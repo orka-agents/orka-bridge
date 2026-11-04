@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+# bridge-vm: run the Bridge Linux VM (Orka on kind) with QEMU/KVM.
+#
+#   bridge-vm install URL   download and verify the image at URL, then start it
+#   bridge-vm start         boot the VM and wait until Orka is ready
+#   bridge-vm stop          shut the VM down cleanly
+#   bridge-vm status        show whether the VM is running and ready
+#   bridge-vm kubeconfig    print the VM's kubeconfig path
+#   bridge-vm logs          print the VM's console log
+#   bridge-vm reset         stop and discard the VM's changes (fresh cluster)
+#   bridge-vm remove        stop and delete the VM, its image and this command
+#
+# Environment: BRIDGE_VM_HOME (state, default ~/.local/share/orka-bridge/vm),
+# BRIDGE_VM_CPUS, BRIDGE_VM_MEMORY (MiB), BRIDGE_VM_KUBE_PORT (16443), BRIDGE_VM_ORKA_PORT (18080).
+set -euo pipefail
+
+home=${BRIDGE_VM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/orka-bridge/vm}
+images=$home/images
+inst=$home/instance
+kubeconfig=$home/kubeconfig
+platform=linux-amd64
+ready_timeout=${BRIDGE_VM_READY_TIMEOUT:-1860}
+
+say() { printf '%s\n' "$*"; }
+step() { printf '\033[1m==>\033[0m %s\n' "$*"; }
+die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+
+# The manifest is written by the image build with one "key": value pair per line.
+manifest_get() { # file key
+  sed -n "s/^ *\"$2\": \"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}\$/\1/p" "$1" | head -n1
+}
+
+preflight() {
+  [ "$(uname -s)" = Linux ] || die "this VM needs Linux; Bridge uses its own VM on macOS and Windows"
+  [ "$(uname -m)" = x86_64 ] || die "this image is for x86_64 Linux"
+  local missing=()
+  for tool in qemu-system-x86_64 qemu-img curl sha256sum; do
+    command -v "$tool" >/dev/null || missing+=("$tool")
+  done
+  if [ "${#missing[@]}" -gt 0 ]; then
+    say "Missing: ${missing[*]}. Install QEMU and curl, for example:"
+    say "  Debian/Ubuntu: sudo apt install qemu-system-x86 qemu-utils curl"
+    say "  Fedora:        sudo dnf install qemu-kvm qemu-img curl"
+    say "  Arch:          sudo pacman -S qemu-base curl"
+    exit 1
+  fi
+  [ -e /dev/kvm ] || die "/dev/kvm is missing: enable virtualization (VT-x/AMD-V) in firmware"
+  { [ -r /dev/kvm ] && [ -w /dev/kvm ]; } ||
+    die "$(id -un) cannot use /dev/kvm: run 'sudo usermod -aG kvm $(id -un)' and log in again"
+}
+
+pid() { cat "$inst/qemu.pid" 2>/dev/null || true; }
+running() {
+  local p
+  p=$(pid)
+  [ -n "$p" ] && kill -0 "$p" 2>/dev/null && grep -q orka-bridge-vm "/proc/$p/cmdline" 2>/dev/null
+}
+
+port_free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+# Only a complete JSON line counts: the ready line carries the kubeconfig and can arrive
+# in more than one write.
+last_status() { tail -n1 "$inst/status.log" 2>/dev/null | grep -E '^\{.*\}$' || true; }
+status_field() { # line key
+  printf '%s' "$1" | sed -n "s/.*\"$2\":\"\{0,1\}\([^\",}]*\).*/\1/p"
+}
+
+fetch() { # url part [resume]
+  local resume=()
+  [ "${3:-}" = resume ] && resume=(-C -)
+  curl -fL --retry 5 --retry-connrefused --progress-bar "${resume[@]}" -o "$2" "$1"
+}
+
+download() { # url destination size sha256
+  local part=$2.part resumed=0
+  if [ -f "$part" ] && [ "$(stat -c %s "$part")" -gt "$3" ]; then rm -f "$part"; fi
+  [ -s "$part" ] && resumed=1
+  # Resume a partial download; start over if the server does not support ranges.
+  if ! fetch "$1" "$part" resume; then
+    rm -f "$part"
+    resumed=0
+    fetch "$1" "$part" || { rm -f "$part"; die "cannot download $1"; }
+  fi
+  # A partial file can come from an earlier build with the same name; retry once from scratch.
+  if [ "$resumed" = 1 ] && ! printf '%s  %s\n' "$4" "$part" | sha256sum -c --quiet - 2>/dev/null; then
+    rm -f "$part"
+    fetch "$1" "$part" || { rm -f "$part"; die "cannot download $1"; }
+  fi
+  [ "$(stat -c %s "$part")" = "$3" ] || { rm -f "$part"; die "size mismatch for $1"; }
+  printf '%s  %s\n' "$4" "$part" | sha256sum -c --quiet - 2>/dev/null ||
+    { rm -f "$part"; die "checksum mismatch for $1"; }
+  mv "$part" "$2"
+}
+
+cmd_install() {
+  local url=${1:?usage: bridge-vm install URL}
+  url=${url%/}
+  preflight
+  # BRIDGE_VM_HOME is deleted by `remove`, so only ever use a new or bridge-vm directory.
+  if [ -e "$home" ] && [ ! -f "$home/.bridge-vm" ] && [ -n "$(ls -A "$home" 2>/dev/null)" ]; then
+    die "$home is not empty and was not created by bridge-vm; set BRIDGE_VM_HOME to a new directory"
+  fi
+  mkdir -p "$images" "$inst"
+  chmod 0700 "$home"
+  touch "$home/.bridge-vm"
+  # Remembered so that `remove` can delete the installed command too.
+  printf '%s\n' "${BRIDGE_VM_BIN:-$HOME/.local/bin}/bridge-vm" >"$home/command"
+
+  step "Reading the image manifest"
+  local manifest=$home/manifest.json.new
+  curl -fsSL --retry 3 --retry-connrefused -o "$manifest" "$url/manifest-$platform.json" ||
+    die "cannot download $url/manifest-$platform.json"
+  local file sha size orka kmx
+  file=$(manifest_get "$manifest" imageFile)
+  sha=$(manifest_get "$manifest" imageSha256)
+  size=$(manifest_get "$manifest" imageSize)
+  orka=$(manifest_get "$manifest" orkaVersion)
+  kmx=$(manifest_get "$manifest" kmxVersion)
+  [[ $file =~ ^[A-Za-z0-9._-]+\.qcow2$ ]] || die "invalid image name in the manifest"
+  [[ $sha =~ ^[0-9a-f]{64}$ ]] || die "invalid image checksum in the manifest"
+  [[ $size =~ ^[0-9]+$ ]] || die "invalid image size in the manifest"
+  say "    Orka $orka, kmx $kmx, $file ($((size / 1024 / 1024)) MiB)"
+
+  # The VM's disk is an overlay on the downloaded image, so that image must never change
+  # under an existing VM, even when a rebuild keeps the same file name.
+  if [ -f "$inst/disk.qcow2" ] && [ "$(cat "$inst/image" 2>/dev/null)" != "$file $sha" ]; then
+    die "a VM from another image exists; run 'bridge-vm remove' (deletes its data) and install again"
+  fi
+
+  local image=$images/$file
+  if [ -f "$image" ] && printf '%s  %s\n' "$sha" "$image" | sha256sum -c --quiet - 2>/dev/null; then
+    step "Image already downloaded and verified"
+  else
+    # Sizes stay in shell integers: some awk builds print large numbers in exponent form.
+    local avail_kb
+    avail_kb=$(df -Pk "$images" | tail -n1 | tr -s ' ' | cut -d' ' -f4)
+    [ "$avail_kb" -gt $((size * 3 / 1024)) ] || die "not enough free space in $images"
+    step "Downloading the image"
+    local start=$SECONDS
+    download "$url/$file" "$image" "$size" "$sha"
+    chmod 0444 "$image"
+    say "    verified sha256 $sha in $((SECONDS - start))s"
+  fi
+
+  if [ ! -f "$inst/disk.qcow2" ]; then
+    qemu-img create -q -f qcow2 -F qcow2 -b "$image" "$inst/disk.qcow2"
+    printf '%s %s\n' "$file" "$sha" >"$inst/image"
+  fi
+  mv "$manifest" "$home/manifest.json"
+  cmd_start
+}
+
+cmd_start() {
+  [ -f "$inst/disk.qcow2" ] || die "no VM installed; run the installer first"
+  local kube_port=${BRIDGE_VM_KUBE_PORT:-16443} orka_port=${BRIDGE_VM_ORKA_PORT:-18080}
+  local start=$SECONDS
+  if running; then
+    step "The VM is already running"
+    # shellcheck source=/dev/null
+    . "$inst/ports.env"
+  else
+    preflight
+    port_free "$kube_port" || die "port $kube_port is in use; set BRIDGE_VM_KUBE_PORT"
+    port_free "$orka_port" || die "port $orka_port is in use; set BRIDGE_VM_ORKA_PORT"
+    local cpus=${BRIDGE_VM_CPUS:-} memory=${BRIDGE_VM_MEMORY:-}
+    [ -n "$cpus" ] || { cpus=$(nproc); [ "$cpus" -le 4 ] || cpus=4; }
+    if [ -z "$memory" ]; then
+      # A 16 GB host reports a little less than 16 GiB of MemTotal.
+      local mem_kb
+      mem_kb=$(sed -n 's/^MemTotal: *\([0-9]*\) kB$/\1/p' /proc/meminfo)
+      if [ "${mem_kb:-0}" -ge $((14 * 1024 * 1024)) ]; then memory=8192; else memory=4096; fi
+    fi
+    rm -f "$inst/status.log" "$inst/qmp.sock"
+    printf 'kube_port=%s\norka_port=%s\n' "$kube_port" "$orka_port" >"$inst/ports.env"
+    step "Starting the VM ($cpus CPUs, $memory MiB)"
+    qemu-system-x86_64 \
+      -name orka-bridge-vm,process=orka-bridge-vm \
+      -machine q35,accel=kvm -cpu host -smp "$cpus" -m "$memory" \
+      -drive "file=$inst/disk.qcow2,if=virtio,discard=unmap,detect-zeroes=unmap" \
+      -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$kube_port-:6443,hostfwd=tcp:127.0.0.1:$orka_port-:8080" \
+      -device virtio-rng-pci \
+      -device virtio-serial-pci \
+      -chardev "file,id=status,path=$inst/status.log" \
+      -device virtserialport,chardev=status,name=ai.orka.bridge.status \
+      -serial "file:$inst/console.log" -display none \
+      -qmp "unix:$inst/qmp.sock,server=on,wait=off" \
+      -pidfile "$inst/qemu.pid" -daemonize
+  fi
+
+  step "Waiting for Orka"
+  local line state shown=""
+  while :; do
+    line=$(last_status)
+    state=$(status_field "$line" state)
+    if [ -n "$state" ] && [ "$state" != "$shown" ] && [ "$state" != ready ] && [ "$state" != failed ]; then
+      say "    $state"
+      shown=$state
+    fi
+    case $state in
+      ready) break ;;
+      failed) die "$(status_field "$line" reason); see 'bridge-vm logs'" ;;
+    esac
+    running || die "the VM stopped; see 'bridge-vm logs'"
+    [ $((SECONDS - start)) -lt "$ready_timeout" ] ||
+      die "Orka was not ready after ${ready_timeout}s; the VM is still running ('bridge-vm logs', 'bridge-vm stop')"
+    sleep 1
+  done
+
+  # The guest reports its kind kubeconfig; point it at the forwarded port and give it a
+  # name that cannot be mistaken for a kind cluster on this machine.
+  local tmp=$kubeconfig.new
+  (umask 077 && status_field "$line" kubeconfig | base64 -d >"$tmp") ||
+    { rm -f "$tmp"; die "the VM sent an unreadable kubeconfig"; }
+  grep -q 'server: https://127.0.0.1:6443$' "$tmp" ||
+    { rm -f "$tmp"; die "the VM sent an incomplete kubeconfig"; }
+  sed -i -e "s#server: https://127.0.0.1:6443#server: https://127.0.0.1:$kube_port#" \
+    -e 's/kind-kaimahi-p1/orka-bridge-vm/g' "$tmp"
+  mv "$tmp" "$kubeconfig"
+  curl -fsS --max-time 10 -o /dev/null "http://127.0.0.1:$orka_port/readyz" || die "the Orka API is not reachable"
+  local elapsed=$((SECONDS - start))
+
+  say ""
+  say "Orka $(status_field "$line" orka) is ready in the Bridge VM ($elapsed s; kmx $(status_field "$line" kmx) inside)."
+  say ""
+  say "  Orka API and dashboard   http://127.0.0.1:$orka_port"
+  say "  Kubernetes API           https://127.0.0.1:$kube_port"
+  say "  kubeconfig               $kubeconfig"
+  say ""
+  say "  export KUBECONFIG=$kubeconfig"
+  say "  kubectl -n orka-system get pods"
+  say "  kubectl -n orka-system create token orka-client   # token for the dashboard"
+  say ""
+  say "  bridge-vm stop     stop the VM; 'bridge-vm start' boots it again"
+  say "  bridge-vm remove   delete the VM, its image and kubeconfig"
+}
+
+qmp() { # command
+  local sock=$inst/qmp.sock
+  [ -S "$sock" ] || return 1
+  if command -v python3 >/dev/null; then
+    python3 -I - "$sock" "$1" <<'EOF'
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+f = s.makefile("rw")
+f.readline()
+for cmd in ("qmp_capabilities", sys.argv[2]):
+    f.write(json.dumps({"execute": cmd}) + "\n")
+    f.flush()
+    f.readline()
+EOF
+  elif command -v socat >/dev/null; then
+    printf '{"execute":"qmp_capabilities"}\n{"execute":"%s"}\n' "$1" |
+      socat - "UNIX-CONNECT:$sock" >/dev/null
+  else
+    return 1
+  fi
+}
+
+cmd_stop() {
+  if ! running; then say "The VM is not running."; return; fi
+  step "Stopping the VM"
+  local p
+  p=$(pid)
+  if qmp system_powerdown; then
+    for _ in $(seq 90); do
+      kill -0 "$p" 2>/dev/null || break
+      sleep 1
+    done
+    if kill -0 "$p" 2>/dev/null; then
+      say "    the VM did not shut down in 90s; stopping QEMU"
+      kill "$p"
+    fi
+  else
+    say "    python3 or socat is needed to shut the VM down cleanly; stopping QEMU"
+    kill "$p"
+  fi
+  rm -f "$inst/qemu.pid" "$inst/qmp.sock"
+  say "    stopped"
+}
+
+cmd_status() {
+  if [ ! -f "$inst/disk.qcow2" ]; then say "Not installed."; return; fi
+  if [ -f "$home/manifest.json" ]; then
+    say "Image: $(cut -d' ' -f1 "$inst/image") (Orka $(manifest_get "$home/manifest.json" orkaVersion), kmx $(manifest_get "$home/manifest.json" kmxVersion))"
+  fi
+  if running; then
+    # shellcheck source=/dev/null
+    . "$inst/ports.env"
+    say "Running: $(status_field "$(last_status)" state), Orka API http://127.0.0.1:$orka_port"
+    say "kubeconfig: $kubeconfig"
+  else
+    say "Stopped."
+  fi
+}
+
+cmd_reset() {
+  [ -f "$inst/disk.qcow2" ] || die "no VM installed"
+  cmd_stop
+  qemu-img create -q -f qcow2 -F qcow2 -b "$images/$(cut -d' ' -f1 "$inst/image")" "$inst/disk.qcow2.new"
+  mv "$inst/disk.qcow2.new" "$inst/disk.qcow2"
+  say "The VM is back to its downloaded state; 'bridge-vm start' boots it."
+}
+
+cmd_remove() {
+  if [ -e "$home" ] && [ ! -f "$home/.bridge-vm" ]; then
+    die "$home was not created by bridge-vm; not deleting it"
+  fi
+  cmd_stop
+  local command
+  command=$(cat "$home/command" 2>/dev/null || printf '%s' "$HOME/.local/bin/bridge-vm")
+  rm -rf "$home"
+  say "Removed $home."
+  if [ -f "$command" ] && [ "$(readlink -f "$command")" = "$(readlink -f "$0")" ]; then
+    rm -f "$command"
+    say "Removed $command."
+  fi
+}
+
+case ${1:-} in
+  install) shift; cmd_install "$@" ;;
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  status) cmd_status ;;
+  kubeconfig) say "$kubeconfig" ;;
+  logs) cat "$inst/console.log" ;;
+  reset) cmd_reset ;;
+  remove) cmd_remove ;;
+  *) sed -n '2,13s/^# \{0,1\}//p' "$0"; exit 2 ;;
+esac
