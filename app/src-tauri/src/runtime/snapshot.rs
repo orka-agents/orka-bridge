@@ -89,6 +89,7 @@ impl Snapshot {
 }
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::fs;
     #[cfg(unix)]
     #[test]
