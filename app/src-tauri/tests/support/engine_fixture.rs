@@ -26,7 +26,9 @@ fn main() {
             let _ = std::io::stderr().write_all(&vec![b'x'; 1048577]);
         }
         "block" => {
-            std::fs::write(&args[6], std::process::id().to_string()).unwrap();
+            let pending = std::path::Path::new(&args[6]).with_extension("pending");
+            std::fs::write(&pending, std::process::id().to_string()).unwrap();
+            std::fs::rename(pending, &args[6]).unwrap();
             std::thread::sleep(std::time::Duration::from_secs(60));
         }
         _ => print!("{}", args.join("\n")),

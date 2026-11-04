@@ -420,4 +420,5 @@ async fn closing_engine_cancels_and_reaps_owned_process() {
             "cancelled child is still listed"
         );
     }
+    std::fs::remove_file(pid_path).unwrap();
 }
