@@ -1,0 +1,77 @@
+name: ARM64 builder capability probe
+
+# A single new-branch create event; the commit skips unrelated push workflows.
+on: create
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/ci/arm64-builder-probe' && github.event.ref_type == 'branch'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: 999476604f68d4a48f5d6c2eb021de90e3ac5d45
+          persist-credentials: false
+      - name: Probe only; no assembly, guest boot or artifact upload
+        shell: bash
+        run: |
+          uname -m
+          python3 -c 'import os; print("runnerUserKvmReadWrite:", os.access("/dev/kvm", os.R_OK | os.W_OK))'
+          sudo -n python3 - <<'PY'
+          import ast
+          import fcntl
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import subprocess
+          import sys
+
+          sys.dont_write_bytecode = True
+          sys.path.insert(0, str(Path('images').resolve()))
+          from guest.lock import require
+
+          result = {
+              'recipeCommit': '999476604f68d4a48f5d6c2eb021de90e3ac5d45',
+              'unameMachine': subprocess.check_output(['uname', '-m'], text=True).strip(),
+              'platformMachine': platform.machine(),
+              'kvmExists': Path('/dev/kvm').exists(),
+              'kvmProbeEffectiveUid': os.geteuid(),
+              'kvmUsableWithSudo': False,
+              'nativeGuardPass': False,
+              'assemblyRun': False,
+              'guestBootRun': False,
+              'diskArtifactsCreated': False,
+              'qualification': 'isolated native guard and basic KVM API/VM-object creation only; no vCPU or guest execution',
+          }
+          source = Path('images/guest/build.py').read_text()
+          result['recipeBuildPySha256'] = hashlib.sha256(source.encode()).hexdigest()
+          build = next(node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == 'build')
+          guards = [node for node in build.body if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == 'require' and len(node.value.args) == 2 and isinstance(node.value.args[1], ast.Constant) and node.value.args[1].value == 'native architecture builder required']
+          require(len(guards) == 1, 'unique original native guard required')
+          guard = guards[0]
+          result['nativeGuardSource'] = ast.get_source_segment(source, guard)
+          try:
+              # Execute only the unchanged guard, never build() or guest hooks.
+              exec(compile(ast.Module(body=[guard], type_ignores=[]), '<original-native-guard>', 'exec'), {'platform': platform, 'lock': {'architecture': 'arm64'}, 'require': require})
+              result['nativeGuardPass'] = True
+          except ValueError as error:
+              result['nativeGuardError'] = str(error)
+          try:
+              with open('/dev/kvm', 'rb+', buffering=0) as device:
+                  result['kvmApiVersion'] = fcntl.ioctl(device, 0xAE00, 0)
+                  require(result['kvmApiVersion'] == 12, 'unexpected KVM API')
+                  vm = fcntl.ioctl(device, 0xAE01, 0)
+                  os.close(vm)
+                  result['kvmUsableWithSudo'] = True
+          except (OSError, ValueError) as error:
+              result['kvmError'] = type(error).__name__
+              result['kvmErrno'] = getattr(error, 'errno', None)
+          print(json.dumps(result, indent=2), flush=True)
+          sys.exit(0 if result['nativeGuardPass'] and result['kvmExists'] and result['kvmUsableWithSudo'] else 1)
+          PY
