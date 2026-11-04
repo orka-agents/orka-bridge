@@ -80,6 +80,24 @@ class BuildTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.api.root_esp(filesystems, "/dev/sda3")
 
+    def test_base_reads_use_an_owned_verified_snapshot(self):
+        import hashlib
+        from unittest.mock import patch
+        tool = self.root / "builder.bin"
+        tool.write_bytes(b"builder")
+        for name in ("qemu-img", "guestfish", "virt-resize", "virt-customize"):
+            self.value["tools"].append({"name": name, "version": "1.0", "path": tool.name, "sha256": hashlib.sha256(tool.read_bytes()).hexdigest()})
+        package = next(p for p in self.value["packages"] if p["name"] == "debian-base")
+        original = self.root / package["path"]
+        def inspect(snapshot):
+            self.assertNotEqual(original, snapshot)
+            self.assertEqual(package["sha256"], self.api.file_hash(snapshot))
+            original.write_bytes(b"external replacement after snapshot")
+            self.assertEqual(package["sha256"], self.api.file_hash(snapshot))
+            raise RuntimeError("snapshot observed")
+        with patch.object(self.api.shutil, "which", return_value=str(tool)), patch.object(self.api, "run", return_value="1.0"), patch.object(self.api, "image_info", side_effect=inspect), self.assertRaisesRegex(RuntimeError, "snapshot observed"):
+            self.api.build(self.value, source=self.root, out=self.root / "build")
+
     def test_bad_input_leaves_no_output(self):
         (self.root / "base.qcow2").write_bytes(b"corrupt")
         with self.assertRaisesRegex(ValueError, "checksum"):

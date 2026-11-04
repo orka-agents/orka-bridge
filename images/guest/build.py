@@ -149,20 +149,24 @@ def build(lock, out, *, source):
         version = run([name, "--version"])
         require(version == selected[name]["version"], "builder tool version mismatch: " + name)
         builder_tools[name] = {"sha256": selected[name]["sha256"], "version": version}
-    base_info = image_info(inputs["base"])
+    expected_packages = {p["name"]: p["sha256"] for p in lock["packages"]}
+    out.mkdir()
+    snapshot = out / "base.input"
+    stage_package(inputs["base"], snapshot, expected_packages["debian-base"])
+    snapshot.chmod(0o444)
+    inputs["base"] = snapshot
+    base_info = image_info(snapshot)
     require(base_info["virtual-size"] <= OS_BYTES, "base exceeds OS capacity")
     # Reject initialized installations rather than attempting to sanitize one.
     for path in ("/etc/kubernetes", "/var/lib/kubelet", "/var/lib/bridge"):
         require(run(["guestfish", "--ro", "-a", inputs["base"], "-i", "is-dir", path]) == "false", "base contains installation state")
     root = run(["guestfish", "--ro", "-a", inputs["base"], "run", ":", "inspect-os"]).splitlines()
     require(len(root) == 1 and root[0].startswith("/dev/"), "expected one Linux root filesystem")
-    out.mkdir()
     with tempfile.TemporaryDirectory(prefix="bridge-assembly-") as temp:
         stage = Path(temp)
         overlay = stage_rootfs(lock, source=source, out=stage / "rootfs")
         rootfs_archive(stage / "rootfs", stage / "rootfs.tar")
         packages = []
-        expected_packages = {p["name"]: p["sha256"] for p in lock["packages"]}
         for index, (name, path) in enumerate(inputs["packages"].items()):
             if name != "debian-base":
                 copied = stage / ("package-" + str(index) + ".deb")
@@ -193,6 +197,7 @@ def build(lock, out, *, source):
         run(["qemu-img", "convert", "-f", "raw", "-O", "qcow2", raw, payload])
         raw.unlink()
     require(image_info(payload)["virtual-size"] == OS_BYTES, "wrong OS capacity")
+    snapshot.unlink()
     result = {"schemaVersion": "bridge-guest-build/v1", "architecture": lock["architecture"], "contract": inputs["contract"],
               "inputSha256": hashlib.sha256(encoded(lock)).hexdigest(), "builderTools": builder_tools,
               "recipeFiles": {"build.py": file_hash(Path(__file__)), "lock.py": file_hash(Path(__file__).with_name("lock.py")), **overlay["files"]},
