@@ -35,6 +35,7 @@ fn release_context_embeds_fonts_and_all_license_notices() {
     for name in [
         "index.html",
         "licenses/shell-MIT.txt",
+        "licenses/Orka-MIT.txt",
         "licenses/Inter-OFL.txt",
         "licenses/JetBrains-Mono-OFL.txt",
     ] {
