@@ -29,7 +29,8 @@ Bridge has three tabs: Overview, Designer, and Clusters.
 On first launch, Clusters asks one question: start a local VM, or connect an existing cluster that has Orka on it.
 For the local VM, Bridge downloads and starts a VM image with Orka already installed, connects a model, and runs a
 test task to verify everything works. Run in the Designer then targets whichever you chose: the local VM, or the
-cluster you connected. Until the VM image ships, only the existing-cluster choice works.
+cluster you connected. The existing-cluster choice is planned to land first; the local VM choice follows once the
+VM image is built.
 
 Setup happens on a single screen with progress indicators. If something goes wrong, Bridge shows what's missing.
 
