@@ -50,7 +50,7 @@ func click(_ fraction: CGFloat) {
 func key(_ code: CGKeyCode, shift: Bool = false) {
     for down in [true, false] {
         let event = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: down)!
-        if shift { event.flags = .maskShift }
+        event.flags = shift ? .maskShift : []
         event.post(tap: .cghidEventTap)
     }
     Thread.sleep(forTimeInterval: 0.3)
@@ -59,18 +59,27 @@ func capture(_ name: String, _ page: String) throws {
     let file = "\(output)/\(name).png"
     let command = Process()
     command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-    command.arguments = ["-x", "-l", String(window()!.0), file]
+    // Exclude the window shadow so OCR coordinates are relative to the window.
+    command.arguments = ["-x", "-o", "-l", String(window()!.0), file]
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture Bridge")
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
-    let heading = observations.contains {
-        let top = 1 - $0.boundingBox.maxY
-        return $0.topCandidates(1).first?.string == page && top > 0.10 && top < 0.25
+    let pages = ["Overview", "Designer", "Clusters"]
+    let headings = Set(observations.compactMap { observation -> String? in
+        let top = 1 - observation.boundingBox.maxY
+        guard top > 0.10 && top < 0.25,
+            let text = observation.topCandidates(1).first?.string,
+            pages.contains(text) else { return nil }
+        return text
+    })
+    // Negative control: persistent nav labels must not qualify as page headings.
+    for wrong in pages where wrong != page {
+        require(!headings.contains(wrong), "OCR confused the \(wrong) nav label with a heading")
     }
-    require(heading, "Native screenshot does not show the expected \(page) page heading")
+    require(headings == Set([page]), "Native screenshot does not show the expected \(page) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
@@ -83,11 +92,13 @@ key(48); key(49); try capture("designer-keyboard", "Designer")
 key(48); key(36); try capture("clusters-keyboard", "Clusters")
 // Resize this CI-owned window using its native bottom-right handle.
 let rect = window()!.1
-// Tauri's configured dimensions are content sizes; CG reports the title bar too.
-let titleBar = rect.height - 800
-require(titleBar >= 0 && titleBar < 60, "Unexpected initial window dimensions: \(rect)")
-let start = CGPoint(x: rect.maxX - 2, y: rect.maxY - 2)
-let end = CGPoint(x: rect.minX + 958, y: rect.minY + 638 + titleBar)
+// The display may constrain the initial size. Derive the minimum frame from
+// AppKit's content-to-frame conversion, not the requested initial dimensions.
+let minimumFrame = NSWindow.frameRect(
+    forContentRect: CGRect(x: 0, y: 0, width: 960, height: 640),
+    styleMask: [.titled, .closable, .miniaturizable, .resizable])
+let start = CGPoint(x: rect.maxX - 10, y: rect.maxY - 5)
+let end = CGPoint(x: rect.minX + minimumFrame.width - 10, y: rect.minY + minimumFrame.height - 5)
 mouse(.leftMouseDown, start)
 for step in 1...20 {
     let t = CGFloat(step) / 20
@@ -97,6 +108,6 @@ for step in 1...20 {
 mouse(.leftMouseUp, end)
 Thread.sleep(forTimeInterval: 0.5)
 let minimum = window()!.1
-require(abs(minimum.width - 960) < 3 && abs(minimum.height - 640 - titleBar) < 3, "Native minimum-size resize not verified: \(minimum)")
+require(abs(minimum.width - minimumFrame.width) < 3 && abs(minimum.height - minimumFrame.height) < 3, "Native minimum-size resize not verified: \(minimum), expected \(minimumFrame.size)")
 try capture("clusters-minimum", "Clusters")
 print("PASS native walk: pointer, Shift-Tab/Tab, Space, Enter and minimum window")

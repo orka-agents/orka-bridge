@@ -74,9 +74,9 @@ jobs:
       - run: npm run build
       - name: Rust checks
         run: |
-          cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-          cargo test --release --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol
-          cargo clippy --release --manifest-path src-tauri/Cargo.toml --locked --all-targets --features custom-protocol -- -D warnings
+          cargo +1.98.1 fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+          cargo +1.98.1 test --release --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol
+          cargo +1.98.1 clippy --release --manifest-path src-tauri/Cargo.toml --locked --all-targets --features custom-protocol -- -D warnings
       - name: Windows executable
         if: runner.os == 'Windows'
         run: |
@@ -90,8 +90,6 @@ jobs:
         run: |
           npm run tauri -- build --bundles app --no-sign --no-binary-patching -- --locked
           bundle=src-tauri/target/release/bundle/macos/Bridge.app
-          mkdir -p "$bundle/Contents/Resources/licenses"
-          cp public/licenses/*.txt "$bundle/Contents/Resources/licenses/"
           test "$(lipo -archs "$bundle/Contents/MacOS/orka-bridge")" = arm64
           codesign --verify --ignore-resources "$bundle/Contents/MacOS/orka-bridge"
           tar -czf bridge-macos-arm64.tar.gz -C src-tauri/target/release/bundle/macos Bridge.app
@@ -100,6 +98,15 @@ jobs:
           test -x smoke-app/Bridge.app/Contents/MacOS/orka-bridge
           cmp "$bundle/Contents/MacOS/orka-bridge" smoke-app/Bridge.app/Contents/MacOS/orka-bridge
           for notice in public/licenses/*.txt; do cmp "$notice" "smoke-app/Bridge.app/Contents/Resources/licenses/${notice##*/}"; done
+          # Test standard macOS keyboard navigation, restoring the runner preference.
+          prior="$(defaults read -g AppleKeyboardUIMode 2>/dev/null || true)"
+          restore_keyboard() {
+            if [[ -n "$prior" ]]; then defaults write -g AppleKeyboardUIMode -int "$prior"
+            else defaults delete -g AppleKeyboardUIMode 2>/dev/null || true
+            fi
+          }
+          trap restore_keyboard EXIT
+          defaults write -g AppleKeyboardUIMode -int 3
           swift ../scripts/native-smoke.swift native-walk "$PWD/smoke-app/Bridge.app"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: runner.os == 'Windows'

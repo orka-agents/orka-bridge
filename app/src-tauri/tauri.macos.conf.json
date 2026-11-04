@@ -1,6 +1,7 @@
 {
   "bundle": {
     "active": true,
-    "targets": ["app"]
+    "targets": ["app"],
+    "resources": {"../public/licenses/": "licenses/"}
   }
 }

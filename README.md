@@ -119,9 +119,9 @@ npm run tauri dev
 Build frontend assets before running the native checks:
 
 ```sh
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo test --release --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol
-cargo clippy --release --manifest-path src-tauri/Cargo.toml --locked --all-targets --features custom-protocol -- -D warnings
+cargo +1.98.1 fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo +1.98.1 test --release --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol
+cargo +1.98.1 clippy --release --manifest-path src-tauri/Cargo.toml --locked --all-targets --features custom-protocol -- -D warnings
 ```
 
 CI builds Windows x64 and Apple silicon Mac, with a native Mac navigation walk

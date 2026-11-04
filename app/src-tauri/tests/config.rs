@@ -15,6 +15,10 @@ fn native_window_uses_local_assets_and_fits_a_laptop() {
     assert!(window.width >= 960.0 && window.height >= 640.0);
     assert!(!config.app.with_global_tauri);
     assert!(config.app.security.capabilities.is_empty());
+    // An empty configured list also enables capabilities discovered on disk.
+    assert!(!std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("capabilities")
+        .exists());
     assert_eq!(config.app.security.csp.as_ref().unwrap().to_string(),
         "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'; form-action 'none'");
     assert!(matches!(

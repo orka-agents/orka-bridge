@@ -21,9 +21,9 @@ npm ci
 npm run lint
 npm test
 npm run build
-cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
-cargo test --release --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol
-cargo clippy --release --manifest-path src-tauri/Cargo.toml --locked --all-targets --features custom-protocol -- -D warnings
+cargo +1.98.1 fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+cargo +1.98.1 test --release --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol
+cargo +1.98.1 clippy --release --manifest-path src-tauri/Cargo.toml --locked --all-targets --features custom-protocol -- -D warnings
 ```
 
 Build frontend assets before Rust checks: Tauri embeds them.

@@ -38,8 +38,8 @@ For an Apple silicon Mac app:
 npm run tauri -- build --bundles app --no-sign --no-binary-patching -- --locked
 ```
 
-CI includes the readable third-party notices beside the Windows executable
-and inside the Mac app's Resources directory, as well as embedding them in
+The Mac bundle includes readable notices in its Resources directory; CI also
+places them beside the portable Windows executable. Both builds embed them in
 the frontend. Preserve these files when redistributing builds.
 
 The app currently opens three empty screens. It does not install a runtime,
@@ -56,6 +56,7 @@ WebView2. Mac archives preserve executable permissions.
 
 The Mac CI job launches its extracted app bundle, uses pointer and keyboard
 navigation, checks captured page headings and resizes the window to its
-minimum dimensions. Captures contain only the app window.
+minimum dimensions. The walk temporarily enables macOS Keyboard Navigation,
+then restores the runner's prior setting. Captures contain only the app window.
 Review visible changes in these captures and report anything not exercised,
 such as platform input feel or installer behavior.
