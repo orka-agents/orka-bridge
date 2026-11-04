@@ -26,11 +26,11 @@ the destination cluster.
 
 Bridge has three tabs: Overview, Designer, and Clusters.
 
-On first launch, Clusters walks you through setup. Bridge downloads and starts a VM with Orka already installed, asks
-you to connect a model, and runs a test task to verify everything works.
+On first launch, Clusters asks one question: start a local VM, or connect an existing cluster that has Orka on it.
+For the local VM, Bridge downloads and starts a VM image with Orka already installed, connects a model, and runs a
+test task to verify everything works.
 
-Setup happens on a single screen with progress indicators. The only decision you need to make is which model to use.
-If something goes wrong, Bridge shows what's missing.
+Setup happens on a single screen with progress indicators. If something goes wrong, Bridge shows what's missing.
 
 ### Designer
 
@@ -61,12 +61,14 @@ Overview brings that information together across your local environment and conn
   local Orka cluster (`kmx cluster up`), running agent tests (`kmx package test`), and publishing and deploying agents
   (`kmx package deploy`). Bridge will run kmx as a sidecar and consume its JSON output rather than implementing its
   own Orka API or Kubernetes integration.
-- **Local VM:** Bridge will ship a VM image containing a container runtime, [kind](https://kind.sigs.k8s.io/), a
-  preconfigured Orka cluster, and kmx. No separate installation is required. The planned runtimes are Apple's
-  Virtualization framework on Apple silicon, WSL2 on Windows, and QEMU/KVM on Linux. The image and build pipeline are
-  not implemented yet.
-- **Models:** The plan is to support your existing GitHub Copilot sign-in through a model gateway inside the VM. You
-  can also provide an API key for OpenAI, Anthropic, or Azure OpenAI.
+- **Local VM:** The Bridge app itself is small. On first run it downloads a VM image, published as a GitHub release
+  asset, containing a container runtime, [kind](https://kind.sigs.k8s.io/), a preconfigured Orka cluster, and kmx.
+  No separate installation is required. The planned runtimes are Apple's Virtualization framework on Apple silicon,
+  WSL2 on Windows, and QEMU/KVM on Linux. The image and build pipeline are not implemented yet. For scale: Orka's
+  own images plus the kind node image are about 800 MB compressed, before the VM's operating system.
+- **Models:** Bridge uses your existing GitHub Copilot sign-in through a model gateway inside the VM. This route has
+  been verified on a kind cluster: a native Orka agent fetched a real web page through Copilot with no API key and no
+  model download. You can also provide an API key for OpenAI, Anthropic, or Azure OpenAI.
 
 Two projects influenced the approach: [Hermes Agent](https://github.com/NousResearch/hermes-agent), for getting from
 installation to a working agent without a terminal, and [Try Omarchy](https://github.com/omacom/try-omarchy), for
