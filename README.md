@@ -1,71 +1,97 @@
 # Bridge
 
-**Write an agent on your laptop, watch it use a real [Orka](https://github.com/orka-agents/orka) tool and pass its
-tests, then send the same file to your team's cluster.**
+**Build and test an agent locally, then deploy the same agent to your team's [Orka](https://github.com/orka-agents/orka) cluster.**
 
-Writing an agent for Orka today starts with a cluster. Before the first prompt runs, someone has to create one,
-install Orka, connect a model and learn the YAML. Most people who want to write an agent do not want to do any of
-that. Bridge is a desktop app that does it for them.
+Building an agent for Orka today starts with setting up a cluster, installing Orka, connecting a model, and learning
+the YAML. Bridge handles that setup so you can focus on the agent itself.
 
-This is the hour it is built for. None of it runs yet; the repo holds this plan, and the app arrives as pull
-requests, one at a time. You open Bridge. It starts an Orka on your laptop without asking you to install anything.
-An example agent is already open, with a prompt, the `web_search` tool ticked and one test the agent can only pass by
-searching. You click Run. The test runs on your local Orka and passes, with the tool call shown under it. You change
-the prompt, add a test of your own, run again. When it is right, you pick your team's cluster and click Send. The
-same file and the same tests run there, and the agent is deployed. The local Orka is a convenience; the tool, the
-file and the tests are the ones the real cluster sees.
+Bridge is a planned desktop app. This repository currently contains the design and implementation issues, with the
+app being built incrementally through pull requests.
 
 ## The first hour
 
-The app has three tabs: Overview, Designer and Clusters. Here they are in the order you meet them.
+Open Bridge and it starts a local Orka environment for you. An example agent is ready to use, with a prompt, the
+`web_search` tool enabled, and a test that requires a search to pass.
 
-**Setup** is what Clusters shows on first run. The app downloads and starts a virtual machine it ships with, which
-has an Orka already running inside. It asks where your model comes from, then runs one test task to prove the path
-works. One screen with a progress list; the only choice is the model. If something is missing, the screen says what
-and waits.
+Click Run to execute the test on your local Orka. You'll see whether it passed, along with the tool calls. Change the
+prompt, add your own tests, and run them again.
 
-**Designer** is where Setup ends, with the example agent open. It has Prompt, Tools, Tests and Chat. Tools lists
-Orka's built-in tools and the Tool resources on the cluster you are targeting; a Tool resource is Orka's object for a
-tool you define yourself, such as an HTTP endpoint. Run executes the tests as real tasks on your local Orka and shows
-pass or fail, the tool calls, time and tokens. Chat is a session with the same agent. The agent is a Markdown file in
-a folder the app makes a git repository, or in a repository of yours.
+When you're happy with the result, choose your team's cluster and click Send. Bridge checks that the cluster supports
+your agent, runs the same tests there, and deploys it.
 
-**Clusters** is where you send the agent: any kubectl context that has Orka on it, or a new AKS cluster the app
-creates for you. Send first checks the destination against the file: Orka version, the model, and each tool the agent
-uses, present or missing. Then it runs the same tests there, publishes the agent as a package in a container registry
-and deploys it. After that, one card per agent per place: where it lives, whether it was tested there, what it can
-reach, its last runs. **Overview** is those cards for every agent you can reach, local and on each cluster.
+The local environment makes development easier, but the agent definition, tools, and tests are the same ones used on
+the destination cluster.
 
-## How it is built
+### Setup
 
-- **A desktop app** in Tauri 2, for Windows, Mac and Linux. The app owns the files, the setup and the screens.
-- **kmx as the engine.** [kmx](https://github.com/kaimahi-agents/kaimahi) already creates a local cluster with Orka
-  on it (`kmx cluster up`), runs an agent's tests on Orka (`kmx package test`), and publishes and deploys
-  (`kmx package deploy`). Bridge will run kmx as a sidecar and read its JSON output instead of talking to Orka's API
-  or running cluster tools itself.
-- **A VM the app ships with.** The plan is an image that carries a container runtime,
-  [kind](https://kind.sigs.k8s.io/), an Orka cluster already created, and kmx, so nothing is installed on the machine
-  first. On Mac it would run on Apple's Virtualization framework (Apple silicon), on Windows as its own WSL2 distro,
-  on Linux under QEMU with KVM. The image and its build pipeline do not exist yet; see the issues.
-- **Your model.** The plan is to use your existing GitHub Copilot sign-in through a model gateway inside the VM. A
-  pasted key for OpenAI, Anthropic or Azure OpenAI is the other choice on the same screen.
+Bridge has three tabs: Overview, Designer, and Clusters.
 
-Two public projects shaped this: Hermes Agent, for an install that ends in a working agent with no terminal, and
-Try Omarchy, for shipping a whole Linux VM inside a Mac app.
+On first launch, Clusters walks you through setup. Bridge downloads and starts a VM with Orka already installed, asks
+you to connect a model, and runs a test task to verify everything works.
 
-## What comes after
+Setup happens on a single screen with progress indicators. The only decision you need to make is which model to use.
+If something goes wrong, Bridge shows what's missing.
 
-Everything past the first hour is an issue, one each, written so a person can pick it up and own it: running an agent
-on a schedule, a Messaging panel for a bot in Teams or Telegram, skills in the designer, a list of sessions across
-clusters, MCP tools in the designer, the VM image build and its update path, a shared team cluster, and the second
-kind of developer, one who points a coding agent at a repository. See the issues labelled
-[help wanted](https://github.com/orka-agents/orka-bridge/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22).
-The first-hour screens themselves land as pull requests from the maintainers, in the order above; if you want to help
-with one of those, say so on an issue first so two people do not build the same screen.
+### Designer
 
-## Develop
+Designer opens with an example agent and four sections:
 
-Build and run instructions arrive with the app shell.
+- **Prompt:** Write the agent's instructions.
+- **Tools:** Choose from Orka's built-in tools or Tool resources available on the target cluster. Tool resources let
+  you define custom tools, such as HTTP endpoints.
+- **Tests:** Run real tasks on your local Orka, with pass/fail results, tool calls, execution time, and token usage.
+- **Chat:** Interact with the same agent in a live session.
+
+Each agent is defined in a Markdown file, stored either in a Git repository Bridge creates or in one you already have.
+
+### Clusters
+
+Deploy to any Kubernetes context with Orka installed, or let Bridge create a new AKS cluster for you.
+
+Before deploying, Bridge checks the destination's Orka version, model availability, and required tools. It then runs
+the agent's tests on that cluster, publishes the agent package to a container registry, and deploys it.
+
+After deployment, Bridge shows where each agent is running, its test status, available tools, and recent runs.
+Overview brings that information together across your local environment and connected clusters.
+
+## How it works
+
+- **Desktop app:** Built with Tauri 2 for Windows, macOS, and Linux. Bridge manages the files, setup, and UI.
+- **kmx:** The engine behind Bridge. [kmx](https://github.com/kaimahi-agents/kaimahi) already supports creating a
+  local Orka cluster (`kmx cluster up`), running agent tests (`kmx package test`), and publishing and deploying agents
+  (`kmx package deploy`). Bridge will run kmx as a sidecar and consume its JSON output rather than implementing its
+  own Orka API or Kubernetes integration.
+- **Local VM:** Bridge will ship a VM image containing a container runtime, [kind](https://kind.sigs.k8s.io/), a
+  preconfigured Orka cluster, and kmx. No separate installation is required. The planned runtimes are Apple's
+  Virtualization framework on Apple silicon, WSL2 on Windows, and QEMU/KVM on Linux. The image and build pipeline are
+  not implemented yet.
+- **Models:** The plan is to support your existing GitHub Copilot sign-in through a model gateway inside the VM. You
+  can also provide an API key for OpenAI, Anthropic, or Azure OpenAI.
+
+Two projects influenced the approach: [Hermes Agent](https://github.com/NousResearch/hermes-agent), for getting from
+installation to a working agent without a terminal, and [Try Omarchy](https://github.com/omacom/try-omarchy), for
+packaging a Linux VM inside a macOS app.
+
+## What's next
+
+The initial focus is the local development and deployment experience described above. Follow-up work includes:
+
+- Scheduled agent runs
+- Teams and Telegram messaging
+- Skills and MCP tools in Designer
+- Session history across clusters
+- VM image builds and updates
+- Shared team clusters
+- Repository-based development with coding agents
+
+Each feature has a separate issue so contributors can work independently. See the
+[help wanted](https://github.com/orka-agents/orka-bridge/issues?q=is%3Aissue+is%3Aopen+label%3A%22help+wanted%22)
+issues for opportunities to contribute. The initial screens will land through maintainer PRs. If you'd like to work on
+one, comment on the relevant issue first to avoid duplicating work.
+
+## Development
+
+Build and run instructions will be added with the initial app shell.
 
 ## Contributing
 
