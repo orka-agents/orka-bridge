@@ -84,6 +84,10 @@ func capture(_ name: String, _ page: String) throws {
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
+    if page == "Clusters" {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }
+        require(text.contains("Engine unavailable"), "Release engine IPC did not report unavailable")
+    }
     let pages = ["Overview", "Designer", "Clusters"]
     let headings = Set(observations.compactMap { observation -> String? in
         let top = 1 - observation.boundingBox.maxY
