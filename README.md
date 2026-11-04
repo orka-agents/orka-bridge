@@ -10,10 +10,10 @@ app being built incrementally through pull requests.
 
 ## The first hour
 
-Open Bridge and it starts a local Orka environment for you. An example agent is ready to use, with a prompt, the
+Open Bridge and it starts a local Orka environment for you, or connects to a cluster you already have. An example agent is ready to use, with a prompt, the
 `web_search` tool enabled, and a test that requires a search to pass.
 
-Click Run to execute the test on your local Orka. You'll see whether it passed, along with the tool calls. Change the
+Click Run to execute the test on your Orka, local or connected. You'll see whether it passed, along with the tool calls. Change the
 prompt, add your own tests, and run them again.
 
 When you're happy with the result, choose your team's cluster and click Send. Bridge checks that the cluster supports
@@ -28,7 +28,8 @@ Bridge has three tabs: Overview, Designer, and Clusters.
 
 On first launch, Clusters asks one question: start a local VM, or connect an existing cluster that has Orka on it.
 For the local VM, Bridge downloads and starts a VM image with Orka already installed, connects a model, and runs a
-test task to verify everything works.
+test task to verify everything works. Run in the Designer then targets whichever you chose: the local VM, or the
+cluster you connected. Until the VM image ships, only the existing-cluster choice works.
 
 Setup happens on a single screen with progress indicators. If something goes wrong, Bridge shows what's missing.
 
@@ -82,7 +83,7 @@ The initial focus is the local development and deployment experience described a
 - Teams and Telegram messaging
 - Skills and MCP tools in Designer
 - Session history across clusters
-- VM image builds and updates
+- The VM image build, which the local VM choice needs, and its updates
 - Shared team clusters
 - Repository-based development with coding agents
 
