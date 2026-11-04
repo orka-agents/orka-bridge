@@ -235,6 +235,7 @@ fn bounded_payload_caches_do_not_limit_lifetime_reads_or_allow_replay() {
     let old = Uuid::new_v4();
     ops.execute(old, EngineActionWire::Version {}, None, &s)
         .unwrap();
+    ops.read(old, 0).unwrap();
     for n in 0..MAX_OPERATIONS + 2 {
         let id = Uuid::new_v4();
         ops.execute(id, EngineActionWire::Version {}, None, &s)
@@ -361,6 +362,101 @@ fn pagination_types_match_the_delivered_typed_decoder() {
             OperationState::Failed
         );
     }
+}
+#[test]
+fn malformed_version_is_failed_before_persistence() {
+    struct Invalid;
+    impl Runner for Invalid {
+        fn execute(&mut self, _: &EngineActionWire) -> io::Result<EngineResult> {
+            Ok(EngineResult {
+                exit: 0,
+                stdout: b"kmx not-a-version\n".to_vec(),
+                has_diagnostics: false,
+            })
+        }
+    }
+    let t = tempfile::tempdir().unwrap();
+    let s = Staging::new(t.path().join("stage")).unwrap();
+    let mut ops = Operations::new(t.path().join("ops"), Invalid).unwrap();
+    assert_eq!(
+        ops.execute(Uuid::new_v4(), EngineActionWire::Version {}, None, &s)
+            .unwrap(),
+        OperationState::Failed
+    );
+}
+#[test]
+fn active_record_ignores_truncated_payload_and_never_reexecutes() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("ops");
+    let id = Uuid::new_v4();
+    let s = Staging::new(t.path().join("stage")).unwrap();
+    let mut ops = Operations::new(root.clone(), Fake::default()).unwrap();
+    std::fs::write(root.join(id.to_string()),serde_json::to_vec(&serde_json::json!({"action":{"type":"version"},"snapshot":null,"state":"running","result":null})).unwrap()).unwrap();
+    std::fs::write(root.join("results").join(id.to_string()), b"{").unwrap();
+    assert_eq!(ops.status(id).unwrap(), OperationState::Unknown);
+    assert_eq!(
+        ops.execute(id, EngineActionWire::Version {}, None, &s)
+            .unwrap(),
+        OperationState::Unknown
+    );
+    assert_eq!(ops.runner().0, 0);
+}
+#[test]
+fn repeated_result_chunks_use_one_bounded_decoded_payload() {
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("ops");
+    let s = Staging::new(t.path().join("stage")).unwrap();
+    let mut ops = Operations::new(root.clone(), Fake::default()).unwrap();
+    let id = Uuid::new_v4();
+    ops.execute(id, EngineActionWire::Version {}, None, &s)
+        .unwrap();
+    let first = ops.read(id, 0).unwrap();
+    std::fs::write(root.join("results").join(id.to_string()), b"{").unwrap();
+    assert_eq!(ops.read(id, 0).unwrap(), first);
+}
+#[test]
+fn payload_write_failure_never_publishes_a_partial_final_name() {
+    struct Fail {
+        path: std::path::PathBuf,
+        calls: usize,
+    }
+    impl Runner for Fail {
+        fn execute(&mut self, _: &EngineActionWire) -> io::Result<EngineResult> {
+            self.calls += 1;
+            std::fs::write(&self.path, b"{")?;
+            Ok(EngineResult {
+                exit: 0,
+                stdout: b"kmx dev\n".to_vec(),
+                has_diagnostics: false,
+            })
+        }
+    }
+    let t = tempfile::tempdir().unwrap();
+    let root = t.path().join("ops");
+    let id = Uuid::new_v4();
+    let s = Staging::new(t.path().join("stage")).unwrap();
+    let mut ops = Operations::new(
+        root.clone(),
+        Fail {
+            path: root
+                .join("results")
+                .join(id.to_string())
+                .with_extension("tmp"),
+            calls: 0,
+        },
+    )
+    .unwrap();
+    assert!(ops
+        .execute(id, EngineActionWire::Version {}, None, &s)
+        .is_err());
+    assert!(!root.join("results").join(id.to_string()).exists());
+    assert_eq!(ops.status(id).unwrap(), OperationState::Unknown);
+    assert_eq!(
+        ops.execute(id, EngineActionWire::Version {}, None, &s)
+            .unwrap(),
+        OperationState::Unknown
+    );
+    assert_eq!(ops.runner().calls, 1);
 }
 #[test]
 fn wrong_digest_and_oversize_never_commit() {

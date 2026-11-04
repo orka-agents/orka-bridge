@@ -37,6 +37,7 @@ dependencies = [
  "cap-fs-ext",
  "cap-std",
  "libc",
+ "semver",
  "serde",
  "serde_json",
  "tempfile",

@@ -16,12 +16,17 @@ struct Record {
 pub struct Operations<R> {
     root: PathBuf,
     runner: R,
+    cached: std::cell::RefCell<Option<(Uuid, EngineResult)>>,
 }
 impl<R: Runner> Operations<R> {
     pub fn new(root: PathBuf, runner: R) -> io::Result<Self> {
         directory(&root)?;
         directory(&root.join("results"))?;
-        Ok(Self { root, runner })
+        Ok(Self {
+            root,
+            runner,
+            cached: std::cell::RefCell::new(None),
+        })
     }
     pub fn runner(&self) -> &R {
         &self.runner
@@ -32,29 +37,51 @@ impl<R: Runner> Operations<R> {
         }
         Ok(self.root.join(id.to_string()))
     }
-    fn record(&self, id: Uuid) -> io::Result<Option<Record>> {
+    fn metadata(&self, id: Uuid) -> io::Result<Option<Record>> {
         let path = self.path(id)?;
         match crate::linux::read_regular(&path, (MAX_FILE * 5) as u64) {
-            Ok(data) => {
-                let mut r: Record = serde_json::from_slice(&data).map_err(|_| invalid())?;
-                match crate::linux::read_regular(
-                    &self.root.join("results").join(id.to_string()),
-                    (MAX_FILE * 5) as u64,
-                ) {
-                    Ok(data) => {
-                        r.result = Some(serde_json::from_slice(&data).map_err(|_| invalid())?)
-                    }
-                    Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(e),
-                }
-                if r.result.as_ref().is_some_and(|x| x.stdout.len() > MAX_FILE) {
-                    return Err(invalid());
-                }
-                Ok(Some(r))
-            }
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).map_err(|_| invalid())?)),
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(e),
         }
+    }
+    fn payload(&self, id: Uuid) -> io::Result<std::cell::Ref<'_, EngineResult>> {
+        if self
+            .cached
+            .borrow()
+            .as_ref()
+            .is_none_or(|(old, _)| *old != id)
+        {
+            let data = crate::linux::read_regular(
+                &self.root.join("results").join(id.to_string()),
+                (MAX_FILE * 5) as u64,
+            )?;
+            let output: EngineResult = serde_json::from_slice(&data).map_err(|_| invalid())?;
+            if output.stdout.len() > MAX_FILE {
+                return Err(invalid());
+            }
+            *self.cached.borrow_mut() = Some((id, output));
+        }
+        Ok(std::cell::Ref::map(self.cached.borrow(), |entry| {
+            &entry.as_ref().expect("initialized payload cache").1
+        }))
+    }
+    fn record(&self, id: Uuid) -> io::Result<Option<Record>> {
+        let Some(mut record) = self.metadata(id)? else {
+            return Ok(None);
+        };
+        record.result = None;
+        if matches!(
+            record.state,
+            OperationState::Completed | OperationState::Failed
+        ) {
+            match self.payload(id) {
+                Ok(output) => record.result = Some(output.clone()),
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
+        }
+        Ok(Some(record))
     }
     pub fn status(&self, id: Uuid) -> io::Result<OperationState> {
         Ok(self
@@ -77,14 +104,21 @@ impl<R: Runner> Operations<R> {
         })
     }
     pub fn read(&self, id: Uuid, offset: usize) -> io::Result<Vec<u8>> {
-        let r = self
-            .record(id)?
-            .and_then(|r| r.result)
-            .ok_or_else(invalid)?;
-        if offset > r.stdout.len() {
+        let record = self.metadata(id)?.ok_or_else(invalid)?;
+        if !matches!(
+            record.state,
+            OperationState::Completed | OperationState::Failed
+        ) {
             return Err(invalid());
         }
-        Ok(r.stdout[offset..r.stdout.len().min(offset.saturating_add(MAX_CHUNK))].to_vec())
+        let output = self.payload(id)?;
+        if offset > output.stdout.len() {
+            return Err(invalid());
+        }
+        Ok(
+            output.stdout[offset..output.stdout.len().min(offset.saturating_add(MAX_CHUNK))]
+                .to_vec(),
+        )
     }
     pub fn execute(
         &mut self,
@@ -146,9 +180,20 @@ impl<R: Runner> Operations<R> {
             entries.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
             while entries.len() >= MAX_OPERATIONS {
                 let old = entries.remove(0);
+                if self
+                    .cached
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|(cached, _)| old.file_name() == cached.to_string().as_str())
+                {
+                    self.cached.borrow_mut().take();
+                }
                 fs::remove_file(old.path())?;
             }
-            create(&root.join(id.to_string()), &serde_json::to_vec(&output)?)?;
+            let final_path = root.join(id.to_string());
+            let temporary = final_path.with_extension("tmp");
+            create(&temporary, &serde_json::to_vec(&output)?)?;
+            fs::rename(temporary, final_path)?;
             fs::File::open(root)?.sync_all()?;
         }
         let next = path.with_extension("tmp");
@@ -221,10 +266,8 @@ fn projection(action: &EngineActionWire, bytes: &[u8]) -> io::Result<Vec<u8>> {
                 .and_then(|s| s.strip_prefix("kmx "))
                 .and_then(|s| s.split_whitespace().next())
                 .ok_or_else(invalid)?;
-            if token.len() > 128
-                || !token
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b".+-".contains(&b))
+            if token != "dev"
+                && semver::Version::parse(token.strip_prefix('v').unwrap_or(token)).is_err()
             {
                 return Err(invalid());
             }
