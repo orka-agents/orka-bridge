@@ -65,13 +65,13 @@ impl Journal {
             return Err(RuntimeError::RetainedState);
         }
         let root = std::path::absolute(root)?;
-        let mut builder = fs::DirBuilder::new();
         #[cfg(unix)]
         {
             use std::os::unix::fs::DirBuilderExt;
-            builder.mode(0o700);
+            fs::DirBuilder::new().mode(0o700).create(&root)?;
         }
-        builder.create(&root)?;
+        #[cfg(windows)]
+        fs::create_dir(&root)?;
         #[cfg(unix)]
         File::open(root.parent().ok_or(RuntimeError::RetainedState)?)?.sync_all()?;
         let root = fs::canonicalize(&root)?;
