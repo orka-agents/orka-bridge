@@ -89,7 +89,7 @@ def inspect_archive(component: dict, source: Path, architecture: str) -> dict:
                 blob(layer)
             require(used == members.keys(), "extra unreferenced OCI blob")
             return {"blobs": sorted(used - {"oci-layout", "index.json"}), "descriptor": root}
-    except (tarfile.TarError, KeyError, AttributeError, TypeError) as error:
+    except (tarfile.TarError, EOFError, KeyError, AttributeError, TypeError) as error:
         raise ValueError("invalid OCI archive: " + component["name"]) from error
 
 

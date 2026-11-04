@@ -1,4 +1,5 @@
 import copy
+import gzip
 import io
 import json
 from pathlib import Path
@@ -92,6 +93,22 @@ class CacheTests(unittest.TestCase):
         c["archiveSha256"] = sha(path.read_bytes())
         with self.assertRaisesRegex(ValueError, "duplicate"):
             inspect_archive(c, self.root, "amd64")
+
+    def test_truncated_gzip_is_a_validation_error(self):
+        c = self.value["components"][0]
+        compressed = gzip.compress((self.root / c["archive"]).read_bytes(), mtime=0)
+        truncated = compressed[:len(compressed) // 2]
+        (self.root / "truncated.tar.gz").write_bytes(truncated)
+        c.update(archive="truncated.tar.gz", archiveSha256=sha(truncated))
+        with self.assertRaisesRegex(ValueError, "invalid OCI archive"):
+            inspect_archive(c, self.root, "amd64")
+        path = self.root / "input.json"
+        path.write_text(json.dumps(self.value))
+        proc = subprocess.run([sys.executable, "images/guest/cache.py", "--lock", str(path), "--out", str(self.root / "bad-out")], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("invalid OCI archive", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertFalse((self.root / "bad-out").exists())
 
     def test_link_member(self):
         c = archive(self.root, "linked")
