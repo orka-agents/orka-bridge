@@ -135,7 +135,9 @@ Use a native Linux builder with Python 3.11+, KVM, libguestfs, QEMU, OVMF and
 `genisoimage`. These are **builder dependencies**, not requirements on the
 creator's laptop. Collect the dated Debian factory disk and complete local Debian
 package dependency set before assembly. Do not use a previously booted guest as
-factory input. The assembler rejects known installation directories rather than
+factory input. The selected profile requires one ext4 root, one EFI filesystem
+and only optional unformatted BIOS space; other or extra filesystems are rejected,
+not silently removed from fstab. The assembler rejects known installation directories rather than
 attempting to erase a configured installation.
 
 The existing lock's `packages` list contains `debian-base` plus the Debian packages
@@ -196,8 +198,8 @@ The instrumented disk and seed hashes are separate from the factory hash.
 The base case checks real daemon roots, mount types, early ordering, control-port
 permissions and a persistent sentinel, then shuts down. It replaces only the OS,
 reuses the same stopped state and EFI files, and checks the same machine identity.
-Missing-state and mismatched-UUID boots must refuse; the mismatch must not change
-state contents. Logs and failed private disks are retained, never silently reset.
+Missing-state, mismatched-UUID and blank-existing boots must refuse; neither of
+the latter two may change logical state contents. Logs and failed private disks are retained, never silently reset.
 
 `boot.json` follows `qualification.schema.json`. It records the actual backend,
 inputs, firmware, instrumentation and seed hashes, per-case disk bytes and elapsed

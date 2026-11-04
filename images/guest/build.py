@@ -101,6 +101,15 @@ def rootfs_archive(overlay, target):
                     tar.addfile(info, stream)
 
 
+def root_esp(filesystems, root):
+    found = dict(line.split(": ", 1) for line in filesystems)
+    esp = [path for path, kind in found.items() if kind == "vfat"]
+    require(len(esp) == 1, "expected one EFI system partition")
+    require(found.get(root) == "ext4", "selected Debian root must be ext4")
+    require({path for path, kind in found.items() if kind != "unknown"} == {root, esp[0]}, "extra base filesystems are unsupported")
+    return esp[0]
+
+
 def stage_package(source, target, expected):
     shutil.copyfile(source, target)
     require(file_hash(target) == expected, "package changed during staging")
@@ -167,10 +176,9 @@ def build(lock, out, *, source):
         # guest's fstab to copied filesystem UUIDs, including its actual ESP.
         new_root = run(["guestfish", "--ro", "-a", raw, "run", ":", "inspect-os"])
         filesystems = run(["guestfish", "--ro", "-a", raw, "run", ":", "list-filesystems"]).splitlines()
-        esp = [line.split(":", 1)[0] for line in filesystems if line.endswith(": vfat")]
-        require(len(esp) == 1, "expected one EFI system partition")
+        esp = root_esp(filesystems, new_root)
         root_uuid = run(["guestfish", "--ro", "-a", raw, "run", ":", "vfs-uuid", new_root])
-        esp_uuid = run(["guestfish", "--ro", "-a", raw, "run", ":", "vfs-uuid", esp[0]])
+        esp_uuid = run(["guestfish", "--ro", "-a", raw, "run", ":", "vfs-uuid", esp])
         fstab = "UUID=" + root_uuid + " / ext4 defaults 0 1\\nUUID=" + esp_uuid + " /boot/efi vfat defaults 0 0\\n"
         run(["guestfish", "-a", raw, "-m", new_root, "write", "/etc/fstab", fstab.replace("\\n", "\n")])
         run(["guestfish", "-a", raw, "-i", "tar-in", stage / "rootfs.tar", "/"])

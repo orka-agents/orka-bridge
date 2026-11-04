@@ -124,9 +124,16 @@ def base(image, lock_path, out):
     mismatch_serial = mismatch.pop("serial")
     require("BRIDGE_EARLY_ERROR state UUID mismatch" in mismatch_serial and "systemd[1]" not in mismatch_serial and "BRIDGE_BASE" not in mismatch_serial, "UUID mismatch did not refuse before services")
     run(["qemu-img", "compare", out / "replacement/state.qcow2", out / "mismatch/state.qcow2"])
+    blank = boot_case(image, out / "blank-existing", installation, "existing")
+    blank_serial = blank.pop("serial")
+    require("BRIDGE_EARLY_ERROR existing state is unformatted" in blank_serial and "systemd[1]" not in blank_serial, "blank existing state did not refuse")
+    empty = out / "expected-empty.qcow2"
+    run(["qemu-img", "create", "-f", "qcow2", empty, str(STATE_BYTES)])
+    run(["qemu-img", "compare", empty, out / "blank-existing/state.qcow2"])
     result = {"schemaVersion": "bridge-guest-boot/v1", "case": "base", "backend": "qemu-kvm", "qualificationOnly": True,
               "publicationReady": False, "build": build, "new": {**first, "result": a}, "replacement": {**second, "result": b},
               "missingStateRefused": True, "uuidMismatchRefusedWithoutMutation": True, "missing": absent, "mismatch": mismatch,
+              "blankExistingRefusedWithoutMutation": True, "blank": blank,
               "firmware": {name: file_hash(FIRMWARE / name) for name in ("OVMF_CODE_4M.fd", "OVMF_VARS_4M.fd")},
               "qemuVersion": run(["qemu-system-x86_64", "--version"]), "machine": "pc-q35-7.2"}
     pending = out / "boot.json.partial"

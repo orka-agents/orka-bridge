@@ -73,6 +73,13 @@ class BuildTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "package changed"):
             self.api.stage_package(source, self.root / "staged.deb", package["sha256"])
 
+    def test_fixed_debian_layout_rejects_other_roots_or_extra_filesystems(self):
+        self.assertTrue(callable(getattr(self.api, "root_esp", None)), "explicit base layout validation missing")
+        self.assertEqual("/dev/sda2", self.api.root_esp(["/dev/sda1: unknown", "/dev/sda2: vfat", "/dev/sda3: ext4"], "/dev/sda3"))
+        for filesystems in (["/dev/sda2: vfat", "/dev/sda3: xfs"], ["/dev/sda2: vfat", "/dev/sda3: ext4", "/dev/sda4: ext4"]):
+            with self.assertRaises(ValueError):
+                self.api.root_esp(filesystems, "/dev/sda3")
+
     def test_bad_input_leaves_no_output(self):
         (self.root / "base.qcow2").write_bytes(b"corrupt")
         with self.assertRaisesRegex(ValueError, "checksum"):

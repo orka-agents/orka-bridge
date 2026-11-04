@@ -3,7 +3,7 @@
   "title": "Reference base boot evidence, not release approval",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "case", "backend", "qualificationOnly", "publicationReady", "build", "new", "replacement", "missing", "mismatch", "missingStateRefused", "uuidMismatchRefusedWithoutMutation", "firmware", "qemuVersion", "machine"],
+  "required": ["schemaVersion", "case", "backend", "qualificationOnly", "publicationReady", "build", "new", "replacement", "missing", "mismatch", "blank", "blankExistingRefusedWithoutMutation", "missingStateRefused", "uuidMismatchRefusedWithoutMutation", "firmware", "qemuVersion", "machine"],
   "properties": {
     "schemaVersion": {"const": "bridge-guest-boot/v1"},
     "case": {"const": "base"},
@@ -15,6 +15,8 @@
     "replacement": {"$ref": "#/$defs/boot"},
     "missing": {"$ref": "#/$defs/negative"},
     "mismatch": {"$ref": "#/$defs/negative"},
+    "blank": {"$ref": "#/$defs/negative"},
+    "blankExistingRefusedWithoutMutation": {"const": true},
     "missingStateRefused": {"const": true},
     "uuidMismatchRefusedWithoutMutation": {"const": true},
     "firmware": {"type": "object", "minProperties": 2, "additionalProperties": {"$ref": "#/$defs/hash"}},
