@@ -87,6 +87,42 @@ fn real_empty_list_is_success_but_missing_null_and_truncated_are_not() {
     }
 }
 #[test]
+fn kubectl_generic_list_accepts_empty_and_populated_envelopes() {
+    let empty = r#"{"apiVersion":"v1","kind":"List","metadata":{},"items":[]}"#;
+    let populated = r#"{"apiVersion":"v1","kind":"List","metadata":{},"items":[{"apiVersion":"core.orka.ai/v1alpha1","kind":"Agent","metadata":{"name":"helper","namespace":"demo","uid":"uid-1"}}]}"#;
+    assert_eq!(
+        decode(&list(), output(empty, "", 0)).unwrap(),
+        EngineReply::Agents {
+            agents: vec![],
+            has_diagnostics: false
+        }
+    );
+    assert_eq!(
+        decode(&list(), output(populated, "", 0)).unwrap(),
+        EngineReply::Agents {
+            agents: vec![AgentSummary {
+                name: "helper".into(),
+                namespace: "demo".into(),
+                uid: "uid-1".into()
+            }],
+            has_diagnostics: false
+        }
+    );
+}
+
+#[test]
+fn kubectl_generic_envelope_does_not_relax_item_validation() {
+    let wrong = r#"{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"helper","namespace":"demo","uid":"uid-1"}}]}"#;
+    let missing = r#"{"apiVersion":"v1","kind":"List","items":[{"apiVersion":"core.orka.ai/v1alpha1","kind":"Agent","metadata":{"name":"helper","namespace":"demo"}}]}"#;
+    for bad in [wrong, missing] {
+        assert_eq!(
+            decode(&list(), output(bad, "", 0)).unwrap_err().kind,
+            ErrorKind::InvalidResponse
+        );
+    }
+}
+
+#[test]
 fn unknown_api_and_kind_are_unsupported_not_empty_success() {
     for bad in [
         AGENTS.replace("core.orka.ai/v1alpha1", "other/v1"),

@@ -107,7 +107,10 @@ pub fn decode(action: &EngineAction, output: EngineOutput) -> Result<EngineReply
         }
         EngineAction::ListAgents { .. } => {
             let list: AgentList = serde_json::from_str(text).map_err(|_| invalid())?;
-            if list.kind != "AgentList" || list.api_version != "core.orka.ai/v1alpha1" {
+            let typed = list.kind == "AgentList" && list.api_version == "core.orka.ai/v1alpha1";
+            // kubectl flattens resource results into the generic v1 List envelope.
+            let kubectl = list.kind == "List" && list.api_version == "v1";
+            if !typed && !kubectl {
                 return Err(EngineError::new(ErrorKind::Unsupported));
             }
             if list.metadata.is_some_and(|m| {
