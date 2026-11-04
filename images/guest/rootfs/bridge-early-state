@@ -4,7 +4,7 @@ set -eu
 PATH=/usr/lib/bridge:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
 root=$1
-fail() { trap - EXIT; echo "BRIDGE_EARLY_ERROR $1" > /dev/console; poweroff -f; while :; do sleep 60; done; }
+fail() { trap - EXIT; set +e; echo "BRIDGE_EARLY_ERROR $1" > /dev/console; poweroff -f; while :; do sleep 60; done; }
 trap 'fail "state preparation failed"' EXIT
 valid_machine_id() {
     jq -en --rawfile machine "$1" '($machine | rtrimstr("\n")) as $id | ($id | length) == 32 and ($id | test("^[0-9a-f]{32}$")) and $id != "00000000000000000000000000000000"' >/dev/null

@@ -81,6 +81,24 @@ test() {
                 result = subprocess.run(["/bin/sh", "-c", match[0] + '\nvalid_machine_id "$1"', "validate", str(path)], capture_output=True, check=False)
                 self.assertEqual(0, result.returncode, result.stderr)
 
+    def test_terminal_failure_stays_closed_if_logging_or_shutdown_fail(self):
+        handler = next(line for line in self.file("bridge-early-state").read_text().splitlines() if line.startswith("fail()"))
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for broken_console in (True, False):
+                trace = root / "wait"
+                if trace.exists():
+                    trace.unlink()
+                console = root if broken_console else root / "console"
+                isolated = handler.replace("/dev/console", str(console))
+                # Only this terminal function runs: no device selection, mounts,
+                # formatter or real shutdown command from the early hook.
+                program = 'set -eu\npoweroff() { return 1; }\nsleep() { echo waiting > "$1"; exit 99; }\n' + isolated.replace("sleep 60", 'sleep "$TRACE"') + '\nfail refused\necho continued'
+                result = subprocess.run(["/bin/sh", "-c", program], env={"TRACE": str(trace)}, capture_output=True, timeout=2, check=False)
+                self.assertEqual(99, result.returncode, result.stderr)
+                self.assertEqual("waiting\n", trace.read_text())
+                self.assertNotIn(b"continued", result.stdout)
+
     def test_missing_existing_state_never_formats(self):
         result = self.run_guard(filesystem="")
         self.assertNotEqual(0, result.returncode)
