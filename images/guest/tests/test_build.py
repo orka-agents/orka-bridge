@@ -1,0 +1,88 @@
+"""Offline recipe checks; actual disk/daemon evidence comes from the base boot."""
+import importlib
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from .fixtures import lock
+
+
+class BuildTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.value = lock(self.root)
+        self.api = importlib.import_module("guest.build")
+
+    def test_reference_assembly_does_not_wait_for_runtime_endpoint(self):
+        result = self.api.verify_os_inputs(self.value, source=self.root)
+        self.assertFalse(result["componentCacheVerified"])
+        self.assertFalse(result["publicationReady"])
+        self.assertEqual(self.root / "base.qcow2", result["base"])
+
+    def test_h1_capacities_and_formats(self):
+        for arch, fmt in (("amd64", "qcow2"), ("arm64", "raw")):
+            contract = self.api.disk_contract(arch)
+            self.assertEqual(fmt, contract["osDisk"]["format"])
+            self.assertEqual(16 * 1024**3, contract["osDisk"]["virtualBytes"])
+            self.assertEqual(32 * 1024**3, contract["stateDisk"]["virtualBytes"])
+            self.assertEqual("create-empty", contract["stateDisk"]["creation"])
+
+    def test_rootfs_staging_starts_no_services(self):
+        with patch("subprocess.Popen", side_effect=AssertionError("no process during staging")):
+            result = self.api.stage_rootfs(self.value, source=self.root, out=self.root / "overlay")
+        self.assertFalse(result["diskBuilt"])
+        self.assertFalse(result["bootVerified"])
+        root = self.root / "overlay"
+        self.assertTrue((root / "usr/lib/bridge/bridge-early-state").is_file())
+        self.assertFalse((root / "etc/systemd/system/multi-user.target.wants/bridge-guest.service").exists())
+        self.assertFalse((root / "run/bridge/boot.json").exists())
+        self.assertFalse((root / "var/lib/bridge").exists())
+
+    def test_archive_has_guest_root_ownership_not_builder_ownership(self):
+        import tarfile
+        self.assertTrue(callable(getattr(self.api, "rootfs_archive", None)), "normalized rootfs archive missing")
+        overlay = self.root / "overlay"
+        self.api.stage_rootfs(self.value, source=self.root, out=overlay)
+        (overlay / "etc").chmod(0o700)
+        archive = self.root / "rootfs.tar"
+        self.api.rootfs_archive(overlay, archive)
+        with tarfile.open(archive) as tar:
+            self.assertTrue(all(m.uid == m.gid == 0 for m in tar))
+            self.assertEqual(0o755, tar.getmember("etc").mode)
+            self.assertEqual(0o755, tar.getmember("usr/lib/bridge/check-state").mode)
+
+    def test_initramfs_dependency_copy_failure_fails_build(self):
+        import subprocess
+        hook = (Path(self.api.__file__).with_name("rootfs") / "initramfs/hooks/bridge-state").read_text()
+        hook = hook.replace(". /usr/share/initramfs-tools/hook-functions", "copy_exec() { return 1; }; manual_add_modules() { return 0; }")
+        result = subprocess.run(["/bin/sh", "-c", hook, "hook", "build"], capture_output=True, check=False)
+        self.assertNotEqual(0, result.returncode)
+
+    def test_bad_input_leaves_no_output(self):
+        (self.root / "base.qcow2").write_bytes(b"corrupt")
+        with self.assertRaisesRegex(ValueError, "checksum"):
+            self.api.stage_rootfs(self.value, source=self.root, out=self.root / "overlay")
+        self.assertFalse((self.root / "overlay").exists())
+
+    def test_existing_output_is_not_overwritten(self):
+        with self.assertRaisesRegex(ValueError, "already exist"):
+            self.api.stage_rootfs(self.value, source=self.root, out=self.root)
+
+    def test_factory_overlay_has_no_test_bootstrap(self):
+        self.api.stage_rootfs(self.value, source=self.root, out=self.root / "overlay")
+        names = [str(p.relative_to(self.root / "overlay")) for p in (self.root / "overlay").rglob("*")]
+        self.assertFalse(any("reference-seed" in n or "reference-check" in n for n in names))
+
+    def test_assembly_command_is_offline_and_never_uses_apt(self):
+        self.assertTrue(callable(getattr(self.api, "customize_commands", None)))
+        commands = self.api.customize_commands([self.root / "docker.deb"], "amd64")
+        joined = "\n".join(commands)
+        self.assertIn("dpkg --force-confold -i", joined)
+        self.assertNotIn("apt-get", joined)
+        self.assertIn("policy-rc.d", joined)
+        self.assertIn("update-initramfs", joined)
+        self.assertIn("--removable --no-nvram", joined)
+        self.assertNotIn("kind create", joined)
