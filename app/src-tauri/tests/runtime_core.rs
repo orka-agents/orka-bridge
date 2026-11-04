@@ -82,6 +82,7 @@ fn single_component_relative_root_is_normalized_before_creation() {
 struct Backend {
     events: Arc<Mutex<Vec<&'static str>>>,
     fail_stop: Arc<Mutex<bool>>,
+    stop_root: Option<std::path::PathBuf>,
 }
 impl VmBackend for Backend {
     fn create_state(&mut self, spec: &LaunchSpec) -> Result<(), RuntimeError> {
@@ -99,6 +100,9 @@ impl VmBackend for Backend {
         Ok(BackendHandle::new(42_u64))
     }
     fn stop(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
+        if let Some(root) = &self.stop_root {
+            assert!(matches!(Journal::open(root), Err(RuntimeError::Busy)));
+        }
         assert_eq!(handle.get::<u64>(), Some(&42));
         self.events.lock().unwrap().push("stop");
         if *self.fail_stop.lock().unwrap() {
@@ -314,6 +318,106 @@ fn symlink_state_is_refused_without_following_or_modifying_target() {
     let mut worker = RuntimeWorker::new(Box::new(Backend::default()), journal);
     assert!(worker.start().is_err());
     assert_eq!(fs::read(outside).unwrap(), b"not owned by the installation");
+}
+
+#[test]
+fn dropping_running_worker_stops_before_releasing_ownership() {
+    let (temp, journal) = create();
+    let backend = Backend {
+        stop_root: Some(temp.path().join("install")),
+        ..Backend::default()
+    };
+    let events = backend.events.clone();
+    let mut worker = RuntimeWorker::new(Box::new(backend), journal);
+    worker.start().unwrap();
+    drop(worker);
+    assert_eq!(*events.lock().unwrap(), vec!["create", "start", "stop"]);
+    assert!(Journal::open(&temp.path().join("install")).is_ok());
+}
+
+#[test]
+fn maximum_machine_identifier_survives_boot_record_updates_and_reopen() {
+    let temp = tempdir().unwrap();
+    let root = temp.path().join("install");
+    let journal = Journal::create(&root, BackendKind::Apple, vec![255; 4096]).unwrap();
+    let mut worker = RuntimeWorker::new(Box::new(Backend::default()), journal);
+    worker.start().unwrap();
+    let nonce = worker.lease().unwrap().spec.boot_nonce;
+    worker
+        .boot_request(&hello(Stage::Early, nonce, 3), 123)
+        .unwrap();
+    worker.stop().unwrap();
+    drop(worker);
+    assert_eq!(
+        Journal::open(&root).unwrap().record().machine_id,
+        vec![255; 4096]
+    );
+}
+
+#[test]
+#[ignore = "subprocess fixture for failed-drop ownership"]
+fn failed_drop_child() {
+    let Some(root) = std::env::var_os("BRIDGE_RUNTIME_DROP_TEST_DIR") else {
+        return; // This entrypoint is driven by the parent test, not standalone.
+    };
+    let root = std::path::PathBuf::from(root);
+    let journal = Journal::create(&root.join("install"), BackendKind::Apple, vec![1]).unwrap();
+    let backend = Backend {
+        stop_root: Some(root.join("install")),
+        ..Backend::default()
+    };
+    *backend.fail_stop.lock().unwrap() = true;
+    let mut worker = RuntimeWorker::new(Box::new(backend), journal);
+    worker.start().unwrap();
+    drop(worker);
+    fs::write(root.join("ready"), b"ready").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !root.join("exit").exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "parent did not release subprocess"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn failed_worker_drop_quarantines_ownership_until_process_exit() {
+    struct Child(std::process::Child);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let temp = tempdir().unwrap();
+    let mut child = Child(
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "failed_drop_child"])
+            .env("BRIDGE_RUNTIME_DROP_TEST_DIR", temp.path())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !temp.path().join("ready").exists() {
+        assert!(
+            child.0.try_wait().unwrap().is_none(),
+            "child exited before ownership check"
+        );
+        assert!(
+            std::time::Instant::now() < deadline,
+            "child did not publish ownership check"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(matches!(
+        Journal::open(&temp.path().join("install")),
+        Err(RuntimeError::Busy)
+    ));
+    fs::write(temp.path().join("exit"), b"exit").unwrap();
+    assert!(child.0.wait().unwrap().success());
+    assert!(Journal::open(&temp.path().join("install")).is_ok());
 }
 
 mod protocol_checks {

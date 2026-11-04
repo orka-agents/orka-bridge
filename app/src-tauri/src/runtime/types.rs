@@ -1,6 +1,6 @@
 use bridge_runtime_protocol::{ProtocolError, Uuid};
 use serde::{Deserialize, Serialize};
-use std::{any::Any, path::PathBuf};
+use std::{any::Any, fs::File, path::PathBuf, sync::Arc};
 
 #[derive(Debug)]
 pub enum RuntimeError {
@@ -46,6 +46,9 @@ pub struct LaunchSpec {
     pub installation_id: Uuid,
     pub generation: u64,
     pub boot_nonce: Uuid,
+    /// Backends retain/inherit this lock capability for the complete VM lifetime,
+    /// including parent death; never reopen a pathname to reconstruct ownership.
+    pub ownership: Arc<File>,
     pub root: PathBuf,
     pub state_path: PathBuf,
     pub state_bytes: u64,
@@ -69,6 +72,8 @@ pub struct VmLease {
 }
 /// Every successful stop/pause/resume observes completion. A failed start must
 /// clean up anything it created before returning; no lease is reconstructed by PID.
+/// Native implementations must bind guest lifetime to the app and preserve the
+/// supplied ownership lock until that guest has stopped, even on parent death.
 pub trait VmBackend: Send {
     fn create_state(&mut self, spec: &LaunchSpec) -> Result<(), RuntimeError>;
     fn start(&mut self, spec: &LaunchSpec) -> Result<BackendHandle, RuntimeError>;

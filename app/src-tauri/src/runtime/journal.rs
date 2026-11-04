@@ -5,9 +5,11 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
-const MAX_RECORD: u64 = 16 * 1024;
+// Worst-case JSON for 4096 byte values plus metadata exceeds 16 KiB.
+const MAX_RECORD: u64 = 32 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum StatePhase {
@@ -32,7 +34,7 @@ pub struct InstallationRecord {
 }
 pub struct Journal {
     root: PathBuf,
-    _lock: File,
+    _lock: Arc<File>,
     state: File,
     record: InstallationRecord,
 }
@@ -100,7 +102,7 @@ impl Journal {
         };
         let journal = Self {
             root,
-            _lock: owner,
+            _lock: Arc::new(owner),
             state,
             record,
         };
@@ -146,7 +148,7 @@ impl Journal {
             .open(root.join("state.disk"))?;
         let journal = Self {
             root,
-            _lock: owner,
+            _lock: Arc::new(owner),
             state,
             record,
         };
@@ -177,6 +179,7 @@ impl Journal {
             installation_id: self.record.installation_id,
             generation: self.record.generation,
             boot_nonce: nonce,
+            ownership: self._lock.clone(),
             root: self.root.clone(),
             state_path: self.root.join("state.disk"),
             state_bytes: STATE_BYTES,
@@ -184,6 +187,17 @@ impl Journal {
             machine_id: self.record.machine_id.clone(),
             mac: self.record.mac,
         }
+    }
+    pub(super) fn finish_preparation(&mut self) -> Result<(), RuntimeError> {
+        self.finish_preparation_with(File::sync_all)
+    }
+    fn finish_preparation_with(
+        &mut self,
+        sync: impl FnOnce(&File) -> std::io::Result<()>,
+    ) -> Result<(), RuntimeError> {
+        self.verify_state()?;
+        sync(&self.state)?;
+        self.set_phase(StatePhase::Prepared)
     }
     pub(super) fn set_phase(&mut self, phase: StatePhase) -> Result<(), RuntimeError> {
         let mut next = self.record.clone();
@@ -281,4 +295,27 @@ fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
         return Err(std::io::Error::last_os_error().into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn failed_state_flush_cannot_commit_prepared() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("install");
+        let mut journal = Journal::create(&root, BackendKind::Apple, vec![1]).unwrap();
+        journal.set_phase(StatePhase::Preparing).unwrap();
+        let before = fs::read(root.join("record.json")).unwrap();
+        let result = journal
+            .finish_preparation_with(|_| Err(std::io::Error::other("simulated failed flush")));
+        assert!(matches!(result,Err(RuntimeError::Io(e)) if e.kind()==std::io::ErrorKind::Other));
+        assert_eq!(journal.record().phase, StatePhase::Preparing);
+        assert_eq!(fs::read(root.join("record.json")).unwrap(), before);
+        drop(journal);
+        assert!(matches!(
+            Journal::open(&root),
+            Err(RuntimeError::RetainedState)
+        ));
+    }
 }

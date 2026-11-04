@@ -5,24 +5,24 @@ pub mod wire;
 
 use bridge_runtime_protocol::*;
 use journal::{Journal, StatePhase};
-use std::sync::Mutex;
+use std::{mem::ManuallyDrop, sync::Mutex};
 use types::*;
 
 /// Serialized owner of backend capabilities and the installation lock.
 /// No backend implementation or endpoint is shipped by this core.
 pub struct RuntimeWorker {
-    backend: Box<dyn VmBackend>,
-    journal: Journal,
-    lease: Option<VmLease>,
+    backend: ManuallyDrop<Box<dyn VmBackend>>,
+    journal: ManuallyDrop<Journal>,
+    lease: ManuallyDrop<Option<VmLease>>,
     next_stage: Option<Stage>,
     early_guest: Option<Uuid>,
 }
 impl RuntimeWorker {
     pub fn new(backend: Box<dyn VmBackend>, journal: Journal) -> Self {
         Self {
-            backend,
-            journal,
-            lease: None,
+            backend: ManuallyDrop::new(backend),
+            journal: ManuallyDrop::new(journal),
+            lease: ManuallyDrop::new(None),
             next_stage: None,
             early_guest: None,
         }
@@ -39,12 +39,11 @@ impl RuntimeWorker {
             self.journal.set_phase(StatePhase::Preparing)?;
             self.backend
                 .create_state(&self.journal.spec(Uuid::new_v4()))?;
-            self.journal.verify_state()?;
-            self.journal.set_phase(StatePhase::Prepared)?;
+            self.journal.finish_preparation()?;
         }
         let spec = self.journal.begin_boot()?;
         let handle = self.backend.start(&spec)?;
-        self.lease = Some(VmLease { spec, handle });
+        *self.lease = Some(VmLease { spec, handle });
         self.next_stage = Some(Stage::Early);
         self.early_guest = None;
         Ok(())
@@ -90,10 +89,10 @@ impl RuntimeWorker {
         Ok(request)
     }
     pub fn stop(&mut self) -> Result<(), RuntimeError> {
-        if let Some(lease) = &self.lease {
+        if let Some(lease) = self.lease.as_ref() {
             self.backend.stop(&lease.handle)?;
         }
-        self.lease = None;
+        *self.lease = None;
         self.next_stage = None;
         Ok(())
     }
@@ -104,6 +103,20 @@ impl RuntimeWorker {
     pub fn resume(&mut self) -> Result<(), RuntimeError> {
         self.backend
             .resume(&self.lease.as_ref().ok_or(RuntimeError::Unavailable)?.handle)
+    }
+}
+impl Drop for RuntimeWorker {
+    fn drop(&mut self) {
+        if self.stop().is_ok() {
+            // SAFETY: these fields are dropped exactly once, only after observed
+            // stop. A failed or panicking stop instead quarantines all ownership
+            // resources until process exit; it must not unlock an unconfirmed VM.
+            unsafe {
+                ManuallyDrop::drop(&mut self.lease);
+                ManuallyDrop::drop(&mut self.backend);
+                ManuallyDrop::drop(&mut self.journal);
+            }
+        }
     }
 }
 #[derive(Default)]
