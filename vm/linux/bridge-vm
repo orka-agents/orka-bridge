@@ -15,6 +15,8 @@
 set -euo pipefail
 
 home=${BRIDGE_VM_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/orka-bridge/vm}
+# QEMU resolves a relative backing file against the overlay's directory, not this one.
+case $home in /*) ;; *) home=$PWD/$home ;; esac
 images=$home/images
 inst=$home/instance
 kubeconfig=$home/kubeconfig
@@ -42,6 +44,7 @@ preflight() {
     say "  Debian/Ubuntu: sudo apt install qemu-system-x86 qemu-utils curl"
     say "  Fedora:        sudo dnf install qemu-kvm qemu-img curl"
     say "  Arch:          sudo pacman -S qemu-base curl"
+    say "RHEL, Rocky and Alma Linux ship QEMU only as /usr/libexec/qemu-kvm, which this VM does not use yet."
     exit 1
   fi
   [ -e /dev/kvm ] || die "/dev/kvm is missing: enable virtualization (VT-x/AMD-V) in firmware"
@@ -50,10 +53,12 @@ preflight() {
 }
 
 pid() { cat "$inst/qemu.pid" 2>/dev/null || true; }
+# A reused pid or an exited process waiting to be reaped has a different or empty cmdline.
+alive() { kill -0 "$1" 2>/dev/null && grep -q orka-bridge-vm "/proc/$1/cmdline" 2>/dev/null; }
 running() {
   local p
   p=$(pid)
-  [ -n "$p" ] && kill -0 "$p" 2>/dev/null && grep -q orka-bridge-vm "/proc/$p/cmdline" 2>/dev/null
+  [ -n "$p" ] && alive "$p"
 }
 
 port_free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
@@ -257,6 +262,18 @@ EOF
   fi
 }
 
+# QEMU still holds the disk and the forwarded ports until it exits, so wait for it; the pid
+# file stays while it runs.
+terminate() { # pid
+  kill "$1" 2>/dev/null || true
+  local i
+  for ((i = 0; i < ${BRIDGE_VM_KILL_WAIT:-30} * 10; i++)); do
+    alive "$1" || return 0
+    sleep 0.1
+  done
+  die "QEMU (pid $1) is still running; stop it before starting, resetting or removing the VM"
+}
+
 cmd_stop() {
   if ! running; then say "The VM is not running."; return; fi
   step "Stopping the VM"
@@ -264,16 +281,16 @@ cmd_stop() {
   p=$(pid)
   if qmp system_powerdown; then
     for _ in $(seq 90); do
-      kill -0 "$p" 2>/dev/null || break
+      alive "$p" || break
       sleep 1
     done
-    if kill -0 "$p" 2>/dev/null; then
+    if alive "$p"; then
       say "    the VM did not shut down in 90s; stopping QEMU"
-      kill "$p"
+      terminate "$p"
     fi
   else
     say "    python3 or socat is needed to shut the VM down cleanly; stopping QEMU"
-    kill "$p"
+    terminate "$p"
   fi
   rm -f "$inst/qemu.pid" "$inst/qmp.sock"
   say "    stopped"
@@ -287,7 +304,13 @@ cmd_status() {
   if running; then
     # shellcheck source=/dev/null
     . "$inst/ports.env"
-    say "Running: $(status_field "$(last_status)" state), Orka API http://127.0.0.1:$orka_port"
+    # The guest reports "ready" once per boot; check that the Orka API still answers now.
+    local state
+    state=$(status_field "$(last_status)" state)
+    if [ "$state" = ready ] && ! curl -fs --max-time 5 -o /dev/null "http://127.0.0.1:$orka_port/readyz"; then
+      state="booted, but the Orka API is not answering"
+    fi
+    say "Running: ${state:-starting}, Orka API http://127.0.0.1:$orka_port"
     say "kubeconfig: $kubeconfig"
   else
     say "Stopped."

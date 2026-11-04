@@ -114,8 +114,12 @@ printf 'instance-id: orka-bridge-build\nlocal-hostname: orka-bridge\n' >"$seed/m
 cloud-localds "$work/seed.iso" "$seed/user-data" "$seed/meta-data"
 
 disk=$work/build.qcow2
-# The seed carries every provisioning input (versions, digests, guest scripts).
-inputs=$(sha256sum "$seed/user-data" | cut -d' ' -f1)
+# The seed carries the provisioning inputs (versions, digests, guest scripts); the base
+# image and the disk size shape the disk itself.
+inputs=$({
+  cat "$seed/user-data"
+  printf 'base %s\ndisk_size %s\n' "$DEBIAN_IMAGE_SHA512" "$disk_size"
+} | sha256sum | cut -d' ' -f1)
 # REUSE_BUILD=1 repackages a disk that already provisioned successfully from the same inputs.
 if [ "${REUSE_BUILD:-0}" = 1 ] && [ -f "$disk" ] &&
   [ "$(cat "$work/provisioned-inputs" 2>/dev/null)" = "$inputs" ] &&

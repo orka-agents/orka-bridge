@@ -145,9 +145,10 @@ artifact. It publishes nothing; publishing belongs to the gated workflow in
 
 On a 16-core x86_64 host with KVM, booting the VM with 4 vCPUs and 8 GiB, the download is
 about 1.7 GB (4.2 GB uncompressed, on a 40 GiB virtual disk): about 2.2 minutes at
-100 Mbit/s. The Kubernetes API is up about 15 s after the VM starts. Across our runs, Orka
-was ready 91–121 s after a cold boot and 77–121 s after a restart (a restart from a clean
-stop, which takes about 12 s). The manifest records each image's exact size, and
+100 Mbit/s. The Kubernetes API is up 15–25 s after the VM starts. Across our runs, Orka
+was ready 78–121 s after a cold boot and 77–121 s after a restart from a clean stop, which
+takes about 12 s. Most of the spread is how often the Orka controller restarts while the
+cluster settles (see below). The manifest records each image's exact size, and
 `bridge-vm` prints how long Orka took to become ready.
 
 ## Limitations
@@ -163,12 +164,14 @@ stop, which takes about 12 s). The manifest records each image's exact size, and
 - kubeadm issues the cluster's leaf certificates (API server, etcd, kubeconfig client) for
   one year, and nothing renews them at boot. An image stops working about a year after
   the `created` time in its manifest.
-- The Orka controller restarts two or three times on every boot, first on Service
+- The Orka controller restarts one to three times on every boot, first on Service
   addresses that kube-proxy has not programmed yet and then on a Workspace/Publisher
   connection that is not ready yet. The boot unit waits these out.
 - Installing a different image does not migrate a VM: `bridge-vm remove` deletes its
   Tasks, Secrets and volumes first.
 - kmx inside the VM cannot be run from the host. kmx on the host works against the VM with
   its kubeconfig for commands that only use the Kubernetes API.
+- RHEL, Rocky and Alma Linux ship QEMU only as `/usr/libexec/qemu-kvm`, which `bridge-vm`
+  does not use yet.
 - macOS and Windows are not covered here; their image formats are part of the
   [images/](../images/README.md) contract.

@@ -10,7 +10,7 @@ server_pid=
 cleanup() {
   [ -z "$server_pid" ] || kill "$server_pid" 2>/dev/null || true
   for pidfile in "$tmp"/home*/instance/qemu.pid; do
-    if [ -f "$pidfile" ]; then kill "$(cat "$pidfile")" 2>/dev/null || true; fi
+    if [ -f "$pidfile" ]; then kill -KILL "$(cat "$pidfile")" 2>/dev/null || true; fi
   done
   rm -rf "$tmp"
 }
@@ -37,7 +37,12 @@ done
 web=$(dirname "$pidfile")/orka-bridge-vm-web
 mkdir -p "$web"
 echo ok >"$web/readyz"
-python3 -I -m http.server "$orka_port" --bind 127.0.0.1 --directory "$web" >/dev/null 2>&1 &
+if [ "${FAKE_GUEST:-}" = stubborn ]; then
+  # A QEMU that ignores SIGTERM.
+  (trap '' TERM; exec python3 -I -m http.server "$orka_port" --bind 127.0.0.1 --directory "$web") >/dev/null 2>&1 &
+else
+  python3 -I -m http.server "$orka_port" --bind 127.0.0.1 --directory "$web" >/dev/null 2>&1 &
+fi
 echo $! >"$pidfile"
 for _ in $(seq 50); do curl -fsS -o /dev/null "http://127.0.0.1:$orka_port/readyz" 2>/dev/null && break; sleep 0.1; done
 {
@@ -57,6 +62,7 @@ cat >"$tmp/fakebin/qemu-img" <<'EOF'
 #!/bin/bash
 [ "$1" = create ] || exit 1
 for last; do :; done
+printf '%s\n' "$@" >"$last.args"
 touch "$last"
 EOF
 chmod +x "$tmp/fakebin/"*
@@ -125,12 +131,42 @@ grep -q 'a VM from another image exists' <<<"$out" || fail "no refusal: $out"
 pass "a rebuilt image with the same name never replaces the one under an existing VM"
 
 vm status | grep -q '^Running: ready' || fail "status while running: $(vm status)"
+# The guest reports "ready" once per boot; status asks the Orka API itself.
+mv "$home/instance/orka-bridge-vm-web/readyz" "$home/instance/orka-bridge-vm-web/readyz.off"
+vm status | grep -q '^Running: booted, but the Orka API is not answering' ||
+  fail "status with the Orka API down: $(vm status)"
+mv "$home/instance/orka-bridge-vm-web/readyz.off" "$home/instance/orka-bridge-vm-web/readyz"
+pass "status checks that the Orka API still answers"
+
 vm stop | grep -q stopped || fail "stop"
 vm status | grep -q '^Stopped' || fail "status after stop: $(vm status)"
 out=$(BRIDGE_VM_KUBE_PORT=$(free_port) BRIDGE_VM_ORKA_PORT=$(free_port) vm start 2>&1) || fail "start: $out"
 grep -q 'is ready' <<<"$out" || fail "start: $out"
 vm stop >/dev/null
 pass "stop and start"
+
+out=$(run stubborn good FAKE_GUEST=stubborn 2>&1) || fail "install for the stop test: $out"
+svm() { BRIDGE_VM_HOME=$tmp/home-stubborn BRIDGE_VM_KILL_WAIT=1 "$tmp/bin-stubborn/bridge-vm" "$@"; }
+qpid=$(cat "$tmp/home-stubborn/instance/qemu.pid")
+if out=$(svm stop 2>&1); then fail "stop succeeded while QEMU kept running: $out"; fi
+grep -q 'is still running' <<<"$out" || fail "no error for a QEMU that kept running: $out"
+[ -f "$tmp/home-stubborn/instance/qemu.pid" ] || fail "stop dropped the pid of a running QEMU"
+if svm remove >/dev/null 2>&1; then fail "removed the VM while QEMU kept running"; fi
+[ -f "$tmp/home-stubborn/instance/disk.qcow2" ] || fail "remove deleted a disk QEMU still uses"
+kill -KILL "$qpid"
+out=$(svm stop 2>&1) || fail "stop after QEMU exited: $out"
+pass "stop waits for QEMU to exit and keeps its pid while it runs"
+
+out=$(cd "$tmp" && env BRIDGE_VM_HOME=home-relative BRIDGE_VM_BIN="$tmp/bin-relative" \
+  BRIDGE_VM_KUBE_PORT="$(free_port)" BRIDGE_VM_ORKA_PORT="$(free_port)" \
+  bash -c "curl -fsSL $url/good/install.sh | bash" 2>&1) || fail "relative BRIDGE_VM_HOME: $out"
+backing=$(grep -A1 '^-b$' "$tmp/home-relative/instance/disk.qcow2.args" | tail -n1)
+case $backing in
+  "$tmp"/home-relative/images/*) ;;
+  *) fail "backing file for a relative BRIDGE_VM_HOME: $backing" ;;
+esac
+BRIDGE_VM_HOME=$tmp/home-relative "$tmp/bin-relative/bridge-vm" stop >/dev/null
+pass "a relative BRIDGE_VM_HOME still gives the VM an absolute backing file"
 
 if out=$(run bad-image bad-image 2>&1); then fail "installed an image with the wrong checksum"; fi
 grep -q 'checksum mismatch' <<<"$out" || fail "no checksum error: $out"
