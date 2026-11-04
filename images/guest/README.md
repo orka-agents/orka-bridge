@@ -202,7 +202,9 @@ exclusively created empty state receives `new`. No arbitrary commands are accept
 The observer, normal test service and verifier are absent from factory output.
 The seed is test metadata only: it never populates the endpoint's accepted boot
 record. The reference host exchanges the real early/serve frames, retains fresh
-stage nonces and checks endpoint readiness. No reference formatter is installed.
+stage nonces and checks endpoint readiness. It requests shutdown only after both
+endpoint readiness and the guest verifier have completed. No reference formatter
+is installed.
 The instrumented disk and seed hashes are separate from the factory hash.
 
 The base case checks real daemon roots, mount types, early ordering, control-port

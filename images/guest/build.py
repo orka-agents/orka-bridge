@@ -73,7 +73,7 @@ def stage_rootfs(lock, *, source, out):
         target = out / dest.lstrip("/")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes((Path(__file__).with_name("rootfs") / name).read_bytes())
-        target.chmod(0o755 if name in ("check-state", "bridge-early-state") or name.startswith("initramfs/") else 0o644)
+        target.chmod(0o755 if name == "check-state" or name.startswith("initramfs/") else 0o644)
         hashes[dest] = file_hash(target)
     target = out / "usr/local/bin/kind"
     target.parent.mkdir(parents=True, exist_ok=True)

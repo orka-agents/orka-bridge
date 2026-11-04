@@ -11,7 +11,7 @@ else:
     from lock import require
 
 
-def runtime_exchange(channel, boot):
+def runtime_exchange(channel, boot, before_shutdown=None):
     frames = []
     with channel.makefile("rb") as reader:
         def receive():
@@ -42,7 +42,23 @@ def runtime_exchange(channel, boot):
             if not request(id_, {"op": "boot", "body": descriptor}):
                 return frames
         require(request(3, {"op": "readiness", "body": {}}), "runtime readiness refused")
+        if before_shutdown is not None:
+            before_shutdown()
+            require(request(4, {"op": "shutdown", "body": {}}), "runtime shutdown refused")
     return frames
+
+
+def wait_for_verifier(root, process, stop, deadline):
+    while True:
+        serial = root / "serial.log"
+        if serial.is_file():
+            with serial.open("rb") as source:
+                source.seek(0, 2)
+                source.seek(max(0, source.tell() - 128 * 1024))
+                if any(line.startswith(b"BRIDGE_BASE ") for line in source.read().splitlines()):
+                    return
+        require(process.poll() is None and not stop.is_set() and time.monotonic() < deadline, "guest verifier incomplete")
+        stop.wait(0.05)
 
 
 def control_worker(root, boot, process, stop, frames, errors):
@@ -57,7 +73,7 @@ def control_worker(root, boot, process, stop, frames, errors):
                     require(process.poll() is None and time.monotonic() < deadline, "runtime control unavailable")
                     time.sleep(0.05)
             channel.settimeout(max(0.1, deadline - time.monotonic()))
-            frames.extend(runtime_exchange(channel, boot))
+            frames.extend(runtime_exchange(channel, boot, before_shutdown=lambda: wait_for_verifier(root, process, stop, deadline)))
             # Keep the serial lease open until this owned VM stops.
             stop.wait(max(0, deadline - time.monotonic()))
     except (OSError, ValueError, KeyError, TypeError) as error:

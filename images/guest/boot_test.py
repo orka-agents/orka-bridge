@@ -138,7 +138,7 @@ def base(image, lock_path, out):
     b = parse_result(second.pop("serial"), installation)
     require(a["machineId"] == b["machineId"], "OS replacement changed machine identity")
     for case in (first, second):
-        require(len(case["runtimeFrames"]) == 5 and case["runtimeFrames"][-1]["body"]["body"]["op"] == "ready", "native runtime handoff incomplete")
+        require(len(case["runtimeFrames"]) == 6 and case["runtimeFrames"][-1]["body"]["body"]["op"] == "ready", "native runtime handoff incomplete")
     absent = boot_case(image, out / "missing", installation, "existing", missing=True)
     missing_serial = absent.pop("serial")
     require("BRIDGE_EARLY_ERROR native endpoint refused" in missing_serial and "systemd[1]" not in missing_serial and "BRIDGE_BASE" not in missing_serial, "missing-state case did not refuse before services")
@@ -152,6 +152,8 @@ def base(image, lock_path, out):
     empty = out / "expected-empty.qcow2"
     run(["qemu-img", "create", "-f", "qcow2", empty, str(STATE_BYTES)])
     run(["qemu-img", "compare", empty, out / "blank-existing/state.qcow2"])
+    for case in (absent, mismatch, blank):
+        require(len(case["runtimeFrames"]) == 2 and case["runtimeFrames"][-1]["body"]["body"] == {"op": "error", "body": {"code": "incompatibleState"}}, "native early refusal missing")
     result = {"schemaVersion": "bridge-guest-boot/v1", "case": "base", "backend": "qemu-kvm", "qualificationOnly": True,
               "publicationReady": False, "build": build, "new": {**first, "result": a}, "replacement": {**second, "result": b},
               "missingStateRefused": True, "uuidMismatchRefusedWithoutMutation": True, "missing": absent, "mismatch": mismatch,

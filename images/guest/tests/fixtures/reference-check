@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eux
-trap 'rc=$?; if [ "$rc" != 0 ]; then echo BRIDGE_TEST_FAILURE > /dev/ttyS0; fi; sync; systemctl poweroff' EXIT
+trap 'rc=$?; if [ "$rc" != 0 ]; then echo BRIDGE_TEST_FAILURE > /dev/ttyS0; sync; systemctl poweroff; fi' EXIT
 /usr/lib/bridge/check-state
 for attempt in $(seq 1 50); do [ -S /run/bridge/kmx.sock ] && break; sleep 0.1; done
 [ -S /run/bridge/kmx.sock ]
