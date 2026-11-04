@@ -95,7 +95,7 @@ class BuildTests(unittest.TestCase):
             original.write_bytes(b"external replacement after snapshot")
             self.assertEqual(package["sha256"], self.api.file_hash(snapshot))
             raise RuntimeError("snapshot observed")
-        with patch.object(self.api.shutil, "which", return_value=str(tool)), patch.object(self.api, "run", return_value="1.0"), patch.object(self.api, "image_info", side_effect=inspect), self.assertRaisesRegex(RuntimeError, "snapshot observed"):
+        with patch.object(self.api.platform, "machine", return_value="x86_64"), patch.object(self.api.shutil, "which", return_value=str(tool)), patch.object(self.api, "run", return_value="1.0"), patch.object(self.api, "image_info", side_effect=inspect), self.assertRaisesRegex(RuntimeError, "snapshot observed"):
             self.api.build(self.value, source=self.root, out=self.root / "build")
 
     def test_bad_input_leaves_no_output(self):
