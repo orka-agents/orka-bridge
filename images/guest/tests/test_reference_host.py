@@ -19,6 +19,14 @@ class ExchangeTests(unittest.TestCase):
             (root / "serial.log").write_bytes(b'noise\r\nBRIDGE_BASE {"result":"done"}\r\n')
             api.wait_for_verifier(root, SimpleNamespace(poll=lambda: 0), threading.Event(), time.monotonic() + 1)
 
+    def test_partial_verifier_line_cannot_authorize_shutdown(self):
+        api = importlib.import_module("guest.reference_host")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "serial.log").write_bytes(b'BRIDGE_BASE {"result":')
+            with self.assertRaisesRegex(ValueError, "verifier incomplete"):
+                api.wait_for_verifier(root, SimpleNamespace(poll=lambda: 0), threading.Event(), time.monotonic() + 1)
+
     def test_real_wire_early_then_existing_serve_and_readiness(self):
         try:
             api = importlib.import_module("guest.reference_host")

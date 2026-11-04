@@ -55,7 +55,7 @@ def wait_for_verifier(root, process, stop, deadline):
             with serial.open("rb") as source:
                 source.seek(0, 2)
                 source.seek(max(0, source.tell() - 128 * 1024))
-                if any(line.startswith(b"BRIDGE_BASE ") for line in source.read().splitlines()):
+                if any(line.startswith(b"BRIDGE_BASE ") and line.endswith(b"\n") for line in source.read(128 * 1024).splitlines(keepends=True)):
                     return
         require(process.poll() is None and not stop.is_set() and time.monotonic() < deadline, "guest verifier incomplete")
         stop.wait(0.05)
