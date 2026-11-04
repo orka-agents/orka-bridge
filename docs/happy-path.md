@@ -15,6 +15,7 @@ code that copies files in have landed here, but the app can't start the VM yet. 
 the work behind the screens, can already create a local cluster, run tests and deploy on its own.
 
 Each step says what the person does and what Bridge shows, then asks design questions under **Ideas wanted**.
+The screenshots are design mockups; the names, sizes, times and token counts in them are made up.
 
 ## 1. Open Bridge
 
@@ -23,6 +24,8 @@ already have with Orka on it.
 
 **Bridge shows:** One setup screen with progress. For the local VM, Bridge downloads a VM image that installs Orka on
 its first start. If something is missing, it says what.
+
+![Mockup: Clusters on first run, setting up the local VM and waiting for the model step](images/happy-path-setup.png)
 
 **Ideas wanted:**
 
@@ -67,6 +70,8 @@ you already have.
 **Bridge shows:** Pass or fail for each test, the tool calls the agent made, how long it took and how many tokens it
 used.
 
+![Mockup: the Designer after the first Run, with two tests passing, one failing and the tool calls](images/happy-path-designer.png)
+
 **Ideas wanted:**
 
 - When a test fails, what should the person see first: the check that failed, the agent's answer, or the tool calls?
@@ -81,6 +86,8 @@ used.
 uses is there. Then it runs the same tests on that cluster and deploys only if they pass. A missing custom tool
 stops Send; Bridge doesn't copy or create it for you.
 
+![Mockup: sending an agent to a team cluster, with the checks, the tests running there and Deploy waiting](images/happy-path-send.png)
+
 **Ideas wanted:**
 
 - A tool or permission is missing on the destination. What do we say, and what can the person do next?
@@ -93,6 +100,8 @@ stops Send; Bridge doesn't copy or create it for you.
 
 **Bridge shows:** Your agents grouped by where they run, the local VM and each connected cluster, with test status,
 tools and recent runs.
+
+![Mockup: Overview with agents grouped by the local VM and a team cluster](images/happy-path-overview.png)
 
 **Ideas wanted:**
 
