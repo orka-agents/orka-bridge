@@ -3,7 +3,7 @@ use crate::engine::types::EngineAction;
 use bridge_runtime_protocol::*;
 use std::{
     fs,
-    io::{self, Read, Write},
+    io::{self, BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
 };
 /// Implementations must enforce native per-I/O deadlines. Construct only after
@@ -11,7 +11,7 @@ use std::{
 pub trait GuestChannel: Read + Write + Send {}
 impl<T: Read + Write + Send> GuestChannel for T {}
 pub struct VmClient {
-    channel: Option<Box<dyn GuestChannel>>,
+    channel: Option<BufReader<Box<dyn GuestChannel>>>,
     nonce: Uuid,
     next: u64,
 }
@@ -24,7 +24,7 @@ impl VmClient {
             return Err(invalid());
         }
         Ok(Self {
-            channel: Some(channel),
+            channel: Some(BufReader::new(channel)),
             nonce,
             next: 3,
         })
@@ -41,14 +41,25 @@ impl VmClient {
         .map_err(|_| invalid())?;
         let result = (|| {
             let io = self.channel.as_mut().ok_or_else(invalid)?;
-            io.write_all(&bytes)?;
-            io.flush()?;
+            io.get_mut().write_all(&bytes)?;
+            io.get_mut().flush()?;
             let mut bytes = Vec::new();
-            for _ in 0..MAX_FRAME {
-                let mut b = [0];
-                io.read_exact(&mut b)?;
-                bytes.push(b[0]);
-                if b[0] == b'\n' {
+            loop {
+                let buffer = io.fill_buf()?;
+                if buffer.is_empty() {
+                    return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+                }
+                let count = buffer
+                    .iter()
+                    .position(|b| *b == b'\n')
+                    .map_or(buffer.len(), |n| n + 1);
+                if bytes.len() + count > MAX_FRAME {
+                    return Err(invalid());
+                }
+                let done = buffer[count - 1] == b'\n';
+                bytes.extend_from_slice(&buffer[..count]);
+                io.consume(count);
+                if done {
                     break;
                 }
             }

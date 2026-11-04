@@ -129,6 +129,72 @@ fn validated_guest_errors_do_not_destroy_the_channel() {
     c.execute(bridge_engine::engine::types::EngineAction::Version {}, None)
         .unwrap();
 }
+#[test]
+fn large_result_uses_buffered_channel_reads() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    struct Count {
+        data: std::io::Cursor<Vec<u8>>,
+        reads: Arc<AtomicUsize>,
+    }
+    impl Read for Count {
+        fn read(&mut self, b: &mut [u8]) -> io::Result<usize> {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            self.data.read(b)
+        }
+    }
+    impl Write for Count {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let nonce = Uuid::new_v4();
+    let operation = Uuid::new_v4();
+    let mut bytes = encode(&Frame::Result(WireResult {
+        version: VERSION,
+        boot_nonce: nonce,
+        request_id: 3,
+        body: ResultBody::Operation {
+            operation,
+            info: OperationInfo {
+                state: OperationState::Completed,
+                exit: Some(0),
+                bytes: MAX_FILE,
+                has_diagnostics: false,
+            },
+        },
+    }))
+    .unwrap();
+    for n in 0..MAX_FILE / MAX_CHUNK {
+        bytes.extend(
+            encode(&Frame::Result(WireResult {
+                version: VERSION,
+                boot_nonce: nonce,
+                request_id: 4 + n as u64,
+                body: ResultBody::Chunk {
+                    data: encode_chunk(&vec![42; MAX_CHUNK]),
+                },
+            }))
+            .unwrap(),
+        );
+    }
+    let reads = Arc::new(AtomicUsize::new(0));
+    let mut c = VmClient::established(
+        Box::new(Count {
+            data: std::io::Cursor::new(bytes),
+            reads: reads.clone(),
+        }),
+        nonce,
+    )
+    .unwrap();
+    assert_eq!(c.result(operation).unwrap().stdout.len(), MAX_FILE);
+    assert!(reads.load(Ordering::Relaxed) < 1024);
+}
 #[cfg(unix)]
 #[test]
 fn snapshot_rejects_symlink() {

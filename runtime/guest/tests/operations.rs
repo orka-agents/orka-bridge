@@ -305,6 +305,64 @@ fn version_projection_preserves_the_diagnostic_signal_not_raw_annotations() {
     assert_eq!(ops.read(id, 0).unwrap(), b"kmx dev\n");
 }
 #[test]
+fn malformed_pagination_never_becomes_an_empty_success() {
+    struct List;
+    impl Runner for List {
+        fn execute(&mut self, _: &EngineActionWire) -> io::Result<EngineResult> {
+            Ok(EngineResult{exit:0,stdout:br#"{"apiVersion":"v1","kind":"List","metadata":{"remainingItemCount":"2"},"items":[]}"#.to_vec(),has_diagnostics:false})
+        }
+    }
+    let t = tempfile::tempdir().unwrap();
+    let s = Staging::new(t.path().join("stage")).unwrap();
+    let mut ops = Operations::new(t.path().join("ops"), List).unwrap();
+    assert_eq!(
+        ops.execute(
+            Uuid::new_v4(),
+            EngineActionWire::ListAgents {
+                context: "c".into(),
+                namespace: "n".into()
+            },
+            None,
+            &s
+        )
+        .unwrap(),
+        OperationState::Failed
+    );
+}
+#[test]
+fn pagination_types_match_the_delivered_typed_decoder() {
+    struct List(serde_json::Value);
+    impl Runner for List {
+        fn execute(&mut self, _: &EngineActionWire) -> io::Result<EngineResult> {
+            Ok(EngineResult{exit:0,stdout:serde_json::to_vec(&serde_json::json!({"apiVersion":"v1","kind":"List","metadata":self.0,"items":[]})).unwrap(),has_diagnostics:false})
+        }
+    }
+    for metadata in [
+        serde_json::json!("wrong"),
+        serde_json::json!([]),
+        serde_json::json!({"continue":4}),
+        serde_json::json!({"remainingItemCount":-1}),
+        serde_json::json!({"remainingItemCount":0.5}),
+    ] {
+        let t = tempfile::tempdir().unwrap();
+        let s = Staging::new(t.path().join("stage")).unwrap();
+        let mut ops = Operations::new(t.path().join("ops"), List(metadata)).unwrap();
+        assert_eq!(
+            ops.execute(
+                Uuid::new_v4(),
+                EngineActionWire::ListAgents {
+                    context: "c".into(),
+                    namespace: "n".into()
+                },
+                None,
+                &s
+            )
+            .unwrap(),
+            OperationState::Failed
+        );
+    }
+}
+#[test]
 fn wrong_digest_and_oversize_never_commit() {
     let root = tempfile::tempdir().unwrap();
     let mut s = Staging::new(root.path().join("snapshots")).unwrap();

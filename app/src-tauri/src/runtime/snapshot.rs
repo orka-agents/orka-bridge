@@ -1,6 +1,5 @@
 use bridge_runtime_protocol::*;
 use std::{
-    fs,
     io::{self, Read},
     path::{Component, Path, PathBuf},
 };
@@ -15,56 +14,51 @@ pub struct Snapshot {
 fn invalid() -> io::Error {
     io::Error::from(io::ErrorKind::InvalidData)
 }
-fn admitted(root: &Path, relative: &Path) -> io::Result<PathBuf> {
-    if relative.as_os_str().is_empty() {
-        return Err(invalid());
-    }
-    let mut path = root.to_path_buf();
-    for component in relative.components() {
-        let Component::Normal(name) = component else {
+// Each lookup is relative to an already-held directory, including on Windows.
+fn open_parent(
+    root: &cap_std::fs::Dir,
+    relative: &Path,
+) -> io::Result<(cap_std::fs::Dir, std::ffi::OsString)> {
+    use cap_fs_ext::DirExt;
+    let mut directory = root.try_clone()?;
+    let mut parts = relative.components().peekable();
+    while let Some(part) = parts.next() {
+        let Component::Normal(name) = part else {
             return Err(invalid());
         };
-        path.push(name);
-        if fs::symlink_metadata(&path)?.file_type().is_symlink() {
-            return Err(invalid());
+        if parts.peek().is_none() {
+            return Ok((directory, name.to_os_string()));
         }
+        directory = directory.open_dir_nofollow(name)?;
     }
-    if !fs::canonicalize(&path)?.starts_with(root) {
-        return Err(invalid());
-    }
-    Ok(path)
+    Err(invalid())
 }
-fn read(root: &Path, path: &Path) -> io::Result<Vec<u8>> {
-    let full = admitted(root, path)?;
-    if !fs::symlink_metadata(&full)?.is_file() {
-        return Err(invalid());
-    }
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
+fn read(root: &cap_std::fs::Dir, path: &Path) -> io::Result<Vec<u8>> {
+    use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+    let (parent, name) = open_parent(root, path)?;
+    let mut options = cap_std::fs::OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY);
+        use cap_std::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY);
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        options.custom_flags(0x00200000);
-    }
-    let mut f = options.open(&full)?;
-    if !f.metadata()?.is_file() {
+    let mut file = parent.open_with(name, &options)?;
+    if !file.metadata()?.is_file() {
         return Err(invalid());
     }
-    let mut b = Vec::new();
-    f.by_ref().take((MAX_FILE + 1) as u64).read_to_end(&mut b)?;
-    if b.len() > MAX_FILE || admitted(root, path)? != full {
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take((MAX_FILE + 1) as u64)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_FILE {
         return Err(invalid());
     }
-    Ok(b)
+    Ok(bytes)
 }
 impl Snapshot {
     pub fn capture(root: &Path, doc: &AgentDocument) -> io::Result<Self> {
-        let root = fs::canonicalize(root)?;
+        let root = cap_std::fs::Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
         Self::collect(|slot| {
             read(
                 &root,
@@ -95,6 +89,23 @@ impl Snapshot {
 }
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    #[cfg(unix)]
+    #[test]
+    fn opened_parent_handle_survives_a_directory_symlink_swap() {
+        use cap_std::{ambient_authority, fs::Dir};
+        let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::create_dir(temp.path().join("sub")).unwrap();
+        fs::write(temp.path().join("sub/a"), b"inside").unwrap();
+        fs::write(outside.path().join("a"), b"outside").unwrap();
+        let root = Dir::open_ambient_dir(temp.path(), ambient_authority()).unwrap();
+        let (parent, name) = open_parent(&root, Path::new("sub/a")).unwrap();
+        fs::rename(temp.path().join("sub"), temp.path().join("old")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), temp.path().join("sub")).unwrap();
+        assert_eq!(parent.read(name).unwrap(), b"inside");
+        assert!(open_parent(&root, Path::new("sub/a")).is_err());
+    }
     use super::*;
     #[test]
     fn edited_during_capture_is_rejected() {

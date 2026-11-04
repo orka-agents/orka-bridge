@@ -203,6 +203,13 @@ impl<R: Runner> Operations<R> {
     }
 }
 // Persist only B's finite response projection, not raw CRDs, specs or stderr.
+#[derive(Deserialize)]
+struct Pagination {
+    #[serde(rename = "continue")]
+    next: Option<String>,
+    #[serde(rename = "remainingItemCount")]
+    remaining: Option<u64>,
+}
 fn projection(action: &EngineActionWire, bytes: &[u8]) -> io::Result<Vec<u8>> {
     use serde_json::{json, Value};
     match action {
@@ -230,11 +237,11 @@ fn projection(action: &EngineActionWire, bytes: &[u8]) -> io::Result<Vec<u8>> {
             {
                 return Err(invalid());
             }
-            if v["metadata"]["continue"]
-                .as_str()
-                .is_some_and(|s| !s.is_empty())
-                || v["metadata"]["remainingItemCount"].as_u64().unwrap_or(0) > 0
-            {
+            let page: Option<Pagination> =
+                serde_json::from_value(v["metadata"].clone()).map_err(|_| invalid())?;
+            if page.is_some_and(|p| {
+                p.next.is_some_and(|s| !s.is_empty()) || p.remaining.unwrap_or(0) > 0
+            }) {
                 return Err(invalid());
             }
             let mut items = Vec::new();
@@ -281,13 +288,11 @@ pub fn argv(action: &EngineActionWire) -> io::Result<Vec<String>> {
 impl Runner for Kmx {
     fn execute(&mut self, action: &EngineActionWire) -> io::Result<EngineResult> {
         use std::{
-            io::Read,
             os::unix::process::CommandExt,
             process::{Command, Stdio},
-            thread,
-            time::{Duration, Instant},
+            time::Duration,
         };
-        let mut child = Command::new("/usr/local/bin/kmx")
+        let child = Command::new("/usr/local/bin/kmx")
             .args(argv(action)?)
             .env_clear()
             .env("PATH", "/usr/local/bin:/usr/bin:/bin")
@@ -300,82 +305,170 @@ impl Runner for Kmx {
             .stderr(Stdio::piped())
             .process_group(0)
             .spawn()?;
-        let (tx, rx) = std::sync::mpsc::channel();
-        for (tag, mut pipe) in [
-            (
-                false,
-                Box::new(child.stdout.take().unwrap()) as Box<dyn Read + Send>,
-            ),
-            (
-                true,
-                Box::new(child.stderr.take().unwrap()) as Box<dyn Read + Send>,
-            ),
-        ] {
-            let tx = tx.clone();
-            thread::spawn(move || {
-                let mut b = Vec::new();
-                let r = pipe
-                    .by_ref()
-                    .take((MAX_FILE + 1) as u64)
-                    .read_to_end(&mut b);
-                let _ = tx.send((tag, r.map(|_| b)));
-            });
-        }
-        drop(tx);
-        let deadline = Instant::now() + Duration::from_secs(60);
-        let mut out = None;
-        let mut diagnostics = None;
-        let result = (|| {
-            loop {
-                while let Ok((stderr, bytes)) = rx.try_recv() {
-                    let b = bytes?;
-                    if b.len() > MAX_FILE {
-                        return Err(invalid());
-                    }
-                    if stderr {
-                        diagnostics = Some(!b.is_empty())
-                    } else {
-                        out = Some(b)
-                    }
+        collect(child, Duration::from_secs(60))
+    }
+}
+// Caller supplies a newly-owned, unreaped child in its own process group.
+fn collect(
+    mut child: std::process::Child,
+    timeout: std::time::Duration,
+) -> io::Result<EngineResult> {
+    use std::{io::Read, thread, time::Instant};
+    let (tx, rx) = std::sync::mpsc::channel();
+    for (tag, mut pipe) in [
+        (
+            false,
+            Box::new(child.stdout.take().unwrap()) as Box<dyn Read + Send>,
+        ),
+        (
+            true,
+            Box::new(child.stderr.take().unwrap()) as Box<dyn Read + Send>,
+        ),
+    ] {
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let mut b = Vec::new();
+            let r = pipe
+                .by_ref()
+                .take((MAX_FILE + 1) as u64)
+                .read_to_end(&mut b);
+            let _ = tx.send((tag, r.map(|_| b)));
+        });
+    }
+    drop(tx);
+    let deadline = Instant::now() + timeout;
+    let mut out = None;
+    let mut diagnostics = None;
+    let result = (|| {
+        loop {
+            while let Ok((stderr, bytes)) = rx.try_recv() {
+                let b = bytes?;
+                if b.len() > MAX_FILE {
+                    return Err(invalid());
                 }
-                let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
-                // SAFETY: child is ours and never reaped until group cleanup; status is writable.
-                if unsafe {
-                    libc::waitid(
-                        libc::P_PID,
-                        child.id(),
-                        &mut status,
-                        libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-                    )
-                } != 0
-                {
-                    return Err(io::Error::last_os_error());
+                if stderr {
+                    diagnostics = Some(!b.is_empty())
+                } else {
+                    out = Some(b)
                 }
-                if unsafe { status.si_pid() } != 0 {
-                    if let Some(has_diagnostics) = diagnostics {
-                        if let Some(stdout) = out.take() {
-                            return Ok(EngineResult {
-                                exit: 0,
-                                stdout,
-                                has_diagnostics,
-                            });
-                        }
-                    }
-                }
-                if Instant::now() >= deadline {
-                    return Err(io::Error::from(io::ErrorKind::TimedOut));
-                }
-                thread::sleep(Duration::from_millis(5));
             }
-        })();
-        // The owned group is still unreaped: its ID cannot be recycled before this kill.
-        unsafe {
-            libc::kill(-(child.id() as i32), libc::SIGKILL);
+            let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            // SAFETY: child is ours and never reaped until group cleanup; status is writable.
+            if unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    child.id(),
+                    &mut status,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            } != 0
+            {
+                return Err(io::Error::last_os_error());
+            }
+            if unsafe { status.si_pid() } != 0 {
+                if let Some(has_diagnostics) = diagnostics {
+                    if let Some(stdout) = out.take() {
+                        return Ok(EngineResult {
+                            exit: 0,
+                            stdout,
+                            has_diagnostics,
+                        });
+                    }
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+            thread::sleep(std::time::Duration::from_millis(5));
         }
-        let status = child.wait()?;
-        result.map(|mut r| {
-            r.exit = status.code().unwrap_or(-1);
-            r
-        })
+    })();
+    // The owned group is still unreaped: its ID cannot be recycled before this kill.
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    let status = child.wait()?;
+    result.map(|mut r| {
+        r.exit = status.code().unwrap_or(-1);
+        r
+    })
+}
+
+#[cfg(test)]
+mod driver_tests {
+    use super::*;
+    use std::{
+        os::unix::process::CommandExt,
+        process::{Child, Command, Stdio},
+        time::Duration,
+    };
+    fn child(script: &str) -> Child {
+        Command::new("/bin/sh")
+            .args(["-c", script])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap()
+    }
+    #[test]
+    fn drains_both_pipes_and_preserves_nonzero_exit() {
+        let output = collect(
+            child("head -c 131072 /dev/zero & head -c 131072 /dev/zero >&2 & wait; exit 7"),
+            Duration::from_secs(3),
+        )
+        .unwrap();
+        assert_eq!(output.exit, 7);
+        assert_eq!(output.stdout.len(), 131072);
+        assert!(output.has_diagnostics);
+    }
+    #[test]
+    fn output_bound_stops_and_reaps_the_owned_child() {
+        let c = child("head -c 1048577 /dev/zero");
+        let id = c.id();
+        assert!(collect(c, Duration::from_secs(3)).is_err());
+        assert_eq!(
+            unsafe { libc::waitpid(id as i32, std::ptr::null_mut(), libc::WNOHANG) },
+            -1
+        );
+        assert_eq!(
+            io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
+    #[test]
+    fn deadline_stops_the_owned_group_including_descendants() {
+        let t = tempfile::tempdir().unwrap();
+        let pid = t.path().join("pid");
+        let c = Command::new("/bin/sh")
+            .args(["-c", "sleep 60 & echo $! > \"$PIDFILE\"; wait"])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("PIDFILE", &pid)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        assert_eq!(
+            collect(c, Duration::from_millis(200)).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
+        let id = fs::read_to_string(pid).unwrap();
+        let status = PathBuf::from(format!("/proc/{}/stat", id.trim()));
+        let limit = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            match fs::read_to_string(&status) {
+                Err(e) if e.kind() == io::ErrorKind::NotFound => break,
+                Ok(s) if s.rsplit_once(") ").is_some_and(|(_, s)| s.starts_with('Z')) => break,
+                _ => {
+                    assert!(std::time::Instant::now() < limit);
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            }
+        }
     }
 }

@@ -16,7 +16,9 @@ channel implementations must enforce I/O deadlines. Default app transport remain
 unavailable; this does not launch a VM.
 
 Inputs are only the explicitly selected agent/test pair, at most 1 MiB each,
-with no symlink or parent traversal. Capture rereads both files, retains immutable
+with no symlink or parent traversal. Capture walks relative to held directory
+handles with cap-std/cap-fs-ext, including Windows; it never reopens an admitted
+ambient path. Capture rereads both files, retains immutable
 bytes and binds both SHA-256 digests. Guest chunks are sequential and at most
 32 KiB; commit verifies both digests before atomically installing the snapshot.
 There is no shared folder or arbitrary archive extraction. The state store caches
