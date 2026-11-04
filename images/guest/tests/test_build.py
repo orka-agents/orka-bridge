@@ -61,6 +61,18 @@ class BuildTests(unittest.TestCase):
         result = subprocess.run(["/bin/sh", "-c", hook, "hook", "build"], capture_output=True, check=False)
         self.assertNotEqual(0, result.returncode)
 
+    def test_package_mutation_after_preflight_cannot_change_selected_bytes(self):
+        import hashlib
+        package = dict(self.value["packages"][0], name="docker.io", version="1.0", path="docker.deb", sha256=hashlib.sha256(b"selected").hexdigest())
+        (self.root / package["path"]).write_bytes(b"selected")
+        self.value["packages"].append(package)
+        self.api.verify_os_inputs(self.value, source=self.root)
+        source = self.root / package["path"]
+        source.write_bytes(b"replacement after verification")
+        self.assertTrue(callable(getattr(self.api, "stage_package", None)), "locked package snapshot missing")
+        with self.assertRaisesRegex(ValueError, "package changed"):
+            self.api.stage_package(source, self.root / "staged.deb", package["sha256"])
+
     def test_bad_input_leaves_no_output(self):
         (self.root / "base.qcow2").write_bytes(b"corrupt")
         with self.assertRaisesRegex(ValueError, "checksum"):

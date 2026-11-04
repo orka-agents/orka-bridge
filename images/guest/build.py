@@ -101,6 +101,11 @@ def rootfs_archive(overlay, target):
                     tar.addfile(info, stream)
 
 
+def stage_package(source, target, expected):
+    shutil.copyfile(source, target)
+    require(file_hash(target) == expected, "package changed during staging")
+
+
 def customize_commands(packages, architecture):
     target = "x86_64-efi" if architecture == "amd64" else "arm64-efi"
     commands = ["mkdir /var/cache/bridge-packages"]
@@ -148,11 +153,11 @@ def build(lock, out, *, source):
         overlay = stage_rootfs(lock, source=source, out=stage / "rootfs")
         rootfs_archive(stage / "rootfs", stage / "rootfs.tar")
         packages = []
+        expected_packages = {p["name"]: p["sha256"] for p in lock["packages"]}
         for index, (name, path) in enumerate(inputs["packages"].items()):
             if name != "debian-base":
                 copied = stage / ("package-" + str(index) + ".deb")
-                shutil.copyfile(path, copied)
-                require(file_hash(copied) == file_hash(path), "package changed during staging")
+                stage_package(path, copied, expected_packages[name])
                 packages.append(copied)
         require(packages, "offline OS package closure is required")
         raw = out / "os.raw"

@@ -6,6 +6,9 @@ export PATH
 root=$1
 fail() { trap - EXIT; echo "BRIDGE_EARLY_ERROR $1" > /dev/console; poweroff -f; while :; do sleep 60; done; }
 trap 'fail "state preparation failed"' EXIT
+valid_machine_id() {
+    jq -en --rawfile machine "$1" '($machine | rtrimstr("\n")) as $id | ($id | length) == 32 and ($id | test("^[0-9a-f]{32}$")) and $id != "00000000000000000000000000000000"' >/dev/null
+}
 [ -f /run/bridge/reference-test ] || fail 'native creation channel unavailable'
 input=/run/bridge/boot.json
 jq -e '(.schemaVersion == "bridge-guest-test/v1") and (.caseId == "base") and (.stateSerial == "bridge-state") and (.installationId | test("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) and ((.stateCreation == "new") or (.stateCreation == "existing"))' "$input" >/dev/null || fail 'invalid reference descriptor'
@@ -44,6 +47,7 @@ if [ ! -s "$state/machine-id" ]; then
     mv "$state/machine-id.partial" "$state/machine-id"
     sync
 fi
+valid_machine_id "$state/machine-id" || fail 'invalid persistent machine identity'
 mount --bind "$state/machine-id" "$root/etc/machine-id"
 for data in docker containerd; do
     mkdir -p "$state/$data" "$root/var/lib/$data"

@@ -64,6 +64,23 @@ test() {
         result = self.run_guard(legacy_uuid="root-os")
         self.assertNotEqual(0, result.returncode)
 
+    def test_early_machine_identity_validator_rejects_corruption(self):
+        import re
+        script = self.file("bridge-early-state").read_text()
+        match = re.search(r"valid_machine_id\(\) \{.*?\n\}", script, re.DOTALL)
+        if match is None:
+            self.fail("early persistent-ID validation missing")
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "machine-id"
+            for value in ("", "0" * 32, "g" * 32, "a" * 31, "a" * 33, "a" * 32 + "\n\n", "a" * 16 + "\x00" + "a" * 16):
+                path.write_bytes(value.encode())
+                result = subprocess.run(["/bin/sh", "-c", match[0] + '\nvalid_machine_id "$1"', "validate", str(path)], capture_output=True, check=False)
+                self.assertNotEqual(0, result.returncode, repr(value))
+            for value in ("a" * 32, "a" * 32 + "\n"):
+                path.write_text(value)
+                result = subprocess.run(["/bin/sh", "-c", match[0] + '\nvalid_machine_id "$1"', "validate", str(path)], capture_output=True, check=False)
+                self.assertEqual(0, result.returncode, result.stderr)
+
     def test_missing_existing_state_never_formats(self):
         result = self.run_guard(filesystem="")
         self.assertNotEqual(0, result.returncode)
