@@ -6,6 +6,8 @@ func require(_ condition: Bool, _ message: String) {
     if !condition { fputs("\(message)\n", stderr); exit(1) }
 }
 let output = CommandLine.arguments[1]
+require(NSRunningApplication.runningApplications(withBundleIdentifier: "ai.orka.bridge").isEmpty,
+        "Quit running Bridge before running the native walk")
 let opened = Process()
 opened.executableURL = URL(fileURLWithPath: "/usr/bin/open")
 opened.arguments = [CommandLine.arguments[2]]
