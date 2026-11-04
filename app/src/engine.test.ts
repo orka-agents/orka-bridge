@@ -14,11 +14,11 @@ test('requests the engine version through the typed native wire', async () => {
   expect(ipc).toHaveBeenCalledExactlyOnceWith('engine_call', { request: { action: { type: 'version' } } });
 });
 
-test('reports unavailable without invoking when the native bridge is absent', async () => {
+test('distinguishes a missing native bridge from the unavailable engine reply', async () => {
   const ipc = vi.fn();
   mockIPC(ipc);
   expect(await engineVersion()).toEqual({
-    ok: false, error: { kind: 'unavailable', message: 'The engine is not available in this app session.' },
+    ok: false, error: { kind: 'unavailable', message: 'The native bridge is not available in this preview.' },
   });
   expect(ipc).not.toHaveBeenCalled();
 });

@@ -8,7 +8,7 @@ afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlo
 test('shows unavailable without a native bridge', async () => {
   render(<EngineStatus />);
   expect(await screen.findByRole('heading', { name: 'Engine unavailable' })).toBeTruthy();
-  expect(screen.getByText('The engine is not available in this app session.')).toBeTruthy();
+  expect(screen.getByText('The native bridge is not available in this preview.')).toBeTruthy();
 });
 
 test.each([

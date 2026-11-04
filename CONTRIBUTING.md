@@ -31,8 +31,10 @@ the development process transport. No helper is discovered or downloaded.
 The native bridge accepts only version and read-only Agent list requests.
 Replies contain validated version or identity fields, not raw diagnostics.
 No credential input channel is provided here; runtime integration must define
-that separately. Closing the main window cancels and reaps the owned direct
-process. This is not a promise to stop grandchildren or remote work.
+that separately. Closing the main window signals cancellation. While the app's
+async runtime is running, cancellation kills and reaps the owned direct process;
+app exit does not wait for that cleanup. Neither grandchildren nor remote work
+are guaranteed to stop.
 
 Run debug engine tests and clippy as well as release checks: process transport
 code is compiled only when debug assertions are enabled.

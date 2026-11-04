@@ -26,7 +26,7 @@ function safeError(rejection: unknown): EngineError {
 
 async function call<T>(action: EngineAction): Promise<EngineResult<T>> {
   if (!isTauri()) {
-    return { ok: false, error: safeError({ kind: 'unavailable' }) };
+    return { ok: false, error: { kind: 'unavailable', message: 'The native bridge is not available in this preview.' } };
   }
   try {
     // Rust validates and projects successful wire replies before they reach the renderer.
