@@ -62,7 +62,7 @@ def infrastructure(image, lock_path, out, case_name, fixture=None, from_receipt=
         result = prior.get('new', {}).get('result', {})
         fingerprints = result.get('fingerprints', {})
         required = {'nodeUID', 'namespaceUID', 'snapshotUID', 'snapshotDataSha256', 'nodeIds', '/etc/kubernetes/pki/ca.crt', '/etc/kubernetes/pki/sa.pub', '/etc/kubernetes/pki/etcd/ca.crt'}
-        require(prior.get('schemaVersion') == 'bridge-guest-infrastructure/v1' and result.get('phase') == 'infrastructure-ready' and isinstance(fingerprints, dict) and required <= fingerprints.keys(), 'completed infrastructure identity evidence required')
+        require(prior.get('schemaVersion') == 'bridge-guest-infrastructure/v1' and prior.get('case') in ('infrastructure', 'restart') and result.get('phase') == 'infrastructure-ready' and isinstance(fingerprints, dict) and required <= fingerprints.keys(), 'completed infrastructure identity evidence required')
         require(prior['build']['inputSha256'] == build['inputSha256'] and prior['build']['contract'] == build['contract'], 'prior software/disk contract mismatch')
     out.mkdir()
     installation = prior['new']['bootDescriptor']['installationId'] if prior else str(uuid.uuid4())
@@ -70,6 +70,7 @@ def infrastructure(image, lock_path, out, case_name, fixture=None, from_receipt=
     first = boot_case(image, out / 'new', installation, 'existing' if prior else 'new', existing, case_name=case_name, fixture=fixture)
     first['network'] = network_evidence(out / 'new/network.pcap')
     require(first['network']['externalIpv4TcpPackets'] == 0, 'external HTTP traffic attempted')
+    require(not first['network']['dnsQueries'], 'external DNS traffic attempted')
     serial = first.pop('serial')
     base = parse_result(serial, installation)
     lines = [line[len('BRIDGE_INFRA '):] for line in serial.splitlines() if line.startswith('BRIDGE_INFRA ')]
@@ -89,6 +90,7 @@ def infrastructure(image, lock_path, out, case_name, fixture=None, from_receipt=
                            prior=out / 'new/state.qcow2' if case_name == 'infrastructure' else None)
         second['network'] = network_evidence(out / 'second/network.pcap')
         require(second['network']['externalIpv4TcpPackets'] == 0, 'external HTTP traffic attempted')
+        require(not second['network']['dnsQueries'], 'external DNS traffic attempted')
         serial = second.pop('serial')
         second['baseResult'] = parse_result(serial, second_id)
         lines = [line[len('BRIDGE_INFRA '):] for line in serial.splitlines() if line.startswith('BRIDGE_INFRA ')]

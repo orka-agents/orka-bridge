@@ -115,7 +115,7 @@ class ReferenceTests(unittest.TestCase):
                 else:
                     with self.assertRaises(AssertionError):
                         api['require_service_success']({})
-        for text, expected in ((b'kmx-owned Orka Helm release is failed; refusing automatic retry over a partial installation.', api['HelmRefusal']), (b'other kmx failure', AssertionError)):
+        for text, expected in ((b'offline Orka release identity/status differs; refusing adoption, overwrite or partial retry', api['HelmRefusal']), (b'other kmx failure', AssertionError)):
             with patch('subprocess.run', return_value=SimpleNamespace(returncode=1, stdout=b'', stderr=text)), self.assertRaises(expected):
                 api['failed_helm_probe'](['kmx'], {})
         with tempfile.TemporaryDirectory() as temp:
@@ -125,6 +125,29 @@ class ReferenceTests(unittest.TestCase):
                 api['refusal_phase'](state)
             (state / 'bootstrap.json').write_text('{"phase":"cache-verified"}')
             self.assertEqual('cache-verified', api['refusal_phase'](state))
+
+    def test_task_receipt_is_not_a_clean_reuse_capability_and_dns_is_rejected(self):
+        import hashlib
+        import json
+        import tempfile
+        from unittest.mock import patch
+        api = self.module('infrastructure_test')
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = root / 'os.qcow2'
+            image.write_bytes(b'factory')
+            lock = {'architecture': 'amd64'}
+            build = {'sha256': hashlib.sha256(b'factory').hexdigest(), 'inputSha256': hashlib.sha256(api.encoded(lock)).hexdigest(), 'contract': {}}
+            (root / 'build.json').write_text(json.dumps(build))
+            fingerprints = {key: 'known' for key in ('nodeUID', 'namespaceUID', 'snapshotUID', 'snapshotDataSha256', 'nodeIds', '/etc/kubernetes/pki/ca.crt', '/etc/kubernetes/pki/sa.pub', '/etc/kubernetes/pki/etcd/ca.crt')}
+            prior = root / 'prior.json'
+            prior.write_text(json.dumps({'schemaVersion': 'bridge-guest-infrastructure/v1', 'case': 'offline-tasks', 'build': build, 'new': {'bootDescriptor': {'installationId': str(uuid.uuid4())}, 'result': {'phase': 'infrastructure-ready', 'fingerprints': fingerprints}}}))
+            with patch.object(api, 'load_lock', return_value=lock), patch.object(api, 'image_info', return_value={'virtual-size': 16 * 1024**3}), patch.object(api, 'boot_case') as boot, self.assertRaisesRegex(ValueError, 'completed infrastructure'):
+                api.infrastructure(image, root / 'unused', root / 'reuse', 'restart', from_receipt=prior)
+            boot.assert_not_called()
+            self.assertFalse((root / 'reuse').exists())
+            with patch.object(api, 'load_lock', return_value=lock), patch.object(api, 'image_info', return_value={'virtual-size': 16 * 1024**3}), patch.object(api, 'boot_case', return_value={'serial': 'not reached'}), patch.object(api, 'network_evidence', return_value={'externalIpv4TcpPackets': 0, 'dnsQueries': ['registry.example.com']}), self.assertRaisesRegex(ValueError, 'DNS'):
+                api.infrastructure(image, root / 'unused', root / 'dns', 'infrastructure')
 
     def test_base_receipt_is_rejected_before_boot_or_output_creation(self):
         import hashlib

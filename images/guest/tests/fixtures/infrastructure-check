@@ -28,7 +28,7 @@ def require_service_success(env):
 
 def failed_helm_probe(args, env):
     result = subprocess.run(args, env=env, capture_output=True, timeout=600, check=False)
-    reason = b'kmx-owned Orka Helm release is failed; refusing automatic retry over a partial installation.'
+    reason = b'offline Orka release identity/status differs; refusing adoption, overwrite or partial retry'
     assert result.returncode != 0 and reason in result.stdout + result.stderr, 'not the pinned kmx failed-release refusal'
     raise HelmRefusal('verified pinned failed-release refusal')
 

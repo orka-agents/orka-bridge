@@ -164,6 +164,7 @@
                 "captureSha256": {"$ref":"#/$defs/hash"},
                 "externalTcpPackets": {"const":0,"description":"Legacy IPv4-only count"},
                 "externalIpv4TcpPackets": {"const":0},
+                "dnsQueries": {"type":"array","maxItems":0},
                 "qemuRestrictedUserNet": {"const":true}
               }
             },
