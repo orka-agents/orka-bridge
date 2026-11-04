@@ -1,3 +1,9 @@
+<div align="center">
+
+<img src="assets/bridge-logo.png" alt="Bridge: the Orka mascot leaping over a bridge" width="520" />
+
+</div>
+
 # Bridge
 
 **Build and test an agent locally, then deploy the same agent to your team's [Orka](https://github.com/orka-agents/orka) cluster.**
