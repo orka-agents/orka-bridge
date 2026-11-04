@@ -78,6 +78,17 @@ class ReferenceTests(unittest.TestCase):
             path.write_bytes(struct.pack('<IHHIIII', 0xa1b2c3d4, 2, 4, 0, 0, 65535, 1) + struct.pack('<IIII', 0, 0, len(frame), len(frame)) + frame)
             self.assertEqual(1, api.network_evidence(path)['externalTcpPackets'])
 
+    def test_interrupted_case_refuses_receipt_reuse_before_any_work(self):
+        import tempfile
+        from unittest.mock import patch
+        api = self.module('infrastructure_test')
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            with patch.object(api, 'boot_case') as boot, self.assertRaisesRegex(ValueError, 'interrupted.*new state'):
+                api.infrastructure(root / 'missing-image', root / 'missing-lock', root / 'out', 'interrupted', from_receipt=root / 'prior.json')
+            boot.assert_not_called()
+            self.assertFalse((root / 'out').exists())
+
     def test_failed_or_wrong_install_result_is_not_success(self):
         api = self.module("boot_test")
         with self.assertRaises(ValueError):

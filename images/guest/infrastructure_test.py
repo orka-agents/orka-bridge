@@ -51,6 +51,7 @@ def network_evidence(path):
 
 
 def infrastructure(image, lock_path, out, case_name, fixture=None, from_receipt=None):
+    require(case_name != 'interrupted' or from_receipt is None, 'interrupted case requires exclusively new state')
     lock = load_lock(lock_path)
     build = json.loads(image.with_name('build.json').read_bytes())
     require(build['sha256'] == file_hash(image) and build['inputSha256'] == hashlib.sha256(encoded(lock)).hexdigest(), 'factory input mismatch')

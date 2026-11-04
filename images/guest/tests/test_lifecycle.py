@@ -144,6 +144,16 @@ class LifecycleTests(unittest.TestCase):
             self.api.bootstrap(self.lock, self.state)
         self.assertEqual([], self.calls)
 
+    def test_cli_retains_guard_reason_but_not_raw_system_errors(self):
+        import io
+        import subprocess
+        for error, visible in ((ValueError('uncertain cluster creation retained; manual recovery required'), 'uncertain cluster creation'), (OSError('secret-system-detail'), 'OSError'), (subprocess.CalledProcessError(2, ['secret-command']), 'CalledProcessError')):
+            stream = io.StringIO()
+            with patch('sys.argv', ['lifecycle', 'bootstrap', '--lock', 'unused']), patch.object(self.api, 'load_lock', return_value=self.lock), patch.object(self.api, 'bootstrap', side_effect=error), patch('sys.stderr', stream):
+                self.assertEqual(2, self.api.main())
+            self.assertIn(visible, stream.getvalue())
+            self.assertNotIn('secret-', stream.getvalue())
+
     def test_altered_archive_blocks_before_commands(self):
         (self.bundle / 'components/controller.oci.tar').write_bytes(b'wrong')
         with self.assertRaises(ValueError):

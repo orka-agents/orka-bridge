@@ -306,7 +306,8 @@ Native cases retain NIC captures, zero external TCP and observed DNS query names
 with restricted QEMU user networking. Keep the builder externally isolated too.
 
 Optional `--from-receipt /build/prior/boot.json` reuses that receipt's stopped `new`
-state and EFI; selected software and disk contracts must match. It is an explicit
+state and EFI; selected software and disk contracts must match. The interrupted
+case rejects this option before creating output or starting a VM. It is an explicit
 owned-test capability, not a production migration path. It can mutate the prior
 private test state. Never run it against a running or shared disk. All failure
 artifacts are retained; choose a fresh output and never silently reset an ambiguous

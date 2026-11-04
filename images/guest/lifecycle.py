@@ -200,7 +200,8 @@ def main():
     try:
         result = (bootstrap if args.action == 'bootstrap' else resume)(load_lock(args.lock), args.state)
     except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
-        print('guest infrastructure refused: ' + type(error).__name__ + '; retained state', file=sys.stderr)
+        reason = str(error) if type(error) is ValueError else type(error).__name__
+        print('guest infrastructure refused: ' + reason + '; retained state', file=sys.stderr)
         return 2
     print(json.dumps({'phase': result['phase'], 'publicationReady': False}))
     return 0
