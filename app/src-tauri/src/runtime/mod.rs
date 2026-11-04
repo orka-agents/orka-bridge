@@ -36,6 +36,7 @@ impl RuntimeWorker {
         }
         self.journal.verify_state()?;
         if self.journal.record().phase == StatePhase::Empty {
+            self.journal.require_fresh_creation()?;
             self.journal.set_phase(StatePhase::Preparing)?;
             self.backend
                 .create_state(&self.journal.spec(Uuid::new_v4()))?;

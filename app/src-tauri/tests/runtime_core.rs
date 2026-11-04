@@ -355,6 +355,31 @@ fn maximum_machine_identifier_survives_boot_record_updates_and_reopen() {
 }
 
 #[test]
+fn reopened_unfinished_state_never_regains_creation_authority() {
+    let (temp, journal) = create();
+    let root = temp.path().join("install");
+    drop(journal);
+    let backend = Backend::default();
+    let events = backend.events.clone();
+    let mut worker = RuntimeWorker::new(Box::new(backend), Journal::open(&root).unwrap());
+    assert!(matches!(worker.start(), Err(RuntimeError::RetainedState)));
+    assert!(events.lock().unwrap().is_empty());
+
+    let (temp, journal) = create();
+    let root = temp.path().join("install");
+    let mut worker = RuntimeWorker::new(Box::new(Backend::default()), journal);
+    worker.start().unwrap();
+    worker.stop().unwrap();
+    drop(worker);
+    // No descriptor escaped, but the original exclusive creation handle closed.
+    let backend = Backend::default();
+    let events = backend.events.clone();
+    let mut worker = RuntimeWorker::new(Box::new(backend), Journal::open(&root).unwrap());
+    assert!(matches!(worker.start(), Err(RuntimeError::RetainedState)));
+    assert!(events.lock().unwrap().is_empty());
+}
+
+#[test]
 #[ignore = "subprocess fixture for failed-drop ownership"]
 fn failed_drop_child() {
     let Some(root) = std::env::var_os("BRIDGE_RUNTIME_DROP_TEST_DIR") else {

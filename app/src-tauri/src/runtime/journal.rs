@@ -37,6 +37,7 @@ pub struct Journal {
     _lock: Arc<File>,
     state: File,
     record: InstallationRecord,
+    creation_live: bool,
 }
 fn lock(root: &Path) -> Result<File, RuntimeError> {
     let file = OpenOptions::new()
@@ -105,6 +106,7 @@ impl Journal {
             _lock: Arc::new(owner),
             state,
             record,
+            creation_live: true,
         };
         journal.persist(&journal.record)?;
         Ok(journal)
@@ -151,6 +153,7 @@ impl Journal {
             _lock: Arc::new(owner),
             state,
             record,
+            creation_live: false,
         };
         journal.verify_state()?;
         if journal.record.phase == StatePhase::Empty && journal.state.metadata()?.len() != 0 {
@@ -188,6 +191,12 @@ impl Journal {
             mac: self.record.mac,
         }
     }
+    pub(super) fn require_fresh_creation(&self) -> Result<(), RuntimeError> {
+        if !self.creation_live {
+            return Err(RuntimeError::RetainedState);
+        }
+        Ok(())
+    }
     pub(super) fn finish_preparation(&mut self) -> Result<(), RuntimeError> {
         self.finish_preparation_with(File::sync_all)
     }
@@ -212,6 +221,9 @@ impl Journal {
         ) {
             return Err(RuntimeError::RetainedState);
         }
+        if self.record.phase == StatePhase::Prepared {
+            self.require_fresh_creation()?;
+        }
         let mut next = self.record.clone();
         next.boot_nonce = Some(Uuid::new_v4());
         self.commit(next)?;
@@ -230,7 +242,11 @@ impl Journal {
         }
         match self.record.phase {
             StatePhase::Prepared => {
+                // Persisted inode/file IDs can be reused after all handles close.
+                // Only this live, exclusively-created file can confer New authority.
+                self.require_fresh_creation()?;
                 self.set_phase(StatePhase::Consumed)?;
+                self.creation_live = false;
                 Ok(StateCreation::New)
             }
             StatePhase::Consumed => Ok(StateCreation::Existing),

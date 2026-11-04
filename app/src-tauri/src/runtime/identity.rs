@@ -2,6 +2,7 @@ use super::types::RuntimeError;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 
+/// Continuity hint, not durable creation authority: IDs may be reused after close.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileIdentity {
