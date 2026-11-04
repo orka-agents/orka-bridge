@@ -196,7 +196,15 @@ impl VmClient {
         if id.is_nil() || bytes.len() > MAX_FILE || !fs::symlink_metadata(root)?.is_dir() {
             return Err(invalid());
         }
+        Self::publish_result(root, id, |file| file.write_all(bytes))
+    }
+    fn publish_result(
+        root: &Path,
+        id: Uuid,
+        write: impl FnOnce(&mut fs::File) -> io::Result<()>,
+    ) -> io::Result<PathBuf> {
         let path = root.join(id.to_string());
+        let temporary = root.join(format!("{id}.{}.tmp", Uuid::new_v4()));
         let mut options = fs::OpenOptions::new();
         options.write(true).create_new(true);
         #[cfg(unix)]
@@ -204,9 +212,38 @@ impl VmClient {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let mut f = options.open(&path)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-        Ok(path)
+        let mut file = options.open(&temporary)?;
+        let outcome = write(&mut file).and_then(|_| file.sync_all());
+        drop(file);
+        // Hard-link publication is atomic and refuses an existing destination on supported filesystems.
+        let outcome = outcome.and_then(|_| fs::hard_link(&temporary, &path).map(|_| path));
+        let _ = fs::remove_file(&temporary);
+        outcome
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn failed_result_write_leaves_no_final_or_temporary_and_allows_retry() {
+        let root = tempfile::tempdir().unwrap();
+        let id = Uuid::new_v4();
+        let result = VmClient::publish_result(root.path(), id, |file| {
+            file.write_all(b"partial")?;
+            Err(io::Error::from(io::ErrorKind::WriteZero))
+        });
+        assert!(result.is_err());
+        assert!(!root.path().join(id.to_string()).exists());
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 0);
+        let final_path = VmClient::store_result(root.path(), id, b"complete").unwrap();
+        assert_eq!(fs::read(&final_path).unwrap(), b"complete");
+        assert_eq!(
+            VmClient::store_result(root.path(), id, b"replacement")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::AlreadyExists
+        );
+        assert_eq!(fs::read(final_path).unwrap(), b"complete");
+        assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
     }
 }
