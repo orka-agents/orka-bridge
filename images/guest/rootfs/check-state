@@ -14,4 +14,6 @@ test "$(findmnt -rn -T /etc/machine-id -o TARGET)" = /etc/machine-id || fail 'pe
 test "$(findmnt -rn -T /etc/machine-id -o UUID)" = "$state_uuid" || fail 'persistent machine identity mismatch'
 for path in /var/lib/docker /var/lib/containerd; do
     test "$(findmnt -rn -M "$path" -o UUID)" = "$state_uuid" || fail 'daemon state bind unavailable'
+    test "$(stat -Lc '%d:%i' "$path")" = "$(stat -Lc '%d:%i' "/var/lib/bridge/${path##*/}")" || fail 'daemon state source mismatch'
 done
+test "$(stat -Lc '%d:%i' /etc/machine-id)" = "$(stat -Lc '%d:%i' /var/lib/bridge/machine-id)" || fail 'machine identity source mismatch'
