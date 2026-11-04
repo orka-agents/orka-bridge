@@ -45,6 +45,7 @@ fn release_context_embeds_fonts_and_all_license_notices() {
         "index.html",
         "licenses/shell-MIT.txt",
         "licenses/Orka-MIT.txt",
+        "licenses/Tauri-API-MIT.txt",
         "licenses/Geist-OFL.txt",
         "licenses/Geist-Mono-OFL.txt",
     ] {
