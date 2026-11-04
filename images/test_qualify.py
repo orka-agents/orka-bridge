@@ -97,6 +97,9 @@ class QualificationTests(unittest.TestCase):
              patch.object(self.q, "file_hash", return_value="c" * 64), \
              patch.dict(self.q.VERSIONS, {"releaseProfiles": {"synthetic": {}}}):
             self.assertEqual(self.q.approved_profile("reviewed"), selected)
+            selected["imageId"] = "fixture..v1"
+            with self.assertRaisesRegex(ValueError, "image"):
+                self.q.approved_profile("reviewed")
 
     def test_remote_accepts_only_pinned_successful_nonfork_run(self):
         with patch.object(self.q, "gh", side_effect=self.api):
@@ -247,7 +250,7 @@ class QualificationTests(unittest.TestCase):
                 package.create(stream, self.metadata, out, chunk_bytes=64)
         return out, sha((out / "manifest.json").read_bytes())
 
-    def draft_api(self, corrupt_manifest=False, wrong_upload=False):
+    def draft_api(self, corrupt_manifest=False, wrong_upload=False, wrong_tag=False):
         release = dict(id=31, tag_name="image-fixture-windows-amd64", draft=True,
                        target_commitish="a" * 40)
         uploads = {}
@@ -256,7 +259,8 @@ class QualificationTests(unittest.TestCase):
         def api(endpoint, **kwargs):
             nonlocal created
             if "/git/matching-refs/" in endpoint:
-                return [[]]
+                return [[dict(ref="refs/tags/image-fixture-windows-amd64",
+                              object=dict(type="commit", sha="d" * 40))]] if created and wrong_tag else [[]]
             if endpoint.endswith("/releases?per_page=100"):
                 return [[copy.deepcopy(release)] if created else []]
             if endpoint.endswith("/releases") and "body" in kwargs:
@@ -288,6 +292,14 @@ class QualificationTests(unittest.TestCase):
         out, digest = self.prepared()
         with patch.object(self.q, "gh", side_effect=self.draft_api()):
             self.assertEqual(self.q.draft(self.profile, out, digest), 31)
+
+    def test_concurrent_wrong_tag_after_create_denies_before_any_upload(self):
+        out, digest = self.prepared()
+        with patch.object(self.q, "gh", side_effect=self.draft_api(wrong_tag=True)) as calls:
+            with self.assertRaisesRegex(ValueError, "tag"):
+                self.q.draft(self.profile, out, digest)
+            self.assertEqual(sum("body" in c.kwargs for c in calls.call_args_list), 1)
+            self.assertEqual(sum("upload" in c.kwargs for c in calls.call_args_list), 0)
 
     def test_roundtrip_rejects_substituted_manifest_even_if_other_assets_match(self):
         out, digest = self.prepared()

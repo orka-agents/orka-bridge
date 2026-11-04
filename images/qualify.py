@@ -59,7 +59,7 @@ def approved_profile(name):
     for field in ("artifactSha256", "payloadSha256", "metadataSha256",
                   "nativeReceiptSha256", "inputIdentity"):
         require(matches(p[field], HEX), "invalid profile checksum")
-    require(matches(p["sourceCommit"], r"[0-9a-f]{40}") and matches(p["imageId"], SLUG),
+    require(matches(p["sourceCommit"], r"[0-9a-f]{40}") and matches(p["imageId"], SLUG) and ".." not in p["imageId"],
             "invalid source/image identity")
     require((p["platform"], p["architecture"]) in (("macos", "arm64"), ("windows", "amd64")),
             "unsupported profile target")
@@ -147,13 +147,19 @@ def check_available(p, created=None):
                 for r in page if r["tag_name"] == tag(p)]
     if created is None:
         require(not releases, "image tag already has a release, including draft")
-        refs = [r for page in gh(base + "/git/matching-refs/tags/" + tag(p), paginate=True) for r in page]
-        require(not any(r["ref"] == "refs/tags/" + tag(p) for r in refs), "image tag ref already exists")
     else:
         require(len(releases) == 1 and releases[0]["id"] == created
                 and releases[0]["draft"] is True
                 and releases[0]["target_commitish"] == p["sourceCommit"],
                 "created draft identity is not unique or changed")
+    refs = [r for page in gh(base + "/git/matching-refs/tags/" + tag(p), paginate=True)
+            for r in page if r["ref"] == "refs/tags/" + tag(p)]
+    if created is None:
+        require(not refs, "image tag ref already exists")
+    else:
+        # target_commitish is ignored by GitHub if a competing writer created the tag.
+        require(all(r["object"]["type"] == "commit" and r["object"]["sha"] == p["sourceCommit"]
+                    for r in refs), "created draft tag/source mismatch")
 
 
 def draft(p, out, expected_sha):

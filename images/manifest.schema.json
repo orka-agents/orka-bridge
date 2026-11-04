@@ -8,7 +8,7 @@
   "properties": {
     "schemaVersion": {"const": "bridge-image/v1"},
     "publicationReady": {"const": false},
-    "imageId": {"$ref": "#/$defs/id"},
+    "imageId": {"allOf": [{"$ref": "#/$defs/id"}, {"not": {"pattern": "\\.\\."}}]},
     "buildSourceCommit": {"$ref": "#/$defs/commit"},
     "stateCompatibilityId": {"$ref": "#/$defs/id"},
     "target": {

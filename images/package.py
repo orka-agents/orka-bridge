@@ -92,7 +92,7 @@ def validate_metadata(value):
     shape(value, ("imageId", "buildSourceCommit", *TARGET, "stateCompatibilityId", "transportProtocolMajor", "componentLock"))
     target = {key: value[key] for key in TARGET}
     target_valid(target)
-    require(matches(value["imageId"], ID) and matches(value["stateCompatibilityId"], ID), "invalid image/state compatibility ID")
+    require(matches(value["imageId"], ID) and ".." not in value["imageId"] and matches(value["stateCompatibilityId"], ID), "invalid image/state compatibility ID")
     require(matches(value["buildSourceCommit"], r"[0-9a-f]{40}"), "invalid build source commit")
     require(type(value["transportProtocolMajor"]) is int and value["transportProtocolMajor"] == 1, "unsupported transport major")
     lock = value["componentLock"]
@@ -176,7 +176,7 @@ def create(stream, metadata, out, chunk_bytes=MAX_CHUNK):
 def validate_manifest(m):
     shape(m, ROOT)
     require(m["schemaVersion"] == "bridge-image/v1" and m["publicationReady"] is False, "unsupported manifest schema or publication claim")
-    require(matches(m["imageId"], ID) and matches(m["stateCompatibilityId"], ID), "invalid image/state ID")
+    require(matches(m["imageId"], ID) and ".." not in m["imageId"] and matches(m["stateCompatibilityId"], ID), "invalid image/state ID")
     require(matches(m["buildSourceCommit"], r"[0-9a-f]{40}"), "invalid build commit")
     target_valid(m["target"]); components_valid(m["components"])
     require(canonical(m["layout"]) == canonical(layout(m["target"]["format"])), "invalid H1 layout")

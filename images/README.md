@@ -36,6 +36,8 @@ linked, reordered or damaged chunks, invalid gzip and mismatched measurements.
 hash. Without that option, verification checks internal consistency only.
 Hash-only verification is the default and needs no second raw disk copy.
 Optional reconstructed output is finalized without replacing an existing file.
+A failed reconstruction leaves `<destination>.partial` for inspection; retry with
+a fresh destination, rather than automatically deleting or trusting partial bytes.
 
 ## Input and manifest mapping
 
@@ -102,7 +104,8 @@ using a qualified runner; a standard runner is not promised to fit every image.
 Only the separate draft job has release-write permission. It requalifies the
 same bytes against prepare's manifest hash, serializes the image's derived tag,
 rejects existing tags and all matching releases including drafts, and checks its
-new draft is unique. Uploads never clobber. It redownloads through authenticated
+new draft is unique. Any tag appearing during the operation must point directly
+to the qualified source commit; other tag identities fail closed. Uploads never clobber. It redownloads through authenticated
 asset IDs and verifies against the original manifest hash. Failure leaves the
 draft for operator inspection, never silently retries or publishes it. A draft
 is not release approval. Freezing the schema, native boot results and a separate

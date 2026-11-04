@@ -113,7 +113,7 @@ class PackageTests(unittest.TestCase):
 
     def test_bad_metadata_is_rejected_without_writing(self):
         for field, value in [("architecture", "arm64"), ("format", "raw"), ("platform", "linux"),
-                             ("imageId", "../../escape"), ("buildSourceCommit", "main"),
+                             ("imageId", "../../escape"), ("imageId", "fixture..v1"), ("buildSourceCommit", "main"),
                              ("transportProtocolMajor", 2), ("transportProtocolMajor", True),
                              ("minimumAppVersion", "latest"), ("stateCompatibilityId", "")]:
             bad = copy.deepcopy(self.meta); bad[field] = value
