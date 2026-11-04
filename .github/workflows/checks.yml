@@ -104,16 +104,18 @@ jobs:
           prior_auto="$(defaults read -g AppleInterfaceStyleSwitchesAutomatically 2>/dev/null || true)"
           prior="$(defaults read -g AppleKeyboardUIMode 2>/dev/null || true)"
           restore_preferences() {
-            if [[ -n "$prior" ]]; then defaults write -g AppleKeyboardUIMode -int "$prior"
+            local status=0
+            if [[ -n "$prior" ]]; then defaults write -g AppleKeyboardUIMode -int "$prior" || status=$?
             else defaults delete -g AppleKeyboardUIMode 2>/dev/null || true
             fi
-            osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $prior_dark"
-            if [[ -n "$prior_style" ]]; then defaults write -g AppleInterfaceStyle -string "$prior_style"
+            osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $prior_dark" || status=$?
+            if [[ -n "$prior_style" ]]; then defaults write -g AppleInterfaceStyle -string "$prior_style" || status=$?
             else defaults delete -g AppleInterfaceStyle 2>/dev/null || true
             fi
-            if [[ -n "$prior_auto" ]]; then defaults write -g AppleInterfaceStyleSwitchesAutomatically -bool "$prior_auto"
+            if [[ -n "$prior_auto" ]]; then defaults write -g AppleInterfaceStyleSwitchesAutomatically -bool "$prior_auto" || status=$?
             else defaults delete -g AppleInterfaceStyleSwitchesAutomatically 2>/dev/null || true
             fi
+            return "$status"
           }
           trap restore_preferences EXIT
           defaults write -g AppleKeyboardUIMode -int 3
