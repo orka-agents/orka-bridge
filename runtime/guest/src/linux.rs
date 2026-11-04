@@ -4,7 +4,7 @@ use bridge_runtime_protocol::*;
 use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -68,6 +68,21 @@ fn private_run() -> io::Result<()> {
     fs::set_permissions(RUN, fs::Permissions::from_mode(0o700))?;
     mount_is(RUN, "tmpfs", None, false)
 }
+fn bind_source(expected: &Path, target: &Path) -> io::Result<()> {
+    let source = fs::symlink_metadata(expected)?;
+    let mounted = fs::symlink_metadata(target)?;
+    if source.file_type().is_symlink()
+        || mounted.file_type().is_symlink()
+        || source.dev() != mounted.dev()
+        || source.ino() != mounted.ino()
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+fn target_directory(path: &Path) -> io::Result<()> {
+    directory(path, false)
+}
 fn directory(path: &Path, create: bool) -> io::Result<()> {
     if create && !path.exists() {
         fs::DirBuilder::new().mode(0o700).create(path)?;
@@ -82,7 +97,7 @@ use std::os::unix::fs::DirBuilderExt;
 pub fn read_regular(path: &Path, limit: u64) -> io::Result<Vec<u8>> {
     let mut f = OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK | libc::O_NOCTTY)
         .open(path)?;
     if !f.metadata()?.file_type().is_file() {
         return Err(invalid());
@@ -208,7 +223,7 @@ impl BootSystem for Linux {
     }
     fn mount_state(&mut self) -> io::Result<()> {
         let state = self.state();
-        directory(&state, true)?;
+        target_directory(&state)?;
         checked(
             "/bin/mount",
             &[
@@ -264,7 +279,7 @@ impl BootSystem for Linux {
             });
             if name != "machine-id" {
                 directory(&source, false)?;
-                directory(Path::new(&target), true)?;
+                target_directory(Path::new(&target))?;
             } else if !fs::symlink_metadata(&target)?.file_type().is_file() {
                 return Err(invalid());
             }
@@ -299,8 +314,10 @@ impl BootSystem for Linux {
             Some(b.state_fs_uuid),
             true,
         )?;
-        for suffix in ["/var/lib/docker", "/var/lib/containerd"] {
-            mount_is(&self.target(suffix), "ext4", Some(b.state_fs_uuid), true)?;
+        for name in ["docker", "containerd"] {
+            let target = self.target(&format!("/var/lib/{name}"));
+            mount_is(&target, "ext4", Some(b.state_fs_uuid), true)?;
+            bind_source(&self.state().join(name), Path::new(&target))?;
         }
         let target = self.target("/etc/machine-id");
         if text(checked(
@@ -311,6 +328,7 @@ impl BootSystem for Linux {
             return Err(invalid());
         }
         mount_is(&target, "ext4", Some(b.state_fs_uuid), false)?;
+        bind_source(&self.state().join("machine-id"), Path::new(&target))?;
         mount_is("/run/bridge/credentials", "tmpfs", None, true)?;
         let identity = self.identity()?.ok_or_else(invalid)?;
         if identity.schema_version != "bridge-state/v1"
@@ -363,6 +381,53 @@ fn parse_probe(status: i32, output: &[u8], bytes: u64) -> io::Result<Disk> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fifo_identity_is_rejected_without_waiting_for_a_writer() {
+        use std::{ffi::CString, os::unix::ffi::OsStrExt, sync::mpsc};
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("identity.json");
+        let name = CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = mpsc::channel();
+        let input = path.clone();
+        let reader = std::thread::spawn(move || {
+            let _ = tx.send(read_regular(&input, 4096));
+        });
+        let answer = rx.recv_timeout(Duration::from_secs(2));
+        if answer.is_err() {
+            let _ = OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&path);
+        }
+        reader.join().unwrap();
+        assert!(answer.expect("nonregular open blocked").is_err());
+    }
+    #[test]
+    fn exact_persistent_bind_sources_are_required() {
+        let temp = tempfile::tempdir().unwrap();
+        let docker = temp.path().join("docker");
+        let containerd = temp.path().join("containerd");
+        fs::create_dir(&docker).unwrap();
+        fs::create_dir(&containerd).unwrap();
+        assert!(bind_source(&docker, &containerd).is_err());
+        let source = temp.path().join("machine-id");
+        let target = temp.path().join("etc-machine-id");
+        fs::write(&source, b"machine").unwrap();
+        fs::hard_link(&source, &target).unwrap();
+        bind_source(&source, &target).unwrap();
+        let wrong = temp.path().join("unrelated");
+        fs::write(&wrong, b"machine").unwrap();
+        assert!(bind_source(&source, &wrong).is_err());
+    }
+    #[test]
+    fn missing_mount_target_is_not_created() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing");
+        assert!(target_directory(&missing).is_err());
+        assert!(!missing.exists());
+        target_directory(temp.path()).unwrap();
+    }
     #[test]
     fn probe_tool_io_error_is_not_blank() {
         let temp = tempfile::tempdir().unwrap();
