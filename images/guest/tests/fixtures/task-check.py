@@ -190,7 +190,7 @@ def run(env, context, node_id, seed_archive: Path, expected_sha256: str, bundle:
     endpoint = "http://fixture.fixture-local.svc.cluster.local:8080"
     pod = obj("Pod", "fixture", {
         "automountServiceAccountToken": False, "serviceAccountName": "fixture", "restartPolicy": "Never",
-        "containers": [{"name": "model", "image": busybox, "imagePullPolicy": "IfNotPresent",
+        "containers": [{"name": "model", "image": busybox, "imagePullPolicy": "Never",
                         "command": [str(STATE / "model-server")],
                         "ports": [{"containerPort": 8080}],
                         "readinessProbe": {"httpGet": {"path": "/v1/models", "port": 8080}},

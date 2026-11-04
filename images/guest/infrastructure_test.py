@@ -35,7 +35,7 @@ def network_evidence(path):
                 continue
             ihl = (frame[14] & 15) * 4
             destination = ipaddress.ip_address(frame[30:34])
-            if frame[23] == 6 and not (destination.is_private or destination.is_multicast or destination.is_link_local):
+            if frame[23] == 6 and destination != ipaddress.ip_address('10.0.2.15') and not destination.is_multicast:
                 external_tcp += 1
             udp = 14 + ihl
             if frame[23] == 17 and len(frame) > udp + 20 and frame[udp + 2:udp + 4] == b'\x00\x35':
@@ -47,7 +47,7 @@ def network_evidence(path):
                     offset += length
                 if labels:
                     queries.add('.'.join(labels))
-    return {'captureSha256': file_hash(path), 'packets': packets, 'externalTcpPackets': external_tcp, 'dnsQueries': sorted(queries), 'qemuRestrictedUserNet': True}
+    return {'captureSha256': file_hash(path), 'packets': packets, 'externalIpv4TcpPackets': external_tcp, 'dnsQueries': sorted(queries), 'qemuRestrictedUserNet': True}
 
 
 def infrastructure(image, lock_path, out, case_name, fixture=None, from_receipt=None):
@@ -57,15 +57,19 @@ def infrastructure(image, lock_path, out, case_name, fixture=None, from_receipt=
     require(build['sha256'] == file_hash(image) and build['inputSha256'] == hashlib.sha256(encoded(lock)).hexdigest(), 'factory input mismatch')
     require(image_info(image)['virtual-size'] == 16 * 1024**3 and lock['architecture'] == 'amd64', 'unsupported reference disk')
     require(not out.exists(), 'output already exists')
-    out.mkdir()
     prior = json.loads(from_receipt.read_bytes()) if from_receipt is not None else None
     if prior is not None:
+        result = prior.get('new', {}).get('result', {})
+        fingerprints = result.get('fingerprints', {})
+        required = {'nodeUID', 'namespaceUID', 'snapshotUID', 'snapshotDataSha256', 'nodeIds', '/etc/kubernetes/pki/ca.crt', '/etc/kubernetes/pki/sa.pub', '/etc/kubernetes/pki/etcd/ca.crt'}
+        require(prior.get('schemaVersion') == 'bridge-guest-infrastructure/v1' and result.get('phase') == 'infrastructure-ready' and isinstance(fingerprints, dict) and required <= fingerprints.keys(), 'completed infrastructure identity evidence required')
         require(prior['build']['inputSha256'] == build['inputSha256'] and prior['build']['contract'] == build['contract'], 'prior software/disk contract mismatch')
+    out.mkdir()
     installation = prior['new']['bootDescriptor']['installationId'] if prior else str(uuid.uuid4())
     existing = from_receipt.parent / 'new/state.qcow2' if from_receipt is not None else None
     first = boot_case(image, out / 'new', installation, 'existing' if prior else 'new', existing, case_name=case_name, fixture=fixture)
     first['network'] = network_evidence(out / 'new/network.pcap')
-    require(first['network']['externalTcpPackets'] == 0, 'external HTTP traffic attempted')
+    require(first['network']['externalIpv4TcpPackets'] == 0, 'external HTTP traffic attempted')
     serial = first.pop('serial')
     base = parse_result(serial, installation)
     lines = [line[len('BRIDGE_INFRA '):] for line in serial.splitlines() if line.startswith('BRIDGE_INFRA ')]
@@ -84,7 +88,7 @@ def infrastructure(image, lock_path, out, case_name, fixture=None, from_receipt=
                            case_name='interrupted' if case_name == 'interrupted' else 'infrastructure',
                            prior=out / 'new/state.qcow2' if case_name == 'infrastructure' else None)
         second['network'] = network_evidence(out / 'second/network.pcap')
-        require(second['network']['externalTcpPackets'] == 0, 'external HTTP traffic attempted')
+        require(second['network']['externalIpv4TcpPackets'] == 0, 'external HTTP traffic attempted')
         serial = second.pop('serial')
         second['baseResult'] = parse_result(serial, second_id)
         lines = [line[len('BRIDGE_INFRA '):] for line in serial.splitlines() if line.startswith('BRIDGE_INFRA ')]

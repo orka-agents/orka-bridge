@@ -302,7 +302,9 @@ Offline Tasks require successful standalone and session-bound native AI Tasks,
 a completed fetch-session init, and local-Git prepare-workspace using general-worker.
 Evidence follows Task→Job→Pod UIDs and actual successful imageIDs, not only declared
 images. It establishes deterministic fixture execution, not real-model quality.
-Native cases retain NIC captures, zero external TCP and observed DNS query names,
+Native cases retain NIC captures, zero observed external IPv4 TCP and DNS query names,
+with the IPv4 counter excluding only traffic addressed back to the guest, not LAN
+or other private destinations. IPv6 and VLAN traffic are not decoded by this counter;
 with restricted QEMU user networking. Keep the builder externally isolated too.
 
 Optional `--from-receipt /build/prior/boot.json` reuses that receipt's stopped `new`

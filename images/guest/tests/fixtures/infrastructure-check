@@ -16,11 +16,36 @@ def command(args, *, body=None):
     return result.stdout
 
 
+class HelmRefusal(ValueError):
+    pass
+
+
+def require_service_success(env):
+    result = subprocess.run(['systemctl', 'show', '--property=ActiveState,Result', 'bridge-infrastructure.service'], env=env, capture_output=True, timeout=20, check=True)
+    fields = dict(line.split('=', 1) for line in result.stdout.decode().splitlines())
+    assert fields.get('ActiveState') == 'active' and fields.get('Result') == 'success', 'infrastructure service did not succeed'
+
+
+def failed_helm_probe(args, env):
+    result = subprocess.run(args, env=env, capture_output=True, timeout=600, check=False)
+    reason = b'kmx-owned Orka Helm release is failed; refusing automatic retry over a partial installation.'
+    assert result.returncode != 0 and reason in result.stdout + result.stderr, 'not the pinned kmx failed-release refusal'
+    raise HelmRefusal('verified pinned failed-release refusal')
+
+
+def refusal_phase(state):
+    phase = json.loads((state / 'bootstrap.json').read_bytes())['phase']
+    assert phase == 'cache-verified', 'refusal did not reach install'
+    return phase
+
+
 try:
     state = Path('/var/lib/bridge')
     seed = json.loads(Path('/run/bridge/reference.json').read_bytes())
     installation = json.loads((state / 'identity.json').read_bytes())['installationId']
     env = lifecycle.environment(state, installation)
+    if seed['caseId'] != 'interrupted':
+        require_service_success(env)
     if seed['caseId'] == 'interrupted':
         if seed['stateCreation'] == 'new':
             original = lifecycle.execute
@@ -95,14 +120,23 @@ try:
         release['data']['release'] = base64.b64encode(base64.b64encode(gzip.compress(json.dumps(data).encode()))).decode()
         release['metadata']['labels']['status'] = 'failed'
         command([*kube, '-n', 'orka-system', 'replace', '-f', '-'], body=json.dumps(release).encode())
+        original = lifecycle.execute
+        install_args = ['kmx', '--context', context, 'cluster', 'orka', 'install', '--provider', '-', '--offline-bundle', str(lifecycle.BUNDLE)]
+        def verify_refusal(args, **kwargs):
+            if args == install_args:
+                return failed_helm_probe(args, kwargs['env'])
+            return original(args, **kwargs)
+        lifecycle.execute = verify_refusal
         try:
             lifecycle.resume(lifecycle.load_lock(lifecycle.BUNDLE / 'inputs.json'), state)
             raise AssertionError('failed Helm release was accepted')
-        except ValueError:
-            pass
+        except HelmRefusal:
+            phase = refusal_phase(state)
+        finally:
+            lifecycle.execute = original
         after = get('-n', 'orka-system', 'get', 'secret', 'orka-api-agent-execution-snapshot')
         assert after['metadata']['uid'] == fingerprints['snapshotUID'] and hashlib.sha256(json.dumps(after['data'], sort_keys=True).encode()).hexdigest() == fingerprints['snapshotDataSha256']
-        result.update(phase='cache-verified', partialInstallRefused=True, identityPreserved=True)
+        result.update(phase=phase, partialInstallRefused=True, identityPreserved=True)
     if seed['caseId'] == 'offline-tasks':
         import importlib.util
         spec = importlib.util.spec_from_file_location('task_check', '/usr/lib/bridge/task-check.py')

@@ -74,6 +74,40 @@ class OfflineTests(unittest.TestCase):
             api.stage_bundle(value, source=root, out=root / 'out')
             self.assertTrue((root / 'out/inputs.json').is_file())
 
+    def test_bundle_path_collision_is_rejected_before_output(self):
+        api = self.api()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            value, manifest = native_inputs(root)
+            manifest['chart']['path'] = 'tools/kmx'
+            (root / 'install.json').write_bytes(encoded(manifest))
+            value['tools'][-1]['sha256'] = sha(encoded(manifest))
+            with self.assertRaisesRegex(ValueError, 'bundle destination collision'):
+                api.stage_bundle(value, source=root, out=root / 'out')
+            self.assertFalse((root / 'out').exists())
+
+    def test_converter_rejects_replaced_config_blob_bytes(self):
+        import io
+        api = self.api()
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            value, _ = native_inputs(root)
+            node = value['components'][0]
+            path = root / node['archive']
+            with tarfile.open(path) as archive:
+                entries = [(m.name, member(archive, m.name).read()) for m in archive if m.isfile()]
+            with tarfile.open(path, 'w') as archive:
+                for name, data in entries:
+                    if name == 'blobs/sha256/' + node['configDigest'][7:]:
+                        changed = json.loads(data)
+                        changed['config'] = {'Labels': {'replaced': 'true'}}
+                        data = encoded(changed)
+                    entry = tarfile.TarInfo(name)
+                    entry.size = len(data)
+                    archive.addfile(entry, io.BytesIO(data))
+            with self.assertRaisesRegex(ValueError, 'node config identity'):
+                api.docker_archive(node, root, root / 'node.docker.tar', value['nodeLocalRef'])
+
     def test_mismatched_manifest_refuses_before_staging(self):
         api = self.api()
         with tempfile.TemporaryDirectory() as temp:

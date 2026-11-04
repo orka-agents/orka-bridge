@@ -158,10 +158,12 @@
             },
             "network": {
               "type": "object",
-              "required": ["captureSha256","externalTcpPackets","dnsQueries","qemuRestrictedUserNet"],
+              "required": ["captureSha256","dnsQueries","qemuRestrictedUserNet"],
+              "oneOf": [{"required":["externalIpv4TcpPackets"]},{"required":["externalTcpPackets"]}],
               "properties": {
                 "captureSha256": {"$ref":"#/$defs/hash"},
-                "externalTcpPackets": {"const":0},
+                "externalTcpPackets": {"const":0,"description":"Legacy IPv4-only count"},
+                "externalIpv4TcpPackets": {"const":0},
                 "qemuRestrictedUserNet": {"const":true}
               }
             },
@@ -257,6 +259,22 @@
               }
             }
           }
+        },
+        {
+          "if": {"properties":{"case":{"const":"infrastructure"}}},
+          "then": {"properties":{"new":{"properties":{"seed":{"properties":{"caseId":{"const":"infrastructure"}}}}}}}
+        },
+        {
+          "if": {"properties":{"case":{"const":"offline-tasks"}}},
+          "then": {"properties":{"new":{"properties":{"seed":{"properties":{"caseId":{"const":"offline-tasks"}}}}}}}
+        },
+        {
+          "if": {"properties":{"case":{"const":"restart"}}},
+          "then": {"properties":{"new":{"properties":{"seed":{"properties":{"caseId":{"const":"restart"}}}}}}}
+        },
+        {
+          "if": {"properties":{"case":{"const":"interrupted"}}},
+          "then": {"properties":{"new":{"properties":{"seed":{"properties":{"caseId":{"const":"interrupted"}}}}}}}
         }
       ]
     }

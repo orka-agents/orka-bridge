@@ -93,6 +93,7 @@ class FixtureTests(unittest.TestCase):
                 elif "create" in args:
                     doc = json.loads(kw["input"])
                     if doc['kind'] == 'Pod':
+                        self.assertEqual('Never', doc['spec']['containers'][0]['imagePullPolicy'])
                         account = doc['spec'].get('serviceAccountName')
                         self.assertTrue(account and any(d['kind'] == 'ServiceAccount' and d['metadata']['name'] == account for d in created), 'fixture must not race default ServiceAccount creation')
                     created.append(doc)

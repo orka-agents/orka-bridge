@@ -27,8 +27,11 @@ def member(archive, name):
 def docker_archive(component, source, output, reference):
     """Docker's classic store needs Docker-save, not an OCI-layout tar."""
     with tarfile.open(source / component['archive']) as incoming, tarfile.open(output, 'w') as outgoing:
-        manifest = read_json(member(incoming, 'blobs/sha256/' + component['manifestDigest'][7:]).read())
+        manifest_bytes = member(incoming, 'blobs/sha256/' + component['manifestDigest'][7:]).read()
+        require('sha256:' + hashlib.sha256(manifest_bytes).hexdigest() == component['manifestDigest'], 'node manifest identity mismatch')
+        manifest = read_json(manifest_bytes)
         config_bytes = member(incoming, 'blobs/sha256/' + component['configDigest'][7:]).read()
+        require('sha256:' + hashlib.sha256(config_bytes).hexdigest() == component['configDigest'], 'node config identity mismatch')
         config = read_json(config_bytes)
         layers = []
         for index, layer in enumerate(manifest['layers']):
@@ -70,6 +73,12 @@ def stage_bundle(lock, *, source, out):
         repository = 'docker.io/kindest/node' if name == 'kind-node' and row['repository'] == 'kindest/node' else row['repository']
         require(repository == components[name]['repository'] and all(row[k] == components[name][k] for k in ('manifestDigest', 'configDigest', 'indexDigest')), 'native image identity mismatch')
         inspect_archive(components[name], source, lock['architecture'])
+    destinations = ['install.json', 'inputs.json', 'node.docker.tar', manifest['chart']['path'], manifest['artifacts']['path'], *['tools/' + name for name in ('kmx', 'kind', 'helm', 'kubectl')]]
+    for name, row in rows:
+        destinations += ['components/' + name + '.oci.tar', *[row[key] for key in ('manifestPath', 'configPath', 'indexPath')]]
+    for name in destinations:
+        relative_path(name)
+    require(len(destinations) == len(set(destinations)), 'bundle destination collision')
     require(not out.exists(), 'bundle output already exists')
     out.mkdir(parents=True)
     (out / 'components').mkdir()
