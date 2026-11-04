@@ -145,9 +145,22 @@ fn control(
     session: &mut Session,
     system: &mut Linux,
     b: &BootDescriptor,
+    operations: &mut bridge_guest::engine::Operations<bridge_guest::engine::Kmx>,
+    staging: &mut bridge_guest::staging::Staging,
 ) -> io::Result<bool> {
     let r = read(io, session)?;
-    let (body, stop) = service::handle(system, b, &r);
+    let (body, stop) = if matches!(r.body, RequestBody::Readiness {} | RequestBody::Shutdown {}) {
+        service::handle(system, b, &r)
+    } else {
+        (
+            operations
+                .handle(staging, &r.body)
+                .unwrap_or(ResultBody::Error {
+                    code: ErrorCode::InvalidRequest,
+                }),
+            false,
+        )
+    };
     write(io, service::result(&r, body))?;
     Ok(stop)
 }
@@ -208,6 +221,11 @@ fn run(mode: &str) -> io::Result<()> {
         return Ok(());
     }
     let socket = socket.ok_or_else(early::invalid)?;
+    let mut operations = bridge_guest::engine::Operations::new(
+        "/var/lib/bridge/operations".into(),
+        bridge_guest::engine::Kmx,
+    )?;
+    let mut staging = bridge_guest::staging::Staging::new("/var/lib/bridge/snapshots".into())?;
     loop {
         let mut fds = [
             libc::pollfd {
@@ -229,7 +247,16 @@ fn run(mode: &str) -> io::Result<()> {
             }
             return Err(early::invalid());
         }
-        if fds[0].revents != 0 && control(&mut channel, &mut session, &mut system, b)? {
+        if fds[0].revents != 0
+            && control(
+                &mut channel,
+                &mut session,
+                &mut system,
+                b,
+                &mut operations,
+                &mut staging,
+            )?
+        {
             return Ok(());
         }
         if fds[1].revents & libc::POLLIN != 0 {
@@ -240,7 +267,16 @@ fn run(mode: &str) -> io::Result<()> {
             client.set_nonblocking(true)?;
             let mut local = Session::local(b.clone())?;
             // A bad local peer cannot poison the serial session or its request IDs.
-            if control(&mut client, &mut local, &mut system, b).unwrap_or(false) {
+            if control(
+                &mut client,
+                &mut local,
+                &mut system,
+                b,
+                &mut operations,
+                &mut staging,
+            )
+            .unwrap_or(false)
+            {
                 return Ok(());
             }
         }
@@ -249,7 +285,7 @@ fn run(mode: &str) -> io::Result<()> {
 fn main() {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     if args.len() == 1 && args[0] == "--help" {
-        println!("bridge-guest --early | --serve\nLinux guest only; fixed paths, no execution operations.");
+        println!("bridge-guest --early | --serve\nLinux guest only; fixed paths and typed kmx operations.");
         return;
     }
     if args.len() != 1 || (args[0] != "--early" && args[0] != "--serve") {

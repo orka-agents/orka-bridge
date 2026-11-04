@@ -149,6 +149,7 @@ dependencies = [
  "base64 0.23.1",
  "serde",
  "serde_json",
+ "sha2",
  "uuid",
 ]
 
@@ -2115,6 +2116,7 @@ name = "orka-bridge"
 version = "0.1.0"
 dependencies = [
  "bridge-runtime-protocol",
+ "libc",
  "semver",
  "serde",
  "serde_json",
