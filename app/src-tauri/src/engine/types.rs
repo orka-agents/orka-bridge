@@ -14,7 +14,23 @@ pub struct EngineRequest {
 pub enum EngineAction {
     // An empty struct, not a unit variant: serde then enforces unknown-field rejection.
     Version {},
-    ListAgents { context: String, namespace: String },
+    ListAgents {
+        #[serde(deserialize_with = "explicit_scope")]
+        context: String,
+        #[serde(deserialize_with = "explicit_scope")]
+        namespace: String,
+    },
+}
+
+// An empty selector must not silently become the helper's default scope.
+fn explicit_scope<'de, D: serde::Deserializer<'de>>(input: D) -> Result<String, D::Error> {
+    let value = String::deserialize(input)?;
+    if value.trim().is_empty() {
+        return Err(serde::de::Error::custom(
+            "An explicit nonempty scope is required.",
+        ));
+    }
+    Ok(value)
 }
 
 impl EngineAction {

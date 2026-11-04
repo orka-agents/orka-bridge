@@ -39,6 +39,12 @@ fn version_projects_only_validated_token_not_annotations_or_diagnostics() {
     assert!(!serde_json::to_string(&reply)
         .unwrap()
         .contains("SECRET_MARKER"));
+    assert_eq!(
+        serde_json::to_value(&reply).unwrap(),
+        serde_json::json!({
+            "kind": "version", "version": "v0.9.0-rc.6", "hasDiagnostics": true
+        })
+    );
 }
 
 #[test]
@@ -58,6 +64,13 @@ fn list_projects_identities_without_private_resource_fields() {
     assert!(!serde_json::to_string(&reply)
         .unwrap()
         .contains("SECRET_MARKER"));
+    assert_eq!(
+        serde_json::to_value(&reply).unwrap(),
+        serde_json::json!({
+            "kind": "agents", "agents": [{"name": "helper", "namespace": "demo", "uid": "uid-1"}],
+            "hasDiagnostics": true
+        })
+    );
 }
 #[test]
 fn real_empty_list_is_success_but_missing_null_and_truncated_are_not() {
@@ -185,6 +198,10 @@ fn request_schema_cannot_accept_executable_or_arbitrary_arguments() {
         r#"{"action":{"type":"shell","command":"SECRET_MARKER"}}"#,
         r#"{"action":{"type":"version"},"executable":"other"}"#,
         r#"{"action":{"type":"version","argv":["delete"]}}"#,
+        r#"{"action":{"type":"listAgents","context":"","namespace":"demo"}}"#,
+        r#"{"action":{"type":"listAgents","context":"team","namespace":""}}"#,
+        r#"{"action":{"type":"listAgents","context":"  ","namespace":"demo"}}"#,
+        r#"{"action":{"type":"listAgents","context":"team","namespace":"\t "}}"#,
     ] {
         assert!(serde_json::from_str::<EngineRequest>(bad).is_err());
     }
@@ -340,7 +357,15 @@ async fn process_nonzero_missing_and_output_bounds_fail_without_raw_diagnostics(
 async fn closing_engine_cancels_and_reaps_owned_process() {
     use bridge_engine::engine::process::ProcessTransport;
     let (tx, rx) = watch::channel(false);
-    let pid_path = fixture().with_file_name("blocked.pid");
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let pid_path = fixture().with_file_name(format!("blocked-{nonce}.pid"));
+    assert!(
+        !pid_path.exists(),
+        "readiness marker must belong to this invocation"
+    );
     let transport = ProcessTransport::new(fixture(), rx);
     let request = EngineRequest {
         action: EngineAction::ListAgents {
@@ -349,8 +374,13 @@ async fn closing_engine_cancels_and_reaps_owned_process() {
         },
     };
     let task = tokio::spawn(async move { transport.execute(request).await });
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while !pid_path.exists() {
+    let pid = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Ok(text) = std::fs::read_to_string(&pid_path) {
+                if let Ok(pid) = text.trim().parse::<u32>() {
+                    break pid;
+                }
+            }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
     })
@@ -365,12 +395,29 @@ async fn closing_engine_cancels_and_reaps_owned_process() {
     assert_eq!(err.kind, ErrorKind::Execution);
     #[cfg(unix)]
     {
-        let pid = std::fs::read_to_string(pid_path).unwrap();
         assert!(!Command::new("kill")
-            .args(["-0", pid.trim()])
+            .args(["-0", &pid.to_string()])
             .stderr(std::process::Stdio::null())
             .status()
             .unwrap()
             .success());
+    }
+    #[cfg(windows)]
+    {
+        let listing = Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
+            .output()
+            .unwrap();
+        assert!(listing.status.success());
+        assert!(
+            !String::from_utf8_lossy(&listing.stdout)
+                .lines()
+                .any(|line| {
+                    line.split(',')
+                        .nth(1)
+                        .is_some_and(|field| field.trim_matches('"') == pid.to_string())
+                }),
+            "cancelled child is still listed"
+        );
     }
 }
