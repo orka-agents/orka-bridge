@@ -183,6 +183,14 @@ class PackageTests(unittest.TestCase):
         self.assertFalse((self.root / "interrupted" / "manifest.json").exists())
         with self.assertRaises((ValueError, OSError)): package.verify(out / "manifest.json", out=out / "manifest.json")
 
+    def test_reconstruction_cannot_invalidate_its_own_package_directory(self):
+        out, _ = self.make()
+        original_names = {p.name for p in out.iterdir()}
+        with self.assertRaisesRegex(ValueError, "outside package"):
+            package.verify(out / "manifest.json", out=out / "restored.disk")
+        self.assertEqual({p.name for p in out.iterdir()}, original_names)
+        package.verify(out / "manifest.json")
+
     def test_verified_output_never_replaces_a_concurrently_created_file(self):
         out, _ = self.make()
         target = self.root / "raced.disk"
@@ -222,6 +230,12 @@ class PackageTests(unittest.TestCase):
         self.assertFalse(schema["additionalProperties"])
         self.assertIn("provisional", schema["$comment"].lower())
         self.assertEqual(schema["properties"]["schemaVersion"]["const"], m["schemaVersion"])
+        layouts = schema["properties"]["layout"]["properties"]
+        state = layouts["stateDisk"]
+        self.assertEqual(set(state["required"]), set(m["layout"]["stateDisk"]))
+        for field in ("role", "operation", "virtualCapacityBytes", "formatPolicy", "blockSerial"):
+            self.assertEqual(state["properties"][field]["const"], m["layout"]["stateDisk"][field])
+        self.assertEqual(layouts["osDisk"]["properties"]["virtualCapacityBytes"]["const"], 17179869184)
         package.verify(out / "manifest.json")
 
     def test_actual_cli_packages_and_verifies_without_network_or_traceback(self):

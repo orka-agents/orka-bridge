@@ -83,6 +83,11 @@ def validate_remote(p):
             and run["event"] in ("push", "workflow_dispatch"), "unqualified source run")
     require(run["repository"]["id"] == run["head_repository"]["id"] == p["repositoryId"],
             "fork/repository mismatch")
+    policy = gh(base + "/contents/images/guest/versions.json?ref=" + p["sourceCommit"])
+    raw_policy = (ROOT / "images/guest/versions.json").read_bytes()
+    # GitHub exposes Git blob identity; the manifest separately records policy SHA-256.
+    blob = hashlib.sha1(b"blob " + str(len(raw_policy)).encode() + b"\0" + raw_policy, usedforsecurity=False).hexdigest()
+    require(policy["type"] == "file" and policy["sha"] == blob, "builder/publisher version policy mismatch")
     artifact = gh(base + "/actions/artifacts/" + str(p["artifactId"]))
     require(artifact["id"] == p["artifactId"] and artifact["expired"] is False
             and artifact["digest"] == "sha256:" + p["artifactSha256"], "artifact mismatch")

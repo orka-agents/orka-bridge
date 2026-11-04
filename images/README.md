@@ -31,11 +31,12 @@ integrity checks against selected bytes, not signatures or source authenticity.
 The output directory must be new. A completed package has `manifest.json`,
 published only after all chunks finish. Interrupted output can remain partial;
 choose a fresh directory, not an overwrite. Verification rejects missing, extra,
-linked, reordered or damaged chunks, invalid gzip and mismatched measurements.
+symbolically linked, reordered or damaged chunks, invalid gzip and mismatched measurements.
 `--manifest-sha256` anchors verification to an independently selected manifest
 hash. Without that option, verification checks internal consistency only.
 Hash-only verification is the default and needs no second raw disk copy.
-Optional reconstructed output is finalized without replacing an existing file.
+Optional reconstructed output must be outside the package directory and is
+finalized without replacing an existing file.
 A failed reconstruction leaves `<destination>.partial` for inspection; retry with
 a fresh destination, rather than automatically deleting or trusting partial bytes.
 
@@ -94,7 +95,10 @@ A profile is a reviewed repository change, not workflow input that self-approves
 The empty policy rejects before any network call.
 
 The manually selected profile is checked on trusted `main`. Prepare has read
-permissions only. It validates run and artifact identities, cross-binds metadata
+permissions only. It first requires the builder commit's checked-in guest version
+policy to match the publisher's exact policy bytes, so policy-declared Kubernetes
+cannot silently refer to a different build policy. It validates run and artifact
+identities, cross-binds metadata
 to the same source and target, then streams the selected ZIP member directly
 into packaging. It never extracts a raw disk or runs downloaded code. Plan for
 ZIP plus compressed-package space; the draft roundtrip needs two compressed
@@ -105,7 +109,8 @@ Only the separate draft job has release-write permission. It requalifies the
 same bytes against prepare's manifest hash, serializes the image's derived tag,
 rejects existing tags and all matching releases including drafts, and checks its
 new draft is unique. Any tag appearing during the operation must point directly
-to the qualified source commit; other tag identities fail closed. Uploads never clobber. It redownloads through authenticated
+to the qualified source commit; other tag identities fail closed. Uploads never
+clobber. It redownloads through authenticated
 asset IDs and verifies against the original manifest hash. Failure leaves the
 draft for operator inspection, never silently retries or publishes it. A draft
 is not release approval. Freezing the schema, native boot results and a separate

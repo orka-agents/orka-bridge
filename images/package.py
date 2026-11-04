@@ -240,6 +240,7 @@ def verify(manifest_path, *, manifest_sha256=None, out=None):
     if out is not None:
         destination = Path(out)
         require(not destination.exists() and not destination.is_symlink(), "output already exists")
+        require(destination.parent.resolve() != manifest_path.parent.resolve(), "output must be outside package directory")
         partial = destination.with_name(destination.name + ".partial"); output = partial.open("xb")
     reader = ChunkReader(manifest_path.parent, a["chunks"])
     original, size = hashlib.sha256(), 0

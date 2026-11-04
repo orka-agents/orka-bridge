@@ -54,7 +54,14 @@ class QualificationTests(unittest.TestCase):
                              workflow_run=dict(id=456, repository_id=123,
                                                head_repository_id=123, head_sha="a" * 40))
 
+    def policy(self):
+        raw = (ROOT / "images/guest/versions.json").read_bytes()
+        return {"type": "file", "sha": hashlib.sha1(b"blob " + str(len(raw)).encode() + b"\0" + raw).hexdigest()}
+
     def api(self, endpoint, **kwargs):
+        if "/contents/images/guest/versions.json?ref=" in endpoint:
+            self.assertTrue(endpoint.endswith("ref=" + self.profile["sourceCommit"]))
+            return self.policy()
         if endpoint.endswith("/actions/runs/456"):
             return copy.deepcopy(self.run)
         if endpoint.endswith("/actions/artifacts/12"):
@@ -114,6 +121,17 @@ class QualificationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.q.validate_remote(self.profile)
             self.run[field] = previous
+
+    def test_builder_policy_mismatch_rejects_before_artifact_download(self):
+        api = self.api
+        def changed(endpoint, **kwargs):
+            if "/contents/" in endpoint:
+                return {"type": "file", "sha": "d" * 40}
+            return api(endpoint, **kwargs)
+        with patch.object(self.q, "gh", side_effect=changed) as calls:
+            with self.assertRaisesRegex(ValueError, "policy"):
+                self.q.validate_remote(self.profile)
+            self.assertFalse(any(c.args[0].endswith("/zip") for c in calls.call_args_list))
 
     def test_artifact_cannot_change_run_repo_source_digest_or_expiry(self):
         for field, value in (("id", 99), ("expired", True), ("digest", "sha256:" + "f" * 64)):
