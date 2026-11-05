@@ -86,7 +86,7 @@ def components_valid(c):
         names.append(tool["name"])
     require(names == sorted(set(names)) and "kind" in names, "invalid tool order or closure")
     kind = next(t for t in c["tools"] if t["name"] == "kind")
-    require(c["kind"] == {k: kind[k] for k in ("version", "sha256")}, "kind identity mismatch")
+    require(matches(kind["version"], VERSION) and c["kind"] == {k: kind[k] for k in ("version", "sha256")}, "kind identity mismatch")
 
 
 def validate_metadata(value):

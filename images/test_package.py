@@ -435,6 +435,28 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(layouts["osDisk"]["properties"]["virtualCapacityBytes"]["const"], 17179869184)
         package.verify(out / "manifest.json")
 
+    def test_system_parent_alias_is_not_a_linked_boot_file(self):
+        physical = self.root / "private-var"
+        physical.mkdir()
+        alias = self.root / "var"
+        alias.symlink_to(physical, target_is_directory=True)
+        inputs = boot_inputs(physical / "boot", self.meta, self.payload)
+        aliased = {name: alias / "boot" / path.name for name, path in inputs.items()}
+        output = alias / "package"
+        package.create(BoundedStream(self.payload), self.meta, output, **aliased)
+        package.verify(output / "manifest.json")
+        linked = alias / "linked.kernel"
+        linked.symlink_to(inputs["kernel"])
+        with self.assertRaisesRegex(ValueError, "linked"):
+            package.boot.regular(linked)
+
+    def test_kind_component_retains_version_grammar(self):
+        _, manifest = self.make()
+        manifest["components"]["kind"]["version"] = "kind version\nnot-a-version"
+        next(t for t in manifest["components"]["tools"] if t["name"] == "kind")["version"] = manifest["components"]["kind"]["version"]
+        with self.assertRaisesRegex(ValueError, "kind"):
+            package.validate_manifest(manifest)
+
     def test_root_package_import_does_not_require_guest_pythonpath(self):
         environment = dict(os.environ, PYTHONPATH="")
         result = subprocess.run([sys.executable, "-c", "from images import package; print(package.ROOT[-1])"],

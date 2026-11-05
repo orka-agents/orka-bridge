@@ -21,8 +21,8 @@ def tool_version(value):
 
 def regular(path):
     path = Path(path).absolute()
-    require(not any(p.is_symlink() for p in (path, *path.parents)) and path.is_file(), "missing or linked regular file")
-    return path
+    require(not path.is_symlink() and path.is_file(), "missing or linked regular file")
+    return path.resolve()
 
 
 def measured(path, record):
