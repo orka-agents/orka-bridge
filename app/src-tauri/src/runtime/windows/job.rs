@@ -1,4 +1,20 @@
-use std::io;
+use std::{
+    io,
+    sync::{Mutex, MutexGuard},
+};
+/// Cooperating app-owned spawns must not overlap a Win32 inheritable-handle window.
+pub fn spawn_guard() -> io::Result<MutexGuard<'static, ()>> {
+    static SPAWNS: Mutex<()> = Mutex::new(());
+    SPAWNS
+        .lock()
+        .map_err(|_| io::Error::other("process spawn coordinator poisoned"))
+}
+/// Release only after observed exit; otherwise quarantine all still-owned capabilities.
+pub fn release_bundle<T>(bundle: T, observed_stop: bool) {
+    if !observed_stop {
+        std::mem::forget(bundle);
+    }
+}
 pub fn owner_lock_error(e: io::Error) -> crate::runtime::types::RuntimeError {
     if matches!(e.raw_os_error(), Some(32 | 33)) {
         crate::runtime::types::RuntimeError::Busy
@@ -87,11 +103,14 @@ mod native {
     };
 
     pub struct OwnedQemuProcess {
-        pub(super) process: Arc<Handle>,
+        resources: Option<Resources>,
+    }
+    struct Resources {
+        process: Arc<Handle>,
         thread: Handle,
         job: Handle,
         stdio: Option<(File, File, File)>,
-        ownership: Arc<File>,
+        _ownership: Arc<File>,
         _inputs: Arc<VerifiedWindowsInputs>,
         _cwd: File,
     }
@@ -157,6 +176,9 @@ mod native {
         Ok((parent.into_file(), child))
     }
     impl OwnedQemuProcess {
+        fn resources(&self) -> &Resources {
+            self.resources.as_ref().expect("live process capability")
+        }
         /// Internal capability API. argv comes only from the fixed host launch builders.
         pub fn spawn_suspended(
             inputs: Arc<VerifiedWindowsInputs>,
@@ -198,6 +220,8 @@ mod native {
                     (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
                     size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
                 ))?;
+                // Declared first so it is released after every temporary inheritable handle.
+                let _spawn_guard = spawn_guard()?;
                 let (stdin, child_in) = anonymous(true)?;
                 let (stdout, child_out) = anonymous(false)?;
                 let (stderr, child_err) = anonymous(false)?;
@@ -264,13 +288,15 @@ mod native {
                     &mut info,
                 ))?;
                 let process = Self {
-                    process: Arc::new(Handle::new(info.hProcess)?),
-                    thread: Handle::new(info.hThread)?,
-                    job,
-                    stdio: Some((stdin, stdout, stderr)),
-                    ownership,
-                    _inputs: inputs,
-                    _cwd: cwd_file,
+                    resources: Some(Resources {
+                        process: Arc::new(Handle::new(info.hProcess)?),
+                        thread: Handle::new(info.hThread)?,
+                        job,
+                        stdio: Some((stdin, stdout, stderr)),
+                        _ownership: ownership,
+                        _inputs: inputs,
+                        _cwd: cwd_file,
+                    }),
                 };
                 // Exercise the same postcondition/cleanup gate as the injected tests.
                 create_verified(
@@ -278,7 +304,11 @@ mod native {
                     |_| Ok(process),
                     |p| {
                         let mut inside = 0;
-                        check(IsProcessInJob(p.process.0, p.job.0, &mut inside))?;
+                        check(IsProcessInJob(
+                            p.resources().process.0,
+                            p.resources().job.0,
+                            &mut inside,
+                        ))?;
                         Ok(inside != 0)
                     },
                     |p| p.abort(),
@@ -287,7 +317,7 @@ mod native {
         }
         pub fn resume(&self) -> io::Result<()> {
             unsafe {
-                if ResumeThread(self.thread.0) == u32::MAX {
+                if ResumeThread(self.resources().thread.0) == u32::MAX {
                     Err(io::Error::last_os_error())
                 } else {
                     Ok(())
@@ -295,20 +325,23 @@ mod native {
             }
         }
         pub fn take_stdio(&mut self) -> io::Result<(File, File, File)> {
-            self.stdio
+            self.resources
+                .as_mut()
+                .expect("live process capability")
+                .stdio
                 .take()
                 .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))
         }
         pub fn process_handle(&self) -> Arc<Handle> {
-            self.process.clone()
+            self.resources().process.clone()
         }
         pub fn exited(&self) -> bool {
-            unsafe { WaitForSingleObject(self.process.0, 0) == WAIT_OBJECT_0 }
+            unsafe { WaitForSingleObject(self.resources().process.0, 0) == WAIT_OBJECT_0 }
         }
         pub fn wait_exit(&self, timeout: Duration) -> io::Result<()> {
             unsafe {
                 match WaitForSingleObject(
-                    self.process.0,
+                    self.resources().process.0,
                     timeout.as_millis().min(u32::MAX as u128 - 1) as u32,
                 ) {
                     WAIT_OBJECT_0 => Ok(()),
@@ -322,15 +355,16 @@ mod native {
                 return Ok(());
             }
             unsafe {
-                check(TerminateJobObject(self.job.0, 1))?;
+                check(TerminateJobObject(self.resources().job.0, 1))?;
             }
             self.wait_exit(Duration::from_secs(45))
         }
     }
     impl Drop for OwnedQemuProcess {
         fn drop(&mut self) {
-            if self.abort().is_err() {
-                std::mem::forget(self.ownership.clone());
+            let observed_stop = self.abort().is_ok();
+            if let Some(resources) = self.resources.take() {
+                release_bundle(resources, observed_stop);
             }
         }
     }

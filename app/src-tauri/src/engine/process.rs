@@ -34,20 +34,25 @@ impl EngineTransport for ProcessTransport {
             if *closed.borrow() {
                 return Err(EngineError::cancelled());
             }
-            let mut child = Command::new(&self.path)
-                .args(request.action.argv())
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-                .map_err(|error| {
-                    EngineError::new(if error.kind() == std::io::ErrorKind::NotFound {
-                        ErrorKind::Unavailable
-                    } else {
-                        ErrorKind::Execution
-                    })
-                })?;
+            let mut child = {
+                #[cfg(windows)]
+                let _spawn_guard = crate::runtime::windows::job::spawn_guard()
+                    .map_err(|_| EngineError::new(ErrorKind::Execution))?;
+                Command::new(&self.path)
+                    .args(request.action.argv())
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+            }
+            .map_err(|error| {
+                EngineError::new(if error.kind() == std::io::ErrorKind::NotFound {
+                    ErrorKind::Unavailable
+                } else {
+                    ErrorKind::Execution
+                })
+            })?;
             let stdout = child.stdout.take().expect("piped stdout");
             let stderr = child.stderr.take().expect("piped stderr");
             // Drain both pipes concurrently. On either bound/error, drop readers,

@@ -98,10 +98,10 @@ pub fn launch_argv(
     pair("-kernel", inputs.paths.kernel.clone().into_os_string());
     pair("-initrd", inputs.paths.initrd.clone().into_os_string());
     pair("-append", inputs.boot.command_line.clone().into());
-    pair(
-        "-serial",
-        format!("file:{}", qemu_value(&spec.root.join("boot.log"))?).into(),
-    );
+    // Legacy -serial file: consumes a literal path, unlike -drive key/value syntax.
+    let mut serial = OsString::from("file:");
+    serial.push(spec.root.join("boot.log"));
+    pair("-serial", serial);
     for (id, path) in [
         ("os", spec.root.join("os.disk")),
         ("state", spec.state_path.clone()),

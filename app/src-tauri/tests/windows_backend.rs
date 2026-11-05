@@ -95,6 +95,49 @@ fn unconfirmed_stop_quarantines_child_capability() {
     assert!(!released.load(std::sync::atomic::Ordering::SeqCst));
 }
 
+#[test]
+fn unconfirmed_teardown_retains_the_entire_capability_bundle() {
+    use bridge_engine::runtime::windows::job::release_bundle;
+    struct Capability(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for Capability {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    for observed in [false, true] {
+        let flags: Vec<_> = (0..4)
+            .map(|_| std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)))
+            .collect();
+        let bundle: Vec<_> = flags.iter().cloned().map(Capability).collect();
+        release_bundle(bundle, observed);
+        assert!(flags
+            .iter()
+            .all(|f| f.load(std::sync::atomic::Ordering::SeqCst) == observed));
+    }
+}
+#[test]
+fn concurrent_app_spawns_serialize_the_inheritable_handle_window() {
+    use bridge_engine::runtime::windows::job::spawn_guard;
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let guard = spawn_guard().unwrap();
+    let other = std::thread::spawn(move || {
+        ready_tx.send(()).unwrap();
+        let _guard = spawn_guard().unwrap();
+        entered_tx.send(()).unwrap();
+    });
+    ready_rx.recv().unwrap();
+    assert!(matches!(
+        entered_rx.recv_timeout(std::time::Duration::from_millis(30)),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+    ));
+    drop(guard);
+    entered_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    other.join().unwrap();
+}
+
 // Hand-checked SHA256 of "abc"; fixtures never contain an executable or guest disk.
 const SHA: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 fn fixture() -> (TempDir, ReviewedWindowsPin, WindowsInputPaths) {
@@ -198,7 +241,7 @@ fn runtime_exe_or_dll_changed_before_launch_refuses() {
 fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
     let (t, pin, paths) = fixture();
     let inputs = verify_windows_inputs(&pin, paths).unwrap();
-    let root = t.path().join("install");
+    let root = t.path().join("install,é space");
     fs::create_dir(&root).unwrap();
     let spec = LaunchSpec {
         installation_id: Uuid::new_v4(),
@@ -218,6 +261,10 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
     assert_eq!(
         value("-append"),
         "root=UUID=22222222-2222-4222-8222-222222222222 ro console=ttyS0,115200n8 noresume"
+    );
+    assert_eq!(
+        value("-serial"),
+        format!("file:{}", spec.root.join("boot.log").display())
     );
     assert_eq!(value("-accel"), "whpx");
     assert_eq!(value("-qmp"), "stdio");
