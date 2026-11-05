@@ -116,7 +116,7 @@ mod native {
             let mut found = 0;
             let mut jobs = 0;
             let mut canaries = 0;
-            for _ in 0..8192 {
+            for index in 0..8192 {
                 let mut entry: PSS_HANDLE_ENTRY = zeroed();
                 let e = PssWalkSnapshot(
                     s.0,
@@ -133,12 +133,29 @@ mod native {
                 if e != 0 {
                     return Err(io::Error::from_raw_os_error(e as i32));
                 }
-                check(entry.Flags & PSS_HANDLE_HAVE_TYPE != 0)?;
+                // HAVE_TYPE validates ObjectType's small enum, not TypeName.
+                // Files and Jobs are not in that enum. Classify their actual
+                // names; never accept an unavailable type or File name.
                 let kind = text(entry.TypeName, entry.TypeNameLength)?;
+                let name = text(entry.ObjectName, entry.ObjectNameLength)?;
+                if index < 12
+                    || name.to_lowercase().ends_with("\\owner.lock")
+                    || name.to_lowercase().ends_with("\\unrelated-canary")
+                {
+                    eprintln!(
+                        "PSS entry flags={:#x} enum={} kind={kind:?} name={name:?}",
+                        entry.Flags, entry.ObjectType
+                    );
+                }
+                if kind.is_empty() || (kind == "File" && entry.Flags & PSS_HANDLE_HAVE_NAME == 0) {
+                    return Err(io::Error::other(format!(
+                        "snapshot lacks type/File name: flags={:#x}, kind={kind:?}",
+                        entry.Flags
+                    )));
+                }
                 if kind == "Job" {
                     jobs += 1
                 }
-                let name = text(entry.ObjectName, entry.ObjectNameLength)?;
                 if name.to_lowercase().ends_with("\\unrelated-canary") {
                     canaries += 1;
                 }
@@ -167,7 +184,11 @@ mod native {
     fn inherited_guard(process: HANDLE, original: &File) -> io::Result<Value> {
         let expected = runtime::identity::file_identity(original).map_err(io::Error::other)?;
         let v = handle_snapshot(process, &expected)?;
-        check(v["guardCopies"] == 1 && v["inheritedJobs"] == 0 && v["unrelatedCanaries"] == 0)?;
+        if v["guardCopies"] != 1 || v["inheritedJobs"] != 0 || v["unrelatedCanaries"] != 0 {
+            return Err(io::Error::other(format!(
+                "inherited inventory differs: {v}"
+            )));
+        }
         Ok(v)
     }
     fn creation_time(process: HANDLE) -> io::Result<u64> {
