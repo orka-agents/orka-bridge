@@ -450,6 +450,17 @@ class PackageTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "linked"):
             package.boot.regular(linked)
 
+    def test_standalone_verification_binds_endpoint_to_component_tool(self):
+        for missing in (False, True):
+            out, manifest = self.make("endpoint-" + str(missing))
+            if missing:
+                manifest["components"]["tools"] = [t for t in manifest["components"]["tools"] if t["name"] != "bridge-guest"]
+            else:
+                manifest["directBoot"]["provenance"]["endpointSha256"] = "f" * 64
+            self.save(out, manifest)
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, "endpoint"):
+                package.verify(out / "manifest.json")
+
     def test_kind_component_retains_version_grammar(self):
         _, manifest = self.make()
         manifest["components"]["kind"]["version"] = "kind version\nnot-a-version"

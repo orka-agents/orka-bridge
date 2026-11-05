@@ -61,6 +61,7 @@ def validate(direct, architecture, stem, tools):
     extraction = direct["provenance"]["extractionTools"]
     require(isinstance(extraction, list) and len(extraction) == 4, "missing extraction tools")
     selected = {t["name"]: t for t in tools}
+    require(selected.get("bridge-guest", {}).get("sha256") == direct["provenance"]["endpointSha256"], "endpoint component identity mismatch")
     for tool in extraction:
         shape(tool, ("name", "version", "executableSha256"))
         require(tool["name"] in selected and tool_version(tool["version"])
