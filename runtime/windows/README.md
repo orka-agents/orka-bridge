@@ -62,7 +62,7 @@ passthrough, plugins, TCG, Rust and unneeded default features are disabled.
 WHPX, slirp, tools, zstd and pixman are required. Effective Meson options and
 compiled configuration are checked; unknown states are not treated as disabled.
 
-The producer copies the three executables and recursively inspects their actual
+The producer copies the two executables and recursively inspects their actual
 PE imports using the locked objdump. Every non-system DLL must resolve uniquely
 inside the locked UCRT64 prefix and have a selected package/source/notice owner.
 System DLLs and API sets are explicit and are never copied. It does not copy an
