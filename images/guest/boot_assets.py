@@ -14,8 +14,9 @@ from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from guest import build
-from guest.boot_inspect import (
+    __package__ = "guest"
+from . import build
+from .boot_inspect import (
     DRIVERS,
     ENDPOINT_TOOLS,
     compare_guest_file,
@@ -23,7 +24,7 @@ from guest.boot_inspect import (
     module_identity,
     rooted_file,
 )
-from guest.lock import (
+from .lock import (
     checked_file,
     file_hash,
     load_lock,

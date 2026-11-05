@@ -24,8 +24,13 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
+      - name: Install schema-test validator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-jsonschema
+          /usr/bin/python3 -c 'import jsonschema'
       - name: Test without network
-        run: sudo unshare --net sh -c 'PYTHONPATH=images python3 -m unittest discover -s images -p "test_*.py" -v'
+        run: sudo unshare --net sh -c 'PYTHONPATH=images /usr/bin/python3 -m unittest discover -s images -p "test_*.py" -v'
 
   prepare:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'orka-agents/orka-bridge'
