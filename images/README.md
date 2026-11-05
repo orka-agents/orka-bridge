@@ -3,7 +3,9 @@
 Bridge image bytes stay separate from the desktop app. These standard-library
 Python tools package one supplied OS disk, verify its chunks, and define a gated
 manual workflow for **draft** release assets. They do not build a disk or VM.
-Python 3.11 or newer is required; there are no Python package dependencies.
+The packaging tools require only Python 3.11 or newer. Schema regression tests
+also use the development-only `jsonschema` validator (`python3-jsonschema` on
+Ubuntu), installed before CI enters the network-disabled test step.
 
 **`bridge-image/v2` is provisional.** The native-runtime owner must accept this
 mapping before it is frozen. `publisher-policy.json` intentionally contains no

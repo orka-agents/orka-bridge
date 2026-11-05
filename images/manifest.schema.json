@@ -19,7 +19,15 @@
         },
         "kernelRelease": {"type": "string", "pattern": "^[A-Za-z0-9._+-]{1,96}-(arm64|amd64)$"},
         "commandLine": {"type": "string", "pattern": "^root=UUID=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12} ro console=(hvc0|ttyS0,115200n8) noresume$"},
-        "requiredDrivers": {"type": "array", "minItems": 6, "maxItems": 6, "uniqueItems": true, "items": {
+        "requiredDrivers": {"type": "array", "minItems": 6, "maxItems": 6, "uniqueItems": true,
+          "allOf": [
+            {"contains": {"properties": {"name": {"const": "virtio_pci"}}, "required": ["name"]}},
+            {"contains": {"properties": {"name": {"const": "virtio_blk"}}, "required": ["name"]}},
+            {"contains": {"properties": {"name": {"const": "virtio_console"}}, "required": ["name"]}},
+            {"contains": {"properties": {"name": {"const": "virtio_rng"}}, "required": ["name"]}},
+            {"contains": {"properties": {"name": {"const": "virtio_net"}}, "required": ["name"]}},
+            {"contains": {"properties": {"name": {"const": "ext4"}}, "required": ["name"]}}
+          ], "items": {
           "type": "object", "additionalProperties": false, "required": ["name", "builtIn"],
           "properties": {"name": {"enum": ["virtio_pci", "virtio_blk", "virtio_console", "virtio_rng", "virtio_net", "ext4"]}, "builtIn": {"type": "boolean"}}
         }},
@@ -32,7 +40,13 @@
             "kernelConfigSha256": {"$ref": "#/$defs/hex"}, "modulesSha256": {"$ref": "#/$defs/hex"},
             "endpointSha256": {"$ref": "#/$defs/hex"}, "earlyHookSha256": {"$ref": "#/$defs/hex"},
             "buildHookSha256": {"$ref": "#/$defs/hex"}, "extractorSha256": {"$ref": "#/$defs/hex"}, "inspectorSha256": {"$ref": "#/$defs/hex"},
-            "extractionTools": {"type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true, "items": {
+            "extractionTools": {"type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true,
+              "allOf": [
+                {"contains": {"properties": {"name": {"const": "guestfish"}}, "required": ["name"]}},
+                {"contains": {"properties": {"name": {"const": "unmkinitramfs"}}, "required": ["name"]}},
+                {"contains": {"properties": {"name": {"const": "readelf"}}, "required": ["name"]}},
+                {"contains": {"properties": {"name": {"const": "dpkg-query"}}, "required": ["name"]}}
+              ], "items": {
               "type": "object", "additionalProperties": false, "required": ["name", "version", "executableSha256"],
               "properties": {"name": {"enum": ["guestfish", "unmkinitramfs", "readelf", "dpkg-query"]}, "version": {"$ref": "#/$defs/toolVersion"}, "executableSha256": {"$ref": "#/$defs/hex"}}
             }}
