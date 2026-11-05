@@ -805,7 +805,9 @@ mod tests {
         );
     }
     #[test]
-    fn credentials_metadata_never_follows_a_symlink() {
+    fn credentials_metadata_rejects_symlink_and_missing_paths() {
+        // This unprivileged fixture tests combined refusal, not an isolated
+        // mutation from symlink_metadata to metadata with matching root ownership.
         let temp = tempfile::tempdir().unwrap();
         let real = temp.path().join("real");
         fs::create_dir(&real).unwrap();

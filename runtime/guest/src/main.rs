@@ -643,9 +643,22 @@ mod tests {
             })
             .is_err()
         );
-        assert!(budgets.len() > 1);
+        // Descheduling may consume the budget before any poll or during the
+        // first sleep. Zero or one poll is valid; expiry must still use this deadline.
         assert!(budgets.windows(2).all(|p| p[1] <= p[0]));
         assert!(Instant::now() >= deadline);
+    }
+    #[test]
+    fn expired_initial_hello_deadline_never_polls() {
+        assert!(wait_with(
+            CTX,
+            -1,
+            libc::POLLOUT,
+            Instant::now() - Duration::from_secs(1),
+            true,
+            |_, _| { panic!("an expired deadline must not poll") }
+        )
+        .is_err());
     }
     struct TestWriter {
         bytes: Vec<u8>,
