@@ -18,6 +18,7 @@ libc = "=0.2.191"
 tauri = { version = "=2.12.5", features = [] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
+sha2 = "=0.10.9"
 semver = "=1.0.28"
 bridge-runtime-protocol = { path = "../../runtime/protocol" }
 tokio = { version = "=1.54.1", features = ["process", "io-util", "sync", "rt", "macros"] }

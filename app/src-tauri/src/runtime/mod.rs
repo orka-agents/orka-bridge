@@ -3,6 +3,7 @@ pub mod identity;
 pub mod journal;
 pub mod snapshot;
 pub mod types;
+pub mod windows;
 pub mod wire;
 
 use bridge_runtime_protocol::*;
