@@ -348,7 +348,9 @@ class BootAssetTests(unittest.TestCase):
     def test_xz_module_stream_errors_and_bounds_are_refused(self):
         inspect = importlib.import_module("guest.boot_inspect")
         valid = lzma.compress(b"selected module")
-        cases = ((b"invalid", 1024, "invalid XZ"), (valid[:-4], 1024, "incomplete"),
+        cases = ((b"invalid", 1024, "XZ kernel module"),
+                 (lzma.compress(b"selected module", format=lzma.FORMAT_ALONE), 1024, "invalid XZ"),
+                 (valid[:-4], 1024, "incomplete"),
                  (valid + b"trailing", 1024, "trailing"), (valid, 16, "compressed module exceeds"),
                  (lzma.compress(b"A" * 1024), 100, "oversized"))
         archive = self.root / "module.tar"

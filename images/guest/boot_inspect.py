@@ -88,7 +88,7 @@ def module_hashes(archive, rows, requested):
                 compressed = stream.read(MAX_MODULE_BYTES + 1)
             require(len(compressed) <= MAX_MODULE_BYTES, "compressed module exceeds bound")
             try:
-                decoder = lzma.LZMADecompressor(memlimit=256 * 1024**2)
+                decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=256 * 1024**2)
                 data = decoder.decompress(compressed, max_length=MAX_MODULE_BYTES + 1)
             except lzma.LZMAError as error:
                 raise ValueError("invalid XZ kernel module") from error
