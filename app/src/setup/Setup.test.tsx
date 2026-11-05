@@ -79,6 +79,8 @@ test('save failures do not mark the choice saved and never render rejected paths
   await screen.findByText('Native setup available');
   await user.click(screen.getByRole('radio', { name: /Local VM/ }));
   expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(screen.getByText('Setup choice unavailable.')).toBeTruthy();
+  expect(screen.queryByText('No runtime selected.')).toBeNull();
   expect(screen.queryByText('Local VM selected.')).toBeNull();
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
 });
@@ -90,6 +92,8 @@ test('a failed initial read can be checked again without changing the saved choi
     : Promise.reject({ kind: 'unavailable' }));
   const user = userEvent.setup(); render(<App />);
   expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(screen.getByText('Setup choice unavailable.')).toBeTruthy();
+  expect(screen.queryByText('No runtime selected.')).toBeNull();
   expect(screen.queryByText('Local VM selected.')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   expect(await screen.findByText('Local VM selected.')).toBeTruthy();

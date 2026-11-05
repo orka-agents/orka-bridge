@@ -25,7 +25,7 @@ export default function Setup() {
     const result = await selectLocal();
     if (request !== epoch.current) return;
     if (result.ok) setStatus(result.status);
-    else setError(result.message);
+    else { setStatus(undefined); setError(result.message); }
     setBusy(false);
   }
   return (
@@ -43,8 +43,8 @@ export default function Setup() {
             <span>Existing cluster<span className="muted choice-detail">Not available yet. No connection will be attempted.</span></span>
           </label>
         </fieldset>
-        <p role="status">{busy ? 'Checking the setup choice…' : status?.selected === 'localVm'
-          ? 'Local VM selected.' : 'No runtime selected.'}</p>
+        <p role="status">{busy ? 'Checking the setup choice…' : !status ? 'Setup choice unavailable.'
+          : status.selected === 'localVm' ? 'Local VM selected.' : 'No runtime selected.'}</p>
         {status && <div className="setup-availability">
           <h3>Native setup available</h3>
           <p className="muted">VM integration is not included in this build.</p>
