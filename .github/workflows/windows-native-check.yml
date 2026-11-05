@@ -142,6 +142,15 @@ jobs:
             # Apply shared read rights BEFORE the probe creates its private case root.
             # Never recursively grant access to that private root after the test.
             Grant-Access $env:NATIVE_STAGE @('*S-1-5-18:(OI)(CI)(F)', '*S-1-5-32-544:(OI)(CI)(F)', '*S-1-5-32-545:(OI)(CI)(RX)')
+            # This new CI payload is staged by runneradmin, unlike an operator's
+            # own extraction. Give only the test SID explicit RX on every existing
+            # payload file before private case creation; never repair a pipe ACL.
+            $payload = Join-Path $env:NATIVE_STAGE 'runtime'
+            foreach ($path in @($env:NATIVE_STAGE, $payload, (Join-Path $payload 'bin/qemu-system-x86_64.exe'), (Join-Path $env:SystemRoot 'System32/ntdll.dll'))) {
+              Write-Output ("Pre-test ACL: " + $path + ' ' + (Get-Acl -LiteralPath $path).Sddl)
+            }
+            & icacls.exe $env:NATIVE_STAGE /grant:r ("*" + $user.SID.Value + ':(OI)(CI)(RX)') /T | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot grant exact test SID read/execute on staged payload' }
             $parent = Join-Path $env:NATIVE_STAGE 'work'
             New-Item -ItemType Directory -Path $parent -ErrorAction Stop | Out-Null
             Grant-Access $parent @('*S-1-5-18:(OI)(CI)(F)', '*S-1-5-32-544:(OI)(CI)(F)', ("*" + $user.SID.Value + ':(OI)(CI)(F)'))
