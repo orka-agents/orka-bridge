@@ -63,6 +63,10 @@ class BootAssetTests(unittest.TestCase):
         (self.initrd / "lib").mkdir()
         (self.initrd / "lib/libfixture.so").write_bytes(b"ELF dependency")
         self.files["/lib/libfixture.so"] = b"ELF dependency"
+        self.files["/lib/fixture-loader"] = b"ELF loader"
+        loader = self.initrd / "lib/fixture-loader"
+        loader.write_bytes(self.files["/lib/fixture-loader"])
+        loader.chmod(0o755)
         self.modules = {"modules.dep": b"", "modules.builtin": b""}
         self.image = self.root / "os.qcow2"
         self.image.write_bytes(b"final payload")
@@ -119,7 +123,7 @@ class BootAssetTests(unittest.TestCase):
             return ""
         if name == "readelf" and args[1] != "--version":
             self.assertEqual({"LC_ALL": "C"}, env)
-            return " (NEEDED) Shared library: [libfixture.so]\n" if Path(args[-1]).read_bytes().startswith(b"ELF tool") else ""
+            return " (NEEDED) Shared library: [libfixture.so]\n[Requesting program interpreter: /lib/fixture-loader]\n" if Path(args[-1]).read_bytes().startswith(b"ELF tool") else ""
         return "fixture-version"
 
     def extract(self):
@@ -348,6 +352,11 @@ class BootAssetTests(unittest.TestCase):
         path = "/boot/grub/grub.cfg"
         self.files[path] = self.files[path].replace(b'set default="0"', b'if [ "${next_entry}" ]; then\nset default="${next_entry}"\nelse\nset default="0"\nfi')
         self.assertTrue(self.extract()["kernel"])
+
+    def test_elf_interpreter_requires_execute_but_shared_library_does_not(self):
+        (self.initrd / "lib/fixture-loader").chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "executable"):
+            self.extract()
 
     def test_guestfish_interface_is_read_only(self):
         with patch.object(self.api, "run", return_value="root") as run:

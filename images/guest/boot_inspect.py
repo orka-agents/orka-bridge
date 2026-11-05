@@ -84,7 +84,7 @@ def dependencies(root, executable, architecture, readelf, run):
             candidates = [name] if name.startswith("/") else [d + "/" + name for d in directories]
             for path in candidates:
                 try:
-                    file = rooted_file(root, path)
+                    file = rooted_file(root, path, executable=name in interpreters)
                 except FileNotFoundError:
                     continue
                 if file not in found:
