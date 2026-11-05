@@ -1,11 +1,97 @@
 """Offline recipe checks; actual disk/daemon evidence comes from the base boot."""
 import importlib
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from .fixtures import lock
+
+HOOK = Path(__file__).resolve().parents[1] / "rootfs/initramfs/hooks/bridge-state"
+HOOK_FUNCTIONS = ". /usr/share/initramfs-tools/hook-functions"
+# initramfs-tools' copy_exec with sources under $HOST: a /bin or /sbin target
+# is usr-merged, and an existing target is kept but still reported as success.
+COPY_EXEC = r'''
+copy_exec() {
+    src=$1
+    case $src in "$HOST"/*) ;; *) src=$HOST$src ;; esac
+    target=${2:-$1}
+    case $target in /bin/*|/sbin/*) target=/usr$target ;; esac
+    [ -f "$src" ] || return 1
+    [ -e "$DESTDIR$target" ] && return 0
+    mkdir -p "$DESTDIR${target%/*}"
+    cp "$src" "$DESTDIR$target"
+}
+manual_add_modules() { :; }
+readlink() { command readlink "$1" "$HOST$2"; }
+'''
+# Endpoint path -> canonical util-linux/e2fsprogs file on a usr-merged guest.
+ENDPOINT_TOOLS = {"/sbin/blkid": "usr/sbin/blkid", "/sbin/blockdev": "usr/sbin/blockdev", "/sbin/mkfs.ext4": "usr/sbin/mke2fs",
+                  "/bin/mount": "usr/bin/mount", "/usr/bin/findmnt": "usr/bin/findmnt"}
+
+
+class InitramfsHookTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name).resolve()
+        self.host, self.dest = root / "host", root / "initramfs"
+        for tree in (self.host, self.dest):
+            for name in ("bin", "sbin"):
+                (tree / "usr" / name).mkdir(parents=True)
+                (tree / name).symlink_to("usr/" + name)
+        (self.host / "usr/lib/bridge").mkdir(parents=True)
+        for name in [*ENDPOINT_TOOLS.values(), "usr/lib/bridge/bridge-guest"]:
+            (self.host / name).write_bytes(b"guest " + name.encode())
+        (self.host / "usr/sbin/mkfs.ext4").symlink_to("mke2fs")
+
+    def run_hook(self, functions=COPY_EXEC, destdir=True):
+        hook = HOOK.read_text()
+        self.assertIn(HOOK_FUNCTIONS, hook)
+        env = {"PATH": os.environ["PATH"], "HOST": str(self.host)}
+        if destdir:
+            env["DESTDIR"] = str(self.dest)
+        return subprocess.run(["/bin/sh", "-c", hook.replace(HOOK_FUNCTIONS, functions), "hook"], env=env,
+                              capture_output=True, text=True, timeout=10, check=False)
+
+    def assert_endpoint_tools(self):
+        for path, source in ENDPOINT_TOOLS.items():
+            installed = self.dest / path.lstrip("/")
+            self.assertFalse(installed.is_symlink(), path)
+            self.assertEqual((self.host / source).read_bytes(), installed.read_bytes(), path)
+
+    def test_klibc_mount_is_replaced_without_busybox(self):
+        # klibc-utils' hook runs first and its mount has no --bind.
+        (self.dest / "usr/bin/mount").write_bytes(b"klibc mount")
+        result = self.run_hook()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assert_endpoint_tools()
+
+    def test_busybox_applets_are_replaced_without_changing_busybox(self):
+        busybox = self.dest / "usr/bin/busybox"
+        busybox.write_bytes(b"busybox")
+        for applet in ("usr/bin/mount", "usr/sbin/blockdev", "usr/sbin/blkid", "usr/sbin/mke2fs"):
+            os.link(busybox, self.dest / applet)
+        result = self.run_hook()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assert_endpoint_tools()
+        self.assertEqual(b"busybox", busybox.read_bytes())
+        self.assertEqual(b"busybox", (self.dest / "usr/sbin/mke2fs").read_bytes())
+
+    def test_endpoint_tool_that_is_not_installed_fails_build(self):
+        skipped = COPY_EXEC.replace('[ -e "$DESTDIR$target" ] && return 0', 'case $target in /usr/bin/mount) return 0 ;; esac')
+        result = self.run_hook(skipped)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("E: bridge-state: /bin/mount", result.stderr)
+
+    def test_missing_destdir_never_touches_builder_paths(self):
+        trace = self.host / "trace"
+        recorded = 'copy_exec() { echo "copy $*" >> "$HOST/trace"; }\nrm() { echo "rm $*" >> "$HOST/trace"; }\nreadlink() { echo "$2"; }\nmanual_add_modules() { :; }\n'
+        result = self.run_hook(recorded, destdir=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn("rm ", trace.read_text() if trace.exists() else "")
 
 
 class BuildTests(unittest.TestCase):
@@ -132,6 +218,17 @@ class BuildTests(unittest.TestCase):
         self.api.stage_rootfs(self.value, source=self.root, out=self.root / "overlay")
         names = [str(p.relative_to(self.root / "overlay")) for p in (self.root / "overlay").rglob("*")]
         self.assertFalse(any("reference-seed" in n or "reference-check" in n for n in names))
+
+    def test_cloud_init_masks_cover_current_and_legacy_units(self):
+        expected = {"cloud-init-main.service", "cloud-init-network.service", "cloud-init.service",
+                    "cloud-init-local.service", "cloud-config.service", "cloud-final.service"}
+        prefix = "run-command systemctl mask "
+        for architecture in ("amd64", "arm64"):
+            with self.subTest(architecture=architecture):
+                commands = self.api.customize_commands([], architecture)
+                masks = [command.removeprefix(prefix).split() for command in commands if command.startswith(prefix)]
+                self.assertEqual(1, len(masks))
+                self.assertEqual(expected, {unit for unit in masks[0] if unit.startswith("cloud-")})
 
     def test_assembly_command_is_offline_and_never_uses_apt(self):
         self.assertTrue(callable(getattr(self.api, "customize_commands", None)))

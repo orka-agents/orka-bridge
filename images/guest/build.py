@@ -175,7 +175,7 @@ def customize_commands(packages, architecture):
         "run-command printf '#!/bin/sh\\nexit 101\\n' > /usr/sbin/policy-rc.d; chmod 755 /usr/sbin/policy-rc.d",
         "run-command DEBIAN_FRONTEND=noninteractive dpkg --force-confold -i /var/cache/bridge-packages/*.deb",
         "run-command rm /usr/sbin/policy-rc.d; rm -rf /var/cache/bridge-packages",
-        "run-command systemctl mask cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service ssh.service ssh.socket serial-getty@.service getty@.service swap.target systemd-hibernate.service systemd-hybrid-sleep.service systemd-coredump.socket systemd-machine-id-commit.service systemd-suspend-then-hibernate.service",
+        "run-command systemctl mask cloud-init-main.service cloud-init-network.service cloud-init.service cloud-init-local.service cloud-config.service cloud-final.service ssh.service ssh.socket serial-getty@.service getty@.service swap.target systemd-hibernate.service systemd-hybrid-sleep.service systemd-coredump.socket systemd-machine-id-commit.service systemd-suspend-then-hibernate.service",
         "run-command sed -i '/[[:space:]]swap[[:space:]]/d' /etc/fstab; : > /etc/machine-id; rm -f /var/lib/dbus/machine-id /var/lib/systemd/random-seed /etc/ssh/ssh_host_*",
         "touch /etc/growroot-disabled",
         "run-command update-initramfs -u -k all",

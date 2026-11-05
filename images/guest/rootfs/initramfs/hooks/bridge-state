@@ -4,9 +4,15 @@ PREREQ=""
 case "$1" in prereqs) echo "$PREREQ"; exit 0;; esac
 . /usr/share/initramfs-tools/hook-functions
 copy_exec /usr/lib/bridge/bridge-guest
-# Native endpoint uses these fixed paths. Copy canonical executable bytes, not
-# dangling aliases that a later busybox hook could fill with an unsupported applet.
+# Native endpoint uses these fixed paths with util-linux and e2fsprogs options
+# such as mount --bind and blkid -p. Package hooks run before this one and may
+# already have put a klibc or busybox applet at a path; copy_exec keeps an
+# existing file. Replace each with canonical executable bytes, not an alias,
+# and fail the build if anything else remains.
 for binary in /sbin/blkid /sbin/blockdev /sbin/mkfs.ext4 /bin/mount /usr/bin/findmnt; do
-    copy_exec "$(readlink -f "$binary")" "$binary"
+    canonical=$(readlink -f "$binary")
+    rm -f "${DESTDIR:?}$binary"
+    copy_exec "$canonical" "$binary"
+    cmp -s "$canonical" "$DESTDIR$binary" || { echo "E: bridge-state: $binary is not $canonical" >&2; exit 1; }
 done
 manual_add_modules virtio_pci virtio_blk virtio_console virtio_rng virtio_net ext4 isofs

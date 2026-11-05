@@ -176,8 +176,11 @@ for diagnostics. The control port is named `ai.orka.bridge.control` and root-onl
 
 The same selected static endpoint runs `--early` in initramfs and `--serve` as a
 normal service. Initramfs must use `/root`, retain `/run` across switch-root, and
-supply the endpoint's fixed utility paths and pre-created mount targets. The early
-hook accepts only the real serial BootDescriptor; no test marker can authorize it.
+supply the endpoint's fixed utility paths and pre-created mount targets. The hook
+puts the guest's util-linux and e2fsprogs executables at those paths, replacing
+any klibc or busybox applet an earlier hook installed, and fails the build if it
+cannot, so busybox is optional. The early hook accepts only the real serial
+BootDescriptor; no test marker can authorize it.
 The serve stage requires a fresh hello and existing-state reaffirmation for the
 same lease. A failed early endpoint stops boot, including when shutdown fails.
 This integration is not a production-ready laptop VM release.

@@ -54,7 +54,13 @@ retained for explicit recovery, not regenerated.
 Persistent `machine-id`, Docker and containerd directories bind from state into
 the future root. Identity uses `bridge-state/v1` with `installationId`.
 The accepted top-level BootDescriptor is written only after guards succeed to
-`/run/bridge/boot.json`. Credentials have a distinct private tmpfs mount.
+`/run/bridge/boot.json`. Credentials have a distinct tmpfs mount: a private `root`-owned underlay
+directory is mounted visible as `root:65532`, mode 0750, `nosuid,nodev,noexec`;
+no-follow directory metadata (owner, group, type, mode bits) is checked after
+mount and again at every readiness check, alongside the existing exact-tmpfs
+check, and a mismatch fails closed rather than being repaired. Token delivery
+is not implemented here. A token producer must create and replace files as
+`root:65532`, mode 0640; the base image contains no token files or values.
 The image owner must carry that entire initramfs `/run` across switch-root,
 then guard these mounts before every Docker and containerd start or restart.
 Normal mode revalidates the saved descriptor, mounts and host's Existing
@@ -62,8 +68,11 @@ reaffirmation before readiness. It never mounts or formats.
 
 Both modes use the root-owned, mode-0600 character port
 `/dev/virtio-ports/ai.orka.bridge.control`. Stale bytes are boundedly drained before
-each fresh stage hello. Only protocol frames use this port; errors are generic
-on stderr. Serve creates a mode-0600 `/run/bridge/kmx.sock` under a private
+each fresh stage hello. A transient HUP-only wait before the first Hello byte
+can wait for the host-open notification within the original 120-second deadline.
+Reads, other frames and a partially written Hello keep terminal HUP semantics;
+this never reopens a channel or replays bytes. Only protocol frames use this
+port; stderr diagnostics contain fixed labels, error kind and errno. Serve creates a mode-0600 `/run/bridge/kmx.sock` under a private
 directory and checks Linux SO_PEERCRED for UID 0. Existing socket names are not
 deleted to make startup work. The original socket is cleaned on normal exit.
 Serial loss ends this session; do not restart serve within the same host lease.
