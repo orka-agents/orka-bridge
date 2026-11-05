@@ -88,12 +88,14 @@ mod native {
             Ok(String::new())
         } else {
             String::from_utf16(std::slice::from_raw_parts(p, n as usize / 2))
+                .map(|s| s.trim_end_matches('\0').to_owned())
                 .map_err(io::Error::other)
         }
     }
     fn handle_snapshot(
         process: HANDLE,
         expected: &runtime::identity::FileIdentity,
+        canary: &runtime::identity::FileIdentity,
     ) -> io::Result<Value> {
         unsafe {
             let mut snap = std::ptr::null_mut();
@@ -134,10 +136,14 @@ mod native {
                     return Err(io::Error::from_raw_os_error(e as i32));
                 }
                 // HAVE_TYPE validates ObjectType's small enum, not TypeName.
-                // Files and Jobs are not in that enum. Classify their actual
-                // names; never accept an unavailable type or File name.
+                // Files and Jobs are not in that enum. PSS can omit File
+                // names entirely; classify the type, then query actual file IDs.
                 let kind = text(entry.TypeName, entry.TypeNameLength)?;
-                let name = text(entry.ObjectName, entry.ObjectNameLength)?;
+                let name = if entry.Flags & PSS_HANDLE_HAVE_NAME != 0 {
+                    text(entry.ObjectName, entry.ObjectNameLength)?
+                } else {
+                    String::new()
+                };
                 if index < 12
                     || name.to_lowercase().ends_with("\\owner.lock")
                     || name.to_lowercase().ends_with("\\unrelated-canary")
@@ -147,19 +153,13 @@ mod native {
                         entry.Flags, entry.ObjectType
                     );
                 }
-                if kind.is_empty() || (kind == "File" && entry.Flags & PSS_HANDLE_HAVE_NAME == 0) {
-                    return Err(io::Error::other(format!(
-                        "snapshot lacks type/File name: flags={:#x}, kind={kind:?}",
-                        entry.Flags
-                    )));
+                if kind.is_empty() {
+                    return Err(io::Error::other("snapshot lacks object type name"));
                 }
                 if kind == "Job" {
                     jobs += 1
                 }
-                if name.to_lowercase().ends_with("\\unrelated-canary") {
-                    canaries += 1;
-                }
-                if name.to_lowercase().ends_with("\\owner.lock") {
+                if kind == "File" {
                     let mut dup = std::ptr::null_mut();
                     win(DuplicateHandle(
                         process,
@@ -171,19 +171,29 @@ mod native {
                         DUPLICATE_SAME_ACCESS,
                     ))?;
                     let file = File::from_raw_handle(dup);
-                    check(
-                        runtime::identity::file_identity(&file).map_err(io::Error::other)?
-                            == *expected,
-                    )?;
-                    found += 1;
+                    match GetFileType(file.as_raw_handle()) {
+                        FILE_TYPE_DISK => {
+                            let id = runtime::identity::file_identity(&file)
+                                .map_err(io::Error::other)?;
+                            if id == *expected {
+                                found += 1;
+                            }
+                            if id == *canary {
+                                canaries += 1;
+                            }
+                        }
+                        FILE_TYPE_PIPE | FILE_TYPE_CHAR => {}
+                        _ => return Err(io::Error::other("snapshot File kind unavailable")),
+                    }
                 }
             }
             Err(io::Error::other("snapshot bound reached"))
         }
     }
-    fn inherited_guard(process: HANDLE, original: &File) -> io::Result<Value> {
+    fn inherited_guard(process: HANDLE, original: &File, canary: &File) -> io::Result<Value> {
         let expected = runtime::identity::file_identity(original).map_err(io::Error::other)?;
-        let v = handle_snapshot(process, &expected)?;
+        let canary = runtime::identity::file_identity(canary).map_err(io::Error::other)?;
+        let v = handle_snapshot(process, &expected, &canary)?;
         if v["guardCopies"] != 1 || v["inheritedJobs"] != 0 || v["unrelatedCanaries"] != 0 {
             return Err(io::Error::other(format!(
                 "inherited inventory differs: {v}"
@@ -349,7 +359,11 @@ mod native {
             .ok_or_else(|| io::Error::other("serial missing"))?;
         argv.extend([OsString::from("-serial"), production[at + 1].clone()]);
         // Deliberately inheritable unrelated file: HANDLE_LIST must exclude it.
-        let canary = File::create(root.join("unrelated-canary"))?;
+        let canary = fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(root.join("unrelated-canary"))?;
         unsafe {
             win(SetHandleInformation(
                 canary.as_raw_handle(),
@@ -362,7 +376,7 @@ mod native {
         let process = child.process_handle();
         runtime::windows::check_token(process.raw())
             .map_err(|e| io::Error::other(format!("restricted primary token: {e}")))?;
-        let inherited = inherited_guard(process.raw(), &spec.ownership)
+        let inherited = inherited_guard(process.raw(), &spec.ownership, &canary)
             .map_err(|e| io::Error::other(format!("inherited handle snapshot: {e}")))?;
         if mode != "hold-created" {
             child.resume()?
@@ -382,7 +396,13 @@ mod native {
         if mode == "hold-guard-only" {
             let identity =
                 runtime::identity::file_identity(&spec.ownership).map_err(io::Error::other)?;
-            check(handle_snapshot(unsafe { GetCurrentProcess() }, &identity)?["guardCopies"] == 1)?;
+            let canary_id = runtime::identity::file_identity(&canary).map_err(io::Error::other)?;
+            let positive = handle_snapshot(unsafe { GetCurrentProcess() }, &identity, &canary_id)?;
+            check(
+                positive["guardCopies"] == 1
+                    && positive["unrelatedCanaries"] == 1
+                    && positive["inheritedJobs"].as_u64().is_some_and(|n| n >= 1),
+            )?;
             let original = spec.ownership.as_raw_handle();
             // Fault injection in this disposable worker only. Every Rust owner is leaked
             // before closing its ONE known shared HANDLE; none may be touched/dropped later.
@@ -393,8 +413,15 @@ mod native {
             unsafe {
                 win(CloseHandle(original))?;
             }
-            check(handle_snapshot(unsafe { GetCurrentProcess() }, &identity)?["guardCopies"] == 0)?;
-            check(handle_snapshot(process.raw(), &identity)?["guardCopies"] == 1)?;
+            let after = handle_snapshot(unsafe { GetCurrentProcess() }, &identity, &canary_id)?;
+            check(
+                after["guardCopies"] == 0
+                    && after["unrelatedCanaries"] == 1
+                    && after["inheritedJobs"].as_u64().is_some_and(|n| n >= 1),
+            )?;
+            check(handle_snapshot(process.raw(), &identity, &canary_id)?["guardCopies"] == 1)?;
+            status["parentSnapshotBeforeClose"] = positive;
+            status["parentSnapshotAfterClose"] = after;
             status["parentGuardHandles"] = json!(0);
             status["childGuardHandles"] = json!(1);
             emit(status)?;
