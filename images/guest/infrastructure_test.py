@@ -78,6 +78,7 @@ def infrastructure(image, lock_path, out, case_name, fixture=None, from_receipt=
     result = json.loads(lines[0])
     expected_phase = 'cluster-ready' if case_name == 'interrupted' else 'infrastructure-ready'
     require(result['phase'] == expected_phase and len(first['runtimeFrames']) == 6, 'infrastructure handoff incomplete')
+    require(expected_phase != 'infrastructure-ready' or result.get('orkaServing') is True, 'Orka not serving at infrastructure-ready')
     if prior is not None:
         require(result['fingerprints'] == prior['new']['result']['fingerprints'], 'persistent identities changed')
     record = {'schemaVersion': 'bridge-guest-infrastructure/v1', 'case': case_name, 'backend': 'qemu-kvm', 'publicationReady': False,
@@ -96,6 +97,7 @@ def infrastructure(image, lock_path, out, case_name, fixture=None, from_receipt=
         lines = [line[len('BRIDGE_INFRA '):] for line in serial.splitlines() if line.startswith('BRIDGE_INFRA ')]
         require(len(lines) == 1 and len(second['runtimeFrames']) == 6, 'second boot proof missing')
         second['result'] = json.loads(lines[0])
+        require(second['result'].get('orkaServing') is True, 'Orka not serving at infrastructure-ready')
         if case_name == 'infrastructure':
             require(second['result'].get('priorCredentialsRejectedOnReachableTarget') is True, 'cross-install auth not proven')
             require(second['result']['fingerprints']['/etc/kubernetes/pki/ca.crt'] != result['fingerprints']['/etc/kubernetes/pki/ca.crt'], 'cluster CA was cloned')

@@ -33,6 +33,16 @@ def failed_helm_probe(args, env):
     raise HelmRefusal('verified pinned failed-release refusal')
 
 
+def require_orka_serving(kube, env):
+    # Checked once, without retry: infrastructure-ready must already mean Orka's API serves.
+    result = subprocess.run([*kube, 'get', '--raw=/api/v1/namespaces/orka-system/services/http:orka-api:api/proxy/readyz'], env=env, capture_output=True, timeout=30, check=False)
+    try:
+        answer = json.loads(result.stdout) if result.returncode == 0 else None
+    except ValueError:
+        answer = None
+    assert isinstance(answer, dict) and answer.get('status') == 'ok', 'Orka API not serving through its Service'
+
+
 def refusal_phase(state):
     phase = json.loads((state / 'bootstrap.json').read_bytes())['phase']
     assert phase == 'cache-verified', 'refusal did not reach install'
@@ -71,6 +81,7 @@ try:
     kube = ['kubectl', '--context', context]
     def get(*args):
         return json.loads(command([*kube, *args, '-o', 'json']))
+    require_orka_serving(kube, env)
     assert command([*kube, 'get', '--raw=/readyz']).strip() == b'ok'
     assert get('get', 'providers.core.orka.ai', '-A')['items'] == []
     secret = get('-n', 'orka-system', 'get', 'secret', 'orka-api-agent-execution-snapshot')
@@ -90,7 +101,7 @@ try:
         if not values:
             values = [arguments[i + 1] for i, a in enumerate(arguments[:-1]) if a == flag]
         assert values == [row['repository'] + '@' + row['manifestDigest']], flag
-    result = {'schemaVersion': 'bridge-infrastructure-test/v1', 'phase': journal['phase'], 'noProvider': True, 'fingerprints': fingerprints, 'workerFlagsVerified': True}
+    result = {'schemaVersion': 'bridge-infrastructure-test/v1', 'phase': journal['phase'], 'noProvider': True, 'fingerprints': fingerprints, 'workerFlagsVerified': True, 'orkaServing': True}
     prior = Path('/dev/disk/by-id/virtio-bridge-prior')
     if prior.exists():
         mount = Path('/run/bridge/prior')

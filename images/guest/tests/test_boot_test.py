@@ -95,7 +95,7 @@ class ReferenceTests(unittest.TestCase):
         import json
         import subprocess
         source = (Path(self.module('boot_test').__file__).with_name('tests') / 'fixtures/infrastructure-check').read_text()
-        names = {'HelmRefusal', 'failed_helm_probe', 'refusal_phase', 'require_service_success'}
+        names = {'HelmRefusal', 'failed_helm_probe', 'refusal_phase', 'require_orka_serving', 'require_service_success'}
         nodes: list[ast.stmt] = [node for node in ast.parse(source).body if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
         self.assertEqual(names, {node.name for node in nodes if isinstance(node, (ast.FunctionDef, ast.ClassDef))}, 'isolated fixed checker guards missing')
         namespace = {'json': json, 'subprocess': subprocess}
@@ -125,6 +125,51 @@ class ReferenceTests(unittest.TestCase):
                 api['refusal_phase'](state)
             (state / 'bootstrap.json').write_text('{"phase":"cache-verified"}')
             self.assertEqual('cache-verified', api['refusal_phase'](state))
+
+    def test_checker_requires_one_orka_api_answer_through_its_service(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        api = self.checker_helpers()
+        route = ['kubectl', 'get', '--raw=/api/v1/namespaces/orka-system/services/http:orka-api:api/proxy/readyz']
+        with patch('subprocess.run', return_value=SimpleNamespace(returncode=0, stdout=b'{"status":"ok","checks":{"store":"ok","kubernetes":"ok"}}')) as run:
+            api['require_orka_serving'](['kubectl'], {})
+        self.assertEqual(route, run.call_args.args[0])
+        # Refused or 404 Service, another :8080 server's answer, and Orka not ready.
+        for returncode, stdout in ((1, b''), (1, b'{"status":"ok"}'), (0, b'ok\n'), (0, b'{"status":"not ready","checks":{"store":"unhealthy"}}'), (0, b'["ok"]')):
+            with self.subTest(stdout=stdout), patch('subprocess.run', return_value=SimpleNamespace(returncode=returncode, stdout=stdout)) as run:
+                with self.assertRaisesRegex(AssertionError, 'Orka API not serving'):
+                    api['require_orka_serving'](['kubectl'], {})
+                self.assertEqual(1, run.call_count)
+
+    def test_infrastructure_ready_boot_must_record_that_orka_served(self):
+        import hashlib
+        import json
+        import tempfile
+        from unittest.mock import patch
+        api = self.module('infrastructure_test')
+        base = {"schemaVersion": "bridge-guest-base/v1", "machineId": "a" * 32, "sentinel": True, "stateBeforeDaemons": True, "machineIdBeforeSystemd": True,
+                "controlPort": True, "credentialsType": "tmpfs", "dockerRoot": "/var/lib/bridge/docker", "containerdRoot": "/var/lib/bridge/containerd"}
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            image = root / 'os.qcow2'
+            image.write_bytes(b'factory')
+            lock = {'architecture': 'amd64'}
+            build = {'sha256': hashlib.sha256(b'factory').hexdigest(), 'inputSha256': hashlib.sha256(api.encoded(lock)).hexdigest(), 'contract': {}}
+            (root / 'build.json').write_text(json.dumps(build))
+            for name, served in (('first', (None, True)), ('second', (True, None)), ('both', (True, True))):
+                results = iter(served)
+                def boot(image, path, installation, *args, **kwargs):
+                    result = {'phase': 'infrastructure-ready', 'fingerprints': {}}
+                    if (orka := next(results)) is not None:
+                        result['orkaServing'] = orka
+                    serial = 'BRIDGE_BASE ' + json.dumps({**base, 'installationId': installation, 'stateUuid': installation}) + '\nBRIDGE_INFRA ' + json.dumps(result)
+                    return {'serial': serial, 'runtimeFrames': [{}] * 6}
+                with self.subTest(name), patch.object(api, 'load_lock', return_value=lock), patch.object(api, 'image_info', return_value={'virtual-size': 16 * 1024**3}), patch.object(api, 'boot_case', side_effect=boot), patch.object(api, 'network_evidence', return_value={'externalIpv4TcpPackets': 0, 'dnsQueries': []}):
+                    if name == 'both':
+                        self.assertTrue(api.infrastructure(image, root / 'unused', root / name, 'restart')['second']['result']['orkaServing'])
+                    else:
+                        with self.assertRaisesRegex(ValueError, 'Orka not serving'):
+                            api.infrastructure(image, root / 'unused', root / name, 'restart')
 
     def test_task_receipt_is_not_a_clean_reuse_capability_and_dns_is_rejected(self):
         import hashlib

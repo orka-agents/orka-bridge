@@ -5,8 +5,10 @@ import json
 import os
 import subprocess
 import sys
+import time
 import uuid
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,11 +37,17 @@ else:
 
 BUNDLE = Path('/opt/bridge/bundle')
 PHASES = ('identity-prepared', 'cluster-ready', 'cache-verified', 'orka-ready', 'infrastructure-ready')
+# A controller that starts before Service routing works crashes; kubelet back-off doubles from 10 s.
+# Leave room for several such restarts on a slow host; the unit's 900 s start timeout still bounds the run.
+SERVING_SECONDS = 600
+# CoreDNS and the only Orka workloads kmx's offline profile renders.
+WORKLOADS = (('kube-system', 'coredns'), ('orka-system', 'orka-api-controller'), ('orka-system', 'orka-api-workspace-publisher'), ('orka-system', 'orka-api-scm-egress-proxy'))
+ORKA_READYZ = '/api/v1/namespaces/orka-system/services/http:orka-api:api/proxy/readyz'
 
 
-def execute(argv, *, env=None, stdin=None):
+def execute(argv, *, env=None, stdin=None, timeout=600):
     with open(stdin, 'rb') if stdin is not None else open(os.devnull, 'rb') as stream:
-        result = subprocess.run(argv, env=env, stdin=stream, capture_output=True, timeout=600, check=False)
+        result = subprocess.run(argv, env=env, stdin=stream, capture_output=True, timeout=timeout, check=False)
     require(result.returncode == 0, 'command failed: ' + Path(argv[0]).name)
     require(len(result.stdout) <= 1024 * 1024, 'command output exceeds bound')
     return result.stdout.decode()
@@ -92,6 +100,56 @@ def node_inventory(env, manifest):
     for node in nodes:
         require(node['Id'] in ids and node['Image'] == manifest['node']['configDigest'] and node['Config']['Labels']['io.x-k8s.kind.cluster'] == env['KIND_CLUSTER'], 'node identity mismatch')
     return nodes
+
+
+def seconds(value):
+    """Whole seconds of a Docker or Kubernetes UTC timestamp."""
+    require(matches(value, r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{1,9})?Z'), 'invalid timestamp')
+    try:
+        return int(datetime.strptime(value[:19], '%Y-%m-%dT%H:%M:%S').replace(tzinfo=timezone.utc).timestamp())
+    except ValueError as error:
+        raise ValueError('invalid timestamp') from error
+
+
+def ready_since(pod, since):
+    """Whether the kubelet reported this pod and every container ready after the `since` second."""
+    status = pod.get('status') or {}
+    conditions = [c for c in status.get('conditions') or [] if c.get('type') == 'Ready']
+    containers = status.get('containerStatuses') or []
+    if pod['metadata'].get('deletionTimestamp') or len(conditions) != 1 or conditions[0].get('status') != 'True' or not containers:
+        return False
+    started = [(c.get('state') or {}).get('running', {}).get('startedAt') for c in containers]
+    return (seconds(conditions[0].get('lastTransitionTime')) > since and all(c.get('ready') is True for c in containers)
+            and all(s is not None and seconds(s) > since for s in started))
+
+
+def not_serving(kubectl, env, since):
+    """Why CoreDNS or Orka is not yet serving since the node started, or None once it is."""
+    step = 'Orka API'
+    try:
+        for namespace, step in WORKLOADS:
+            spec = read_json(execute([*kubectl, '-n', namespace, 'get', 'deployment', step, '-o', 'json'], env=env, timeout=30))['spec']
+            selector = spec['selector'].get('matchLabels') or {}
+            require(selector and not spec['selector'].get('matchExpressions'), 'unsupported workload selector')
+            labels = ','.join(key + '=' + value for key, value in sorted(selector.items()))
+            pods = read_json(execute([*kubectl, '-n', namespace, 'get', 'pods', '-l', labels, '-o', 'json'], env=env, timeout=30))['items']
+            if sum(ready_since(pod, since) for pod in pods) < max(spec.get('replicas', 1), 1):
+                return step + ' not ready'
+        step = 'Orka API'
+        answer = read_json(execute([*kubectl, 'get', '--raw=' + ORKA_READYZ], env=env, timeout=30))
+    except (ValueError, LookupError, TypeError, AttributeError, subprocess.SubprocessError) as error:
+        # A failed or unexpected read is not serving yet; keep only fixed guard text or the type.
+        return step + ': ' + (str(error) if type(error) is ValueError else type(error).__name__)
+    # Only Orka's API answers this JSON; a stale endpoint can reach another :8080 server.
+    return None if isinstance(answer, dict) and answer.get('status') == 'ok' else 'Orka API not ready'
+
+
+def wait_serving(kubectl, env, since):
+    # Status written before the node last started is stale after a restart, as is kmx's rollout check.
+    deadline = time.monotonic() + SERVING_SECONDS
+    while (reason := not_serving(kubectl, env, since)) is not None:
+        require(time.monotonic() < deadline, 'infrastructure not serving since node start: ' + reason)
+        time.sleep(2)
 
 
 def verified_inputs(lock):
@@ -186,6 +244,9 @@ def initialize(lock, state, *, require_existing):
     execute([*kubectl, 'get', '--raw=/readyz'], env=env)
     execute([*kubectl, '-n', 'kube-system', 'rollout', 'status', 'deployment/coredns', '--timeout=120s'], env=env)
     execute([*kubectl, '-n', 'orka-system', 'wait', 'pvc', '--all', '--for=jsonpath={.status.phase}=Bound', '--timeout=120s'], env=env)
+    nodes = node_inventory(env, manifest)
+    require([n['Id'] for n in nodes] == journal['nodeIds'] and nodes[0]['State']['Running'], 'cluster node unavailable')
+    wait_serving([*kubectl, '--request-timeout=10s'], env, seconds(nodes[0]['State']['StartedAt']))
     journal['phase'] = 'infrastructure-ready'
     save(state, journal)
     return journal
