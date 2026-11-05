@@ -504,7 +504,7 @@ fn main() {
             io::ErrorKind::InvalidInput,
             None,
         );
-        eprintln!("usage: bridge-guest --early | --serve");
+        diagnostics::fixed_line("usage: bridge-guest --early | --serve");
         std::process::exit(2)
     }
     let mode = args[0].to_str().unwrap_or("");
@@ -513,7 +513,7 @@ fn main() {
             diagnostics::Context::new(if mode == "--early" { "early" } else { "serve" }, "run"),
             &error,
         );
-        eprintln!("bridge-guest: incompatible state or unavailable guest operation");
+        diagnostics::fixed_line("bridge-guest: incompatible state or unavailable guest operation");
         std::process::exit(1)
     }
 }
