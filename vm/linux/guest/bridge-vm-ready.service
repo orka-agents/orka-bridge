@@ -1,0 +1,14 @@
+[Unit]
+Description=Start the Bridge kind cluster and report Orka readiness to the host
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/bridge-vm-ready
+TimeoutStartSec=30min
+
+[Install]
+WantedBy=multi-user.target
