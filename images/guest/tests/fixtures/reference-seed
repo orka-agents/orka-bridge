@@ -6,7 +6,7 @@ set -eu
 modprobe isofs
 mkdir -p /run/bridge-seed
 mount -t iso9660 -o ro /dev/disk/by-id/virtio-bridge-test /run/bridge-seed
-cp /run/bridge-seed/bridge.json /run/bridge/reference.json
+cat /run/bridge-seed/bridge.json > /run/bridge/reference.json
 umount /run/bridge-seed
 read uptime rest < /proc/uptime
 pid1=$(cat /proc/1/comm)

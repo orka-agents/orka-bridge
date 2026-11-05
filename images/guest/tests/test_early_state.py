@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 ROOTFS = Path(__file__).resolve().parents[1] / "rootfs"
+KLIBC_SH = "/usr/lib/klibc/bin/sh"
 
 
 class StateGuardTests(unittest.TestCase):
@@ -78,6 +79,14 @@ test() {
         self.assertNotIn("mkfs", script)
 
     def test_terminal_failure_stays_closed_if_logging_or_shutdown_fail(self):
+        self.terminal_failure("/bin/sh")
+
+    @unittest.skipUnless(Path(KLIBC_SH).is_file(), "klibc-utils is not installed")
+    def test_terminal_failure_stays_closed_in_klibc_shell(self):
+        # Without busybox, initramfs runs this script with klibc's sh.
+        self.terminal_failure(KLIBC_SH)
+
+    def terminal_failure(self, shell):
         handler = next(line for line in self.file("initramfs/scripts/local-bottom/bridge-state").read_text().splitlines() if line.startswith("fail()"))
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -90,8 +99,9 @@ test() {
                 # Only this terminal function runs: no device selection, mounts,
                 # formatter or real shutdown command from the early hook.
                 program = 'set -eu\npoweroff() { return 1; }\nsleep() { echo waiting > "$1"; exit 99; }\n' + isolated.replace("sleep 60", 'sleep "$TRACE"') + '\nfail refused\necho continued'
-                result = subprocess.run(["/bin/sh", "-c", program], env={"TRACE": str(trace)}, capture_output=True, timeout=2, check=False)
+                result = subprocess.run([shell, "-c", program], env={"TRACE": str(trace)}, capture_output=True, timeout=2, check=False)
                 self.assertEqual(99, result.returncode, result.stderr)
+                self.assertNotIn(b"trap", result.stderr)
                 self.assertEqual("waiting\n", trace.read_text())
                 self.assertNotIn(b"continued", result.stdout)
 
