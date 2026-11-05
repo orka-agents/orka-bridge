@@ -348,6 +348,17 @@ fn mount_is(
     }
     Ok(())
 }
+fn machine_id_mount_target(stage: &'static str, target: &str) -> io::Result<String> {
+    diagnostics::context(
+        Context::new(stage, "ready-machine-id-findmnt"),
+        checked(
+            stage,
+            "/usr/bin/findmnt",
+            &["-rn", "-T", target, "-o", "TARGET"],
+        )
+        .and_then(text),
+    )
+}
 impl BootSystem for Linux {
     fn probe(&mut self) -> io::Result<Disk> {
         self.device = fs::canonicalize("/dev/disk/by-id/virtio-bridge-state")?;
@@ -504,15 +515,7 @@ impl BootSystem for Linux {
             )?;
         }
         let target = self.target("/etc/machine-id");
-        if diagnostics::context(
-            Context::new(stage, "ready-machine-id-findmnt"),
-            text(checked(
-                stage,
-                "/usr/bin/findmnt",
-                &["-rn", "-T", &target, "-o", "TARGET"],
-            )?),
-        )? != target
-        {
+        if machine_id_mount_target(stage, &target)? != target {
             diagnostics::log(
                 Context::new(stage, "ready-machine-id-target"),
                 io::ErrorKind::Other,
@@ -670,6 +673,7 @@ mod tests {
         )
         .is_err());
         assert!(checked("serve", "/bin/sh", &["-c", "exit 3"]).is_err());
+        assert!(machine_id_mount_target("serve", "/dev/null/not-a-directory").is_err());
     }
     #[test]
     fn command_failure_logs_keep_context_without_content() {
@@ -692,6 +696,8 @@ mod tests {
                 "bridge-guest: stage=early phase=command-spawn kind=NotFound errno=2",
                 "bridge-guest: stage=serve phase=command-stderr kind=Other errno=none",
                 "bridge-guest: stage=serve phase=command-status kind=Other errno=none",
+                "bridge-guest: stage=serve phase=command-status kind=Other errno=none",
+                "bridge-guest: stage=serve phase=ready-machine-id-findmnt kind=Other errno=none",
             ]
         );
     }
