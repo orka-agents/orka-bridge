@@ -128,11 +128,13 @@ def check_central_directory(path):
         size = end[5]
         if size > MAX_CENTRAL_DIRECTORY:
             raise ValueError("archive central directory exceeds limit")
-        # ZipFile reads the directory just before the end records; 3.11 reports
-        # the plain end record's position even for ZIP64 archives.
+        # ZipFile reads the directory just before the end records. Some CPython
+        # releases report the plain end record even for ZIP64 and then step back
+        # over the ZIP64 record and locator; others report the ZIP64 record.
         start = end[9] - size
-        if sys.version_info < (3, 12) and end[0] == b"PK\x06\x06":
-            start -= 56 + 20  # ZIP64 end record and locator
+        fp.seek(end[9])
+        if end[0] == b"PK\x06\x06" and fp.read(4) == b"PK\x05\x06":
+            start -= 56 + 20
         if start != end[6]:
             raise ValueError("bad central directory offset")
         fp.seek(start)
