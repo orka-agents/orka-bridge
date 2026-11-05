@@ -46,8 +46,12 @@ selected closure installs, not merely that the dependency records look complete.
 
 ## Build and inspect
 
-The path-filtered Windows workflow checks out the exact reviewed head with
-read-only permissions and no persisted checkout credentials. It verifies all
+Path-filtered checks validate source changes on pull requests and branch pushes.
+The producer runs only when manually dispatched on `main`; pull requests and
+branch pushes do not build or upload archives. Start it after the workflow change
+has merged with `gh workflow run windows-runtime.yml --ref main`.
+It checks out the exact selected main commit with read-only permissions and no
+persisted checkout credentials. It verifies all
 inputs, extracts the pinned bootstrap into a new runner-local directory, and
 installs only locked local packages. Its temporary pacman configuration preserves
 the bootstrap's options but contains no repositories: no database refresh or
@@ -86,8 +90,18 @@ CI extracts the verified portable ZIP with Windows-native tooling into a new
 space-containing, non-ASCII path. With PATH limited to Windows and System32, it
 checks QEMU/qemu-img versions, pinned `pc-q35-11.0`, WHPX presence and TCG absence.
 The host uses the console executable with `CREATE_NO_WINDOW`; no windowless
-variant is required or shipped. No archives are uploaded; only ordinary workflow
-logs remain.
+variant is required or shipped. After successful build verification and Windows
+inspection, the workflow uploads one engineering artifact named
+`bridge-windows-runtime-<commit>-<attempt>` for seven days. It contains both ZIPs,
+`SHA256SUMS`, `build-report.json` and `verification.json`; failed builds do not
+upload partial output. No input caches or toolchain directories are uploaded.
+
+Download that artifact from the specific successful run with
+`gh run download <run-id> --name bridge-windows-runtime-<commit>-<attempt> --dir <new-directory>`.
+Check the selected run and commit and both ZIP hashes against `SHA256SUMS` before
+extracting the portable ZIP. Preserve the corresponding-source ZIP and notices.
+These temporary CI artifacts are not release assets; retention does not change
+`publicationReady: false` or establish native guest qualification.
 
 ## Verify an output independently
 
