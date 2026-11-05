@@ -168,6 +168,9 @@ jobs:
             if ($jsonLines.Count -ne 1 -or $stdout -notmatch '(?m)^PASS(?:\s|$)') { throw 'Missing single JSON receipt or PASS line' }
             $receipt = $jsonLines[0] | ConvertFrom-Json -AsHashtable
             if ($receipt.status -ne 'passed' -or $receipt.sourceHead -ne '24096131fcba3ff7cf3a30ccdb352f83efe56292' -or $receipt.caller.elevated -isnot [bool] -or $receipt.caller.elevated -ne $false -or $receipt.cases.Count -ne 4) { throw 'Native receipt does not prove the required gate' }
+            $trustedPin = Get-Content -LiteralPath $pin -Raw | ConvertFrom-Json -AsHashtable
+            $actualExeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($receipt.caller.userSid -ne $result.accountSid -or $receipt.probeSha256 -ne $actualExeHash -or $receipt.runtimeZipSha256 -ne $trustedPin.runtimeZipSha256 -or $receipt.producerRun -ne 42120608528 -or $receipt.guestBoot -isnot [bool] -or $receipt.guestBoot -ne $false -or $receipt.whpxUsability -ne 'not-tested') { throw 'Native receipt does not match this user, executable, runtime or no-VM scope' }
             $result.status = 'passed'
           } catch {
             $result.error = $_.Exception.Message

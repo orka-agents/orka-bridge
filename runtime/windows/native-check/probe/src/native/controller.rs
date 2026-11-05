@@ -168,7 +168,10 @@ fn packet(runtime: &Path, pin: &Path, work: &Path) -> io::Result<(PathBuf, Value
     .map(|key| (key.into(), json!(hash)))
     .collect();
     let uuid = "00000000-0000-4000-8000-000000000001";
-    let config = json!({"head":crate::SOURCE_HEAD,"pin":{"runtimeFiles":trusted["runtimeFiles"],"image":{"name":names[2],"bytes":bytes.len(),"sha256":hash},"endpointSha256":hash,"directBoot":{"kernel":{"name":names[0],"bytes":bytes.len(),"sha256":hash,"format":"linux-bzimage"},"initrd":{"name":names[1],"bytes":bytes.len(),"sha256":hash,"format":"initramfs","compression":"cpio-prefix"},"rootSelector":{"kind":"filesystem-uuid","value":uuid},"commandLine":format!("root=UUID={uuid} ro console=ttyS0,115200n8 noresume"),"kernelRelease":"inert-fixture-amd64","requiredDrivers":(["virtio_pci","virtio_blk","virtio_console","virtio_rng","virtio_net","ext4"].map(|name|json!({"name":name,"built_in":true}))),"provenance":provenance}},"paths":{"runtime":runtime,"kernel":fixture.join(names[0]),"initrd":fixture.join(names[1]),"factory":fixture.join(names[2])}});
+    let config = json!({"head":crate::SOURCE_HEAD,"pin":{"runtimeFiles":trusted["runtimeFiles"],"image":{"name":names[2],"bytes":bytes.len(),"sha256":hash},"endpointSha256":hash,"directBoot":{"kernel":{"name":names[0],"bytes":bytes.len(),"sha256":hash,"format":"linux-bzimage"},"initrd":{"name":names[1],"bytes":bytes.len(),"sha256":hash,"format":"initramfs","compression":"cpio-prefix"},"rootSelector":{"kind":"filesystem-uuid","value":uuid},"commandLine":format!("root=UUID={uuid} ro console=ttyS0,115200n8 noresume"),"kernelRelease":"inert-fixture-amd64","requiredDrivers":(["virtio_pci","virtio_blk","virtio_console","virtio_rng","virtio_net","ext4"].map(|name|json!({"name":name,"builtIn":true}))),"provenance":provenance}},"paths":{"runtime":runtime,"kernel":fixture.join(names[0]),"initrd":fixture.join(names[1]),"factory":fixture.join(names[2])}});
+    // Validate the test fixture against the EXACT imported source schema before
+    // any worker or QEMU can run. This caught a built_in/builtIn fixture mismatch.
+    let _: Config = serde_json::from_value(config.clone()).map_err(io::Error::other)?;
     let path = work.join("packet.json");
     fs::write(
         &path,
