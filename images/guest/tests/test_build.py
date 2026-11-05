@@ -219,6 +219,17 @@ class BuildTests(unittest.TestCase):
         names = [str(p.relative_to(self.root / "overlay")) for p in (self.root / "overlay").rglob("*")]
         self.assertFalse(any("reference-seed" in n or "reference-check" in n for n in names))
 
+    def test_cloud_init_masks_cover_current_and_legacy_units(self):
+        expected = {"cloud-init-main.service", "cloud-init-network.service", "cloud-init.service",
+                    "cloud-init-local.service", "cloud-config.service", "cloud-final.service"}
+        prefix = "run-command systemctl mask "
+        for architecture in ("amd64", "arm64"):
+            with self.subTest(architecture=architecture):
+                commands = self.api.customize_commands([], architecture)
+                masks = [command.removeprefix(prefix).split() for command in commands if command.startswith(prefix)]
+                self.assertEqual(1, len(masks))
+                self.assertEqual(expected, {unit for unit in masks[0] if unit.startswith("cloud-")})
+
     def test_assembly_command_is_offline_and_never_uses_apt(self):
         self.assertTrue(callable(getattr(self.api, "customize_commands", None)))
         commands = self.api.customize_commands([self.root / "docker.deb"], "amd64")
