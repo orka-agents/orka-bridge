@@ -141,7 +141,10 @@ fn concurrent_app_spawns_serialize_the_inheritable_handle_window() {
 // Hand-checked SHA256 of "abc"; fixtures never contain an executable or guest disk.
 const SHA: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 fn fixture() -> (TempDir, ReviewedWindowsPin, WindowsInputPaths) {
-    let t = tempfile::tempdir().unwrap();
+    let t = tempfile::Builder::new()
+        .prefix("wsl-fixture-")
+        .tempdir()
+        .unwrap();
     let runtime = t.path().join("runtime");
     fs::create_dir_all(runtime.join("bin")).unwrap();
     for name in ["qemu-system-x86_64.exe", "qemu-img.exe", "glib.dll"] {
@@ -295,7 +298,15 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
     assert!(
         strs.contains(&"virtserialport,bus=control.0,chardev=guest,name=ai.orka.bridge.control")
     );
-    assert!(!strs
+    let raw_temp = t.path().to_str().unwrap();
+    let option_text: Vec<_> = strs
+        .iter()
+        .map(|a| {
+            a.replace(&qemu_value(t.path()).unwrap(), "")
+                .replace(raw_temp, "")
+        })
+        .collect();
+    assert!(!option_text
         .iter()
         .any(|a| a.contains("pflash") || a.contains("tcg") || a.contains("wsl")));
     let mut wrong = spec.clone();
@@ -323,6 +334,8 @@ fn qcow2_backing_chain_wrong_capacity_or_dirty_image_refuses() {
         br#"{"format":"qcow2","virtual-size":34359738368}"#,
         br#"{"format":"qcow2","virtual-size":17179869184,"backing-filename":"other"}"#,
         br#"{"format":"qcow2","virtual-size":17179869184,"dirty-flag":true}"#,
+        br#"{"format":"qcow2","virtual-size":17179869184,"format-specific":{"data":{"data-file":"../external.raw"}}}"#,
+        br#"{"format":"qcow2","virtual-size":17179869184,"format-specific":{"data":{"data-file-raw":true}}}"#,
     ] {
         assert!(validate_qcow2_info(bad, 17179869184).is_err());
     }

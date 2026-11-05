@@ -298,6 +298,10 @@ mod native {
                         _cwd: cwd_file,
                     }),
                 };
+                // Creation copied the selected handles. Close the temporary inherited copies
+                // before releasing other app spawns; exceptional cleanup must not hold this gate.
+                drop((attrs, child_in, child_out, child_err, guard));
+                drop(_spawn_guard);
                 // Exercise the same postcondition/cleanup gate as the injected tests.
                 create_verified(
                     &policy,

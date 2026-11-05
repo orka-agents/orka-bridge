@@ -85,7 +85,13 @@ fn capture_command(path: &Path) -> tokio::process::Command {
 
 async fn run_capture(path: &Path, timeout: Duration) -> Result<CapturedGithubToken, CaptureError> {
     tokio::time::timeout(timeout, async {
-        let mut child = capture_command(path).spawn().map_err(|error| {
+        let mut child = {
+            #[cfg(windows)]
+            let _spawn_guard =
+                super::windows::job::spawn_guard().map_err(|_| CaptureError::Failed)?;
+            capture_command(path).spawn()
+        }
+        .map_err(|error| {
             if error.kind() == io::ErrorKind::NotFound {
                 CaptureError::Unavailable
             } else {

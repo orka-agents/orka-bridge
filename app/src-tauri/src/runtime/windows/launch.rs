@@ -49,6 +49,9 @@ pub fn validate_qcow2_info(bytes: &[u8], expected: u64) -> Result<(), RuntimeErr
         .any(|k| v.get(k).is_some())
         || v.get("dirty-flag").is_some_and(|x| x != false)
         || v.get("encrypted").is_some_and(|x| x != false)
+        || v.pointer("/format-specific/data/data-file").is_some()
+        || v.pointer("/format-specific/data/data-file-raw")
+            .is_some_and(|x| x != false)
         || v.pointer("/format-specific/data/corrupt")
             .is_some_and(|x| x != false)
     {
