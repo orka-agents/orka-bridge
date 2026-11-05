@@ -70,7 +70,7 @@ entire toolchain `bin` directory or rely on a filtered `ldd` result.
 
 The output directory must not already exist. It contains:
 
-- `bridge-windows-runtime-portable.zip`: console and windowless system emulators,
+- `bridge-windows-runtime-portable.zip`: console system emulator,
   `qemu-img`, reachable DLLs, unpruned QEMU data, notices and provenance.
 - `bridge-windows-runtime-source.zip`: exact patched source, ROM sources and
   matching historical firmware dependencies, original patches/checks/wraps,
@@ -85,8 +85,9 @@ publishes the new local output directory; failure creates no success marker.
 CI extracts the verified portable ZIP with Windows-native tooling into a new
 space-containing, non-ASCII path. With PATH limited to Windows and System32, it
 checks QEMU/qemu-img versions, pinned `pc-q35-11.0`, WHPX presence and TCG absence.
-The windowless executable is inspected as PE data, not executed or qualified for
-stdio. No archives are uploaded; only ordinary workflow logs remain.
+The host uses the console executable with `CREATE_NO_WINDOW`; no windowless
+variant is required or shipped. No archives are uploaded; only ordinary workflow
+logs remain.
 
 ## Verify an output independently
 

@@ -76,7 +76,7 @@ class Archives(unittest.TestCase):
         self.put(self.runtime, "LICENSES/reference/LICENSE", b"reference")
         self.put(self.runtime, "LICENSES/msys2/lib/COPYING", b"MIT notice")
         self.put(self.runtime, "share/qemu/bios-256k.bin", b"bios")
-        self.exes = ["bin/qemu-system-x86_64.exe", "bin/qemu-system-x86_64w.exe", "bin/qemu-img.exe"]
+        self.exes = ["bin/qemu-system-x86_64.exe", "bin/qemu-img.exe"]
         for name in [*self.exes, "bin/demo.dll"]:
             self.put(self.runtime, name, pe())
         imports = {p: [{"name": "KERNEL32.dll", "system": True},
@@ -145,6 +145,10 @@ class Archives(unittest.TestCase):
         sums = "".join(f"{hashlib.sha256((self.output / n).read_bytes()).hexdigest()}  {n}\n"
                        for n in verify.ARCHIVES)
         (self.output / "SHA256SUMS").write_text(sums)
+
+    def test_console_only_runtime_and_img_are_required(self):
+        self.assertEqual(verify.EXES, {"bin/qemu-system-x86_64.exe", "bin/qemu-img.exe"})
+        self.build()
 
     def test_self_consistent_source_rewrite_cannot_change_external_tree(self):
         self.put(self.source, "qemu/extra.c", b"int original;\n")

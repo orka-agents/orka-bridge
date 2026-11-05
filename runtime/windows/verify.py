@@ -14,7 +14,7 @@ import recipe
 
 ARCHIVES = ("bridge-windows-runtime-portable.zip", "bridge-windows-runtime-source.zip")
 MAX_ENTRIES, MAX_RUNTIME, MAX_SOURCE = 200000, 2 * 1024**3, 16 * 1024**3
-EXES = {"bin/qemu-system-x86_64.exe", "bin/qemu-system-x86_64w.exe", "bin/qemu-img.exe"}
+EXES = {"bin/qemu-system-x86_64.exe", "bin/qemu-img.exe"}
 FEATURES = {**dict.fromkeys(("whpx", "slirp", "tools", "zstd", "pixman"), True),
             **dict.fromkeys(("tcg", "plugins", "sdl", "gtk", "vnc", "curses", "opengl", "virglrenderer",
                             "rutabaga_gfx", "libusb", "usb_redir", "virtfs", "guest_agent"), False),
