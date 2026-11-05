@@ -20,6 +20,33 @@ use std::{
 };
 
 fn wait(ctx: diagnostics::Context, fd: i32, event: i16, deadline: Instant) -> io::Result<()> {
+    wait_mode(ctx, fd, event, deadline, false)
+}
+fn wait_mode(
+    ctx: diagnostics::Context,
+    fd: i32,
+    event: i16,
+    deadline: Instant,
+    connecting: bool,
+) -> io::Result<()> {
+    wait_with(ctx, fd, event, deadline, connecting, |poll, timeout| {
+        // SAFETY: one initialized pollfd remains writable throughout poll.
+        let n = unsafe { libc::poll(poll, 1, timeout) };
+        if n < 0 {
+            Err(io::Error::last_os_error())
+        } else {
+            Ok(n)
+        }
+    })
+}
+fn wait_with(
+    ctx: diagnostics::Context,
+    fd: i32,
+    event: i16,
+    deadline: Instant,
+    connecting: bool,
+    mut poll_fn: impl FnMut(&mut libc::pollfd, i32) -> io::Result<i32>,
+) -> io::Result<()> {
     loop {
         let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
             diagnostics::log_reason(ctx, "poll-timeout", io::ErrorKind::TimedOut, None);
@@ -30,28 +57,37 @@ fn wait(ctx: diagnostics::Context, fd: i32, event: i16, deadline: Instant) -> io
             events: event,
             revents: 0,
         };
-        // SAFETY: a single initialized pollfd is writable for the duration of poll.
-        let n = unsafe {
-            libc::poll(
-                &mut poll,
-                1,
-                remaining.as_millis().min(i32::MAX as u128) as i32,
-            )
-        };
-        if n < 0 {
-            let saved = io::Error::last_os_error();
-            if saved.kind() == io::ErrorKind::Interrupted {
-                continue;
+        let n = match poll_fn(
+            &mut poll,
+            remaining.as_millis().min(i32::MAX as u128) as i32,
+        ) {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => {
+                diagnostics::note_reason(ctx, "poll-system-error", &e);
+                return Err(early::invalid());
             }
-            diagnostics::note_reason(ctx, "poll-system-error", &saved);
-            return Err(early::invalid());
-        }
+            Ok(n) => n,
+        };
         if n == 0 {
             diagnostics::log_reason(ctx, "poll-timeout", io::ErrorKind::TimedOut, None);
             return Err(early::invalid());
         }
         if poll.revents & event != 0 {
             return Ok(());
+        }
+        // Before the first Hello byte, virtio PORT_OPEN can still be in flight.
+        // Retry only that HUP-only connection state, within the original deadline.
+        if connecting
+            && event == libc::POLLOUT
+            && poll.revents & libc::POLLHUP != 0
+            && poll.revents & (libc::POLLERR | libc::POLLNVAL) == 0
+        {
+            std::thread::sleep(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(Duration::from_millis(1)),
+            );
+            continue;
         }
         let reason = if poll.revents & libc::POLLNVAL != 0 {
             "poll-invalid-fd"
@@ -113,6 +149,17 @@ fn write(
     stream: &mut (impl Write + AsRawFd),
     frame: Frame,
 ) -> io::Result<()> {
+    write_with(ctx, stream, frame, |ctx, fd, deadline, connecting| {
+        wait_mode(ctx, fd, libc::POLLOUT, deadline, connecting)
+    })
+}
+fn write_with(
+    ctx: diagnostics::Context,
+    stream: &mut (impl Write + AsRawFd),
+    frame: Frame,
+    mut wait_fn: impl FnMut(diagnostics::Context, i32, Instant, bool) -> io::Result<()>,
+) -> io::Result<()> {
+    let connecting = matches!(&frame, Frame::Hello(_));
     let bytes = encode(&frame).map_err(|_| {
         diagnostics::log_reason(ctx, "encode", io::ErrorKind::InvalidData, None);
         early::invalid()
@@ -120,7 +167,7 @@ fn write(
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut offset = 0;
     while offset < bytes.len() {
-        wait(ctx, stream.as_raw_fd(), libc::POLLOUT, deadline)?;
+        wait_fn(ctx, stream.as_raw_fd(), deadline, connecting && offset == 0)?;
         match stream.write(&bytes[offset..]) {
             Ok(0) => {
                 diagnostics::log_reason(ctx, "write-zero", io::ErrorKind::WriteZero, None);
@@ -533,6 +580,258 @@ mod tests {
             state_bytes: STATE_BYTES,
             host_utc: 1,
         }
+    }
+    #[test]
+    fn initial_hello_waits_through_host_not_connected_hup() {
+        for stage in ["early", "serve"] {
+            let mut calls = 0;
+            let result = wait_with(
+                diagnostics::Context::new(stage, "hello-write"),
+                -1,
+                libc::POLLOUT,
+                Instant::now() + Duration::from_secs(1),
+                true,
+                |p, _| {
+                    calls += 1;
+                    p.revents = if calls == 1 {
+                        libc::POLLHUP
+                    } else {
+                        libc::POLLOUT
+                    };
+                    Ok(1)
+                },
+            );
+            assert!(result.is_ok());
+            assert_eq!(calls, 2);
+        }
+    }
+    #[test]
+    fn terminal_hup_and_invalid_flags_do_not_retry() {
+        for (event, connecting, flags) in [
+            (libc::POLLIN, false, libc::POLLHUP),
+            (libc::POLLIN, true, libc::POLLHUP),
+            (libc::POLLOUT, false, libc::POLLHUP),
+            (libc::POLLOUT, true, libc::POLLHUP | libc::POLLERR),
+            (libc::POLLOUT, true, libc::POLLHUP | libc::POLLNVAL),
+        ] {
+            let mut calls = 0;
+            assert!(wait_with(
+                CTX,
+                -1,
+                event,
+                Instant::now() + Duration::from_secs(1),
+                connecting,
+                |p, _| {
+                    calls += 1;
+                    p.revents = flags;
+                    Ok(1)
+                }
+            )
+            .is_err());
+            assert_eq!(calls, 1);
+        }
+    }
+    #[test]
+    fn initial_hup_keeps_the_original_deadline() {
+        let deadline = Instant::now() + Duration::from_millis(10);
+        let mut budgets = Vec::new();
+        assert!(
+            wait_with(CTX, -1, libc::POLLOUT, deadline, true, |p, budget| {
+                budgets.push(budget);
+                p.revents = libc::POLLHUP;
+                Ok(1)
+            })
+            .is_err()
+        );
+        // Descheduling may consume the budget before any poll or during the
+        // first sleep. Zero or one poll is valid; expiry must still use this deadline.
+        assert!(budgets.windows(2).all(|p| p[1] <= p[0]));
+        assert!(Instant::now() >= deadline);
+    }
+    #[test]
+    fn expired_initial_hello_deadline_never_polls() {
+        assert!(wait_with(
+            CTX,
+            -1,
+            libc::POLLOUT,
+            Instant::now() - Duration::from_secs(1),
+            true,
+            |_, _| { panic!("an expired deadline must not poll") }
+        )
+        .is_err());
+    }
+    struct TestWriter {
+        bytes: Vec<u8>,
+        chunk: usize,
+        writes: usize,
+    }
+    impl AsRawFd for TestWriter {
+        fn as_raw_fd(&self) -> i32 {
+            -1
+        }
+    }
+    impl Write for TestWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            let n = bytes.len().min(self.chunk);
+            self.bytes.extend_from_slice(&bytes[..n]);
+            Ok(n)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn write_only_allows_hup_before_the_first_hello_byte() {
+        let hello = Frame::Hello(Session::early().hello().clone());
+        let expected = encode(&hello).unwrap();
+        let mut writer = TestWriter {
+            bytes: Vec::new(),
+            chunk: usize::MAX,
+            writes: 0,
+        };
+        let mut polls = 0;
+        assert!(
+            write_with(CTX, &mut writer, hello, |ctx, fd, deadline, connecting| {
+                assert!(connecting);
+                wait_with(ctx, fd, libc::POLLOUT, deadline, connecting, |p, _| {
+                    polls += 1;
+                    p.revents = if polls == 1 {
+                        libc::POLLHUP
+                    } else {
+                        libc::POLLOUT
+                    };
+                    Ok(1)
+                })
+            })
+            .is_ok()
+        );
+        assert_eq!(polls, 2);
+        assert_eq!(writer.bytes, expected);
+        assert_eq!(writer.writes, 1);
+    }
+    #[test]
+    fn partial_hello_hup_is_terminal_without_replay() {
+        let mut writer = TestWriter {
+            bytes: Vec::new(),
+            chunk: 1,
+            writes: 0,
+        };
+        let mut permissions = Vec::new();
+        let mut deadlines = Vec::new();
+        assert!(write_with(
+            CTX,
+            &mut writer,
+            Frame::Hello(Session::early().hello().clone()),
+            |ctx, fd, deadline, connecting| {
+                permissions.push(connecting);
+                deadlines.push(deadline);
+                let second = permissions.len() == 2;
+                let mut polls = 0;
+                wait_with(ctx, fd, libc::POLLOUT, deadline, connecting, |p, _| {
+                    polls += 1;
+                    p.revents = if second && polls == 1 {
+                        libc::POLLHUP
+                    } else {
+                        libc::POLLOUT
+                    };
+                    Ok(1)
+                })
+            }
+        )
+        .is_err());
+        assert_eq!(permissions, [true, false]);
+        assert_eq!(writer.bytes.len(), 1);
+        assert_eq!(writer.writes, 1);
+        assert_eq!(deadlines.len(), 2);
+        assert_eq!(deadlines[0], deadlines[1]);
+    }
+    #[test]
+    fn non_hello_hup_is_terminal_before_any_write() {
+        let frame = Frame::Result(WireResult {
+            version: VERSION,
+            boot_nonce: boot().boot_nonce,
+            request_id: 1,
+            body: ResultBody::Ready {},
+        });
+        let mut writer = TestWriter {
+            bytes: Vec::new(),
+            chunk: usize::MAX,
+            writes: 0,
+        };
+        let mut polls = 0;
+        assert!(
+            write_with(CTX, &mut writer, frame, |ctx, fd, deadline, connecting| {
+                assert!(!connecting);
+                wait_with(ctx, fd, libc::POLLOUT, deadline, connecting, |p, _| {
+                    polls += 1;
+                    p.revents = if polls == 1 {
+                        libc::POLLHUP
+                    } else {
+                        libc::POLLOUT
+                    };
+                    Ok(1)
+                })
+            })
+            .is_err()
+        );
+        assert_eq!(polls, 1);
+        assert!(writer.bytes.is_empty());
+        assert_eq!(writer.writes, 0);
+    }
+    #[test]
+    fn initial_hup_diagnostics_child() {
+        if std::env::var_os("BRIDGE_TEST_INITIAL_HUP_DIAGNOSTICS").is_none() {
+            return;
+        }
+        let ctx = diagnostics::Context::new("serve", "hello-write");
+        let mut calls = 0;
+        assert!(wait_with(
+            ctx,
+            -1,
+            libc::POLLOUT,
+            Instant::now() + Duration::from_secs(1),
+            true,
+            |p, _| {
+                calls += 1;
+                p.revents = if calls <= 3 {
+                    libc::POLLHUP
+                } else {
+                    libc::POLLOUT
+                };
+                Ok(1)
+            }
+        )
+        .is_ok());
+        assert!(wait_with(
+            ctx,
+            -1,
+            libc::POLLOUT,
+            Instant::now() + Duration::from_millis(3),
+            true,
+            |p, _| {
+                p.revents = libc::POLLHUP;
+                Ok(1)
+            }
+        )
+        .is_err());
+    }
+    #[test]
+    fn initial_hup_is_silent_until_the_existing_deadline_expires() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tests::initial_hup_diagnostics_child",
+                "--nocapture",
+            ])
+            .env("BRIDGE_TEST_INITIAL_HUP_DIAGNOSTICS", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert_eq!(
+            std::str::from_utf8(&out.stderr).unwrap(),
+            "bridge-guest: stage=serve phase=hello-write.poll-timeout kind=TimedOut errno=none\n"
+        );
     }
     #[test]
     fn diagnostic_io_child() {
