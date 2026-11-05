@@ -281,6 +281,8 @@ def verify(output, source_lock, packages_lock):
                         raise ValueError(f"unknown system import: {edge['name']}")
                 else:
                     target, owner = edge["path"], edge["owner"]
+                    if not target.startswith("bin/") or target.count("/") != 1:
+                        raise ValueError(f"bundled DLL must sit beside the executables in bin/: {target}")
                     if (target not in pe_files or Path(target).name.casefold() != edge["name"].casefold()
                             or owner not in package_by_name or package_by_name[owner]["redistribution"] != "runtime"):
                         raise ValueError(f"missing DLL/package owner: {edge['name']}")

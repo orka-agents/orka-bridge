@@ -305,6 +305,19 @@ class Archives(unittest.TestCase):
             with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 recipe.package(self.runtime, self.source, self.output, (self.source_lock, self.package_lock), evidence)
 
+    def test_bundled_dll_must_sit_beside_executables(self):
+        # Windows finds non-system DLLs beside the executable, not in other folders.
+        data = (self.runtime / "bin/demo.dll").read_bytes()
+        (self.runtime / "bin/demo.dll").unlink()
+        self.put(self.runtime, "lib/demo.dll", data)
+        for edges in self.evidence["imports"].values():
+            for edge in edges:
+                if edge.get("path") == "bin/demo.dll":
+                    edge["path"] = "lib/demo.dll"
+        self.evidence["imports"]["lib/demo.dll"] = self.evidence["imports"].pop("bin/demo.dll")
+        with self.assertRaisesRegex(ValueError, "beside the executables"):
+            self.build()
+
     def test_windows_path_hazards(self):
         for name in ("../x", "/x", "C:/x", "\\\\server\\x", "a/b:c", "a/NUL.txt", "a/COM1", "a/CON .txt", "a/CONIN$", "a/COM¹.txt", "a/b.",
                      "a/b ", "a\x00b", "a\\b", "a//b", "a/./b"):
