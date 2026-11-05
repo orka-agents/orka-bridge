@@ -3,20 +3,32 @@ import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import zipfile
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from images.guest.lock import (HEX, VERSIONS, file_hash, input_identity, matches,
-                               read_json, relative_path, require, shape, validate_lock)
+from images.guest.lock import (
+    HEX,
+    VERSIONS,
+    file_hash,
+    input_identity,
+    matches,
+    read_json,
+    relative_path,
+    require,
+    shape,
+    validate_lock,
+)
 
 REPOSITORY = "orka-agents/orka-bridge"
 SLUG = r"[a-z0-9][a-z0-9.-]{0,62}"
+MEMBERS = ("payload", "metadata", "buildReceipt", "bootReceipt", "kernel", "initrd")
 
 
 def gh(endpoint, *, paginate=False, download=None, body=None, upload=None):
@@ -52,22 +64,31 @@ def approved_profile(name):
     shape(p, ("repository", "repositoryId", "runId", "workflowId", "sourceCommit",
               "artifactId", "artifactSha256", "payloadPath", "payloadSha256",
               "metadataPath", "metadataSha256", "imageId", "platform", "architecture",
-              "nativeReceiptSha256", "inputIdentity"))
+              "nativeReceiptSha256", "inputIdentity", "buildReceiptPath", "buildReceiptSha256",
+              "bootReceiptPath", "bootReceiptSha256", "kernelPath", "kernelSha256", "kernelBytes",
+              "initrdPath", "initrdSha256", "initrdBytes"))
     require(p["repository"] == REPOSITORY, "unapproved repository")
     for field in ("repositoryId", "runId", "workflowId", "artifactId"):
         require(type(p[field]) is int and p[field] > 0, "invalid API identity")
-    for field in ("artifactSha256", "payloadSha256", "metadataSha256",
-                  "nativeReceiptSha256", "inputIdentity"):
+    for field in ("artifactSha256", "nativeReceiptSha256", "inputIdentity", *(r + "Sha256" for r in MEMBERS)):
         require(matches(p[field], HEX), "invalid profile checksum")
     require(matches(p["sourceCommit"], r"[0-9a-f]{40}") and matches(p["imageId"], SLUG) and ".." not in p["imageId"],
             "invalid source/image identity")
     require((p["platform"], p["architecture"]) in (("macos", "arm64"), ("windows", "amd64")),
             "unsupported profile target")
-    for field in ("payloadPath", "metadataPath"):
-        relative_path(p[field])
-    require(p["payloadPath"] != p["metadataPath"], "selected members must differ")
+    selected_members(p)
     require(bool(VERSIONS["releaseProfiles"]), "no reviewed guest production profiles")
     return p
+
+
+def selected_members(p):
+    paths = [p[r + "Path"] for r in MEMBERS]
+    for path in paths:
+        relative_path(path)
+    require(len(set(paths)) == len(paths), "selected members must differ")
+    for role in ("kernel", "initrd"):
+        require(type(p[role + "Bytes"]) is int and p[role + "Bytes"] > 0, "invalid selected boot size")
+    return paths
 
 
 def tag(p):
@@ -98,6 +119,7 @@ def validate_remote(p):
 
 
 def archive_metadata(p, archive):
+    paths = selected_members(p)
     names = set()
     for entry in archive.infolist():
         name = entry.filename.rstrip("/") if entry.is_dir() else entry.filename
@@ -106,17 +128,22 @@ def archive_metadata(p, archive):
         require(name not in names and mode in (0, stat.S_IFREG, stat.S_IFDIR),
                 "duplicate or nonregular ZIP member")
         names.add(name)
-    for field in ("payloadPath", "metadataPath"):
-        require(p[field] in names and not archive.getinfo(p[field]).is_dir(), "missing selected ZIP member")
+    for path in paths:
+        require(path in names and not archive.getinfo(path).is_dir(), "missing selected ZIP member")
+    for role in MEMBERS:
+        info = archive.getinfo(p[role + "Path"])
+        if role in ("metadata", "buildReceipt", "bootReceipt"):
+            require(info.file_size <= 8 * 1024**2, "selected JSON too large")
+        if role in ("kernel", "initrd"):
+            require(info.file_size == p[role + "Bytes"], "selected boot size mismatch")
+        with archive.open(info) as stream:
+            require(hashlib.file_digest(stream, "sha256").hexdigest() == p[role + "Sha256"], "selected " + role + " checksum mismatch")
     info = archive.getinfo(p["metadataPath"])
     require(info.file_size <= 8 * 1024 * 1024, "metadata too large")
     with archive.open(info) as stream:
         raw = stream.read(8 * 1024 * 1024 + 1)
     require(len(raw) <= 8 * 1024 * 1024
             and hashlib.sha256(raw).hexdigest() == p["metadataSha256"], "metadata checksum mismatch")
-    with archive.open(p["payloadPath"]) as stream:
-        require(hashlib.file_digest(stream, "sha256").hexdigest() == p["payloadSha256"],
-                "payload checksum mismatch")
     return read_json(raw)
 
 
@@ -141,8 +168,15 @@ def prepare(p, out):
             metadata = archive_metadata(p, archive)
             bind_metadata(p, metadata)
             validate_lock(metadata["componentLock"], production=True)
+            inputs = {}
+            for role, argument in (("buildReceipt", "build_receipt"), ("bootReceipt", "boot_receipt"), ("kernel", "kernel"), ("initrd", "initrd")):
+                destination = Path(temporary) / role
+                with archive.open(p[role + "Path"]) as source, destination.open("xb") as target:
+                    shutil.copyfileobj(source, target, 1024**2)
+                require(file_hash(destination) == p[role + "Sha256"], "selected input changed while copying")
+                inputs[argument] = destination
             with archive.open(p["payloadPath"]) as stream:
-                package.create(stream, metadata, out)
+                package.create(stream, metadata, out, **inputs)
     return package.verify(out / "manifest.json")
 
 
@@ -170,6 +204,11 @@ def check_available(p, created=None):
 def draft(p, out, expected_sha):
     from images import package
     manifest = package.verify(out / "manifest.json", manifest_sha256=expected_sha)
+    direct = manifest["directBoot"]
+    require(manifest["artifact"]["uncompressedSha256"] == p["payloadSha256"]
+            and all(direct["provenance"][r + "Sha256"] == p[r + "Sha256"] for r in ("bootReceipt", "buildReceipt"))
+            and all(direct[r]["sha256"] == p[r + "Sha256"] and direct[r]["bytes"] == p[r + "Bytes"] for r in ("kernel", "initrd")),
+            "draft boot/profile binding mismatch")
     require(manifest["imageId"] == p["imageId"]
             and manifest["buildSourceCommit"] == p["sourceCommit"]
             and all(manifest["target"][k] == p[k] for k in ("platform", "architecture"))
@@ -186,7 +225,7 @@ def draft(p, out, expected_sha):
     print("Created draft release " + str(release_id) + "; failures leave it for operator inspection.", flush=True)
     check_available(p, created=release_id)
     assets = {}
-    files = [c["name"] for c in manifest["artifact"]["chunks"]] + ["manifest.json"]
+    files = package.asset_names(manifest)
     for name in files:
         asset = gh("https://uploads.github.com/" + base + "/releases/" + str(release_id)
                    + "/assets?name=" + name, upload=out / name)

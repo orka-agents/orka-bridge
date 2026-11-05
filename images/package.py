@@ -5,12 +5,14 @@ import hashlib
 import io
 import json
 import os
-from pathlib import Path
+import shutil
 import sys
 import zlib
+from pathlib import Path
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from images import boot
 from images.guest import lock as guest
 
 MAX_CHUNK = 1024 ** 3
@@ -20,7 +22,7 @@ HEX = r"[0-9a-f]{64}"
 ID = r"[a-z0-9][a-z0-9.-]{0,62}"
 VERSION = r"[A-Za-z0-9][A-Za-z0-9._+-]{0,95}"
 TARGET = ("platform", "architecture", "format", "minimumHostVersion", "minimumAppVersion")
-ROOT = ("schemaVersion", "publicationReady", "imageId", "buildSourceCommit", "stateCompatibilityId", "target", "components", "layout", "artifact")
+ROOT = ("schemaVersion", "publicationReady", "imageId", "buildSourceCommit", "stateCompatibilityId", "target", "components", "layout", "artifact", "defaultLaunch", "directBoot")
 require, shape, matches = guest.require, guest.shape, guest.matches
 
 
@@ -80,7 +82,7 @@ def components_valid(c):
     names = []
     for tool in c["tools"]:
         shape(tool, ("name", "version", "sha256"))
-        require(matches(tool["name"], guest.NAME) and matches(tool["version"], VERSION) and matches(tool["sha256"], HEX), "invalid tool identity")
+        require(matches(tool["name"], guest.NAME) and boot.tool_version(tool["version"]) and matches(tool["sha256"], HEX), "invalid tool identity")
         names.append(tool["name"])
     require(names == sorted(set(names)) and "kind" in names, "invalid tool order or closure")
     kind = next(t for t in c["tools"] if t["name"] == "kind")
@@ -109,7 +111,8 @@ def validate_metadata(value):
          "kubernetes": {"version": json.loads(policy_bytes)["kubernetes"], "provenance": "policy-declared"},
          "vekil": {k: vekil[k] for k in ("manifestDigest", "configDigest")}, "tools": tools}
     components_valid(c)
-    return {"schemaVersion": "bridge-image/v1", "publicationReady": False,
+    return {"schemaVersion": "bridge-image/v2", "publicationReady": False,
+            "defaultLaunch": "uefi" if target["platform"] == "macos" else "linux-direct",
             **{k: value[k] for k in ("imageId", "buildSourceCommit", "stateCompatibilityId")},
             "target": target, "components": c, "layout": layout(target["format"])}
 
@@ -146,9 +149,17 @@ class ChunkWriter:
             self.entries.append({"order": len(self.entries), "name": self.name, "bytes": self.size, "sha256": self.part.hexdigest()})
 
 
-def create(stream, metadata, out, chunk_bytes=MAX_CHUNK):
+def create(stream, metadata, out, chunk_bytes=MAX_CHUNK, *, build_receipt, boot_receipt, kernel, initrd):
     require(type(chunk_bytes) is int and 0 < chunk_bytes <= MAX_CHUNK, "invalid chunk size")
     manifest = validate_metadata(metadata)
+    direct, expected_size = boot.consume(metadata, build_receipt, boot_receipt, kernel, initrd)
+    require(stream.seekable(), "payload stream must be seekable for preflight")
+    start, size, digest = stream.tell(), 0, hashlib.sha256()
+    while data := stream.read(BLOCK):
+        digest.update(data); size += len(data)
+    require(size == expected_size and digest.hexdigest() == direct["provenance"]["diskSha256"], "final payload differs from boot/build receipts")
+    stream.seek(start)
+    manifest["directBoot"] = direct
     first = stream.read(BLOCK)
     require(isinstance(first, bytes) and first, "empty or nonbinary payload")
     out = Path(out); out.mkdir()
@@ -165,6 +176,10 @@ def create(stream, metadata, out, chunk_bytes=MAX_CHUNK):
     manifest["artifact"] = {"role": "os-disk", "format": manifest["target"]["format"], "compression": "gzip",
                             "uncompressedBytes": size, "uncompressedSha256": original.hexdigest(),
                             "compressedBytes": writer.total, "compressedSha256": writer.whole.hexdigest(), "chunks": writer.entries}
+    validate_manifest(manifest)
+    for role, source in (("kernel", kernel), ("initrd", initrd)):
+        shutil.copyfile(boot.regular(source), out / direct[role]["name"])
+    boot.verify_files(direct, metadata["architecture"], out / direct["kernel"]["name"], out / direct["initrd"]["name"])
     encoded = canonical(manifest)
     require(len(encoded) <= MAX_JSON, "manifest exceeds size limit")
     partial = out / "manifest.json.partial"
@@ -173,8 +188,9 @@ def create(stream, metadata, out, chunk_bytes=MAX_CHUNK):
 
 
 def validate_manifest(m):
+    require(isinstance(m, dict) and m.get("schemaVersion") == "bridge-image/v2", "unsupported manifest schema; v1 is historical and is not upgraded")
     shape(m, ROOT)
-    require(m["schemaVersion"] == "bridge-image/v1" and m["publicationReady"] is False, "unsupported manifest schema or publication claim")
+    require(m["publicationReady"] is False, "unsupported publication claim")
     require(matches(m["imageId"], ID) and ".." not in m["imageId"] and matches(m["stateCompatibilityId"], ID), "invalid image/state ID")
     require(matches(m["buildSourceCommit"], r"[0-9a-f]{40}"), "invalid build commit")
     target_valid(m["target"]); components_valid(m["components"])
@@ -196,6 +212,9 @@ def validate_manifest(m):
             require(previous == a["chunks"][0]["bytes"] and c["bytes"] <= previous, "invalid chunk boundary")
         previous = c["bytes"]; total += c["bytes"]
     require(total == a["compressedBytes"], "compressed size mismatch")
+    require(m["defaultLaunch"] == ("uefi" if m["target"]["platform"] == "macos" else "linux-direct"), "wrong default launch")
+    boot.validate(m["directBoot"], m["target"]["architecture"], prefix(m), m["components"]["tools"])
+    require(m["directBoot"]["provenance"]["diskSha256"] == a["uncompressedSha256"], "boot/disk identity mismatch")
 
 
 class ChunkReader(io.RawIOBase):
@@ -229,12 +248,18 @@ class ChunkReader(io.RawIOBase):
         super().close()
 
 
+def asset_names(manifest):
+    return [c["name"] for c in manifest["artifact"]["chunks"]] + [manifest["directBoot"][r]["name"] for r in ("kernel", "initrd")] + ["manifest.json"]
+
+
 def verify(manifest_path, *, manifest_sha256=None, out=None):
     manifest_path = Path(manifest_path)
     m = read_json(manifest_path, manifest_sha256)
     validate_manifest(m)
     a = m["artifact"]
-    require({p.name for p in manifest_path.parent.iterdir()} == {manifest_path.name, *(c["name"] for c in a["chunks"])}, "missing or extra package files")
+    require({p.name for p in manifest_path.parent.iterdir()} == set(asset_names(m)), "missing or extra package files")
+    boot.verify_files(m["directBoot"], m["target"]["architecture"],
+                      manifest_path.parent / m["directBoot"]["kernel"]["name"], manifest_path.parent / m["directBoot"]["initrd"]["name"])
     destination, partial, output = None, None, None
     if out is not None:
         destination = Path(out)
@@ -270,17 +295,20 @@ def main():
     parser.add_argument("--metadata", type=Path); parser.add_argument("--out", type=Path)
     parser.add_argument("--chunk-bytes", type=int, default=MAX_CHUNK)
     parser.add_argument("--manifest-sha256")
+    for name in ("build-receipt", "boot-receipt", "kernel", "initrd"):
+        parser.add_argument("--" + name, type=Path)
     args = parser.parse_args()
     try:
         if args.verify:
-            require(args.metadata is None, "metadata is not a verify option")
+            require(all(getattr(args, k) is None for k in ("metadata", "build_receipt", "boot_receipt", "kernel", "initrd")), "producer inputs are not verify options")
             result = verify(args.verify, manifest_sha256=args.manifest_sha256, out=args.out)
         else:
             require(args.metadata is not None and args.out is not None and args.manifest_sha256 is None, "packaging requires metadata and a new output directory")
-            require(not args.input.is_symlink(), "input symlink is not allowed")
-            with args.input.open("rb") as stream:
-                result = create(stream, read_json(args.metadata), args.out, args.chunk_bytes)
-    except (ValueError, OSError, TypeError) as error:
+            inputs = {k: getattr(args, k) for k in ("build_receipt", "boot_receipt", "kernel", "initrd")}
+            require(all(v is not None for v in inputs.values()), "packaging requires build/boot receipts, kernel and initrd")
+            with boot.regular(args.input).open("rb") as stream:
+                result = create(stream, read_json(args.metadata), args.out, args.chunk_bytes, **inputs)
+    except (ValueError, OSError, KeyError, TypeError) as error:
         print("image package: " + str(error), file=sys.stderr)
         return 2
     print(f"verified bytes: {result['artifact']['compressedBytes']} compressed, {result['artifact']['uncompressedBytes']} uncompressed; not boot or publication readiness")

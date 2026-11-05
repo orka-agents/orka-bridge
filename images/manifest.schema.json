@@ -1,12 +1,45 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:orka-bridge:bridge-image:v1",
-  "$comment": "PROVISIONAL: native-runtime owner acceptance is required before freezing bridge-image/v1. This schema does not authorize publication or prove a bootable image.",
+  "$id": "urn:orka-bridge:bridge-image:v2",
+  "$comment": "PROVISIONAL: owner acceptance is required before freezing bridge-image/v2. No publication or boot approval. V1 remains at historical baseline 4b810c232c627f2ccb1dd59456a7ddd415d2912d; no upgrade.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "publicationReady", "imageId", "buildSourceCommit", "stateCompatibilityId", "target", "components", "layout", "artifact"],
+  "required": ["schemaVersion", "publicationReady", "imageId", "buildSourceCommit", "stateCompatibilityId", "target", "components", "layout", "artifact", "defaultLaunch", "directBoot"],
   "properties": {
-    "schemaVersion": {"const": "bridge-image/v1"},
+    "schemaVersion": {"const": "bridge-image/v2"},
+    "defaultLaunch": {"enum": ["uefi", "linux-direct"]},
+    "directBoot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kernel", "initrd", "rootSelector", "kernelRelease", "commandLine", "requiredDrivers", "provenance"],
+      "properties": {
+        "kernel": {"$ref": "#/$defs/kernel"}, "initrd": {"$ref": "#/$defs/initrd"},
+        "rootSelector": {
+          "type": "object", "additionalProperties": false, "required": ["kind", "value"],
+          "properties": {"kind": {"const": "filesystem-uuid"}, "value": {"type": "string", "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"}}
+        },
+        "kernelRelease": {"type": "string", "pattern": "^[A-Za-z0-9._+-]{1,96}-(arm64|amd64)$"},
+        "commandLine": {"type": "string", "pattern": "^root=UUID=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12} ro console=(hvc0|ttyS0,115200n8) noresume$"},
+        "requiredDrivers": {"type": "array", "minItems": 6, "maxItems": 6, "uniqueItems": true, "items": {
+          "type": "object", "additionalProperties": false, "required": ["name", "builtIn"],
+          "properties": {"name": {"enum": ["virtio_pci", "virtio_blk", "virtio_console", "virtio_rng", "virtio_net", "ext4"]}, "builtIn": {"type": "boolean"}}
+        }},
+        "provenance": {
+          "type": "object", "additionalProperties": false,
+          "required": ["diskSha256", "bootReceiptSha256", "buildReceiptSha256", "inputSha256", "kernelConfigSha256", "modulesSha256", "endpointSha256", "earlyHookSha256", "buildHookSha256", "extractorSha256", "inspectorSha256", "extractionTools"],
+          "properties": {
+            "diskSha256": {"$ref": "#/$defs/hex"}, "bootReceiptSha256": {"$ref": "#/$defs/hex"},
+            "buildReceiptSha256": {"$ref": "#/$defs/hex"}, "inputSha256": {"$ref": "#/$defs/hex"},
+            "kernelConfigSha256": {"$ref": "#/$defs/hex"}, "modulesSha256": {"$ref": "#/$defs/hex"},
+            "endpointSha256": {"$ref": "#/$defs/hex"}, "earlyHookSha256": {"$ref": "#/$defs/hex"},
+            "buildHookSha256": {"$ref": "#/$defs/hex"}, "extractorSha256": {"$ref": "#/$defs/hex"}, "inspectorSha256": {"$ref": "#/$defs/hex"},
+            "extractionTools": {"type": "array", "minItems": 4, "maxItems": 4, "uniqueItems": true, "items": {
+              "type": "object", "additionalProperties": false, "required": ["name", "version", "executableSha256"],
+              "properties": {"name": {"enum": ["guestfish", "unmkinitramfs", "readelf", "dpkg-query"]}, "version": {"$ref": "#/$defs/toolVersion"}, "executableSha256": {"$ref": "#/$defs/hex"}}
+            }}
+          }
+        }
+      }
+    },
     "publicationReady": {"const": false},
     "imageId": {"allOf": [{"$ref": "#/$defs/id"}, {"not": {"pattern": "\\.\\."}}]},
     "buildSourceCommit": {"$ref": "#/$defs/commit"},
@@ -98,12 +131,24 @@
       "then": {"properties": {
         "target": {"properties": {"architecture": {"const": "arm64"}, "format": {"const": "raw"}}},
         "layout": {"properties": {"osDisk": {"properties": {"format": {"const": "raw"}}}, "stateDisk": {"properties": {"format": {"const": "raw"}}}}},
-        "artifact": {"properties": {"format": {"const": "raw"}}}
+        "artifact": {"properties": {"format": {"const": "raw"}}},
+        "defaultLaunch": {"const": "uefi"},
+        "directBoot": {"properties": {
+          "kernel": {"properties": {"format": {"const": "linux-arm64-image"}, "name": {"pattern": "-macos-arm64\\.kernel$"}}},
+          "initrd": {"properties": {"name": {"pattern": "-macos-arm64\\.initrd$"}}},
+          "kernelRelease": {"pattern": "-arm64$"}, "commandLine": {"pattern": " ro console=hvc0 noresume$"}
+        }}
       }},
       "else": {"properties": {
         "target": {"properties": {"architecture": {"const": "amd64"}, "format": {"const": "qcow2"}}},
         "layout": {"properties": {"osDisk": {"properties": {"format": {"const": "qcow2"}}}, "stateDisk": {"properties": {"format": {"const": "qcow2"}}}}},
-        "artifact": {"properties": {"format": {"const": "qcow2"}}}
+        "artifact": {"properties": {"format": {"const": "qcow2"}}},
+        "defaultLaunch": {"const": "linux-direct"},
+        "directBoot": {"properties": {
+          "kernel": {"properties": {"format": {"const": "linux-bzimage"}, "name": {"pattern": "-windows-amd64\\.kernel$"}}},
+          "initrd": {"properties": {"name": {"pattern": "-windows-amd64\\.initrd$"}}},
+          "kernelRelease": {"pattern": "-amd64$"}, "commandLine": {"pattern": " ro console=ttyS0,115200n8 noresume$"}
+        }}
       }}
     }
   ],
@@ -113,13 +158,29 @@
     "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]{0,62}$"},
     "version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,95}$"},
+    "toolVersion": {"type": "string", "minLength": 1, "maxLength": 4096, "allOf": [{"pattern": "^[^\\u0000-\\u0008\\u000b\\u000c\\u000e-\\u001f\\u007f]+$"}, {"pattern": "\\S"}]},
+    "kernel": {
+      "type": "object", "additionalProperties": false, "required": ["name", "bytes", "sha256", "format"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*-(macos-arm64|windows-amd64)\\.kernel$"},
+        "bytes": {"type": "integer", "minimum": 1}, "sha256": {"$ref": "#/$defs/hex"}, "format": {"enum": ["linux-arm64-image", "linux-bzimage"]}
+      }
+    },
+    "initrd": {
+      "type": "object", "additionalProperties": false, "required": ["name", "bytes", "sha256", "format", "compression"],
+      "properties": {
+        "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.-]*-(macos-arm64|windows-amd64)\\.initrd$"},
+        "bytes": {"type": "integer", "minimum": 1}, "sha256": {"$ref": "#/$defs/hex"}, "format": {"const": "initramfs"},
+        "compression": {"enum": ["gzip", "xz", "zstd", "cpio-prefix"]}
+      }
+    },
     "versionHash": {
       "type": "object", "additionalProperties": false, "required": ["version", "sha256"],
       "properties": {"version": {"$ref": "#/$defs/version"}, "sha256": {"$ref": "#/$defs/hex"}}
     },
     "tool": {
       "type": "object", "additionalProperties": false, "required": ["name", "version", "sha256"],
-      "properties": {"name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]{0,95}$"}, "version": {"$ref": "#/$defs/version"}, "sha256": {"$ref": "#/$defs/hex"}}
+      "properties": {"name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9+.-]{0,95}$"}, "version": {"$ref": "#/$defs/toolVersion"}, "sha256": {"$ref": "#/$defs/hex"}}
     },
     "chunk": {
       "type": "object", "additionalProperties": false, "required": ["order", "name", "bytes", "sha256"],

@@ -3,11 +3,12 @@ import copy
 import hashlib
 import io
 import json
-from pathlib import Path
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from images import package
@@ -18,7 +19,7 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def metadata(root, platform="windows"):
+def metadata(root, platform="windows") -> dict:
     value = lock(root)
     if platform == "macos":
         value["architecture"] = "arm64"
@@ -29,6 +30,71 @@ def metadata(root, platform="windows"):
             "minimumHostVersion": "13.0" if platform == "macos" else "11.0",
             "minimumAppVersion": "0.1.0", "stateCompatibilityId": "fixture-state-v1",
             "transportProtocolMajor": 1, "componentLock": value}
+
+
+def boot_inputs(root, meta, payload):
+    """Complete guest receipt shape; synthetic bytes are never boot evidence."""
+    root.mkdir(exist_ok=True)
+    arch = meta["architecture"]
+    kernel = bytearray(4096)
+    if arch == "amd64":
+        kernel[0x1fe:0x200], kernel[0x202:0x206] = b"\x55\xaa", b"HdrS"
+    else:
+        kernel[0x38:0x3c] = b"ARM\x64"
+    files = {"kernel": root / "os.kernel", "initrd": root / "os.initrd",
+             "build_receipt": root / "build.json", "boot_receipt": root / "boot-assets.json"}
+    files["kernel"].write_bytes(kernel)
+    files["initrd"].write_bytes(b"\x1f\x8bsynthetic initramfs")
+    lock_value = meta["componentLock"]
+    for name in ("guestfish", "unmkinitramfs", "readelf", "dpkg-query", "bridge-guest"):
+        if not any(t["name"] == name for t in lock_value["tools"]):
+            lock_value["tools"].append(dict(name=name, version="tool 1.2\nCopyright fixture", path=name, sha256=sha(name.encode())))
+    for name in ("bridge-guest", "bridge-guest-provenance"):
+        record = next((t for t in lock_value["tools"] if t["name"] == name), None)
+        if record is None:
+            record = dict(name=name, path=name, sha256=sha(name.encode()))
+            lock_value["tools"].append(record)
+        record["version"] = meta["buildSourceCommit"]
+    inputs = sha(json.dumps(lock_value, sort_keys=True, separators=(",", ":")).encode())
+    recipe = {"/etc/initramfs-tools/hooks/bridge-state": "1" * 64,
+              "/etc/initramfs-tools/scripts/local-bottom/bridge-state": "2" * 64}
+    build = dict(schemaVersion="bridge-guest-build/v1", architecture=arch,
+                 contract={}, inputSha256=inputs, builderTools=[],
+                 runtime=dict(schemaVersion="bridge-guest-binary/v1", sourceCommit=meta["buildSourceCommit"],
+                              binarySha256=sha(b"bridge-guest"), binaryBytes=12,
+                              target="aarch64-unknown-linux-musl" if arch == "arm64" else "x86_64-unknown-linux-musl",
+                              contractVersion="H1/v1", protocolMajor=1,
+                              publicationReady=False, qualification={}, toolchain="1.98.1", rustc="rustc 1.98.1",
+                              rustcBinarySha256="6" * 64, cargoLockSha256="7" * 64, elf={}),
+                 recipeFiles=recipe, payload="os.raw" if arch == "arm64" else "os.qcow2",
+                 sha256=sha(payload), fileBytes=len(payload), allocatedBytes=4096,
+                 componentCacheVerified=False, bootVerified=False, publicationReady=False)
+    files["build_receipt"].write_bytes(package.canonical(build))
+    uuid = "11111111-2222-4333-8444-555555555555"
+    console = "hvc0" if arch == "arm64" else "ttyS0,115200n8"
+    guest_dir = Path(package.guest.__file__).parent
+    receipt = dict(schemaVersion="bridge-guest-boot-assets/v1", architecture=arch,
+                   diskSha256=sha(payload), buildReceiptSha256=sha(files["build_receipt"].read_bytes()), inputSha256=inputs,
+                   kernel={"name": "os.kernel", "bytes": len(kernel), "sha256": sha(kernel),
+                           "format": "linux-arm64-image" if arch == "arm64" else "linux-bzimage"},
+                   initrd={"name": "os.initrd", "bytes": files["initrd"].stat().st_size,
+                           "sha256": sha(files["initrd"].read_bytes()), "format": "initramfs", "compression": "gzip"},
+                   rootSelector={"kind": "filesystem-uuid", "value": uuid}, kernelRelease="6.1.0-fixture-" + arch,
+                   commandLine="root=UUID=" + uuid + " ro console=" + console + " noresume",
+                   requiredDrivers=[{"name": n, "builtIn": True} for n in
+                                    ("virtio_pci", "virtio_blk", "virtio_console", "virtio_rng", "virtio_net", "ext4")],
+                   kernelConfigSha256="3" * 64, modulesSha256="4" * 64, endpointSha256=sha(b"bridge-guest"),
+                   earlyHookSha256="2" * 64, buildHookSha256="1" * 64,
+                   extractorSha256=sha((guest_dir / "boot_assets.py").read_bytes()),
+                   inspectorSha256=sha((guest_dir / "boot_inspect.py").read_bytes()),
+                   extractionTools=[{"name": n, "version": "tool 1.2\nCopyright fixture", "executableSha256": sha(n.encode())}
+                                    for n in ("guestfish", "unmkinitramfs", "readelf", "dpkg-query")],
+                   initrdTools=[dict(initrdPath=n, guestCanonicalPath=n, bytes=12, guestSha256="5" * 64,
+                                     initrdSha256="5" * 64, initrdType="regular", dependencies=[]) for n in
+                                ("/sbin/blkid", "/sbin/blockdev", "/sbin/mkfs.ext4", "/bin/mount", "/usr/bin/findmnt")],
+                   bootVerified=False, publicationReady=False)
+    files["boot_receipt"].write_bytes(package.canonical(receipt))
+    return files
 
 
 class BoundedStream(io.BytesIO):
@@ -47,11 +113,25 @@ class PackageTests(unittest.TestCase):
 
     def make(self, name="package", chunk=17, payload=None):
         out = self.root / name
-        result = package.create(BoundedStream(self.payload if payload is None else payload), self.meta, out, chunk)
+        inputs = boot_inputs(self.root / "boot", self.meta, self.payload)
+        result = package.create(BoundedStream(self.payload if payload is None else payload), self.meta, out, chunk, **inputs)
         return out, result
 
     def save(self, out, value):
         (out / "manifest.json").write_bytes(package.canonical(value))
+
+    def test_v2_requires_direct_pair_and_separate_host_launch(self):
+        _, manifest = self.make()
+        self.assertEqual(manifest["schemaVersion"], "bridge-image/v2")
+        self.assertEqual(manifest["defaultLaunch"], "linux-direct")
+        self.assertEqual(manifest["layout"]["osDisk"]["boot"], "uefi")
+        self.assertIn("directBoot", manifest)
+
+    def test_v1_is_explicitly_unsupported_without_upgrade(self):
+        _, manifest = self.make()
+        manifest["schemaVersion"] = "bridge-image/v1"
+        with self.assertRaisesRegex(ValueError, "unsupported manifest schema"):
+            package.validate_manifest(manifest)
 
     def test_roundtrip_deterministic_streaming_and_measured_bytes(self):
         first, manifest = self.make()
@@ -66,6 +146,121 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(manifest["artifact"]["uncompressedSha256"], sha(self.payload))
         self.assertFalse(manifest["publicationReady"])
         self.assertNotEqual(manifest["artifact"]["uncompressedBytes"], manifest["layout"]["osDisk"]["virtualCapacityBytes"])
+
+    def test_boot_pair_and_provenance_match_task2_inputs(self):
+        for platform, launch, fmt, console in (("windows", "linux-direct", "linux-bzimage", "ttyS0,115200n8"),
+                                               ("macos", "uefi", "linux-arm64-image", "hvc0")):
+            self.meta = metadata(self.root, platform)
+            out, manifest = self.make(platform)
+            direct = manifest["directBoot"]
+            self.assertEqual(manifest["defaultLaunch"], launch)
+            self.assertEqual(direct["kernel"]["format"], fmt)
+            self.assertEqual(direct["commandLine"], "root=UUID=11111111-2222-4333-8444-555555555555 ro console=" + console + " noresume")
+            self.assertEqual(direct["provenance"]["diskSha256"], sha(self.payload))
+            self.assertNotEqual(direct["provenance"]["inputSha256"], manifest["components"]["canonicalLockSha256"])
+            self.assertEqual(direct["provenance"]["extractionTools"][0]["version"], "tool 1.2\nCopyright fixture")
+            self.assertEqual({p.name for p in out.iterdir()}, {"manifest.json", direct["kernel"]["name"], direct["initrd"]["name"],
+                             *(c["name"] for c in manifest["artifact"]["chunks"])})
+            package.verify(out / "manifest.json")
+
+    def test_consumes_actual_task2_extractor_receipt_not_an_alternate_format(self):
+        from images.guest.tests.test_boot_assets import BootAssetTests
+        producer = BootAssetTests()
+        producer.setUp()
+        self.addCleanup(producer.doCleanups)
+        producer.build["runtime"] = json.loads((producer.root / "provenance.json").read_bytes())
+        receipt = producer.extract()  # Real extractor; only guest/tool I/O is synthetic.
+        meta = dict(self.meta, componentLock=producer.value)
+        output = self.root / "task2-package"
+        exported = producer.root / "assets"
+        manifest = package.create(BoundedStream(producer.image.read_bytes()), meta, output,
+                                  build_receipt=producer.receipt, boot_receipt=exported / "boot-assets.json",
+                                  kernel=exported / "os.kernel", initrd=exported / "os.initrd")
+        self.assertEqual(manifest["directBoot"]["provenance"]["inputSha256"], receipt["inputSha256"])
+        self.assertEqual(manifest["directBoot"]["provenance"]["inspectorSha256"], receipt["inspectorSha256"])
+        package.verify(output / "manifest.json")
+
+    def test_bad_receipts_and_inputs_reject_before_package_writes(self):
+        changes = [("architecture", "arm64"), ("kernelRelease", "6.1-other-arm64"),
+                   ("diskSha256", "f" * 64), ("inputSha256", "f" * 64),
+                   ("buildReceiptSha256", "f" * 64), ("extractorSha256", "f" * 64),
+                   ("inspectorSha256", "f" * 64), ("endpointSha256", "f" * 64),
+                   ("earlyHookSha256", "f" * 64), ("buildHookSha256", "f" * 64),
+                   ("commandLine", "root=/dev/sda3 ro"), ("rootSelector", {"kind": "filesystem-uuid", "value": "bad"}),
+                   ("requiredDrivers", []), ("extractionTools", []), ("derivation", {})]
+        for field, value in changes:
+            inputs = boot_inputs(self.root / "boot", self.meta, self.payload)
+            receipt = json.loads(inputs["boot_receipt"].read_bytes()); receipt[field] = value
+            inputs["boot_receipt"].write_bytes(package.canonical(receipt))
+            with self.subTest(field=field), self.assertRaises((ValueError, OSError)):
+                package.create(BoundedStream(self.payload), self.meta, self.root / "bad", **inputs)
+            self.assertFalse((self.root / "bad").exists())
+
+    def test_foreign_runtime_source_refused_before_writes(self):
+        inputs = boot_inputs(self.root / "boot", self.meta, self.payload)
+        build = json.loads(inputs["build_receipt"].read_bytes())
+        build["runtime"]["sourceCommit"] = "b" * 40
+        inputs["build_receipt"].write_bytes(package.canonical(build))
+        receipt = json.loads(inputs["boot_receipt"].read_bytes())
+        receipt["buildReceiptSha256"] = sha(inputs["build_receipt"].read_bytes())
+        inputs["boot_receipt"].write_bytes(package.canonical(receipt))
+        with self.assertRaisesRegex(ValueError, "runtime"):
+            package.create(BoundedStream(self.payload), self.meta, self.root / "bad", **inputs)
+        self.assertFalse((self.root / "bad").exists())
+
+    def test_boot_files_missing_linked_swapped_changed_or_truncated_refused(self):
+        for role in ("kernel", "initrd"):
+            for kind in ("missing", "symlink", "swapped", "changed", "truncated"):
+                out, manifest = self.make(role + kind)
+                path = out / manifest["directBoot"][role]["name"]
+                original = path.read_bytes()
+                if kind == "missing": path.unlink()
+                if kind == "symlink":
+                    path.unlink(); path.symlink_to(self.root / "boot" / ("os." + role))
+                if kind == "swapped": path.write_bytes((out / manifest["directBoot"]["initrd" if role == "kernel" else "kernel"]["name"]).read_bytes())
+                if kind == "changed": path.write_bytes(b"!" * len(original))
+                if kind == "truncated": path.write_bytes(original[:-1])
+                with self.subTest(role=role, kind=kind), self.assertRaises((ValueError, OSError)):
+                    package.verify(out / "manifest.json", out=self.root / "no-restored")
+                self.assertFalse((self.root / "no-restored.partial").exists())
+
+    def test_source_boot_files_and_receipts_refuse_before_output(self):
+        for role in ("kernel", "initrd", "build_receipt", "boot_receipt"):
+            for kind in ("missing", "symlink", "changed", "truncated"):
+                inputs = boot_inputs(self.root / "boot", self.meta, self.payload)
+                path = inputs[role]; data = path.read_bytes()
+                if kind == "missing": path.unlink()
+                if kind == "symlink":
+                    copy = self.root / "copy"; copy.write_bytes(data)
+                    path.unlink(); path.symlink_to(copy)
+                if kind == "changed": path.write_bytes(b"!" * len(data))
+                if kind == "truncated": path.write_bytes(data[:len(data) // 2])
+                with self.subTest(role=role, kind=kind), self.assertRaises((ValueError, OSError)):
+                    package.create(BoundedStream(self.payload), self.meta, self.root / "bad", **inputs)
+                self.assertFalse((self.root / "bad").exists())
+                if path.is_symlink(): path.unlink()
+
+    def test_tool_versions_are_bounded_text_but_other_versions_keep_policy(self):
+        for version in ("", " " * 20, "x" * 4097, "tool\x00bad"):
+            meta = copy.deepcopy(self.meta)
+            inputs = boot_inputs(self.root / "boot", meta, self.payload)
+            meta["componentLock"]["tools"][1]["version"] = version
+            with self.subTest(version=version[:20]), self.assertRaises(ValueError):
+                package.create(BoundedStream(self.payload), meta, self.root / "bad", **inputs)
+            self.assertFalse((self.root / "bad").exists())
+
+    def test_v2_metadata_and_format_mismatch_refused(self):
+        mutations = [lambda m: m.pop("directBoot"), lambda m: m.update(defaultLaunch="uefi"),
+                     lambda m: m["directBoot"]["kernel"].update(format="linux-arm64-image"),
+                     lambda m: m["directBoot"]["initrd"].update(compression="xz"),
+                     lambda m: m["directBoot"].update(commandLine="root=UUID=other ro"),
+                     lambda m: m["directBoot"]["provenance"].update(diskSha256="f" * 64),
+                     lambda m: m["directBoot"]["kernel"].update(name="../kernel"),
+                     lambda m: m["layout"]["osDisk"].update(boot="linux-direct")]
+        for i, change in enumerate(mutations):
+            out, manifest = self.make("bad-v2-" + str(i)); change(manifest); self.save(out, manifest)
+            with self.subTest(i=i), self.assertRaises(ValueError):
+                package.verify(out / "manifest.json")
 
     def test_exact_boundary_and_short_final_have_no_empty_chunk(self):
         _, initial = self.make(chunk=package.MAX_CHUNK)
@@ -109,7 +304,8 @@ class PackageTests(unittest.TestCase):
         text = json.dumps(m)
         for unwanted in ["chartPath", "archiveSha256", "base.qcow2", "installationUuid", "bootNonce", "credentialId"]:
             self.assertNotIn(unwanted, text)
-        self.assertEqual(c["tools"][0]["name"], "kind")
+        self.assertIn("kind", [t["name"] for t in c["tools"]])
+        self.assertEqual([t["name"] for t in c["tools"]], sorted(t["name"] for t in c["tools"]))
 
     def test_bad_metadata_is_rejected_without_writing(self):
         for field, value in [("architecture", "arm64"), ("format", "raw"), ("platform", "linux"),
@@ -118,7 +314,8 @@ class PackageTests(unittest.TestCase):
                              ("minimumAppVersion", "latest"), ("stateCompatibilityId", "")]:
             bad = copy.deepcopy(self.meta); bad[field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
-                package.create(io.BytesIO(self.payload), bad, self.root / "bad")
+                package.create(io.BytesIO(self.payload), bad, self.root / "bad",
+                               **boot_inputs(self.root / "boot", self.meta, self.payload))
             self.assertFalse((self.root / "bad").exists())
         for key in ["statePayload", "token", "localPath", "installationUuid", "publicationReady"]:
             bad = dict(self.meta, **{key: "PRIVATE_MARKER"})
@@ -139,7 +336,7 @@ class PackageTests(unittest.TestCase):
                 package.verify(out / "manifest.json")
 
     def test_manifest_boundary_schema_order_duplicates_and_layout(self):
-        changes = [lambda m: m.update(schemaVersion="bridge-image/v2"),
+        changes = [lambda m: m.update(schemaVersion="bridge-image/v1"),
                    lambda m: m.update(publicationReady=True),
                    lambda m: m["artifact"]["chunks"].reverse(),
                    lambda m: m["artifact"]["chunks"].append(m["artifact"]["chunks"][0]),
@@ -174,7 +371,7 @@ class PackageTests(unittest.TestCase):
         self.assertEqual((out / "manifest.json").read_bytes(), before)
         original = package.canonical
         def fail_final(value):
-            if value.get("schemaVersion") == "bridge-image/v1":
+            if value.get("schemaVersion") == "bridge-image/v2":
                 raise OSError("injected manifest write failure")
             return original(value)
         with patch.object(package, "canonical", side_effect=fail_final):
@@ -238,11 +435,22 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(layouts["osDisk"]["properties"]["virtualCapacityBytes"]["const"], 17179869184)
         package.verify(out / "manifest.json")
 
+    def test_root_package_import_does_not_require_guest_pythonpath(self):
+        environment = dict(os.environ, PYTHONPATH="")
+        result = subprocess.run([sys.executable, "-c", "from images import package; print(package.ROOT[-1])"],
+                                cwd=Path(package.__file__).resolve().parents[1], env=environment,
+                                capture_output=True, text=True, check=False)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual("directBoot", result.stdout.strip())
+
     def test_actual_cli_packages_and_verifies_without_network_or_traceback(self):
         src = self.root / "fixture.disk"; src.write_bytes(self.payload)
         meta = self.root / "metadata.json"; meta.write_text(json.dumps(self.meta))
         script = str(Path(package.__file__))
-        a = subprocess.run([sys.executable, script, "--input", str(src), "--metadata", str(meta),
+        inputs = boot_inputs(self.root / "boot", self.meta, self.payload)
+        meta.write_text(json.dumps(self.meta))
+        flags = [x for k, v in inputs.items() for x in ("--" + k.replace("_", "-"), str(v))]
+        a = subprocess.run([sys.executable, script, *flags, "--input", str(src), "--metadata", str(meta),
                             "--out", str(self.root / "cli"), "--chunk-bytes", "17"], capture_output=True, text=True)
         self.assertEqual(a.returncode, 0, a.stderr)
         b = subprocess.run([sys.executable, script, "--verify", str(self.root / "cli/manifest.json")], capture_output=True, text=True)

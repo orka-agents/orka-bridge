@@ -4,20 +4,22 @@ import hashlib
 import importlib
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
 import warnings
 import zipfile
+from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "images"))
-from guest.tests.fixtures import lock
 from guest.lock import input_identity
+from guest.tests.fixtures import lock
+
+from images.test_package import boot_inputs
 
 
 def sha(data):
@@ -39,6 +41,7 @@ class QualificationTests(unittest.TestCase):
                              stateCompatibilityId="fixture-state", transportProtocolMajor=1,
                              componentLock=lock(self.root))
         self.payload = b"synthetic disk, not boot qualified\n" * 100
+        self.boot = boot_inputs(self.root / "boot", self.metadata, self.payload)
         self.profile = dict(repository="orka-agents/orka-bridge", repositoryId=123,
                             runId=456, workflowId=789, sourceCommit="a" * 40,
                             artifactId=12, artifactSha256="0" * 64,
@@ -47,6 +50,11 @@ class QualificationTests(unittest.TestCase):
                             imageId="fixture", platform="windows", architecture="amd64",
                             nativeReceiptSha256="b" * 64,
                             inputIdentity=input_identity(self.metadata["componentLock"]))
+        for role, key in (("build_receipt", "buildReceipt"), ("boot_receipt", "bootReceipt"), ("kernel", "kernel"), ("initrd", "initrd")):
+            self.profile[key + "Path"] = "selected/" + self.boot[role].name
+            self.profile[key + "Sha256"] = sha(self.boot[role].read_bytes())
+            if role in ("kernel", "initrd"):
+                self.profile[role + "Bytes"] = self.boot[role].stat().st_size
         self.run = dict(id=456, workflow_id=789, head_sha="a" * 40, event="push",
                         status="completed", conclusion="success", repository={"id": 123},
                         head_repository={"id": 123})
@@ -76,6 +84,8 @@ class QualificationTests(unittest.TestCase):
             warnings.simplefilter("ignore", UserWarning)
             archive.writestr(self.profile["payloadPath"], self.payload)
             archive.writestr(self.profile["metadataPath"], raw)
+            for role, key in (("build_receipt", "buildReceipt"), ("boot_receipt", "bootReceipt"), ("kernel", "kernel"), ("initrd", "initrd")):
+                archive.writestr(self.profile[key + "Path"], self.boot[role].read_bytes())
             archive.writestr("unselected-script.py", b"raise RuntimeError('must not execute')")
             if extra:
                 archive.writestr(*extra)
@@ -155,13 +165,28 @@ class QualificationTests(unittest.TestCase):
             metadata = self.q.archive_metadata(self.profile, archive)
             self.assertEqual(metadata, self.metadata)
         self.assertFalse((self.root / "selected").exists())
-        for field in ("metadataSha256", "payloadSha256"):
+        for field in ("metadataSha256", "payloadSha256", "buildReceiptSha256", "bootReceiptSha256", "kernelSha256", "initrdSha256"):
             previous = self.profile[field]
             self.profile[field] = "f" * 64
             with self.subTest(field=field), zipfile.ZipFile(path) as archive:
                 with self.assertRaises(ValueError):
                     self.q.archive_metadata(self.profile, archive)
             self.profile[field] = previous
+
+    def test_selected_paths_must_all_differ_before_writes(self):
+        path = self.archive()
+        for field in ("metadataPath", "buildReceiptPath", "bootReceiptPath", "kernelPath", "initrdPath"):
+            changed = dict(self.profile, **{field: self.profile["payloadPath"]})
+            with self.subTest(field=field), zipfile.ZipFile(path) as archive, self.assertRaises(ValueError):
+                self.q.archive_metadata(changed, archive)
+
+    def test_boot_profile_bytes_and_missing_members_are_checked(self):
+        path = self.archive()
+        for role in ("kernel", "initrd"):
+            for field, value in ((role + "Path", "missing"), (role + "Bytes", 1)):
+                changed = dict(self.profile, **{field: value})
+                with self.subTest(field=field), zipfile.ZipFile(path) as archive, self.assertRaises(ValueError):
+                    self.q.archive_metadata(changed, archive)
 
     def test_zip_unsafe_duplicate_symlink_or_missing_selected_member_rejected(self):
         link = zipfile.ZipInfo("symlink")
@@ -215,11 +240,12 @@ class QualificationTests(unittest.TestCase):
         with zipfile.ZipFile(path) as archive:
             metadata = self.q.archive_metadata(self.profile, archive)
             with archive.open(self.profile["payloadPath"]) as stream:
-                package.create(stream, metadata, out, chunk_bytes=64)
+                package.create(stream, metadata, out, chunk_bytes=64, **self.boot)
         verified = package.verify(out / "manifest.json")
         self.assertEqual(verified["artifact"]["uncompressedSha256"], sha(self.payload))
         self.assertEqual({p.name for p in out.iterdir()},
-                         {"manifest.json"} | {c["name"] for c in verified["artifact"]["chunks"]})
+                         {"manifest.json", "fixture-windows-amd64.kernel", "fixture-windows-amd64.initrd"}
+                         | {c["name"] for c in verified["artifact"]["chunks"]})
 
 
     def test_prepare_download_uses_job_temp_and_rejects_archive_digest_before_output(self):
@@ -247,6 +273,61 @@ class QualificationTests(unittest.TestCase):
             else:
                 os.environ["RUNNER_TEMP"] = previous
 
+    def test_prepare_materializes_only_selected_boot_inputs(self):
+        path = self.archive()
+        self.artifact["digest"] = "sha256:" + self.profile["artifactSha256"]
+        def api(endpoint, **kwargs):
+            if endpoint.endswith("/zip"):
+                kwargs["download"].write_bytes(path.read_bytes())
+                return None
+            return self.api(endpoint, **kwargs)
+        # Only the existing production policy gate is replaced; no input/file verifier.
+        with patch.object(self.q, "gh", side_effect=api), patch.object(self.q, "validate_lock"):
+            out = self.root / "package"
+            manifest = self.q.prepare(self.profile, out)
+            self.assertEqual(manifest["directBoot"]["provenance"]["bootReceiptSha256"], self.profile["bootReceiptSha256"])
+            self.assertEqual({p.name for p in out.iterdir()}, {"manifest.json", "fixture-windows-amd64.kernel", "fixture-windows-amd64.initrd",
+                             *(c["name"] for c in manifest["artifact"]["chunks"])})
+
+    def test_prepare_boot_profile_mismatch_refuses_before_output(self):
+        path = self.archive()
+        self.artifact["digest"] = "sha256:" + self.profile["artifactSha256"]
+        def api(endpoint, **kwargs):
+            if endpoint.endswith("/zip"):
+                kwargs["download"].write_bytes(path.read_bytes())
+                return None
+            return self.api(endpoint, **kwargs)
+        with patch.object(self.q, "gh", side_effect=api), patch.object(self.q, "validate_lock"):
+            for field in ("bootReceiptSha256", "buildReceiptSha256", "kernelSha256", "initrdSha256"):
+                previous = self.profile[field]; self.profile[field] = "f" * 64
+                with self.subTest(field=field), self.assertRaisesRegex(ValueError, "checksum"):
+                    self.q.prepare(self.profile, self.root / "never-created")
+                self.assertFalse((self.root / "never-created").exists())
+                self.profile[field] = previous
+
+    def test_main_draft_requalifies_profile_and_refuses_foreign_prepared_context(self):
+        path = self.archive()
+        self.artifact["digest"] = "sha256:" + self.profile["artifactSha256"]
+        def api(endpoint, **kwargs):
+            if endpoint.endswith("/zip"):
+                kwargs["download"].write_bytes(path.read_bytes())
+                return None
+            return self.api(endpoint, **kwargs)  # Rejects any release/upload endpoint.
+        with patch.object(self.q, "gh", side_effect=api), patch.object(self.q, "validate_lock"):
+            self.q.prepare(self.profile, self.root / "expected")
+            expected = sha((self.root / "expected/manifest.json").read_bytes())
+            self.metadata["stateCompatibilityId"] = "foreign-valid-metadata"
+            path = self.archive()
+            self.artifact["digest"] = "sha256:" + self.profile["artifactSha256"]
+            args = ["qualify.py", "draft", "--profile", "synthetic", "--out", str(self.root / "requalified"),
+                    "--manifest-sha256", expected]
+            trusted = dict(GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_REF="refs/heads/main", GITHUB_REPOSITORY=self.q.REPOSITORY)
+            with patch.object(self.q, "approved_profile", return_value=self.profile), patch.object(sys, "argv", args), patch.dict(os.environ, trusted):
+                self.assertEqual(self.q.main(), 2)
+            value = json.loads((self.root / "requalified/manifest.json").read_bytes())
+            self.assertEqual(value["stateCompatibilityId"], "foreign-valid-metadata")
+            self.assertNotEqual(sha((self.root / "requalified/manifest.json").read_bytes()), expected)
+
     def test_prepare_source_fixture_never_becomes_a_production_package(self):
         path = self.archive()
         self.artifact["digest"] = "sha256:" + self.profile["artifactSha256"]
@@ -265,10 +346,10 @@ class QualificationTests(unittest.TestCase):
         out = self.root / "ready"
         with zipfile.ZipFile(self.archive()) as archive:
             with archive.open(self.profile["payloadPath"]) as stream:
-                package.create(stream, self.metadata, out, chunk_bytes=64)
+                package.create(stream, self.metadata, out, chunk_bytes=64, **self.boot)
         return out, sha((out / "manifest.json").read_bytes())
 
-    def draft_api(self, corrupt_manifest=False, wrong_upload=False, wrong_tag=False):
+    def draft_api(self, corrupt_manifest=False, wrong_upload=False, wrong_tag=False, corrupt_asset=None, listed_change=None):
         release = dict(id=31, tag_name="image-fixture-windows-amd64", draft=True,
                        target_commitish="a" * 40)
         uploads = {}
@@ -294,9 +375,14 @@ class QualificationTests(unittest.TestCase):
                 return dict(id=asset_id, name="wrong" if wrong_upload else path.name,
                             size=path.stat().st_size, state="uploaded")
             if endpoint.endswith("/releases/31/assets?per_page=100"):
-                return [[dict(id=k, name=v[0]) for k, v in uploads.items()]]
+                listed = [dict(id=k, name=v[0]) for k, v in uploads.items()]
+                if listed_change == "missing": listed.pop()
+                if listed_change == "extra": listed.append(dict(id=9000, name="boot-assets.json"))
+                return [listed]
             if "/releases/assets/" in endpoint and "download" in kwargs:
                 name, data = uploads[int(endpoint.rsplit("/", 1)[1])]
+                if corrupt_asset and name.endswith("." + corrupt_asset):
+                    data = b"!" * len(data)
                 if corrupt_manifest and name == "manifest.json":
                     value = json.loads(data)
                     value["stateCompatibilityId"] = "substituted-valid-metadata"
@@ -308,8 +394,25 @@ class QualificationTests(unittest.TestCase):
 
     def test_draft_roundtrip_uses_authenticated_asset_ids_and_expected_manifest(self):
         out, digest = self.prepared()
-        with patch.object(self.q, "gh", side_effect=self.draft_api()):
+        with patch.object(self.q, "gh", side_effect=self.draft_api()) as calls:
             self.assertEqual(self.q.draft(self.profile, out, digest), 31)
+        uploaded = {c.kwargs["upload"].name for c in calls.call_args_list if "upload" in c.kwargs}
+        downloaded = {c.kwargs["download"].name for c in calls.call_args_list if "download" in c.kwargs}
+        expected = {p.name for p in out.iterdir()}
+        self.assertIn("fixture-windows-amd64.kernel", expected)
+        self.assertIn("fixture-windows-amd64.initrd", expected)
+        self.assertEqual(uploaded, expected)
+        self.assertEqual(downloaded, expected)
+
+    def test_direct_draft_checks_new_boot_profile_pins_before_network(self):
+        out, digest = self.prepared()
+        fields = (("payloadSha256", "f" * 64), ("bootReceiptSha256", "f" * 64),
+                  ("buildReceiptSha256", "f" * 64), ("kernelSha256", "f" * 64),
+                  ("initrdSha256", "f" * 64), ("kernelBytes", 1), ("initrdBytes", 1))
+        with patch.object(self.q, "gh", side_effect=AssertionError("network before context check")):
+            for field, value in fields:
+                with self.subTest(field=field), self.assertRaises(ValueError):
+                    self.q.draft(dict(self.profile, **{field: value}), out, digest)
 
     def test_concurrent_wrong_tag_after_create_denies_before_any_upload(self):
         out, digest = self.prepared()
@@ -324,6 +427,14 @@ class QualificationTests(unittest.TestCase):
         with patch.object(self.q, "gh", side_effect=self.draft_api(corrupt_manifest=True)):
             with self.assertRaises(ValueError):
                 self.q.draft(self.profile, out, digest)
+
+    def test_draft_readback_checks_boot_bytes_and_exact_asset_set(self):
+        out, digest = self.prepared()
+        for options in ({"corrupt_asset": "kernel"}, {"corrupt_asset": "initrd"},
+                        {"listed_change": "missing"}, {"listed_change": "extra"}):
+            with self.subTest(options=options), patch.object(self.q, "gh", side_effect=self.draft_api(**options)):
+                with self.assertRaises(ValueError):
+                    self.q.draft(self.profile, out, digest)
 
     def test_upload_identity_must_match_requested_name(self):
         out, digest = self.prepared()
