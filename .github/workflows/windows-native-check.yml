@@ -130,6 +130,7 @@ jobs:
             $os = Get-CimInstance Win32_OperatingSystem
             $result.os = @{ caption = $os.Caption; version = $os.Version; build = $os.BuildNumber; architecture = $os.OSArchitecture }
             $result.secondaryLogon = (Get-Service seclogon).Status.ToString()
+            $result.loadUserProfile = $true
             # No password files, environment variables, console output, or command-line secrets.
             $secure = ConvertTo-SecureString ('Aa1!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))) -AsPlainText -Force
             $user = New-LocalUser -Name $name -Password $secure -Description 'Ephemeral native check'
@@ -162,7 +163,7 @@ jobs:
             $arguments = 'check "{0}" "{1}" "{2}"' -f $runtime, $pin, $workroot
             # Fresh machine environment: no inherited GitHub step credentials.
             # Secondary Logon failure is a failure, never an elevated fallback.
-            $process = Start-Process -FilePath $exe -ArgumentList $arguments -Credential $credential -UseNewEnvironment -WorkingDirectory $env:NATIVE_STAGE -RedirectStandardOutput (Join-Path $env:NATIVE_OUTPUT 'ci-stdout.txt') -RedirectStandardError (Join-Path $env:NATIVE_OUTPUT 'ci-stderr.txt') -PassThru
+            $process = Start-Process -FilePath $exe -ArgumentList $arguments -Credential $credential -LoadUserProfile -UseNewEnvironment -WorkingDirectory $env:NATIVE_STAGE -RedirectStandardOutput (Join-Path $env:NATIVE_OUTPUT 'ci-stdout.txt') -RedirectStandardError (Join-Path $env:NATIVE_OUTPUT 'ci-stderr.txt') -PassThru
             [void]$process.Handle
             $wait = $process.WaitForExitAsync()
             if (-not $wait.Wait([TimeSpan]::FromMinutes(8))) {
@@ -204,6 +205,13 @@ jobs:
               }
             }
             if ($null -ne $secure) { $secure.Dispose() }
+            if ($result.status -ne 'passed') {
+              foreach ($log in @('Microsoft-Windows-CodeIntegrity/Operational', 'Microsoft-Windows-AppLocker/EXE and DLL', 'Application')) {
+                try {
+                  Get-WinEvent -FilterHashtable @{ LogName=$log; StartTime=(Get-Date).AddMinutes(-5) } -MaxEvents 8 -ErrorAction Stop | Select-Object TimeCreated, Id, ProviderName, Message | Format-List
+                } catch { Write-Output ("No diagnostic events available: " + $log) }
+              }
+            }
             # stdout/stderr are controller-owned artifacts, not copies of private cases.
             $result | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $env:NATIVE_OUTPUT 'ci-controller.json')
             foreach ($file in 'ci-stdout.txt', 'ci-stderr.txt', 'ci-controller.json') {
