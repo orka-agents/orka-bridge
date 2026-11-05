@@ -1,0 +1,10 @@
+diff --git a/meson.build b/meson.build
+--- a/meson.build
++++ b/meson.build
+@@ -1785,5 +1785,5 @@
+ dsound = not_found
+-if not get_option('dsound').auto() or (host_os == 'windows' and have_system)
++if not get_option('dsound').disabled() and (not get_option('dsound').auto() or (host_os == 'windows' and have_system))
+   if cc.has_header('dsound.h')
+     dsound = declare_dependency(link_args: ['-lole32', '-ldxguid'])
+   endif

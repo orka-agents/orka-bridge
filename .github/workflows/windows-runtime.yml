@@ -1,4 +1,4 @@
-name: Windows runtime inputs
+name: Windows runtime
 on:
   pull_request:
     paths:
@@ -14,6 +14,14 @@ permissions:
 concurrency:
   group: windows-runtime-${{ github.ref }}
   cancel-in-progress: true
+env:
+  GIT_CONFIG_COUNT: '3'
+  GIT_CONFIG_KEY_0: core.autocrlf
+  GIT_CONFIG_VALUE_0: 'false'
+  GIT_CONFIG_KEY_1: core.symlinks
+  GIT_CONFIG_VALUE_1: 'false'
+  GIT_CONFIG_KEY_2: core.longpaths
+  GIT_CONFIG_VALUE_2: 'true'
 jobs:
   sources:
     strategy:
@@ -22,10 +30,6 @@ jobs:
         os: [ubuntu-latest, windows-2025]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
-    env:
-      GIT_CONFIG_COUNT: '1'
-      GIT_CONFIG_KEY_0: core.autocrlf
-      GIT_CONFIG_VALUE_0: 'false'
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -34,5 +38,89 @@ jobs:
       - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6
         with:
           python-version: '3.11'
-      - run: python -m unittest discover -s runtime/windows -p test_recipe.py -v
+      - run: python -m unittest discover -s runtime/windows -p 'test_*.py' -v
       - run: python runtime/windows/recipe.py check-sources --lock runtime/windows/sources.lock.json
+      - run: python runtime/windows/recipe.py check-locks --sources runtime/windows/sources.lock.json --packages runtime/windows/packages.lock.json
+  producer:
+    runs-on: windows-2025
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6
+        with:
+          python-version: '3.11'
+      - name: Acquire and verify locked inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inputs = Join-Path $env:RUNNER_TEMP ('bridge-inputs-' + [guid]::NewGuid())
+          [void][IO.Directory]::CreateDirectory($inputs)
+          $records = python runtime/windows/recipe.py list-inputs --sources runtime/windows/sources.lock.json --packages runtime/windows/packages.lock.json | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Input selection failed' }
+          $records | ForEach-Object -Parallel {
+            $target = Join-Path $using:inputs $_.path
+            [void][IO.Directory]::CreateDirectory((Split-Path $target))
+            Invoke-WebRequest -Uri $_.url -OutFile $target
+            if ((Get-Item $target).Length -ne $_.bytes -or (Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant() -ne $_.sha256) {
+              throw ('Input hash/length mismatch: ' + $_.path)
+            }
+            (Get-Item $target).IsReadOnly = $true
+          } -ThrottleLimit 8
+          python runtime/windows/recipe.py check-inputs --sources runtime/windows/sources.lock.json --packages runtime/windows/packages.lock.json --inputs $inputs
+          if ($LASTEXITCODE -ne 0) { throw 'Input verification failed' }
+          $lock = Get-Content runtime/windows/packages.lock.json -Raw | ConvertFrom-Json
+          [IO.File]::WriteAllText((Join-Path $inputs 'install-targets.txt'), ($lock.packages.path -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+          "BRIDGE_INPUTS=$inputs" >> $env:GITHUB_ENV
+          "BRIDGE_RUNTIME_OUTPUT=$(Join-Path $env:RUNNER_TEMP ('bridge-output-' + [guid]::NewGuid()))" >> $env:GITHUB_ENV
+          "BRIDGE_RUNNER_IMAGE=$env:ImageOS $env:ImageVersion $([Environment]::OSVersion.VersionString)" >> $env:GITHUB_ENV
+      - name: Install local packages and compile the headless runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lock = Get-Content runtime/windows/packages.lock.json -Raw | ConvertFrom-Json
+          $root = Join-Path $env:RUNNER_TEMP ('bridge-msys-' + [guid]::NewGuid())
+          [void][IO.Directory]::CreateDirectory($root)
+          tar -xf (Join-Path $env:BRIDGE_INPUTS $lock.bootstrap.path) -C $root
+          if ($LASTEXITCODE -ne 0) { throw 'Bootstrap extraction failed' }
+          $bash = Join-Path $root 'msys64/usr/bin/bash.exe'
+          $env:MSYSTEM = 'UCRT64'
+          $env:MSYS2_PATH_TYPE = 'strict'
+          $env:CHERE_INVOKING = '1'
+          $env:BRIDGE_RECIPE = (Resolve-Path runtime/windows).Path
+          $script = @'
+          set -euo pipefail
+          inputs=$(cygpath -au "$BRIDGE_INPUTS")
+          config=$(mktemp)
+          awk 'BEGIN{keep=1} /^\[/{keep=($0=="[options]")} keep{print}' /etc/pacman.conf > "$config"
+          mapfile -t targets < "$inputs/install-targets.txt"
+          for i in "${!targets[@]}"; do targets[$i]="$inputs/${targets[$i]}"; done
+          pacman --config "$config" -U --noconfirm --needed "${targets[@]}"
+          bash "$(cygpath -au "$BRIDGE_RECIPE")/build.sh" "$BRIDGE_INPUTS" "$BRIDGE_RUNTIME_OUTPUT"
+          '@
+          & $bash --login -c $script
+          if ($LASTEXITCODE -ne 0) { throw 'Producer failed' }
+      - name: Inspect the verified portable ZIP with Windows-only PATH
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zip = Join-Path $env:BRIDGE_RUNTIME_OUTPUT 'bridge-windows-runtime-portable.zip'
+          $clean = Join-Path $env:RUNNER_TEMP ('Bridge inspection café ' + [guid]::NewGuid())
+          Expand-Archive -LiteralPath $zip -DestinationPath $clean
+          $env:PATH = "$env:SystemRoot;$env:SystemRoot\System32"
+          Set-Location $clean
+          $qemu = Join-Path $clean 'bin/qemu-system-x86_64.exe'
+          $img = Join-Path $clean 'bin/qemu-img.exe'
+          $version = & $qemu --version
+          if ($LASTEXITCODE -ne 0 -or ($version -join "`n") -notmatch '\b11\.0\.0\b') { throw 'QEMU version inspection failed' }
+          $machines = & $qemu -machine help
+          if ($LASTEXITCODE -ne 0 -or ($machines -join "`n") -notmatch '\bpc-q35-11\.0\b') { throw 'Pinned q35 missing' }
+          $accels = & $qemu -accel help
+          if ($LASTEXITCODE -ne 0 -or ($accels -join "`n") -notmatch '(?im)^\s*whpx\b' -or ($accels -join "`n") -match '(?im)^\s*tcg\b') { throw 'Accelerator profile differs' }
+          $imageVersion = & $img --version
+          if ($LASTEXITCODE -ne 0 -or ($imageVersion -join "`n") -notmatch '\b11\.0\.0\b') { throw 'qemu-img inspection failed' }
+          Get-Content (Join-Path $env:BRIDGE_RUNTIME_OUTPUT 'verification.json') -Raw
+          Get-Content (Join-Path $env:BRIDGE_RUNTIME_OUTPUT 'SHA256SUMS')
+          Get-Item $zip, (Join-Path $env:BRIDGE_RUNTIME_OUTPUT 'bridge-windows-runtime-source.zip') | Select-Object Name, Length
