@@ -214,6 +214,8 @@ def validate_manifest(m):
     require(total == a["compressedBytes"], "compressed size mismatch")
     require(m["defaultLaunch"] == ("uefi" if m["target"]["platform"] == "macos" else "linux-direct"), "wrong default launch")
     boot.validate(m["directBoot"], m["target"]["architecture"], prefix(m), m["components"]["tools"])
+    selected = {t["name"]: t for t in m["components"]["tools"]}
+    require(all(selected.get(n, {}).get("version") == m["buildSourceCommit"] for n in ("bridge-guest", "bridge-guest-provenance")), "Bridge runtime source identity mismatch")
     require(m["directBoot"]["provenance"]["diskSha256"] == a["uncompressedSha256"], "boot/disk identity mismatch")
 
 

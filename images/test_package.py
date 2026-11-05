@@ -461,6 +461,19 @@ class PackageTests(unittest.TestCase):
             with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, "endpoint"):
                 package.verify(out / "manifest.json")
 
+    def test_standalone_verification_keeps_one_bridge_source(self):
+        for change in ("commit", "missing-provenance", "tool-version"):
+            out, manifest = self.make("source-" + change)
+            if change == "commit":
+                manifest["buildSourceCommit"] = "f" * 40
+            elif change == "missing-provenance":
+                manifest["components"]["tools"] = [t for t in manifest["components"]["tools"] if t["name"] != "bridge-guest-provenance"]
+            else:
+                next(t for t in manifest["components"]["tools"] if t["name"] == "bridge-guest")["version"] = "f" * 40
+            self.save(out, manifest)
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, "source"):
+                package.verify(out / "manifest.json")
+
     def test_kind_component_retains_version_grammar(self):
         _, manifest = self.make()
         manifest["components"]["kind"]["version"] = "kind version\nnot-a-version"
