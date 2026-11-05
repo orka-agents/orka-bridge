@@ -1,4 +1,5 @@
 pub mod client;
+pub mod credentials;
 pub mod identity;
 pub mod journal;
 pub mod snapshot;
