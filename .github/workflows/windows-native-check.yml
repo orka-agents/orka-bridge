@@ -1,0 +1,233 @@
+name: Windows native premises
+on:
+  push:
+    branches: [ci/windows-native-check]
+    paths:
+      - 'runtime/windows/native-check/**'
+      - '.github/workflows/windows-native-check.yml'
+permissions:
+  contents: read
+  actions: read
+# Do not cancel an owned native process halfway through its teardown.
+concurrency:
+  group: windows-native-check-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  GIT_CONFIG_COUNT: '3'
+  GIT_CONFIG_KEY_0: core.autocrlf
+  GIT_CONFIG_VALUE_0: 'false'
+  GIT_CONFIG_KEY_1: core.symlinks
+  GIT_CONFIG_VALUE_1: 'false'
+  GIT_CONFIG_KEY_2: core.longpaths
+  GIT_CONFIG_VALUE_2: 'true'
+jobs:
+  native:
+    runs-on: windows-2025
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: driver
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          path: native-source
+          ref: 24096131fcba3ff7cf3a30ccdb352f83efe56292
+          persist-credentials: false
+      - name: Initialize diagnostic directory and assert source identity
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $env:RUNNER_TEMP 'native-operator'
+          New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
+          "NATIVE_OUTPUT=$output" >> $env:GITHUB_ENV
+          $head = git -C native-source rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $head -ne '24096131fcba3ff7cf3a30ccdb352f83efe56292') { throw 'Wrong source head' }
+          $dirty = git -C native-source status --porcelain --untracked-files=all
+          if ($LASTEXITCODE -ne 0 -or $dirty) { throw 'Source checkout is not clean' }
+          git -C driver diff --exit-code 006b30f02a3c9cec61f8f3cc32fde6b0d248fc34 -- runtime/windows/recipe.py runtime/windows/verify.py runtime/windows/sources.lock.json runtime/windows/packages.lock.json
+          if ($LASTEXITCODE -ne 0) { throw 'Producer verifier or external locks changed' }
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6
+        with:
+          python-version: '3.11'
+      - name: Check archive and bundle tooling
+        run: |
+          python -m unittest discover -s driver/runtime/windows -p 'test_*.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'Producer tooling tests failed' }
+          python -m unittest discover -s driver/runtime/windows/native-check -p 'test_bundle.py' -v
+          if ($LASTEXITCODE -ne 0) { throw 'Native bundle tests failed' }
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: 1.98.1-x86_64-pc-windows-msvc
+      - name: Build the static-CRT standalone probe
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/native-target
+          RUSTFLAGS: -Ctarget-feature=+crt-static
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo +1.98.1-x86_64-pc-windows-msvc build --release --locked --manifest-path driver/runtime/windows/native-check/probe/Cargo.toml 2>&1 | Tee-Object -FilePath (Join-Path $env:NATIVE_OUTPUT 'build.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Native probe build failed' }
+          $exe = Join-Path $env:CARGO_TARGET_DIR 'release/bridge-native-premises.exe'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $vs) { throw 'Runner MSVC tools missing' }
+          $dumpbin = Get-ChildItem (Join-Path $vs 'VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe') | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $dumpbin) { throw 'Runner dumpbin missing' }
+          $deps = & $dumpbin.FullName /dependents $exe
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect probe PE dependencies' }
+          $deps | Set-Content -Encoding utf8 (Join-Path $env:NATIVE_OUTPUT 'probe-dependents.txt')
+          if (($deps -join "`n") -match '(?im)^\s*(?:vcruntime[^\s]*|msvcp[^\s]*|concrt[^\s]*|ucrtbase|api-ms-win-crt-[^\s]*)\.dll\s*$') { throw 'Probe still needs a dynamic VC runtime' }
+          Get-FileHash -Algorithm SHA256 $exe | Format-List
+      - name: Await only the existing main producer and download its artifact
+        timeout-minutes: 90
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $producer = Join-Path $env:RUNNER_TEMP 'native-producer'
+          New-Item -ItemType Directory -Path $producer -ErrorAction Stop | Out-Null
+          gh run watch 42120608528 --repo orka-agents/orka-bridge --exit-status --interval 30 2>&1 | Tee-Object -FilePath (Join-Path $env:NATIVE_OUTPUT 'producer-watch.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Existing runtime producer did not succeed' }
+          $raw = gh run view 42120608528 --repo orka-agents/orka-bridge --json databaseId,headSha,headBranch,event,workflowName,status,conclusion,url
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot authenticate producer identity' }
+          $run = $raw | ConvertFrom-Json
+          if ($run.databaseId -ne 42120608528 -or $run.headSha -ne '006b30f02a3c9cec61f8f3cc32fde6b0d248fc34' -or $run.headBranch -ne 'main' -or $run.event -ne 'workflow_dispatch' -or $run.workflowName -ne 'Windows runtime' -or $run.status -ne 'completed' -or $run.conclusion -ne 'success') { throw 'Wrong producer identity or conclusion' }
+          $raw | Set-Content -Encoding utf8 (Join-Path $producer 'producer-run.json')
+          gh run download 42120608528 --repo orka-agents/orka-bridge --name bridge-windows-runtime-006b30f02a3c9cec61f8f3cc32fde6b0d248fc34-1 --dir $producer
+          if ($LASTEXITCODE -ne 0) { throw 'Known producer artifact download failed; do not rebuild' }
+      - name: Verify both archives, pin all runtime files and extract a fresh runtime
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path ($env:SystemDrive + '\') ('bridge-native-' + [guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $stage -ErrorAction Stop | Out-Null
+          "NATIVE_STAGE=$stage" >> $env:GITHUB_ENV
+          $producer = Join-Path $env:RUNNER_TEMP 'native-producer'
+          python driver/runtime/windows/native-check/bundle.py prepare --producer $producer --run-file (Join-Path $producer 'producer-run.json') --sources driver/runtime/windows/sources.lock.json --packages driver/runtime/windows/packages.lock.json --exe (Join-Path $env:RUNNER_TEMP 'native-target/release/bridge-native-premises.exe') --output $env:NATIVE_OUTPUT --runtime (Join-Path $stage 'runtime') --driver-head $env:GITHUB_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Independent producer verification or bundle assembly failed' }
+          Copy-Item (Join-Path $env:NATIVE_OUTPUT 'bridge-native-premises.exe'), (Join-Path $env:NATIVE_OUTPUT 'runtime-pin.json') -Destination $stage
+      - name: Run the same CLI as a new standard local user
+        timeout-minutes: 12
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $process = $null
+          $secure = $null
+          $created = $false
+          $name = 'bnc' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+          $result = [ordered]@{
+            status = 'failed'; sourceHead = '24096131fcba3ff7cf3a30ccdb352f83efe56292'
+            timedOut = $false; controllerExitObserved = $false
+            accountRemoved = $false; privateWorkroot = 'not read or uploaded; disposed with hosted runner'
+          }
+          function Grant-Access([string]$Path, [string[]]$Rules) {
+            & icacls.exe $Path /inheritance:r /grant:r @Rules | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot stage the required access rights' }
+          }
+          try {
+            $os = Get-CimInstance Win32_OperatingSystem
+            $result.os = @{ caption = $os.Caption; version = $os.Version; build = $os.BuildNumber; architecture = $os.OSArchitecture }
+            $result.secondaryLogon = (Get-Service seclogon).Status.ToString()
+            # No password files, environment variables, console output, or command-line secrets.
+            $secure = ConvertTo-SecureString ('Aa1!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))) -AsPlainText -Force
+            $user = New-LocalUser -Name $name -Password $secure -Description 'Ephemeral native check'
+            $created = $true
+            $users = Get-LocalGroup -SID 'S-1-5-32-545'
+            Add-LocalGroupMember -Group $users -Member $user
+            $admins = Get-LocalGroup -SID 'S-1-5-32-544'
+            if (Get-LocalGroupMember -Group $admins | Where-Object SID -eq $user.SID) { throw 'Test account unexpectedly has administrator membership' }
+            $result.accountSid = $user.SID.Value
+            # Apply shared read rights BEFORE the probe creates its private case root.
+            # Never recursively grant access to that private root after the test.
+            Grant-Access $env:NATIVE_STAGE @('*S-1-5-18:(OI)(CI)(F)', '*S-1-5-32-544:(OI)(CI)(F)', '*S-1-5-32-545:(OI)(CI)(RX)')
+            $parent = Join-Path $env:NATIVE_STAGE 'work'
+            New-Item -ItemType Directory -Path $parent -ErrorAction Stop | Out-Null
+            Grant-Access $parent @('*S-1-5-18:(OI)(CI)(F)', '*S-1-5-32-544:(OI)(CI)(F)', ("*" + $user.SID.Value + ':(OI)(CI)(F)'))
+            $workroot = Join-Path $parent 'cases'
+            $exe = Join-Path $env:NATIVE_STAGE 'bridge-native-premises.exe'
+            $runtime = Join-Path $env:NATIVE_STAGE 'runtime'
+            $pin = Join-Path $env:NATIVE_STAGE 'runtime-pin.json'
+            $credential = [PSCredential]::new(("$env:COMPUTERNAME\" + $name), $secure)
+            $arguments = 'check "{0}" "{1}" "{2}"' -f $runtime, $pin, $workroot
+            # Fresh machine environment: no inherited GitHub step credentials.
+            # Secondary Logon failure is a failure, never an elevated fallback.
+            $process = Start-Process -FilePath $exe -ArgumentList $arguments -Credential $credential -UseNewEnvironment -WorkingDirectory $env:NATIVE_STAGE -RedirectStandardOutput (Join-Path $env:NATIVE_OUTPUT 'ci-stdout.txt') -RedirectStandardError (Join-Path $env:NATIVE_OUTPUT 'ci-stderr.txt') -PassThru
+            [void]$process.Handle
+            $wait = $process.WaitForExitAsync()
+            if (-not $wait.Wait([TimeSpan]::FromMinutes(8))) {
+              $result.timedOut = $true
+              throw 'Native controller exceeded eight minutes'
+            }
+            $result.controllerExitObserved = $true
+            $result.exitCode = $process.ExitCode
+            if ($process.ExitCode -ne 0) { throw 'Native controller failed' }
+            $stdout = Get-Content (Join-Path $env:NATIVE_OUTPUT 'ci-stdout.txt') -Raw
+            $jsonLines = @($stdout -split '\r?\n' | Where-Object { $_.StartsWith('{') })
+            if ($jsonLines.Count -ne 1 -or $stdout -notmatch '(?m)^PASS(?:\s|$)') { throw 'Missing single JSON receipt or PASS line' }
+            $receipt = $jsonLines[0] | ConvertFrom-Json -AsHashtable
+            if ($receipt.status -ne 'passed' -or $receipt.sourceHead -ne '24096131fcba3ff7cf3a30ccdb352f83efe56292' -or $receipt.caller.elevated -isnot [bool] -or $receipt.caller.elevated -ne $false -or $receipt.cases.Count -ne 4) { throw 'Native receipt does not prove the required gate' }
+            $result.status = 'passed'
+          } catch {
+            $result.error = $_.Exception.Message
+          } finally {
+            if ($null -ne $process) {
+              try {
+                if (-not $process.HasExited) { $process.Kill() }
+                $result.controllerExitObserved = $process.WaitForExit(45000)
+                if (-not $result.controllerExitObserved) { throw 'Owned controller exit not observed within 45 seconds' }
+              } catch {
+                $result.status = 'failed'
+                $result.cleanupError = $_.Exception.Message
+              } finally { $process.Dispose() }
+            }
+            if ($created) {
+              try {
+                Remove-LocalUser -Name $name
+                $result.accountRemoved = $true
+              } catch {
+                $result.status = 'failed'
+                $result.accountCleanupError = $_.Exception.Message
+              }
+            }
+            if ($null -ne $secure) { $secure.Dispose() }
+            # stdout/stderr are controller-owned artifacts, not copies of private cases.
+            $result | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 (Join-Path $env:NATIVE_OUTPUT 'ci-controller.json')
+            foreach ($file in 'ci-stdout.txt', 'ci-stderr.txt', 'ci-controller.json') {
+              $path = Join-Path $env:NATIVE_OUTPUT $file
+              if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path }
+            }
+          }
+          if ($result.status -ne 'passed') { throw 'Native check failed; retained output is diagnostic, not a pass' }
+      - name: Hash only actual operator files, including failure diagnostics
+        if: always()
+        run: |
+          python driver/runtime/windows/native-check/bundle.py finish --output (Join-Path $env:RUNNER_TEMP 'native-operator')
+          if ($LASTEXITCODE -ne 0) { throw 'Operator checksum generation failed' }
+      - name: Retain the bounded operator bundle and measured diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bridge-windows-native-check-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/native-operator/bridge-windows-runtime-portable.zip
+            ${{ runner.temp }}/native-operator/bridge-windows-runtime-source.zip
+            ${{ runner.temp }}/native-operator/SHA256SUMS
+            ${{ runner.temp }}/native-operator/build-report.json
+            ${{ runner.temp }}/native-operator/verification.json
+            ${{ runner.temp }}/native-operator/bridge-native-premises.exe
+            ${{ runner.temp }}/native-operator/runtime-pin.json
+            ${{ runner.temp }}/native-operator/producer-run.json
+            ${{ runner.temp }}/native-operator/bundle-provenance.json
+            ${{ runner.temp }}/native-operator/independent-verification.json
+            ${{ runner.temp }}/native-operator/build.log
+            ${{ runner.temp }}/native-operator/probe-dependents.txt
+            ${{ runner.temp }}/native-operator/producer-watch.log
+            ${{ runner.temp }}/native-operator/ci-stdout.txt
+            ${{ runner.temp }}/native-operator/ci-stderr.txt
+            ${{ runner.temp }}/native-operator/ci-controller.json
+            ${{ runner.temp }}/native-operator/operator-sha256sums.txt
+          retention-days: 7
+          if-no-files-found: error
+          compression-level: 0
