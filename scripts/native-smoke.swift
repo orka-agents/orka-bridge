@@ -10,6 +10,7 @@ let theme = CommandLine.arguments[3]
 require(["light", "dark"].contains(theme), "Expected light or dark theme")
 require(NSRunningApplication.runningApplications(withBundleIdentifier: "ai.orka.bridge").isEmpty,
         "Quit running Bridge before running the native walk")
+func launch() throws -> NSRunningApplication {
 let opened = Process()
 opened.executableURL = URL(fileURLWithPath: "/usr/bin/open")
 opened.arguments = [CommandLine.arguments[2]]
@@ -22,7 +23,10 @@ for _ in 0..<30 {
     if running != nil { break }
     Thread.sleep(forTimeInterval: 1)
 }
-guard let app = running else { fatalError("Bridge process did not appear") }
+guard let launched = running else { fatalError("Bridge process did not appear") }
+return launched
+}
+var app = try launch()
 defer {
     app.terminate()
     for _ in 0..<30 {
@@ -66,7 +70,8 @@ func key(_ code: CGKeyCode, shift: Bool = false) {
     }
     Thread.sleep(forTimeInterval: 0.3)
 }
-func capture(_ name: String, _ page: String) throws {
+@discardableResult
+func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservation] {
     let file = "\(output)/\(name).png"
     let command = Process()
     command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
@@ -85,9 +90,15 @@ func capture(_ name: String, _ page: String) throws {
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
     if page == "Clusters" {
-        let text = observations.compactMap { $0.topCandidates(1).first?.string }
-        require(text.contains("Engine unavailable") && text.contains("The engine is not available in this app session."),
-                "Release engine IPC did not report unavailable (a missing native bridge is not sufficient)")
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("Native setup available") && text.contains("VM integration is not included"),
+                "Release setup IPC did not report its real integration state")
+        if name != "clusters-minimum" {
+            require(text.contains("Model connection locked"), "The model gate is not visible")
+        }
+        if ["local-selected", "choice-retained"].contains(name) {
+            require(text.contains("Local VM selected"), "Native preference was not acknowledged or retained")
+        }
     }
     let pages = ["Overview", "Designer", "Clusters"]
     let headings = Set(observations.compactMap { observation -> String? in
@@ -103,8 +114,35 @@ func capture(_ name: String, _ page: String) throws {
     }
     require(headings == Set([page]), "Native screenshot does not show the expected \(page) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
+    return observations
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
+let chooser = try capture("chooser", "Clusters")
+guard let local = chooser.first(where: { $0.topCandidates(1).first?.string == "Local VM" }) else {
+    fatalError("Local VM choice not visible")
+}
+let initialRect = window()!.1
+let point = CGPoint(x: initialRect.minX + local.boundingBox.midX * initialRect.width,
+                    y: initialRect.minY + (1 - local.boundingBox.midY) * initialRect.height)
+mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+Thread.sleep(forTimeInterval: 0.5)
+try capture("local-selected", "Clusters")
+app.terminate()
+for _ in 0..<30 {
+    if app.isTerminated { break }
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+}
+require(app.isTerminated, "Bridge did not quit before preference check")
+app = try launch()
+app.activate(options: [])
+for _ in 0..<30 {
+    if window() != nil { break }
+    Thread.sleep(forTimeInterval: 1)
+}
+require(window() != nil, "Relaunched Bridge window did not appear")
+Thread.sleep(forTimeInterval: 2)
+try capture("choice-retained", "Clusters")
+click(0.25)
 try capture("overview", "Overview")
 click(0.55); try capture("designer-pointer", "Designer")
 click(0.85); try capture("clusters-pointer", "Clusters")

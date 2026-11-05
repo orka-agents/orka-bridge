@@ -28,7 +28,7 @@ For development only, set `BRIDGE_DEV_KMX_PATH` to a kmx executable before
 `npm run tauri dev`. Release builds ignore this override and cannot select
 the development process transport. No helper is discovered or downloaded.
 
-The native bridge accepts only version and read-only Agent list requests.
+The native engine bridge accepts only version and read-only Agent list requests. Two separate no-argument setup commands read availability and retain the local VM choice; neither starts a runtime or handles credentials.
 Replies contain validated version or identity fields, not raw diagnostics.
 No credential input channel is provided here; runtime integration must define
 that separately. Closing the main window signals cancellation. While the app's
@@ -61,8 +61,7 @@ The Mac bundle includes readable notices in its Resources directory; CI also
 places them beside the portable Windows executable. Both builds embed them in
 the frontend. Preserve these files when redistributing builds.
 
-The app has three empty screens and an engine diagnostics panel. It does not install a runtime,
-save agents, connect to clusters or run tests. There is no app data store;
+The app opens Clusters with a runtime chooser and a locked model step. Existing cluster is unavailable on both platforms. Local VM selection writes only an empty preference marker at `setup-v1/local-vm` under the app data directory. It does not download, start or reopen a VM, save agents, connect a model or cluster, or run tests. Selection is never readiness. Model connection stays locked pending supported restricted worker access; there is no guest token channel. Engine diagnostics remain available in Clusters. No runtime or credential state is stored by setup;
 native webviews can still create their usual cache/profile directories under
 the app identifier `ai.orka.bridge`.
 
@@ -75,8 +74,7 @@ WebView2. Mac archives preserve executable permissions.
 
 The Mac CI job launches its extracted app bundle, uses pointer and keyboard
 navigation, checks captured page headings and resizes the window to its
-minimum dimensions. In Clusters it also checks the actual release engine IPC
-reports unavailable. The walk runs in both system themes, temporarily enables
+minimum dimensions. In Clusters it also checks the actual release setup IPC reports unavailable VM integration and a locked model step, and verifies a native choice remains selected after relaunch. Relaunch checks only the preference, not VM reopen. The walk runs in both system themes, temporarily enables
 macOS Keyboard Navigation, then restores the runner's prior preferences. Captures contain only the app window.
 Review visible changes in these captures and report anything not exercised,
 such as platform input feel or installer behavior.
