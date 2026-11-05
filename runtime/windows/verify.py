@@ -13,6 +13,9 @@ import recipe
 
 ARCHIVES = ("bridge-windows-runtime-portable.zip", "bridge-windows-runtime-source.zip")
 MAX_ENTRIES, MAX_RUNTIME, MAX_SOURCE = 200000, 2 * 1024**3, 16 * 1024**3
+MAX_CENTRAL_DIRECTORY = MAX_ENTRIES * 1024
+# ZIP central-directory header layout (APPNOTE 4.3.12), as CPython reads it.
+CENTRAL_HEADER, CENTRAL_SIGNATURE = struct.Struct("<4s4B4HL2L5H2L"), b"PK\x01\x02"
 EXES = {"bin/qemu-system-x86_64.exe", "bin/qemu-img.exe"}
 FEATURES = {**dict.fromkeys(("whpx", "slirp", "tools", "zstd", "pixman"), True),
             **dict.fromkeys(("tcg", "plugins", "sdl", "gtk", "vnc", "curses", "opengl", "virglrenderer",
@@ -109,14 +112,55 @@ def validate_links(links, names):
             raise ValueError(f"source link {name}: {error}") from error
 
 
+
+def check_central_directory(path):
+    """Count the real central-directory entries before ZipFile reads them all.
+
+    ZipFile reads the whole directory and builds every ZipInfo before any limit
+    applies, and ignores the declared entry count. This walks the same bytes
+    with bounded reads. It uses CPython's private end-record reader, which reads
+    at most the comment window plus the ZIP64 records (Python 3.11 to 3.14).
+    """
+    with path.open("rb") as fp:
+        end = vars(zipfile)["_EndRecData"](fp)  # [signature, ..., size, offset, comment, location]
+        if not end:
+            raise ValueError("not a ZIP archive")
+        size = end[5]
+        if size > MAX_CENTRAL_DIRECTORY:
+            raise ValueError("archive central directory exceeds limit")
+        # ZipFile reads the directory just before the end records; 3.11 reports
+        # the plain end record's position even for ZIP64 archives.
+        start = end[9] - size
+        if sys.version_info < (3, 12) and end[0] == b"PK\x06\x06":
+            start -= 56 + 20  # ZIP64 end record and locator
+        if start != end[6]:
+            raise ValueError("bad central directory offset")
+        fp.seek(start)
+        count = done = 0
+        while done < size:
+            header = fp.read(CENTRAL_HEADER.size)
+            if len(header) != CENTRAL_HEADER.size:
+                raise ValueError("truncated central directory")
+            fields = CENTRAL_HEADER.unpack(header)
+            if fields[0] != CENTRAL_SIGNATURE:
+                raise ValueError("bad central directory entry")
+            count += 1
+            if count > MAX_ENTRIES:
+                raise ValueError("archive entry limit exceeded")
+            skip = sum(fields[12:15])  # name, extra field and comment lengths
+            fp.seek(skip, 1)
+            done += CENTRAL_HEADER.size + skip
+        return start
+
 def read_archive(path, source):
     limit = MAX_SOURCE if source else MAX_RUNTIME
     if path.stat().st_size > limit + MAX_ENTRIES * 1024:
         raise ValueError("archive compressed size exceeds limit")
     manifest_name = "provenance/source-manifest.json" if source else "provenance/runtime-manifest.json"
     records, folded, links, metadata, total = {}, set(), {}, {}, 0
+    start = check_central_directory(path)
     with zipfile.ZipFile(path) as archive:
-        if len(archive.infolist()) > MAX_ENTRIES:
+        if archive.start_dir != start or len(archive.infolist()) > MAX_ENTRIES:
             raise ValueError("archive entry limit exceeded")
         for info in archive.infolist():
             name = safe_path(info.orig_filename)

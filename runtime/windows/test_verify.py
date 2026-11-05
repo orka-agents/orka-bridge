@@ -1,4 +1,5 @@
 """Producer archives are checked against external locks, without extraction."""
+import contextlib
 import copy
 import hashlib
 import json
@@ -356,6 +357,51 @@ class Archives(unittest.TestCase):
         verify.validate_links({"sub/inside": "../TARGET/FILE"}, names)
         with self.assertRaisesRegex(ValueError, "cyclic"):
             verify.validate_links({"sub/jump": "inside", "sub/inside": "jump"}, names)
+
+    def write_zip(self, name, count):
+        path = self.root / name
+        with zipfile.ZipFile(path, "w") as archive:
+            for i in range(count):
+                archive.writestr(f"f{i}", b"")
+        return path
+
+    def test_central_directory_is_bounded_before_zipfile_reads_it(self):
+        plain = self.write_zip("plain.zip", 5)
+        raw = bytearray(plain.read_bytes())
+        struct.pack_into("<HH", raw, raw.rfind(b"PK\x05\x06") + 8, 1, 1)
+        forged = self.root / "forged.zip"  # The end record claims one entry; the directory holds five.
+        forged.write_bytes(raw)
+        raw = bytearray(plain.read_bytes())
+        raw[raw.find(b"PK\x01\x02", raw.find(b"PK\x01\x02") + 4)] ^= 1
+        broken = self.root / "broken.zip"
+        broken.write_bytes(raw)
+        raw = bytearray(plain.read_bytes())
+        end = raw.rfind(b"PK\x05\x06")
+        struct.pack_into("<I", raw, end + 12, struct.unpack_from("<I", raw, end + 12)[0] + 46)
+        oversized = self.root / "oversized.zip"  # The declared directory runs into the file data.
+        oversized.write_bytes(raw)
+        refuse = patch.object(verify.zipfile, "ZipFile", side_effect=AssertionError("ZipFile read the directory"))
+        for path, limits, message in (
+                (plain, {"MAX_ENTRIES": 2}, "entry limit"),
+                (forged, {"MAX_ENTRIES": 2}, "entry limit"),
+                (plain, {"MAX_CENTRAL_DIRECTORY": 100}, "central directory exceeds"),
+                (broken, {}, "central directory"),
+                (oversized, {}, "central directory")):
+            with self.subTest(path=path.name, limits=limits), refuse, contextlib.ExitStack() as stack:
+                for key, value in limits.items():
+                    stack.enter_context(patch.object(verify, key, value))
+                with self.assertRaisesRegex(ValueError, message):
+                    verify.read_archive(path, source=False)
+
+    def test_zip64_central_directory_is_counted(self):
+        path = self.write_zip("zip64.zip", 0x10000)  # More entries than a plain end record holds.
+        self.assertIn(b"PK\x06\x06", path.read_bytes()[-200:])
+        with zipfile.ZipFile(path) as archive:
+            self.assertEqual(verify.check_central_directory(path), archive.start_dir)
+        with patch.object(verify, "MAX_ENTRIES", 0xFFFF), \
+                patch.object(verify.zipfile, "ZipFile", side_effect=AssertionError("ZipFile read the directory")), \
+                self.assertRaisesRegex(ValueError, "entry limit"):
+            verify.read_archive(path, source=False)
 
     def test_limits_and_no_success_on_failure(self):
         for key, value in (("MAX_ENTRIES", 1), ("MAX_RUNTIME", 20), ("MAX_SOURCE", 20)):
