@@ -170,6 +170,82 @@ class BootAssetTests(unittest.TestCase):
             self.extract()
         self.assertFalse((self.root / "assets/boot-assets.json").exists())
 
+    def test_conditional_kernel_is_not_a_determinate_default(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = self.files["/boot/grub/grub.cfg"].replace(
+            b"linux ", b"if [ 1 = 0 ]; then\nlinux ") + b"fi\n"
+        with self.assertRaisesRegex(ValueError, "conditional"):
+            self.extract()
+        self.assertFalse((self.root / "assets/boot-assets.json").exists())
+
+    def test_conditional_initrd_is_not_a_determinate_default(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = self.files["/boot/grub/grub.cfg"].replace(
+            b"initrd ", b"if [ 1 = 0 ]; then\ninitrd ") + b"fi\n"
+        with self.assertRaisesRegex(ValueError, "conditional"):
+            self.extract()
+
+    def test_second_kernel_in_default_entry_is_ambiguous(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] += b"linux /boot/vmlinuz-another-amd64\n"
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            self.extract()
+
+    def test_non_boot_conditionals_can_precede_unconditional_default_pair(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = self.files["/boot/grub/grub.cfg"].replace(
+            b"linux ", b"if [ x = y ]; then\ninsmod foo\nelse\ninsmod bar\nfi\nlinux ")
+        self.assertEqual(self.release, self.extract()["kernelRelease"])
+
+    def test_debian_inline_xen_module_condition_keeps_default_boot_pair(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = self.files["/boot/grub/grub.cfg"].replace(
+            b"linux ", b"if [ x$grub_platform = xxen ]; then insmod xzio; insmod lzopio; fi\nlinux ")
+        self.assertEqual(self.release, self.extract()["kernelRelease"])
+
+    def test_loop_around_default_boot_commands_is_unsupported(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = self.files["/boot/grub/grub.cfg"].replace(
+            b"linux ", b"while false; do\nlinux ") + b"done\n"
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            self.extract()
+
+    def test_compound_line_cannot_hide_a_second_kernel_command(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] += b"true; linux /boot/vmlinuz-another-amd64\n"
+        with self.assertRaisesRegex(ValueError, "unsupported|ambiguous"):
+            self.extract()
+
+    def test_default_menu_cannot_itself_be_conditional(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = b"if [ 1 = 0 ]; then\n" + self.files["/boot/grub/grub.cfg"] + b"}\nfi\n"
+        with self.assertRaisesRegex(ValueError, "conditional"):
+            self.extract()
+
+    def test_default_menu_cannot_be_inside_a_loop(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = b"while false; do\n" + self.files["/boot/grub/grub.cfg"] + b"}\ndone\n"
+        with self.assertRaisesRegex(ValueError, "conditional"):
+            self.extract()
+
+    def test_default_menu_cannot_be_a_function_definition(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = b"function unused {\n" + self.files["/boot/grub/grub.cfg"] + b"}\n}\n"
+        with self.assertRaisesRegex(ValueError, "conditional"):
+            self.extract()
+
+    def test_unbalanced_prefix_cannot_cancel_an_open_conditional(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = b"fi\nif [ 1 = 0 ]; then\n" + self.files["/boot/grub/grub.cfg"] + b"}\nfi\n"
+        with self.assertRaisesRegex(ValueError, "conditional"):
+            self.extract()
+
+    def test_regular_root_kernel_file_cannot_conflict_with_grub(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/vmlinuz"] = b"regular root kernel"
+        with self.assertRaisesRegex(ValueError, "kernel"):
+            self.extract()
+
     def test_corrupt_payload_or_mixed_build_refuses_before_output(self):
         self.build["sha256"] = "0" * 64
         with self.assertRaisesRegex(ValueError, "payload"):

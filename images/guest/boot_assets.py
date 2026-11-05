@@ -97,7 +97,28 @@ def asset(file, **fields):
 def selected_kernel(guest, architecture, expected_grub):
     require(re.findall(r"(?m)^GRUB_DEFAULT=(.*)$", guest.call("cat", "/etc/default/grub")) == ["0"]
             and guest.call("checksum", "sha256", "/etc/default/grub") == expected_grub, "unsupported GRUB default policy")
-    commands = [line.split() for line in guest.call("cat", "/boot/grub/grub.cfg").splitlines() if line.strip()]
+    commands = []
+    for raw in guest.call("cat", "/boot/grub/grub.cfg").splitlines():
+        require(not raw.rstrip().endswith("\\"), "unsupported GRUB line continuation")
+        lexer = shlex.shlex(raw, posix=True, punctuation_chars=";")
+        lexer.whitespace_split = True
+        statement = []
+        for token in lexer:
+            if set(token) == {";"}:
+                if statement:
+                    commands.append(statement)
+                    statement = []
+            else:
+                statement.append(token)
+        if statement:
+            commands.append(statement)
+    expanded = []
+    for command in commands:
+        if command[0] in ("then", "else", "do") and len(command) > 1:
+            expanded.extend((command[:1], command[1:]))
+        else:
+            expanded.append(command)
+    commands = expanded
     defaults = [shlex.split(" ".join(line))[1].removeprefix("default=") for line in commands
                 if len(line) >= 2 and line[0] == "set" and line[1].startswith("default=")]
     require("0" in defaults and set(defaults) <= {"0", "${next_entry}"}, "unsupported GRUB default selection")
@@ -107,6 +128,19 @@ def selected_kernel(guest, architecture, expected_grub):
     menus = [i for i, command in enumerate(commands) if command[0] in ("menuentry", "submenu")]
     require(menus and commands[menus[0]][0] == "menuentry" and menus[0] < index
             and not any(command[0] in ("}", "menuentry", "submenu") for command in commands[menus[0] + 1:index]), "default menuentry is not the selected Linux kernel")
+    prefix_conditionals = prefix_loops = prefix_blocks = 0
+    for preceding in commands[:menus[0]]:
+        if preceding[0] == "if":
+            prefix_conditionals += 1
+        elif preceding[0] == "fi":
+            prefix_conditionals -= 1
+        elif preceding[0] == "do":
+            prefix_loops += 1
+        elif preceding[0] == "done":
+            prefix_loops -= 1
+        prefix_blocks += preceding.count("{") - preceding.count("}")
+        require(min(prefix_conditionals, prefix_loops, prefix_blocks) >= 0, "invalid GRUB prefix conditional")
+    require(prefix_conditionals == prefix_loops == prefix_blocks == 0, "conditional GRUB default menu is unsupported")
     line = commands[index]
     require(len(line) >= 2 and matches(line[1], r"/boot/vmlinuz-[A-Za-z0-9._+-]{1,96}"), "invalid selected kernel path")
     kernel = guest.call("realpath", line[1])
@@ -115,12 +149,36 @@ def selected_kernel(guest, architecture, expected_grub):
     # Cloud images need not have Debian's optional root-level convenience link.
     if guest.call("is-symlink", "/vmlinuz") == "true" or guest.call("is-file", "/vmlinuz") == "true":
         require(guest.call("realpath", "/vmlinuz") == kernel, "GRUB default kernel differs from selected kernel")
-    initrds = []
-    for following in commands[index + 1:]:
-        if following[0] in ("linux", "linuxefi", "menuentry", "}"):
+    kernels, initrds, conditionals = [], [], 0
+    for following in commands[menus[0] + 1:]:
+        key = following[0]
+        if key in ("menuentry", "submenu", "}"):
             break
-        if following[0] in ("initrd", "initrdefi"):
-            initrds.append(following[1:])
+        if key.startswith("#"):
+            continue
+        require(not any(marker in " ".join(following) for marker in ("&&", "||")), "unsupported compound GRUB command")
+        if key in ("then", "else"):
+            require(conditionals > 0, "invalid GRUB conditional")
+            following = following[1:]
+            if not following:
+                continue
+            key = following[0]
+        require(key not in ("while", "until", "for", "do", "done", "function", "{", "source", "configfile", ".", "linux16", "initrd16"), "unsupported GRUB control flow")
+        if key == "if":
+            conditionals += 1
+        elif key == "fi":
+            require(conditionals > 0, "invalid GRUB conditional")
+            conditionals -= 1
+        elif key in ("else", "elif"):
+            require(conditionals > 0, "invalid GRUB conditional")
+        elif key in ("linux", "linuxefi", "initrd", "initrdefi"):
+            require(conditionals == 0, "conditional GRUB boot command is unsupported")
+            if key in ("linux", "linuxefi"):
+                kernels.append(following)
+            else:
+                initrds.append(following[1:])
+    require(conditionals == 0, "unterminated GRUB conditional")
+    require(kernels == [line], "ambiguous GRUB default kernel commands")
     require(initrds == [["/boot/initrd.img-" + release]], "GRUB default initrd differs from exported release")
     console = "hvc0" if architecture == "arm64" else "ttyS0,115200n8"
     require([v for v in line if v.startswith("console=")] == ["console=" + console], "wrong kernel console")
