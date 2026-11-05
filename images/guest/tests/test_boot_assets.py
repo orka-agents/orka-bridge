@@ -345,6 +345,35 @@ class BootAssetTests(unittest.TestCase):
         self.modules["kernel/virtio_blk.ko.xz"] = lzma.compress(path.read_bytes())
         self.assertEqual(self.release, self.extract()["kernelRelease"])
 
+    def test_xz_module_expanded_bytes_must_match(self):
+        path = self.initrd / "lib/modules" / self.release / "kernel/virtio_blk.ko"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"selected module")
+        self.modules["kernel/virtio_blk.ko.xz"] = lzma.compress(b"different module")
+        with self.assertRaisesRegex(ValueError, "module.*bytes"):
+            self.extract()
+        self.assertFalse((self.root / "assets/boot-assets.json").exists())
+
+    def test_xz_fallback_cannot_hide_a_physical_guest_hardlink(self):
+        path = self.initrd / "lib/modules" / self.release / "kernel/virtio_blk.ko"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"selected module")
+        self.modules["kernel/other.ko"] = b"different hardlinked guest module"
+        self.modules["kernel/virtio_blk.ko.xz"] = lzma.compress(path.read_bytes())
+        original = self.call
+        def linked(command, *args):
+            value = original(command, *args)
+            if command == "tar-out":
+                with tarfile.open(args[1], "a") as archive:
+                    member = tarfile.TarInfo("kernel/virtio_blk.ko")
+                    member.type = tarfile.LNKTYPE
+                    member.linkname = "kernel/other.ko"
+                    archive.addfile(member)
+            return value
+        with patch.object(self, "call", side_effect=linked), self.assertRaisesRegex(ValueError, "module.*bytes"):
+            self.extract()
+        self.assertFalse((self.root / "assets/boot-assets.json").exists())
+
     def test_xz_module_stream_errors_and_bounds_are_refused(self):
         inspect = importlib.import_module("guest.boot_inspect")
         valid = lzma.compress(b"selected module")

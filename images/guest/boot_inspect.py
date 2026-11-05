@@ -76,9 +76,11 @@ def module_hashes(archive, rows, requested):
     if not needed:
         return hashes
     with tarfile.open(archive, "r:") as tar:
-        for member in tar:
+        members = tar.getmembers()
+        occupied = {member.name.removeprefix("./") for member in members}
+        for member in members:
             name = member.name.removeprefix("./")
-            if name not in needed or not member.isfile():
+            if name not in needed or name.removesuffix(".xz") in occupied or not member.isfile():
                 continue
             require(member.size <= MAX_MODULE_BYTES, "compressed module exceeds bound")
             stream = tar.extractfile(member)
