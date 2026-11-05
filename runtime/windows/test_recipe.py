@@ -350,6 +350,19 @@ class Packages(unittest.TestCase):
         with self.assertRaises(ValueError):
             recipe.import_names(text.replace("demo.dll", "../demo.dll"))
 
+    def test_checked_in_installed_qemu_data_notices(self):
+        packages = recipe.read_json(Path(__file__).with_name("packages.lock.json"))
+        rows = {r["path"]: r for r in packages["firmware"]}
+        artwork = [f"icons/hicolor/{size}x{size}/apps/qemu.png" for size in (16, 24, 32, 48, 64, 128, 256, 512)]
+        artwork += ["icons/hicolor/32x32/apps/qemu.bmp", "icons/hicolor/scalable/apps/qemu.svg"]
+        for path in artwork:
+            self.assertEqual(rows["share/qemu/" + path], {"path": "share/qemu/" + path, "source": "qemu", "license": "qemu/ui/icons/qemu.svg"})
+        for path in ("applications/qemu.desktop", "trace-events-all"):
+            self.assertEqual(rows["share/qemu/" + path]["license"], "qemu/LICENSE")
+        self.assertEqual(len(rows), 127)
+        notices = {r["path"]: r for r in packages["firmwareNotices"]}
+        self.assertEqual(notices["qemu/ui/icons/qemu.svg"]["gitBlob"], "f2500de339170ae69cb27ec3c02464d187cf1359")
+
     def test_real_package_paths(self):
         for path in ("packages/libstdc++-1-1.pkg.tar.zst", "packages/pkgconf-1~3.0-1.pkg.tar.zst"):
             self.data["packages"][0]["path"] = path

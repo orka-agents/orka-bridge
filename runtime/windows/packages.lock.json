@@ -8851,6 +8851,66 @@
       "path": "share/qemu/keymaps/sv",
       "source": "qemu",
       "license": "qemu/COPYING"
+    },
+    {
+      "path": "share/qemu/applications/qemu.desktop",
+      "source": "qemu",
+      "license": "qemu/LICENSE"
+    },
+    {
+      "path": "share/qemu/icons/hicolor/16x16/apps/qemu.png",
+      "source": "qemu",
+      "license": "qemu/ui/icons/qemu.svg"
+    },
+    {
+      "path": "share/qemu/icons/hicolor/24x24/apps/qemu.png",
+      "source": "qemu",
+      "license": "qemu/ui/icons/qemu.svg"
+    },
+    {
+      "path": "share/qemu/icons/hicolor/32x32/apps/qemu.png",
+      "source": "qemu",
+      "license": "qemu/ui/icons/qemu.svg"
+    },
+    {
+      "path": "share/qemu/icons/hicolor/48x48/apps/qemu.png",
+      "source": "qemu",
+      "license": "qemu/ui/icons/qemu.svg"
+    },
+    {
+      "path": "share/qemu/icons/hicolor/64x64/apps/qemu.png",
+      "source": "qemu",
+      "license": "qemu/ui/icons/qemu.svg"
+    },
+    {
+      "path": "share/qemu/icons/hicolor/128x128/apps/qemu.png",
+      "source": "qemu",
+      "license": "qemu/ui/icons/qemu.svg"
+    },
+    {
+      "path": "share/qemu/icons/hicolor/256x256/apps/qemu.png",
+      "source": "qemu",
+      "license": "qemu/ui/icons/qemu.svg"
+    },
+    {
+      "path": "share/qemu/icons/hicolor/512x512/apps/qemu.png",
+      "source": "qemu",
+      "license": "qemu/ui/icons/qemu.svg"
+    },
+    {
+      "path": "share/qemu/icons/hicolor/32x32/apps/qemu.bmp",
+      "source": "qemu",
+      "license": "qemu/ui/icons/qemu.svg"
+    },
+    {
+      "path": "share/qemu/icons/hicolor/scalable/apps/qemu.svg",
+      "source": "qemu",
+      "license": "qemu/ui/icons/qemu.svg"
+    },
+    {
+      "path": "share/qemu/trace-events-all",
+      "source": "qemu",
+      "license": "qemu/LICENSE"
     }
   ],
   "extraSources": [
@@ -20009,6 +20069,334 @@
       "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
       "gitBlob": "d645695673349e3947e8e5ae42332d0ac3164cd7",
       "url": "https://raw.githubusercontent.com/google/vbootrom/1c8e9510b22c5b0fd7d7753f08042a4bcbd2939d/LICENSE"
+    },
+    {
+      "path": "qemu/ui/icons/qemu.svg",
+      "source": "qemu",
+      "bytes": 31609,
+      "sha256": "62d48c555d0774df126821c73b6d8c0b0b6a50ffc2c9e45bd1fa0478d4100a03",
+      "gitBlob": "f2500de339170ae69cb27ec3c02464d187cf1359",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/ui/icons/qemu.svg"
+    },
+    {
+      "path": "qemu/accel/hvf/trace-events",
+      "source": "qemu",
+      "bytes": 544,
+      "sha256": "19d1a505f7e8f1f503fbbfe148f5a2210172f5192a45cc0ff195eaa4d2188069",
+      "gitBlob": "f989da594927c2b4eb5d95cfa673e7db4ddc858d",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/accel/hvf/trace-events"
+    },
+    {
+      "path": "qemu/accel/mshv/trace-events",
+      "source": "qemu",
+      "bytes": 2084,
+      "sha256": "4f3c88c24eaf32f41c496d4765395082798b4b4a9d99d5044a5c8dbfd4761fc6",
+      "gitBlob": "a4dffeb24a327e09844d0d2895a035f409ec3268",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/accel/mshv/trace-events"
+    },
+    {
+      "path": "qemu/accel/nitro/trace-events",
+      "source": "qemu",
+      "bytes": 192,
+      "sha256": "5804edd7a1c49da23c7e29c608763e85b04590661f4bea52b259780bb0b72457",
+      "gitBlob": "9673eb5aa224bf0ee016d694af5566d408c21108",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/accel/nitro/trace-events"
+    },
+    {
+      "path": "qemu/hw/vfio-user/trace-events",
+      "source": "qemu",
+      "bytes": 1462,
+      "sha256": "42271d28f97594980e72b94a0e2b6883fc21ddafcc4c99c0e5f9c707f7bcc045",
+      "gitBlob": "abb67f4c119af533a77ad04e383fa027e5aaa684",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/hw/vfio-user/trace-events"
+    },
+    {
+      "path": "qemu/hw/vfio/trace-events",
+      "source": "qemu",
+      "bytes": 15899,
+      "sha256": "62735baf67f3f17ad7ff04d8f0ef0bf5ab7c7944079ecd0916b5b3b2b2247c28",
+      "gitBlob": "846e3625c584e231c44f31559f85d17e25cafab7",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/hw/vfio/trace-events"
+    },
+    {
+      "path": "qemu/hw/vmapple/trace-events",
+      "source": "qemu",
+      "bytes": 1689,
+      "sha256": "2167c0a4b4571413b1824436f227b5c148b52e089205ee62759d399b95ad8e36",
+      "gitBlob": "93380ede1451dcc269ed35a8b5f676954945915e",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/hw/vmapple/trace-events"
+    },
+    {
+      "path": "qemu/qapi/accelerator.json",
+      "source": "qemu",
+      "bytes": 2047,
+      "sha256": "5795a7824989ea55f99f294232d82ec4ba688fe936ceae21a89d580f078d46f6",
+      "gitBlob": "0cf5e0f9d94fb0adb1642412df952e82ca03cc56",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/accelerator.json"
+    },
+    {
+      "path": "qemu/qapi/acpi-hest.json",
+      "source": "qemu",
+      "bytes": 869,
+      "sha256": "72bc3450962547d8575c4a0cae70163c79ccfed97f1af532f343d34e0922a986",
+      "gitBlob": "a01f1dee09589b52028ff95a30b2947d69e71f14",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/acpi-hest.json"
+    },
+    {
+      "path": "qemu/qapi/acpi.json",
+      "source": "qemu",
+      "bytes": 4206,
+      "sha256": "49f68ac09c2cc98c17c16aae25b34739e70295697304eb084eb509f532923a82",
+      "gitBlob": "906b3687a554bcec98aaf6779d330d9b031d25d2",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/acpi.json"
+    },
+    {
+      "path": "qemu/qapi/audio.json",
+      "source": "qemu",
+      "bytes": 13641,
+      "sha256": "e90f0335cadcaae1b1c40201e8e76ddc9e29fc14c33edda239815ed5c718d064",
+      "gitBlob": "2df87b97101b77add4ea5b2406bf9f29fda75270",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/audio.json"
+    },
+    {
+      "path": "qemu/qapi/cryptodev.json",
+      "source": "qemu",
+      "bytes": 2059,
+      "sha256": "428424689cf0da5e09bf8d0a41070e0003b096796d7e3efa9793ae871e5df1f1",
+      "gitBlob": "eb309c22f86453f80324d915407c49d46033319f",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/cryptodev.json"
+    },
+    {
+      "path": "qemu/qapi/dump.json",
+      "source": "qemu",
+      "bytes": 5935,
+      "sha256": "b9b4a7af0a96eee468aa75bf2e51c95e84cb3ddd303e471b24083fb13a1f2e21",
+      "gitBlob": "726b5208703c0ed87004b98541794e44302d63e9",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/dump.json"
+    },
+    {
+      "path": "qemu/qapi/ebpf.json",
+      "source": "qemu",
+      "bytes": 1651,
+      "sha256": "fcc0d9fd2788cef34e9c12de1763d00001ae6123bf93fa742e750e2e9a191166",
+      "gitBlob": "f0257955fa20d6a50605089ebc6b92d7c1c94622",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/ebpf.json"
+    },
+    {
+      "path": "qemu/qapi/introspect.json",
+      "source": "qemu",
+      "bytes": 8862,
+      "sha256": "3f2e968181b1f95cdd91bb713ecbac1407756d6fc4c8dee43656b7f203c35edb",
+      "gitBlob": "c8432c8ed8ec5b2a0a1e9aba4a376f2c2546456b",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/introspect.json"
+    },
+    {
+      "path": "qemu/qapi/machine-common.json",
+      "source": "qemu",
+      "bytes": 3015,
+      "sha256": "ec7610ffce26f87629eef39f50415f8f752eb75f8326721cc0c266ed94b0e6fc",
+      "gitBlob": "92e84dfb1468c04c1dffd2cf65cf4f322bb5357a",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/machine-common.json"
+    },
+    {
+      "path": "qemu/qapi/machine-s390x.json",
+      "source": "qemu",
+      "bytes": 3169,
+      "sha256": "ddeb28d28d48dff6687716a9459892dc80eb9391753a90e299c34214083ed4e8",
+      "gitBlob": "ea430e1b889242ab0898e129f69b468b736d2ff6",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/machine-s390x.json"
+    },
+    {
+      "path": "qemu/qapi/machine.json",
+      "source": "qemu",
+      "bytes": 59424,
+      "sha256": "45c29367ab4572dc2995eab049165015c64077404c7f91422278a1807235c171",
+      "gitBlob": "685e4e29b87ddc34ca2a30bb89deaa1f57f2fae3",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/machine.json"
+    },
+    {
+      "path": "qemu/qapi/misc-arm.json",
+      "source": "qemu",
+      "bytes": 2258,
+      "sha256": "ac394069749db6d4f7ac4a4c55bb991eaf0d381239328c6dc068b9bad8c29fbc",
+      "gitBlob": "4dc66d00e5c39429786b92f785ebd5463e744fca",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/misc-arm.json"
+    },
+    {
+      "path": "qemu/qapi/misc-i386.json",
+      "source": "qemu",
+      "bytes": 11252,
+      "sha256": "96a662f9e7b17b1f0946ea9dd6ef1049ef80d7226477ee7fe0aa286f6e269b9a",
+      "gitBlob": "05a94d6c416dfba051d13a72cfa9f92828200fc3",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/misc-i386.json"
+    },
+    {
+      "path": "qemu/qapi/pci.json",
+      "source": "qemu",
+      "bytes": 9052,
+      "sha256": "b6f6c2f709716245a2c06c9ecb102483c236095a8c541667d4a0d07d168286af",
+      "gitBlob": "694c741e420ac506d07818d6149b70e01f774e0d",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/pci.json"
+    },
+    {
+      "path": "qemu/qapi/qdev.json",
+      "source": "qemu",
+      "bytes": 5303,
+      "sha256": "741a20f77c0948131f23d976b5ec59384bc50269f2fdb305e1322eafdb7a76ca",
+      "gitBlob": "974cf9c5830efc90e03c7f6dc1c7350b83a62e33",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/qdev.json"
+    },
+    {
+      "path": "qemu/qapi/qom.json",
+      "source": "qemu",
+      "bytes": 41948,
+      "sha256": "b08350698a83eec3e4e2c52e878a7aaa52dd1890f29a922a52bea7b5bbc3ab3e",
+      "gitBlob": "c653248f85d85807b074fee7bf19fecb8ec1900c",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/qom.json"
+    },
+    {
+      "path": "qemu/qapi/stats.json",
+      "source": "qemu",
+      "bytes": 6799,
+      "sha256": "6fe2f17184b32479ac2132c4fd644af1c3f29156aaab11afb612de60e453e790",
+      "gitBlob": "a98624531c3c251a7f7c1c69130cb393e0996955",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/stats.json"
+    },
+    {
+      "path": "qemu/qapi/trace.json",
+      "source": "qemu",
+      "bytes": 1830,
+      "sha256": "c7eed4b09f6a6c84a76daa206db0b93a3769e79f57f87f997c036ed2d97773e8",
+      "gitBlob": "de369dae6b531809fc66c89801c2036ec9e25adc",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/qapi/trace.json"
+    },
+    {
+      "path": "qemu/scripts/qapi-gen.py",
+      "source": "qemu",
+      "bytes": 463,
+      "sha256": "d9ff2376ab145f7001e3bfc17d2a2e6d40c5c059fcf77117710831557d420a63",
+      "gitBlob": "f3518d29a549ba5eff05186ad0c9720c6c11edfc",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi-gen.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/backend.py",
+      "source": "qemu",
+      "bytes": 2273,
+      "sha256": "6bee805907473e2c94e53aa825a2ca96a400a4a36324963cc76cc19c65119e79",
+      "gitBlob": "49ae6ecdd33e632f71a4fb183030b3fb6ec66492",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/backend.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/commands.py",
+      "source": "qemu",
+      "bytes": 10809,
+      "sha256": "0c1d8fc97df529daeba5a1c103c6625b2b5495e3bbae0927c01123f8a7924007",
+      "gitBlob": "9dede7472051801e434d135293b0e34d03a47d1d",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/commands.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/common.py",
+      "source": "qemu",
+      "bytes": 7856,
+      "sha256": "538a788293cf5a89b0b824cb8b791039060debf7c6dc8717227a01b35b8ecc86",
+      "gitBlob": "d7c8aa3365c6f7638a7e8709f03e0facc7571113",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/common.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/error.py",
+      "source": "qemu",
+      "bytes": 1295,
+      "sha256": "829086fe354602ac24bc6aa39f052ebeadf7ab76702f7d87c6852b87bedbd3bc",
+      "gitBlob": "f73bc553db6fd8d98d5b7a3e41e452a498d74fbf",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/error.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/events.py",
+      "source": "qemu",
+      "bytes": 7572,
+      "sha256": "b505af94f926f4a8f19caec70cacb4ad6c54fc26d308d3ef7291da7393d90856",
+      "gitBlob": "d179b0ed6951d8e196920d94d7219e6ee2a8657d",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/events.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/expr.py",
+      "source": "qemu",
+      "bytes": 23594,
+      "sha256": "c7f1e40e4f1428d5487617742814a89e81dfe1aaf854c11db3aab1ef498042d3",
+      "gitBlob": "f40b247f8b61bc4ded443ae436fa033d02dca1d0",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/expr.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/features.py",
+      "source": "qemu",
+      "bytes": 1422,
+      "sha256": "7f8f73337ed73688addcec655f5283d50d46465b08ac1a8511767dcd67d90de1",
+      "gitBlob": "57563207a823be42c241d5140d7c6e6cfe8e9654",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/features.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/gen.py",
+      "source": "qemu",
+      "bytes": 11297,
+      "sha256": "17b4a47f7c217479db92c11280d7e6e65d86b147df947c3696715f4d2f80a94d",
+      "gitBlob": "0c9b8db3b0241918472e9d840ef66a692e901240",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/gen.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/introspect.py",
+      "source": "qemu",
+      "bytes": 14393,
+      "sha256": "d91c8de5fd5a6322ec5af1fec99efc7fd01f8f1fe8a0ac0e931225a35a9321ae",
+      "gitBlob": "7e28de2279ad32302e19916d90ddea799370c546",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/introspect.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/main.py",
+      "source": "qemu",
+      "bytes": 3654,
+      "sha256": "3d4484f3915df747dc45295d79753a5c8151090ab549b2881619d8d904a32fb9",
+      "gitBlob": "0e2a6ae3f070ea594c56f2f92356c2954490d4cb",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/main.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/parser.py",
+      "source": "qemu",
+      "bytes": 34271,
+      "sha256": "6d688954a1ef441869a4bd9f83748bfa83596008b06bbfd1b6f54fb6c671d263",
+      "gitBlob": "c3cf33904efb19538f5574dc47d8c578667e3b21",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/parser.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/schema.py",
+      "source": "qemu",
+      "bytes": 52057,
+      "sha256": "b87de0f6040fc65b77d8275266084815adc27f66c9685176c89d6facdc2a4b01",
+      "gitBlob": "8d88b40de2e19e200e7b55b524a489c52b1a6b9b",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/schema.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/source.py",
+      "source": "qemu",
+      "bytes": 2225,
+      "sha256": "f7999450c2cf25024c83fad6486ccf76f0c95db12ba8670b803c5e03111e025a",
+      "gitBlob": "ffdc3f482acd45f048ce81f720409991f04da0b3",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/source.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/types.py",
+      "source": "qemu",
+      "bytes": 11394,
+      "sha256": "9ffc3cb1fbf1f0b5b3a15b78167be82746f31af6ca319d43928f84577452ca94",
+      "gitBlob": "2bf75338283577a2257f0962856043f4e0f30c3a",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/types.py"
+    },
+    {
+      "path": "qemu/scripts/qapi/visit.py",
+      "source": "qemu",
+      "bytes": 12575,
+      "sha256": "35bf1b7d693686d3ea5f1b3206fa526e2b8f1ca39a54bfb17be2f00b03781390",
+      "gitBlob": "36e240967b687db10115ba375da3371898b7d95c",
+      "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/visit.py"
     }
   ],
   "patchedQemuTree": "486479e673161e8191bbae662f04e8b26fb387aa",

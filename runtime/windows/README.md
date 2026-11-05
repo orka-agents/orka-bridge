@@ -30,6 +30,9 @@ packages, exact final installed inventory, Python wheels, corresponding sources,
 notices, firmware ownership, historical recipes and additional Git sources.
 Git records and downloadable file records occupy separate lock groups. The
 package lock is generated data, not a package-manager update instruction.
+The installed-data map also retains QEMU's desktop entry, tracing definitions and
+artwork. The original SVG's CC BY 3.0 attribution and license link are preserved
+with the bitmap derivation recipe, not replaced by QEMU's GPL notice.
 
 Archive sizes and SHA-256 values come from the publisher's repository metadata
 or explicitly recorded inspection of immutable source bytes. Metadata snapshot
