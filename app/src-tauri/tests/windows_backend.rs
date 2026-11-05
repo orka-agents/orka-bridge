@@ -7,6 +7,94 @@ use serde_json::json;
 use std::{fs, path::PathBuf};
 use tempfile::TempDir;
 
+use bridge_engine::runtime::windows::job::{create_verified, SpawnPolicy};
+
+#[test]
+fn job_list_present_at_create_and_job_handle_does_not_inherit() {
+    let p = SpawnPolicy::new(9, vec![1, 2, 3, 4]).unwrap();
+    assert_eq!(p.jobs(), &[9]);
+    assert_eq!(p.handles(), &[1, 2, 3, 4]);
+    assert_eq!(p.flags() & 0x08080404, 0x08080404); // no-window, extended startup, Unicode, suspended
+    assert!(SpawnPolicy::new(9, vec![1, 2, 3, 9]).is_err());
+    assert!(SpawnPolicy::new(0, vec![1, 2, 3, 4]).is_err());
+}
+#[test]
+fn sharing_and_lock_violations_are_busy_but_access_denied_is_not() {
+    use bridge_engine::runtime::{types::RuntimeError, windows::job::owner_lock_error};
+    for code in [32, 33] {
+        assert!(matches!(
+            owner_lock_error(std::io::Error::from_raw_os_error(code)),
+            RuntimeError::Busy
+        ));
+    }
+    assert!(matches!(
+        owner_lock_error(std::io::Error::from_raw_os_error(5)),
+        RuntimeError::Io(_)
+    ));
+}
+#[test]
+fn atomic_job_assignment_denial_has_no_child_or_fallback() {
+    let p = SpawnPolicy::new(9, vec![1, 2, 3, 4]).unwrap();
+    let calls = std::cell::Cell::new(0);
+    let r = create_verified(
+        &p,
+        |_| {
+            calls.set(calls.get() + 1);
+            Err::<u32, _>(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+        },
+        |_| panic!("no child"),
+        |_| panic!("no child"),
+    );
+    assert!(r.is_err());
+    assert_eq!(calls.get(), 1);
+}
+#[test]
+fn failed_membership_reaps_only_owned_child_before_any_resume() {
+    let p = SpawnPolicy::new(9, vec![1, 2, 3, 4]).unwrap();
+    let reaped = std::cell::Cell::new(0);
+    let r = create_verified(
+        &p,
+        |_| Ok(42),
+        |_| Ok(false),
+        |c| {
+            reaped.set(*c);
+            Ok(())
+        },
+    );
+    assert!(r.is_err());
+    assert_eq!(reaped.get(), 42);
+    assert_eq!(
+        create_verified(
+            &p,
+            |_| Ok(42),
+            |_| Ok(true),
+            |_| panic!("successful child retained")
+        )
+        .unwrap(),
+        42
+    );
+}
+
+#[test]
+fn unconfirmed_stop_quarantines_child_capability() {
+    struct Child(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for Child {
+        fn drop(&mut self) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let released = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let p = SpawnPolicy::new(9, vec![1, 2, 3, 4]).unwrap();
+    let r = create_verified(
+        &p,
+        |_| Ok(Child(released.clone())),
+        |_| Ok(false),
+        |_| Err(std::io::Error::other("stop not observed")),
+    );
+    assert!(r.is_err());
+    assert!(!released.load(std::sync::atomic::Ordering::SeqCst));
+}
+
 // Hand-checked SHA256 of "abc"; fixtures never contain an executable or guest disk.
 const SHA: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 fn fixture() -> (TempDir, ReviewedWindowsPin, WindowsInputPaths) {
