@@ -211,6 +211,41 @@ mod native {
         }
         Ok(v)
     }
+    fn thread_state(process: HANDLE, label: &str) -> io::Result<()> {
+        unsafe {
+            let mut raw = std::ptr::null_mut();
+            let status = PssCaptureSnapshot(process, PSS_CAPTURE_THREADS, 0, &mut raw);
+            if status != 0 {
+                return Err(io::Error::from_raw_os_error(status as i32));
+            }
+            let mut snapshot = Snapshot(raw, std::ptr::null_mut());
+            let status = PssWalkMarkerCreate(std::ptr::null(), &mut snapshot.1);
+            if status != 0 {
+                return Err(io::Error::from_raw_os_error(status as i32));
+            }
+            for _ in 0..256 {
+                let mut thread: PSS_THREAD_ENTRY = zeroed();
+                let status = PssWalkSnapshot(
+                    snapshot.0,
+                    PSS_WALK_THREADS,
+                    snapshot.1,
+                    (&mut thread as *mut PSS_THREAD_ENTRY).cast(),
+                    size_of::<PSS_THREAD_ENTRY>() as u32,
+                );
+                if status == ERROR_NO_MORE_ITEMS {
+                    return Ok(());
+                }
+                if status != 0 {
+                    return Err(io::Error::from_raw_os_error(status as i32));
+                }
+                eprintln!(
+                    "QEMU thread {label}: id={}, suspended={}, exit={:#x}",
+                    thread.ThreadId, thread.SuspendCount, thread.ExitStatus
+                );
+            }
+            Err(io::Error::other("thread snapshot bound"))
+        }
+    }
     fn creation_time(process: HANDLE) -> io::Result<u64> {
         unsafe {
             let (mut c, mut e, mut k, mut u) = (zeroed(), zeroed(), zeroed(), zeroed());
@@ -386,6 +421,11 @@ mod native {
                 HANDLE_FLAG_INHERIT,
             ))?;
         }
+        // Test diagnostics: loader faults must report an exit, not hang on a
+        // modal dialog on an unattended desktop. This cannot turn a fault into PASS.
+        unsafe {
+            windows_sys::Win32::System::Diagnostics::Debug::SetErrorMode(0x8003);
+        }
         eprintln!("Fixed no-VM QEMU argv: {argv:?}");
         let mut child =
             OwnedQemuProcess::spawn_suspended(inputs, spec.ownership.clone(), &root, &argv)?;
@@ -411,8 +451,10 @@ mod native {
             }
         });
         let rx = reader(stdout);
+        thread_state(process.raw(), "before-resume")?;
         if mode != "hold-created" {
-            child.resume()?
+            child.resume()?;
+            thread_state(process.raw(), "after-resume")?;
         }
         if mode == "hold-pipe" {
             let until = Instant::now() + Duration::from_secs(30);
@@ -473,6 +515,7 @@ mod native {
             unsafe {
                 GetExitCodeProcess(process.raw(), &mut code);
             }
+            let _ = thread_state(process.raw(), "pipe-failure");
             io::Error::other(format!(
                 "pipe peer/instance/DACL before QMP: {e}; QEMU status={code:#x}; stderr={}",
                 String::from_utf8_lossy(&errors.lock().unwrap())
