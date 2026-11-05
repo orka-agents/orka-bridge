@@ -348,6 +348,30 @@ fn mount_is(
     }
     Ok(())
 }
+fn create_credentials(
+    path: &Path,
+    mount: impl FnOnce(&[&str]) -> io::Result<()>,
+) -> io::Result<()> {
+    directory(path, true)?;
+    mount(&[
+        "-t",
+        "tmpfs",
+        "-o",
+        "uid=0,gid=65532,mode=0750,nosuid,nodev,noexec",
+        "tmpfs",
+        path.to_str().ok_or_else(invalid)?,
+    ])
+}
+fn credentials_metadata_matches(is_dir: bool, uid: u32, gid: u32, mode: u32) -> bool {
+    is_dir && uid == 0 && gid == 65532 && mode & 0o7777 == 0o750
+}
+fn credentials_metadata(path: &Path) -> io::Result<()> {
+    let m = fs::symlink_metadata(path)?;
+    if !credentials_metadata_matches(m.file_type().is_dir(), m.uid(), m.gid(), m.mode()) {
+        return Err(invalid());
+    }
+    Ok(())
+}
 fn machine_id_mount_target(stage: &'static str, target: &str) -> io::Result<String> {
     diagnostics::context(
         Context::new(stage, "ready-machine-id-findmnt"),
@@ -466,21 +490,20 @@ impl BootSystem for Linux {
         Ok(())
     }
     fn credentials(&mut self) -> io::Result<()> {
-        let path = "/run/bridge/credentials";
-        directory(Path::new(path), true)?;
-        checked(
-            self.stage(),
-            "/bin/mount",
-            &[
-                "-t",
-                "tmpfs",
-                "-o",
-                "mode=0700,nosuid,nodev,noexec",
-                "tmpfs",
-                path,
-            ],
+        let stage = self.stage();
+        let path = Path::new("/run/bridge/credentials");
+        create_credentials(path, |args| checked(stage, "/bin/mount", args).map(|_| ()))?;
+        mount_is(
+            stage,
+            path.to_str().ok_or_else(invalid)?,
+            "tmpfs",
+            None,
+            true,
         )?;
-        mount_is(self.stage(), path, "tmpfs", None, true)
+        diagnostics::context(
+            Context::new(stage, "credentials-metadata"),
+            credentials_metadata(path),
+        )
     }
     fn ready(&mut self, b: &BootDescriptor) -> io::Result<()> {
         let stage = self.stage();
@@ -534,6 +557,10 @@ impl BootSystem for Linux {
         diagnostics::context(
             Context::new(stage, "ready-credentials-mount"),
             mount_is(stage, "/run/bridge/credentials", "tmpfs", None, true),
+        )?;
+        diagnostics::context(
+            Context::new(stage, "ready-credentials-metadata"),
+            credentials_metadata(Path::new("/run/bridge/credentials")),
         )?;
         let identity = match self.identity() {
             Ok(Some(id)) => id,
@@ -713,6 +740,120 @@ mod tests {
                 stage
             );
         }
+    }
+    fn assert_credential_mount_contract() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent_mode = fs::symlink_metadata(temp.path()).unwrap().mode();
+        let path = temp.path().join("credentials");
+        let mut captured: Option<Vec<String>> = None;
+        create_credentials(&path, |args| {
+            // The private underlay must exist before invoking mount.
+            let m = fs::symlink_metadata(&path).unwrap();
+            assert!(m.file_type().is_dir());
+            assert_eq!(m.mode() & 0o7777, 0o700);
+            captured = Some(args.iter().map(|s| s.to_string()).collect());
+            Ok(())
+        })
+        .unwrap();
+        let m = fs::symlink_metadata(&path).unwrap();
+        assert!(m.file_type().is_dir());
+        assert_eq!(m.mode() & 0o7777, 0o700);
+        assert_eq!(
+            fs::symlink_metadata(temp.path()).unwrap().mode(),
+            parent_mode
+        );
+        assert_eq!(
+            captured.unwrap(),
+            vec![
+                "-t",
+                "tmpfs",
+                "-o",
+                "uid=0,gid=65532,mode=0750,nosuid,nodev,noexec",
+                "tmpfs",
+                path.to_str().unwrap(),
+            ]
+        );
+    }
+    #[test]
+    fn create_credentials_mounts_missing_underlay_with_explicit_owner_and_mode() {
+        assert_credential_mount_contract();
+    }
+    #[test]
+    fn credential_mount_arguments_umask_child() {
+        if std::env::var_os("BRIDGE_TEST_CREDENTIAL_UMASK").is_none() {
+            return;
+        }
+        // SAFETY: this isolated child changes only its own process umask.
+        unsafe { libc::umask(0o077) };
+        assert_credential_mount_contract();
+    }
+    #[test]
+    fn credential_mount_arguments_and_private_underlay_are_unchanged_under_umask() {
+        let out = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "linux::tests::credential_mount_arguments_umask_child",
+                "--nocapture",
+            ])
+            .env("BRIDGE_TEST_CREDENTIAL_UMASK", "1")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    #[test]
+    fn credentials_metadata_never_follows_a_symlink() {
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(credentials_metadata(&link).is_err());
+        let err = credentials_metadata(&temp.path().join("missing")).unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::ENOENT));
+    }
+    #[test]
+    fn create_credentials_propagates_the_original_mount_errno() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("credentials");
+        let err = create_credentials(&path, |_args| {
+            Err(io::Error::from_raw_os_error(libc::EPERM))
+        })
+        .unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(libc::EPERM));
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+    }
+    #[test]
+    fn create_credentials_rejects_a_non_directory_target_without_mounting() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("credentials");
+        fs::write(&path, b"not a directory").unwrap();
+        assert!(create_credentials(&path, |_args| panic!("must not mount")).is_err());
+    }
+    #[test]
+    fn create_credentials_rejects_a_symlinked_target_without_mounting() {
+        let temp = tempfile::tempdir().unwrap();
+        let real = temp.path().join("real");
+        fs::create_dir(&real).unwrap();
+        let path = temp.path().join("credentials");
+        std::os::unix::fs::symlink(&real, &path).unwrap();
+        assert!(create_credentials(&path, |_args| panic!("must not mount")).is_err());
+    }
+    #[test]
+    fn credentials_metadata_predicate_accepts_only_the_exact_owner_type_and_mode() {
+        assert!(credentials_metadata_matches(true, 0, 65532, 0o750));
+        assert!(!credentials_metadata_matches(false, 0, 65532, 0o750));
+        assert!(!credentials_metadata_matches(true, 1, 65532, 0o750));
+        assert!(!credentials_metadata_matches(true, 0, 0, 0o750));
+        assert!(!credentials_metadata_matches(true, 0, 65532, 0o700));
+        assert!(!credentials_metadata_matches(true, 0, 65532, 0o755));
+        assert!(!credentials_metadata_matches(true, 0, 65532, 0o770));
+        assert!(!credentials_metadata_matches(true, 0, 65532, 0o4750));
+        assert!(!credentials_metadata_matches(true, 0, 65532, 0o2750));
+        assert!(!credentials_metadata_matches(true, 0, 65532, 0o1750));
     }
     #[test]
     fn probe_rejects_foreign_ambiguous_and_bad_bytes() {
