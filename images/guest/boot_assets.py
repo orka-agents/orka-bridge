@@ -21,6 +21,7 @@ from .boot_inspect import (
     ENDPOINT_TOOLS,
     compare_guest_file,
     dependencies,
+    module_hashes,
     module_identity,
     rooted_file,
 )
@@ -220,18 +221,18 @@ def inspect_pair(guest, lock, receipt, tools, out, work):
     expanded = work / "expanded"
     run([tools["unmkinitramfs"], initrd, expanded])
     root = expanded / "main" if (expanded / "main").is_dir() else expanded
-    module_hashes = {name: digest for name, _, digest in module_rows}
     installed_modules = []
     try:
         tree = rooted_file(root, "/lib/modules/" + release, directory=True)
     except FileNotFoundError:
         tree = None
     if tree is not None:
-        for path in tree.rglob("*"):
-            if re.search(r"\.ko(?:\.(?:xz|gz|zst))?$", path.name):
-                require(path.is_file() and not path.is_symlink()
-                        and module_hashes.get(path.relative_to(tree).as_posix()) == file_hash(path), "initrd module bytes differ from selected guest tree")
-                installed_modules.append(path.name)
+        paths = [path for path in tree.rglob("*") if re.search(r"\.ko(?:\.(?:xz|gz|zst))?$", path.name)]
+        hashes = module_hashes(modules, module_rows, {path.relative_to(tree).as_posix() for path in paths})
+        for path in paths:
+            require(path.is_file() and not path.is_symlink()
+                    and hashes.get(path.relative_to(tree).as_posix()) == file_hash(path), "initrd module bytes differ from selected guest tree")
+            installed_modules.append(path.name)
     drivers = []
     for name, symbol in DRIVERS.items():
         values = re.findall(r"(?m)^CONFIG_" + symbol + r"=([ym])$", config)

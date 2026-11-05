@@ -3,6 +3,7 @@ import importlib
 import importlib.util
 import io
 import json
+import lzma
 import os
 import shutil
 import tarfile
@@ -336,6 +337,69 @@ class BootAssetTests(unittest.TestCase):
         (self.initrd / "usr/lib/bridge/bridge-guest").unlink()
         with self.assertRaises((ValueError, FileNotFoundError)):
             self.extract()
+
+    def test_initrd_uncompressed_module_matches_guest_xz_bytes(self):
+        path = self.initrd / "lib/modules" / self.release / "kernel/virtio_blk.ko"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"selected module")
+        self.modules["kernel/virtio_blk.ko.xz"] = lzma.compress(path.read_bytes())
+        self.assertEqual(self.release, self.extract()["kernelRelease"])
+
+    def test_xz_module_expanded_bytes_must_match(self):
+        path = self.initrd / "lib/modules" / self.release / "kernel/virtio_blk.ko"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"selected module")
+        self.modules["kernel/virtio_blk.ko.xz"] = lzma.compress(b"different module")
+        with self.assertRaisesRegex(ValueError, "module.*bytes"):
+            self.extract()
+        self.assertFalse((self.root / "assets/boot-assets.json").exists())
+
+    def test_xz_fallback_cannot_hide_a_physical_guest_hardlink(self):
+        path = self.initrd / "lib/modules" / self.release / "kernel/virtio_blk.ko"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"selected module")
+        self.modules["kernel/other.ko"] = b"different hardlinked guest module"
+        self.modules["kernel/virtio_blk.ko.xz"] = lzma.compress(path.read_bytes())
+        original = self.call
+        def linked(command, *args):
+            value = original(command, *args)
+            if command == "tar-out":
+                with tarfile.open(args[1], "a") as archive:
+                    member = tarfile.TarInfo("kernel/virtio_blk.ko")
+                    member.type = tarfile.LNKTYPE
+                    member.linkname = "kernel/other.ko"
+                    archive.addfile(member)
+            return value
+        with patch.object(self, "call", side_effect=linked), self.assertRaisesRegex(ValueError, "module.*bytes"):
+            self.extract()
+        self.assertFalse((self.root / "assets/boot-assets.json").exists())
+
+    def test_xz_module_stream_errors_and_bounds_are_refused(self):
+        inspect = importlib.import_module("guest.boot_inspect")
+        valid = lzma.compress(b"selected module")
+        cases = ((b"invalid", 1024, "XZ kernel module"),
+                 (lzma.compress(b"selected module", format=lzma.FORMAT_ALONE), 1024, "invalid XZ"),
+                 (valid[:-4], 1024, "incomplete"),
+                 (valid + b"trailing", 1024, "trailing"), (valid, 16, "compressed module exceeds"),
+                 (lzma.compress(b"A" * 1024), 100, "oversized"))
+        archive = self.root / "module.tar"
+        for compressed, limit, message in cases:
+            with self.subTest(message=message):
+                self.modules["kernel/virtio_blk.ko.xz"] = compressed
+                self.call("tar-out", "/unused", archive)
+                rows = inspect.module_identity(archive)
+                with patch.object(inspect, "MAX_MODULE_BYTES", limit), self.assertRaisesRegex(ValueError, message):
+                    inspect.module_hashes(archive, rows, {"kernel/virtio_blk.ko"})
+
+    def test_xz_module_does_not_hide_a_different_uncompressed_guest_file(self):
+        path = self.initrd / "lib/modules" / self.release / "kernel/virtio_blk.ko"
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"selected module")
+        self.modules["kernel/virtio_blk.ko"] = b"different physical guest module"
+        self.modules["kernel/virtio_blk.ko.xz"] = lzma.compress(path.read_bytes())
+        with self.assertRaisesRegex(ValueError, "module.*bytes"):
+            self.extract()
+        self.assertFalse((self.root / "assets/boot-assets.json").exists())
 
     def test_selected_kernel_module_must_be_present_when_not_builtin(self):
         self.files["/boot/config-" + self.release] = self.files["/boot/config-" + self.release].replace(b"CONFIG_VIRTIO_BLK=y", b"CONFIG_VIRTIO_BLK=m")

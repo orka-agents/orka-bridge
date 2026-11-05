@@ -1,5 +1,6 @@
 """Read initramfs files as data; never execute guest tools on the builder."""
 import hashlib
+import lzma
 import re
 import stat
 import tarfile
@@ -63,6 +64,40 @@ def module_identity(archive):
     require(rows and len({r[0] for r in rows}) == len(rows), "missing or duplicate module files")
     require({"modules.dep", "modules.builtin"} <= {r[0] for r in rows}, "missing module metadata")
     return rows
+
+
+MAX_MODULE_BYTES = 128 * 1024**2
+
+
+def module_hashes(archive, rows, requested):
+    """Keep physical identities; compare XZ modules expanded by initramfs-tools."""
+    hashes = {name: digest for name, _, digest in rows}
+    needed = {name + ".xz" for name in requested if name.endswith(".ko") and name not in hashes}
+    if not needed:
+        return hashes
+    with tarfile.open(archive, "r:") as tar:
+        members = tar.getmembers()
+        occupied = {member.name.removeprefix("./") for member in members}
+        for member in members:
+            name = member.name.removeprefix("./")
+            if name not in needed or name.removesuffix(".xz") in occupied or not member.isfile():
+                continue
+            require(member.size <= MAX_MODULE_BYTES, "compressed module exceeds bound")
+            stream = tar.extractfile(member)
+            if stream is None:
+                raise ValueError("missing compressed module bytes")
+            with stream:
+                compressed = stream.read(MAX_MODULE_BYTES + 1)
+            require(len(compressed) <= MAX_MODULE_BYTES, "compressed module exceeds bound")
+            try:
+                decoder = lzma.LZMADecompressor(format=lzma.FORMAT_XZ, memlimit=256 * 1024**2)
+                data = decoder.decompress(compressed, max_length=MAX_MODULE_BYTES + 1)
+            except lzma.LZMAError as error:
+                raise ValueError("invalid XZ kernel module") from error
+            require(len(data) <= MAX_MODULE_BYTES and decoder.eof and not decoder.unused_data,
+                    "incomplete, trailing or oversized XZ kernel module")
+            hashes[name.removesuffix(".xz")] = hashlib.sha256(data).hexdigest()
+    return hashes
 
 
 def dependencies(root, executable, architecture, readelf, run):
