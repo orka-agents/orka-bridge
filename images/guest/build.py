@@ -12,10 +12,24 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if __package__ or TYPE_CHECKING:
-    from .lock import checked_file, file_hash, load_lock, require, validate_lock
+    from .lock import (
+        VERSIONS,
+        checked_file,
+        file_hash,
+        load_lock,
+        require,
+        validate_lock,
+    )
     from .offline import stage_bundle
 else:
-    from lock import checked_file, file_hash, load_lock, require, validate_lock
+    from lock import (
+        VERSIONS,
+        checked_file,
+        file_hash,
+        load_lock,
+        require,
+        validate_lock,
+    )
     from offline import stage_bundle
 
 OS_BYTES, STATE_BYTES = 16 * 1024**3, 32 * 1024**3
@@ -48,6 +62,16 @@ def disk_contract(architecture):
             "stateDisk": {"role": "state-disk", "creation": "create-empty", "format": fmt, "virtualBytes": STATE_BYTES, "filesystem": "ext4", "blockSerial": "bridge-state", "formatOnNewOnly": True}}
 
 
+def kernel_policy(lock):
+    if lock["architecture"] != "arm64":
+        return None
+    policy = VERSIONS["arm64Kernel"]
+    selected = [p for p in lock["packages"] if p["name"] == policy["package"]]
+    require(len(selected) == 1 and selected[0]["version"] == policy["version"]
+            and selected[0]["sha256"] == policy["packageSha256"], "pinned ARM kernel package required")
+    return policy
+
+
 def verify_os_inputs(lock, *, source):
     validate_lock(lock, production=False)
     files = {group: {a["name"]: checked_file(source, a["path"], a["sha256"]) for a in lock[group]} for group in ("packages", "tools")}
@@ -74,7 +98,10 @@ def stage_rootfs(lock, *, source, out):
     for dest, name in ROOTFS_FILES.items():
         target = out / dest.lstrip("/")
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes((Path(__file__).with_name("rootfs") / name).read_bytes())
+        data = (Path(__file__).with_name("rootfs") / name).read_bytes()
+        if name == "grub" and lock["architecture"] == "arm64":
+            data = data.replace(b"console=ttyS0,115200n8", b"console=hvc0")
+        target.write_bytes(data)
         target.chmod(0o755 if name == "check-state" or name.startswith("initramfs/") else 0o644)
         hashes[dest] = file_hash(target)
     target = out / "usr/local/bin/kind"
@@ -188,6 +215,7 @@ def customize_commands(packages, architecture):
 def build(lock, out, *, source):
     out = out.absolute()
     inputs = verify_os_inputs(lock, source=source)
+    kernel_policy(lock)
     require({"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine()) == lock["architecture"], "native architecture builder required")
     require(not out.exists() and not out.is_symlink(), "output must not already exist")
     selected = {t["name"]: t for t in lock["tools"]}

@@ -2,7 +2,8 @@
 # Validate the early endpoint's mounts. This guard never mounts or formats.
 set -eu
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
-export PATH
+LC_ALL=C
+export PATH LC_ALL
 fail() { printf '%s\n' "bridge-state: $1" >&2; exit 1; }
 test -s /run/bridge/boot.json || fail 'accepted early descriptor unavailable'
 test "$(findmnt -rn -M /var/lib/bridge -o FSTYPE)" = ext4 || fail 'state mount unavailable'
@@ -10,6 +11,12 @@ state_uuid=$(findmnt -rn -M /var/lib/bridge -o UUID)
 test -n "$state_uuid" || fail 'state mount identity unavailable'
 test "$(jq -er .installationId /run/bridge/boot.json)" = "$state_uuid" || fail 'accepted installation identity mismatch'
 test "$(findmnt -rn -M /run/bridge/credentials -o FSTYPE)" = tmpfs || fail 'credential tmpfs unavailable'
+test "$(stat -c '%u:%g:%a:%F' /run/bridge)" = '0:0:700:directory' || fail 'private runtime permissions unavailable'
+test "$(stat -c '%u:%g:%a:%F' /run/bridge/credentials)" = '0:65532:750:directory' || fail 'credential permissions unavailable'
+credential_options=$(findmnt -rn -M /run/bridge/credentials -o OPTIONS) || fail 'credential options unavailable'
+for flag in nosuid nodev noexec; do
+    case ",$credential_options," in *",$flag,"*) ;; *) fail 'credential security flags unavailable' ;; esac
+done
 test "$(findmnt -rn -T /etc/machine-id -o TARGET)" = /etc/machine-id || fail 'persistent machine identity mount unavailable'
 test "$(findmnt -rn -T /etc/machine-id -o UUID)" = "$state_uuid" || fail 'persistent machine identity mismatch'
 same_source() {

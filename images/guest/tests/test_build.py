@@ -110,6 +110,34 @@ class BuildTests(unittest.TestCase):
         self.assertFalse(result["publicationReady"])
         self.assertEqual(self.root / "base.qcow2", result["base"])
 
+    def test_console_is_architecture_specific(self):
+        from .test_runtime import runtime_inputs
+        for arch, console in (("amd64", "ttyS0,115200n8"), ("arm64", "hvc0")):
+            with self.subTest(architecture=arch):
+                root = self.root / arch
+                root.mkdir()
+                value = lock(root)
+                value["architecture"] = arch
+                value["nodeLocalRef"] = value["nodeLocalRef"].rsplit("-", 1)[0] + "-" + arch
+                runtime_inputs(root, value)
+                self.api.stage_rootfs(value, source=root, out=root / "overlay")
+                text = (root / "overlay/etc/default/grub").read_text()
+                self.assertIn(f'GRUB_CMDLINE_LINUX="console={console} noresume"', text)
+                self.assertNotIn("ttyS0" if arch == "arm64" else "hvc0", text)
+
+    def test_arm_kernel_policy_requires_exact_package(self):
+        value: dict = dict(self.value, architecture="arm64")
+        self.assertTrue(callable(getattr(self.api, "kernel_policy", None)))
+        with self.assertRaisesRegex(ValueError, "ARM kernel"):
+            self.api.kernel_policy(value)
+        policy = self.api.VERSIONS["arm64Kernel"]
+        value["packages"] = [{"name": policy["package"], "version": policy["version"], "sha256": policy["packageSha256"], "path": "kernel.deb"}]
+        self.assertEqual(policy, self.api.kernel_policy(value))
+        value["packages"][0]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "ARM kernel"):
+            self.api.kernel_policy(value)
+        self.assertIsNone(self.api.kernel_policy(self.value))
+
     def test_h1_capacities_and_formats(self):
         for arch, fmt in (("amd64", "qcow2"), ("arm64", "raw")):
             contract = self.api.disk_contract(arch)
