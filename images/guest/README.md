@@ -230,7 +230,10 @@ executable conditions, backslash escapes and inline comments are refused rather
 than evaluated. Stock module-loading conditions remain supported. Other or
 indeterminate defaults are refused.
 Required drivers must be
-built in or present with the selected guest's module bytes. Unsupported kernel
+built in or present with the selected guest's module bytes. When initramfs-tools
+expands a guest `.ko.xz` into `.ko`, comparison uses bounded XZ decompression;
+the recorded module-tree identity still hashes the original stored files.
+Unsupported kernel
 formats, foreign bytes, mismatched GRUB kernel/initrd selections, saved GRUB
 overrides and missing dependencies fail closed;
 there is no automatic kernel decompression or fallback. A `cpio-prefix`
