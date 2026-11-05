@@ -1,6 +1,13 @@
 {
   "schemaVersion": "bridge-guest-versions/v1",
   "debianBase": "20261026-2643",
+  "arm64Kernel": {
+    "package": "linux-image-6.12.95+deb12-arm64",
+    "version": "6.12.95-1~bpo12+1",
+    "release": "6.12.95+deb12-arm64",
+    "packageSha256": "08f6c01d4c68c5136106f51302d1b564f40325be2b6bfada71269929e9b5b336",
+    "kernelSha256": "27f833e233753a0a601f3a6792dcd73e2f2c7c8bd30e00b837315c71c5996dcb"
+  },
   "kind": "v0.33.0",
   "kubernetes": "v1.35.0",
   "orkaSource": "59703d6eac1760aa2dc5fed4dee9dcb74c6e5186",

@@ -14,7 +14,7 @@ class StateGuardTests(unittest.TestCase):
         self.assertTrue(path.is_file(), "missing image integration file: " + name)
         return path
 
-    def run_guard(self, *, filesystem="ext4", credentials="tmpfs", state_uuid="install", machine_uuid="install", machine_mount="/etc/machine-id", descriptor=True, expected_uuid="install", legacy_uuid="install", bind_source="1:2", stat_fail=False):
+    def run_guard(self, *, filesystem="ext4", credentials="tmpfs", state_uuid="install", machine_uuid="install", machine_mount="/etc/machine-id", descriptor=True, expected_uuid="install", legacy_uuid="install", bind_source="1:2", stat_fail=False, credential_meta="0:65532:750:directory", private_meta="0:0:700:directory", credential_options="rw,nosuid,nodev,noexec"):
         script = self.file("check-state")
         with tempfile.TemporaryDirectory() as temp:
             trace = Path(temp) / "trace"
@@ -22,13 +22,14 @@ class StateGuardTests(unittest.TestCase):
             # functions and values never enter the installed image/service.
             wrapper = r'''
 jq() { printf '%s\n' "$EXPECTED_UUID"; }
-stat() { [ "$STAT_FAIL" = no ] || return 1; case "$*" in *'/var/lib/docker') printf '%s\n' "$BIND_SOURCE";; *) printf '%s\n' '1:2';; esac; }
+stat() { [ "$STAT_FAIL" = no ] || return 1; case "$*" in *'/run/bridge/credentials') printf '%s\n' "$CREDENTIAL_META";; *'/run/bridge') printf '%s\n' "$PRIVATE_META";; *'/var/lib/docker') printf '%s\n' "$BIND_SOURCE";; *) printf '%s\n' '1:2';; esac; }
 findmnt() {
     printf '%s\n' "$*" >> "$TRACE"
     case "$*" in
       *'/var/lib/bridge -o FSTYPE') printf '%s\n' "$STATE_FS" ;;
       *'/var/lib/bridge -o UUID') printf '%s\n' "$STATE_UUID" ;;
       *'/run/bridge/credentials -o FSTYPE') printf '%s\n' "$CREDENTIAL_FS" ;;
+      *'/run/bridge/credentials -o OPTIONS') printf '%s\n' "$CREDENTIAL_OPTIONS" ;;
       *'/var/lib/docker -o UUID'|*'/var/lib/containerd -o UUID') printf '%s\n' "$LEGACY_UUID" ;;
       *'/etc/machine-id -o UUID') printf '%s\n' "$MACHINE_UUID" ;;
       *'/etc/machine-id -o TARGET') printf '%s\n' "$MACHINE_MOUNT" ;;
@@ -46,7 +47,8 @@ test() {
             environment = {"GUARD": str(script), "TRACE": str(trace), "STATE_FS": filesystem,
                            "STATE_UUID": state_uuid, "CREDENTIAL_FS": credentials,
                            "MACHINE_UUID": machine_uuid, "MACHINE_MOUNT": machine_mount,
-                           "DESCRIPTOR": "yes" if descriptor else "no", "EXPECTED_UUID": expected_uuid, "LEGACY_UUID": legacy_uuid, "BIND_SOURCE": bind_source, "STAT_FAIL": "yes" if stat_fail else "no"}
+                           "DESCRIPTOR": "yes" if descriptor else "no", "EXPECTED_UUID": expected_uuid, "LEGACY_UUID": legacy_uuid, "BIND_SOURCE": bind_source, "STAT_FAIL": "yes" if stat_fail else "no",
+                           "CREDENTIAL_META": credential_meta, "PRIVATE_META": private_meta, "CREDENTIAL_OPTIONS": credential_options}
             result = subprocess.run(["/bin/sh", "-c", wrapper], env=environment, capture_output=True, text=True, check=False)
             calls = trace.read_text() if trace.exists() else ""
             self.assertNotIn("mkfs", calls)
@@ -57,6 +59,21 @@ test() {
         result = self.run_guard()
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertEqual("", result.stdout)
+
+    def test_credential_metadata_and_private_parent_are_exact(self):
+        for meta in ("1:65532:750:directory", "0:0:750:directory", "0:65532:700:directory",
+                     "0:65532:2750:directory", "0:65532:750:symbolic link"):
+            with self.subTest(metadata=meta):
+                self.assertNotEqual(0, self.run_guard(credential_meta=meta).returncode)
+        for meta in ("0:0:755:directory", "1:0:700:directory", "0:65532:700:directory"):
+            with self.subTest(parent=meta):
+                self.assertNotEqual(0, self.run_guard(private_meta=meta).returncode)
+
+    def test_each_credential_security_flag_is_required(self):
+        for missing in ("nosuid", "nodev", "noexec"):
+            with self.subTest(flag=missing):
+                flags = ",".join(f for f in ("rw", "nosuid", "nodev", "noexec") if f != missing)
+                self.assertNotEqual(0, self.run_guard(credential_options=flags).returncode)
 
     def test_per_start_guard_matches_accepted_installation(self):
         result = self.run_guard(expected_uuid="other")
