@@ -264,6 +264,34 @@ class BootAssetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsupported|ambiguous"):
             self.extract()
 
+    def test_embedded_quoted_semicolons_cannot_fabricate_an_initrd(self):
+        del self.aliases["/vmlinuz"]
+        cfg = self.files["/boot/grub/grub.cfg"].replace(b"\ninitrd ", b" x='; initrd ").rstrip()
+        self.files["/boot/grub/grub.cfg"] = cfg + b"; true x'\n"
+        with self.assertRaisesRegex(ValueError, "unsupported|initrd"):
+            self.extract()
+
+    def test_initrd_cannot_precede_its_kernel(self):
+        del self.aliases["/vmlinuz"]
+        cfg = self.files["/boot/grub/grub.cfg"].splitlines(keepends=True)
+        cfg[-2], cfg[-1] = cfg[-1], cfg[-2]
+        self.files["/boot/grub/grub.cfg"] = b"".join(cfg)
+        with self.assertRaisesRegex(ValueError, "initrd.*kernel"):
+            self.extract()
+
+    def test_quoted_test_predicate_can_precede_default_pair(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = self.files["/boot/grub/grub.cfg"].replace(
+            b"linux ", b'if [ "$feature" = xy ] ; then\ninsmod foo\nfi\nlinux ')
+        self.assertEqual(self.release, self.extract()["kernelRelease"])
+
+    def test_unbalanced_embedded_quote_cannot_hide_default_pair(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = self.files["/boot/grub/grub.cfg"].replace(
+            b"linux ", b"if [ x='broken ]; then\ntrue\nfi\nlinux ")
+        with self.assertRaises(ValueError):
+            self.extract()
+
     def test_regular_root_kernel_file_cannot_conflict_with_grub(self):
         del self.aliases["/vmlinuz"]
         self.files["/vmlinuz"] = b"regular root kernel"

@@ -102,6 +102,9 @@ def selected_kernel(guest, architecture, expected_grub):
         if raw.lstrip().startswith("#"):
             continue
         require("#" not in raw and "\\" not in raw, "unsupported GRUB inline comment, escape or line continuation")
+        shlex.split(raw)  # Validate embedded quotes without discarding their context below.
+        if ";" in raw and any(quote in raw for quote in ("'", '"')):
+            require(raw.count(";") == 1 and re.fullmatch(r"\s*(?:if|elif)\s+\[[^;]*\]\s*;\s*then\s*", raw), "unsupported quoted compound GRUB command")
         lexer = shlex.shlex(raw, posix=False, punctuation_chars=";")
         lexer.commenters = ""
         lexer.whitespace_split = True
@@ -179,6 +182,7 @@ def selected_kernel(guest, architecture, expected_grub):
             if key in ("linux", "linuxefi"):
                 kernels.append(following)
             else:
+                require(kernels == [line], "GRUB initrd command precedes its kernel")
                 initrds.append(following[1:])
     require(conditionals == 0, "unterminated GRUB conditional")
     require(kernels == [line], "ambiguous GRUB default kernel commands")
