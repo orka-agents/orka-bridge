@@ -310,6 +310,10 @@ def verify(output, source_lock, packages_lock):
         for name in ("recipe.py", "verify.py", "build.sh", "README.md", "windows-runtime.yml"):
             if not source.get("recipe/" + name, {}).get("bytes"):
                 raise ValueError(f"missing rebuild recipe: {name}")
+        policy = packages.get("policyPatch")
+        if policy and (source.get("recipe/" + policy["path"], {}).get("bytes") != policy["bytes"]
+                       or source.get("recipe/" + policy["path"], {}).get("sha256") != policy["sha256"]):
+            raise ValueError("missing/mismatched owned policy patch")
         for name, value in hashes.items():
             if source.get(f"recipe/{name}.lock.json", {}).get("sha256") != value:
                 raise ValueError(f"missing/mismatched rebuild recipe lock: {name}")

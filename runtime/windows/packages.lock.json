@@ -8274,7 +8274,7 @@
       "Snapshot databases and the separately dated bootstrap are not an atomic repository transaction.",
       "Expected inventory is checked against the actual installed environment before source execution."
     ],
-    "sourceTreeMethod": "Git tree IDs reconstructed from exact-commit tree API entries; current EDK2, libvirt-ci and keycodemapdb commit-tree API reads; QEMU tree from read-tree plus the six locked patches applied to the index."
+    "sourceTreeMethod": "Git tree IDs reconstructed from exact-commit tree API entries; current EDK2, libvirt-ci and keycodemapdb commit-tree API reads; QEMU tree from read-tree plus the six locked reference patches and the owned DirectSound policy patch applied to the index."
   },
   "firmware": [
     {
@@ -20399,9 +20399,14 @@
       "url": "https://raw.githubusercontent.com/cmspam/winq-emu-qemu/2ce303cfbbc8b0e4a7a3c66e27a094a980426d73/scripts/qapi/visit.py"
     }
   ],
-  "patchedQemuTree": "486479e673161e8191bbae662f04e8b26fb387aa",
+  "patchedQemuTree": "0f11827b0b6f359b12f29a24fb91babcbdc079ac",
+  "policyPatch": {
+    "path": "disable-dsound.patch",
+    "bytes": 425,
+    "sha256": "b0bd729308cc4052f74d8aa95b9ca1e3524b10fe871c79441a4ce712c634db55"
+  },
   "sourceTrees": {
-    "qemu": "486479e673161e8191bbae662f04e8b26fb387aa",
+    "qemu": "0f11827b0b6f359b12f29a24fb91babcbdc079ac",
     "qemu/roms/QemuMacDrivers": "065bb206ca65e095054c153b72ef12df66e08a02",
     "qemu/roms/SLOF": "615712b5f66960a4f46eb9232858dda3134a2924",
     "qemu/roms/edk2": "de49737c6ea7070fa42c550331fd63e4d688a4c0",

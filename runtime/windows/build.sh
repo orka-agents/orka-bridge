@@ -39,8 +39,11 @@ while IFS=$'\t' read -r path repository commit base; do
     [[ $(git -C "$destination" rev-parse HEAD) == "$commit" ]]
 done < "$work/git-inputs.tsv"
 qemu="$checkouts/qemu"
-"$py" - "$sources" <<'PY' > "$work/patches.txt"
-import json,sys
+"$py" - "$sources" "$packages" "$recipe" <<'PY' > "$work/patches.txt"
+import hashlib,json,sys
+from pathlib import Path
+policy=json.load(open(sys.argv[2]))['policyPatch']; data=(Path(sys.argv[3])/policy['path']).read_bytes()
+assert len(data)==policy['bytes'] and hashlib.sha256(data).hexdigest()==policy['sha256'],'policy patch identity'
 for row in json.load(open(sys.argv[1]))['patches']:
     print(row['path'])
 PY
@@ -50,6 +53,8 @@ PY
         git apply --check "$inputs/$patch"
         git apply --index "$inputs/$patch"
     done < "$work/patches.txt"
+    git apply --check "$recipe/disable-dsound.patch"
+    git apply --index "$recipe/disable-dsound.patch"
 )
 [[ $(git -C "$qemu" write-tree) == "$(value "$packages" patchedQemuTree)" ]]
 # These fixtures execute compiler-built tests, never a guest or QEMU machine.

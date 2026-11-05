@@ -53,6 +53,8 @@ class Archives(unittest.TestCase):
                          "referenceNotice": archive_record("reference/LICENSE", b"reference"),
                          "bootstrapPackages": [{"name": "base", "version": "1-1"}],
                          "packages": [package], "pythonArchives": [],
+                         "policyPatch": {"path": "disable-dsound.patch", "bytes": 12,
+                                         "sha256": hashlib.sha256(b"policy patch").hexdigest()},
                          "expectedInstalled": [{"name": "base", "version": "1-1"},
                                                {"name": "lib", "version": "1-1"}],
                          "firmware": [{"path": "share/qemu/bios-256k.bin", "source": "qemu", "license": "qemu/COPYING"}]}
@@ -67,6 +69,7 @@ class Archives(unittest.TestCase):
             self.put(self.source, "qemu/" + name, b"license")
             self.put(self.runtime, "LICENSES/qemu/" + name, b"license")
         self.put(self.source, "recipe/build.sh", b"#!/bin/bash\n")
+        self.put(self.source, "recipe/disable-dsound.patch", b"policy patch")
         for name in ("recipe.py", "verify.py", "README.md", "windows-runtime.yml"):
             self.put(self.source, "recipe/" + name, b"fixture")
         self.put(self.source, "inputs/reference/LICENSE", b"reference")
@@ -231,6 +234,12 @@ class Archives(unittest.TestCase):
         (self.runtime / "LICENSES/reference/LICENSE").unlink()
         with self.assertRaisesRegex(ValueError, "reference|license"):
             self.build()
+
+    def test_owned_policy_patch_is_authenticated(self):
+        self.put(self.source, "recipe/disable-dsound.patch", b"corrupt")
+        with self.assertRaisesRegex(ValueError, "policy patch"):
+            self.build()
+        self.assertFalse(self.output.exists())
 
     def test_qemu_license_bytes_must_match_source(self):
         for name in ("COPYING", "COPYING.LIB", "LICENSE"):

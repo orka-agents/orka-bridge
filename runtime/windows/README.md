@@ -24,7 +24,10 @@ selection; package installation uses the explicit target list, not a directory
 glob. Inputs must remain stable throughout the build.
 
 `sources.lock.json` pins the QEMU fork, upstream base, reference recipe, six
-ordered patches, three retained checks, wraps and original top-level gitlinks.
+ordered reference patches, three retained checks, wraps and original top-level
+gitlinks. One owned `disable-dsound.patch` makes detection respect a disabled
+option without changing enabled or auto behavior. Its bytes and the resulting
+Git tree are locked; it is included in the corresponding-source rebuild recipe.
 `packages.lock.json` records the dated MSYS2 bootstrap inventory, all external
 packages, exact final installed inventory, Python wheels, corresponding sources,
 notices, firmware ownership, historical recipes and additional Git sources.

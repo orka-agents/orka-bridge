@@ -319,6 +319,32 @@ class Packages(unittest.TestCase):
         with self.assertRaises(ValueError):
             recipe.effective_features(options)
 
+    def test_owned_dsound_patch_preserves_enabled_and_auto(self):
+        policy = Path(__file__).with_name("disable-dsound.patch")
+        self.assertTrue(policy.is_file(), "owned DirectSound policy patch is missing")
+        original = "dsound = not_found\nif not get_option('dsound').auto() or (host_os == 'windows' and have_system)\n  if cc.has_header('dsound.h')\n    dsound = declare_dependency(link_args: ['-lole32', '-ldxguid'])\n  endif\n"
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "meson.build"
+            source.write_bytes(original.encode())
+            subprocess.run(["git", "apply", "--no-index", str(policy)], cwd=directory, check=True, capture_output=True)
+            condition = source.read_text().splitlines()[1].removeprefix("if ")
+        class Feature:
+            def __init__(self, state):
+                self.state = state
+            def auto(self):
+                return self.state == "auto"
+            def disabled(self):
+                return self.state == "disabled"
+        for state in ("disabled", "enabled", "auto"):
+            for host in ("windows", "linux"):
+                for system in (False, True):
+                    with self.subTest(state=state, host=host, system=system):
+                        # Evaluate only this owned boolean expression, not upstream Meson code.
+                        value = eval(condition, {"__builtins__": {}, "get_option": lambda key, state=state: Feature(state),
+                                                 "host_os": host, "have_system": system})
+                        expected = state != "disabled" and (state != "auto" or (host == "windows" and system))
+                        self.assertEqual(value, expected)
+
     def test_compiled_features_accept_meson_boolean_forms(self):
         configs = "#define CONFIG_WHPX 1\n#define CONFIG_SLIRP\n#define CONFIG_ZSTD\n#define CONFIG_PIXMAN\n#undef CONFIG_TCG\n#define CONFIG_PLUGIN 0\n"
         recipe.check_compiled_features(configs)

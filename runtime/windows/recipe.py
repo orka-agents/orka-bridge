@@ -246,6 +246,11 @@ def load_locks(source, packages):
                 _path(entry["path"])
                 _repository(entry["repository"])
                 _hex(entry["commit"], 40)
+        if "policyPatch" in data:
+            policy = data["policyPatch"]
+            if policy["path"] != "disable-dsound.patch" or type(policy["bytes"]) is not int or policy["bytes"] <= 0:
+                raise ValueError("invalid owned policy patch")
+            _hex(policy["sha256"], 64)
         if "patchedQemuTree" in data:
             _hex(data["patchedQemuTree"], 40)
         package_inputs(data)
@@ -440,7 +445,7 @@ def collect(args, locks):
         path = args.source / "inputs" / entry["path"]
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(args.inputs / entry["path"], path)
-    for name in ("recipe.py", "verify.py", "build.sh", "README.md"):
+    for name in ("recipe.py", "verify.py", "build.sh", "README.md", "disable-dsound.patch"):
         path = args.source / "recipe" / name
         path.parent.mkdir(exist_ok=True)
         shutil.copyfile(Path(__file__).with_name(name), path)
