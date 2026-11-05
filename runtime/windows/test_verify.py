@@ -337,6 +337,10 @@ class Archives(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "escape|unsafe"):
             verify.validate_links({"sub/jump": "../target", "sub/escape": "jump/../../outside"}, names)
         verify.validate_links({"sub/jump": "../target", "sub/inside": "jump/../outside"}, names)
+        # Windows matches names case-insensitively, so JUMP follows the sub/jump link.
+        with self.assertRaisesRegex(ValueError, "escape|unsafe"):
+            verify.validate_links({"sub/jump": "../target", "sub/escape": "JUMP/../../outside"}, names)
+        verify.validate_links({"sub/inside": "../TARGET/FILE"}, names)
         with self.assertRaisesRegex(ValueError, "cyclic"):
             verify.validate_links({"sub/jump": "inside", "sub/inside": "jump"}, names)
 

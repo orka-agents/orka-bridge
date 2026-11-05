@@ -71,6 +71,10 @@ def is_system(name):
 
 
 def validate_links(links, names):
+    # Archive paths are already unique case-insensitively; resolve as Windows does.
+    folded_links = {k.casefold(): v for k, v in links.items()}
+    folded_names = {n.casefold() for n in names}
+
     def resolve(name):
         # Resolve each link before applying a later "..", as a filesystem does;
         # normalizing the joined text first would hide an escape via a link.
@@ -86,17 +90,17 @@ def validate_links(links, names):
                 continue
             resolved.append(part)
             prefix = safe_path("/".join(resolved))
-            if prefix in links:
+            if prefix.casefold() in folded_links:
                 hops += 1
                 if hops > 40:  # Linux's symlink-follow limit.
                     raise ValueError(f"cyclic source link: {prefix}")
-                target = links[prefix]
+                target = folded_links[prefix.casefold()]
                 if not target or target.startswith("/") or "\\" in target or ":" in target:
                     raise ValueError(f"unsafe source link: {prefix}")
                 resolved.pop()
                 pending = target.split("/") + pending
-        final = "/".join(resolved)
-        if not final or final not in names and not any(p.startswith(final + "/") for p in names):
+        final = "/".join(resolved).casefold()
+        if not final or final not in folded_names and not any(p.startswith(final + "/") for p in folded_names):
             raise ValueError(f"dangling source link: {final}")
     for name in links:
         try:
