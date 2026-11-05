@@ -77,8 +77,18 @@ mod native {
     impl Drop for Snapshot {
         fn drop(&mut self) {
             unsafe {
-                PssWalkMarkerFree(self.1);
-                PssFreeSnapshot(GetCurrentProcess(), self.0);
+                let marker = if self.1.is_null() {
+                    0
+                } else {
+                    PssWalkMarkerFree(self.1)
+                };
+                let snapshot = PssFreeSnapshot(GetCurrentProcess(), self.0);
+                if marker != 0 || snapshot != 0 {
+                    eprintln!(
+                        "FAIL/BLOCKED: snapshot release marker={marker}, snapshot={snapshot}"
+                    );
+                    std::process::abort();
+                }
             }
         }
     }
@@ -211,11 +221,15 @@ mod native {
     fn connect(name: &str, process: HANDLE) -> io::Result<File> {
         let deadline = Instant::now() + Duration::from_secs(30);
         let path = wide(&format!("\\\\.\\pipe\\{name}"));
+        let mut last_retry = 0;
         loop {
             unsafe {
                 check(WaitForSingleObject(process, 0) == WAIT_TIMEOUT)?;
                 if Instant::now() >= deadline {
-                    return Err(io::Error::from(io::ErrorKind::TimedOut));
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("pipe connect deadline; last retry Win32={last_retry}"),
+                    ));
                 }
                 let h = CreateFileW(
                     path.as_ptr(),
@@ -246,6 +260,7 @@ mod native {
                 if !matches!(e.raw_os_error(), Some(2 | 231)) {
                     return Err(e);
                 }
+                last_retry = e.raw_os_error().unwrap();
             }
             std::thread::sleep(Duration::from_millis(5));
         }
@@ -371,6 +386,7 @@ mod native {
                 HANDLE_FLAG_INHERIT,
             ))?;
         }
+        eprintln!("Fixed no-VM QEMU argv: {argv:?}");
         let mut child =
             OwnedQemuProcess::spawn_suspended(inputs, spec.ownership.clone(), &root, &argv)?;
         let process = child.process_handle();
@@ -378,6 +394,23 @@ mod native {
             .map_err(|e| io::Error::other(format!("restricted primary token: {e}")))?;
         let inherited = inherited_guard(process.raw(), &spec.ownership, &canary)
             .map_err(|e| io::Error::other(format!("inherited handle snapshot: {e}")))?;
+        // Drain diagnostics and pump QMP immediately, including during pipe wait.
+        // The greeting is still consumed only AFTER pipe peer/DACL validation.
+        let (mut stdin, stdout, mut stderr) = child.take_stdio()?;
+        let errors = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let capture = errors.clone();
+        std::thread::spawn(move || {
+            let mut buffer = [0; 4096];
+            while let Ok(n) = stderr.read(&mut buffer) {
+                if n == 0 {
+                    break;
+                }
+                let mut out = capture.lock().unwrap();
+                let take = n.min(65536usize.saturating_sub(out.len()));
+                out.extend_from_slice(&buffer[..take]);
+            }
+        });
+        let rx = reader(stdout);
         if mode != "hold-created" {
             child.resume()?
         }
@@ -435,13 +468,16 @@ mod native {
                 std::thread::sleep(Duration::from_secs(1));
             }
         }
-        let pipe = connect(&name, process.raw())
-            .map_err(|e| io::Error::other(format!("pipe peer/instance/DACL before QMP: {e}")))?;
-        let (mut stdin, stdout, stderr) = child.take_stdio()?;
-        std::thread::spawn(move || {
-            let _ = io::copy(&mut { stderr }, &mut io::sink());
-        });
-        let rx = reader(stdout);
+        let pipe = connect(&name, process.raw()).map_err(|e| {
+            let mut code = 0;
+            unsafe {
+                GetExitCodeProcess(process.raw(), &mut code);
+            }
+            io::Error::other(format!(
+                "pipe peer/instance/DACL before QMP: {e}; QEMU status={code:#x}; stderr={}",
+                String::from_utf8_lossy(&errors.lock().unwrap())
+            ))
+        })?;
         receive(&rx, None)?;
         for (id, command) in [(1, "qmp_capabilities"), (2, "query-status"), (3, "quit")] {
             serde_json::to_writer(&mut stdin, &json!({"execute":command,"id":id}))
