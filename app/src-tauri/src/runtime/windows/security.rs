@@ -194,6 +194,12 @@ pub(super) fn private_object(handle: HANDLE, require_protected: bool) -> io::Res
             return Err(io::Error::from_raw_os_error(error as i32));
         }
         let sd = Local(sd);
+        let denied = || io::Error::from(io::ErrorKind::PermissionDenied);
+        let owner = std::ptr::NonNull::new(owner).ok_or_else(denied)?;
+        let acl = std::ptr::NonNull::new(acl).ok_or_else(denied)?;
+        if sd.0.is_null() {
+            return Err(denied());
+        }
         let token = current_token(TOKEN_QUERY)?;
         let u = user(token.0)?;
         let sid = (*(u.as_ptr().cast::<TOKEN_USER>())).User.Sid;
@@ -209,22 +215,22 @@ pub(super) fn private_object(handle: HANDLE, require_protected: bool) -> io::Res
             &mut control,
             &mut revision,
         ))?;
-        if EqualSid(owner, sid) == 0
-            || acl.is_null()
+        if EqualSid(owner.as_ptr(), sid) == 0
             || (require_protected && control & SE_DACL_PROTECTED == 0)
-            || (*acl).AceCount != 2
+            || acl.as_ref().AceCount != 2
         {
             return Err(io::Error::from(io::ErrorKind::PermissionDenied));
         }
         let (mut has_user, mut has_system) = (false, false);
         for i in 0..2 {
             let mut ace = std::ptr::null_mut();
-            check(GetAce(acl, i, &mut ace))?;
-            let header = &*ace.cast::<ACE_HEADER>();
+            check(GetAce(acl.as_ptr(), i, &mut ace))?;
+            let ace = std::ptr::NonNull::new(ace).ok_or_else(denied)?;
+            let header = ace.cast::<ACE_HEADER>().as_ref();
             if header.AceType != 0 || header.AceSize < 16 {
                 return Err(io::Error::from(io::ErrorKind::PermissionDenied));
             }
-            let a = &*ace.cast::<ACCESS_ALLOWED_ACE>();
+            let a = ace.cast::<ACCESS_ALLOWED_ACE>().as_ref();
             if a.Mask & GENERIC_ALL == 0 && a.Mask & 0x1f01ff != 0x1f01ff {
                 return Err(io::Error::from(io::ErrorKind::PermissionDenied));
             }
@@ -262,4 +268,34 @@ pub(super) fn private_directory(path: &Path) -> io::Result<File> {
     use std::os::windows::io::AsRawHandle;
     private_object(f.as_raw_handle(), false)?;
     Ok(f)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn null_dacl_is_rejected_without_dereferencing_it() {
+        use std::os::windows::io::AsRawHandle;
+        let t = tempfile::NamedTempFile::new().unwrap();
+        let f = OpenOptions::new()
+            .access_mode(0x00060000)
+            .open(t.path())
+            .unwrap();
+        let error = unsafe {
+            SetSecurityInfo(
+                f.as_raw_handle(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        };
+        assert_eq!(error, 0);
+        assert_eq!(
+            private_object(f.as_raw_handle(), true).unwrap_err().kind(),
+            io::ErrorKind::PermissionDenied
+        );
+    }
 }
