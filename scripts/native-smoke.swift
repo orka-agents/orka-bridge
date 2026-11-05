@@ -118,8 +118,18 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 let chooser = try capture("chooser", "Clusters")
-guard let local = chooser.first(where: { $0.topCandidates(1).first?.string == "Local VM" }) else {
-    fatalError("Local VM choice not visible")
+func isLocalChoice(_ text: String) -> Bool {
+    let label = text.lowercased().filter { $0.isLetter || $0.isNumber }
+    // Vision may include the native radio ring as O or 0 in the label line.
+    return ["localvm", "olocalvm", "0localvm"].contains(label)
+}
+require(isLocalChoice("Local VM") && isLocalChoice("O Local VM") && isLocalChoice("○ Local VM"),
+        "Choice locator must accept native radio decoration")
+require(!isLocalChoice("Local VM selected.") && !isLocalChoice("Existing cluster"),
+        "Choice locator must not click a status line or another route")
+guard let local = chooser.first(where: { isLocalChoice($0.topCandidates(1).first?.string ?? "") }) else {
+    let text = chooser.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
+    fatalError("Local VM choice not visible; observed: \(text)")
 }
 let initialRect = window()!.1
 let point = CGPoint(x: initialRect.minX + local.boundingBox.midX * initialRect.width,

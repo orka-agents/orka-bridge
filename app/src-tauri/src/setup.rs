@@ -3,7 +3,7 @@ use std::{
     fs::{self, OpenOptions},
     io::ErrorKind,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::{Arc, Mutex},
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -44,6 +44,16 @@ impl SetupStore {
             access: Mutex::new(()),
         }
     }
+    pub async fn status_async(self: Arc<Self>) -> Result<SetupSnapshot, SetupError> {
+        tokio::task::spawn_blocking(move || self.status())
+            .await
+            .map_err(|_| storage_error())?
+    }
+    pub async fn select_local_async(self: Arc<Self>) -> Result<SetupSnapshot, SetupError> {
+        tokio::task::spawn_blocking(move || self.select_local())
+            .await
+            .map_err(|_| storage_error())?
+    }
     pub fn status(&self) -> Result<SetupSnapshot, SetupError> {
         let _access = self.access.lock().map_err(|_| storage_error())?;
         snapshot(self.root.as_deref().ok_or_else(storage_error)?)
@@ -76,6 +86,13 @@ impl SetupStore {
 }
 
 fn selected(root: &Path) -> Result<bool, SetupError> {
+    // Windows can report NotFound for a child of a regular file. Validate the
+    // native app-data parent separately instead of mistaking that for no choice.
+    match fs::metadata(root.parent().ok_or_else(storage_error)?) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        _ => return Err(storage_error()),
+    }
     match fs::symlink_metadata(root) {
         Ok(metadata) if metadata.file_type().is_dir() => {}
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
@@ -94,4 +111,42 @@ fn snapshot(root: &Path) -> Result<SetupSnapshot, SetupError> {
         local_vm: "notIntegrated",
         model: "locked",
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        sync::{mpsc, Arc, Barrier},
+        time::Duration,
+    };
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn filesystem_waits_do_not_stall_the_async_caller() {
+        for select in [false, true] {
+            let tmp = tempfile::tempdir().unwrap();
+            let store = Arc::new(SetupStore::new(Some(tmp.path().to_owned())));
+            let barrier = Arc::new(Barrier::new(2));
+            let (send, receive) = mpsc::channel();
+            let blocked = Arc::clone(&store);
+            let waiting = Arc::clone(&barrier);
+            let holder = std::thread::spawn(move || {
+                let _guard = blocked.access.lock().unwrap();
+                waiting.wait();
+                receive.recv_timeout(Duration::from_secs(2)).is_ok()
+            });
+            barrier.wait();
+            tokio::join!(biased;
+                async {
+                    if select { store.select_local_async().await.unwrap(); }
+                    else { store.status_async().await.unwrap(); }
+                },
+                async { tokio::task::yield_now().await; let _ = send.send(()); }
+            );
+            assert!(
+                holder.join().unwrap(),
+                "Preference I/O blocked the async caller"
+            );
+        }
+    }
 }

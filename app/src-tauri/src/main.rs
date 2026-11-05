@@ -3,6 +3,7 @@
 use bridge_engine::engine::{types::*, EngineState};
 use bridge_engine::runtime::RuntimeState;
 use bridge_engine::setup::{SetupError, SetupSnapshot, SetupStore};
+use std::sync::Arc;
 use tauri::Manager;
 
 #[tauri::command]
@@ -14,13 +15,17 @@ async fn engine_call(
 }
 
 #[tauri::command]
-fn setup_status(state: tauri::State<'_, SetupStore>) -> Result<SetupSnapshot, SetupError> {
-    state.status()
+async fn setup_status(
+    state: tauri::State<'_, Arc<SetupStore>>,
+) -> Result<SetupSnapshot, SetupError> {
+    Arc::clone(state.inner()).status_async().await
 }
 
 #[tauri::command]
-fn setup_select_local(state: tauri::State<'_, SetupStore>) -> Result<SetupSnapshot, SetupError> {
-    state.select_local()
+async fn setup_select_local(
+    state: tauri::State<'_, Arc<SetupStore>>,
+) -> Result<SetupSnapshot, SetupError> {
+    Arc::clone(state.inner()).select_local_async().await
 }
 
 fn main() {
@@ -28,7 +33,7 @@ fn main() {
         .manage(EngineState::configured())
         .manage(RuntimeState::default())
         .setup(|app| {
-            app.manage(SetupStore::new(app.path().app_data_dir().ok()));
+            app.manage(Arc::new(SetupStore::new(app.path().app_data_dir().ok())));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
