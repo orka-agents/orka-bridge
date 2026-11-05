@@ -26,12 +26,12 @@ Click Run to execute the test on your Orka, local or connected. You'll see wheth
 prompt, add your own tests, and run them again.
 
 When you're happy with the result, choose your team's cluster and click Send. Bridge checks that the cluster supports
-your agent, runs the same tests there, and deploys it.
+your agent, runs the same tests there, and keeps the agent there if they pass.
 
 The local environment makes development easier, but the agent definition, tools, and tests are the same ones used on
 the destination cluster.
 
-The [happy path](docs/happy-path.md) walks through these steps, with open design questions for each.
+The [roadmap](docs/happy-path.md) walks through these steps, where each one stands, and open design questions for each.
 
 ### Setup
 
