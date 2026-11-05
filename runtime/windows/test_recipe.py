@@ -204,6 +204,16 @@ class Sources(unittest.TestCase):
 
 
 class Workflow(unittest.TestCase):
+    def test_rebuild_reads_captured_workflow_beside_recipe(self):
+        here = Path(recipe.__file__).resolve().parent
+        self.assertEqual(recipe.captured_workflow(here), here.parents[1] / ".github/workflows/windows-runtime.yml")
+        with tempfile.TemporaryDirectory() as tmp:
+            # The source ZIP keeps the workflow in recipe/, with no .github tree.
+            recipe_dir = Path(tmp) / "source/recipe"
+            recipe_dir.mkdir(parents=True)
+            (recipe_dir / "windows-runtime.yml").write_text("captured")
+            self.assertEqual(recipe.captured_workflow(recipe_dir), recipe_dir / "windows-runtime.yml")
+
     def test_producer_build_authority(self):
         root = Path(__file__).resolve().parents[2]
         text = (root / ".github/workflows/windows-runtime.yml").read_text()

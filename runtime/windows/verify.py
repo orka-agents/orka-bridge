@@ -2,7 +2,6 @@
 import argparse
 import hashlib
 import json
-import posixpath
 import re
 import stat
 import struct
@@ -72,24 +71,36 @@ def is_system(name):
 
 
 def validate_links(links, names):
-    def resolve(name, visited):
-        parts = name.split("/")
-        for i in range(1, len(parts) + 1):
-            prefix = "/".join(parts[:i])
+    def resolve(name):
+        # Resolve each link before applying a later "..", as a filesystem does;
+        # normalizing the joined text first would hide an escape via a link.
+        resolved, pending, hops = [], name.split("/"), 0
+        while pending:
+            part = pending.pop(0)
+            if part == "..":
+                if not resolved:
+                    raise ValueError("source link escapes the archive")
+                resolved.pop()
+                continue
+            if part in ("", "."):
+                continue
+            resolved.append(part)
+            prefix = safe_path("/".join(resolved))
             if prefix in links:
-                if prefix in visited:
+                hops += 1
+                if hops > 40:  # Linux's symlink-follow limit.
                     raise ValueError(f"cyclic source link: {prefix}")
                 target = links[prefix]
                 if not target or target.startswith("/") or "\\" in target or ":" in target:
                     raise ValueError(f"unsafe source link: {prefix}")
-                joined = posixpath.normpath(posixpath.join(posixpath.dirname(prefix), target, *parts[i:]))
-                safe_path(joined)
-                return resolve(joined, visited | {prefix})
-        if name not in names and not any(p.startswith(name + "/") for p in names):
-            raise ValueError(f"dangling source link: {name}")
+                resolved.pop()
+                pending = target.split("/") + pending
+        final = "/".join(resolved)
+        if not final or final not in names and not any(p.startswith(final + "/") for p in names):
+            raise ValueError(f"dangling source link: {final}")
     for name in links:
         try:
-            resolve(name, set())
+            resolve(name)
         except ValueError as error:
             raise ValueError(f"source link {name}: {error}") from error
 

@@ -171,6 +171,12 @@ def inventory(rows):
     return result
 
 
+def captured_workflow(recipe_dir):
+    """A source-ZIP rebuild keeps the workflow beside the recipe; the repository keeps it under .github."""
+    beside = recipe_dir / "windows-runtime.yml"
+    return beside if beside.is_file() else recipe_dir.parents[1] / ".github/workflows/windows-runtime.yml"
+
+
 def package_inputs(packages):
     entries = [packages["bootstrap"], packages["referenceNotice"], *packages["packages"], *packages["pythonArchives"],
                *packages.get("firmwareRecipes", [])]
@@ -449,7 +455,7 @@ def collect(args, locks):
         path = args.source / "recipe" / name
         path.parent.mkdir(exist_ok=True)
         shutil.copyfile(Path(__file__).with_name(name), path)
-    shutil.copyfile(Path(__file__).resolve().parents[2] / ".github/workflows/windows-runtime.yml", args.source / "recipe/windows-runtime.yml")
+    shutil.copyfile(captured_workflow(Path(__file__).resolve().parent), args.source / "recipe/windows-runtime.yml")
     for name, lock in zip(("sources", "packages"), locks):
         shutil.copyfile(lock, args.source / f"recipe/{name}.lock.json")
     (runtime / "LICENSES/reference").mkdir(parents=True)

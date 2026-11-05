@@ -220,10 +220,12 @@ class Archives(unittest.TestCase):
             self.build()
 
     def test_missing_sources_firmware_and_import_evidence(self):
+        self.build()  # A valid baseline, so each case reaches its evidence check.
         for key in ("imports", "firmware", "installed", "features", "tools"):
             evidence = self.evidence.copy()
             del evidence[key]
-            with self.subTest(key=key), self.assertRaises(ValueError):
+            self.output = self.root / (self.output.name + "x")
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "missing build evidence"):
                 recipe.package(self.runtime, self.source, self.output, (self.source_lock, self.package_lock), evidence)
         (self.source / "inputs/sources/lib.src.tar.zst").unlink()
         with self.assertRaisesRegex(ValueError, "source|missing"):
@@ -291,13 +293,16 @@ class Archives(unittest.TestCase):
             self.build()
 
     def test_unknown_dll_package_and_inventory(self):
-        for change in (lambda e: e["imports"][self.exes[0]][1].update(owner="unknown"),
-                       lambda e: e["imports"][self.exes[0]][1].update(path="bin/missing.dll"),
-                       lambda e: e["installed"].append({"name": "unknown", "version": "1"}),
-                       lambda e: e["features"].update(tcg=True)):
+        self.build()  # A valid baseline, so each case reaches its evidence check.
+        for change, message in (
+                (lambda e: e["imports"][self.exes[0]][1].update(owner="unknown"), "DLL/package owner"),
+                (lambda e: e["imports"][self.exes[0]][1].update(path="bin/missing.dll"), "DLL/package owner"),
+                (lambda e: e["installed"].append({"name": "unknown", "version": "1"}), "installed package"),
+                (lambda e: e["features"].update(tcg=True), "headless features")):
             evidence = copy.deepcopy(self.evidence)
             change(evidence)
-            with self.subTest(change=change), self.assertRaises(ValueError):
+            self.output = self.root / (self.output.name + "x")
+            with self.subTest(message=message), self.assertRaisesRegex(ValueError, message):
                 recipe.package(self.runtime, self.source, self.output, (self.source_lock, self.package_lock), evidence)
 
     def test_windows_path_hazards(self):
@@ -325,6 +330,15 @@ class Archives(unittest.TestCase):
             self.output = self.root / (self.output.name + "x")
             with self.subTest(target=target), self.assertRaisesRegex(ValueError, "link"):
                 self.build()
+
+    def test_source_links_resolve_intermediate_links_before_parent_steps(self):
+        names = {"target/file", "outside", "sub/jump", "sub/escape", "sub/inside"}
+        # The filesystem resolves sub/jump before "..", so this reaches ../outside.
+        with self.assertRaisesRegex(ValueError, "escape|unsafe"):
+            verify.validate_links({"sub/jump": "../target", "sub/escape": "jump/../../outside"}, names)
+        verify.validate_links({"sub/jump": "../target", "sub/inside": "jump/../outside"}, names)
+        with self.assertRaisesRegex(ValueError, "cyclic"):
+            verify.validate_links({"sub/jump": "inside", "sub/inside": "jump"}, names)
 
     def test_limits_and_no_success_on_failure(self):
         for key, value in (("MAX_ENTRIES", 1), ("MAX_RUNTIME", 20), ("MAX_SOURCE", 20)):
