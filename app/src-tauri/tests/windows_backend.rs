@@ -147,6 +147,8 @@ fn fixture() -> (TempDir, ReviewedWindowsPin, WindowsInputPaths) {
     for name in ["qemu-system-x86_64.exe", "qemu-img.exe", "glib.dll"] {
         fs::write(runtime.join("bin").join(name), b"abc").unwrap();
     }
+    fs::create_dir_all(runtime.join("share/qemu")).unwrap();
+    fs::write(runtime.join("share/qemu/test-firmware.bin"), b"abc").unwrap();
     for name in ["os.kernel", "os.initrd", "factory.qcow2"] {
         fs::write(t.path().join(name), b"abc").unwrap();
     }
@@ -168,7 +170,7 @@ fn fixture() -> (TempDir, ReviewedWindowsPin, WindowsInputPaths) {
         provenance.insert(key.into(), json!(SHA));
     }
     let pin = serde_json::from_value(json!({
-        "runtimeFiles": [asset("bin/qemu-system-x86_64.exe"),asset("bin/qemu-img.exe"),asset("bin/glib.dll")],
+        "runtimeFiles": [asset("bin/qemu-system-x86_64.exe"),asset("bin/qemu-img.exe"),asset("bin/glib.dll"),asset("share/qemu/test-firmware.bin")],
         "image": asset("factory.qcow2"), "endpointSha256":SHA,
         "directBoot": { "kernel": {"name":"os.kernel","bytes":3,"sha256":SHA,"format":"linux-bzimage"},
             "initrd":{"name":"os.initrd","bytes":3,"sha256":SHA,"format":"initramfs","compression":"zstd"},
@@ -185,6 +187,19 @@ fn fixture() -> (TempDir, ReviewedWindowsPin, WindowsInputPaths) {
         factory: t.path().join("factory.qcow2"),
     };
     (t, pin, paths)
+}
+#[test]
+fn initrd_compression_matches_the_publisher_contract() {
+    let (_t, mut pin, paths) = fixture();
+    for compression in ["gzip", "xz", "zstd", "cpio-prefix"] {
+        pin.direct_boot.initrd.compression = Some(compression.into());
+        assert!(
+            verify_windows_inputs(&pin, paths.clone()).is_ok(),
+            "{compression}"
+        );
+    }
+    pin.direct_boot.initrd.compression = Some("lz4".into());
+    assert!(verify_windows_inputs(&pin, paths).is_err());
 }
 #[test]
 fn reject_mixed_boot_set() {
@@ -240,6 +255,8 @@ fn runtime_exe_or_dll_changed_before_launch_refuses() {
 #[test]
 fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
     let (t, pin, paths) = fixture();
+    let expected_data = paths.runtime.join("share/qemu");
+    assert!(expected_data.is_dir());
     let inputs = verify_windows_inputs(&pin, paths).unwrap();
     let root = t.path().join("install,é space");
     fs::create_dir(&root).unwrap();
@@ -266,6 +283,7 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
         value("-serial"),
         format!("file:{}", spec.root.join("boot.log").display())
     );
+    assert_eq!(value("-L"), expected_data.to_str().unwrap());
     assert_eq!(value("-accel"), "whpx");
     assert_eq!(value("-qmp"), "stdio");
     assert_eq!(value("-machine"), "pc-q35-11.0,usb=off");

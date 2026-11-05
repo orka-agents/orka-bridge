@@ -311,9 +311,19 @@ mod native {
                         ))?;
                         Ok(inside != 0)
                     },
-                    |p| p.abort(),
+                    |p| p.abort_suspended(),
                 )
             }
+        }
+        fn abort_suspended(&self) -> io::Result<()> {
+            // Before the membership postcondition, only the retained process is authority.
+            // It has never resumed, so there cannot be descendants to stop here.
+            if !self.exited() {
+                unsafe {
+                    check(TerminateProcess(self.resources().process.0, 1))?;
+                }
+            }
+            self.wait_exit(Duration::from_secs(45))
         }
         pub fn resume(&self) -> io::Result<()> {
             unsafe {

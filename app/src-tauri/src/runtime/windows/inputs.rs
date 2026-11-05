@@ -59,6 +59,8 @@ pub struct ReviewedWindowsPin {
     pub endpoint_sha256: String,
     pub direct_boot: DirectBoot,
 }
+/// Trusted host-owned stable trees; file sharing does not pin ancestor directories.
+/// Hostile same-user junction/rename races require a separate filesystem sandbox.
 #[derive(Clone)]
 pub struct WindowsInputPaths {
     pub runtime: PathBuf,
@@ -216,7 +218,7 @@ pub fn verify_windows_inputs(
         || b.initrd.format != "initramfs"
         || !matches!(
             b.initrd.compression.as_deref(),
-            Some("zstd" | "gzip" | "xz" | "lz4")
+            Some("zstd" | "gzip" | "xz" | "cpio-prefix")
         )
         || b.root_selector.kind != "filesystem-uuid"
         || b.root_selector.value.is_nil()

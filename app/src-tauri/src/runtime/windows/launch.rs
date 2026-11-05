@@ -78,7 +78,7 @@ pub fn launch_argv(
     };
     pair(
         "-L",
-        inputs.paths.runtime.join("bin/share").into_os_string(),
+        inputs.paths.runtime.join("share/qemu").into_os_string(),
     );
     for (a, b) in [
         ("-machine", "pc-q35-11.0,usb=off"),
