@@ -240,6 +240,30 @@ class BootAssetTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conditional"):
             self.extract()
 
+    def test_quoted_semicolon_cannot_fabricate_an_initrd_statement(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = self.files["/boot/grub/grub.cfg"].replace(b"\ninitrd ", b" ';' initrd ")
+        with self.assertRaisesRegex(ValueError, "initrd|unsupported"):
+            self.extract()
+
+    def test_escaped_semicolon_cannot_fabricate_an_initrd_statement(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] = self.files["/boot/grub/grub.cfg"].replace(b"\ninitrd ", rb" \; initrd ")
+        with self.assertRaisesRegex(ValueError, "initrd|unsupported"):
+            self.extract()
+
+    def test_condition_cannot_execute_another_kernel_command(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] += b"if linux /boot/vmlinuz-another-amd64; then true; fi\n"
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            self.extract()
+
+    def test_inline_hash_cannot_hide_a_second_kernel_command(self):
+        del self.aliases["/vmlinuz"]
+        self.files["/boot/grub/grub.cfg"] += b"true x#; linux /boot/vmlinuz-another-amd64\n"
+        with self.assertRaisesRegex(ValueError, "unsupported|ambiguous"):
+            self.extract()
+
     def test_regular_root_kernel_file_cannot_conflict_with_grub(self):
         del self.aliases["/vmlinuz"]
         self.files["/vmlinuz"] = b"regular root kernel"

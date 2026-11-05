@@ -223,8 +223,12 @@ all five fixed initrd tools against canonical guest bytes and checks their
 transitive ELF dependencies against the guest too. The endpoint, early hook and
 five tools and ELF interpreters must have executable bits; shared-library comparisons do not require
 them. ELF inspection uses LC_ALL=C without changing tool-version pin output.
-The supported GRUB policy is the staged default 0 with the first menuentry
-containing the selected kernel; other or indeterminate defaults are refused.
+The supported GRUB policy is the staged default 0 with one unconditional kernel
+and matching initrd in the first menuentry. The optional `/vmlinuz` link must
+agree when present. Quoted separators retain their context; unsupported commands,
+executable conditions, backslash escapes and inline comments are refused rather
+than evaluated. Stock module-loading conditions remain supported. Other or
+indeterminate defaults are refused.
 Required drivers must be
 built in or present with the selected guest's module bytes. Unsupported kernel
 formats, foreign bytes, mismatched GRUB kernel/initrd selections, saved GRUB

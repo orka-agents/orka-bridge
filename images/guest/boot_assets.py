@@ -99,8 +99,11 @@ def selected_kernel(guest, architecture, expected_grub):
             and guest.call("checksum", "sha256", "/etc/default/grub") == expected_grub, "unsupported GRUB default policy")
     commands = []
     for raw in guest.call("cat", "/boot/grub/grub.cfg").splitlines():
-        require(not raw.rstrip().endswith("\\"), "unsupported GRUB line continuation")
-        lexer = shlex.shlex(raw, posix=True, punctuation_chars=";")
+        if raw.lstrip().startswith("#"):
+            continue
+        require("#" not in raw and "\\" not in raw, "unsupported GRUB inline comment, escape or line continuation")
+        lexer = shlex.shlex(raw, posix=False, punctuation_chars=";")
+        lexer.commenters = ""
         lexer.whitespace_split = True
         statement = []
         for token in lexer:
@@ -154,16 +157,16 @@ def selected_kernel(guest, architecture, expected_grub):
         key = following[0]
         if key in ("menuentry", "submenu", "}"):
             break
-        if key.startswith("#"):
-            continue
-        require(not any(marker in " ".join(following) for marker in ("&&", "||")), "unsupported compound GRUB command")
+        require(not any(marker in " ".join(following) for marker in ("&&", "||", "$(", "`")), "unsupported compound GRUB command")
         if key in ("then", "else"):
             require(conditionals > 0, "invalid GRUB conditional")
             following = following[1:]
             if not following:
                 continue
             key = following[0]
-        require(key not in ("while", "until", "for", "do", "done", "function", "{", "source", "configfile", ".", "linux16", "initrd16"), "unsupported GRUB control flow")
+        require(key in ("if", "elif", "fi", "load_video", "insmod", "set", "search", "echo", "recordfail", "savedefault", "true", "false", "test", "linux", "linuxefi", "initrd", "initrdefi"), "unsupported GRUB control flow or command")
+        if key in ("if", "elif"):
+            require(len(following) > 1 and following[1] in ("[", "test"), "unsupported executable GRUB condition")
         if key == "if":
             conditionals += 1
         elif key == "fi":
