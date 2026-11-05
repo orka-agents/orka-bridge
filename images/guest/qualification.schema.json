@@ -154,7 +154,9 @@
             "result": {
               "type": "object",
               "required": ["phase"],
-              "properties": {"phase":{"enum":["cluster-ready","cache-verified","infrastructure-ready"]}}
+              "properties": {"phase":{"enum":["cluster-ready","cache-verified","infrastructure-ready"]},"orkaServing":{"const":true}},
+              "if": {"properties":{"phase":{"const":"infrastructure-ready"}}},
+              "then": {"required":["orkaServing"]}
             },
             "network": {
               "type": "object",
@@ -249,7 +251,7 @@
               "second": {
                 "properties": {
                   "result": {
-                    "required": ["partialInstallRefused","identityPreserved"],
+                    "required": ["partialInstallRefused","identityPreserved","orkaServing"],
                     "properties": {
                       "phase": {"const":"cache-verified"},
                       "partialInstallRefused": {"const":true},

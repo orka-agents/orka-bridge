@@ -308,6 +308,15 @@ live on the state disk. The minimal child environment contains no inherited
 provider credentials. The lifecycle imports application OCI archives into the
 owned node's k8s.io store and requires exact CRI references/config IDs before kmx
 can install. API, CoreDNS, kmx rollout and PVC checks precede infrastructure-ready.
+Rollout checks read Deployment status that survives a restart, so the lifecycle then
+polls for 600 s until CoreDNS and the three Orka Deployments have pods the kubelet
+reported Ready after the node container last started, and Orka's API answers
+`/readyz` with status `ok` through its Service. Otherwise it refuses with the last
+reason and the journal stays at orka-ready. On a slow first boot the unit's 900 s start
+timeout can stop the run before that refusal; the journal still stays at orka-ready.
+The unit does not retry, and the next run, such as the next boot, repeats every check.
+Freshness compares kubelet and Docker timestamps, so it relies on the guest clock the
+early endpoint sets from the host.
 This marker is not authority: every resume rechecks ownership, caches and kmx.
 
 The fsynced journal records identity-prepared, cluster-ready, cache-verified,
@@ -344,6 +353,8 @@ local Git repository; the seed accepts no arbitrary command. Fixture state and
 resources are exclusive to the disposable test cluster, with an explicit fixture
 ServiceAccount. No real model credentials or external Git service are required.
 
+Each boot that reaches infrastructure-ready checks once, without retrying, that Orka's
+API answers `/readyz` through its Service, and records `orkaServing`.
 Infrastructure checks real rendered worker/session-loader image arguments and no
 initial Provider. It also boots a distinct new state B, attaches stopped A read-only,
 and tries A's client identity against B with B's server/CA. B must first be reachable
