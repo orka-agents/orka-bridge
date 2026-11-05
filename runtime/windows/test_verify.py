@@ -232,6 +232,39 @@ class Archives(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "reference|license"):
             self.build()
 
+    def test_qemu_license_bytes_must_match_source(self):
+        for name in ("COPYING", "COPYING.LIB", "LICENSE"):
+            path = self.runtime / "LICENSES/qemu" / name
+            original = path.read_bytes()
+            for value in (b"", b"substituted notice"):
+                path.write_bytes(value)
+                with self.subTest(name=name, value=value), self.assertRaisesRegex(ValueError, "QEMU.*license"):
+                    self.build()
+                self.assertFalse(self.output.exists())
+                self.assertFalse(list(self.root.glob(".bridge-runtime-*")))
+            path.write_bytes(original)
+
+    def test_raw_zip_name_is_validated_before_python_normalization(self):
+        self.put(self.runtime, "extraXtrailer", b"opaque extra")
+        self.build()
+        def change(entries):
+            result = []
+            for info, data in entries:
+                if info.filename.endswith("runtime-manifest.json"):
+                    manifest = json.loads(data)
+                    next(r for r in manifest["files"] if r["path"] == "extraXtrailer")["path"] = "extra"
+                    data = encoded(manifest)
+                result.append((info, data))
+            return result
+        self.rewrite(verify.ARCHIVES[0], change)
+        path = self.output / verify.ARCHIVES[0]
+        raw = path.read_bytes()
+        self.assertEqual(raw.count(b"extraXtrailer"), 2)
+        path.write_bytes(raw.replace(b"extraXtrailer", b"extra\0trailer"))
+        (self.output / "SHA256SUMS").write_text("".join(f"{verify.file_hash(self.output / n)}  {n}\n" for n in verify.ARCHIVES))
+        with self.assertRaisesRegex(ValueError, "unsafe archive path"):
+            verify.verify(self.output, self.source_lock, self.package_lock)
+
     def test_notice_bytes_and_firmware_owner(self):
         notice = self.runtime / "LICENSES/msys2/lib/COPYING"
         notice.write_bytes(b"not a license")
@@ -259,9 +292,12 @@ class Archives(unittest.TestCase):
                      "a/b ", "a\x00b", "a\\b", "a//b", "a/./b"):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 verify.safe_path(name)
-        self.put(self.runtime, "BIN/QEMU-IMG.EXE", pe())
+        self.build()
+        alias = zipfile.ZipInfo("BIN/QEMU-IMG.EXE")
+        alias.external_attr = 0o100644 << 16
+        self.rewrite(verify.ARCHIVES[0], lambda entries: [*entries, (alias, pe())])
         with self.assertRaisesRegex(ValueError, "collision|duplicate"):
-            self.build()
+            verify.verify(self.output, self.source_lock, self.package_lock)
 
     def test_source_links_safe_escape_dangling_cycle(self):
         link = self.source / "qemu/link"

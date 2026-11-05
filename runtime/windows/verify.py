@@ -104,7 +104,7 @@ def read_archive(path, source):
         if len(archive.infolist()) > MAX_ENTRIES:
             raise ValueError("archive entry limit exceeded")
         for info in archive.infolist():
-            name = safe_path(info.filename)
+            name = safe_path(info.orig_filename)
             if name.casefold() in folded:
                 raise ValueError(f"duplicate/collision archive path: {name}")
             folded.add(name.casefold())
@@ -314,8 +314,10 @@ def verify(output, source_lock, packages_lock):
             if source.get(f"recipe/{name}.lock.json", {}).get("sha256") != value:
                 raise ValueError(f"missing/mismatched rebuild recipe lock: {name}")
         for name in ("COPYING", "COPYING.LIB", "LICENSE"):
-            if f"LICENSES/qemu/{name}" not in runtime or f"qemu/{name}" not in source:
-                raise ValueError(f"missing QEMU source/license: {name}")
+            notice, original = runtime.get(f"LICENSES/qemu/{name}", {}), source.get(f"qemu/{name}", {})
+            if (not notice.get("bytes") or notice.get("bytes") != original.get("bytes")
+                    or notice.get("sha256") != original.get("sha256")):
+                raise ValueError(f"missing/mismatched QEMU source/license: {name}")
         return {"publicationReady": False, "qualification": "build-only; no VM boot",
                 "sourceCommit": evidence["sourceCommit"], "lockSha256": hashes,
                 "runtimeFiles": len(runtime), "sourceFiles": len(source)}
