@@ -95,12 +95,36 @@ def asset(file, **fields):
 
 
 def selected_kernel(guest, architecture, expected_grub):
-    kernel = guest.call("realpath", "/vmlinuz")
-    require(matches(kernel, r"/boot/vmlinuz-[A-Za-z0-9._+-]{1,96}"), "invalid selected kernel path")
-    release = kernel.removeprefix("/boot/vmlinuz-")
     require(re.findall(r"(?m)^GRUB_DEFAULT=(.*)$", guest.call("cat", "/etc/default/grub")) == ["0"]
             and guest.call("checksum", "sha256", "/etc/default/grub") == expected_grub, "unsupported GRUB default policy")
-    commands = [line.split() for line in guest.call("cat", "/boot/grub/grub.cfg").splitlines() if line.strip()]
+    commands = []
+    for raw in guest.call("cat", "/boot/grub/grub.cfg").splitlines():
+        if raw.lstrip().startswith("#"):
+            continue
+        require("#" not in raw and "\\" not in raw, "unsupported GRUB inline comment, escape or line continuation")
+        shlex.split(raw)  # Validate embedded quotes without discarding their context below.
+        if ";" in raw and any(quote in raw for quote in ("'", '"')):
+            require(raw.count(";") == 1 and re.fullmatch(r"\s*(?:if|elif)\s+\[[^;]*\]\s*;\s*then\s*", raw), "unsupported quoted compound GRUB command")
+        lexer = shlex.shlex(raw, posix=False, punctuation_chars=";")
+        lexer.commenters = ""
+        lexer.whitespace_split = True
+        statement = []
+        for token in lexer:
+            if set(token) == {";"}:
+                if statement:
+                    commands.append(statement)
+                    statement = []
+            else:
+                statement.append(token)
+        if statement:
+            commands.append(statement)
+    expanded = []
+    for command in commands:
+        if command[0] in ("then", "else", "do") and len(command) > 1:
+            expanded.extend((command[:1], command[1:]))
+        else:
+            expanded.append(command)
+    commands = expanded
     defaults = [shlex.split(" ".join(line))[1].removeprefix("default=") for line in commands
                 if len(line) >= 2 and line[0] == "set" and line[1].startswith("default=")]
     require("0" in defaults and set(defaults) <= {"0", "${next_entry}"}, "unsupported GRUB default selection")
@@ -110,14 +134,58 @@ def selected_kernel(guest, architecture, expected_grub):
     menus = [i for i, command in enumerate(commands) if command[0] in ("menuentry", "submenu")]
     require(menus and commands[menus[0]][0] == "menuentry" and menus[0] < index
             and not any(command[0] in ("}", "menuentry", "submenu") for command in commands[menus[0] + 1:index]), "default menuentry is not the selected Linux kernel")
+    prefix_conditionals = prefix_loops = prefix_blocks = 0
+    for preceding in commands[:menus[0]]:
+        if preceding[0] == "if":
+            prefix_conditionals += 1
+        elif preceding[0] == "fi":
+            prefix_conditionals -= 1
+        elif preceding[0] == "do":
+            prefix_loops += 1
+        elif preceding[0] == "done":
+            prefix_loops -= 1
+        prefix_blocks += preceding.count("{") - preceding.count("}")
+        require(min(prefix_conditionals, prefix_loops, prefix_blocks) >= 0, "invalid GRUB prefix conditional")
+    require(prefix_conditionals == prefix_loops == prefix_blocks == 0, "conditional GRUB default menu is unsupported")
     line = commands[index]
-    require(len(line) >= 2 and line[1] == kernel, "GRUB default kernel differs from selected kernel")
-    initrds = []
-    for following in commands[index + 1:]:
-        if following[0] in ("linux", "linuxefi", "menuentry", "}"):
+    require(len(line) >= 2 and matches(line[1], r"/boot/vmlinuz-[A-Za-z0-9._+-]{1,96}"), "invalid selected kernel path")
+    kernel = guest.call("realpath", line[1])
+    require(kernel == line[1], "GRUB default kernel path is not canonical")
+    release = kernel.removeprefix("/boot/vmlinuz-")
+    # Cloud images need not have Debian's optional root-level convenience link.
+    if guest.call("is-symlink", "/vmlinuz") == "true" or guest.call("is-file", "/vmlinuz") == "true":
+        require(guest.call("realpath", "/vmlinuz") == kernel, "GRUB default kernel differs from selected kernel")
+    kernels, initrds, conditionals = [], [], 0
+    for following in commands[menus[0] + 1:]:
+        key = following[0]
+        if key in ("menuentry", "submenu", "}"):
             break
-        if following[0] in ("initrd", "initrdefi"):
-            initrds.append(following[1:])
+        require(not any(marker in " ".join(following) for marker in ("&&", "||", "$(", "`")), "unsupported compound GRUB command")
+        if key in ("then", "else"):
+            require(conditionals > 0, "invalid GRUB conditional")
+            following = following[1:]
+            if not following:
+                continue
+            key = following[0]
+        require(key in ("if", "elif", "fi", "load_video", "insmod", "set", "search", "echo", "recordfail", "savedefault", "true", "false", "test", "linux", "linuxefi", "initrd", "initrdefi"), "unsupported GRUB control flow or command")
+        if key in ("if", "elif"):
+            require(len(following) > 1 and following[1] in ("[", "test"), "unsupported executable GRUB condition")
+        if key == "if":
+            conditionals += 1
+        elif key == "fi":
+            require(conditionals > 0, "invalid GRUB conditional")
+            conditionals -= 1
+        elif key in ("else", "elif"):
+            require(conditionals > 0, "invalid GRUB conditional")
+        elif key in ("linux", "linuxefi", "initrd", "initrdefi"):
+            require(conditionals == 0, "conditional GRUB boot command is unsupported")
+            if key in ("linux", "linuxefi"):
+                kernels.append(following)
+            else:
+                require(kernels == [line], "GRUB initrd command precedes its kernel")
+                initrds.append(following[1:])
+    require(conditionals == 0, "unterminated GRUB conditional")
+    require(kernels == [line], "ambiguous GRUB default kernel commands")
     require(initrds == [["/boot/initrd.img-" + release]], "GRUB default initrd differs from exported release")
     console = "hvc0" if architecture == "arm64" else "ttyS0,115200n8"
     require([v for v in line if v.startswith("console=")] == ["console=" + console], "wrong kernel console")
