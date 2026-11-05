@@ -95,9 +95,6 @@ def asset(file, **fields):
 
 
 def selected_kernel(guest, architecture, expected_grub):
-    kernel = guest.call("realpath", "/vmlinuz")
-    require(matches(kernel, r"/boot/vmlinuz-[A-Za-z0-9._+-]{1,96}"), "invalid selected kernel path")
-    release = kernel.removeprefix("/boot/vmlinuz-")
     require(re.findall(r"(?m)^GRUB_DEFAULT=(.*)$", guest.call("cat", "/etc/default/grub")) == ["0"]
             and guest.call("checksum", "sha256", "/etc/default/grub") == expected_grub, "unsupported GRUB default policy")
     commands = [line.split() for line in guest.call("cat", "/boot/grub/grub.cfg").splitlines() if line.strip()]
@@ -111,7 +108,13 @@ def selected_kernel(guest, architecture, expected_grub):
     require(menus and commands[menus[0]][0] == "menuentry" and menus[0] < index
             and not any(command[0] in ("}", "menuentry", "submenu") for command in commands[menus[0] + 1:index]), "default menuentry is not the selected Linux kernel")
     line = commands[index]
-    require(len(line) >= 2 and line[1] == kernel, "GRUB default kernel differs from selected kernel")
+    require(len(line) >= 2 and matches(line[1], r"/boot/vmlinuz-[A-Za-z0-9._+-]{1,96}"), "invalid selected kernel path")
+    kernel = guest.call("realpath", line[1])
+    require(kernel == line[1], "GRUB default kernel path is not canonical")
+    release = kernel.removeprefix("/boot/vmlinuz-")
+    # Cloud images need not have Debian's optional root-level convenience link.
+    if guest.call("is-symlink", "/vmlinuz") == "true" or guest.call("is-file", "/vmlinuz") == "true":
+        require(guest.call("realpath", "/vmlinuz") == kernel, "GRUB default kernel differs from selected kernel")
     initrds = []
     for following in commands[index + 1:]:
         if following[0] in ("linux", "linuxefi", "menuentry", "}"):

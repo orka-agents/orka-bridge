@@ -102,6 +102,8 @@ class BootAssetTests(unittest.TestCase):
         if command == "checksum":
             self.assertEqual("sha256", args[0])
             return sha(self.files[str(args[1])])
+        if command == "is-symlink":
+            return str(str(args[0]) in self.aliases).lower()
         if command == "is-file":
             return str(str(args[0]) in self.files).lower()
         if command == "download":
@@ -148,6 +150,25 @@ class BootAssetTests(unittest.TestCase):
         self.assertEqual({"guestfish", "unmkinitramfs", "readelf", "dpkg-query"}, {t["name"] for t in result["extractionTools"]})
         self.assertFalse(result["publicationReady"])
         self.assertTrue((self.root / "assets/boot-assets.json").is_file())
+
+    def test_default_grub_pair_is_selected_without_optional_root_kernel_link(self):
+        del self.aliases["/vmlinuz"]
+        result = self.extract()
+        self.assertEqual(self.release, result["kernelRelease"])
+        self.assertEqual(sha(self.files["/boot/vmlinuz-" + self.release]), result["kernel"]["sha256"])
+        self.assertNotIn(("realpath", "/vmlinuz"), self.guest_calls)
+
+    def test_grub_kernel_path_cannot_alias_a_different_release(self):
+        self.aliases["/boot/vmlinuz-" + self.release] = "/boot/vmlinuz-another-amd64"
+        with self.assertRaisesRegex(ValueError, "canonical"):
+            self.extract()
+        self.assertFalse((self.root / "assets/boot-assets.json").exists())
+
+    def test_root_kernel_link_must_agree_with_default_grub_entry_when_present(self):
+        self.aliases["/vmlinuz"] = "/boot/vmlinuz-another-amd64"
+        with self.assertRaisesRegex(ValueError, "kernel"):
+            self.extract()
+        self.assertFalse((self.root / "assets/boot-assets.json").exists())
 
     def test_corrupt_payload_or_mixed_build_refuses_before_output(self):
         self.build["sha256"] = "0" * 64
