@@ -94,8 +94,18 @@ class Sources(unittest.TestCase):
         for name in ("../x", "/x", "C:/x", "a\\b", "a//b", "a/./b", "a/NUL", "a/COM1.txt", "a/b.", "a/b ", "a/b:c"):
             data = fixture()
             data["wraps"][0]["path"] = name
-            with self.subTest(name=name), self.assertRaises(ValueError):
+            data["wraps"][0]["url"] = f"https://raw.githubusercontent.com/cmspam/winq-emu-qemu/{QEMU}/{name}"
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "unsafe source path"):
                 self.load(data)
+
+    def test_duplicate_check_basename(self):
+        data = fixture()
+        duplicate = copy.deepcopy(data["checks"][0])
+        duplicate["path"] = "checks/extra/test-socket-close.py"
+        duplicate["url"] = duplicate["url"].replace("/test-socket-close.py", "/extra/test-socket-close.py")
+        data["checks"].append(duplicate)
+        with self.assertRaisesRegex(ValueError, "required source checks"):
+            self.load(data)
 
     def test_duplicate_keys_and_paths(self):
         self.lock.write_text('{"schemaVersion":1,"schemaVersion":2}', encoding="utf-8")

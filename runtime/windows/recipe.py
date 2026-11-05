@@ -101,7 +101,7 @@ def load_sources(path):
                     raise ValueError(f"unexpected wrap path: {name}")
         if tuple(Path(x["path"]).name[:4] for x in data["patches"]) != PATCHES:
             raise ValueError("patch selection or application order differs from headless profile")
-        if {Path(x["path"]).name for x in data["checks"]} != CHECKS:
+        if sorted(Path(x["path"]).name for x in data["checks"]) != sorted(CHECKS):
             raise ValueError("required source checks are missing or substituted")
         return data
     except (OSError, UnicodeError, TypeError, ValueError) as error:
