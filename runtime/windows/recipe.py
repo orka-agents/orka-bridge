@@ -373,6 +373,19 @@ def effective_features(options):
     return result
 
 
+def check_compiled_features(configs):
+    required = ("WHPX", "SLIRP", "ZSTD", "PIXMAN")
+    forbidden = ("TCG", "PLUGIN", *(f"AUDIO_{k}" for k in ("ALSA", "COREAUDIO", "DSOUND", "JACK", "OSS", "PA", "PIPEWIRE", "SDL", "SNDIO")))
+    for key in (*required, *forbidden):
+        values = {v.strip() for v in re.findall(rf"^#define CONFIG_{key}(?:[ \t]+(.*))?$", configs, re.MULTILINE)}
+        states = {v != "0" for v in values}
+        if values - {"", "0", "1"} or len(states) > 1:
+            raise ValueError(f"unknown/conflicting compiled feature: {key}")
+        if (True in states) != (key in required):
+            reason = "compiled feature missing" if key in required else "forbidden compiled feature"
+            raise ValueError(f"{reason}: {key}")
+
+
 def collect(args, locks):
     """Stage selected executables and their full locked non-system DLL closure."""
     import verify
@@ -387,12 +400,7 @@ def collect(args, locks):
     for key in ("alsa", "coreaudio", "dsound", "jack", "oss", "pa", "pipewire", "sndio", "spice", "dbus_display"):
         if options[key] != "disabled":
             raise ValueError(f"host backend remains enabled: {key}")
-    configs = "\n".join(p.read_text() for p in args.build.glob("*config*.h"))
-    for key in ("WHPX", "SLIRP", "ZSTD", "PIXMAN"):
-        if not re.search(rf"^#define CONFIG_{key} 1$", configs, re.MULTILINE):
-            raise ValueError(f"compiled feature missing: {key}")
-    if re.search(r"^#define CONFIG_(TCG|PLUGIN|AUDIO_(ALSA|COREAUDIO|DSOUND|JACK|OSS|PA|PIPEWIRE|SDL|SNDIO)) 1$", configs, re.MULTILINE):
-        raise ValueError("forbidden compiled feature")
+    check_compiled_features("\n".join(p.read_text() for p in args.build.glob("*config*.h")))
     runtime = args.runtime
     (runtime / "bin").mkdir(parents=True)
     for name in sorted(verify.EXES):

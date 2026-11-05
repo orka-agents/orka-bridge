@@ -319,6 +319,22 @@ class Packages(unittest.TestCase):
         with self.assertRaises(ValueError):
             recipe.effective_features(options)
 
+    def test_compiled_features_accept_meson_boolean_forms(self):
+        configs = "#define CONFIG_WHPX 1\n#define CONFIG_SLIRP\n#define CONFIG_ZSTD\n#define CONFIG_PIXMAN\n#undef CONFIG_TCG\n#define CONFIG_PLUGIN 0\n"
+        recipe.check_compiled_features(configs)
+        for name in ("TCG", "PLUGIN", "AUDIO_ALSA", "AUDIO_SDL"):
+            for value in ("", " 1"):
+                with self.subTest(name=name, value=value), self.assertRaisesRegex(ValueError, "forbidden compiled feature"):
+                    recipe.check_compiled_features(configs.replace("#define CONFIG_PLUGIN 0\n", "") + f"#define CONFIG_{name}{value}\n")
+        for value in ("#undef CONFIG_SLIRP", "#define CONFIG_SLIRP 0", ""):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "compiled feature missing: SLIRP"):
+                recipe.check_compiled_features(configs.replace("#define CONFIG_SLIRP", value))
+        for value in ("2", "auto", "(1)"):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "unknown/conflicting compiled feature"):
+                recipe.check_compiled_features(configs + f"#define CONFIG_PLUGIN {value}\n")
+        with self.assertRaisesRegex(ValueError, "unknown/conflicting compiled feature"):
+            recipe.check_compiled_features(configs + "#define CONFIG_SLIRP 0\n")
+
     def test_import_resolution(self):
         text = "sample: file format pei-x86-64\n\tDLL Name: KERNEL32.dll\n\tDLL Name: demo.dll\n"
         self.assertEqual(recipe.import_names(text), ["KERNEL32.dll", "demo.dll"])
