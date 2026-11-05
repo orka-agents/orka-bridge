@@ -220,7 +220,12 @@ disk, build receipt, lock, extractor, inspection helper and extraction tools. Th
 receipt records the selected release, filesystem UUID root selector, supported
 command line, kernel config, module tree, early endpoint and hook. It verifies
 all five fixed initrd tools against canonical guest bytes and checks their
-transitive ELF dependencies against the guest too. Required drivers must be
+transitive ELF dependencies against the guest too. The endpoint, early hook and
+five tools must have executable bits; shared-library comparisons do not require
+them. ELF inspection uses LC_ALL=C without changing tool-version pin output.
+The supported GRUB policy is the staged default 0 with the first menuentry
+containing the selected kernel; other or indeterminate defaults are refused.
+Required drivers must be
 built in or present with the selected guest's module bytes. Unsupported kernel
 formats, foreign bytes, mismatched GRUB kernel/initrd selections, saved GRUB
 overrides and missing dependencies fail closed;

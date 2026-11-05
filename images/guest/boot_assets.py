@@ -1,7 +1,9 @@
 """Export and inspect boot assets from a final unbooted payload; never boot it."""
 import argparse
 import hashlib
+import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -31,7 +33,12 @@ from guest.lock import (
     validate_lock,
 )
 
-encoded, run = build.encoded, build.run
+encoded = build.encoded
+
+
+def run(argv, *, env=None):
+    environment = None if env is None else {**os.environ, **env}
+    return subprocess.run([str(x) for x in argv], env=environment, check=True, capture_output=True, text=True).stdout.strip()
 
 
 class Guest:
@@ -86,14 +93,22 @@ def asset(file, **fields):
     return {"name": file.name, "bytes": file.stat().st_size, "sha256": file_hash(file), **fields}
 
 
-def selected_kernel(guest, architecture):
+def selected_kernel(guest, architecture, expected_grub):
     kernel = guest.call("realpath", "/vmlinuz")
     require(matches(kernel, r"/boot/vmlinuz-[A-Za-z0-9._+-]{1,96}"), "invalid selected kernel path")
     release = kernel.removeprefix("/boot/vmlinuz-")
+    require(re.findall(r"(?m)^GRUB_DEFAULT=(.*)$", guest.call("cat", "/etc/default/grub")) == ["0"]
+            and guest.call("checksum", "sha256", "/etc/default/grub") == expected_grub, "unsupported GRUB default policy")
     commands = [line.split() for line in guest.call("cat", "/boot/grub/grub.cfg").splitlines() if line.strip()]
+    defaults = [shlex.split(" ".join(line))[1].removeprefix("default=") for line in commands
+                if len(line) >= 2 and line[0] == "set" and line[1].startswith("default=")]
+    require("0" in defaults and set(defaults) <= {"0", "${next_entry}"}, "unsupported GRUB default selection")
     index = next((i for i, line in enumerate(commands) if line[0] in ("linux", "linuxefi")), None)
     if index is None:
         raise ValueError("GRUB default kernel missing")
+    menus = [i for i, command in enumerate(commands) if command[0] in ("menuentry", "submenu")]
+    require(menus and commands[menus[0]][0] == "menuentry" and menus[0] < index
+            and not any(command[0] in ("}", "menuentry", "submenu") for command in commands[menus[0] + 1:index]), "default menuentry is not the selected Linux kernel")
     line = commands[index]
     require(len(line) >= 2 and line[1] == kernel, "GRUB default kernel differs from selected kernel")
     initrds = []
@@ -119,7 +134,7 @@ def inspect_pair(guest, lock, receipt, tools, out, work):
         require(str(uuid.UUID(root_uuid)) == root_uuid, "noncanonical root UUID")
     except (ValueError, AttributeError) as error:
         raise ValueError("invalid root UUID") from error
-    kernel_path, release, console = selected_kernel(guest, architecture)
+    kernel_path, release, console = selected_kernel(guest, architecture, receipt["recipeFiles"]["/etc/default/grub"])
     kernel, initrd = out / "os.kernel", out / "os.initrd"
     guest.call("download", kernel_path, kernel)
     guest.call("download", "/boot/initrd.img-" + release, initrd)
@@ -156,9 +171,9 @@ def inspect_pair(guest, lock, receipt, tools, out, work):
             require(any(re.fullmatch(re.escape(name) + r"\.ko(?:\.(?:xz|gz|zst))?", p.replace("-", "_")) for p in installed_modules), "missing initrd driver: " + name)
         drivers.append({"name": name, "builtIn": values[0] == "y"})
     scratch = work / "guest-file"
-    endpoint = compare_guest_file(guest, root, "/usr/lib/bridge/bridge-guest", scratch, regular_leaf=True)
+    endpoint = compare_guest_file(guest, root, "/usr/lib/bridge/bridge-guest", scratch, regular_leaf=True, executable=True)
     require(endpoint["guestSha256"] == receipt["runtime"]["binarySha256"], "endpoint differs from build")
-    hook = rooted_file(root, "/scripts/local-bottom/bridge-state", regular_leaf=True)
+    hook = rooted_file(root, "/scripts/local-bottom/bridge-state", regular_leaf=True, executable=True)
     early_path = "/etc/initramfs-tools/scripts/local-bottom/bridge-state"
     guest.call("download", early_path, scratch)
     require(file_hash(hook) == file_hash(scratch) == receipt["recipeFiles"][early_path], "early hook differs from guest/build")
@@ -169,7 +184,7 @@ def inspect_pair(guest, lock, receipt, tools, out, work):
     build_hook_sha = file_hash(scratch)
     checked = []
     for path in ENDPOINT_TOOLS:
-        record = compare_guest_file(guest, root, path, scratch, regular_leaf=True)
+        record = compare_guest_file(guest, root, path, scratch, regular_leaf=True, executable=True)
         executable = rooted_file(root, path, regular_leaf=True)
         record["dependencies"] = [compare_guest_file(guest, root, p, scratch) for p in dependencies(root, executable, architecture, tools["readelf"], run)]
         checked.append(record)

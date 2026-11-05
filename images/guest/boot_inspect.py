@@ -13,7 +13,7 @@ DRIVERS = {"virtio_pci": "VIRTIO_PCI", "virtio_blk": "VIRTIO_BLK", "virtio_conso
            "virtio_rng": "HW_RANDOM_VIRTIO", "virtio_net": "VIRTIO_NET", "ext4": "EXT4_FS"}
 
 
-def rooted_file(root, name, *, regular_leaf=False, directory=False):
+def rooted_file(root, name, *, regular_leaf=False, directory=False, executable=False):
     """Resolve usr-merge links inside the archive root, including absolute links."""
     require(name.startswith("/"), "absolute initrd path required")
     pending, parts, links = deque(PurePosixPath(name).parts[1:]), [], 0
@@ -40,6 +40,7 @@ def rooted_file(root, name, *, regular_leaf=False, directory=False):
     result = root.joinpath(*parts)
     mode = result.lstat().st_mode
     require(stat.S_ISDIR(mode) if directory else stat.S_ISREG(mode), "initrd file must be regular or selected directory")
+    require(not executable or mode & 0o111 != 0, "initrd boot file must be executable")
     return result
 
 
@@ -74,7 +75,7 @@ def dependencies(root, executable, architecture, readelf, run):
         if current in seen:
             continue
         seen.add(current)
-        data = run([readelf, "-l", "-d", current])
+        data = run([readelf, "-l", "-d", current], env={"LC_ALL": "C"})
         require(not re.search(r"\((?:RPATH|RUNPATH)\)", data), "unsupported dependency search path")
         names = re.findall(r"Shared library: \[([^\]]+)\]", data)
         interpreters = re.findall(r"Requesting program interpreter: ([^\]]+)\]", data)
@@ -95,8 +96,8 @@ def dependencies(root, executable, architecture, readelf, run):
     return sorted(found.values())
 
 
-def compare_guest_file(guest, root, path, scratch, *, regular_leaf=False):
-    installed = rooted_file(root, path, regular_leaf=regular_leaf)
+def compare_guest_file(guest, root, path, scratch, *, regular_leaf=False, executable=False):
+    installed = rooted_file(root, path, regular_leaf=regular_leaf, executable=executable)
     canonical = guest.call("realpath", path)
     require(canonical.startswith("/") and ".." not in canonical.split("/"), "invalid canonical guest path")
     guest.call("download", canonical, scratch)

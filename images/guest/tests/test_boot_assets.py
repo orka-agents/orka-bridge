@@ -3,6 +3,7 @@ import importlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import tarfile
 import tempfile
@@ -35,7 +36,8 @@ class BootAssetTests(unittest.TestCase):
         self.files["/boot/vmlinuz-" + self.release] = bytes(kernel)
         self.files["/boot/initrd.img-" + self.release] = b"\x1f\x8bsynthetic-initrd"
         self.files["/boot/config-" + self.release] = "".join("CONFIG_" + c + "=y\n" for c in CONFIG).encode()
-        self.files["/boot/grub/grub.cfg"] = ("linux /boot/vmlinuz-" + self.release + " root=PARTUUID=old ro console=ttyS0,115200n8 noresume\ninitrd /boot/initrd.img-" + self.release + "\n").encode()
+        self.files["/etc/default/grub"] = b"GRUB_DEFAULT=0\n"
+        self.files["/boot/grub/grub.cfg"] = ('set default="0"\nmenuentry Linux {\nlinux /boot/vmlinuz-' + self.release + " root=PARTUUID=old ro console=ttyS0,115200n8 noresume\ninitrd /boot/initrd.img-" + self.release + "\n").encode()
         self.files["/boot/grub/grubenv"] = b"# GRUB Environment Block\n"
         self.files["/usr/lib/bridge/bridge-guest"] = (self.root / "bridge-guest").read_bytes()
         self.files["/etc/initramfs-tools/hooks/bridge-state"] = b"build hook"
@@ -51,11 +53,13 @@ class BootAssetTests(unittest.TestCase):
             self.aliases[path] = canonical
             self.files[canonical] = b"ELF tool " + path.encode()
             (self.initrd / path.lstrip("/")).write_bytes(self.files[canonical])
+            (self.initrd / path.lstrip("/")).chmod(0o755)
         for path, source in (("/usr/lib/bridge/bridge-guest", "/usr/lib/bridge/bridge-guest"),
                              ("/scripts/local-bottom/bridge-state", "/etc/initramfs-tools/scripts/local-bottom/bridge-state")):
             target = self.initrd / path.lstrip("/")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(self.files[source])
+            target.chmod(0o755)
         (self.initrd / "lib").mkdir()
         (self.initrd / "lib/libfixture.so").write_bytes(b"ELF dependency")
         self.files["/lib/libfixture.so"] = b"ELF dependency"
@@ -67,7 +71,7 @@ class BootAssetTests(unittest.TestCase):
                       "sha256": sha(self.image.read_bytes()), "fileBytes": self.image.stat().st_size,
                       "inputSha256": sha(self.api.encoded(self.value)), "bootVerified": False, "publicationReady": False,
                       "runtime": {"binarySha256": sha(self.files["/usr/lib/bridge/bridge-guest"])},
-                      "recipeFiles": {p: sha(self.files[p]) for p in ("/etc/initramfs-tools/hooks/bridge-state", "/etc/initramfs-tools/scripts/local-bottom/bridge-state")}}
+                      "recipeFiles": {p: sha(self.files[p]) for p in ("/etc/default/grub", "/etc/initramfs-tools/hooks/bridge-state", "/etc/initramfs-tools/scripts/local-bottom/bridge-state")}}
         self.guest_calls = []
         for name in ("guestfish", "unmkinitramfs", "readelf", "dpkg-query"):
             path = self.root / name
@@ -91,6 +95,9 @@ class BootAssetTests(unittest.TestCase):
             return self.aliases.get(str(args[0]), str(args[0]))
         if command == "cat":
             return self.files[str(args[0])].decode().strip()
+        if command == "checksum":
+            self.assertEqual("sha256", args[0])
+            return sha(self.files[str(args[1])])
         if command == "is-file":
             return str(str(args[0]) in self.files).lower()
         if command == "download":
@@ -105,12 +112,13 @@ class BootAssetTests(unittest.TestCase):
             return ""
         raise AssertionError((command, args))
 
-    def run_command(self, args):
+    def run_command(self, args, *, env=None):
         name = Path(args[0]).name
         if name == "unmkinitramfs":
             shutil.copytree(self.initrd, Path(args[-1]) / "main", symlinks=True)
             return ""
         if name == "readelf" and args[1] != "--version":
+            self.assertEqual({"LC_ALL": "C"}, env)
             return " (NEEDED) Shared library: [libfixture.so]\n" if Path(args[-1]).read_bytes().startswith(b"ELF tool") else ""
         return "fixture-version"
 
@@ -167,7 +175,7 @@ class BootAssetTests(unittest.TestCase):
             self.extract()
 
     def test_wrong_default_kernel_and_saved_override_are_refused(self):
-        self.files["/boot/grub/grub.cfg"] = b"linux /boot/vmlinuz-other root=UUID=x console=ttyS0,115200n8\n"
+        self.files["/boot/grub/grub.cfg"] = b'set default="0"\nmenuentry Linux {\nlinux /boot/vmlinuz-other root=UUID=x console=ttyS0,115200n8\n'
         with self.assertRaisesRegex(ValueError, "default kernel"):
             self.extract()
 
@@ -230,7 +238,7 @@ class BootAssetTests(unittest.TestCase):
         header[0x38:0x3c] = b"ARM\x64"
         self.files["/boot/vmlinuz-" + self.release] = bytes(header)
         self.aliases["/vmlinuz"] = "/boot/vmlinuz-" + self.release
-        self.files["/boot/grub/grub.cfg"] = ("linux /boot/vmlinuz-" + self.release + " root=PARTUUID=old ro console=hvc0 noresume\ninitrd /boot/initrd.img-" + self.release + "\n").encode()
+        self.files["/boot/grub/grub.cfg"] = ('set default="0"\nmenuentry Linux {\nlinux /boot/vmlinuz-' + self.release + " root=PARTUUID=old ro console=hvc0 noresume\ninitrd /boot/initrd.img-" + self.release + "\n").encode()
         self.value["architecture"] = self.build["architecture"] = "arm64"
         self.value["nodeLocalRef"] = self.value["nodeLocalRef"].rsplit("-", 1)[0] + "-arm64"
         self.value["packages"].append({"name": policy["package"], "version": policy["version"], "path": "kernel.deb", "sha256": policy["packageSha256"]})
@@ -300,6 +308,46 @@ class BootAssetTests(unittest.TestCase):
              patch.object(self.api, "extract_boot_assets", side_effect=tarfile.ReadError("bad archive")), \
              contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(2, self.api.main())
+
+    def test_nonzero_grub_default_does_not_inherit_first_linux(self):
+        path = "/boot/grub/grub.cfg"
+        self.files[path] = self.files[path].replace(b'set default="0"', b'set default="1"')
+        with self.assertRaisesRegex(ValueError, "default"):
+            self.extract()
+
+    def test_nonlinux_first_menuentry_cannot_be_skipped(self):
+        path = "/boot/grub/grub.cfg"
+        self.files[path] = b'set default="0"\nmenuentry Other {\nchainloader +1\n}\n' + self.files[path]
+        with self.assertRaisesRegex(ValueError, "default"):
+            self.extract()
+
+    def test_tool_requires_executable_permissions(self):
+        (self.initrd / "sbin/blkid").chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "executable"):
+            self.extract()
+
+    def test_endpoint_requires_executable_permissions(self):
+        (self.initrd / "usr/lib/bridge/bridge-guest").chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "executable"):
+            self.extract()
+
+    def test_early_hook_requires_executable_permissions(self):
+        (self.initrd / "scripts/local-bottom/bridge-state").chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "executable"):
+            self.extract()
+
+    def test_inspection_locale_does_not_change_version_pins(self):
+        import sys
+        with patch.dict(os.environ, {"LC_ALL": "fr_FR.UTF-8"}):
+            command = [sys.executable, "-c", "import os; print(os.environ['LC_ALL'])"]
+            result = self.api.run(command, env={"LC_ALL": "C"})
+            self.assertEqual("fr_FR.UTF-8", self.api.run(command))
+        self.assertEqual("C", result)
+
+    def test_generated_conditional_default_zero_is_supported(self):
+        path = "/boot/grub/grub.cfg"
+        self.files[path] = self.files[path].replace(b'set default="0"', b'if [ "${next_entry}" ]; then\nset default="${next_entry}"\nelse\nset default="0"\nfi')
+        self.assertTrue(self.extract()["kernel"])
 
     def test_guestfish_interface_is_read_only(self):
         with patch.object(self.api, "run", return_value="root") as run:
