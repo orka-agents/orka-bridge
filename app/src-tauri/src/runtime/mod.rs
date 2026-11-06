@@ -1,3 +1,4 @@
+pub mod acquire;
 #[cfg(unix)]
 pub mod apple;
 pub mod client;
