@@ -1,5 +1,6 @@
 #[cfg(debug_assertions)]
 pub mod process;
+pub mod run;
 pub mod types;
 pub mod vm;
 

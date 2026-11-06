@@ -8,6 +8,35 @@ use std::{fs, path::PathBuf};
 use tempfile::TempDir;
 
 use bridge_engine::runtime::windows::job::{create_verified, SpawnPolicy};
+mod fixture_runtime {
+    pub use bridge_engine::runtime::{image_cache, image_types, manifest};
+}
+#[path = "support/runtime_image_fixture.rs"]
+mod runtime_image_fixture;
+fn installed_fixture(
+    root: &std::path::Path,
+) -> (
+    Uuid,
+    std::sync::Arc<bridge_engine::runtime::image_install::InstalledImageSet>,
+) {
+    use bridge_engine::runtime::{
+        image_install::materialize_image, image_types::ImageTarget, journal::Journal,
+    };
+    let journal = Journal::create(root, BackendKind::Qemu, b"pc-q35-11.0".to_vec()).unwrap();
+    let source = root.join("inert-source");
+    fs::create_dir(&source).unwrap();
+    let verified = runtime_image_fixture::verified(&source, ImageTarget::WindowsAmd64);
+    let target = journal
+        .image_target(&verified.image().identity().state_compatibility_id)
+        .unwrap();
+    let (_sender, closed) = tokio::sync::watch::channel(false);
+    let image = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .unwrap()
+        .block_on(materialize_image(&verified, &target, closed, |_| {}))
+        .unwrap();
+    (journal.record().installation_id, std::sync::Arc::new(image))
+}
 
 #[test]
 fn job_list_present_at_create_and_job_handle_does_not_inherit() {
@@ -262,9 +291,10 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
     assert!(expected_data.is_dir());
     let inputs = verify_windows_inputs(&pin, paths).unwrap();
     let root = t.path().join("install,é space");
-    fs::create_dir(&root).unwrap();
+    let (installation_id, image) = installed_fixture(&root);
     let spec = LaunchSpec {
-        installation_id: Uuid::new_v4(),
+        installation_id,
+        image,
         generation: 1,
         boot_nonce: Uuid::new_v4(),
         ownership: std::sync::Arc::new(fs::File::create(root.join("owner.lock")).unwrap()),

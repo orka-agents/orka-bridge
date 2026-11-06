@@ -39,6 +39,22 @@ are guaranteed to stop.
 Run debug engine tests and clippy as well as release checks: process transport
 code is compiled only when debug assertions are enabled.
 
+## Native Run core
+
+Rust callers can parse an exact agent/test byte pair and use `engine::run` to
+submit fresh Orka Agents and Tasks, then observe acknowledged identities using
+GET only. Targets and bearer credentials must come from trusted native config,
+not the renderer; there is no ambient cluster, provider fallback or new IPC.
+Supports schemaVersion 1 source with tool entries declared `kind: builtin`, plus
+`contains` and `toolCalled`. Unknown fields refuse before writes. This narrow
+parser expects unindented backtick `yaml agent-test` fences; it is not a general
+Markdown reader or an effective-tool policy check. Completed attributable tool
+events are positive evidence only; missing/unavailable events stay unknown. A failed
+Task cannot pass, even when individual assertions match. Requests and observation
+are bounded; timeout/drop does not stop remote work. Retain the in-memory handle
+and error's acknowledged/possibly-created identities. No POST retry, overwrite,
+adoption, deletion or persisted history is provided. VM/chooser hookup is separate.
+
 ## Image transport
 
 The native image transport accepts Rust-owned pins, not renderer URLs. It fetches
@@ -72,6 +88,41 @@ materialize an installation, start a VM or select a production image catalog.
 On Windows, schedule cached manifest reads before acquisition: a concurrent
 staging read can cause a sharing failure during publication, with staging retained.
 The no-follow directory protections are not weakened to avoid this contention.
+
+## Private installed images
+
+The native lifecycle owner can lend its held installation directory and ownership
+file to the private image installer. Only that owner can assert live creation
+permission. Materialization copies and verifies the private OS, kernel and initrd,
+then commits a separate version-one image binding after a no-replace generation
+publication. Incomplete work is not boot-ready and never restores creation authority.
+
+Reopen checks the current installation, platform, state compatibility and immutable
+boot files, and flushes the generation and parent directories before returning. The initial OS hash remains provenance because the guest can mutate
+its private disk. Installed handoff clones contain metadata, not installation locks
+or exclusive disk handles; the backend must revalidate under current ownership
+and retain its normal container inspection and lifetime controls. This API does not
+wire the runtime, start a VM, migrate journals or select a production image.
+
+## Native image handoff
+
+Native callers can use `runtime::setup_adapter::prepare_pinned_image` with a
+Rust-owned pin, host facts, cache and HTTP client. It loads the pinned manifest,
+acquires verified files and returns a `PreparedImage`. A complete cache is reused
+without HTTP. Debug callers can instead use `prepare_development_image` on the
+existing verified local source; release builds contain no local-source bridge.
+
+Finish source preparation before taking installation ownership. Then call
+`PreparedImage::materialize` with the owner's borrowed installation target and
+cancellation receiver. Both sources use the same verified private copies and
+binding publication. The actual blocking job retains the owner's counted Arc,
+not a duplicated ownership file. The result remains metadata-only.
+
+Engineering identity is explicit: the common manifest-hash slot identifies its
+raw pinned boot receipt, not a release manifest. Its compatibility ID is
+`engineering-afc68ae1`. Neither source preparation nor materialization starts a
+VM or reports whole-setup readiness. Backend selection, launch validation and
+the visible setup connection remain the native runtime caller's responsibility.
 
 ## Local development image
 

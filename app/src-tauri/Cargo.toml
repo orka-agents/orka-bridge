@@ -18,6 +18,7 @@ libc = "=0.2.191"
 tauri = { version = "=2.12.5", features = [] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
+serde_yaml_ng = "=0.10.0"
 sha2 = "=0.10.9"
 semver = "=1.0.28"
 flate2 = "=1.1.10"
