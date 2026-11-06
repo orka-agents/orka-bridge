@@ -548,6 +548,14 @@ fn verify_checked(
     Ok(())
 }
 impl CacheTransaction {
+    fn sync_namespace(&self) -> Result<(), ImageError> {
+        fs::sync(&self.stage)?;
+        fs::sync(&self.directory)?;
+        for dir in self.ancestors.iter() {
+            fs::sync(dir)?;
+        }
+        Ok(())
+    }
     fn space(&self, bytes: u64) -> Result<(), ImageError> {
         #[cfg(test)]
         if let Some(available) = self.available {
@@ -641,6 +649,7 @@ impl CacheTransaction {
         match regular(&self.stage, &name, false, false) {
             Ok(mut file) => {
                 verify(&mut file, asset.bytes, &asset.sha256)?;
+                self.sync_namespace()?;
                 return Ok(None);
             }
             Err(ImageError::Storage(io::ErrorKind::NotFound)) => {}
@@ -666,7 +675,7 @@ impl CacheTransaction {
         file.sync_all().map_err(storage)?;
         drop(file);
         fs::link(&self.stage, &pending, &format!("asset-{index}"))?;
-        Ok(())
+        self.sync_namespace()
     }
 }
 #[cfg(test)]

@@ -276,6 +276,44 @@ fn incomplete_pending_bytes_are_released_before_the_space_recheck() {
     );
 }
 
+#[test]
+fn completed_chunk_is_not_reported_successful_until_its_namespace_is_flushed() {
+    let temp = tempfile::tempdir().unwrap();
+    let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+    let (image, data) = chunk_image();
+    let mut tx = cache.begin(&image).unwrap();
+    let mut f = tx.start_asset(0).unwrap().unwrap();
+    f.write_all(&data).unwrap();
+    drop(f);
+    let invalid = temp.path().join("not-a-directory");
+    std::fs::write(&invalid, b"retained").unwrap();
+    #[cfg(windows)]
+    let invalid_handle = {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Windows may reopen '.' on a file handle; deny sharing so that must fail too.
+        File::options()
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&invalid)
+            .unwrap()
+    };
+    #[cfg(not(windows))]
+    let invalid_handle = File::open(&invalid).unwrap();
+    tx.ancestors = Arc::new(vec![Dir::from_std_file(invalid_handle)]);
+    assert!(
+        matches!(tx.finish_asset(0), Err(ImageError::Storage(_))),
+        "namespace flush failure must prevent completion success"
+    );
+    assert!(
+        matches!(tx.start_asset(0), Err(ImageError::Storage(_))),
+        "a retry must flush the existing completion link too"
+    );
+    tx.ancestors = cache.ancestors.clone();
+    assert!(tx.start_asset(0).unwrap().is_none());
+    assert_eq!(std::fs::read(invalid).unwrap(), b"retained");
+}
+
 pub(crate) type Point = Arc<dyn Fn(&str) -> Result<(), ImageError> + Send + Sync>;
 #[test]
 fn every_publication_boundary_is_recoverable_without_selecting_a_partial_set() {
