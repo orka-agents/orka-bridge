@@ -573,7 +573,13 @@ mod native {
             if info.NumberOfProcessIdsInList as usize > capacity
                 || info.NumberOfProcessIdsInList != info.NumberOfAssignedProcesses
             {
-                return Err(io::Error::from(io::ErrorKind::InvalidData));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "incomplete Job PID list: assigned={}, listed={}, capacity={capacity}",
+                        info.NumberOfAssignedProcesses, info.NumberOfProcessIdsInList
+                    ),
+                ));
             }
             let ids = unsafe {
                 std::slice::from_raw_parts(
@@ -600,7 +606,10 @@ mod native {
                     check(IsProcessInJob(process.0, job, &mut member))?;
                 }
                 if member == 0 {
-                    return Err(io::Error::from(io::ErrorKind::InvalidData));
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("snapshot process {id} no longer belongs to the owned Job"),
+                    ));
                 }
                 processes.push(process);
             }
@@ -634,7 +643,7 @@ mod native {
             // An unlisted descendant may still be closing handles. Without its
             // process handle that historical exit is unobserved, not success.
             if known != before.TotalProcesses as usize {
-                return Err(io::Error::from(io::ErrorKind::InvalidData));
+                return Err(io::Error::new(io::ErrorKind::InvalidData, format!("unobserved Job process history: total={}, active={}, retained={known}, leader_listed={includes_leader}", before.TotalProcesses, before.ActiveProcesses)));
             }
             Ok((before.TotalProcesses, processes))
         });
@@ -655,7 +664,13 @@ mod native {
             let info = accounting(job)?;
             // A process created after the snapshot is unobserved: quarantine, not success.
             if info.TotalProcesses != generation {
-                return Err(io::Error::from(io::ErrorKind::InvalidData));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Job process generation changed: expected={generation}, observed={}",
+                        info.TotalProcesses
+                    ),
+                ));
             }
             if info.ActiveProcesses == 0 {
                 observed.store(true, Ordering::Release);
