@@ -4,6 +4,7 @@ pub mod apple;
 pub mod client;
 pub mod credentials;
 pub mod identity;
+pub mod image_cache;
 pub mod image_types;
 pub mod journal;
 pub mod manifest;

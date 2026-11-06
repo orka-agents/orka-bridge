@@ -1,4 +1,6 @@
 //! Real native-TLS adapter tests. All certificate/key material exists only in memory.
+#[path = "image_acquire_tests.rs"]
+mod acquisition;
 #[path = "image_http_deadline_tests.rs"]
 mod deadlines;
 #[path = "image_http_redirect_tests.rs"]
@@ -30,6 +32,7 @@ struct Server {
     address: std::net::SocketAddr,
     root: Vec<u8>,
     calls: Arc<AtomicUsize>,
+    routes: Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>>,
     task: tokio::task::JoinHandle<()>,
 }
 impl Drop for Server {
@@ -78,6 +81,11 @@ impl Server {
         if let Some(offset) = response.windows(6).position(|bytes| bytes == b"{port}") {
             response.splice(offset..offset + 6, address.port().to_string().bytes());
         }
+        let routes = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+            String,
+            Vec<u8>,
+        >::new()));
+        let server_routes = routes.clone();
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
         let task = tokio::spawn(async move {
@@ -119,6 +127,17 @@ impl Server {
                     }
                     std::future::pending::<()>().await;
                 } else {
+                    let path = String::from_utf8_lossy(&header)
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap()
+                        .to_owned();
+                    let response = server_routes
+                        .lock()
+                        .unwrap()
+                        .get(&path)
+                        .cloned()
+                        .unwrap_or_else(|| response.clone());
                     let _ = tls.write_all(&response).await;
                     let _ = tls.shutdown().await;
                 }
@@ -128,6 +147,7 @@ impl Server {
             address,
             root,
             calls,
+            routes,
             task,
         }
     }

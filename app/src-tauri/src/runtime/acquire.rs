@@ -142,7 +142,11 @@ impl ImageHttpClient {
                     .checked_add(chunk.len() as u64)
                     .filter(|n| *n <= maximum)
                     .ok_or(ImageError::LimitExceeded)?;
-                output.write_all(&chunk).await.map_err(io_error)?;
+                tokio::select! {
+                    biased;
+                    _ = cancelled(&mut closed) => return Err(ImageError::Cancelled),
+                    result = output.write_all(&chunk) => result.map_err(io_error)?,
+                }
                 hash.update(&chunk);
                 progress(bytes);
             }
@@ -185,6 +189,157 @@ impl ImageHttpClient {
             origins,
         })
     }
+}
+
+struct AssetWriter {
+    file: std::sync::Arc<std::fs::File>,
+    owner: std::sync::Arc<super::image_cache::CacheTransaction>,
+    pending: Option<tokio::task::JoinHandle<std::io::Result<usize>>>,
+}
+fn asset_writer(
+    file: std::fs::File,
+    owner: std::sync::Arc<super::image_cache::CacheTransaction>,
+) -> AssetWriter {
+    AssetWriter {
+        file: std::sync::Arc::new(file),
+        owner,
+        pending: None,
+    }
+}
+impl tokio::io::AsyncWrite for AssetWriter {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        use std::{future::Future, io::Write, task::Poll};
+        if self.pending.is_none() {
+            if bytes.is_empty() {
+                return Poll::Ready(Ok(0));
+            }
+            let (file, owner, bytes) = (self.file.clone(), self.owner.clone(), bytes.to_vec());
+            // The actual I/O job owns the pin even if the caller drops its future.
+            self.pending = Some(tokio::task::spawn_blocking(move || {
+                let _owner = owner;
+                (&*file).write(&bytes)
+            }));
+        }
+        match std::pin::Pin::new(self.pending.as_mut().unwrap()).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                self.pending = None;
+                Poll::Ready(
+                    result.unwrap_or_else(|_| Err(std::io::Error::other("image writer stopped"))),
+                )
+            }
+        }
+    }
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        // std::fs::File is unbuffered; wait for any outstanding blocking write.
+        self.poll_write(cx, &[]).map(|result| result.map(|_| ()))
+    }
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.poll_flush(cx)
+    }
+}
+
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, ImageError> + Send + 'static,
+) -> Result<T, ImageError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| ImageError::Storage(std::io::ErrorKind::Other))?
+}
+pub async fn acquire_image(
+    image: &super::image_types::ResolvedImage,
+    cache: &super::image_cache::ImageCache,
+    client: &ImageHttpClient,
+    closed: tokio::sync::watch::Receiver<bool>,
+    progress: impl Fn(super::image_types::ImageProgress) + Send + Sync,
+) -> Result<super::image_types::VerifiedImageSet, ImageError> {
+    use super::image_types::ImageProgress;
+    if client.pin.manifest_sha256 != image.identity().manifest_sha256 {
+        return Err(ImageError::Invalid("image client pin"));
+    }
+    let total = image.assets().iter().try_fold(0u64, |n, a| {
+        n.checked_add(a.bytes()).ok_or(ImageError::LimitExceeded)
+    })?;
+    progress(ImageProgress::Verifying);
+    let mut reconciled = false;
+    let tx = loop {
+        let (store, descriptor, stop) = (cache.clone(), image.clone(), closed.clone());
+        if let Some(set) =
+            blocking(move || store.verified_checked(&descriptor, Some(&stop))).await?
+        {
+            progress(ImageProgress::Download {
+                bytes: total,
+                total,
+            });
+            progress(ImageProgress::Verified);
+            return Ok(set);
+        }
+        let (store, descriptor, stop) = (cache.clone(), image.clone(), closed.clone());
+        match blocking(move || {
+            super::image_cache::verification::cancelled(&stop)?;
+            store.begin(&descriptor)
+        })
+        .await
+        {
+            Ok(owner) => break std::sync::Arc::new(owner.with_cancellation(closed.clone())),
+            // Another owner may commit between the optimistic read and try_lock.
+            Err(ImageError::RetainedImage) if !reconciled => reconciled = true,
+            Err(error) => return Err(error),
+        }
+    };
+    let mut done = 0;
+    progress(ImageProgress::Download { bytes: done, total });
+    for (index, asset) in image.assets().iter().enumerate() {
+        let (owner, stop) = (tx.clone(), closed.clone());
+        let pending = blocking(move || {
+            super::image_cache::verification::cancelled(&stop)?;
+            owner.start_asset(index)
+        })
+        .await?;
+        if let Some(file) = pending {
+            let mut file = asset_writer(file, tx.clone());
+            let url = format!("{}{}", asset.location().base(), asset.location().leaf());
+            client
+                .transfer(
+                    &url,
+                    &mut file,
+                    asset.bytes(),
+                    (Some(asset.bytes()), asset.sha256()),
+                    closed.clone(),
+                    |bytes| {
+                        progress(ImageProgress::Download {
+                            bytes: done + bytes,
+                            total,
+                        })
+                    },
+                )
+                .await?;
+            drop(file);
+            let (owner, stop) = (tx.clone(), closed.clone());
+            blocking(move || {
+                super::image_cache::verification::cancelled(&stop)?;
+                owner.finish_asset(index)
+            })
+            .await?;
+        }
+        done += asset.bytes();
+        progress(ImageProgress::Download { bytes: done, total });
+    }
+    progress(ImageProgress::Verifying);
+    let tx = std::sync::Arc::try_unwrap(tx).map_err(|_| ImageError::Busy)?;
+    let set = blocking(move || tx.commit(&closed)).await?;
+    progress(ImageProgress::Verified);
+    Ok(set)
 }
 
 #[cfg(test)]

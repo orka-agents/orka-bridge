@@ -47,6 +47,9 @@ pub enum ImageError {
     Network(&'static str),
     Storage(std::io::ErrorKind),
     NoSpace,
+    UnsafePath,
+    Busy,
+    RetainedImage,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaunchMode {
@@ -60,6 +63,25 @@ pub struct ImageIdentity {
     pub state_compatibility_id: String,
     pub build_source_commit: String,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageProgress {
+    Download { bytes: u64, total: u64 },
+    Verifying,
+    Verified,
+}
+
+/// A revalidated factory read capability; private installed copies still require verification.
+#[derive(Clone)]
+pub struct VerifiedImageSet {
+    pub(crate) directory: std::sync::Arc<cap_std::fs::Dir>,
+    pub(crate) image: ResolvedImage,
+}
+impl VerifiedImageSet {
+    pub fn image(&self) -> &ResolvedImage {
+        &self.image
+    }
+}
+
 /// Base and validated leaf stay separate; the future HTTP adapter owns URL parsing/policy.
 #[derive(Clone, Debug)]
 pub struct AssetLocation {
@@ -115,8 +137,12 @@ pub struct ResolvedImage {
     pub(crate) compressed_bytes: u64,
     pub(crate) disk_sha256: String,
     pub(crate) disk_bytes: u64,
+    pub(crate) manifest_bytes: std::sync::Arc<[u8]>,
 }
 impl ResolvedImage {
+    pub fn manifest_bytes(&self) -> &[u8] {
+        &self.manifest_bytes
+    }
     pub fn identity(&self) -> &ImageIdentity {
         &self.identity
     }
