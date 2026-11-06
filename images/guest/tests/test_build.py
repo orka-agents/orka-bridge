@@ -160,11 +160,12 @@ class BuildTests(unittest.TestCase):
         self.assertEqual([], list((root / "var/lib/bridge").iterdir()))
 
     def test_native_payload_installs_only_runtime_modules_and_native_archives(self):
-        from .test_offline import native_inputs
+        from .test_offline import native_inputs, SYNTHETIC_PROFILE
         from .test_runtime import runtime_inputs
         value, _ = native_inputs(self.root)
         runtime_inputs(self.root, value)
-        self.api.stage_rootfs(value, source=self.root, out=self.root / 'native')
+        with patch.dict(self.api.VERSIONS, {'sourceOfflineProfile': SYNTHETIC_PROFILE}):
+            self.api.stage_rootfs(value, source=self.root, out=self.root / 'native')
         root = self.root / 'native'
         self.assertTrue((root / 'opt/bridge/guest/lifecycle.py').is_file())
         self.assertTrue((root / 'opt/bridge/bundle/install.json').is_file())

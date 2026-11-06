@@ -1,0 +1,22 @@
+name: Apple helper core
+on:
+  push:
+    paths:
+      - 'app/src-tauri/native/macos/**'
+      - 'scripts/test-vm-helper-macos.sh'
+      - '.github/workflows/apple-helper.yml'
+  pull_request:
+    paths:
+      - 'app/src-tauri/native/macos/**'
+      - 'scripts/test-vm-helper-macos.sh'
+      - '.github/workflows/apple-helper.yml'
+permissions:
+  contents: read
+jobs:
+  swift:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - run: bash scripts/test-vm-helper-macos.sh

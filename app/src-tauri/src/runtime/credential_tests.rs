@@ -57,14 +57,25 @@ fn executable(mode: &str) -> (tempfile::TempDir, PathBuf) {
             include_str!("../../tests/support/credential_fixture.rs"),
         )
         .unwrap();
-        assert!(Command::new("rustc")
-            .args(["--edition=2021"])
-            .arg(source)
-            .arg("-o")
-            .arg(&binary)
-            .status()
-            .unwrap()
-            .success());
+        let spawn = || {
+            Command::new("rustc")
+                .args(["--edition=2021"])
+                .arg(source)
+                .arg("-o")
+                .arg(&binary)
+                .spawn()
+        };
+        #[cfg(unix)]
+        let mut compiler = std::thread::scope(|scope| {
+            scope
+                .spawn(|| super::super::spawn_guard::run_blocking(spawn))
+                .join()
+                .unwrap()
+        })
+        .unwrap();
+        #[cfg(not(unix))]
+        let mut compiler = spawn().unwrap();
+        assert!(compiler.wait().unwrap().success());
         (dir, binary)
     });
     let dir = tempfile::Builder::new()

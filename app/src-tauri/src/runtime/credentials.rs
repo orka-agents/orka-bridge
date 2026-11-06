@@ -1,4 +1,4 @@
-//! Host-only stored-sign-in capture. No renderer binding or guest delivery.
+// Host-only stored-sign-in capture. No renderer binding or guest delivery.
 
 use std::{
     io,
@@ -85,19 +85,15 @@ fn capture_command(path: &Path) -> tokio::process::Command {
 
 async fn run_capture(path: &Path, timeout: Duration) -> Result<CapturedGithubToken, CaptureError> {
     tokio::time::timeout(timeout, async {
-        let mut child = {
-            #[cfg(windows)]
-            let _spawn_guard =
-                super::windows::job::spawn_guard().map_err(|_| CaptureError::Failed)?;
-            capture_command(path).spawn()
-        }
-        .map_err(|error| {
-            if error.kind() == io::ErrorKind::NotFound {
-                CaptureError::Unavailable
-            } else {
-                CaptureError::Failed
-            }
-        })?;
+        let mut child = super::spawn_guard::run(|| capture_command(path).spawn())
+            .await
+            .map_err(|error| {
+                if error.kind() == io::ErrorKind::NotFound {
+                    CaptureError::Unavailable
+                } else {
+                    CaptureError::Failed
+                }
+            })?;
         let stdout = child.stdout.take().ok_or(CaptureError::Failed)?;
         let mut raw = Vec::new();
         stdout

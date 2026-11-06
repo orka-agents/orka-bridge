@@ -1,13 +1,7 @@
-use std::{
-    io,
-    sync::{Mutex, MutexGuard},
-};
+use std::io;
 /// Cooperating app-owned spawns must not overlap a Win32 inheritable-handle window.
-pub fn spawn_guard() -> io::Result<MutexGuard<'static, ()>> {
-    static SPAWNS: Mutex<()> = Mutex::new(());
-    SPAWNS
-        .lock()
-        .map_err(|_| io::Error::other("process spawn coordinator poisoned"))
+pub fn spawn_guard() -> io::Result<tokio::sync::MutexGuard<'static, ()>> {
+    Ok(crate::runtime::spawn_guard::blocking_guard())
 }
 /// Release only after observed exit; otherwise quarantine all still-owned capabilities.
 pub fn release_bundle<T>(bundle: T, observed_stop: bool) {
@@ -77,6 +71,43 @@ pub fn create_verified<T>(
         )));
     }
     Err(failure)
+}
+
+#[cfg(test)]
+mod coordinator_tests {
+    #[test]
+    fn inheritance_window_and_async_spawns_share_one_gate() {
+        let guard = super::spawn_guard().unwrap();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+        assert!(
+            runtime
+                .block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_millis(30),
+                        crate::runtime::spawn_guard::run(|| ()),
+                    )
+                    .await
+                })
+                .is_err(),
+            "async process creation must wait for the inheritance window"
+        );
+        drop(guard);
+        assert!(
+            runtime
+                .block_on(async {
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        crate::runtime::spawn_guard::run(|| ()),
+                    )
+                    .await
+                })
+                .is_ok(),
+            "releasing the window must permit process creation"
+        );
+    }
 }
 
 #[cfg(windows)]
@@ -325,14 +356,12 @@ mod native {
             }
         }
         fn abort_suspended(&self) -> io::Result<()> {
-            // Before the membership postcondition, only the retained process is authority.
-            // It has never resumed, so there cannot be descendants to stop here.
-            if !self.exited() {
-                unsafe {
-                    check(TerminateProcess(self.resources().process.0, 1))?;
-                }
-            }
-            self.wait_exit(Duration::from_secs(45))
+            let resources = self.resources();
+            stop_suspended(
+                resources.job.0,
+                resources.process.0,
+                &resources.stop_observed,
+            )
         }
         pub fn resume(&self) -> io::Result<()> {
             unsafe {
@@ -379,6 +408,16 @@ mod native {
                 _ => Err(io::Error::last_os_error()),
             }
         }
+    }
+    fn stop_suspended(_job: HANDLE, leader: HANDLE, _observed: &AtomicBool) -> io::Result<()> {
+        // Before the membership postcondition, only the retained process is authority.
+        // It has never resumed, so there cannot be descendants to stop here.
+        if wait_handle(leader, Duration::ZERO).is_err() {
+            unsafe {
+                check(TerminateProcess(leader, 1))?;
+            }
+        }
+        wait_handle(leader, Duration::from_secs(45))
     }
     fn accounting(job: HANDLE) -> io::Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
         let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
@@ -592,6 +631,65 @@ mod native {
         }
         fn raw(child: &Child) -> HANDLE {
             child.as_raw_handle() as HANDLE
+        }
+
+        struct SuspendedChild(Child);
+        impl Drop for SuspendedChild {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                if wait_handle(raw(&self.0), Duration::from_secs(45)).is_err() {
+                    std::process::abort();
+                }
+            }
+        }
+        #[test]
+        fn stopped_suspended_nonmember_releases_the_ownership_capability() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("guard");
+            let guard = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .share_mode(0)
+                .open(&path)
+                .unwrap();
+            let job = kill_on_close_job();
+            let child = {
+                let _guard = spawn_guard().unwrap();
+                SuspendedChild(
+                    Command::new("cmd.exe")
+                        .raw_arg("/d /c exit 0")
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
+                        .spawn()
+                        .unwrap(),
+                )
+            };
+            let mut member = 1;
+            unsafe {
+                check(IsProcessInJob(raw(&child.0), job.0, &mut member)).unwrap();
+            }
+            assert_eq!(
+                member, 0,
+                "model a rejected membership postcondition before resume"
+            );
+            let observed = AtomicBool::new(false);
+            stop_suspended(job.0, raw(&child.0), &observed).unwrap();
+            assert!(wait_handle(raw(&child.0), Duration::ZERO).is_ok());
+            // Same recheck and whole-bundle release that OwnedQemuProcess::drop uses.
+            release_bundle(
+                guard,
+                stop_job(job.0, raw(&child.0), Duration::from_secs(45), &observed).is_ok(),
+            );
+            drop(
+                OpenOptions::new()
+                    .write(true)
+                    .share_mode(0)
+                    .open(&path)
+                    .expect("a stopped pre-resume nonmember must not quarantine ownership"),
+            );
+            assert!(observed.load(Ordering::Acquire));
         }
 
         #[test]

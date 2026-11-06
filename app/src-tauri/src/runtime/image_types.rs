@@ -43,6 +43,10 @@ pub enum ImageError {
     Incompatible(Incompatibility),
     Integrity,
     LimitExceeded,
+    Cancelled,
+    Network(&'static str),
+    Storage(std::io::ErrorKind),
+    NoSpace,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaunchMode {
