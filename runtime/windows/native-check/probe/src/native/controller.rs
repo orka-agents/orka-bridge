@@ -209,7 +209,8 @@ impl Worker {
             .take()
             .ok_or_else(|| io::Error::other("stderr missing"))?;
         let (tx, rx) = mpsc::sync_channel(2);
-        let messages = if mode == "try-unix" || mode == "smoke" {
+        let messages = if mode == "try-unix" || mode == "smoke" || mode == crate::MEMBER_DIAGNOSTIC
+        {
             2
         } else {
             1
@@ -302,11 +303,72 @@ fn one(mode: &str, packet: &Path, root: &Path) -> io::Result<Value> {
     check(v["sourceHead"] == crate::SOURCE_HEAD)?;
     Ok(v)
 }
+/// DIAGNOSTIC ONLY: one worker, one fixed no-VM QEMU, no four-case loop, no PASS.
+fn member_diagnostic_receipt(
+    packet: &Path,
+    work: &Path,
+    caller: Value,
+    trusted: &Value,
+) -> io::Result<()> {
+    let logs = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| io::Error::other("stage missing"))?
+        .join("logs");
+    check(logs.is_dir())?;
+    eprintln!("Job member diagnostic at {}", crate::SOURCE_HEAD);
+    let mut worker = Worker::start(
+        crate::MEMBER_DIAGNOSTIC,
+        packet,
+        &work.join("member,é space"),
+    )?;
+    let ready = worker.line()?;
+    check(
+        ready["sourceHead"] == crate::SOURCE_HEAD
+            && ready["stage"] == "job-member-diagnostic-ready",
+    )?;
+    emit(ready)?;
+    let result = worker.line()?;
+    let exit = worker
+        .wait(Duration::from_secs(45))
+        .map_err(|e| e.to_string());
+    check(
+        result["sourceHead"] == crate::SOURCE_HEAD
+            && result["stage"] == "job-member-diagnostic-result"
+            && result["diagnosticOnly"] == true
+            && result["fullContainmentQualified"] == false,
+    )?;
+    let complete = exit.is_ok()
+        && result["secondMemberIdentified"] == true
+        && result["memberHandlesSignaled"] == true
+        && result["failures"].as_array().is_some_and(Vec::is_empty);
+    let receipt = json!({"status":"job-member-diagnostic-only","diagnosticOnly":true,"fullContainmentQualified":false,
+        "diagnosticComplete":complete,"sourceHead":crate::SOURCE_HEAD,"caller":caller,
+        "probeSha256":digest(&fs::read(std::env::current_exe()?)?),"runtimeZipSha256":trusted["runtimeZipSha256"],
+        "producerRun":trusted["producerRun"],"guestBoot":false,"whpxUsability":"not-tested",
+        "imports":{"diagnosticImports":crate::DIAGNOSTIC_IMPORTS,"derivedNotProduct":true,
+            "jobSourcePath":crate::JOB_SOURCE_PATH,"jobSourceSha256":crate::JOB_SOURCE_SHA256,
+            "jobImportPath":crate::JOB_IMPORT_PATH,"jobImportSha256":crate::JOB_IMPORT_SHA256},
+        "workerExit":exit,"result":result});
+    fs::write(
+        logs.join("job-member-diagnostic-receipt.json"),
+        serde_json::to_vec_pretty(&receipt).map_err(io::Error::other)?,
+    )?;
+    emit(receipt)?;
+    eprintln!("DIAGNOSTIC ONLY: Job member identity, not native qualification");
+    check(complete).map_err(|_| io::Error::other("Job member diagnostic incomplete"))
+}
 pub(super) fn run(args: &[String]) -> io::Result<()> {
     let trial = args.len() == 4 && args[3] == "--owned-pipe-trial";
     let unix_trial = args.len() == 4 && args[3] == "--af-unix-trial";
     let ci_access = args.len() == 4 && args[3] == "--ci-access-proof";
-    check(args.len() == 3 || trial || unix_trial || ci_access)?;
+    let member_diagnostic = args.len() == 4 && args[3] == "--job-member-diagnostic";
+    check(args.len() == 3 || trial || unix_trial || ci_access || member_diagnostic)?;
+    if !crate::controller_flag_permitted(crate::DIAGNOSTIC_IMPORTS, args.get(3).map(String::as_str))
+    {
+        return Err(io::Error::other(
+            "refused: --job-member-diagnostic requires, and is the only mode of, a member-diagnostic build",
+        ));
+    }
     let runtime = PathBuf::from(&args[0]);
     let pin = PathBuf::from(&args[1]);
     let work = PathBuf::from(&args[2]);
@@ -325,6 +387,9 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
         &packet,
         serde_json::to_vec(&config).map_err(io::Error::other)?,
     )?;
+    if member_diagnostic {
+        return member_diagnostic_receipt(&packet, &work, caller, &trusted);
+    }
     if unix_trial {
         let mut worker = Worker::start("try-unix", &packet, &work.join("unix"))?;
         let first = worker.line()?;

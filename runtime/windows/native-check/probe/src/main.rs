@@ -2,6 +2,115 @@
 compile_error!("probe must use static CRT");
 #[cfg(windows)]
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
+include!(concat!(env!("OUT_DIR"), "/flags.rs"));
+#[cfg(test)]
+#[path = "job_insert.rs"]
+mod job_insert;
+#[cfg(any(windows, test))]
+const MEMBER_DIAGNOSTIC: &str = "job-member-diagnostic";
+/// A member-diagnostic build imports derived source: it may run only its own
+/// diagnostic worker or controller, never a qualification or legacy trial mode.
+#[cfg(any(windows, test))]
+fn worker_mode_permitted(diagnostic: bool, mode: &str) -> bool {
+    if diagnostic {
+        mode == MEMBER_DIAGNOSTIC || mode == "check"
+    } else {
+        mode != MEMBER_DIAGNOSTIC
+    }
+}
+#[cfg(any(windows, test))]
+fn controller_flag_permitted(diagnostic: bool, flag: Option<&str>) -> bool {
+    match flag {
+        Some("--job-member-diagnostic") => diagnostic,
+        _ => !diagnostic,
+    }
+}
+#[cfg(test)]
+mod member_diagnostic_build_tests {
+    use super::job_insert::*;
+    fn sealed_job() -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../../../native-source/app/src-tauri/src/runtime/windows/job.rs");
+        std::fs::read_to_string(path).unwrap()
+    }
+    #[test]
+    fn derivation_inserts_exactly_one_method_inside_the_native_impl() {
+        let original = sealed_job();
+        let derived = derive(&original).unwrap();
+        assert_eq!(derived.len(), original.len() + TYPES.len() + METHOD.len());
+        assert_eq!(derived.matches(METHOD_NAME).count(), 1);
+        assert_eq!(
+            derived.replacen(METHOD, "", 1).replacen(TYPES, "", 1),
+            original
+        );
+        let at = derived.find(MARKER).unwrap() + MARKER.len();
+        assert!(derived[at..].starts_with(METHOD));
+    }
+    #[test]
+    fn malformed_markers_fail_closed() {
+        let original = sealed_job();
+        assert!(derive(&original.replace(MARKER, "\n    impl Other {\n")).is_err());
+        assert!(derive(&format!("{original}{MARKER}}}\n")).is_err());
+        assert!(derive(&derive(&original).unwrap()).is_err());
+        assert!(derive(&original.replace('\n', "\r\n")).is_err());
+    }
+    #[test]
+    fn imports_are_original_unless_the_diagnostic_feature_is_explicit() {
+        use sha2::{Digest, Sha256};
+        let original = sealed_job();
+        assert_eq!(
+            crate::JOB_SOURCE_SHA256,
+            format!("{:x}", Sha256::digest(original.as_bytes()))
+        );
+        assert_eq!(
+            crate::DIAGNOSTIC_IMPORTS,
+            cfg!(feature = "member-diagnostic")
+        );
+        if crate::DIAGNOSTIC_IMPORTS {
+            let derived = derive(&original).unwrap();
+            assert_ne!(crate::JOB_IMPORT_PATH, crate::JOB_SOURCE_PATH);
+            assert_eq!(
+                std::fs::read_to_string(crate::JOB_IMPORT_PATH).unwrap(),
+                derived
+            );
+            assert_eq!(
+                crate::JOB_IMPORT_SHA256,
+                format!("{:x}", Sha256::digest(derived.as_bytes()))
+            );
+        } else {
+            assert_eq!(crate::JOB_IMPORT_PATH, crate::JOB_SOURCE_PATH);
+            assert_eq!(crate::JOB_IMPORT_SHA256, crate::JOB_SOURCE_SHA256);
+        }
+    }
+    #[test]
+    fn diagnostic_build_refuses_every_qualification_and_legacy_mode() {
+        use super::{controller_flag_permitted as flag, worker_mode_permitted as mode};
+        for legacy in [
+            "smoke",
+            "hold-created",
+            "hold-pipe",
+            "hold-guard-only",
+            "try-owned-pipe",
+            "try-unix",
+            "check-free",
+            "check-busy",
+            "unix-connect",
+        ] {
+            assert!(!mode(true, legacy) && mode(false, legacy));
+        }
+        assert!(mode(true, super::MEMBER_DIAGNOSTIC) && !mode(false, super::MEMBER_DIAGNOSTIC));
+        for normal in [
+            None,
+            Some("--ci-access-proof"),
+            Some("--owned-pipe-trial"),
+            Some("--af-unix-trial"),
+        ] {
+            assert!(!flag(true, normal) && flag(false, normal));
+        }
+        assert!(flag(true, Some("--job-member-diagnostic")));
+        assert!(!flag(false, Some("--job-member-diagnostic")));
+    }
+}
 #[cfg(any(windows, test))]
 fn no_vm_prelaunch(reply: &serde_json::Value) -> bool {
     reply["return"]["status"] == "prelaunch" && reply["return"]["running"] == false
@@ -68,6 +177,9 @@ mod native {
     mod controller;
     #[path = "loader_trace.rs"]
     mod loader_trace;
+    #[cfg(feature = "member-diagnostic")]
+    #[path = "member_diagnostic.rs"]
+    mod member_diagnostic;
     #[path = "owned_pipe_trial.rs"]
     mod owned_pipe_trial;
     #[path = "permission_diag.rs"]
@@ -202,14 +314,33 @@ mod native {
                     );
                 }
                 if e != 0 {
-                    return Err(io::Error::from_raw_os_error(e as i32));
+                    return Err(io::Error::other(format!(
+                        "PSS handle walk at entry {index}: {}",
+                        io::Error::from_raw_os_error(e as i32)
+                    )));
                 }
+                // Context only: acceptance below is unchanged.
+                let context = |what: String| {
+                    io::Error::other(format!(
+                        "PSS handle entry {index}: {what}; flags={:#x} objectType={} handle={:#x} access={:#x} typeNameLength={} typeNamePtrNull={} objectNameLength={} objectNamePtrNull={}",
+                        entry.Flags,
+                        entry.ObjectType,
+                        entry.Handle as usize,
+                        entry.GrantedAccess,
+                        entry.TypeNameLength,
+                        entry.TypeName.is_null(),
+                        entry.ObjectNameLength,
+                        entry.ObjectName.is_null()
+                    ))
+                };
                 // HAVE_TYPE validates ObjectType's small enum, not TypeName.
                 // Files and Jobs are not in that enum. PSS can omit File
                 // names entirely; classify the type, then query actual file IDs.
-                let kind = text(entry.TypeName, entry.TypeNameLength)?;
+                let kind = text(entry.TypeName, entry.TypeNameLength)
+                    .map_err(|e| context(format!("type name: {e}")))?;
                 let name = if entry.Flags & PSS_HANDLE_HAVE_NAME != 0 {
-                    text(entry.ObjectName, entry.ObjectNameLength)?
+                    text(entry.ObjectName, entry.ObjectNameLength)
+                        .map_err(|e| context(format!("object name: {e}")))?
                 } else {
                     String::new()
                 };
@@ -223,7 +354,7 @@ mod native {
                     );
                 }
                 if kind.is_empty() {
-                    return Err(io::Error::other("snapshot lacks object type name"));
+                    return Err(context("snapshot lacks object type name".into()));
                 }
                 if kind == "Job" {
                     jobs += 1
@@ -238,12 +369,13 @@ mod native {
                         0,
                         0,
                         DUPLICATE_SAME_ACCESS,
-                    ))?;
+                    ))
+                    .map_err(|e| context(format!("duplicate File: {e}")))?;
                     let file = File::from_raw_handle(dup);
                     match GetFileType(file.as_raw_handle()) {
                         FILE_TYPE_DISK => {
                             let id = runtime::identity::file_identity(&file)
-                                .map_err(io::Error::other)?;
+                                .map_err(|e| context(format!("File identity: {e}")))?;
                             if id == *expected {
                                 found += 1;
                             }
@@ -252,7 +384,11 @@ mod native {
                             }
                         }
                         FILE_TYPE_PIPE | FILE_TYPE_CHAR => {}
-                        _ => return Err(io::Error::other("snapshot File kind unavailable")),
+                        other => {
+                            return Err(context(format!(
+                                "snapshot File kind unavailable: type={other} name={name:?}"
+                            )))
+                        }
                     }
                 }
             }
@@ -357,6 +493,14 @@ mod native {
     }
     pub fn run() -> io::Result<()> {
         let args: Vec<_> = std::env::args().collect();
+        if !args
+            .get(1)
+            .is_some_and(|mode| crate::worker_mode_permitted(crate::DIAGNOSTIC_IMPORTS, mode))
+        {
+            return Err(io::Error::other(
+                "mode refused: a member-diagnostic build runs only its diagnostic, and normal builds never do",
+            ));
+        }
         if args.get(1).map(String::as_str) == Some("unix-connect") {
             check(args.len() == 3)?;
             return unix_trial::client(std::path::Path::new(&args[2]));
@@ -389,7 +533,8 @@ mod native {
                 "try-owned-pipe",
                 "try-unix",
             ]
-            .contains(&mode.as_str()),
+            .contains(&mode.as_str())
+                || (crate::DIAGNOSTIC_IMPORTS && mode == crate::MEMBER_DIAGNOSTIC),
         )?;
         let diagnostic_runtime = cfg.paths.runtime.clone();
         let paths = WindowsInputPaths {
@@ -532,6 +677,26 @@ mod native {
                 out.extend_from_slice(&buffer[..take]);
             }
         });
+        // Diagnostic worker: same fixed argv, spawn and inherited-handle checks as
+        // smoke, no permission_diag, no second QEMU, no quit, no qualification.
+        #[cfg(feature = "member-diagnostic")]
+        if mode == crate::MEMBER_DIAGNOSTIC {
+            check(!cfg.ci_access_proof && !loader_trace::enabled()?)?;
+            let result = member_diagnostic::run(member_diagnostic::Launch {
+                child,
+                stdin,
+                stdout,
+                errors,
+                guard: runtime::identity::file_identity(&spec.ownership)
+                    .map_err(io::Error::other)?,
+                canary: runtime::identity::file_identity(&canary).map_err(io::Error::other)?,
+                endpoint: endpoint_path,
+                inherited,
+            });
+            drop(spec);
+            drop(journal);
+            return result;
+        }
         let log_root = if cfg.ci_access_proof && mode == "smoke" {
             std::env::current_exe()?
                 .parent()

@@ -1,4 +1,4 @@
-name: Windows native premises
+name: Windows Job member diagnostic
 on:
   push:
     branches: [ci/windows-native-check]
@@ -76,7 +76,7 @@ jobs:
           $pipeTest = @(cargo +1.98.1-x86_64-pc-windows-msvc test --release --locked --manifest-path native-source/runtime/Cargo.toml -p bridge-runtime-protocol --test windows_backend pipe_query_accepts_only_protected_user_system_dacl 2>&1)
           $pipeTest | ForEach-Object { Write-Output $_ }
           if ($LASTEXITCODE -ne 0 -or ($pipeTest -join "`n") -notmatch 'test result: ok\. 1 passed; 0 failed;') { throw 'Protected pipe query regression failed or matched no test' }
-          cargo +1.98.1-x86_64-pc-windows-msvc build --release --locked --manifest-path driver/runtime/windows/native-check/probe/Cargo.toml 2>&1 | Tee-Object -FilePath (Join-Path $env:NATIVE_OUTPUT 'build.log')
+          cargo +1.98.1-x86_64-pc-windows-msvc build --release --locked --features member-diagnostic --manifest-path driver/runtime/windows/native-check/probe/Cargo.toml 2>&1 | Tee-Object -FilePath (Join-Path $env:NATIVE_OUTPUT 'build.log')
           if ($LASTEXITCODE -ne 0) { throw 'Native probe build failed' }
           $exe = Join-Path $env:CARGO_TARGET_DIR 'release/bridge-native-premises.exe'
           $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
@@ -116,123 +116,71 @@ jobs:
           python driver/runtime/windows/native-check/bundle.py prepare --producer $producer --run-file (Join-Path $producer 'producer-run.json') --sources driver/runtime/windows/sources.lock.json --packages driver/runtime/windows/packages.lock.json --exe (Join-Path $env:RUNNER_TEMP 'native-target/release/bridge-native-premises.exe') --output $env:NATIVE_OUTPUT --runtime (Join-Path $stage 'runtime') --driver-head $env:GITHUB_SHA
           if ($LASTEXITCODE -ne 0) { throw 'Independent producer verification or bundle assembly failed' }
           Copy-Item (Join-Path $env:NATIVE_OUTPUT 'bridge-native-premises.exe'), (Join-Path $env:NATIVE_OUTPUT 'runtime-pin.json') -Destination $stage
-      - name: Full four-case native qualification with required account challenge
+      - name: One bounded Job member diagnostic, not native qualification
         timeout-minutes: 12
         run: |
           $ErrorActionPreference = 'Stop'
-          $process = $null; $client = $null
-          $secure = $null; $otherSecure = $null
-          $created = $false; $otherCreated = $false
-          $name = 'bnc' + [guid]::NewGuid().ToString('N').Substring(0, 12)
-          $otherName = 'bno' + [guid]::NewGuid().ToString('N').Substring(0, 12)
-          $result = [ordered]@{ status = 'failed'; sourceHead = '443bcc0718a777e03057c20ddc1a8dff12b159bf'; fullFourCaseQualification = $true; controllerExitObserved = $false; accountRemoved = $false; otherAccountRemoved = $false; diagnosticLoaderTrace = $false }
+          $process = $null; $secure = $null; $created = $false
+          $name = 'bnd' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+          $result = [ordered]@{ status='failed'; sourceHead='443bcc0718a777e03057c20ddc1a8dff12b159bf'; diagnosticOnly=$true; fullFourCaseQualification=$false; fullContainmentQualified=$false; controllerExitObserved=$false; accountRemoved=$false }
           function Grant-Access([string]$Path, [string[]]$Rules) {
             & icacls.exe $Path /inheritance:r /grant:r @Rules | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'Cannot stage required access rights' }
           }
           try {
-            if (Test-Path -LiteralPath (Join-Path $env:NATIVE_STAGE 'loader-trace.enabled')) { throw 'No diagnostic debugger in AF_UNIX check' }
+            if (Test-Path -LiteralPath (Join-Path $env:NATIVE_STAGE 'loader-trace.enabled')) { throw 'No debugger in member diagnostic' }
             $secure = ConvertTo-SecureString ('Aa1!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))) -AsPlainText -Force
-            $otherSecure = ConvertTo-SecureString ('Aa1!' + [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(48))) -AsPlainText -Force
-            $user = New-LocalUser -Name $name -Password $secure -Description 'AF_UNIX owner check'; $created = $true
-            $other = New-LocalUser -Name $otherName -Password $otherSecure -Description 'AF_UNIX negative control'; $otherCreated = $true
+            $user = New-LocalUser -Name $name -Password $secure -Description 'Read-only Job member diagnostic'; $created = $true
             $users = Get-LocalGroup -SID 'S-1-5-32-545'; $admins = Get-LocalGroup -SID 'S-1-5-32-544'
-            Add-LocalGroupMember -Group $users -Member $user, $other
-            if (Get-LocalGroupMember -Group $admins | Where-Object { $_.SID -eq $user.SID -or $_.SID -eq $other.SID }) { throw 'Both accounts must be standard users' }
-            if ($user.SID.Value -eq $other.SID.Value) { throw 'Negative account must be distinct' }
-            $result.accountSid = $user.SID.Value; $result.otherSid = $other.SID.Value
+            Add-LocalGroupMember -Group $users -Member $user
+            if (Get-LocalGroupMember -Group $admins | Where-Object { $_.SID -eq $user.SID }) { throw 'Diagnostic caller must be a standard user' }
+            $result.accountSid = $user.SID.Value
             Grant-Access $env:NATIVE_STAGE @('*S-1-5-18:(OI)(CI)(F)', '*S-1-5-32-544:(OI)(CI)(F)', '*S-1-5-32-545:(OI)(CI)(RX)')
-            & icacls.exe $env:NATIVE_STAGE /grant:r ("*" + $user.SID.Value + ':(OI)(CI)(RX)') ("*" + $other.SID.Value + ':(OI)(CI)(RX)') /T | Out-Null
+            & icacls.exe $env:NATIVE_STAGE /grant:r ("*" + $user.SID.Value + ':(OI)(CI)(RX)') /T | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'Payload read rights could not be staged' }
-            # Separate diagnostics export only; never widen private endpoints or inputs.
-            $logs = Join-Path $env:NATIVE_STAGE 'logs'; New-Item -ItemType Directory -Path $logs -ErrorAction Stop | Out-Null
-            Grant-Access $logs @('*S-1-5-18:(OI)(CI)(F)', '*S-1-5-32-544:(OI)(CI)(F)', ("*" + $user.SID.Value + ':(OI)(CI)(F)'))
-            $parent = Join-Path $env:NATIVE_STAGE 'work'; New-Item -ItemType Directory -Path $parent -ErrorAction Stop | Out-Null
-            Grant-Access $parent @('*S-1-5-18:(OI)(CI)(F)', '*S-1-5-32-544:(OI)(CI)(F)', ("*" + $user.SID.Value + ':(OI)(CI)(F)'))
-            # This separate positive-control fixture deliberately admits the other account.
-            # The private directory and target socket are NEVER widened or repaired.
-            $controlDir = Join-Path $env:NATIVE_STAGE 'af-control'; New-Item -ItemType Directory -Path $controlDir -ErrorAction Stop | Out-Null
-            Grant-Access $controlDir @('*S-1-5-18:(OI)(CI)(F)', '*S-1-5-32-544:(OI)(CI)(F)', ("*" + $user.SID.Value + ':(OI)(CI)(F)'), ("*" + $other.SID.Value + ':(OI)(CI)(F)'))
+            foreach ($leaf in 'logs','work') {
+              $dir = Join-Path $env:NATIVE_STAGE $leaf
+              New-Item -ItemType Directory -Path $dir -ErrorAction Stop | Out-Null
+              Grant-Access $dir @('*S-1-5-18:(OI)(CI)(F)', '*S-1-5-32-544:(OI)(CI)(F)', ("*" + $user.SID.Value + ':(OI)(CI)(F)'))
+            }
+            $provenancePath = Join-Path $env:NATIVE_OUTPUT 'bundle-provenance.json'
+            $provenance = Get-Content -LiteralPath $provenancePath -Raw | ConvertFrom-Json -AsHashtable
+            $provenance.diagnosticOnly = $true
+            $provenance.diagnosticImports = $true
+            $provenance.fullContainmentQualified = $false
+            $provenance.qualification = 'Modified diagnostic Job import; not a four-case containment or operator qualification'
+            $provenance | ConvertTo-Json -Depth 16 | Set-Content -Encoding utf8 -LiteralPath $provenancePath
             $exe = Join-Path $env:NATIVE_STAGE 'bridge-native-premises.exe'
             $runtime = Join-Path $env:NATIVE_STAGE 'runtime'; $pin = Join-Path $env:NATIVE_STAGE 'runtime-pin.json'
             $credential = [PSCredential]::new(("$env:COMPUTERNAME\" + $name), $secure)
-            $otherCredential = [PSCredential]::new(("$env:COMPUTERNAME\" + $otherName), $otherSecure)
-            # Complete the second user's first profile logon BEFORE the owner's
-            # fixed 30-second challenge window. This is not a connection proof.
-            $warmupOut = Join-Path $env:NATIVE_OUTPUT 'ci-af-warmup.json'
-            $client = Start-Process -FilePath $exe -ArgumentList ('unix-connect "{0}"' -f (Join-Path $controlDir 'absent.sock')) -Credential $otherCredential -LoadUserProfile -UseNewEnvironment -WorkingDirectory $env:NATIVE_STAGE -RedirectStandardOutput $warmupOut -RedirectStandardError (Join-Path $env:NATIVE_OUTPUT 'ci-af-client-stderr.txt') -PassThru
-            [void]$client.Handle
-            if (-not $client.WaitForExit(45000) -or $client.ExitCode -ne 0) { throw 'Other-account profile warmup failed' }
-            $warmup = Get-Content -LiteralPath $warmupOut -Raw | ConvertFrom-Json -AsHashtable
-            if ($warmup.sourceHead -ne '443bcc0718a777e03057c20ddc1a8dff12b159bf' -or $warmup.caller.userSid -ne $other.SID.Value -or $warmup.caller.elevated -ne $false) { throw 'Other-account warmup identity mismatch' }
-            $client.Dispose(); $client = $null
-            $arguments = 'check "{0}" "{1}" "{2}" --ci-access-proof' -f $runtime, $pin, (Join-Path $parent 'cases')
+            $arguments = 'check "{0}" "{1}" "{2}" --job-member-diagnostic' -f $runtime, $pin, (Join-Path $env:NATIVE_STAGE 'work/cases')
             $out = Join-Path $env:NATIVE_OUTPUT 'ci-stdout.txt'; $err = Join-Path $env:NATIVE_OUTPUT 'ci-stderr.txt'
             $process = Start-Process -FilePath $exe -ArgumentList $arguments -Credential $credential -LoadUserProfile -UseNewEnvironment -WorkingDirectory $env:NATIVE_STAGE -RedirectStandardOutput $out -RedirectStandardError $err -PassThru
             [void]$process.Handle
-            $until = [DateTime]::UtcNow.AddSeconds(90); $ready = $null
-            while ($null -eq $ready) {
-              if (Test-Path -LiteralPath $out) {
-                foreach ($line in @(Get-Content -LiteralPath $out)) {
-                  if ($line.StartsWith('{') -and $line.EndsWith('}')) {
-                    try { $item = $line | ConvertFrom-Json -AsHashtable } catch { continue }
-                    if ($item.stage -eq 'native-control-ready') { $ready = $item }
-                  }
-                }
-              }
-              if ($null -ne $ready) { break }
-              if ($process.HasExited -or [DateTime]::UtcNow -ge $until) { throw 'AF_UNIX endpoint did not become ready; inspect actual startup/security diagnostics' }
-              Start-Sleep -Milliseconds 20
-            }
-            if ($ready.sourceHead -ne '443bcc0718a777e03057c20ddc1a8dff12b159bf') { throw 'Wrong ready source' }
-            $observations = @{}
-            foreach ($case in @(@{ name='control'; path=$ready.control }, @{ name='private'; path=$ready.endpoint })) {
-              $clientOut = Join-Path $env:NATIVE_OUTPUT ('ci-af-' + $case.name + '.json')
-              $client = Start-Process -FilePath $exe -ArgumentList ('unix-connect "{0}"' -f $case.path) -Credential $otherCredential -LoadUserProfile -UseNewEnvironment -WorkingDirectory $env:NATIVE_STAGE -RedirectStandardOutput $clientOut -RedirectStandardError (Join-Path $env:NATIVE_OUTPUT 'ci-af-client-stderr.txt') -PassThru
-              [void]$client.Handle
-              if (-not $client.WaitForExit(45000)) { throw 'Owned negative-control client exceeded deadline' }
-              if ($client.ExitCode -ne 0) { throw 'Other-account client failed before reporting its socket result' }
-              $observation = Get-Content -LiteralPath $clientOut -Raw | ConvertFrom-Json -AsHashtable
-              if ($observation.sourceHead -ne '443bcc0718a777e03057c20ddc1a8dff12b159bf' -or $observation.path -ne $case.path -or $observation.caller.userSid -ne $other.SID.Value -or $observation.caller.elevated -ne $false) { throw 'Other-account socket result identity mismatch' }
-              $observations[$case.name] = $observation
-              $client.Dispose(); $client = $null
-            }
-            $proof = [ordered]@{ sourceHead='443bcc0718a777e03057c20ddc1a8dff12b159bf'; endpoint=$ready.endpoint; primarySid=$user.SID.Value; otherSid=$other.SID.Value; otherElevated=$observations.private.caller.elevated; controlConnected=$observations.control.result.connected; controlPeerPid=$observations.control.result.peerPid; privateConnected=$observations.private.result.connected; privateError=$observations.private.result.errorCode }
-            $result.otherAccount = $proof
-            # Stage is admin-owned and read-only to both accounts. Publish proof atomically.
-            $proofPath = Join-Path $env:NATIVE_STAGE 'af-unix-proof.json'
-            if (Test-Path -LiteralPath $proofPath) { throw 'Refusing pre-existing AF_UNIX proof' }
-            $tmp = Join-Path $env:NATIVE_STAGE 'af-unix-proof.tmp'
-            $proof | ConvertTo-Json -Depth 8 | Set-Content -Encoding utf8 -LiteralPath $tmp
-            Move-Item -LiteralPath $tmp -Destination $proofPath -ErrorAction Stop
-            if (-not $process.WaitForExit(240000)) { throw 'Full four-case controller did not finish its bounded checks' }
+            if (-not $process.WaitForExit(180000)) { throw 'Single diagnostic exceeded bounded controller window' }
             $result.controllerExitObserved = $true
-            if ($process.ExitCode -ne 0) { throw 'Full native security, QMP or ownership case failed' }
-            $lines = @(Get-Content -LiteralPath $out | Where-Object { $_.StartsWith('{') })
-            if ($lines.Count -ne 2) { throw 'Expected ready and complete four-case receipt' }
+            if ($process.ExitCode -ne 0) { throw 'Diagnostic failed; preserve evidence, do not repeat automatically' }
+            $lines = @(Get-Content -LiteralPath $out | Where-Object { $_.StartsWith('{') -and $_.EndsWith('}') })
+            if ($lines.Count -lt 1) { throw 'Missing diagnostic receipt' }
             $receipt = $lines[-1] | ConvertFrom-Json -AsHashtable
             $trustedPin = Get-Content -LiteralPath $pin -Raw | ConvertFrom-Json -AsHashtable
-            if ($receipt.status -ne 'passed' -or $receipt.sourceHead -ne '443bcc0718a777e03057c20ddc1a8dff12b159bf' -or $receipt.caller.userSid -ne $result.accountSid -or $receipt.caller.elevated -ne $false -or $receipt.probeSha256 -ne (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() -or $receipt.producerRun -ne 42120608528 -or $receipt.runtimeZipSha256 -ne $trustedPin.runtimeZipSha256) { throw 'Receipt binding mismatch' }
-            if ($receipt.cases.Count -ne 4 -or (@($receipt.cases.case) -join ',') -ne 'smoke,hold-created,hold-pipe,hold-guard-only') { throw 'All four unchanged premises cases are required' }
-            $smoke = $receipt.cases[0].result
-            if ($smoke.smoke -ne 'passed' -or $smoke.qmp.replies[1].return.status -ne 'prelaunch' -or $smoke.qmp.replies[1].return.running -ne $false -or $smoke.qmp.replies[2].id -ne 3 -or $smoke.qmp.quitExitObserved -ne $true -or $smoke.qmp.exitCode -ne 0 -or $smoke.terminalDisconnect.exitObserved -ne $true -or $smoke.terminalDisconnect.exitCode -ne 1 -or $smoke.otherAccount.privateError -ne 10013 -or $smoke.otherAccount.controlConnected -ne $true) { throw 'Exact QMP, quit, disconnect and account proof required' }
-            foreach ($mapping in @(@{src=$smoke.qmp.rx;name='ci-qmp-rx.jsonl'}, @{src=$smoke.qmp.tx;name='ci-qmp-tx.jsonl'}, @{src=$smoke.terminalDisconnect.rx;name='ci-qmp-disconnect-rx.jsonl'}, @{src=$smoke.terminalDisconnect.tx;name='ci-qmp-disconnect-tx.jsonl'})) { Copy-Item -LiteralPath $mapping.src -Destination (Join-Path $env:NATIVE_OUTPUT $mapping.name) -ErrorAction Stop }
-            $smoke | ConvertTo-Json -Depth 16 | Set-Content -Encoding utf8 (Join-Path $env:NATIVE_OUTPUT 'ci-qmp-summary.json')
-            $result.status = 'passed'; $result.receipt = $receipt
+            if ($receipt.status -ne 'job-member-diagnostic-only' -or $receipt.diagnosticComplete -ne $true -or $receipt.imports.diagnosticImports -ne $true -or $receipt.imports.derivedNotProduct -ne $true -or $receipt.imports.jobSourceSha256 -notmatch '^[0-9a-f]{64}$' -or $receipt.imports.jobImportSha256 -notmatch '^[0-9a-f]{64}$' -or $receipt.imports.jobSourceSha256 -eq $receipt.imports.jobImportSha256 -or $receipt.runtimeZipSha256 -ne $trustedPin.runtimeZipSha256 -or $receipt.sourceHead -ne '443bcc0718a777e03057c20ddc1a8dff12b159bf' -or $receipt.diagnosticOnly -ne $true -or $receipt.fullContainmentQualified -ne $false -or $receipt.caller.userSid -ne $result.accountSid -or $receipt.caller.elevated -ne $false -or $receipt.probeSha256 -ne (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant() -or $receipt.producerRun -ne 42120608528) { throw 'Diagnostic receipt binding mismatch' }
+            $result.receipt = $receipt
+            $result.status = 'diagnostic-only'
           } catch { $result.error = $_.Exception.Message } finally {
-            foreach ($owned in @($client, $process)) {
-              if ($null -ne $owned) {
-                try { if (-not $owned.HasExited) { $owned.Kill() }; if (-not $owned.WaitForExit(45000)) { throw 'Owned process exit unobserved' } } catch { $result.status='failed'; $result.cleanupError=$_.Exception.Message } finally { $owned.Dispose() }
-              }
+            if ($null -ne $process) {
+              try { if (-not $process.HasExited) { $process.Kill() }; if (-not $process.WaitForExit(45000)) { throw 'Owned controller exit unobserved' } } catch { $result.status='failed'; $result.cleanupError=$_.Exception.Message } finally { $process.Dispose() }
             }
-            foreach ($mapping in @(@{src='qmp-rx.jsonl';name='ci-qmp-rx.jsonl'}, @{src='qmp-tx.jsonl';name='ci-qmp-tx.jsonl'}, @{src='qmp-disconnect-rx.jsonl';name='ci-qmp-disconnect-rx.jsonl'}, @{src='qmp-disconnect-tx.jsonl';name='ci-qmp-disconnect-tx.jsonl'})) { $p=Join-Path (Join-Path $env:NATIVE_STAGE 'logs') $mapping.src; if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $env:NATIVE_OUTPUT $mapping.name) -Force } }
+            foreach ($mapping in @(@{src='job-member-diagnostic-qmp-rx.jsonl';name='ci-qmp-rx.jsonl'}, @{src='job-member-diagnostic-qmp-tx.jsonl';name='ci-qmp-tx.jsonl'}, @{src='job-member-diagnostic-receipt.json';name='ci-job-member-diagnostic.json'})) {
+              $p = Join-Path (Join-Path $env:NATIVE_STAGE 'logs') $mapping.src
+              if (Test-Path -LiteralPath $p) { Copy-Item -LiteralPath $p -Destination (Join-Path $env:NATIVE_OUTPUT $mapping.name) -Force }
+            }
             if ($created) { try { Remove-LocalUser -Name $name; $result.accountRemoved=$true } catch { $result.status='failed'; $result.cleanupError=$_.Exception.Message } }
-            if ($otherCreated) { try { Remove-LocalUser -Name $otherName; $result.otherAccountRemoved=$true } catch { $result.status='failed'; $result.cleanupError=$_.Exception.Message } }
-            if ($null -ne $secure) { $secure.Dispose() }; if ($null -ne $otherSecure) { $otherSecure.Dispose() }
-            $result | ConvertTo-Json -Depth 16 | Set-Content -Encoding utf8 (Join-Path $env:NATIVE_OUTPUT 'ci-controller.json')
-            foreach ($file in 'ci-stdout.txt','ci-stderr.txt','ci-controller.json','ci-af-control.json','ci-af-private.json','ci-af-client-stderr.txt') { $p=Join-Path $env:NATIVE_OUTPUT $file; if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p } }
+            if ($null -ne $secure) { $secure.Dispose() }
+            $result | ConvertTo-Json -Depth 24 | Set-Content -Encoding utf8 (Join-Path $env:NATIVE_OUTPUT 'ci-controller.json')
+            foreach ($file in 'ci-stdout.txt','ci-stderr.txt','ci-controller.json') { $p=Join-Path $env:NATIVE_OUTPUT $file; if (Test-Path -LiteralPath $p) { Get-Content -LiteralPath $p } }
           }
-          if ($result.status -ne 'passed') { throw 'Complete four-case native qualification did not pass; retain the failed evidence' }
+          if ($result.status -ne 'diagnostic-only') { throw 'Bounded diagnostic incomplete; do not infer qualification or repeat automatically' }
 
       - name: Hash only actual operator files, including failure diagnostics
         if: always()
@@ -272,6 +220,7 @@ jobs:
             ${{ runner.temp }}/native-operator/ci-qmp-disconnect-rx.jsonl
             ${{ runner.temp }}/native-operator/ci-qmp-disconnect-tx.jsonl
             ${{ runner.temp }}/native-operator/ci-qmp-summary.json
+            ${{ runner.temp }}/native-operator/ci-job-member-diagnostic.json
             ${{ runner.temp }}/native-operator/operator-sha256sums.txt
           retention-days: 7
           if-no-files-found: error

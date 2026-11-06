@@ -22,7 +22,7 @@ BUNDLE_FILES = (*PRODUCER_FILES, "bridge-native-premises.exe", "runtime-pin.json
                 "ci-owned-pipe-stdout.txt", "ci-owned-pipe-stderr.txt",
                 "ci-af-warmup.json", "ci-af-control.json", "ci-af-private.json", "ci-af-client-stderr.txt",
                 "ci-qmp-rx.jsonl", "ci-qmp-tx.jsonl", "ci-qmp-disconnect-rx.jsonl",
-                "ci-qmp-disconnect-tx.jsonl", "ci-qmp-summary.json")
+                "ci-qmp-disconnect-tx.jsonl", "ci-qmp-summary.json", "ci-job-member-diagnostic.json")
 
 
 def write_json(path, value):
