@@ -221,6 +221,24 @@ private struct Tests {
             _ = try VirtualizationDriver(configuration: VZVirtualMachineConfiguration(), queue: q)
             check(false, "invalid native configuration reached VM construction")
         } catch { /* Validation is required before any native VM instance exists. */ }
+        do {
+            let h = Harness(q); h.running(); h.driver.canStop = false
+            h.core.receive(frame(83,1))
+            check(h.trace.terminal.isEmpty && fcntl(h.fd,F_GETFD) >= 0, "refused S did not quarantine")
+            h.driver.ended(.stopped)
+            check(h.trace.writes.last == frame(69,1) && h.trace.terminal == [false], "refused S became success after unrelated stop")
+        }
+        do {
+            var h: Harness? = Harness(q)
+            let fd = h!.fd
+            h!.running(); h!.core.receive(frame(83,1)); h!.driver.complete(.stopped)
+            // Reuse a released FD before FileHandle deallocation; never close a
+            // descriptor still owned by the core to fabricate an API exception.
+            precondition(dup2(h!.original.fileDescriptor, fd) == fd)
+            h = nil
+            check(fcntl(fd,F_GETFD) >= 0, "owner deallocation closed a reused FD")
+            _ = close(fd)
+        }
         check(BridgeVM.successor(UInt64.max) == nil, "ID wrapped")
         check(BridgeVM.successor(255) == 256, "ID successor")
         check(VirtualizationDriver.classify(.stopped) == .stopped, "native stopped mapping")
