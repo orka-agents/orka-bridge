@@ -47,15 +47,36 @@ pub struct Journal {
     creation_live: bool,
 }
 fn lock(root: &Path) -> Result<File, RuntimeError> {
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(root.join("owner.lock"))?;
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Unlike a process-owned byte lock, this capability survives in the child.
+        options.share_mode(0);
+    }
+    let file = options.open(root.join("owner.lock")).map_err(|e| {
+        #[cfg(windows)]
+        {
+            super::windows::job::owner_lock_error(e)
+        }
+        #[cfg(not(windows))]
+        {
+            RuntimeError::from(e)
+        }
+    })?;
     file.try_lock().map_err(|e| match e {
         fs::TryLockError::WouldBlock => RuntimeError::Busy,
-        fs::TryLockError::Error(e) => e.into(),
+        fs::TryLockError::Error(e) => {
+            #[cfg(windows)]
+            {
+                super::windows::job::owner_lock_error(e)
+            }
+            #[cfg(not(windows))]
+            {
+                e.into()
+            }
+        }
     })?;
     Ok(file)
 }
@@ -371,6 +392,31 @@ mod image_wiring_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn new_installation_lock_denies_open_even_after_original_handle_drops() {
+        let t = tempfile::tempdir().unwrap();
+        let owner = lock(t.path()).unwrap();
+        let duplicate = owner.try_clone().unwrap();
+        drop(owner);
+        let err = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(t.path().join("owner.lock"))
+            .unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(32));
+        assert!(matches!(lock(t.path()), Err(RuntimeError::Busy)));
+        drop(duplicate);
+        assert!(lock(t.path()).is_ok());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn journal_open_contention_is_busy_before_try_lock() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("installation");
+        let _owner = Journal::create(&root, BackendKind::Qemu, b"pc-q35-11.0".to_vec()).unwrap();
+        assert!(matches!(Journal::open(&root), Err(RuntimeError::Busy)));
+    }
     #[test]
     fn failed_state_flush_cannot_commit_prepared() {
         let temp = tempfile::tempdir().unwrap();

@@ -3,6 +3,27 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::io::Write;
 
+#[cfg(windows)]
+#[test]
+fn original_deny_sharing_owner_is_validated_without_reopening_its_data() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("install");
+    let journal = crate::runtime::journal::Journal::create(
+        &root,
+        crate::runtime::types::BackendKind::Qemu,
+        vec![1],
+    )
+    .unwrap();
+    let target = journal.image_target("fixture-owner").unwrap();
+    validate_target(target.root, target.owner, target.id).unwrap();
+    assert_eq!(
+        File::open(root.join("owner.lock"))
+            .unwrap_err()
+            .raw_os_error(),
+        Some(32),
+        "identity validation must not weaken the original deny-sharing guard"
+    );
+}
 fn hash(data: &[u8]) -> String {
     format!("{:x}", Sha256::digest(data))
 }

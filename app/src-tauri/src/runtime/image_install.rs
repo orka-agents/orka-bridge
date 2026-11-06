@@ -267,8 +267,37 @@ fn valid_hash(value: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
+fn owner_path_identity(root: &Dir) -> Result<FileIdentity, ImageError> {
+    #[cfg(windows)]
+    {
+        use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
+        use cap_std::fs::{OpenOptions, OpenOptionsExt};
+        use windows_sys::Win32::Storage::FileSystem::FILE_READ_ATTRIBUTES;
+        // The supplied capability already holds the original deny-sharing lock.
+        // Query the anchored namespace identity, never reopen that lock for data.
+        let mut options = OpenOptions::new();
+        options
+            .read(true)
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .follow(FollowSymlinks::No);
+        let file = root
+            .open_with("owner.lock", &options)
+            .map_err(storage)?
+            .into_std();
+        image_cache::not_reparse(&file)?;
+        if !file.metadata().map_err(storage)?.is_file() {
+            return Err(ImageError::UnsafePath);
+        }
+        single_link(&file)?;
+        fid(&file)
+    }
+    #[cfg(not(windows))]
+    {
+        fid(&read_file(root, "owner.lock")?)
+    }
+}
 fn validate_target(root: &Dir, owner: &File, id: Uuid) -> Result<(), ImageError> {
-    if id.is_nil() || fid(&read_file(root, "owner.lock")?)? != fid(owner)? {
+    if id.is_nil() || owner_path_identity(root)? != fid(owner)? {
         return Err(ImageError::RetainedImage);
     }
     image_cache::not_reparse(&root.try_clone().map_err(storage)?.into_std_file())

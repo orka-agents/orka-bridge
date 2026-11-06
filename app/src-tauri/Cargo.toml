@@ -19,15 +19,15 @@ tauri = { version = "=2.12.5", features = [] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 serde_yaml_ng = "=0.10.0"
-semver = "=1.0.28"
 sha2 = "=0.10.9"
+semver = "=1.0.28"
 flate2 = "=1.1.10"
 reqwest = { version = "=0.13.5", default-features = false, features = ["native-tls", "stream"] }
 bridge-runtime-protocol = { path = "../../runtime/protocol" }
 tokio = { version = "=1.54.1", features = ["process", "io-util", "sync", "rt", "macros", "time", "fs"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Win32_Storage_FileSystem", "Win32_Foundation", "Win32_UI_Shell", "Win32_System_Com", "Win32_System_Threading", "Win32_System_IO", "Wdk_Storage_FileSystem", "Wdk_System_SystemServices"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_System_IO", "Win32_System_SystemServices", "Win32_Networking_WinSock", "Win32_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_UI_Shell", "Win32_System_Com", "Wdk_Storage_FileSystem", "Wdk_System_SystemServices"] }
 
 [dev-dependencies]
 rcgen = { version = "=0.14.10", default-features = false, features = ["ring"] }

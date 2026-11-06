@@ -13,6 +13,7 @@ pub mod setup_adapter;
 pub mod snapshot;
 pub mod spawn_guard;
 pub mod types;
+pub mod windows;
 pub mod wire;
 
 use bridge_runtime_protocol::*;
