@@ -101,6 +101,75 @@ async fn installation_symlinks_hardlinks_and_fifos_do_not_escape_the_owned_root(
     }
 }
 #[test]
+fn detached_materialization_keeps_the_same_counted_ownership_arc() {
+    use std::{
+        future::Future,
+        pin::Pin,
+        task::{Context as TaskContext, Poll, Waker},
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let Scene {
+            temp,
+            image,
+            root,
+            lock,
+            id,
+        } = Scene::new();
+        let mut owner = lock;
+        let (release, wait) = std::sync::mpsc::channel();
+        let blocker = tokio::task::spawn_blocking(move || wait.recv().unwrap());
+        let target = InstallationImageTarget::from_owned_installation(
+            &root,
+            &owner,
+            id,
+            ImageTarget::WindowsAmd64,
+            &image.image().identity().state_compatibility_id,
+            true,
+        );
+        let (_sender, closed) = watch::channel(false);
+        let mut future = Box::pin(materialize_image(&image, &target, closed, |_| {}));
+        assert!(matches!(
+            Pin::new(&mut future).poll(&mut TaskContext::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        drop(future);
+        drop(target);
+        let count = Arc::strong_count(&owner);
+        // Match Journal's last-Arc release policy, including after cancellation.
+        if let Some(file) = Arc::get_mut(&mut owner) {
+            file.unlock().unwrap();
+        }
+        drop(owner);
+        let contender = File::options()
+            .read(true)
+            .write(true)
+            .open(temp.path().join("install/owner.lock"))
+            .unwrap();
+        let busy = matches!(contender.try_lock(), Err(std::fs::TryLockError::WouldBlock));
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        tokio::task::spawn_blocking(|| {}).await.unwrap();
+        assert_eq!(
+            count, 2,
+            "the actual queued job must retain the SAME ownership Arc"
+        );
+        assert!(
+            busy,
+            "dropping the caller must not unlock an unquiescent image job"
+        );
+        contender
+            .try_lock()
+            .expect("final job holder must release ownership");
+        assert!(!temp.path().join("install/image-binding.json").exists());
+    });
+}
+
+#[test]
 fn dropping_a_queued_materialization_future_keeps_real_ownership_until_job_quiescence() {
     use std::{
         future::Future,

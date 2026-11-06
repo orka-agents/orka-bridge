@@ -102,6 +102,26 @@ or exclusive disk handles; the backend must revalidate under current ownership
 and retain its normal container inspection and lifetime controls. This API does not
 wire the runtime, start a VM, migrate journals or select a production image.
 
+## Native image handoff
+
+Native callers can use `runtime::setup_adapter::prepare_pinned_image` with a
+Rust-owned pin, host facts, cache and HTTP client. It loads the pinned manifest,
+acquires verified files and returns a `PreparedImage`. A complete cache is reused
+without HTTP. Debug callers can instead use `prepare_development_image` on the
+existing verified local source; release builds contain no local-source bridge.
+
+Finish source preparation before taking installation ownership. Then call
+`PreparedImage::materialize` with the owner's borrowed installation target and
+cancellation receiver. Both sources use the same verified private copies and
+binding publication. The actual blocking job retains the owner's counted Arc,
+not a duplicated ownership file. The result remains metadata-only.
+
+Engineering identity is explicit: the common manifest-hash slot identifies its
+raw pinned boot receipt, not a release manifest. Its compatibility ID is
+`engineering-afc68ae1`. Neither source preparation nor materialization starts a
+VM or reports whole-setup readiness. Backend selection, launch validation and
+the visible setup connection remain the native runtime caller's responsibility.
+
 ## Local development image
 
 Debug builds can read a local engineering image with `BRIDGE_DEV_IMAGE_DIR`.

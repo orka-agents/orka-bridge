@@ -26,11 +26,37 @@ pub enum DevImageDiskFormat {
     Qcow2,
 }
 
+pub const STATE_COMPATIBILITY_ID: &str = "engineering-afc68ae1";
+pub(crate) const SOURCE_COMMIT: &str = "afc68ae14e9702d148b01b243cc2a27d90fde5a6";
+
 pub struct VerifiedDevImage {
     platform: DevImagePlatform,
+    pins: [FilePin; 4],
     files: [File; 4],
 }
 impl VerifiedDevImage {
+    pub(crate) fn try_clone(&self) -> Result<Self, DevImageError> {
+        let copy = || {
+            Ok::<_, io::Error>(Self {
+                platform: self.platform,
+                pins: self.pins,
+                files: [
+                    self.files[0].try_clone()?,
+                    self.files[1].try_clone()?,
+                    self.files[2].try_clone()?,
+                    self.files[3].try_clone()?,
+                ],
+            })
+        };
+        copy().map_err(|_| DevImageError)
+    }
+    pub(crate) fn declared(&self, slot: usize) -> (u64, String) {
+        let pin = &self.pins[slot];
+        (
+            pin.bytes,
+            pin.sha256.iter().map(|b| format!("{b:02x}")).collect(),
+        )
+    }
     pub fn platform(&self) -> DevImagePlatform {
         self.platform
     }
@@ -66,6 +92,7 @@ impl fmt::Debug for DevImageError {
 }
 impl std::error::Error for DevImageError {}
 
+#[derive(Clone, Copy)]
 struct FilePin {
     name: &'static str,
     bytes: u64,
@@ -197,6 +224,7 @@ fn verify(root: &Dir, pins: &Pins) -> Result<VerifiedDevImage, DevImageError> {
     let result = (|| {
         Ok::<_, io::Error>(VerifiedDevImage {
             platform: pins.platform,
+            pins: pins.files,
             files: [
                 verified_file(root, &pins.files[0])?,
                 verified_file(root, &pins.files[1])?,
@@ -246,6 +274,10 @@ fn verified_file(root: &Dir, pin: &FilePin) -> io::Result<File> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(debug_assertions)]
+    mod installation {
+        include!("dev_image_install_tests.rs");
+    }
     use super::*;
     use cap_std::{ambient_authority, fs::Dir};
     use sha2::{Digest, Sha256};
