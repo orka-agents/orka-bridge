@@ -123,3 +123,5 @@ async fn materialization_copies_private_bytes_and_reopens_a_committed_binding() 
 mod boundary;
 #[path = "image_install_native_tests.rs"]
 mod native;
+#[path = "image_setup_tests.rs"]
+mod setup;

@@ -249,7 +249,7 @@ impl tokio::io::AsyncWrite for AssetWriter {
     }
 }
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, ImageError> + Send + 'static,
 ) -> Result<T, ImageError> {
     tokio::task::spawn_blocking(work)

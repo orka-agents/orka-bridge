@@ -1,4 +1,9 @@
 // Compile and exercise the same installation source without desktop SDKs.
+#[path = "../../../app/src-tauri/src/runtime/acquire.rs"]
+pub mod acquire;
+#[path = "../../../app/src-tauri/src/runtime/setup_adapter.rs"]
+pub mod setup_adapter;
+
 #[path = "../../../app/src-tauri/src/runtime/identity.rs"]
 pub mod identity;
 #[path = "../../../app/src-tauri/src/runtime/image_cache.rs"]
