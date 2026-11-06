@@ -1,6 +1,6 @@
 # Standalone Windows native-premises check
 
-This driver is sealed to source `06e7307a9c7a9c78b3b116474e2d042e584f2b9d`. CI builds Rust 1.98.1 MSVC x64 with static CRT. The operator needs no Rust, Visual Studio, Python or helper script.
+This driver is sealed to source `babe04a65a46962081ba8678022abe0d67364797`. CI builds Rust 1.98.1 MSVC x64 with static CRT. The operator needs no Rust, Visual Studio, Python or helper script.
 
 It uses only original runtime producer 42120608528 at `006b30f02a3c9cec61f8f3cc32fde6b0d248fc34`. It verifies the authenticated producer selection, both ZIP inventories and the unchanged external package/source locks before extraction. It never dispatches a producer or patches QEMU. Hashes are engineering verification, not remote attestation or proof of binary-to-source equivalence.
 
