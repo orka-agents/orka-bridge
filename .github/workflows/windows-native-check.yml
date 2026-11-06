@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           path: native-source
-          ref: 24096131fcba3ff7cf3a30ccdb352f83efe56292
+          ref: faa106f040e7bb00b3dac23938177e00502fe6f6
           persist-credentials: false
       - name: Initialize diagnostic directory and assert source identity
         run: |
@@ -46,7 +46,7 @@ jobs:
           New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
           "NATIVE_OUTPUT=$output" >> $env:GITHUB_ENV
           $head = git -C native-source rev-parse HEAD
-          if ($LASTEXITCODE -ne 0 -or $head -ne '24096131fcba3ff7cf3a30ccdb352f83efe56292') { throw 'Wrong source head' }
+          if ($LASTEXITCODE -ne 0 -or $head -ne 'faa106f040e7bb00b3dac23938177e00502fe6f6') { throw 'Wrong source head' }
           $dirty = git -C native-source status --porcelain --untracked-files=all
           if ($LASTEXITCODE -ne 0 -or $dirty) { throw 'Source checkout is not clean' }
           git -C driver diff --exit-code 006b30f02a3c9cec61f8f3cc32fde6b0d248fc34 -- runtime/windows/recipe.py runtime/windows/verify.py runtime/windows/sources.lock.json runtime/windows/packages.lock.json
@@ -69,6 +69,10 @@ jobs:
           RUSTFLAGS: -Ctarget-feature=+crt-static
         run: |
           $ErrorActionPreference = 'Stop'
+          cargo +1.98.1-x86_64-pc-windows-msvc test --release --locked --manifest-path native-source/runtime/Cargo.toml -p bridge-runtime-protocol --test windows_backend restricted_token_default_dacl_stays_user_and_system_only
+          if ($LASTEXITCODE -ne 0) { throw 'Default DACL regression failed' }
+          cargo +1.98.1-x86_64-pc-windows-msvc test --release --locked --manifest-path native-source/runtime/Cargo.toml -p bridge-runtime-protocol --test windows_backend restricting_sids_are_exactly_user_system_and_restricted
+          if ($LASTEXITCODE -ne 0) { throw 'Exact restricting SID regression failed' }
           cargo +1.98.1-x86_64-pc-windows-msvc build --release --locked --manifest-path driver/runtime/windows/native-check/probe/Cargo.toml 2>&1 | Tee-Object -FilePath (Join-Path $env:NATIVE_OUTPUT 'build.log')
           if ($LASTEXITCODE -ne 0) { throw 'Native probe build failed' }
           $exe = Join-Path $env:CARGO_TARGET_DIR 'release/bridge-native-premises.exe'
@@ -116,11 +120,9 @@ jobs:
           $process = $null
           $secure = $null
           $created = $false
-          $traceKeyCreated = $false
-          $traceKey = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\qemu-system-x86_64.exe'
           $name = 'bnc' + [guid]::NewGuid().ToString('N').Substring(0, 12)
           $result = [ordered]@{
-            status = 'failed'; sourceHead = '24096131fcba3ff7cf3a30ccdb352f83efe56292'
+            status = 'failed'; sourceHead = 'faa106f040e7bb00b3dac23938177e00502fe6f6'
             timedOut = $false; controllerExitObserved = $false
             accountRemoved = $false; privateWorkroot = 'not read or uploaded; disposed with hosted runner'
           }
@@ -129,13 +131,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Cannot stage the required access rights' }
           }
           try {
-            # Loader snaps ONLY on this disposable CI image. No Debugger value,
-            # mitigations, token, ACL, privilege or QEMU launch flags are changed.
-            if (Test-Path -LiteralPath $traceKey) { throw 'Refusing to overwrite an existing QEMU IFEO key' }
-            New-Item -Path $traceKey -Force | Out-Null
-            $traceKeyCreated = $true
-            New-ItemProperty -LiteralPath $traceKey -Name GlobalFlag -PropertyType String -Value '0x00000002' | Out-Null
-            Set-Content -LiteralPath (Join-Path $env:NATIVE_STAGE 'loader-trace.enabled') -Value 'CI diagnostic only; never native qualification'
+            if (Test-Path -LiteralPath (Join-Path $env:NATIVE_STAGE 'loader-trace.enabled')) { throw 'Qualification cannot enable diagnostic debugging' }
             $os = Get-CimInstance Win32_OperatingSystem
             $result.os = @{ caption = $os.Caption; version = $os.Version; build = $os.BuildNumber; architecture = $os.OSArchitecture }
             $result.secondaryLogon = (Get-Service seclogon).Status.ToString()
@@ -186,7 +182,7 @@ jobs:
             $jsonLines = @($stdout -split '\r?\n' | Where-Object { $_.StartsWith('{') })
             if ($jsonLines.Count -ne 1 -or $stdout -notmatch '(?m)^PASS(?:\s|$)') { throw 'Missing single JSON receipt or PASS line' }
             $receipt = $jsonLines[0] | ConvertFrom-Json -AsHashtable
-            if ($receipt.status -ne 'passed' -or $receipt.sourceHead -ne '24096131fcba3ff7cf3a30ccdb352f83efe56292' -or $receipt.caller.elevated -isnot [bool] -or $receipt.caller.elevated -ne $false -or $receipt.cases.Count -ne 4) { throw 'Native receipt does not prove the required gate' }
+            if ($receipt.status -ne 'passed' -or $receipt.sourceHead -ne 'faa106f040e7bb00b3dac23938177e00502fe6f6' -or $receipt.caller.elevated -isnot [bool] -or $receipt.caller.elevated -ne $false -or $receipt.cases.Count -ne 4) { throw 'Native receipt does not prove the required gate' }
             $trustedPin = Get-Content -LiteralPath $pin -Raw | ConvertFrom-Json -AsHashtable
             $actualExeHash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($receipt.caller.userSid -ne $result.accountSid -or $receipt.probeSha256 -ne $actualExeHash -or $receipt.runtimeZipSha256 -ne $trustedPin.runtimeZipSha256 -or $receipt.producerRun -ne 42120608528 -or $receipt.guestBoot -isnot [bool] -or $receipt.guestBoot -ne $false -or $receipt.whpxUsability -ne 'not-tested') { throw 'Native receipt does not match this user, executable, runtime or no-VM scope' }
@@ -214,8 +210,7 @@ jobs:
               }
             }
             if ($null -ne $secure) { $secure.Dispose() }
-            if ($traceKeyCreated) { Remove-Item -LiteralPath $traceKey -Recurse -ErrorAction Stop }
-            $result.diagnosticLoaderTrace = $true
+            $result.diagnosticLoaderTrace = $false
             if ($result.status -ne 'passed') {
               foreach ($log in @('Microsoft-Windows-CodeIntegrity/Operational', 'Microsoft-Windows-AppLocker/EXE and DLL', 'Application')) {
                 try {
