@@ -2,6 +2,13 @@ use serde_json::Value;
 use std::io;
 
 pub const WINDOW_MS: u64 = 30_000;
+pub fn worker_frames(mode: &str) -> usize {
+    match mode {
+        "hold-guard-only" => 3,
+        "try-unix" | "smoke" => 2,
+        _ => 1,
+    }
+}
 pub struct GuardProbe {
     pub event: String,
     pub deadline_tick: u64,
@@ -84,6 +91,19 @@ mod tests {
             assert!(!direct_guard_property(&failed), "{field}");
         }
         assert!(!direct_guard_property(&serde_json::json!({})));
+    }
+    #[test]
+    fn guard_worker_keeps_reader_open_for_stop_confirmation() {
+        let count = worker_frames("hold-guard-only");
+        let stages = [
+            "guard-before-close",
+            "guard-after-close",
+            "guard-child-stopped",
+        ];
+        let received: Vec<_> = stages.into_iter().take(count).collect();
+        assert_eq!(received.last(), Some(&"guard-child-stopped"));
+        assert_eq!(worker_frames("smoke"), 2);
+        assert_eq!(worker_frames("hold-created"), 1);
     }
     fn name() -> String {
         format!("Local\\bridge-guard-{}", "a".repeat(32))

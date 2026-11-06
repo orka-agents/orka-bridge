@@ -229,11 +229,7 @@ impl Worker {
             .take()
             .ok_or_else(|| io::Error::other("stderr missing"))?;
         let (tx, rx) = mpsc::sync_channel(2);
-        let messages = if mode == "try-unix" || mode == "smoke" || mode == "hold-guard-only" {
-            2
-        } else {
-            1
-        };
+        let messages = crate::guard_probe::worker_frames(mode);
         std::thread::spawn(move || {
             let mut b = BufReader::new(stdout);
             for _ in 0..messages {
