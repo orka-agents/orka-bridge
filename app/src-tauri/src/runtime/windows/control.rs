@@ -469,7 +469,8 @@ mod tests {
     fn owned_guest_stream_satisfies_the_existing_channel_lifetime() {
         fn channel<T: std::io::Read + std::io::Write + Send + 'static>() {}
         channel::<GuestStream>();
-        let _: fn(&Arc<OwnedQemuProcess>) -> io::Result<GuestStream> = OwnedQemuProcess::guest_stream;
+        let _: fn(&Arc<OwnedQemuProcess>) -> io::Result<GuestStream> =
+            OwnedQemuProcess::guest_stream;
     }
     struct Local(*mut core::ffi::c_void);
     impl Drop for Local {
