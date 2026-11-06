@@ -9,6 +9,7 @@ pub mod image_install;
 pub mod image_types;
 pub mod journal;
 pub mod manifest;
+pub mod setup_adapter;
 pub mod snapshot;
 pub mod spawn_guard;
 pub mod types;

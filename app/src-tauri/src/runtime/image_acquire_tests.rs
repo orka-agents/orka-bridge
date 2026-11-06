@@ -348,3 +348,119 @@ async fn acquisition_streams_assets_reports_progress_and_reuses_without_http() {
     ));
     assert_eq!(server.calls.load(Ordering::SeqCst), files.len());
 }
+
+#[tokio::test]
+async fn pinned_preparation_downloads_then_reuses_the_committable_private_source() {
+    use super::super::super::{
+        image_install::InstallationImageTarget,
+        image_types::{HostTarget, ImageTarget},
+        setup_adapter::prepare_pinned_image,
+    };
+    let (image, files) = image_cache::tests::publication::complete_image();
+    let server = Server::start(b"HTTP/1.1 503 Busy\r\nContent-Length: 0\r\n\r\n").await;
+    let mut client = server.client(true, "image.invalid");
+    client.pin.manifest_sha256 = image.identity().manifest_sha256.clone();
+    client.pin.accepted_schema_sha256 =
+        hash(include_bytes!("../../../../images/manifest.schema.json"));
+    client.pin.limits = image.limits();
+    let host = HostTarget {
+        target: ImageTarget::WindowsAmd64,
+        host_version: "13.0".into(),
+        app_version: "1.0.0".into(),
+    };
+    // Cache recovery fixtures can carry synthetic raw bytes, so resolve a genuine v2 document here.
+    let mut raw: serde_json::Value = serde_json::from_slice(include_bytes!(
+        "../../../../images/testdata/v2/producer-windows.json"
+    ))
+    .unwrap();
+    raw["artifact"]["compressedBytes"] = image.compressed_bytes().into();
+    raw["artifact"]["compressedSha256"] = image.compressed_sha256().into();
+    raw["artifact"]["uncompressedBytes"] = image.disk_bytes().into();
+    raw["artifact"]["uncompressedSha256"] = image.disk_sha256().into();
+    raw["artifact"]["chunks"]
+        .as_array_mut()
+        .unwrap()
+        .truncate(1);
+    raw["artifact"]["chunks"][0]["bytes"] = files[0].len().into();
+    raw["artifact"]["chunks"][0]["sha256"] = hash(&files[0]).into();
+    raw["directBoot"]["provenance"]["diskSha256"] = image.disk_sha256().into();
+    for (name, data) in [("kernel", &files[1]), ("initrd", &files[2])] {
+        raw["directBoot"][name]["bytes"] = data.len().into();
+        raw["directBoot"][name]["sha256"] = hash(data).into();
+    }
+    raw["directBoot"]["initrd"]["compression"] = "cpio-prefix".into();
+    let raw = serde_json::to_vec(&raw).unwrap();
+    client.pin.manifest_sha256 = hash(&raw);
+    let image = super::super::super::manifest::resolve_image(&client.pin, &raw, &host).unwrap();
+    let response = |data: &[u8]| {
+        let mut r =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", data.len()).into_bytes();
+        r.extend(data);
+        r
+    };
+    server
+        .routes
+        .lock()
+        .unwrap()
+        .insert("/".into(), response(image.manifest_bytes()));
+    for (asset, data) in image.assets().iter().zip(&files) {
+        server
+            .routes
+            .lock()
+            .unwrap()
+            .insert(format!("/{}", asset.location().leaf()), response(data));
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+
+    let (_sender, closed) = watch::channel(false);
+    fn send<T: Send>(future: T) -> T {
+        future
+    }
+    let prepared = send(prepare_pinned_image(
+        &client.pin,
+        &host,
+        &cache,
+        &client,
+        closed.clone(),
+        |_| {},
+    ))
+    .await
+    .expect("pinned manifest and assets must prepare a materializable source");
+    assert_eq!(
+        prepared.identity().manifest_sha256,
+        image.identity().manifest_sha256
+    );
+    assert_eq!(server.calls.load(Ordering::SeqCst), files.len() + 1);
+    drop(prepared);
+    let offline = ImageHttpClient::new(&client.pin).unwrap();
+    let prepared =
+        prepare_pinned_image(&client.pin, &host, &cache, &offline, closed.clone(), |_| {})
+            .await
+            .expect("a complete cache must not perform HTTP");
+    let path = temp.path().join("installation");
+    std::fs::create_dir(&path).unwrap();
+    let root = cap_std::fs::Dir::open_ambient_dir(&path, cap_std::ambient_authority()).unwrap();
+    let owner = Arc::new(
+        std::fs::File::options()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(path.join("owner.lock"))
+            .unwrap(),
+    );
+    owner.try_lock().unwrap();
+    let compatibility = prepared.identity().state_compatibility_id.clone();
+    let target = InstallationImageTarget::from_owned_installation(
+        &root,
+        &owner,
+        bridge_runtime_protocol::Uuid::new_v4(),
+        host.target,
+        &compatibility,
+        true,
+    );
+    let installed = prepared.materialize(&target, closed, |_| {}).await.unwrap();
+    installed.revalidate(&target).unwrap();
+    assert!(path.join(installed.kernel_path()).is_file());
+    assert_eq!(server.calls.load(Ordering::SeqCst), files.len() + 1);
+}

@@ -4,7 +4,7 @@ pub(super) struct Scene {
     temp: tempfile::TempDir,
     pub(super) image: VerifiedImageSet,
     root: Dir,
-    lock: File,
+    lock: Arc<File>,
     id: Uuid,
 }
 impl Scene {
@@ -188,7 +188,7 @@ fn a_cancelled_reuse_hash_does_not_truncate_a_complete_private_copy() {
     let (events, _receive) = mpsc::channel(1);
     let context = Context {
         root: scene.root.try_clone().unwrap(),
-        owner: scene.lock.try_clone().unwrap(),
+        owner: Arc::clone(&scene.lock),
         id: scene.id,
         target: ImageTarget::WindowsAmd64,
         compatibility: scene
