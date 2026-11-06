@@ -438,7 +438,28 @@ mod native {
             b"pc-q35-11.0".to_vec(),
         )
         .map_err(io::Error::other)?;
-        let spec = runtime::probe_spec(&journal);
+        // Reuse the source's verified synthetic factory and real materializer.
+        // This issues a genuine installed binding; no guest bytes are booted.
+        let source_root = root.join("inert-image-source");
+        fs::create_dir(&source_root)?;
+        let verified = crate::native_image_fixture::verified(
+            &source_root,
+            runtime::image_types::ImageTarget::WindowsAmd64,
+        );
+        let target = journal
+            .image_target(&verified.image().identity().state_compatibility_id)
+            .map_err(io::Error::other)?;
+        let (_sender, closed) = tokio::sync::watch::channel(false);
+        let installed = tokio::runtime::Builder::new_current_thread()
+            .build()?
+            .block_on(runtime::image_install::materialize_image(
+                &verified,
+                &target,
+                closed,
+                |_| {},
+            ))
+            .map_err(|error| io::Error::other(format!("inert image materialization: {error:?}")))?;
+        let spec = runtime::probe_spec(&journal, Arc::new(installed));
         let name = format!("bridge-premise-{}", bridge_runtime_protocol::Uuid::new_v4());
         let endpoint = runtime::windows::control::ControlEndpoint::create(&cfg.endpoint_parent)?;
         let endpoint_path = endpoint.path().to_owned();
@@ -540,7 +561,7 @@ mod native {
             endpoint,
         )?;
         let process = child.process_handle();
-        runtime::windows::check_token(process.raw())
+        crate::proof::check_token(process.raw())
             .map_err(|e| io::Error::other(format!("restricted primary token: {e}")))?;
         let inherited = inherited_guard(process.raw(), &spec.ownership, &canary)
             .map_err(|e| io::Error::other(format!("inherited handle snapshot: {e}")))?;

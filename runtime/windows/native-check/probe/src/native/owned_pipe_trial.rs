@@ -51,7 +51,7 @@ impl Listener {
             LocalFree(sd);
             let pipe = result?;
             // Reuse the exact imported production validator, not a weaker trial validator.
-            runtime::windows::check_pipe(pipe.as_raw_handle())?;
+            crate::proof::check_pipe(pipe.as_raw_handle())?;
             let mut inherit = 0;
             win(GetHandleInformation(pipe.as_raw_handle(), &mut inherit))?;
             check(inherit & HANDLE_FLAG_INHERIT == 0)?;

@@ -256,7 +256,7 @@ pub(super) fn checked_path(path: &std::path::Path, directory: bool) -> io::Resul
         "[AF-UNIX-ACL] {}",
         json!({"path":path,"directory":directory,"security":security})
     );
-    runtime::windows::check_unix_path(file.as_raw_handle(), directory).map_err(|error| {
+    crate::proof::check_unix_path(file.as_raw_handle(), directory).map_err(|error| {
         io::Error::other(format!(
             "AF_UNIX actual ACL rejected at {}: {error}; {security}",
             path.display()
