@@ -48,10 +48,20 @@ struct Channel {
     active: OnceLock<SOCKET>,
     peer: OnceLock<u32>,
     terminal: AtomicBool,
-    _network: Network,
+    _network: Mutex<Option<Network>>,
 }
 impl Channel {
     fn socket(&self) -> io::Result<SOCKET> {
+        // Namespace ownership needs no Winsock initialization. Keep its machinery
+        // absent until connection acquisition, then retain it with the sockets.
+        let mut network = self
+            ._network
+            .lock()
+            .map_err(|_| io::Error::other("AF_UNIX network owner poisoned"))?;
+        if network.is_none() {
+            *network = Some(Network::start()?);
+        }
+        drop(network);
         let raw = unsafe {
             WSASocketW(
                 AF_UNIX as i32,
@@ -105,7 +115,7 @@ impl ControlEndpoint {
             active: OnceLock::new(),
             peer: OnceLock::new(),
             terminal: AtomicBool::new(false),
-            _network: Network::start()?,
+            _network: Mutex::new(None),
         });
         Ok(Self {
             path,
@@ -454,6 +464,14 @@ mod tests {
         let parent = root.path().join("p");
         let retained = security::create_af_directory(&parent).unwrap();
         (root, parent, retained)
+    }
+    #[test]
+    fn namespace_creation_does_not_start_winsock_before_a_socket_is_needed() {
+        let (_root, parent, _retained) = parent();
+        let endpoint = ControlEndpoint::create(&parent).unwrap();
+        assert!(endpoint.channel._network.lock().unwrap().is_none());
+        endpoint.channel.socket().unwrap();
+        assert!(endpoint.channel._network.lock().unwrap().is_some());
     }
     #[test]
     fn endpoint_creation_is_unique_protected_and_never_reuses_stale_files() {
