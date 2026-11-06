@@ -123,6 +123,57 @@ fn nt_open(name: &str, rights: u32, directory: bool, security: bool) -> Value {
         }
     }
 }
+/// Observe the security query API without changing the existing gate or ACL.
+pub(super) fn pipe_security(handle: HANDLE) {
+    use windows_sys::Win32::Security::Authorization::*;
+    unsafe {
+        eprintln!("[PIPE-DIAG] GetKernelObjectSecurity={}", descriptor(handle));
+        for (label, kind) in [("kernel", SE_KERNEL_OBJECT), ("file", SE_FILE_OBJECT)] {
+            let mut sd = std::ptr::null_mut();
+            let flags = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
+            let status = GetSecurityInfo(
+                handle,
+                kind,
+                flags,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut sd,
+            );
+            let mut control = 0;
+            let mut revision = 0;
+            let valid =
+                !sd.is_null() && GetSecurityDescriptorControl(sd, &mut control, &mut revision) != 0;
+            let mut text = std::ptr::null_mut();
+            let mut chars = 0;
+            let sddl = if valid
+                && ConvertSecurityDescriptorToStringSecurityDescriptorW(
+                    sd, 1, flags, &mut text, &mut chars,
+                ) != 0
+                && !text.is_null()
+                && chars > 0
+                && chars <= 32768
+            {
+                String::from_utf16_lossy(std::slice::from_raw_parts(text, chars as usize))
+                    .trim_end_matches('\0')
+                    .to_owned()
+            } else {
+                String::new()
+            };
+            eprintln!(
+                "[PIPE-DIAG] {}",
+                json!({"type":label,"GetSecurityInfo":status,"controlValid":valid,"control":format!("{control:#x}"),"sddl":sddl})
+            );
+            if !text.is_null() {
+                LocalFree(text.cast());
+            }
+            if !sd.is_null() {
+                LocalFree(sd);
+            }
+        }
+    }
+}
 struct Impersonation;
 impl Impersonation {
     fn begin(primary: &OwnedHandle) -> io::Result<Self> {

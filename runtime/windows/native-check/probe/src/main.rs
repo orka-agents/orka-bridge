@@ -282,16 +282,22 @@ mod native {
                 if h != INVALID_HANDLE_VALUE {
                     let f = File::from_raw_handle(h);
                     let (mut pid, mut instances) = (0, 0);
-                    win(GetNamedPipeServerProcessId(h, &mut pid))?;
+                    win(GetNamedPipeServerProcessId(h, &mut pid)).map_err(|e| {
+                        io::Error::other(format!("GetNamedPipeServerProcessId: {e}"))
+                    })?;
                     win(GetNamedPipeInfo(
                         h,
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
                         std::ptr::null_mut(),
                         &mut instances,
-                    ))?;
+                    ))
+                    .map_err(|e| io::Error::other(format!("GetNamedPipeInfo: {e}")))?;
                     check(pid == GetProcessId(process) && instances == 1)?;
-                    runtime::windows::check_pipe(h)?;
+                    permission_diag::pipe_security(h);
+                    runtime::windows::check_pipe(h).map_err(|e| {
+                        io::Error::other(format!("source private_object check: {e}"))
+                    })?;
                     check(WaitForSingleObject(process, 0) == WAIT_TIMEOUT)?;
                     return Ok(f);
                 }
