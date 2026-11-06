@@ -409,7 +409,8 @@ mod native {
             }
         }
     }
-    fn stop_suspended(_job: HANDLE, leader: HANDLE, _observed: &AtomicBool) -> io::Result<()> {
+    fn stop_suspended(job: HANDLE, leader: HANDLE, observed: &AtomicBool) -> io::Result<()> {
+        let deadline = std::time::Instant::now() + Duration::from_secs(45);
         // Before the membership postcondition, only the retained process is authority.
         // It has never resumed, so there cannot be descendants to stop here.
         if wait_handle(leader, Duration::ZERO).is_err() {
@@ -417,7 +418,18 @@ mod native {
                 check(TerminateProcess(leader, 1))?;
             }
         }
-        wait_handle(leader, Duration::from_secs(45))
+        wait_handle(
+            leader,
+            deadline.saturating_duration_since(std::time::Instant::now()),
+        )?;
+        let info = accounting(job)?;
+        // This fresh, private Job had only this suspended creation attempt. Observe
+        // both authorities, including the empty Job when membership was rejected.
+        if info.ActiveProcesses != 0 || info.TotalProcesses > 1 {
+            return Err(io::Error::from(io::ErrorKind::InvalidData));
+        }
+        observed.store(true, Ordering::Release);
+        Ok(())
     }
     fn accounting(job: HANDLE) -> io::Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
         let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
@@ -642,6 +654,46 @@ mod native {
                 }
             }
         }
+        fn suspended_cmd() -> SuspendedChild {
+            let _guard = spawn_guard().unwrap();
+            SuspendedChild(
+                Command::new("cmd.exe")
+                    .raw_arg("/d /c exit 0")
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
+                    .spawn()
+                    .unwrap(),
+            )
+        }
+        #[test]
+        fn unqueryable_job_does_not_record_suspended_stop() {
+            let job = kill_on_close_job();
+            let child = suspended_cmd();
+            let mut query_denied = std::ptr::null_mut();
+            unsafe {
+                check(DuplicateHandle(
+                    GetCurrentProcess(),
+                    job.0,
+                    GetCurrentProcess(),
+                    &mut query_denied,
+                    8,
+                    0,
+                    0,
+                ))
+                .unwrap(); // JOB_OBJECT_TERMINATE, not QUERY
+            }
+            let query_denied = Handle::new(query_denied).unwrap();
+            let observed = AtomicBool::new(false);
+            let error = stop_suspended(query_denied.0, raw(&child.0), &observed).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(5));
+            assert!(wait_handle(raw(&child.0), Duration::ZERO).is_ok());
+            assert!(
+                !observed.load(Ordering::Acquire),
+                "unobserved Job state must quarantine"
+            );
+        }
         #[test]
         fn stopped_suspended_nonmember_releases_the_ownership_capability() {
             let dir = tempfile::tempdir().unwrap();
@@ -653,19 +705,7 @@ mod native {
                 .open(&path)
                 .unwrap();
             let job = kill_on_close_job();
-            let child = {
-                let _guard = spawn_guard().unwrap();
-                SuspendedChild(
-                    Command::new("cmd.exe")
-                        .raw_arg("/d /c exit 0")
-                        .stdin(Stdio::null())
-                        .stdout(Stdio::null())
-                        .stderr(Stdio::null())
-                        .creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW)
-                        .spawn()
-                        .unwrap(),
-                )
-            };
+            let child = suspended_cmd();
             let mut member = 1;
             unsafe {
                 check(IsProcessInJob(raw(&child.0), job.0, &mut member)).unwrap();
