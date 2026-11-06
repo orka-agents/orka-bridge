@@ -7,7 +7,7 @@ xcrun swiftc --version
 native="$root/app/src-tauri/native/macos"
 sources=("$native/BridgeVM.swift" "$native/VirtualizationDriver.swift"
          "$native/InheritedDescriptors.swift" "$native/SupervisorSocket.swift" "$native/TerminationObserver.swift"
-         "$native/HelperConfiguration.swift")
+         "$native/HelperConfiguration.swift" "$native/HelperBootstrap.swift")
 flags=(-swift-version 5 -target arm64-apple-macos13.0 -warnings-as-errors -parse-as-library)
 # Compile the production core independently of test code as well as in the runner.
 xcrun swiftc "${flags[@]}" -whole-module-optimization -emit-object "${sources[@]}" -o "$work/BridgeVM.o"
