@@ -45,9 +45,11 @@ Rust callers can parse an exact agent/test byte pair and use `engine::run` to
 submit fresh Orka Agents and Tasks, then observe acknowledged identities using
 GET only. Targets and bearer credentials must come from trusted native config,
 not the renderer; there is no ambient cluster, provider fallback or new IPC.
-Only schemaVersion 1, Orka builtin tools, `contains` and `toolCalled` are supported.
-Unsupported semantics refuse before writes. Completed attributable tool events
-are positive evidence only; missing/unavailable events stay unknown. A failed
+Supports schemaVersion 1 source with tool entries declared `kind: builtin`, plus
+`contains` and `toolCalled`. Unknown fields refuse before writes. This narrow
+parser expects unindented backtick `yaml agent-test` fences; it is not a general
+Markdown reader or an effective-tool policy check. Completed attributable tool
+events are positive evidence only; missing/unavailable events stay unknown. A failed
 Task cannot pass, even when individual assertions match. Requests and observation
 are bounded; timeout/drop does not stop remote work. Retain the in-memory handle
 and error's acknowledged/possibly-created identities. No POST retry, overwrite,
