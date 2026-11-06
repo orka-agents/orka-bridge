@@ -11,18 +11,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import verify
 
-SOURCE_HEAD = "443bcc0718a777e03057c20ddc1a8dff12b159bf"
+SOURCE_HEAD = "924ce13c641e91079c78fe88efe9a8a735c2b174"
 PRODUCER_HEAD = "006b30f02a3c9cec61f8f3cc32fde6b0d248fc34"
 PRODUCER_RUN = 42120608528
 PRODUCER_FILES = (*verify.ARCHIVES, "SHA256SUMS", "build-report.json", "verification.json")
 BUNDLE_FILES = (*PRODUCER_FILES, "bridge-native-premises.exe", "runtime-pin.json",
                 "producer-run.json", "bundle-provenance.json", "independent-verification.json",
                 "build.log", "probe-dependents.txt", "producer-watch.log",
+                "guard-test-build.log", "ci-guard-tests.txt", "ci-guard-tests-stderr.txt",
                 "ci-stdout.txt", "ci-stderr.txt", "ci-controller.json",
                 "ci-owned-pipe-stdout.txt", "ci-owned-pipe-stderr.txt",
                 "ci-af-warmup.json", "ci-af-control.json", "ci-af-private.json", "ci-af-client-stderr.txt",
                 "ci-qmp-rx.jsonl", "ci-qmp-tx.jsonl", "ci-qmp-disconnect-rx.jsonl",
-                "ci-qmp-disconnect-tx.jsonl", "ci-qmp-summary.json", "ci-job-member-diagnostic.json")
+                "ci-qmp-disconnect-tx.jsonl", "ci-qmp-summary.json")
 
 
 def write_json(path, value):

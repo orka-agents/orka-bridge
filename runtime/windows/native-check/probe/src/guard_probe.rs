@@ -1,0 +1,89 @@
+use serde_json::Value;
+use std::io;
+
+pub const WINDOW_MS: u64 = 30_000;
+pub struct GuardProbe {
+    pub event: String,
+    pub deadline_tick: u64,
+}
+impl GuardProbe {
+    pub fn parse(event: &str, deadline: &str, now: u64) -> io::Result<Self> {
+        let suffix = event
+            .strip_prefix("Local\\bridge-guard-")
+            .ok_or(io::ErrorKind::InvalidInput)?;
+        if suffix.len() != 32
+            || !suffix
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let probe = Self {
+            event: event.into(),
+            deadline_tick: deadline.parse().map_err(io::Error::other)?,
+        };
+        probe.remaining(now)?;
+        Ok(probe)
+    }
+    pub fn remaining(&self, now: u64) -> io::Result<u32> {
+        let remaining = self
+            .deadline_tick
+            .checked_sub(now)
+            .filter(|&n| n > 0 && n <= WINDOW_MS)
+            .ok_or(io::ErrorKind::TimedOut)?;
+        Ok(remaining as u32)
+    }
+}
+pub fn parent_counts(value: &Value, copies: u64) -> bool {
+    value["guardCopies"] == copies
+        && value["unrelatedCanaries"] == 1
+        && value["inheritedJobs"].as_u64().is_some_and(|n| n >= 1)
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn name() -> String {
+        format!("Local\\bridge-guard-{}", "a".repeat(32))
+    }
+    #[test]
+    fn guard_arguments_reject_namespace_replays_and_unbounded_deadlines() {
+        assert!(GuardProbe::parse(&name(), "31000", 1000).is_ok());
+        for bad in [
+            "Global\\bridge-guard-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "Local\\bridge-guard-abc",
+            "Local\\bridge-guard-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0",
+        ] {
+            assert!(GuardProbe::parse(bad, "31000", 1000).is_err(), "{bad:?}");
+        }
+        for tick in ["1000", "999", "31001", "18446744073709551615", "-1", "wat"] {
+            assert!(GuardProbe::parse(&name(), tick, 1000).is_err(), "{tick}");
+        }
+    }
+    #[test]
+    fn guard_probe_uses_one_absolute_deadline() {
+        let probe = GuardProbe::parse(&name(), "31000", 1000).unwrap();
+        assert_eq!(probe.remaining(2000).unwrap(), 29000);
+        assert_eq!(probe.remaining(30999).unwrap(), 1);
+        assert!(probe.remaining(31000).is_err());
+        assert!(probe.remaining(31001).is_err());
+    }
+    #[test]
+    fn missing_metadata_never_supplies_parent_counts() {
+        assert!(!parent_counts(
+            &serde_json::json!({"error":"missing type","flags":0}),
+            0
+        ));
+        assert!(!parent_counts(
+            &serde_json::json!({"guardCopies":0,"unrelatedCanaries":1,"inheritedJobs":0}),
+            0
+        ));
+        assert!(parent_counts(
+            &serde_json::json!({"guardCopies":1,"unrelatedCanaries":1,"inheritedJobs":1}),
+            1
+        ));
+        assert!(parent_counts(
+            &serde_json::json!({"guardCopies":0,"unrelatedCanaries":1,"inheritedJobs":1}),
+            0
+        ));
+    }
+}

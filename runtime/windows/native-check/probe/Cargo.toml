@@ -5,11 +5,6 @@ edition = "2021"
 [workspace]
 [profile.release]
 panic = "abort"
-[features]
-# DIAGNOSTIC-ONLY: imports a derived job.rs copy; can never qualify.
-member-diagnostic = []
-[build-dependencies]
-sha2 = "=0.10.9"
 [dev-dependencies]
 tempfile = "=3.27.0"
 [dependencies]
