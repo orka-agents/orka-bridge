@@ -12,7 +12,7 @@ use std::{
 };
 
 #[path = "image_cache_fs.rs"]
-mod fs;
+pub(crate) mod fs;
 #[path = "image_cache_verify.rs"]
 pub(crate) mod verification;
 use verification::{cancelled, marker, publish_marker, record, verify_set};
@@ -46,7 +46,7 @@ pub struct CacheTransaction {
     available: Option<u64>,
 }
 #[cfg(unix)]
-fn available_space(dir: &Dir) -> Result<u64, ImageError> {
+pub(crate) fn available_space(dir: &Dir) -> Result<u64, ImageError> {
     use std::os::fd::AsRawFd;
     let mut info = std::mem::MaybeUninit::<libc::statvfs>::uninit();
     // fstatvfs fills this buffer on success and quotes the held directory's filesystem.
@@ -58,7 +58,7 @@ fn available_space(dir: &Dir) -> Result<u64, ImageError> {
         .map_err(|_| ImageError::NoSpace)
 }
 #[cfg(windows)]
-fn available_space(dir: &Dir) -> Result<u64, ImageError> {
+pub(crate) fn available_space(dir: &Dir) -> Result<u64, ImageError> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::{
         Wdk::{
@@ -109,14 +109,14 @@ fn require_space(image: &ResolvedImage, available: u64) -> Result<(), ImageError
         .map(|_| ())
         .ok_or(ImageError::NoSpace)
 }
-fn storage(error: io::Error) -> ImageError {
+pub(crate) fn storage(error: io::Error) -> ImageError {
     if error.kind() == io::ErrorKind::StorageFull {
         ImageError::NoSpace
     } else {
         ImageError::Storage(error.kind())
     }
 }
-fn not_reparse(file: &File) -> Result<(), ImageError> {
+pub(crate) fn not_reparse(file: &File) -> Result<(), ImageError> {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -127,7 +127,10 @@ fn not_reparse(file: &File) -> Result<(), ImageError> {
     let _ = file;
     Ok(())
 }
-fn read_directory(parent: &Dir, name: impl AsRef<Path>) -> Result<Option<Dir>, ImageError> {
+pub(crate) fn read_directory(
+    parent: &Dir,
+    name: impl AsRef<Path>,
+) -> Result<Option<Dir>, ImageError> {
     let dir = match parent.open_dir_nofollow(name) {
         Ok(d) => d,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
@@ -136,7 +139,7 @@ fn read_directory(parent: &Dir, name: impl AsRef<Path>) -> Result<Option<Dir>, I
     not_reparse(&dir.try_clone().map_err(storage)?.into_std_file())?;
     Ok(Some(dir))
 }
-fn directory(parent: &Dir, name: &std::ffi::OsStr) -> Result<Dir, ImageError> {
+pub(crate) fn directory(parent: &Dir, name: &std::ffi::OsStr) -> Result<Dir, ImageError> {
     let builder = DirBuilder::new();
     #[cfg(unix)]
     let builder = {
@@ -156,7 +159,12 @@ fn directory(parent: &Dir, name: &std::ffi::OsStr) -> Result<Dir, ImageError> {
     not_reparse(&dir.try_clone().map_err(storage)?.into_std_file())?;
     Ok(dir)
 }
-fn regular(parent: &Dir, name: &str, write: bool, create: bool) -> Result<File, ImageError> {
+pub(crate) fn regular(
+    parent: &Dir,
+    name: &str,
+    write: bool,
+    create: bool,
+) -> Result<File, ImageError> {
     let mut options = OpenOptions::new();
     options
         .read(true)
@@ -176,8 +184,14 @@ fn regular(parent: &Dir, name: &str, write: bool, create: bool) -> Result<File, 
     if !file.metadata().map_err(storage)?.is_file() {
         return Err(ImageError::UnsafePath);
     }
-    #[cfg(windows)]
     if write {
+        single_link(&file)?;
+    }
+    Ok(file)
+}
+pub(crate) fn single_link(file: &File) -> Result<(), ImageError> {
+    #[cfg(windows)]
+    {
         use std::os::windows::io::AsRawHandle;
         use windows_sys::Win32::Storage::FileSystem::{
             GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
@@ -193,11 +207,11 @@ fn regular(parent: &Dir, name: &str, write: bool, create: bool) -> Result<File, 
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        if write && file.metadata().map_err(storage)?.nlink() != 1 {
+        if file.metadata().map_err(storage)?.nlink() != 1 {
             return Err(ImageError::UnsafePath);
         }
     }
-    Ok(file)
+    Ok(())
 }
 impl ImageCache {
     pub fn manifest(
