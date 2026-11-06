@@ -185,7 +185,12 @@ pub(super) fn restricted_token() -> io::Result<Handle> {
     }
 }
 /// Require actual kernel object security; no post-connection ACL rewrite.
-pub(super) fn private_object(handle: HANDLE, require_protected: bool) -> io::Result<()> {
+// Named pipes require SE_KERNEL_OBJECT; directories retain SE_FILE_OBJECT.
+pub(super) fn private_object(
+    handle: HANDLE,
+    require_protected: bool,
+    kind: SE_OBJECT_TYPE,
+) -> io::Result<()> {
     unsafe {
         let (mut owner, mut acl, mut sd) = (
             std::ptr::null_mut(),
@@ -194,7 +199,7 @@ pub(super) fn private_object(handle: HANDLE, require_protected: bool) -> io::Res
         );
         let error = GetSecurityInfo(
             handle,
-            SE_FILE_OBJECT,
+            kind,
             OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
             &mut owner,
             std::ptr::null_mut(),
@@ -278,7 +283,7 @@ pub(super) fn private_directory(path: &Path) -> io::Result<File> {
         .custom_flags(0x02200000)
         .open(path)?;
     use std::os::windows::io::AsRawHandle;
-    private_object(f.as_raw_handle(), false)?;
+    private_object(f.as_raw_handle(), false, SE_FILE_OBJECT)?;
     Ok(f)
 }
 
@@ -401,6 +406,68 @@ mod tests {
         }
     }
     #[test]
+    fn pipe_query_accepts_only_protected_user_system_dacl() {
+        use windows_sys::Win32::{Storage::FileSystem::*, System::Pipes::*};
+        unsafe {
+            let token = current_token(TOKEN_QUERY).unwrap();
+            let current = user(token.0).unwrap();
+            let sid = (*(current.as_ptr().cast::<TOKEN_USER>())).User.Sid;
+            let mut text = std::ptr::null_mut();
+            check(ConvertSidToStringSidW(sid, &mut text)).unwrap();
+            let owned_text = Local(text.cast());
+            let mut len = 0;
+            while *text.add(len) != 0 {
+                len += 1;
+            }
+            let sid = String::from_utf16(std::slice::from_raw_parts(text, len)).unwrap();
+            drop(owned_text);
+            for (sddl, expected) in [
+                (format!("O:{sid}D:P(A;;GA;;;SY)(A;;GA;;;{sid})"), true),
+                (format!("O:{sid}D:(A;;GA;;;SY)(A;;GA;;;{sid})"), false),
+                (
+                    format!("O:{sid}D:P(A;;GA;;;SY)(A;;GA;;;{sid})(A;;GR;;;WD)"),
+                    false,
+                ),
+            ] {
+                let mut sd = std::ptr::null_mut();
+                check(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                    wide(&sddl).unwrap().as_ptr(),
+                    1,
+                    &mut sd,
+                    std::ptr::null_mut(),
+                ))
+                .unwrap();
+                let sd = Local(sd);
+                let attributes = SECURITY_ATTRIBUTES {
+                    nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+                    lpSecurityDescriptor: sd.0,
+                    bInheritHandle: 0,
+                };
+                let name = wide(&format!(
+                    "\\\\.\\pipe\\bridge-security-{}",
+                    bridge_runtime_protocol::Uuid::new_v4()
+                ))
+                .unwrap();
+                let pipe = Handle::new(CreateNamedPipeW(
+                    name.as_ptr(),
+                    PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE | FILE_FLAG_OVERLAPPED,
+                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+                    1,
+                    4096,
+                    4096,
+                    0,
+                    &attributes,
+                ))
+                .unwrap();
+                assert_eq!(
+                    private_object(pipe.raw(), true, SE_KERNEL_OBJECT).is_ok(),
+                    expected,
+                    "{sddl}"
+                );
+            }
+        }
+    }
+    #[test]
     fn null_dacl_is_rejected_without_dereferencing_it() {
         use std::os::windows::io::AsRawHandle;
         let t = tempfile::NamedTempFile::new().unwrap();
@@ -421,7 +488,9 @@ mod tests {
         };
         assert_eq!(error, 0);
         assert_eq!(
-            private_object(f.as_raw_handle(), true).unwrap_err().kind(),
+            private_object(f.as_raw_handle(), true, SE_FILE_OBJECT)
+                .unwrap_err()
+                .kind(),
             io::ErrorKind::PermissionDenied
         );
     }
