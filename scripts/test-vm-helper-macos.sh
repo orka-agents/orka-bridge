@@ -19,6 +19,9 @@ for runner in tests io-tests configuration-tests; do
 done
 "$work/tests"
 "$work/configuration-tests"
+xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/tests/HelperBootstrapTests.swift" -o "$work/bootstrap-tests"
+codesign --force --sign - --entitlements "$native/virtualization.entitlements" "$work/bootstrap-tests"
+"$work/bootstrap-tests"
 # Both new suites must run: an I/O assertion failure must not hide peer failures.
 status=0
 if ! "$work/io-tests"; then status=1; fi
