@@ -47,60 +47,162 @@ fn dropping_the_writer_keeps_the_transaction_owned_until_queued_io_finishes() {
         .expect("write completed and dropped its final ownership");
 }
 
-#[tokio::test]
-async fn ready_publication_between_cache_check_and_lock_is_reconciled_without_http() {
+#[test]
+fn cancellation_returns_while_an_owned_write_is_still_queued() {
     use std::{
-        future::Future,
-        task::{Context, Poll, Wake, Waker},
+        pin::Pin,
+        task::{Context, Poll},
     };
-    struct Signal(Arc<tokio::sync::Notify>);
-    impl Wake for Signal {
-        fn wake(self: Arc<Self>) {
-            self.0.notify_one();
+    use tokio::io::AsyncWrite;
+    struct SignalWriter {
+        inner: AssetWriter,
+        queued: Arc<tokio::sync::Notify>,
+    }
+    impl AsyncWrite for SignalWriter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            data: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            let result = Pin::new(&mut self.inner).poll_write(cx, data);
+            if result.is_pending() {
+                self.queued.notify_one();
+            }
+            result
+        }
+        fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.inner).poll_flush(cx)
+        }
+        fn poll_shutdown(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            Pin::new(&mut self.inner).poll_shutdown(cx)
         }
     }
-    let (image, files) = image_cache::tests::publication::complete_image();
-    let pin = ImagePin {
-        release_id: "fixture".into(),
-        manifest_url: "https://fixture.invalid/m".into(),
-        manifest_sha256: image.identity().manifest_sha256.clone(),
-        accepted_schema_sha256: "a".repeat(64),
-        target: image.target(),
-        asset_base: "https://fixture.invalid/".into(),
-        redirect_origins: vec![],
-        limits: image.limits(),
-    };
-    let client = ImageHttpClient::new(&pin).unwrap();
-    let temp = tempfile::tempdir().unwrap();
-    let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
-    let tx = cache.begin(&image).unwrap();
-    for (i, data) in files.iter().enumerate() {
-        let mut f = tx.start_asset(i).unwrap().unwrap();
-        std::io::Write::write_all(&mut f, data).unwrap();
-        drop(f);
-        tx.finish_asset(i).unwrap();
-    }
-    let (_sender, closed) = watch::channel(false);
-    let mut acquire = Box::pin(acquire_image(
-        &image,
-        &cache,
-        &client,
-        closed.clone(),
-        |_| {},
-    ));
-    let notified = Arc::new(tokio::sync::Notify::new());
-    let waker = Waker::from(Arc::new(Signal(notified.clone())));
-    assert!(matches!(
-        acquire.as_mut().poll(&mut Context::from_waker(&waker)),
-        Poll::Pending
-    ));
-    tokio::time::timeout(Duration::from_secs(5), notified.notified())
-        .await
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
         .unwrap();
-    tx.commit(&closed).unwrap();
-    acquire
-        .await
-        .expect("a concurrent complete commit is a cache hit, not a transfer error");
+    runtime.block_on(async {
+        let (image, files) = image_cache::tests::publication::complete_image();
+        let data = &files[0];
+        let mut response =
+            format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n", data.len()).into_bytes();
+        response.extend(data);
+        let server = Server::start(&response).await;
+        let client = server.client(true, "image.invalid");
+        let temp = tempfile::tempdir().unwrap();
+        let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+        let owner = Arc::new(cache.begin(&image).unwrap());
+        let file = owner.start_asset(0).unwrap().unwrap();
+        let queued = Arc::new(tokio::sync::Notify::new());
+        let mut writer = SignalWriter {
+            inner: asset_writer(file, owner.clone()),
+            queued: queued.clone(),
+        };
+        let (release, wait) = std::sync::mpsc::channel();
+        let blocker = tokio::task::spawn_blocking(move || wait.recv().unwrap());
+        let (sender, closed) = watch::channel(false);
+        let mut transfer = Box::pin(client.transfer(
+            &client.pin.manifest_url,
+            &mut writer,
+            data.len() as u64,
+            (Some(data.len() as u64), image.assets[0].sha256()),
+            closed,
+            |_| {},
+        ));
+        tokio::select! {
+            _=queued.notified()=>{},
+            result=&mut transfer=>panic!("transfer ended before the I/O gate: {result:?}"),
+        }
+        sender.send(true).unwrap();
+        let result = tokio::time::timeout(Duration::from_millis(200), &mut transfer).await;
+        drop(transfer);
+        drop(writer);
+        drop(owner);
+        let early = cache.begin(&image);
+        let busy = matches!(early, Err(ImageError::Busy));
+        drop(early);
+        release.send(()).unwrap();
+        blocker.await.unwrap();
+        assert!(
+            matches!(result, Ok(Err(ImageError::Cancelled))),
+            "cancellation must not wait on queued disk I/O: {result:?}"
+        );
+        assert!(
+            busy,
+            "the detached actual write must still own the cache pin"
+        );
+    });
+}
+
+#[test]
+fn ready_publication_between_cache_check_and_lock_is_reconciled_without_http() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap()
+        .block_on(async {
+            use std::{
+                future::Future,
+                task::{Context, Poll, Wake, Waker},
+            };
+            struct Signal(Arc<tokio::sync::Notify>);
+            impl Wake for Signal {
+                fn wake(self: Arc<Self>) {
+                    self.0.notify_one();
+                }
+            }
+            let (image, files) = image_cache::tests::publication::complete_image();
+            let pin = ImagePin {
+                release_id: "fixture".into(),
+                manifest_url: "https://fixture.invalid/m".into(),
+                manifest_sha256: image.identity().manifest_sha256.clone(),
+                accepted_schema_sha256: "a".repeat(64),
+                target: image.target(),
+                asset_base: "https://fixture.invalid/".into(),
+                redirect_origins: vec![],
+                limits: image.limits(),
+            };
+            let client = ImageHttpClient::new(&pin).unwrap();
+            let temp = tempfile::tempdir().unwrap();
+            let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+            let tx = cache.begin(&image).unwrap();
+            for (i, data) in files.iter().enumerate() {
+                let mut f = tx.start_asset(i).unwrap().unwrap();
+                std::io::Write::write_all(&mut f, data).unwrap();
+                drop(f);
+                tx.finish_asset(i).unwrap();
+            }
+            let (_sender, closed) = watch::channel(false);
+            let mut acquire = Box::pin(acquire_image(
+                &image,
+                &cache,
+                &client,
+                closed.clone(),
+                |_| {},
+            ));
+            let notified = Arc::new(tokio::sync::Notify::new());
+            let waker = Waker::from(Arc::new(Signal(notified.clone())));
+            let (release, wait) = std::sync::mpsc::channel();
+            let blocker = tokio::task::spawn_blocking(move || wait.recv().unwrap());
+            assert!(matches!(
+                acquire.as_mut().poll(&mut Context::from_waker(&waker)),
+                Poll::Pending
+            ));
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            tokio::time::timeout(Duration::from_secs(5), notified.notified())
+                .await
+                .unwrap();
+            tx.commit(&closed).unwrap();
+            acquire
+                .await
+                .expect("a concurrent complete commit is a cache hit, not a transfer error");
+        });
 }
 
 #[tokio::test]

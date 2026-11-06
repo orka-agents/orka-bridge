@@ -142,7 +142,11 @@ impl ImageHttpClient {
                     .checked_add(chunk.len() as u64)
                     .filter(|n| *n <= maximum)
                     .ok_or(ImageError::LimitExceeded)?;
-                output.write_all(&chunk).await.map_err(io_error)?;
+                tokio::select! {
+                    biased;
+                    _ = cancelled(&mut closed) => return Err(ImageError::Cancelled),
+                    result = output.write_all(&chunk) => result.map_err(io_error)?,
+                }
                 hash.update(&chunk);
                 progress(bytes);
             }
@@ -287,7 +291,7 @@ pub async fn acquire_image(
         })
         .await
         {
-            Ok(owner) => break std::sync::Arc::new(owner),
+            Ok(owner) => break std::sync::Arc::new(owner.with_cancellation(closed.clone())),
             // Another owner may commit between the optimistic read and try_lock.
             Err(ImageError::RetainedImage) if !reconciled => reconciled = true,
             Err(error) => return Err(error),

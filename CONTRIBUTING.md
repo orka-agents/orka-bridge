@@ -69,6 +69,9 @@ the final selector last. Interrupted owned staging can resume; nothing is evicte
 or garbage-collected. Read capabilities do not freeze other writers, so future
 installation code must verify its private destination copies. This API does not
 materialize an installation, start a VM or select a production image catalog.
+On Windows, schedule cached manifest reads before acquisition: a concurrent
+staging read can cause a sharing failure during publication, with staging retained.
+The no-follow directory protections are not weakened to avoid this contention.
 
 ## Local development image
 

@@ -23,11 +23,13 @@ pub struct ImageCache {
     #[cfg(test)]
     available: Option<u64>,
 }
-struct OwnerLock(File);
+struct OwnerLock(File, u32);
 impl Drop for OwnerLock {
     fn drop(&mut self) {
         // A forked child may retain the file description until exec; it is not an owner.
-        let _ = self.0.unlock();
+        if std::process::id() == self.1 {
+            let _ = self.0.unlock();
+        }
     }
 }
 pub struct CacheTransaction {
@@ -36,6 +38,7 @@ pub struct CacheTransaction {
     image: ResolvedImage,
     _lock: OwnerLock,
     published: bool,
+    closed: Option<tokio::sync::watch::Receiver<bool>>,
     #[cfg(test)]
     point: Option<tests::recovery::Point>,
     ancestors: Arc<Vec<Dir>>,
@@ -299,7 +302,7 @@ impl ImageCache {
             std::fs::TryLockError::WouldBlock => ImageError::Busy,
             std::fs::TryLockError::Error(e) => storage(e),
         })?;
-        let lock = OwnerLock(lock);
+        let lock = OwnerLock(lock, std::process::id());
         if marker(&directory, "ready.json", &record(image, "ready"))? {
             return Err(ImageError::RetainedImage);
         }
@@ -332,6 +335,7 @@ impl ImageCache {
             image: image.clone(),
             _lock: lock,
             published,
+            closed: None,
             #[cfg(test)]
             point: None,
             ancestors: self.ancestors.clone(),
@@ -516,9 +520,6 @@ fn decode_gzip(
     output.sync_all().map_err(storage)?;
     Ok(())
 }
-fn verify(file: &mut File, bytes: u64, hash: &str) -> Result<(), ImageError> {
-    verify_checked(file, bytes, hash, None)
-}
 fn verify_checked(
     file: &mut File,
     bytes: u64,
@@ -548,6 +549,10 @@ fn verify_checked(
     Ok(())
 }
 impl CacheTransaction {
+    pub(crate) fn with_cancellation(mut self, closed: tokio::sync::watch::Receiver<bool>) -> Self {
+        self.closed = Some(closed);
+        self
+    }
     fn sync_namespace(&self) -> Result<(), ImageError> {
         fs::sync(&self.stage)?;
         fs::sync(&self.directory)?;
@@ -640,6 +645,7 @@ impl CacheTransaction {
         })
     }
     pub(crate) fn start_asset(&self, index: usize) -> Result<Option<File>, ImageError> {
+        self.closed.as_ref().map_or(Ok(()), cancelled)?;
         let asset = self
             .image
             .assets
@@ -648,7 +654,7 @@ impl CacheTransaction {
         let name = format!("asset-{index}");
         match regular(&self.stage, &name, false, false) {
             Ok(mut file) => {
-                verify(&mut file, asset.bytes, &asset.sha256)?;
+                verify_checked(&mut file, asset.bytes, &asset.sha256, self.closed.as_ref())?;
                 self.sync_namespace()?;
                 return Ok(None);
             }
@@ -664,6 +670,7 @@ impl CacheTransaction {
         Ok(Some(file))
     }
     pub(crate) fn finish_asset(&self, index: usize) -> Result<(), ImageError> {
+        self.closed.as_ref().map_or(Ok(()), cancelled)?;
         let asset = self
             .image
             .assets
@@ -671,7 +678,7 @@ impl CacheTransaction {
             .ok_or(ImageError::Invalid("asset index"))?;
         let pending = format!("pending-{index}");
         let mut file = regular(&self.stage, &pending, true, false)?;
-        verify(&mut file, asset.bytes, &asset.sha256)?;
+        verify_checked(&mut file, asset.bytes, &asset.sha256, self.closed.as_ref())?;
         file.sync_all().map_err(storage)?;
         drop(file);
         fs::link(&self.stage, &pending, &format!("asset-{index}"))?;

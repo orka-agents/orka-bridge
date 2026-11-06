@@ -60,6 +60,53 @@ fn transaction_drop_releases_ownership_even_while_a_fork_child_holds_the_fd() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn dropping_an_inherited_lock_in_a_child_does_not_unlock_the_parent() {
+    const KEY: &str = "BRIDGE_TEST_IMAGE_CACHE_CHILD_UNLOCK";
+    if std::env::var_os(KEY).is_none() {
+        let name = format!(
+            "{}::dropping_an_inherited_lock_in_a_child_does_not_unlock_the_parent",
+            module_path!().split_once("::").unwrap().1
+        );
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &name, "--nocapture"])
+            .env(KEY, "1")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(String::from_utf8_lossy(&out.stdout).contains("1 passed"));
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+    let image = image();
+    let owner = cache.begin(&image).unwrap();
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0);
+    if pid == 0 {
+        drop(owner._lock);
+        unsafe { libc::_exit(0) }
+    }
+    let mut status = 0;
+    assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+    assert_eq!(status, 0);
+    let contender = cache.begin(&image);
+    let busy = matches!(contender, Err(ImageError::Busy));
+    drop(contender);
+    drop(owner);
+    assert!(
+        busy,
+        "the child must not release the parent's acquisition lock"
+    );
+    cache.begin(&image).unwrap();
+}
+
 #[test]
 fn symlinks_or_junctions_in_pin_stage_or_generation_are_never_adopted() {
     for component in ["pin", "stage", "generation"] {
@@ -312,6 +359,34 @@ fn completed_chunk_is_not_reported_successful_until_its_namespace_is_flushed() {
     tx.ancestors = cache.ancestors.clone();
     assert!(tx.start_asset(0).unwrap().is_none());
     assert_eq!(std::fs::read(invalid).unwrap(), b"retained");
+}
+
+#[test]
+fn asset_rehashing_observes_the_acquisition_cancellation_receiver() {
+    let mut results = Vec::new();
+    for finishing in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+        let (image, data) = chunk_image();
+        let tx = cache.begin(&image).unwrap();
+        let mut f = tx.start_asset(0).unwrap().unwrap();
+        f.write_all(&data).unwrap();
+        drop(f);
+        if !finishing {
+            tx.finish_asset(0).unwrap();
+        }
+        let (_sender, closed) = tokio::sync::watch::channel(true);
+        let tx = tx.with_cancellation(closed);
+        results.push(if finishing {
+            tx.finish_asset(0).err()
+        } else {
+            tx.start_asset(0).err()
+        });
+    }
+    assert_eq!(
+        results,
+        vec![Some(ImageError::Cancelled), Some(ImageError::Cancelled)]
+    );
 }
 
 pub(crate) type Point = Arc<dyn Fn(&str) -> Result<(), ImageError> + Send + Sync>;
