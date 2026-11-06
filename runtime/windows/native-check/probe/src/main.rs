@@ -18,6 +18,8 @@ fn main() {
 mod native {
     #[path = "controller.rs"]
     mod controller;
+    #[path = "permission_diag.rs"]
+    mod permission_diag;
     use crate::runtime::{
         self,
         windows::{inputs::*, job::OwnedQemuProcess},
@@ -360,6 +362,7 @@ mod native {
             return emit(json!({"sourceHead":crate::SOURCE_HEAD,"lock":"busy"}));
         }
         check(["smoke", "hold-created", "hold-pipe", "hold-guard-only"].contains(&mode.as_str()))?;
+        let diagnostic_runtime = cfg.paths.runtime.clone();
         let paths = WindowsInputPaths {
             runtime: cfg.paths.runtime,
             kernel: cfg.paths.kernel,
@@ -434,6 +437,11 @@ mod native {
             .map_err(|e| io::Error::other(format!("restricted primary token: {e}")))?;
         let inherited = inherited_guard(process.raw(), &spec.ownership, &canary)
             .map_err(|e| io::Error::other(format!("inherited handle snapshot: {e}")))?;
+        if mode == "smoke" {
+            if let Err(e) = permission_diag::run(process.raw(), &diagnostic_runtime) {
+                eprintln!("[LOADER-DIAG] measurement unavailable: {e}");
+            }
+        }
         // Drain diagnostics and pump QMP immediately, including during pipe wait.
         // The greeting is still consumed only AFTER pipe peer/DACL validation.
         let (mut stdin, stdout, mut stderr) = child.take_stdio()?;
