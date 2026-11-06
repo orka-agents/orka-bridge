@@ -34,12 +34,23 @@ pub struct InstallationRecord {
 }
 pub struct Journal {
     root: PathBuf,
-    _lock: Arc<File>,
+    _lock: OwnerLock,
     state: File,
     record: InstallationRecord,
     creation_live: bool,
 }
-fn lock(root: &Path) -> Result<File, RuntimeError> {
+struct OwnerLock(Arc<File>);
+impl Drop for OwnerLock {
+    fn drop(&mut self) {
+        // The lock belongs to the open file description, which any concurrent
+        // spawn shares from fork until exec. Release it now unless a backend
+        // still retains the ownership capability.
+        if let Some(file) = Arc::get_mut(&mut self.0) {
+            let _ = file.unlock();
+        }
+    }
+}
+fn lock(root: &Path) -> Result<OwnerLock, RuntimeError> {
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -50,7 +61,7 @@ fn lock(root: &Path) -> Result<File, RuntimeError> {
         fs::TryLockError::WouldBlock => RuntimeError::Busy,
         fs::TryLockError::Error(e) => e.into(),
     })?;
-    Ok(file)
+    Ok(OwnerLock(Arc::new(file)))
 }
 fn regular(path: &Path) -> Result<(), RuntimeError> {
     if !fs::symlink_metadata(path)?.file_type().is_file() {
@@ -103,7 +114,7 @@ impl Journal {
         };
         let journal = Self {
             root,
-            _lock: Arc::new(owner),
+            _lock: owner,
             state,
             record,
             creation_live: true,
@@ -150,7 +161,7 @@ impl Journal {
             .open(root.join("state.disk"))?;
         let journal = Self {
             root,
-            _lock: Arc::new(owner),
+            _lock: owner,
             state,
             record,
             creation_live: false,
@@ -182,7 +193,7 @@ impl Journal {
             installation_id: self.record.installation_id,
             generation: self.record.generation,
             boot_nonce: nonce,
-            ownership: self._lock.clone(),
+            ownership: self._lock.0.clone(),
             root: self.root.clone(),
             state_path: self.root.join("state.disk"),
             state_bytes: STATE_BYTES,

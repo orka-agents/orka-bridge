@@ -36,6 +36,39 @@ fn exclusive_directory_lock_and_persistent_random_identity() {
     assert_ne!(other.record().installation_id, id);
     assert_ne!(other.record().mac, mac);
 }
+#[cfg(unix)]
+#[test]
+fn concurrent_spawn_cannot_extend_dropped_journal_ownership() {
+    use std::{
+        io::{Read, Write},
+        os::unix::{net::UnixStream, process::CommandExt},
+    };
+    let (temp, journal) = create();
+    let mut worker = RuntimeWorker::new(Box::new(Backend::default()), journal);
+    worker.start().unwrap();
+    let (parent, child) = UnixStream::pair().unwrap();
+    child
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command.arg("--list").stdout(std::process::Stdio::null());
+    // SAFETY: the child only reads and writes its socket before exec.
+    unsafe {
+        command.pre_exec(move || {
+            (&child).write_all(b"f")?;
+            (&child).read_exact(&mut [0])
+        });
+    }
+    let spawner = std::thread::spawn(move || command.status().unwrap());
+    // Pause this spawn between fork and exec, like any concurrent app spawn:
+    // it shares every open descriptor.
+    (&parent).read_exact(&mut [0]).unwrap();
+    drop(worker);
+    let reopened = Journal::open(&temp.path().join("install"));
+    (&parent).write_all(b"x").unwrap();
+    assert!(spawner.join().unwrap().success());
+    reopened.unwrap();
+}
 #[test]
 fn missing_replaced_or_unjournaled_state_is_never_recreated() {
     let (temp, j) = create();
@@ -83,6 +116,7 @@ struct Backend {
     events: Arc<Mutex<Vec<&'static str>>>,
     fail_stop: Arc<Mutex<bool>>,
     stop_root: Option<std::path::PathBuf>,
+    retained: Arc<Mutex<Vec<LaunchSpec>>>,
 }
 impl VmBackend for Backend {
     fn create_state(&mut self, spec: &LaunchSpec) -> Result<(), RuntimeError> {
@@ -95,8 +129,9 @@ impl VmBackend for Backend {
             .set_len(64)?;
         Ok(())
     }
-    fn start(&mut self, _: &LaunchSpec) -> Result<BackendHandle, RuntimeError> {
+    fn start(&mut self, spec: &LaunchSpec) -> Result<BackendHandle, RuntimeError> {
         self.events.lock().unwrap().push("start");
+        self.retained.lock().unwrap().push(spec.clone());
         Ok(BackendHandle::new(42_u64))
     }
     fn stop(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
@@ -333,6 +368,20 @@ fn dropping_running_worker_stops_before_releasing_ownership() {
     drop(worker);
     assert_eq!(*events.lock().unwrap(), vec!["create", "start", "stop"]);
     assert!(Journal::open(&temp.path().join("install")).is_ok());
+}
+#[test]
+fn retained_backend_capability_keeps_dropped_journal_ownership() {
+    let (temp, journal) = create();
+    let backend = Backend::default();
+    let retained = backend.retained.clone();
+    let mut worker = RuntimeWorker::new(Box::new(backend), journal);
+    worker.start().unwrap();
+    drop(worker);
+    assert_eq!(retained.lock().unwrap().len(), 1);
+    assert!(matches!(
+        Journal::open(&temp.path().join("install")),
+        Err(RuntimeError::Busy)
+    ));
 }
 
 #[test]
