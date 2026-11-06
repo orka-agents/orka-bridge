@@ -390,7 +390,10 @@ mod tests {
             for index in 0..2 {
                 let mut raw = std::ptr::null_mut();
                 check(GetAce(acl, index, &mut raw)).unwrap();
-                let ace = &*raw.cast::<ACCESS_ALLOWED_ACE>();
+                let ace = std::ptr::NonNull::new(raw)
+                    .expect("GetAce must return an ACE")
+                    .cast::<ACCESS_ALLOWED_ACE>()
+                    .as_ref();
                 assert_eq!(ace.Header.AceType, 0); // ACCESS_ALLOWED_ACE_TYPE
                 assert_eq!(ace.Header.AceFlags, 0);
                 assert_eq!(ace.Mask, GENERIC_ALL);
