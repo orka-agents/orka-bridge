@@ -318,6 +318,15 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
         format!("file:{}", spec.root.join("boot.log").display())
     );
     assert_eq!(value("-L"), expected_data.to_str().unwrap());
+    let committed_os = spec.root.join(spec.image.disk_path());
+    assert!(committed_os.is_file());
+    assert_eq!(
+        value("-drive"),
+        format!(
+            "if=none,id=os,format=qcow2,cache=writeback,file={}",
+            qemu_value(&committed_os).unwrap()
+        )
+    );
     assert_eq!(value("-accel"), "whpx");
     assert_eq!(value("-qmp"), "stdio");
     assert_eq!(

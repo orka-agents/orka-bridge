@@ -143,7 +143,7 @@ pub fn launch_argv(
     serial.push(spec.root.join("boot.log"));
     pair("-serial", serial);
     for (id, path) in [
-        ("os", spec.root.join("os.disk")),
+        ("os", spec.root.join(spec.image.disk_path())),
         ("state", spec.state_path.clone()),
     ] {
         pair(
