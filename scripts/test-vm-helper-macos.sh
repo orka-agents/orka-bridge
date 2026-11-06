@@ -12,7 +12,12 @@ flags=(-swift-version 5 -target arm64-apple-macos13.0 -warnings-as-errors -parse
 xcrun swiftc "${flags[@]}" -whole-module-optimization -emit-object "${sources[@]}" -o "$work/BridgeVM.o"
 xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/tests/BridgeVMTests.swift" -o "$work/tests"
 xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/tests/SupervisorIOTests.swift" -o "$work/io-tests"
+xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/tests/HelperConfigurationTests.swift" -o "$work/configuration-tests"
+for runner in tests io-tests configuration-tests; do
+    codesign --force --sign - --entitlements "$native/virtualization.entitlements" "$work/$runner"
+done
 "$work/tests"
+"$work/configuration-tests"
 # Both new suites must run: an I/O assertion failure must not hide peer failures.
 status=0
 if ! "$work/io-tests"; then status=1; fi
