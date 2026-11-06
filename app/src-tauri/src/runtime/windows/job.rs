@@ -467,6 +467,11 @@ mod native {
         pub fn wait_exit(&self, timeout: Duration) -> io::Result<()> {
             wait_handle(self.resources().process.0, timeout)
         }
+        /// Natural quit and any subsequent teardown share the original stop budget.
+        pub fn wait_for_stop(&self) -> io::Result<()> {
+            let resources = self.resources();
+            wait_handle(resources.process.0, stop_budget(&resources.stop_deadline))
+        }
         pub fn abort(&self) -> io::Result<()> {
             let resources = self.resources();
             stop_job(
