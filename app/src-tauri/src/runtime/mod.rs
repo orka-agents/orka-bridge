@@ -15,8 +15,12 @@ pub mod types;
 pub mod wire;
 
 use bridge_runtime_protocol::*;
+use image_install::InstalledImageSet;
 use journal::{Journal, StatePhase};
-use std::{mem::ManuallyDrop, sync::Mutex};
+use std::{
+    mem::ManuallyDrop,
+    sync::{Arc, Mutex},
+};
 use types::*;
 
 /// Serialized owner of backend capabilities and the installation lock.
@@ -24,19 +28,26 @@ use types::*;
 pub struct RuntimeWorker {
     backend: ManuallyDrop<Box<dyn VmBackend>>,
     journal: ManuallyDrop<Journal>,
+    image: Arc<InstalledImageSet>,
     lease: ManuallyDrop<Option<VmLease>>,
     next_stage: Option<Stage>,
     early_guest: Option<Uuid>,
 }
 impl RuntimeWorker {
-    pub fn new(backend: Box<dyn VmBackend>, journal: Journal) -> Self {
-        Self {
+    pub fn new(
+        backend: Box<dyn VmBackend>,
+        journal: Journal,
+        image: Arc<InstalledImageSet>,
+    ) -> Result<Self, RuntimeError> {
+        journal.validate_image(&image)?;
+        Ok(Self {
             backend: ManuallyDrop::new(backend),
             journal: ManuallyDrop::new(journal),
+            image,
             lease: ManuallyDrop::new(None),
             next_stage: None,
             early_guest: None,
-        }
+        })
     }
     pub fn lease(&self) -> Option<&VmLease> {
         self.lease.as_ref()
@@ -46,14 +57,15 @@ impl RuntimeWorker {
             return Err(RuntimeError::Busy);
         }
         self.journal.verify_state()?;
+        self.journal.validate_image(&self.image)?;
         if self.journal.record().phase == StatePhase::Empty {
             self.journal.require_fresh_creation()?;
             self.journal.set_phase(StatePhase::Preparing)?;
             self.backend
-                .create_state(&self.journal.spec(Uuid::new_v4()))?;
+                .create_state(&self.journal.spec(Uuid::new_v4(), self.image.clone()))?;
             self.journal.finish_preparation()?;
         }
-        let spec = self.journal.begin_boot()?;
+        let spec = self.journal.begin_boot(self.image.clone())?;
         let handle = self.backend.start(&spec)?;
         *self.lease = Some(VmLease { spec, handle });
         self.next_stage = Some(Stage::Early);

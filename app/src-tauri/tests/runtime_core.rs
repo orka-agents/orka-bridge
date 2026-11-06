@@ -1,4 +1,5 @@
 use bridge_engine::engine::types::EngineAction;
+use bridge_engine::runtime as fixture_runtime;
 use bridge_engine::runtime::{journal::*, types::*, wire::*, RuntimeState, RuntimeWorker};
 use bridge_runtime_protocol::*;
 use std::{
@@ -6,16 +7,47 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tempfile::tempdir;
+#[path = "support/runtime_image_fixture.rs"]
+mod image_fixture;
+
+fn make_worker(backend: Box<dyn VmBackend>, journal: Journal) -> RuntimeWorker {
+    let target = journal.image_target("fixture-state-v1").unwrap();
+    let image = fixture_runtime::image_install::open_installed_image(&target).unwrap();
+    drop(target);
+    RuntimeWorker::new(backend, journal, Arc::new(image)).unwrap()
+}
 
 fn create() -> (tempfile::TempDir, Journal) {
     let temp = tempdir().unwrap();
+    let verified = image_fixture::verified(
+        temp.path(),
+        fixture_runtime::image_types::ImageTarget::MacosArm64,
+    );
     let journal = Journal::create(
         &temp.path().join("install"),
         BackendKind::Apple,
         vec![1, 2, 3],
     )
     .unwrap();
+    install_image(&journal, &verified);
     (temp, journal)
+}
+fn install_image(journal: &Journal, verified: &fixture_runtime::image_types::VerifiedImageSet) {
+    let target = journal
+        .image_target(&verified.image().identity().state_compatibility_id)
+        .unwrap();
+    let (_sender, closed) = tokio::sync::watch::channel(false);
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(fixture_runtime::image_install::materialize_image(
+            verified,
+            &target,
+            closed,
+            |_| {},
+        ))
+        .unwrap();
 }
 #[test]
 fn exclusive_directory_lock_and_persistent_random_identity() {
@@ -60,7 +92,7 @@ fn nonempty_uninitialized_owned_file_is_retained_before_backend_can_touch_it() {
     fs::write(&state, b"retained unknown state").unwrap();
     let backend = Backend::default();
     let events = backend.events.clone();
-    let mut worker = RuntimeWorker::new(Box::new(backend), journal);
+    let mut worker = make_worker(Box::new(backend), journal);
     assert!(matches!(worker.start(), Err(RuntimeError::RetainedState)));
     assert!(events.lock().unwrap().is_empty());
     assert_eq!(fs::read(state).unwrap(), b"retained unknown state");
@@ -135,7 +167,7 @@ fn hello(stage: Stage, nonce: Uuid, guest: u128) -> StageHello {
 #[test]
 fn creation_consumed_durably_before_delivery_never_repeated_on_serve_or_reopen() {
     let (temp, j) = create();
-    let mut worker = RuntimeWorker::new(Box::new(Backend::default()), j);
+    let mut worker = make_worker(Box::new(Backend::default()), j);
     worker.start().unwrap();
     let nonce = worker.lease().unwrap().spec.boot_nonce;
     let early = worker
@@ -163,7 +195,7 @@ fn creation_consumed_durably_before_delivery_never_repeated_on_serve_or_reopen()
     ));
     worker.stop().unwrap();
     drop(worker);
-    let mut worker = RuntimeWorker::new(
+    let mut worker = make_worker(
         Box::new(Backend::default()),
         Journal::open(&temp.path().join("install")).unwrap(),
     );
@@ -187,7 +219,7 @@ fn backend_failures_keep_ownership_and_wrong_hello_cannot_consume_creation() {
     let backend = Backend::default();
     let failing = backend.fail_stop.clone();
     let events = backend.events.clone();
-    let mut worker = RuntimeWorker::new(Box::new(backend), j);
+    let mut worker = make_worker(Box::new(backend), j);
     worker.start().unwrap();
     let nonce = worker.lease().unwrap().spec.boot_nonce;
     assert!(worker.start().is_err());
@@ -266,7 +298,7 @@ fn interrupted_initialization_or_record_write_stays_retained() {
     fs::write(root.join("record.next"), b"interrupted record").unwrap();
     let backend = Backend::default();
     let events = backend.events.clone();
-    let mut worker = RuntimeWorker::new(Box::new(backend), journal);
+    let mut worker = make_worker(Box::new(backend), journal);
     assert!(worker.start().is_err());
     assert!(events.lock().unwrap().is_empty());
     assert_eq!(fs::read(root.join("record.json")).unwrap(), selected);
@@ -283,7 +315,7 @@ fn concurrent_service_starts_share_one_owned_lease_and_shutdown_barrier() {
     let (_temp, journal) = create();
     let backend = Backend::default();
     let events = backend.events.clone();
-    let service = Arc::new(RuntimeState::with_worker(RuntimeWorker::new(
+    let service = Arc::new(RuntimeState::with_worker(make_worker(
         Box::new(backend),
         journal,
     )));
@@ -315,7 +347,7 @@ fn symlink_state_is_refused_without_following_or_modifying_target() {
     fs::write(&outside, b"not owned by the installation").unwrap();
     fs::remove_file(root.join("state.disk")).unwrap();
     std::os::unix::fs::symlink(&outside, root.join("state.disk")).unwrap();
-    let mut worker = RuntimeWorker::new(Box::new(Backend::default()), journal);
+    let mut worker = make_worker(Box::new(Backend::default()), journal);
     assert!(worker.start().is_err());
     assert_eq!(fs::read(outside).unwrap(), b"not owned by the installation");
 }
@@ -328,7 +360,7 @@ fn dropping_running_worker_stops_before_releasing_ownership() {
         ..Backend::default()
     };
     let events = backend.events.clone();
-    let mut worker = RuntimeWorker::new(Box::new(backend), journal);
+    let mut worker = make_worker(Box::new(backend), journal);
     worker.start().unwrap();
     drop(worker);
     assert_eq!(*events.lock().unwrap(), vec!["create", "start", "stop"]);
@@ -339,8 +371,13 @@ fn dropping_running_worker_stops_before_releasing_ownership() {
 fn maximum_machine_identifier_survives_boot_record_updates_and_reopen() {
     let temp = tempdir().unwrap();
     let root = temp.path().join("install");
+    let verified = image_fixture::verified(
+        temp.path(),
+        fixture_runtime::image_types::ImageTarget::MacosArm64,
+    );
     let journal = Journal::create(&root, BackendKind::Apple, vec![255; 4096]).unwrap();
-    let mut worker = RuntimeWorker::new(Box::new(Backend::default()), journal);
+    install_image(&journal, &verified);
+    let mut worker = make_worker(Box::new(Backend::default()), journal);
     worker.start().unwrap();
     let nonce = worker.lease().unwrap().spec.boot_nonce;
     worker
@@ -361,20 +398,20 @@ fn reopened_unfinished_state_never_regains_creation_authority() {
     drop(journal);
     let backend = Backend::default();
     let events = backend.events.clone();
-    let mut worker = RuntimeWorker::new(Box::new(backend), Journal::open(&root).unwrap());
+    let mut worker = make_worker(Box::new(backend), Journal::open(&root).unwrap());
     assert!(matches!(worker.start(), Err(RuntimeError::RetainedState)));
     assert!(events.lock().unwrap().is_empty());
 
     let (temp, journal) = create();
     let root = temp.path().join("install");
-    let mut worker = RuntimeWorker::new(Box::new(Backend::default()), journal);
+    let mut worker = make_worker(Box::new(Backend::default()), journal);
     worker.start().unwrap();
     worker.stop().unwrap();
     drop(worker);
     // No descriptor escaped, but the original exclusive creation handle closed.
     let backend = Backend::default();
     let events = backend.events.clone();
-    let mut worker = RuntimeWorker::new(Box::new(backend), Journal::open(&root).unwrap());
+    let mut worker = make_worker(Box::new(backend), Journal::open(&root).unwrap());
     assert!(matches!(worker.start(), Err(RuntimeError::RetainedState)));
     assert!(events.lock().unwrap().is_empty());
 }
@@ -386,13 +423,16 @@ fn failed_drop_child() {
         return; // This entrypoint is driven by the parent test, not standalone.
     };
     let root = std::path::PathBuf::from(root);
+    let verified =
+        image_fixture::verified(&root, fixture_runtime::image_types::ImageTarget::MacosArm64);
     let journal = Journal::create(&root.join("install"), BackendKind::Apple, vec![1]).unwrap();
+    install_image(&journal, &verified);
     let backend = Backend {
         stop_root: Some(root.join("install")),
         ..Backend::default()
     };
     *backend.fail_stop.lock().unwrap() = true;
-    let mut worker = RuntimeWorker::new(Box::new(backend), journal);
+    let mut worker = make_worker(Box::new(backend), journal);
     worker.start().unwrap();
     drop(worker);
     fs::write(root.join("ready"), b"ready").unwrap();

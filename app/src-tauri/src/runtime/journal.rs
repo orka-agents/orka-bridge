@@ -1,5 +1,11 @@
-use super::{identity::*, types::*};
+use super::{
+    identity::*,
+    image_install::{InstallationImageTarget, InstalledImageSet},
+    image_types::ImageTarget,
+    types::*,
+};
 use bridge_runtime_protocol::{StateCreation, Uuid, STATE_BYTES};
+use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -35,6 +41,7 @@ pub struct InstallationRecord {
 pub struct Journal {
     root: PathBuf,
     _lock: Arc<File>,
+    image_root: Dir,
     state: File,
     record: InstallationRecord,
     creation_live: bool,
@@ -79,6 +86,7 @@ impl Journal {
         File::open(root.parent().ok_or(RuntimeError::RetainedState)?)?.sync_all()?;
         let root = fs::canonicalize(&root)?;
         let owner = lock(&root)?;
+        let image_root = Dir::open_ambient_dir(&root, cap_std::ambient_authority())?;
         let state = OpenOptions::new()
             .create_new(true)
             .read(true)
@@ -104,6 +112,7 @@ impl Journal {
         let journal = Self {
             root,
             _lock: Arc::new(owner),
+            image_root,
             state,
             record,
             creation_live: true,
@@ -118,6 +127,7 @@ impl Journal {
         }
         let root = fs::canonicalize(root)?;
         let owner = lock(&root)?;
+        let image_root = Dir::open_ambient_dir(&root, cap_std::ambient_authority())?;
         // An interrupted record write needs explicit recovery, not guessed replay.
         if root.join("record.next").exists() {
             return Err(RuntimeError::RetainedState);
@@ -151,6 +161,7 @@ impl Journal {
         let journal = Self {
             root,
             _lock: Arc::new(owner),
+            image_root,
             state,
             record,
             creation_live: false,
@@ -160,6 +171,29 @@ impl Journal {
             return Err(RuntimeError::RetainedState);
         }
         Ok(journal)
+    }
+    /// Prepare/cache the source before acquiring this Journal's ownership.
+    pub fn image_target<'a>(
+        &'a self,
+        compatibility: &'a str,
+    ) -> Result<InstallationImageTarget<'a>, RuntimeError> {
+        let target = match self.record.backend {
+            BackendKind::Apple => ImageTarget::MacosArm64,
+            BackendKind::Qemu => ImageTarget::WindowsAmd64,
+        };
+        Ok(InstallationImageTarget::from_owned_installation(
+            &self.image_root,
+            &self._lock,
+            self.record.installation_id,
+            target,
+            compatibility,
+            self.creation_live && self.record.phase == StatePhase::Empty,
+        ))
+    }
+    /// Installation/platform/binding preflight, not backend or infrastructure readiness.
+    pub fn validate_image(&self, image: &InstalledImageSet) -> Result<(), RuntimeError> {
+        image.revalidate(&self.image_target(&image.identity().state_compatibility_id)?)?;
+        Ok(())
     }
     pub fn record(&self) -> &InstallationRecord {
         &self.record
@@ -177,12 +211,13 @@ impl Journal {
         }
         Ok(())
     }
-    pub(super) fn spec(&self, nonce: Uuid) -> LaunchSpec {
+    pub(super) fn spec(&self, nonce: Uuid, image: Arc<InstalledImageSet>) -> LaunchSpec {
         LaunchSpec {
             installation_id: self.record.installation_id,
             generation: self.record.generation,
             boot_nonce: nonce,
             ownership: self._lock.clone(),
+            image,
             root: self.root.clone(),
             state_path: self.root.join("state.disk"),
             state_bytes: STATE_BYTES,
@@ -213,7 +248,10 @@ impl Journal {
         next.phase = phase;
         self.commit(next)
     }
-    pub(super) fn begin_boot(&mut self) -> Result<LaunchSpec, RuntimeError> {
+    pub(super) fn begin_boot(
+        &mut self,
+        image: Arc<InstalledImageSet>,
+    ) -> Result<LaunchSpec, RuntimeError> {
         self.verify_state()?;
         if !matches!(
             self.record.phase,
@@ -227,7 +265,7 @@ impl Journal {
         let mut next = self.record.clone();
         next.boot_nonce = Some(Uuid::new_v4());
         self.commit(next)?;
-        Ok(self.spec(self.record.boot_nonce.unwrap()))
+        Ok(self.spec(self.record.boot_nonce.unwrap(), image))
     }
     pub(super) fn consume_creation(
         &mut self,
@@ -312,6 +350,10 @@ fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "image_wiring_tests.rs"]
+mod image_wiring_tests;
 
 #[cfg(test)]
 mod tests {
