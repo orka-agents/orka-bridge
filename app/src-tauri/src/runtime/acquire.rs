@@ -187,6 +187,64 @@ impl ImageHttpClient {
     }
 }
 
+struct AssetWriter {
+    file: std::sync::Arc<std::fs::File>,
+    owner: std::sync::Arc<super::image_cache::CacheTransaction>,
+    pending: Option<tokio::task::JoinHandle<std::io::Result<usize>>>,
+}
+fn asset_writer(
+    file: std::fs::File,
+    owner: std::sync::Arc<super::image_cache::CacheTransaction>,
+) -> AssetWriter {
+    AssetWriter {
+        file: std::sync::Arc::new(file),
+        owner,
+        pending: None,
+    }
+}
+impl tokio::io::AsyncWrite for AssetWriter {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        use std::{future::Future, io::Write, task::Poll};
+        if self.pending.is_none() {
+            if bytes.is_empty() {
+                return Poll::Ready(Ok(0));
+            }
+            let (file, owner, bytes) = (self.file.clone(), self.owner.clone(), bytes.to_vec());
+            // The actual I/O job owns the pin even if the caller drops its future.
+            self.pending = Some(tokio::task::spawn_blocking(move || {
+                let _owner = owner;
+                (&*file).write(&bytes)
+            }));
+        }
+        match std::pin::Pin::new(self.pending.as_mut().unwrap()).poll(cx) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(result) => {
+                self.pending = None;
+                Poll::Ready(
+                    result.unwrap_or_else(|_| Err(std::io::Error::other("image writer stopped"))),
+                )
+            }
+        }
+    }
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        // std::fs::File is unbuffered; wait for any outstanding blocking write.
+        self.poll_write(cx, &[]).map(|result| result.map(|_| ()))
+    }
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.poll_flush(cx)
+    }
+}
+
 async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, ImageError> + Send + 'static,
 ) -> Result<T, ImageError> {
@@ -241,7 +299,7 @@ pub async fn acquire_image(
         })
         .await?;
         if let Some(file) = pending {
-            let mut file = tokio::fs::File::from_std(file);
+            let mut file = asset_writer(file, tx.clone());
             let url = format!("{}{}", asset.location().base(), asset.location().leaf());
             client
                 .transfer(

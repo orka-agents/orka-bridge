@@ -5,6 +5,48 @@ use super::super::super::{
 use super::*;
 use image_cache::ImageCache;
 
+#[test]
+fn dropping_the_writer_keeps_the_transaction_owned_until_queued_io_finishes() {
+    use std::{
+        pin::Pin,
+        task::{Context, Poll, Waker},
+    };
+    use tokio::io::AsyncWrite;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    let temp = tempfile::tempdir().unwrap();
+    let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+    let (image, _) = image_cache::tests::publication::complete_image();
+    let owner = Arc::new(cache.begin(&image).unwrap());
+    let file = owner.start_asset(0).unwrap().unwrap();
+    let mut writer = asset_writer(file, owner.clone());
+    let (release, wait) = std::sync::mpsc::channel();
+    let blocker = runtime.spawn_blocking(move || wait.recv().unwrap());
+    runtime.block_on(async {
+        let result = Pin::new(&mut writer)
+            .poll_write(&mut Context::from_waker(Waker::noop()), b"old queued data");
+        assert!(!matches!(result, Poll::Ready(Err(_))));
+    });
+    drop(writer);
+    drop(owner);
+    let early = cache.begin(&image);
+    let busy = matches!(early, Err(ImageError::Busy));
+    drop(early);
+    release.send(()).unwrap();
+    runtime.block_on(blocker).unwrap();
+    drop(runtime);
+    assert!(
+        busy,
+        "an uncompleted queued write must still own the cache pin"
+    );
+    cache
+        .begin(&image)
+        .expect("write completed and dropped its final ownership");
+}
+
 #[tokio::test]
 async fn ready_publication_between_cache_check_and_lock_is_reconciled_without_http() {
     use std::{

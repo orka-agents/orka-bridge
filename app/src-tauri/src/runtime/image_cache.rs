@@ -308,15 +308,18 @@ impl ImageCache {
             Err(e) if e.kind() == io::ErrorKind::NotFound => false,
             Err(e) => return Err(storage(e)),
         };
-        if !published {
-            require_space(image, available)?;
-        }
         let stage = if published {
             directory
                 .open_dir_nofollow("generation-1")
                 .map_err(storage)?
         } else {
-            self::directory(&directory, std::ffi::OsStr::new("staging"))?
+            match read_directory(&directory, "staging")? {
+                Some(stage) => stage,
+                None => {
+                    require_space(image, available)?;
+                    self::directory(&directory, std::ffi::OsStr::new("staging"))?
+                }
+            }
         };
         not_reparse(&stage.try_clone().map_err(storage)?.into_std_file())?;
         if published && !marker(&stage, "generation.json", &record(image, "generation"))? {

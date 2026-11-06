@@ -87,8 +87,8 @@ fn symlinks_or_junctions_in_pin_stage_or_generation_are_never_adopted() {
         #[cfg(windows)]
         assert!(std::process::Command::new("cmd.exe")
             .args(["/d", "/c", "mklink", "/J"])
-            .arg(&link)
-            .arg(outside.path())
+            .arg(link.components().collect::<std::path::PathBuf>())
+            .arg(outside.path().components().collect::<std::path::PathBuf>())
             .status()
             .unwrap()
             .success());
@@ -189,6 +189,47 @@ fn cache_manifests_are_pinned_bounded_and_not_silently_refetched() {
         cache.manifest(&invalid),
         Err(ImageError::Invalid("cache pin"))
     );
+}
+
+#[test]
+fn resumed_chunks_need_only_remaining_space_not_the_fresh_download_budget() {
+    let temp = tempfile::tempdir().unwrap();
+    let mut cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+    let (image, files) = publication::complete_image();
+    let tx = cache.begin(&image).unwrap();
+    for (i, data) in files
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| matches!(image.assets[*i].role, ImageAssetRole::Chunk(_)))
+    {
+        let mut f = tx.start_asset(i).unwrap().unwrap();
+        f.write_all(data).unwrap();
+        drop(f);
+        tx.finish_asset(i).unwrap();
+    }
+    drop(tx);
+    cache.available = Some(
+        image.disk_bytes
+            + image
+                .assets
+                .iter()
+                .filter(|a| !matches!(a.role, ImageAssetRole::Chunk(_)))
+                .map(|a| a.bytes)
+                .sum::<u64>(),
+    );
+    let tx = cache
+        .begin(&image)
+        .expect("retained chunks leave enough space for remaining files");
+    for (i, data) in files.iter().enumerate() {
+        if let Some(mut f) = tx.start_asset(i).unwrap() {
+            f.write_all(data).unwrap();
+            drop(f);
+            tx.finish_asset(i).unwrap();
+        }
+    }
+    let (_sender, closed) = tokio::sync::watch::channel(false);
+    tx.commit(&closed).unwrap();
+    assert!(cache.verified(&image).unwrap().is_some());
 }
 
 pub(crate) type Point = Arc<dyn Fn(&str) -> Result<(), ImageError> + Send + Sync>;
