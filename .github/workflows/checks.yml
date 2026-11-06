@@ -93,12 +93,14 @@ jobs:
         run: |
           npm run tauri -- build --bundles app --no-sign --no-binary-patching -- --locked
           bundle=src-tauri/target/release/bundle/macos/Bridge.app
+          bash ../scripts/check-vm-helper-bundle-macos.sh "$bundle"
           test "$(lipo -archs "$bundle/Contents/MacOS/orka-bridge")" = arm64
           codesign --verify --ignore-resources "$bundle/Contents/MacOS/orka-bridge"
           tar -czf bridge-macos-arm64.tar.gz -C src-tauri/target/release/bundle/macos Bridge.app
           mkdir smoke-app
           tar -xzf bridge-macos-arm64.tar.gz -C smoke-app
           test -x smoke-app/Bridge.app/Contents/MacOS/orka-bridge
+          bash ../scripts/check-vm-helper-bundle-macos.sh smoke-app/Bridge.app
           cmp "$bundle/Contents/MacOS/orka-bridge" smoke-app/Bridge.app/Contents/MacOS/orka-bridge
           for notice in public/licenses/*.txt; do cmp "$notice" "smoke-app/Bridge.app/Contents/Resources/licenses/${notice##*/}"; done
           # Test both system themes and keyboard navigation; restore runner preferences.
