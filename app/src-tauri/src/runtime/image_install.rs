@@ -11,7 +11,6 @@ use bridge_runtime_protocol::Uuid;
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-#[cfg(test)]
 use std::sync::Arc;
 use std::{
     fs::File,
@@ -29,7 +28,7 @@ type Point = Arc<dyn Fn(&str) -> Result<(), ImageError> + Send + Sync>;
 /// This does not reconstruct permission from a pathname, file ID or persisted record.
 pub struct InstallationImageTarget<'owner> {
     root: &'owner Dir,
-    owner: &'owner File,
+    owner: &'owner Arc<File>,
     id: Uuid,
     target: ImageTarget,
     compatibility: &'owner str,
@@ -42,7 +41,7 @@ pub struct InstallationImageTarget<'owner> {
 impl<'owner> InstallationImageTarget<'owner> {
     pub(crate) fn from_owned_installation(
         root: &'owner Dir,
-        owner: &'owner File,
+        owner: &'owner Arc<File>,
         id: Uuid,
         target: ImageTarget,
         compatibility: &'owner str,
@@ -514,7 +513,7 @@ fn installed(binding: Binding) -> InstalledImageSet {
 }
 struct Context {
     root: Dir,
-    owner: File,
+    owner: Arc<File>,
     id: Uuid,
     target: ImageTarget,
     compatibility: String,
@@ -897,7 +896,7 @@ pub async fn materialize_image(
     let (events, mut receive) = mpsc::channel(1);
     let context = Context {
         root: target.root.try_clone().map_err(storage)?,
-        owner: target.owner.try_clone().map_err(storage)?,
+        owner: Arc::clone(target.owner),
         id: target.id,
         target: target.target,
         compatibility: target.compatibility.into(),

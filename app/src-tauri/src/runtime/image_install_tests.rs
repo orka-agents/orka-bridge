@@ -77,7 +77,7 @@ fn factory_for(path: &std::path::Path, disk: &[u8], target: ImageTarget) -> Veri
     let (_sender, closed) = tokio::sync::watch::channel(false);
     tx.commit(&closed).unwrap()
 }
-fn owner(path: &std::path::Path) -> (Dir, File) {
+fn owner(path: &std::path::Path) -> (Dir, Arc<File>) {
     std::fs::create_dir(path).unwrap();
     let root = Dir::open_ambient_dir(path, cap_std::ambient_authority()).unwrap();
     let f = File::options()
@@ -87,7 +87,7 @@ fn owner(path: &std::path::Path) -> (Dir, File) {
         .open(path.join("owner.lock"))
         .unwrap();
     f.try_lock().unwrap();
-    (root, f)
+    (root, Arc::new(f))
 }
 #[tokio::test]
 async fn materialization_copies_private_bytes_and_reopens_a_committed_binding() {
