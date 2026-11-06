@@ -1,7 +1,6 @@
 fn main() {
     println!("cargo:rerun-if-changed=native/macos");
     println!("cargo:rerun-if-changed=../../scripts/build-vm-helper-macos.sh");
-    println!("cargo:rerun-if-changed=gen/apple-helper/BridgeVM");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
         && std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64")
     {

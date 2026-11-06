@@ -1,7 +1,7 @@
 import Foundation
 import Virtualization
 
-// A later verified bootstrap supplies the complete configuration. This adapter
+// The bootstrap supplies the complete configuration. This adapter
 // never selects image paths, creates state/EFI, or exposes the VM to a renderer.
 final class VirtualizationDriver: NSObject, MachineDriver, VZVirtualMachineDelegate {
     private let queue: DispatchQueue

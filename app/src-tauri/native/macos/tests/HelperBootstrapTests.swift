@@ -108,6 +108,7 @@ private struct BootstrapTests {
         }
         do {
             try rejectsBeforeDriver(q)
+            try realFactoryFailure(q)
             try failedSetup(q, factoryThrows: false)
             try failedSetup(q, factoryThrows: true)
             try lifecycle(q, term: false)
@@ -130,6 +131,26 @@ private struct BootstrapTests {
             }
         }
         check(receive(f.control[1], 5).isEmpty, "rejection emitted readiness")
+    }
+
+    private static func realFactoryFailure(_ q: DispatchQueue) throws {
+        let f = try Fixture()
+        let configuration = try HelperConfiguration.read(owningFD: f.config)
+        q.sync {
+            do {
+                _ = try HelperBootstrap.makeDriver(configuration: configuration, guestFD: f.guest[0], queue: q)
+                check(false, "missing disks reached native VM construction")
+            } catch HelperConfigurationError.system {
+                check(true, "real factory rejected missing disks")
+            } catch { check(false, "unexpected real factory failure") }
+            check(fcntl(f.guest[0], F_GETFD) == -1, "real factory failure leaked adopted guest")
+            check(fcntl(f.owner, F_GETFD) >= 0, "real factory failure closed ownership")
+            check(fcntl(f.config, F_GETFD) == -1, "real configuration reader leaked config FD")
+            check(!FileManager.default.fileExists(atPath: f.root.appendingPathComponent("efi.vars").path),
+                  "missing disks created an EFI store")
+            _ = close(f.control[0])
+            _ = close(f.owner)
+        }
     }
 
     private static func failedSetup(_ q: DispatchQueue, factoryThrows: Bool) throws {

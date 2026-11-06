@@ -17,6 +17,7 @@ sources=("$native/BridgeVM.swift" "$native/VirtualizationDriver.swift"
          "$native/HelperBootstrap.swift" "$native/BridgeVMMain.swift")
 xcrun swiftc -swift-version 5 -target arm64-apple-macos13.0 \
     -warnings-as-errors -parse-as-library "${sources[@]}" -o "$work/BridgeVM"
+chmod 0755 "$work/BridgeVM"
 codesign --force --sign - --entitlements "$native/virtualization.entitlements" "$work/BridgeVM"
 codesign --verify --strict "$work/BridgeVM"
 # Publish only a complete signed executable; the previous build survives failure.

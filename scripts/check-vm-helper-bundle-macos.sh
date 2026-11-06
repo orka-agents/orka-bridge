@@ -6,6 +6,13 @@ if [[ ! -x "$helper" ]]; then
     echo 'missing executable bundled Apple helper' >&2
     exit 1
 fi
+python3 - "$helper" <<'PY'
+import os
+import stat
+import sys
+mode = stat.S_IMODE(os.stat(sys.argv[1]).st_mode)
+assert mode == 0o755, f'helper mode must be 0755, got {mode:04o}'
+PY
 test "$(lipo -archs "$helper")" = arm64
 codesign --verify --strict "$helper"
 entitlements=$(mktemp "${TMPDIR:-/tmp}/bridge-helper-entitlements.XXXXXX")
