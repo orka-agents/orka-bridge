@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import tarfile
 
-SOURCE = "59703d6eac1760aa2dc5fed4dee9dcb74c6e5186"
+SOURCE = "7916cd1c8c083ade6b10df6ba408f854d930190c"
 ROLES = ["kind-node", "controller", "ai-worker", "general-worker", "publisher", "session-loader", "vekil", "telegram", "teams"]
 
 def sha(data):

@@ -2,7 +2,7 @@
   {
     "invariant": "producer-windows",
     "file": "producer-windows.json",
-    "sha256": "9e1d165cd836bdb3c065d58452ac472995896d210d163bbf072a05707a79e0e5",
+    "sha256": "3d2628611aa4be0151383a73c5629a424aab3da6f594319f9b2b1a87e434fa57",
     "structure": "valid",
     "compatibility": "compatible",
     "platform": "windows"
@@ -10,7 +10,7 @@
   {
     "invariant": "producer-macos",
     "file": "producer-macos.json",
-    "sha256": "8461ce705ee300e382884b4ac78e6a0c396fd852bc85b2aa964b8f6947090aee",
+    "sha256": "c386d2ecde6b5147bb1fa42bc0910e7ba47b62ce42f5dee487be53b1a0b675ee",
     "structure": "valid",
     "compatibility": "compatible",
     "platform": "macos"
@@ -18,518 +18,518 @@
   {
     "invariant": "schema-v1",
     "file": "schema-v1.json",
-    "sha256": "cfbbf2376a56c4aa956196c7f8c88304efd51d37e249f253e228b143f6099bc0",
+    "sha256": "cbe4216468e2fdf78848b834c052e4f05a6706fb6aee095381253e0a630b1485",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "publication-claim",
     "file": "publication-claim.json",
-    "sha256": "1c4c0695a60b5dc4366a20e9559bfcf4543bae24485b44e5f04b55f10c3bfc15",
+    "sha256": "62e268856f4977d33546a30dff1aba7930fb2d7c560282167d7ee133fcfd7b16",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "image-traversal",
     "file": "image-traversal.json",
-    "sha256": "dc2b221a487d2f174fcb96f7476a408b435c259902370d37c6c8e3d80f028371",
+    "sha256": "de665052bd10c0d94025f2bac718314b668b3e8237a503c3e966340253cfe125",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "bad-commit",
     "file": "bad-commit.json",
-    "sha256": "d12722fe654f355070b1821defcd3134621dfd04c6aaafd18043ca91d77f9628",
+    "sha256": "a5444ab11aa41103831b7f3ffab25218c6a9fae1f2e7ace652212194336bd173",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "target-tuple",
     "file": "target-tuple.json",
-    "sha256": "abf3d06d53295235b24bf6a85846e6123f3b3f6efeca916c47652c1b0f56067d",
+    "sha256": "a00f9efe3ca14047db4ff91e44acf0cafedefce210d911b6a445db4f2a6f097d",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "target-format",
     "file": "target-format.json",
-    "sha256": "d9256d6b457fb1629b263a912d01cf3cfd4235e0ad87aa950d0d3f188e3942f7",
+    "sha256": "93ec716d140cd0c079f4c4000189b00c1581b7c40f153021842f153912fe7a32",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "unknown-nested",
     "file": "unknown-nested.json",
-    "sha256": "5b9a7375716b34d6cee84f116eff462ca940e77d5acc892928f2491a1ba4aacd",
+    "sha256": "78ea91d2af6538f7c8c4e5dc202d4f8c9ffd8490dddd5ef357f8ea4031945860",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "wrong-type",
     "file": "wrong-type.json",
-    "sha256": "0511ee360aeee559607894279c894f3d3b44332a6144ad18628c0d38a20f49ec",
+    "sha256": "5f4363ef4cf60492e1b0544f057080a3d99c4b7616630bff78e03fd8925dbe64",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "root-uppercase",
     "file": "root-uppercase.json",
-    "sha256": "5f610af6a7c5d4698a91c2dd9810b79e9f4efc7daaf77d12baa5f1ea9530ee33",
+    "sha256": "bc41a4bf8edf6bd28444e9497f268d312fc614cb8a6c7297c5c2f242beb64806",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "root-command-binding",
     "file": "root-command-binding.json",
-    "sha256": "7300746657d582a7236aafdd620b9baf3d658b51ca89e7018dce662253542aa2",
+    "sha256": "ea21e36bdfd5a9321a9b04a0d214144eb325a818b93b02cc696665b0d485ee28",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "root-kind",
     "file": "root-kind.json",
-    "sha256": "ea6ed6332f206e424c3039ff38b07129dfb1825deb00314b597cf6f05642462d",
+    "sha256": "d8b461dde05bc90537f6cb2aa500cbfeeaa2ee29aa983779a104183b744f8d93",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "kernel-release",
     "file": "kernel-release.json",
-    "sha256": "a5a15521297c842c2302500cec4d8d60034ed87651de0a3b49e39824ed4c5361",
+    "sha256": "25bae348240bca5beb1278f924915102c3c834166ec31d42f168cca1222e6265",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "launch-policy",
     "file": "launch-policy.json",
-    "sha256": "4f4948aaedbbf96a1a17a84d0d1a63711dc8d3f7f689b1c166c91172ed7bf968",
+    "sha256": "6eac01d8c870cc7b90f238d230b631c80ce793eeda9a23b636b7fbcfdebf9fe3",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "kernel-format",
     "file": "kernel-format.json",
-    "sha256": "bb0954c821d900eea529434dd7829e232e8d87eca21aec7c7a27393a95560b29",
+    "sha256": "c1ad11ec8a72d2ac80dca22337d790a2b9538f75b9c1b268f1842f2abbb8859b",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "initrd-format",
     "file": "initrd-format.json",
-    "sha256": "8fe6bac7cfe73686cd7ad807978d395ad25990198ff8d67d42ce1003f918d371",
+    "sha256": "393309bbf95d8a768f2ab96bb885b68c908db69c1b1275fc8161c8fd78f4d0dc",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "initrd-compression",
     "file": "initrd-compression.json",
-    "sha256": "82dc21ecae476fcfff386115f707c1d587bac45a0dd673a2b651bab1aede6a18",
+    "sha256": "b7bd8aa0f7f8765820ff6b2ef1ae4a50066bcbffcc545182c48699621a67a7f2",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "boot-name",
     "file": "boot-name.json",
-    "sha256": "a8e57cfc5a78fbfd88a98099bc8bed6e9ea13e08fb9cf7a2efb0723ee5444aeb",
+    "sha256": "69838b5a4f342d1c756e68070fbb37f2ec95154dd4a38e8545cbdf57751b0cb0",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "boot-zero",
     "file": "boot-zero.json",
-    "sha256": "53f22ad5a8065ab57bcdc20953c0d41db608115afe34ad3fbf91ebd3dadbd07a",
+    "sha256": "ff8ac3d1973f8026c97198dbd07c9f7d1252019293b45d1c4dbb764aa18676a6",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "boot-disk-binding",
     "file": "boot-disk-binding.json",
-    "sha256": "15b1344cfd4b96de93276af0a2db6bc6ff908ec2e7e586d803f5c5bf8ee3cf99",
+    "sha256": "d5520571891ab45b8ab5aabb2b1df52c8d8df2555e0803949e971520ce7cf868",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "endpoint-binding",
     "file": "endpoint-binding.json",
-    "sha256": "66ecfea5f94dea95763d416fbcfa292f872c4d3a134d608781d813e1dfef0ecd",
+    "sha256": "66a497e23364fbeb2f98f1a8aa89e4b03397c45be002f764ffb298e91c4d056b",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "runtime-source",
     "file": "runtime-source.json",
-    "sha256": "3093efa9d0ada51024fb70191701c75786ba0b86c54bd9e9e539e9b7707d7f60",
+    "sha256": "06cea2c0f3598b7f03534240ce8d9f6c5163368516c2e7dc79999b9f6587cebf",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "chunk-name",
     "file": "chunk-name.json",
-    "sha256": "20e228afbdcf947aac6b0424852fbea87530b02656ae1a9dd0c12e20769cedb3",
+    "sha256": "4d764cba55fac2780987f0ac63ef290979ddd473443b59e35979eac08d163fcb",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "chunk-order",
     "file": "chunk-order.json",
-    "sha256": "cc0db841fccc415689c849f7e6b002e2cb94e611cffaf36b651e45d3dd9d32a4",
+    "sha256": "5b623a1a089fff1da533bc5aa8ecbed49468b1574fb7123a80b7ce3667aa0e5b",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "chunk-zero",
     "file": "chunk-zero.json",
-    "sha256": "ff81ca60e55f529560ce2eec464be083341594a9280c0c660bc2016d69841063",
+    "sha256": "2b595eee86fa21bf153835afdb88a3d1cad1fdbea031cf7ed9a8e97649234c08",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "chunk-ceiling",
     "file": "chunk-ceiling.json",
-    "sha256": "c4ab8f65c376510d36280ddab2ea063a8e85a4cb15747789a274b51b12e3ae84",
+    "sha256": "c03d9fb71629d10f4a4ec5e86c4f484c62ee3da5f0d87a3d49d49fb04fd70012",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "chunk-total",
     "file": "chunk-total.json",
-    "sha256": "168143c4e361b06803bb6a3e070e74c51c313d262d0862bbfd57d70475f0e443",
+    "sha256": "d3fac5f856e6ebf1eb78a1f738013b148f0956a9556eb4449df758cf002faa7e",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "chunk-hash",
     "file": "chunk-hash.json",
-    "sha256": "2635c116c058143aeda500d9490e9b87ad1b8d70faaa18c87ce13a913e608e9c",
+    "sha256": "42bfa62f0a52bfeb5c745a298b26ea3cd2281b8fa50881111a1eb639e1ec6bd9",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "component-schema",
     "file": "component-schema.json",
-    "sha256": "46062e694d8c214d26e76f5a2d4b648cdfb4b555fe73baa0016c63317e4199fe",
+    "sha256": "5b0e8ea09cd3004bfc660976e25b517be8d7192d844800fb100914a0e6a83781",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "component-hash",
     "file": "component-hash.json",
-    "sha256": "a620c6fa7fb931d454b42e91127ac1feca5831587576e8a1a121bbecb9345b3e",
+    "sha256": "108cd9e1fdf4fde1f42b137d521421b2e34b16931c07ff0f4f6796e3a3b68523",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "orka-source",
     "file": "orka-source.json",
-    "sha256": "d7ee08f2d3512ed24f747a2526699ad0a8d7e0ebcd3a3b1c94fae9bcebf2a0b1",
+    "sha256": "d8ac5706db6c14a6a713f44dd6999b9f36df1fa5eea5ca4f15501efbb8977670",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "kubernetes-policy",
     "file": "kubernetes-policy.json",
-    "sha256": "6a6b757b4837fb9db1c98bd79c9d369c7025fde4b4d6d1f6549d985a03d25515",
+    "sha256": "2ebe29cab23bea5f4dd46f4ff4708ba26887025a29d6f7b8afdc155bc8d82f18",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "vekil-digest",
     "file": "vekil-digest.json",
-    "sha256": "9183880a583b851d889a782af81d4bd7378cc39f973d3602fd8d99e744b028b2",
+    "sha256": "cab1a8fee8a24c41bd7b8e6a4dd8bf08e4ba29b82acbf40a137ec5fed9905b9e",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "kind-binding",
     "file": "kind-binding.json",
-    "sha256": "6a193bed0f71034961d43df708dc93cdef3ca5f11713593919475d58be3b6ee8",
+    "sha256": "33b29c8ed6449a2cb4dc618e77e3de217165f75d8169b4dd2c5afe9857920de2",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "host-grammar",
     "file": "host-grammar.json",
-    "sha256": "bc7fcdb546621a3fee72faa4738f0e27b40f1b3c32af41d0930fa3e8d6e67fa9",
+    "sha256": "6622f4b90ccb95ccd7d57ac67628476efb9436316480cb79315ca9bbf5502772",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "app-grammar",
     "file": "app-grammar.json",
-    "sha256": "7d438f8020294c6a513d3d7b6ef4e7f5c54abc80be67fe2676b18a0d584176b8",
+    "sha256": "053236414bd19df60954c3a44a5e4a8316eddd12c158e983db5942b0c5c77dd9",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "tool-name",
     "file": "tool-name.json",
-    "sha256": "d6f4c24bc7f265bd189b50ebadf8a888b3f655461d53b33f1e7ecdce21b34a4e",
+    "sha256": "5813480b39dd15c0a3ad9715af4263f323b4ab26577f355abcb14087e67fa3b1",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "required-nullable-omitted",
     "file": "required-nullable-omitted.json",
-    "sha256": "fbb06b99cb747d406455ae8fd778249ad033c4c9589d0b742070016506cd8469",
+    "sha256": "e9fddb875f6f2aa50535f61004e3bff0285f54676bf7aef98b47b47419a96207",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "required-nullable-null",
     "file": "required-nullable-null.json",
-    "sha256": "9e1d165cd836bdb3c065d58452ac472995896d210d163bbf072a05707a79e0e5",
+    "sha256": "3d2628611aa4be0151383a73c5629a424aab3da6f594319f9b2b1a87e434fa57",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "required-nullable-hash",
     "file": "required-nullable-hash.json",
-    "sha256": "47bcefa48d193467bbf89435895671a44c281b074fc42169b614769d61c1e4c7",
+    "sha256": "6bccaf1e945c253de354f771ed8e934d3f56c7a10470e6a1498d48ee98872f79",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "state-id-harmless-dots",
     "file": "state-id-harmless-dots.json",
-    "sha256": "30c9b54712dff13ce67c239583586e987553570cb2f8e06872931ed8b0dad06d",
+    "sha256": "75b45c8cb537b5ca2bc3a1e4eff31ca6b8ccf4d5a9343017a9fbbcf79f3a6fb9",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "driver-role-0",
     "file": "driver-role-0.json",
-    "sha256": "81e862026eb87afe038ce71b0ed1866fe7554288d627d8b01165fa393af5ebce",
+    "sha256": "b21d28998058707997bf0aff28f08b695ab76bbb8d423ea885177d160845b022",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "driver-role-1",
     "file": "driver-role-1.json",
-    "sha256": "7a1005eaf490f96bccd7279850c9762ffe7b6ba4dcbfcef2578959e39414163d",
+    "sha256": "33f66f2c1af246349b54fee40c85fd9f076fd4157665e28b3cb9b5099f2a1bf1",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "driver-role-2",
     "file": "driver-role-2.json",
-    "sha256": "480ef9d75b55fceb8c72512b8b572ae6ea7ada236f1fd64dabedfbb249c6a4cf",
+    "sha256": "f48da665f7b96f7d4210b6e486b32e933e88204f7a6e405c4433e6bb0d77b87a",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "driver-role-3",
     "file": "driver-role-3.json",
-    "sha256": "1e516d01d37171c67f1dda0d097fba2aa5540c9388a7c1da20d71da43e831fa7",
+    "sha256": "139503864b2deb7d03d68d887b1ac249b1c5fd8db3c63b54f27f6093e585efa7",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "driver-role-4",
     "file": "driver-role-4.json",
-    "sha256": "6b0d32062c360d647e2f363a2dbc5fe79f00405e9dcc7605ad286b5860b0251a",
+    "sha256": "eb639e25bb7a37c19edd9b90b342492f874a211a94e19314f5bab3f6e01200ec",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "driver-role-5",
     "file": "driver-role-5.json",
-    "sha256": "609b3744cd526f7d00b18a14eb90692847ef195320ae04aa124b90e5da31d627",
+    "sha256": "44f39126d5bbb74af3f1afaef8e91b39518879927adf85d9e75bdb76b463d9d5",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "extractor-role-0",
     "file": "extractor-role-0.json",
-    "sha256": "6ca7295e00665f52444aca66d280d48fd7f76d9c99b549a1b557c63cacae28f4",
+    "sha256": "6e4764b7cf9db501c5bd1092019b212e1f5301571374769a9716189a0bd576ef",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "extractor-role-1",
     "file": "extractor-role-1.json",
-    "sha256": "2e43f103c0ca5c71a9dbbb891eebb4c36be9aa3568c7d8d54b75894a2bc4249b",
+    "sha256": "9997fca426a907f2270468579f13f064f2c33ba8eaecd95aa631fc366f023a4b",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "extractor-role-2",
     "file": "extractor-role-2.json",
-    "sha256": "6f764bc290a3d38d08503f66a8c4127b5d8ee3e61aa0844a68e174bbd82f87af",
+    "sha256": "9895841963bcbf95de9a208c668bffcce93166beb48a391c0fe6aaa73379e694",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "extractor-role-3",
     "file": "extractor-role-3.json",
-    "sha256": "09efe7d0c5561592a1118fe8e1de64b01dddf67d0ae5c6d04f8dc5009571db83",
+    "sha256": "a1df4634a98c49566c56a3285cd66c8100f8a9c77126aa60081361d3454d84da",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "tools-order",
     "file": "tools-order.json",
-    "sha256": "ec7144985e96476afdea014098e881b97732e18af9e2c5193c3486784d1c3c67",
+    "sha256": "20170879f32375c93cdbe5022228d0326adc75540c648b1c5d10de6078a5655f",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "tools-duplicate",
     "file": "tools-duplicate.json",
-    "sha256": "5e04ad73fce617e0631fcf9928129eab9ec0c0c725fdea0fa4bfccdb578ac0d8",
+    "sha256": "cae528f089843245a4f6f611d610d1b4e7db4aad132be5443585e1b59754b3d9",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "extraction-version-binding",
     "file": "extraction-version-binding.json",
-    "sha256": "76c51e76bca2dd3f0948f8d278911215ee97e2a60cdd7e243b9cc5a8ab960aa3",
+    "sha256": "6198f9c208b264bb497a305df933d5839d69641695e0dfc404b0b45256c9326c",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "extraction-hash-binding",
     "file": "extraction-hash-binding.json",
-    "sha256": "8f97a613a6e8b650e2c87c5b723dec372c3d1c33b115472c97593a1d14fbca5f",
+    "sha256": "6e9930e63d28f0d2be485cb5ef0acd5a82bac6e6e8321871d1211621e5083c91",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "chunk-geometry",
     "file": "chunk-geometry.json",
-    "sha256": "8e1d768c83e7d2b8f4d0d96b42fa5c350969fafd1a6c1ac9a306380a0d00afd7",
+    "sha256": "2c5ca26d94ae9eb3526b2f4872d9ab16007faf0ac056474eb53184f5468f5352",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "h1-layout-osDisk-virtualCapacityBytes",
     "file": "h1-layout-osDisk-virtualCapacityBytes.json",
-    "sha256": "585c72f1ccec21c42ccb1fcba0bc43dbab8a7111f6cdf8e084efede500dcf629",
+    "sha256": "2377e374b70098b9bcbcdb25782711be694fa8f7cae626f6d2fafbb054d78e09",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "h1-layout-stateDisk-formatPolicy",
     "file": "h1-layout-stateDisk-formatPolicy.json",
-    "sha256": "86a57ea3cab0d2ddc6763d15826901a453d55054418c6f8999ae73cfc5929a6a",
+    "sha256": "26e48e047a1b37f0feb5725ac781b1d159fc149584fa44b8cd998b000bbfa34f",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "h1-layout-transport-protocolMajor",
     "file": "h1-layout-transport-protocolMajor.json",
-    "sha256": "9f438cefca21b36e29be201da2dcf39664900f2b73c5d8ab580c526927469b28",
+    "sha256": "fdb849765c50c0009047c2f8e4b16daa62cacc8be349eb5ea5146130bc484341",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "h1-layout-devices-entropy",
     "file": "h1-layout-devices-entropy.json",
-    "sha256": "1a10bbcd6b6b13b593fb8bdd774bcdd61dc9fa0d64f1c6cf4c20355e9e4dc5cb",
+    "sha256": "c95c1f5319756a74477bcc95ae335f38a6e0a2abff24c6354105a491735ad4c1",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "h1-layout-testResources-vcpus",
     "file": "h1-layout-testResources-vcpus.json",
-    "sha256": "33b9a46adb9779a82ba9b03e0fb41598919798fb143895bd3a4602283a012d71",
+    "sha256": "cc5b9f6ff7381e1c4d358aaa6e39a4feee86c9125e9c6271b9a63b349b091528",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "unicode-4096",
     "file": "unicode-4096.json",
-    "sha256": "6b5a42597bd773c6ddadd99860458d9fee2a6bfc7384fbda7166dd1a8c603091",
+    "sha256": "909157e9e54fbabb18f55f455f9f37c0a89dc2e99b53de0b2fbad2bf85b0f4b8",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "unicode-4097",
     "file": "unicode-4097.json",
-    "sha256": "b627264a92206596ff0b09779da7eea6c938cff4d3d7d9d78f997e19a504e40c",
+    "sha256": "5395b9b0a0016fe26d00bbd29e7ba87f574fc43b15bb36318d08d9232af2beeb",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "allowed-controls",
     "file": "allowed-controls.json",
-    "sha256": "44ab9fa173de907c3fab2ad34df285d7d52760092b34d4af83b8e71780f2df80",
+    "sha256": "99ecdc32e868688ea8d37fa8381b0674e29f277999ca707e33a36a9bfee35cf0",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "unicode-blank",
     "file": "unicode-blank.json",
-    "sha256": "da7de691661fdcc18e58d98cf1716396086ca70f48d682f96c6bfbfcbd23d71a",
+    "sha256": "d796e9c48bf44c716037bc8a0bb4d9142412f6a88da0057cbe2e77dea9241a14",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "python-blank-control",
     "file": "python-blank-control.json",
-    "sha256": "f2c631c9025e513773b028bfb2f5171f081e72b88f5dd0945a7f5ffb6906cedd",
+    "sha256": "00037b61dd5a306efdf17d58e1db709d816230111a777d916d352f3162a9302e",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "forbidden-control",
     "file": "forbidden-control.json",
-    "sha256": "4e754df14a9f76dca1dcf524706873e0ca1cd5fcffd309b1a4ca98de5e852b95",
+    "sha256": "6b5ec534bfed04769572618d3d005fc7cd2b57fa41d6beb326506a5eeeb3a7ce",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "del-control",
     "file": "del-control.json",
-    "sha256": "df5d0f7b244bd618fb04113d80ebd14bda72084b8dd6c3f7e999ecf541918bf6",
+    "sha256": "43d1ae30f027757b7356ca72864922a800e04637e3af0db06bf18adfd47d7dca",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "zero-width-not-blank",
     "file": "zero-width-not-blank.json",
-    "sha256": "6b1084520f90ad537cc25a45722b0ca2cdac158689116d13974e6feb98757c10",
+    "sha256": "b353ee66197ff4f4a56a916585b7d601637cb3c28e73ceaad66a2939c152a36b",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "app-policy-01.2.3",
     "file": "app-policy-01.2.3.json",
-    "sha256": "2a78989d1942c6a61946796ef586cefb766e4e4cf9680c478fdf319122b82ad0",
+    "sha256": "45f7d2fa16b912f6d0aeed8c9f69ce3917d0b858122282de9e00e4fc60a1c9e7",
     "structure": "valid",
     "compatibility": "UnsupportedVersionPolicy"
   },
   {
     "invariant": "app-policy-1.2.3-a..b",
     "file": "app-policy-1.2.3-a..b.json",
-    "sha256": "58d76970260eb7135926c71ed6b83f1a0374cd8d9015e58db7fa927192e19888",
+    "sha256": "05aa29cdd6473f36c5a588aebf8051d07d1f1b3d870b51564b703c53e60f2e83",
     "structure": "valid",
     "compatibility": "UnsupportedVersionPolicy"
   },
   {
     "invariant": "app-policy-184467440737095516160.2.3",
     "file": "app-policy-184467440737095516160.2.3.json",
-    "sha256": "32f8774b99b963ec0cdff00b61af09bc09f5149a32be30453834cd5ad53554fc",
+    "sha256": "4a36f40f14d129b6298acd4a3a530608ff457d8c61e4a624e89770d149112c50",
     "structure": "valid",
     "compatibility": "UnsupportedVersionPolicy"
   },
   {
     "invariant": "app-too-new",
     "file": "app-too-new.json",
-    "sha256": "66ef0a15cdbc557245f312443d98fe4d507ba863b1d0e44b037700fefae776ee",
+    "sha256": "770c1b6d4725c99152b7cd50f37ff0ac87b1d4aa2b26b858d551f9a545b54377",
     "structure": "valid",
     "compatibility": "AppVersion"
   },
   {
     "invariant": "app-prerelease",
     "file": "app-prerelease.json",
-    "sha256": "9f5273e055f5f2cf2cee4c6d57f32a7555dd7d83c2b46612baf042276453eab8",
+    "sha256": "249247a30380414e7d1c395cc3314d3d8173f628ff7d3f1913885e4a229ab864",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "app-prerelease-host",
     "file": "app-prerelease-host.json",
-    "sha256": "9ff5058803c33f6b0f7fd47774ca06a0b5582a51458690d51463a8da41679043",
+    "sha256": "9660b2d47f00251501cb869692a8025bc6ca4bca3bd9bdf650ce3a88672c96bc",
     "structure": "valid",
     "compatibility": "AppVersion",
     "appVersion": "1.0.0-rc.1"
@@ -537,28 +537,28 @@
   {
     "invariant": "host-too-new",
     "file": "host-too-new.json",
-    "sha256": "4549492d73077a52ebea36d6e2239e204a43069ce5bb350bb85e6fe49e0dd615",
+    "sha256": "5de3762e5f3dc13975e6c124a26a2b719c382cc5eecca38393067988c20c3bd5",
     "structure": "valid",
     "compatibility": "HostVersion"
   },
   {
     "invariant": "host-normalize",
     "file": "host-normalize.json",
-    "sha256": "af2225057355bcd77562e6b6de2e175f276ceac56975c80abeae078357b1b51e",
+    "sha256": "4d0fd90e336b277109c0ff14ddfdd564a1771e3ae223840528e3b2a358231c50",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "host-overflow",
     "file": "host-overflow.json",
-    "sha256": "a1c3d9d9eb7199957991ecdce76f2f5132049d9c10e7a1bf792b52ec42ce4439",
+    "sha256": "ca94709edbc3e8b3414b8acf2f3c0ca4248fc45b3f731332448dcfa11d6a29c9",
     "structure": "valid",
     "compatibility": "HostVersion"
   },
   {
     "invariant": "host-native-overflow",
     "file": "host-native-overflow.json",
-    "sha256": "9e1d165cd836bdb3c065d58452ac472995896d210d163bbf072a05707a79e0e5",
+    "sha256": "3d2628611aa4be0151383a73c5629a424aab3da6f594319f9b2b1a87e434fa57",
     "structure": "valid",
     "compatibility": "compatible",
     "hostVersion": "184467440737095516161.0"
@@ -566,133 +566,133 @@
   {
     "invariant": "duplicate-root",
     "file": "duplicate-root.json",
-    "sha256": "e108a204b80fbf9f4a59f294c3323cd0a89599770a5553ac6f2be6acd87e774d",
+    "sha256": "3391a577f3cf7e2ad78536d8f265f4a9be411d969469fecbccedf29977547911",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "duplicate-nested-escaped",
     "file": "duplicate-nested-escaped.json",
-    "sha256": "ae38a9def6d8e2a0d4e1833ae29f597ced6269582e1a6233d2706650685949dd",
+    "sha256": "d88dec36bb62ca8ea4af81ad6c609c0608c1b8c49fbbc6b9ad699d0eac21e697",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "driver-extra",
     "file": "driver-extra.json",
-    "sha256": "f993946240f5bdc067450624980038eecd502dd7b0eee930d2979432bfa0bc96",
+    "sha256": "14d52287f5a5ebc4bfcdb32a8beabfa79fe4087bcb29bc19a5e8a5a5612c6845",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "driver-missing",
     "file": "driver-missing.json",
-    "sha256": "9d76c41cdbfe165de0ead838e30feeb21a430390682c521c140e6458a4d7a207",
+    "sha256": "fcd4dfb5ccce33098054dc21210d9098de3a9ac2b0db32d8b24ff4d6afa28817",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "driver-boolean-type",
     "file": "driver-boolean-type.json",
-    "sha256": "7488715f339d50c58336e8f88daf364f8ab096a76c2ffe40f1e25fa627f25529",
+    "sha256": "f8e9514c71c8e69aa38ad26215ded71dc31a59e1af39734297e387f9820d796d",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "extractor-extra",
     "file": "extractor-extra.json",
-    "sha256": "fdcca4554780db3734e29d8792a4d29abdedbafe24c107045398bd55bacc0f09",
+    "sha256": "800b21202da1704db8708f7741bbf67b632605b766d806d7e4446dbb03ed7422",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "extractor-missing",
     "file": "extractor-missing.json",
-    "sha256": "c2df61eb1040320d5933bfabbba69efb4c54ddc67a23e24214ae48d2f497bc71",
+    "sha256": "6b00db6d4648c2b5092348db5df3c6acab2115666ecb36e1b52b0953d4d0a9db",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "chunks-empty",
     "file": "chunks-empty.json",
-    "sha256": "bab8e6f6a9ed80f030a8c7d085af2dd9513d3da67267929c7cb10ebb85a784c8",
+    "sha256": "3c6f17f7388e0e36ab2fd8c81ad31b627b15df74faf587deec760961cbffe497",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "tools-empty",
     "file": "tools-empty.json",
-    "sha256": "eecaf2aa29b91b05feb923726792309aa18ae8a63a6dd02ffa4699a583f0a9b6",
+    "sha256": "0e82b4b2bf02fbcf5e0dc17ef4422212c23fc3589c2ff8983348f50870dc6d9a",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "source-provenance-component",
     "file": "source-provenance-component.json",
-    "sha256": "20c490d8d0cf0a75608997aa3ceb215483028513240637ddfa9e14d66e627e10",
+    "sha256": "c81cbb75d0a72b2ddd1277ee95c6fe5a0d58ccd7b451b9fcc31a9021e528bcd3",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "required-nullable-type",
     "file": "required-nullable-type.json",
-    "sha256": "24bf63d5b9ceebe8b2a6ddc65d0b75060709619fa11ca8bf337fb1adb1ea5014",
+    "sha256": "70e8bd086bf627309539c44be8c6fc293ee2455af9eca80fb0ce6f4db0beed6f",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "tool-version-empty",
     "file": "tool-version-empty.json",
-    "sha256": "556c9b73c0ced84062d0cf0bc46b95d95098590c5f8966c36af39920c56b34a2",
+    "sha256": "3e39458f8bda286eed17a746ecca754c5dafe1f9a67958be7848060536eb0723",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "tool-version-c1-allowed",
     "file": "tool-version-c1-allowed.json",
-    "sha256": "30d4af88fa51ad0fa5425f41134b97b8565f29cb799a3436b1dbda73bfe33dba",
+    "sha256": "35638f60dee88dc644a26767d8ad21c349c918aa9261f191ad44d884358dc1cb",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "app-exact-boundary",
     "file": "app-exact-boundary.json",
-    "sha256": "9ff5058803c33f6b0f7fd47774ca06a0b5582a51458690d51463a8da41679043",
+    "sha256": "9660b2d47f00251501cb869692a8025bc6ca4bca3bd9bdf650ce3a88672c96bc",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "host-exact-boundary",
     "file": "host-exact-boundary.json",
-    "sha256": "68d4a364b03d31ca1a0f360d4a6b6aa5162426ead968a203391437db64b1cb59",
+    "sha256": "5fb7fd542c4ad64f18140706b2bc75b6ee7f018af13e2305f4d1942a83c1d05b",
     "structure": "valid",
     "compatibility": "compatible"
   },
   {
     "invariant": "host-patch-boundary",
     "file": "host-patch-boundary.json",
-    "sha256": "b6bd8f441433534cc1a685810673d21538cc7bc0e3568820d33645a409783d70",
+    "sha256": "f6bc65e6a9e7cd96c3a8eec61f593aa2be8d44b857cbdda5cc7c92e8c9686398",
     "structure": "valid",
     "compatibility": "HostVersion"
   },
   {
     "invariant": "unknown-root",
     "file": "unknown-root.json",
-    "sha256": "8fdf1c68b61c157416cc01a4ee5d83964d3d8b5d2767e4057a5420f94429bb06",
+    "sha256": "1346245735c714e8dde191d8bd04fc962e6dd34bda08a665c5dc1c0ebafb3065",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "unknown-layout",
     "file": "unknown-layout.json",
-    "sha256": "87f71d46c3eaff3ef8910f170fec61dd0d1850ab074dbdc3ea111899d02f7dc7",
+    "sha256": "bde0436048db242d11b53f04804ec5af5fdbb52cc3299e47a75f3e59b82f799f",
     "structure": "invalid",
     "compatibility": "compatible"
   },
   {
     "invariant": "duplicate-array-escaped",
     "file": "duplicate-array-escaped.json",
-    "sha256": "ad9cee7d3dbff7ddb8b8c5cbd0e413632ce2f97f63e64b139702df61898ed27a",
+    "sha256": "e9c5a30e52f4f33883cf368db338085c1610848431839722b9a8a920854aaa0a",
     "structure": "invalid",
     "compatibility": "compatible"
   }

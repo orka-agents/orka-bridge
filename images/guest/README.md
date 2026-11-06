@@ -294,9 +294,12 @@ To enable the native six-role profile, select additional hash-locked tools `kmx`
 `helm`, `kubectl`, `kmx-offline-manifest` and `orka-images`. The manifest is the
 original supported `kmx-offline/v1` install.json, selected by hash, not another
 Bridge schema. Its source, platform, complete profile, chart, descriptor, tool and
-six image identities must agree with the input lock. Source qualification uses
-kmx 4844d8dbead61bd70331f52b17ab25afb7d7a463 and Orka 59703d6e; it does not approve
-a production release. Missing tools or references fail rather than download.
+six image identities must agree with the input lock. Source bundles use the
+`versions.json` pins: kmx `fc811336bfdf4d972525eb78f1cba8a7b7e45b19`, Orka
+`7916cd1c8c083ade6b10df6ba408f854d930190c` and profile
+`orka-7916cd1c-native/v1`. The profile selects restricted AI-worker RBAC and
+controller context-token enforcement. This does not approve a production release.
+Missing tools or references fail rather than download.
 
 Assembly normalizes the six OCI archive references with the existing collector,
 retaining original manifest/config/layer bytes. The node additionally becomes a
