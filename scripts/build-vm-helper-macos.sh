@@ -2,8 +2,9 @@
 set -euo pipefail
 umask 077
 root=$(cd "$(dirname "$0")/.." && pwd)
-if [[ $(uname -s) != Darwin || $(uname -m) != arm64 ]]; then
-    echo 'Apple helper requires an Apple silicon Mac with the Xcode Swift compiler' >&2
+# Xcode cross-compiles this fixed arm64 resource on either Mac host CPU.
+if [[ $(uname -s) != Darwin ]]; then
+    echo 'Apple helper build requires macOS and the Xcode Swift compiler' >&2
     exit 1
 fi
 native="$root/app/src-tauri/native/macos"
