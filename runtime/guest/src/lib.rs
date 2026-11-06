@@ -1,3 +1,5 @@
+#[cfg(target_os = "linux")]
+pub mod credentials;
 pub mod diagnostics;
 pub mod early;
 pub mod engine;

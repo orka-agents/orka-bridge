@@ -151,6 +151,30 @@ pub fn handle(
         ),
     }
 }
+/// Credential authority is the owned physical channel, not the local kmx socket.
+pub fn credential_request(
+    host_channel: bool,
+    request: &RequestBody,
+    run: impl FnOnce() -> ResultBody,
+) -> Option<ResultBody> {
+    if matches!(
+        request,
+        RequestBody::CredentialStatus {}
+            | RequestBody::CredentialPublish { .. }
+            | RequestBody::CredentialClear { .. }
+    ) {
+        Some(if host_channel {
+            run()
+        } else {
+            ResultBody::Error {
+                code: ErrorCode::Unavailable,
+            }
+        })
+    } else {
+        None
+    }
+}
+
 pub fn result(r: &WireRequest, body: ResultBody) -> Frame {
     Frame::Result(WireResult {
         version: VERSION,
@@ -158,4 +182,25 @@ pub fn result(r: &WireRequest, body: ResultBody) -> Frame {
         request_id: r.request_id,
         body,
     })
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    #[test]
+    fn local_peer_never_reaches_a_working_credential_handler() {
+        for host in [false, true] {
+            let called = std::cell::Cell::new(false);
+            let reply = credential_request(host, &RequestBody::CredentialStatus {}, || {
+                called.set(true);
+                ResultBody::Ready {}
+            });
+            assert_eq!(
+                called.get(),
+                host,
+                "local request must not execute credential code"
+            );
+            assert!(reply.is_some());
+        }
+    }
 }
