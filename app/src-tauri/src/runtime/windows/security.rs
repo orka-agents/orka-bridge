@@ -287,9 +287,111 @@ pub(super) fn private_directory(path: &Path) -> io::Result<File> {
     Ok(f)
 }
 
-#[cfg(test)]
-fn private_af_directory(path: &Path) -> io::Result<File> {
-    private_directory(path)
+pub(super) fn private_af_object(handle: HANDLE, directory: bool) -> io::Result<()> {
+    use windows_sys::Win32::Storage::FileSystem::*;
+    private_object(handle, directory, SE_FILE_OBJECT)?;
+    unsafe {
+        let mut tag: FILE_ATTRIBUTE_TAG_INFO = std::mem::zeroed();
+        check(GetFileInformationByHandleEx(
+            handle,
+            FileAttributeTagInfo,
+            (&mut tag as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+            size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
+        ))?;
+        let valid = if directory {
+            tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0
+                && tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT == 0
+                && tag.ReparseTag == 0
+        } else {
+            tag.FileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0
+                && tag.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                && tag.ReparseTag == 0x80000023
+        };
+        if !valid {
+            return Err(io::Error::from(io::ErrorKind::PermissionDenied));
+        }
+        let (mut acl, mut sd) = (std::ptr::null_mut(), std::ptr::null_mut());
+        let error = GetSecurityInfo(
+            handle,
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut acl,
+            std::ptr::null_mut(),
+            &mut sd,
+        );
+        if error != 0 {
+            return Err(io::Error::from_raw_os_error(error as i32));
+        }
+        let _sd = Local(sd);
+        let denied = || io::Error::from(io::ErrorKind::PermissionDenied);
+        let acl = std::ptr::NonNull::new(acl).ok_or_else(denied)?;
+        if acl.as_ref().AceCount != 2 {
+            return Err(denied());
+        }
+        for index in 0..2 {
+            let mut raw = std::ptr::null_mut();
+            check(GetAce(acl.as_ptr(), index, &mut raw))?;
+            let header = std::ptr::NonNull::new(raw)
+                .ok_or_else(denied)?
+                .cast::<ACE_HEADER>();
+            let flags = u32::from(header.as_ref().AceFlags);
+            let valid = if directory {
+                flags == OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
+            } else {
+                flags == 0 || flags == INHERITED_ACE
+            };
+            if !valid {
+                return Err(denied());
+            }
+        }
+        Ok(())
+    }
+}
+pub(super) fn private_af_directory(path: &Path) -> io::Result<File> {
+    use std::os::windows::io::AsRawHandle;
+    let file = OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .custom_flags(0x02200000)
+        .open(path)?;
+    private_af_object(file.as_raw_handle(), true)?;
+    Ok(file)
+}
+pub(super) fn create_af_directory(path: &Path) -> io::Result<File> {
+    unsafe {
+        let token = current_token(TOKEN_QUERY)?;
+        let u = user(token.0)?;
+        let sid = (*(u.as_ptr().cast::<TOKEN_USER>())).User.Sid;
+        let mut text = std::ptr::null_mut();
+        check(ConvertSidToStringSidW(sid, &mut text))?;
+        let _text = Local(text.cast());
+        let mut length = 0;
+        while *text.add(length) != 0 {
+            length += 1;
+        }
+        let sid = String::from_utf16(std::slice::from_raw_parts(text, length))
+            .map_err(io::Error::other)?;
+        let mut sd = std::ptr::null_mut();
+        check(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            wide(&format!("O:{sid}D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)"))?.as_ptr(),
+            1,
+            &mut sd,
+            std::ptr::null_mut(),
+        ))?;
+        let sd = Local(sd);
+        let attributes = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: sd.0,
+            bInheritHandle: 0,
+        };
+        check(windows_sys::Win32::Storage::FileSystem::CreateDirectoryW(
+            wide_path(path)?.as_ptr(),
+            &attributes,
+        ))?;
+    }
+    private_af_directory(path)
 }
 
 #[cfg(test)]

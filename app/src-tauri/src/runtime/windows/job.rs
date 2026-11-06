@@ -164,18 +164,41 @@ mod native {
         _ownership: Arc<File>,
         _inputs: Arc<VerifiedWindowsInputs>,
         _cwd: File,
+        control: super::super::control::ControlEndpoint,
+        control_started: AtomicBool,
     }
     struct RetainedStdio {
-        files: Option<(File, File, File)>,
+        files: (File, File, File),
+        taken: bool,
     }
     impl RetainedStdio {
         fn new(files: (File, File, File)) -> Self {
-            Self { files: Some(files) }
+            Self {
+                files,
+                taken: false,
+            }
         }
         fn take(&mut self) -> io::Result<(File, File, File)> {
-            self.files
-                .take()
-                .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))
+            if self.taken {
+                return Err(io::Error::from(io::ErrorKind::BrokenPipe));
+            }
+            let _guard = spawn_guard()?;
+            let copies = (
+                self.files.0.try_clone()?,
+                self.files.1.try_clone()?,
+                self.files.2.try_clone()?,
+            );
+            for copy in [&copies.0, &copies.1, &copies.2] {
+                unsafe {
+                    check(SetHandleInformation(
+                        copy.as_raw_handle(),
+                        HANDLE_FLAG_INHERIT,
+                        0,
+                    ))?;
+                }
+            }
+            self.taken = true;
+            Ok(copies)
         }
     }
     struct Attributes {
@@ -249,6 +272,7 @@ mod native {
             ownership: Arc<File>,
             cwd: &Path,
             argv: &[OsString],
+            control: super::super::control::ControlEndpoint,
         ) -> io::Result<Self> {
             inputs.recheck_runtime().map_err(io::Error::other)?;
             let cwd_file = private_directory(cwd)?;
@@ -362,6 +386,8 @@ mod native {
                         _ownership: ownership,
                         _inputs: inputs,
                         _cwd: cwd_file,
+                        control,
+                        control_started: AtomicBool::new(false),
                     }),
                 };
                 // Creation copied the selected handles. Close the temporary inherited copies
@@ -409,6 +435,28 @@ mod native {
                 .expect("live process capability")
                 .stdio
                 .take()
+        }
+        pub fn control_path(&self) -> &Path {
+            self.resources().control.path()
+        }
+        pub fn connect_control(&self) -> io::Result<super::super::control::ControlConnection<'_>> {
+            let resources = self.resources();
+            if resources.control_started.swap(true, Ordering::AcqRel) {
+                let _ = self.abort();
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "AF_UNIX channel already acquired; reconnect is forbidden",
+                ));
+            }
+            resources
+                .control
+                .connect(self)
+                .map_err(|error| match self.abort() {
+                    Ok(()) => error,
+                    Err(stop) => io::Error::other(format!(
+                        "AF_UNIX setup failed: {error}; QEMU stop unobserved: {stop}"
+                    )),
+                })
         }
         pub fn process_handle(&self) -> Arc<Handle> {
             self.resources().process.clone()
