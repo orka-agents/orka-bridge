@@ -103,16 +103,19 @@ private struct IOTests {
         let reordered = Array(args.suffix(2)) + Array(args.prefix(4))
         check((try? InheritedDescriptors.parse(reordered))?.supervisor == control[0], "descriptor argument order changed validity")
         let dead = dup(control[0]); precondition(dead >= 0); _ = close(dead)
-        let invalid = [Array(args.dropLast()), args + ["--extra", "1"], args + Array(args.prefix(2)),
-                       ["--supervisor-fd", "-1"] + Array(args.dropFirst(2)),
-                       ["--supervisor-fd", "+1"] + Array(args.dropFirst(2)),
-                       ["--supervisor-fd", "1x"] + Array(args.dropFirst(2)),
-                       ["--supervisor-fd", "2147483648"] + Array(args.dropFirst(2)),
-                       ["--supervisor-fd", String(dead)] + Array(args.dropFirst(2)),
-                       Array(args.prefix(2)) + ["--guest-fd", String(control[0])] + Array(args.suffix(2)),
-                       ["--guest-fd", String(control[0])] + Array(args.dropFirst(2)),
-                       ["--supervisor-fd", String(owner.fileDescriptor)] + Array(args.dropFirst(2)),
-                       Array(args.prefix(4)) + ["--ownership-fd", String(guest[1])]]
+        var invalid: [[String]] = []
+        invalid.append(Array(args.dropLast()))
+        invalid.append(args + ["--extra", "1"])
+        invalid.append(args + Array(args.prefix(2)))
+        invalid.append(["--supervisor-fd", "-1"] + Array(args.dropFirst(2)))
+        invalid.append(["--supervisor-fd", "+1"] + Array(args.dropFirst(2)))
+        invalid.append(["--supervisor-fd", "1x"] + Array(args.dropFirst(2)))
+        invalid.append(["--supervisor-fd", "2147483648"] + Array(args.dropFirst(2)))
+        invalid.append(["--supervisor-fd", String(dead)] + Array(args.dropFirst(2)))
+        invalid.append(Array(args.prefix(2)) + ["--guest-fd", String(control[0])] + Array(args.suffix(2)))
+        invalid.append(["--guest-fd", String(control[0])] + Array(args.dropFirst(2)))
+        invalid.append(["--supervisor-fd", String(owner.fileDescriptor)] + Array(args.dropFirst(2)))
+        invalid.append(Array(args.prefix(4)) + ["--ownership-fd", String(guest[1])])
         for value in invalid {
             check((try? InheritedDescriptors.parse(value)) == nil, "invalid descriptor accepted: \(value)")
             check(borrowed.allSatisfy { fcntl($0, F_GETFD) >= 0 }, "error closed borrowed FDs")
@@ -207,10 +210,10 @@ private struct IOTests {
     private static func signalRestoration(_ q: DispatchQueue) {
         // A harmless prior handler makes the inert seam fail assertions, not die.
         var original = sigaction(), before = sigaction(), after = sigaction()
-        precondition(Darwin.sigaction(SIGTERM, nil, &original) == 0)
+        precondition(sigaction(SIGTERM, nil, &original) == 0)
         _ = signal(SIGTERM, termSentinel)
-        defer { _ = Darwin.sigaction(SIGTERM, &original, nil) }
-        precondition(Darwin.sigaction(SIGTERM, nil, &before) == 0)
+        defer { _ = sigaction(SIGTERM, &original, nil) }
+        precondition(sigaction(SIGTERM, nil, &before) == 0)
         let data = Received(), delivered = DispatchSemaphore(value: 0)
         let observer = q.sync {
             try! TerminationObserver(queue: q, onTermination: { data.lost += 1; delivered.signal() })
@@ -223,7 +226,7 @@ private struct IOTests {
         q.sync { observer.close { ok in data.closeOK = ok; restored.signal() } }
         check(wait(restored), "signal cancellation did not complete")
         check(q.sync { data.closeOK && data.lost == 1 }, "signal close failed or repeated delivery")
-        precondition(Darwin.sigaction(SIGTERM, nil, &after) == 0)
+        precondition(sigaction(SIGTERM, nil, &after) == 0)
         check(unsafeBitCast(before.__sigaction_u.__sa_handler, to: UInt.self) ==
               unsafeBitCast(after.__sigaction_u.__sa_handler, to: UInt.self) &&
               before.sa_flags == after.sa_flags && before.sa_mask == after.sa_mask,
@@ -232,7 +235,7 @@ private struct IOTests {
         q.sync {}
         let end = Date().addingTimeInterval(5)
         repeat {
-            precondition(Darwin.sigaction(SIGTERM, nil, &after) == 0)
+            precondition(sigaction(SIGTERM, nil, &after) == 0)
             if unsafeBitCast(before.__sigaction_u.__sa_handler, to: UInt.self) ==
                 unsafeBitCast(after.__sigaction_u.__sa_handler, to: UInt.self) { break }
             Thread.sleep(forTimeInterval: 0.002)
