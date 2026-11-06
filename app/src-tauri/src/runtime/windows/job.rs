@@ -375,13 +375,34 @@ mod native {
         }
     }
     fn stop_job(job: HANDLE, leader: HANDLE, timeout: Duration) -> io::Result<()> {
-        if wait_handle(leader, Duration::ZERO).is_ok() {
-            return Ok(());
+        let deadline = std::time::Instant::now() + timeout;
+        // A stopped leader can leave descendants holding inherited capabilities.
+        // Terminate the whole Job and observe it empty before releasing any owner.
+        unsafe { check(TerminateJobObject(job, 1))? };
+        wait_handle(
+            leader,
+            deadline.saturating_duration_since(std::time::Instant::now()),
+        )?;
+        loop {
+            let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
+            unsafe {
+                check(QueryInformationJobObject(
+                    job,
+                    JobObjectBasicAccountingInformation,
+                    (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                    std::ptr::null_mut(),
+                ))?;
+            }
+            if info.ActiveProcesses == 0 {
+                return Ok(());
+            }
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+            std::thread::sleep(remaining.min(Duration::from_millis(10)));
         }
-        unsafe {
-            check(TerminateJobObject(job, 1))?;
-        }
-        wait_handle(leader, timeout)
     }
     impl Drop for OwnedQemuProcess {
         fn drop(&mut self) {
