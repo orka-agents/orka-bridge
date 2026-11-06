@@ -1,17 +1,19 @@
 import Foundation
 import Virtualization
 
-// A later verified bootstrap supplies the complete configuration. This adapter
+// The bootstrap supplies the complete configuration. This adapter
 // never selects image paths, creates state/EFI, or exposes the VM to a renderer.
 final class VirtualizationDriver: NSObject, MachineDriver, VZVirtualMachineDelegate {
     private let queue: DispatchQueue
     private var machine: VZVirtualMachine?
+    private var ownedHandles: [FileHandle]
     var didEnd: (() -> Void)?
 
-    init(configuration: VZVirtualMachineConfiguration, queue: DispatchQueue) throws {
+    init(configuration: VZVirtualMachineConfiguration, queue: DispatchQueue, ownedHandles: [FileHandle] = []) throws {
         dispatchPrecondition(condition: .onQueue(queue))
         try configuration.validate()
         self.queue = queue
+        self.ownedHandles = ownedHandles
         machine = VZVirtualMachine(configuration: configuration, queue: queue)
         super.init()
         machine?.delegate = self
@@ -87,6 +89,10 @@ final class VirtualizationDriver: NSObject, MachineDriver, VZVirtualMachineDeleg
         precondition(state == .stopped || state == .failed)
         machine?.delegate = nil
         machine = nil
+        // The helper owns these endpoints independently of SDK retention. Close
+        // after native disposal, before the core releases installation ownership.
+        for handle in ownedHandles { try? handle.close() }
+        ownedHandles.removeAll()
         didEnd = nil
     }
     func guestDidStop(_ virtualMachine: VZVirtualMachine) {

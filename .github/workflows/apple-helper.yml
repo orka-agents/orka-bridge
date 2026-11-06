@@ -4,6 +4,9 @@ on:
     paths:
       - 'app/src-tauri/native/macos/**'
       - 'scripts/test-vm-helper-macos.sh'
+      - 'scripts/build-vm-helper-macos.sh'
+      - 'app/src-tauri/build.rs'
+      - 'app/src-tauri/tauri.macos.conf.json'
       - '.github/workflows/apple-helper.yml'
       - 'app/src-tauri/src/runtime/apple.rs'
       - 'app/src-tauri/src/runtime/apple_tests.rs'
@@ -23,6 +26,9 @@ on:
     paths:
       - 'app/src-tauri/native/macos/**'
       - 'scripts/test-vm-helper-macos.sh'
+      - 'scripts/build-vm-helper-macos.sh'
+      - 'app/src-tauri/build.rs'
+      - 'app/src-tauri/tauri.macos.conf.json'
       - '.github/workflows/apple-helper.yml'
       - 'app/src-tauri/src/runtime/apple.rs'
       - 'app/src-tauri/src/runtime/apple_tests.rs'
@@ -51,4 +57,5 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: '1.98.1'
+      - run: bash scripts/build-vm-helper-macos.sh
       - run: bash scripts/test-vm-helper-macos.sh
