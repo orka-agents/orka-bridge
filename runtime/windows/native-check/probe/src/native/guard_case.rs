@@ -159,6 +159,7 @@ pub(super) fn open(probe: &GuardProbe) -> io::Result<OwnedHandle> {
     Ok(handle)
 }
 pub(super) fn snapshot(
+    phase: &'static str,
     worker: HANDLE,
     guard: &runtime::identity::FileIdentity,
     canary: &runtime::identity::FileIdentity,
@@ -182,7 +183,12 @@ pub(super) fn snapshot(
     // The observer owns target, buffers and all duplicates, even if the caller's
     // deadline expires. On timeout the controller fails/exits, never joins it.
     std::thread::spawn(move || {
-        let _ = send.send(handle_snapshot(target.as_raw_handle(), &guard, &canary));
+        let _ = send.send(handle_snapshot(
+            phase,
+            target.as_raw_handle(),
+            &guard,
+            &canary,
+        ));
     });
     let result = receive
         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
@@ -246,6 +252,7 @@ mod tests {
         // Either complete metadata or a strict metadata error is acceptable here;
         // an observer blocked in a synchronous kernel query cannot delay failure.
         let _ = snapshot(
+            "pending-pipe-fixture",
             child.as_raw_handle(),
             &guard,
             &canary,

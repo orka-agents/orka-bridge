@@ -166,6 +166,7 @@ mod native {
         }
     }
     fn handle_snapshot(
+        phase: &str,
         process: HANDLE,
         expected: &runtime::identity::FileIdentity,
         canary: &runtime::identity::FileIdentity,
@@ -211,7 +212,17 @@ mod native {
                 // HAVE_TYPE validates ObjectType's small enum, not TypeName.
                 // Files and Jobs are not in that enum. PSS can omit File
                 // names entirely; classify the type, then query actual file IDs.
-                let kind = text(entry.TypeName, entry.TypeNameLength)?;
+                let kind = text(entry.TypeName, entry.TypeNameLength).map_err(|error| {
+                    io::Error::other(format!(
+                        "{}; invalid type text: {error}",
+                        crate::guard_probe::missing_pss_type(
+                            phase,
+                            index,
+                            entry.Handle as usize,
+                            entry.Flags
+                        )
+                    ))
+                })?;
                 let name = if entry.Flags & PSS_HANDLE_HAVE_NAME != 0 {
                     text(entry.ObjectName, entry.ObjectNameLength)?
                 } else {
@@ -227,7 +238,14 @@ mod native {
                     );
                 }
                 if kind.is_empty() {
-                    return Err(io::Error::other("snapshot lacks object type name"));
+                    eprintln!("PSS phase={phase} entry={index} handle={:#x} flags={:#x} objectType={} typeNameLength={} typeNamePtrNull={}",
+                        entry.Handle as usize, entry.Flags, entry.ObjectType, entry.TypeNameLength, entry.TypeName.is_null());
+                    return Err(crate::guard_probe::missing_pss_type(
+                        phase,
+                        index,
+                        entry.Handle as usize,
+                        entry.Flags,
+                    ));
                 }
                 if kind == "Job" {
                     jobs += 1
@@ -266,7 +284,7 @@ mod native {
     fn inherited_guard(process: HANDLE, original: &File, canary: &File) -> io::Result<Value> {
         let expected = runtime::identity::file_identity(original).map_err(io::Error::other)?;
         let canary = runtime::identity::file_identity(canary).map_err(io::Error::other)?;
-        let v = handle_snapshot(process, &expected, &canary)?;
+        let v = handle_snapshot("child-inherited-before-resume", process, &expected, &canary)?;
         if v["guardCopies"] != 1 || v["inheritedJobs"] != 0 || v["unrelatedCanaries"] != 0 {
             return Err(io::Error::other(format!(
                 "inherited inventory differs: {v}"
@@ -547,7 +565,12 @@ mod native {
             unsafe {
                 win(CloseHandle(original))?;
             }
-            let child_snapshot = handle_snapshot(process.raw(), &identity, &canary_id)?;
+            let child_snapshot = handle_snapshot(
+                "guard-child-after-close",
+                process.raw(),
+                &identity,
+                &canary_id,
+            )?;
             check(
                 child_snapshot["guardCopies"] == 1
                     && child_snapshot["inheritedJobs"] == 0

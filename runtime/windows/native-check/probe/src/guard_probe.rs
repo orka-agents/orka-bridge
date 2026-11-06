@@ -39,9 +39,27 @@ pub fn parent_counts(value: &Value, copies: u64) -> bool {
         && value["unrelatedCanaries"] == 1
         && value["inheritedJobs"].as_u64().is_some_and(|n| n >= 1)
 }
+pub fn missing_pss_type(phase: &str, index: usize, handle: usize, flags: i32) -> io::Error {
+    io::Error::other(format!("phase={phase} entry={index} handle={handle:#x} flags={flags:#x}: snapshot lacks object type name"))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn missing_pss_entry_reports_phase_index_handle_and_flags() {
+        let error = missing_pss_type("guard-parent-before-close", 17, 0x48, 0);
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        let message = error.to_string();
+        for field in [
+            "phase=guard-parent-before-close",
+            "entry=17",
+            "handle=0x48",
+            "flags=0x0",
+            "snapshot lacks object type name",
+        ] {
+            assert!(message.contains(field), "missing {field}: {message}");
+        }
+    }
     fn name() -> String {
         format!("Local\\bridge-guard-{}", "a".repeat(32))
     }

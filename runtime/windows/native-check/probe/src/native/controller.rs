@@ -429,7 +429,13 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
             let canary = serde_json::from_value(before["canaryIdentity"].clone())
                 .map_err(io::Error::other)?;
             let target = worker.child.as_ref().unwrap().as_raw_handle();
-            let positive = super::guard_case::snapshot(target, &guard, &canary, deadline)?;
+            let positive = super::guard_case::snapshot(
+                "guard-parent-before-close",
+                target,
+                &guard,
+                &canary,
+                deadline,
+            )?;
             check(crate::guard_probe::parent_counts(&positive, 1))?;
             event.signal()?;
             let mut after = worker.line_until(deadline)?;
@@ -443,7 +449,13 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
                     && after["canaryIdentity"] == before["canaryIdentity"]
                     && after["childGuardHandles"] == 1,
             )?;
-            let negative = super::guard_case::snapshot(target, &guard, &canary, deadline)?;
+            let negative = super::guard_case::snapshot(
+                "guard-parent-after-close",
+                target,
+                &guard,
+                &canary,
+                deadline,
+            )?;
             check(crate::guard_probe::parent_counts(&negative, 0))?;
             after["parentSnapshotBeforeClose"] = positive;
             after["parentSnapshotAfterClose"] = negative;
