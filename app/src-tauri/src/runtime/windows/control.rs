@@ -135,12 +135,7 @@ impl ControlEndpoint {
         security::private_af_object(self.directory.as_raw_handle(), true)?;
         loop {
             live(owner)?;
-            match OpenOptions::new()
-                .read(true)
-                .share_mode(3)
-                .custom_flags(0x02200000)
-                .open(&self.path)
-            {
+            match socket_metadata(&self.path) {
                 Ok(file) => {
                     let mut metadata = self
                         .channel
@@ -206,6 +201,14 @@ impl ControlEndpoint {
             channel: self.channel.clone(),
         })
     }
+}
+
+fn socket_metadata(path: &Path) -> io::Result<File> {
+    OpenOptions::new()
+        .read(true)
+        .share_mode(3)
+        .custom_flags(0x02200000)
+        .open(path)
 }
 
 fn live(owner: &OwnedQemuProcess) -> io::Result<()> {
@@ -553,6 +556,49 @@ mod tests {
             0
         );
     }
+    #[test]
+    fn socket_metadata_coexists_with_a_reader_holding_delete_access() {
+        let (_root, parent, _retained) = parent();
+        let endpoint = ControlEndpoint::create(&parent).unwrap();
+        let server = endpoint.channel.socket().unwrap();
+        let address = address(endpoint.path()).unwrap();
+        unsafe {
+            assert_eq!(
+                bind(
+                    server,
+                    (&address as *const SOCKADDR_UN).cast(),
+                    size_of::<SOCKADDR_UN>() as i32
+                ),
+                0
+            );
+            assert_eq!(listen(server, 1), 0);
+        }
+        // A legitimate existing reader allows sharing but itself holds DELETE.
+        // Our attributes/security query must not request file data or conflict.
+        let _reader = OpenOptions::new()
+            .access_mode(GENERIC_READ | windows_sys::Win32::Storage::FileSystem::DELETE)
+            .share_mode(7)
+            .custom_flags(0x02200000)
+            .open(endpoint.path())
+            .unwrap();
+        let metadata = socket_metadata(endpoint.path())
+            .expect("metadata query must coexist with the existing reader");
+        security::private_af_object(metadata.as_raw_handle(), false).unwrap();
+        let client = endpoint.channel.socket().unwrap();
+        unsafe {
+            let mut blocking = 0;
+            assert_eq!(ioctlsocket(client, FIONBIO, &mut blocking), 0);
+            assert_eq!(
+                connect(
+                    client,
+                    (&address as *const SOCKADDR_UN).cast(),
+                    size_of::<SOCKADDR_UN>() as i32
+                ),
+                0
+            );
+        }
+    }
+
     #[test]
     fn socket_metadata_rejects_wrong_flags_principals_and_reparse_type() {
         let (_root, parent, _retained) = parent();
