@@ -13,11 +13,15 @@ base64 = "=0.23.1"
 sha2 = "=0.10.9"
 
 [dev-dependencies]
+reqwest = { version = "=0.13.5", default-features = false, features = ["native-tls", "stream"] }
+rcgen = { version = "=0.14.10", default-features = false, features = ["ring"] }
+rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring", "tls12"] }
 cap-std = "=4.0.3"
 cap-fs-ext = "=4.0.3"
 libc = "=0.2.191"
 semver = "=1.0.28"
-tokio = { version = "=1.54.1", features = ["process", "io-util", "sync", "rt", "macros", "time"] }
+tokio = { version = "=1.54.1", features = ["process", "io-util", "sync", "rt", "macros", "time", "net"] }
 tempfile = "=3.27.0"
 
 [target.'cfg(windows)'.dev-dependencies]

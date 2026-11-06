@@ -39,6 +39,19 @@ are guaranteed to stop.
 Run debug engine tests and clippy as well as release checks: process transport
 code is compiled only when debug assertions are enabled.
 
+## Image transport
+
+The native image transport accepts Rust-owned pins, not renderer URLs. It fetches
+at most 8 MiB of manifest bytes and verifies the exact SHA-256 before returning
+bytes to the manifest reader. HTTPS uses native OS trust, explicit redirect
+origins and identity encoding; proxy discovery, automatic retries and transparent
+content decoding are disabled. Closing the supplied cancellation channel stops
+the transfer. Transport errors omit URLs, queries and server bodies.
+
+The tests generate their CA, certificates and private keys entirely in memory at
+runtime. They never write keys or alter the host trust store. This transport does
+not yet select a live image catalog, populate a cache or activate an image.
+
 ## Checks and builds
 
 Run the commands in [AGENTS.md](AGENTS.md#checks). Also run `npm audit` to

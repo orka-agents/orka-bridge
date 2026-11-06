@@ -1,3 +1,4 @@
+pub mod acquire;
 pub mod client;
 pub mod credentials;
 pub mod identity;
