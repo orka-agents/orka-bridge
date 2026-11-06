@@ -96,7 +96,7 @@ fn mount(file: &File, flags: libc::c_ulong) -> io::Result<()> {
     syscall(unsafe { libc::fstatfs(file.as_raw_fd(), &mut fs) })?;
     let mut vfs: libc::statvfs = unsafe { std::mem::zeroed() };
     syscall(unsafe { libc::fstatvfs(file.as_raw_fd(), &mut vfs) })?;
-    if fs.f_type != libc::TMPFS_MAGIC || vfs.f_flag & flags != flags {
+    if i128::from(fs.f_type) != i128::from(libc::TMPFS_MAGIC) || vfs.f_flag & flags != flags {
         return Err(invalid());
     }
     Ok(())
@@ -264,14 +264,17 @@ impl CredentialStore {
         // Fresh publication must never overwrite an unknown endpoint. Replacement
         // is allowed only for the retained, checked, already-cleared inode.
         if self.known.is_none() {
+            // musl does not export a renameat2 wrapper. The Linux syscall returns
+            // only 0 or -1 here, so narrowing its result preserves errno handling.
             syscall(unsafe {
-                libc::renameat2(
-                    dirfd,
+                libc::syscall(
+                    libc::SYS_renameat2,
+                    libc::c_long::from(dirfd),
                     name.as_ptr(),
-                    dirfd,
+                    libc::c_long::from(dirfd),
                     NAME.as_ptr(),
-                    libc::RENAME_NOREPLACE,
-                )
+                    libc::c_long::from(libc::RENAME_NOREPLACE),
+                ) as libc::c_int
             })?;
         } else {
             syscall(unsafe { libc::renameat(dirfd, name.as_ptr(), dirfd, NAME.as_ptr()) })?;
