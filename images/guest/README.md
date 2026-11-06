@@ -289,6 +289,34 @@ native offline inputs below, OS assembly stages no application archives.
 Source-fixture metadata cannot qualify Orka. Native platform boots and real-model
 quality remain separate work. Every build and boot keeps `publicationReady: false`.
 
+## CI reference boot
+
+`.github/workflows/guest-boot.yml` runs the base case on a GitHub-hosted
+`ubuntu-24.04` runner when guest or endpoint sources change. A networked step
+fetches the files pinned in `ci/sources.json` and checks each file's size and
+SHA-256: the dated Debian cloud image from cloud.debian.org, the package closure
+from snapshot.debian.org, kind from its GitHub release and kmx's install fixture
+at the pinned commit, which retains the exact profile chart. The endpoint and its
+provenance are built from the commit under test, not taken from another run's
+artifact. Downloads are cached under the hash of `ci/sources.json` and checked
+again after restore. A newly built builder image is cached under the hash of
+`ci/Dockerfile` only after a passing run; a restored one is trusted as this
+repository's cache content, not checked against a pin, and is rebuilt if it fails
+to load.
+
+Locking, assembly and the boot run in the `ci/Dockerfile` builder with
+`docker run --network none`, adding `--device /dev/kvm` for assembly and the
+boot. The builder installs from the current trixie mirror on a digest-pinned base
+and is rebuilt when its cache entry expires, so it is not a durable input; each
+run uploads its image ID and package list with the receipts, and
+`ci_inputs.py lock` records its tool hashes and exact versions. The base
+case stages no application archives, so its lock has a null kmx profile and
+`localhost/bridge-ci-unused/*` component rows that name no files; anything that
+reads one fails on the missing file. These are test inputs, not a release
+candidate. To reproduce the job on a Linux AMD64 host with KVM and Docker, run
+the workflow's commands in order with `WORK` set to a new directory. Skip the
+runner preparation step: it deletes preinstalled toolchains.
+
 ## Native offline infrastructure
 
 To enable the native six-role profile, select additional hash-locked tools `kmx`,

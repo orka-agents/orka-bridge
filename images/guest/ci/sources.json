@@ -1,0 +1,105 @@
+{
+  "schemaVersion": "bridge-guest-ci-sources/v1",
+  "architecture": "amd64",
+  "files": [
+    {
+      "use": "package",
+      "name": "debian-base",
+      "version": "20261026-2643",
+      "path": "base/debian-13-genericcloud-amd64-20261026-2643.qcow2",
+      "url": "https://cloud.debian.org/images/cloud/trixie/20261026-2643/debian-13-genericcloud-amd64-20261026-2643.qcow2",
+      "bytes": 341114880,
+      "sha256": "dd7f5e92d879a983d757fc6acd8c5df0294abd9ba57137b29f8c863bb74a6904"
+    },
+    {
+      "use": "package",
+      "name": "containerd",
+      "version": "1.7.24~ds1-6+deb13u1",
+      "path": "debs/containerd_1.7.24~ds1-6+deb13u1_amd64.deb",
+      "url": "https://snapshot.debian.org/file/b94e66123488675d2c7b132e483aff618b49d680/containerd_1.7.24~ds1-6%2Bdeb13u1_amd64.deb",
+      "bytes": 32784720,
+      "sha256": "ed708deb96fe476a3bce4efa5c0538dfbcf717ab9a7c7944ba7260342c25899c"
+    },
+    {
+      "use": "package",
+      "name": "docker-cli",
+      "version": "26.1.5+dfsg1-9+deb13u1",
+      "path": "debs/docker-cli_26.1.5+dfsg1-9+deb13u1_amd64.deb",
+      "url": "https://snapshot.debian.org/file/d9b02095dbc5852a13be358abd7a3803bbb9109b/docker-cli_26.1.5%2Bdfsg1-9%2Bdeb13u1_amd64.deb",
+      "bytes": 7337444,
+      "sha256": "e78ac35b7a21652546ca1a739f63e4f31fe52e4385a9baf7020be400c594f23d"
+    },
+    {
+      "use": "package",
+      "name": "docker.io",
+      "version": "26.1.5+dfsg1-9+deb13u1",
+      "path": "debs/docker.io_26.1.5+dfsg1-9+deb13u1_amd64.deb",
+      "url": "https://snapshot.debian.org/file/452692208974097edebbc5d90d507ce1ba96deaa/docker.io_26.1.5%2Bdfsg1-9%2Bdeb13u1_amd64.deb",
+      "bytes": 23037844,
+      "sha256": "142fe32f839a20720b2e6074b8d28d883b01bc45345f7315586b0c2d348dae87"
+    },
+    {
+      "use": "package",
+      "name": "jq",
+      "version": "1.7.1-6+deb13u4",
+      "path": "debs/jq_1.7.1-6+deb13u4_amd64.deb",
+      "url": "https://snapshot.debian.org/file/1abd1c3cd80df560d8158085020843db31dd60c5/jq_1.7.1-6%2Bdeb13u4_amd64.deb",
+      "bytes": 78900,
+      "sha256": "7350392f700e20e46b7ae174a57f54e4ea106dd559753646d629b4e618bf2bff"
+    },
+    {
+      "use": "package",
+      "name": "libjq1",
+      "version": "1.7.1-6+deb13u4",
+      "path": "debs/libjq1_1.7.1-6+deb13u4_amd64.deb",
+      "url": "https://snapshot.debian.org/file/c1db16b6f4eec66701c884a7e528d14557939a80/libjq1_1.7.1-6%2Bdeb13u4_amd64.deb",
+      "bytes": 167808,
+      "sha256": "70bb2cbd66d5ada4349067ae9f61d0560b3b359d4203f2c051ca5773153ae0ba"
+    },
+    {
+      "use": "package",
+      "name": "libonig5",
+      "version": "6.9.9-1+b1",
+      "path": "debs/libonig5_6.9.9-1+b1_amd64.deb",
+      "url": "https://snapshot.debian.org/file/7a8e995387646dadeecbaa160a3585ee84b24705/libonig5_6.9.9-1%2Bb1_amd64.deb",
+      "bytes": 189396,
+      "sha256": "3abee130696244050500bcc7870e3b4cb82ddd87149ece3fd55010c3d4e1d18c"
+    },
+    {
+      "use": "package",
+      "name": "runc",
+      "version": "1.1.15+ds1-2+b4",
+      "path": "debs/runc_1.1.15+ds1-2+b4_amd64.deb",
+      "url": "https://snapshot.debian.org/file/a05f0eebacea67823ed84a5ef2c0c8b66fef9028/runc_1.1.15%2Bds1-2%2Bb4_amd64.deb",
+      "bytes": 3229748,
+      "sha256": "fad4f807a369677f0954bd4c61e56ddb2dd8b3f4aec30c3834c3165fc6d3c19f"
+    },
+    {
+      "use": "package",
+      "name": "tini",
+      "version": "0.19.0-3+b8",
+      "path": "debs/tini_0.19.0-3+b8_amd64.deb",
+      "url": "https://snapshot.debian.org/file/810bcd6a3db0fab313c0b83b14037a82ea77a338/tini_0.19.0-3%2Bb8_amd64.deb",
+      "bytes": 280384,
+      "sha256": "a443b12107331f67836a64cb6efe1dd92d2765e15568eb4567dccb409a8cd2a0"
+    },
+    {
+      "use": "tool",
+      "name": "kind",
+      "version": "v0.33.0",
+      "path": "tools/kind",
+      "url": "https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64",
+      "bytes": 10530942,
+      "sha256": "aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d"
+    },
+    {
+      "use": "chart-fixture",
+      "name": "kmx-offline-7916-install",
+      "version": "fc811336bfdf4d972525eb78f1cba8a7b7e45b19",
+      "path": "kmx/offline-7916-install.json",
+      "url": "https://raw.githubusercontent.com/kaimahi-agents/kaimahi/fc811336bfdf4d972525eb78f1cba8a7b7e45b19/internal/kmx/app/testdata/offline-7916-install.json",
+      "bytes": 371957,
+      "sha256": "a2c42303f21adbd5d1f40f596700f2805aa84698004e19383bbcde42993539eb"
+    }
+  ]
+}
