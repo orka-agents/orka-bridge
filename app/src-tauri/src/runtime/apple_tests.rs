@@ -1,6 +1,151 @@
 use super::*;
 use std::{io::Read, os::fd::AsRawFd, sync::OnceLock};
 
+// Synthetic descriptors/signals only: this ignored Mac test does not qualify VZ.
+#[cfg(target_os = "macos")]
+#[test]
+#[ignore = "requires the compiled Swift supervisor I/O test executable"]
+fn swift_supervisor_peer() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let executable = std::env::var_os("BRIDGE_TEST_SWIFT_PEER")
+        .expect("BRIDGE_TEST_SWIFT_PEER must name the compiled Swift test executable");
+    let executable = std::path::PathBuf::from(executable).canonicalize().unwrap();
+    assert!(executable.is_file(), "Swift peer executable is missing");
+    let budgets = Budgets {
+        read: Duration::from_secs(5),
+        write: Duration::from_secs(1),
+        exit: Duration::from_secs(2),
+        cleanup: Duration::from_secs(2),
+    };
+    let start = || {
+        let directory = tempfile::tempdir().unwrap();
+        let file = File::create(directory.path().join("lock")).unwrap();
+        file.try_lock().unwrap();
+        let mut owner = AppleHelperOwner::new(Arc::new(file));
+        owner.budgets = budgets;
+        let mut command = Command::new(&executable);
+        command.arg("--synthetic-peer");
+        // The actual owner supplies exactly three FD arguments and clears env/stdio.
+        let guest = owner
+            .start(command)
+            .expect("Swift peer did not send BRVM readiness");
+        let mut marker = [0];
+        read_until(&guest, &mut marker, Instant::now() + budgets.read).unwrap();
+        assert_eq!(marker, [0xAA], "fake driver did not enter running state");
+        guest.set_write_timeout(Some(budgets.write)).unwrap();
+        (directory, owner, guest)
+    };
+    let disposed = |guest: &mut UnixStream| {
+        let end = Instant::now() + budgets.read;
+        let mut marker = [0];
+        read_until(guest, &mut marker, end).expect("missing guest disposal marker");
+        assert_eq!(marker, [0xBB], "fake driver was not disposed");
+        guest
+            .set_read_timeout(Some(remaining(end).unwrap()))
+            .unwrap();
+        assert_eq!(
+            guest.read(&mut marker).unwrap(),
+            0,
+            "guest FD not closed after disposal"
+        );
+    };
+    let unclean = |status: ExitStatus| {
+        assert_eq!(
+            status.code(),
+            Some(1),
+            "isolated EOF/TERM must exit 1: {status:?}"
+        );
+    };
+
+    // Happy P/R/S: stop itself requires an observed successful child exit.
+    {
+        let (_directory, mut owner, mut guest) = start();
+        owner.pause().unwrap();
+        owner.resume().unwrap();
+        owner.stop().unwrap();
+        disposed(&mut guest);
+        assert!(owner.session.is_none());
+    }
+    // EOF alone: no cleanup or signal before the child's status is observed.
+    {
+        let (_directory, mut owner, mut guest) = start();
+        let session = owner.session.as_mut().unwrap();
+        drop(session.control.take());
+        disposed(&mut guest);
+        unclean(
+            wait_until(&mut session.child, Instant::now() + budgets.exit)
+                .unwrap()
+                .expect("EOF-only child did not exit"),
+        );
+        drop(owner);
+    }
+    // TERM alone: readiness has returned, the control endpoint remains open,
+    // and the owned Child is unreaped when its PID is signalled.
+    {
+        let (_directory, mut owner, mut guest) = start();
+        let session = owner.session.as_mut().unwrap();
+        assert!(session.control.is_some());
+        assert!(session.child.try_wait().unwrap().is_none());
+        assert_eq!(
+            unsafe { libc::kill(session.child.id() as i32, libc::SIGTERM) },
+            0
+        );
+        disposed(&mut guest);
+        unclean(
+            wait_until(&mut session.child, Instant::now() + budgets.exit)
+                .unwrap()
+                .expect("TERM-only child did not exit"),
+        );
+        assert!(
+            session.control.is_some(),
+            "TERM probe accidentally used EOF"
+        );
+        drop(owner);
+    }
+    // Combined-event status probe, not a recovered actual Drop status. Keep the
+    // Child in the owner until status is captured; never signal a reaped PID.
+    {
+        let (_directory, mut owner, mut guest) = start();
+        let session = owner.session.as_mut().unwrap();
+        drop(session.control.take());
+        let early = session.child.try_wait().unwrap();
+        if early.is_none() {
+            assert_eq!(
+                unsafe { libc::kill(session.child.id() as i32, libc::SIGTERM) },
+                0
+            );
+        }
+        disposed(&mut guest);
+        let status = early
+            .or_else(|| wait_until(&mut session.child, Instant::now() + budgets.exit).unwrap())
+            .expect("combined-event child did not exit");
+        assert!(
+            status.code() == Some(1) || status.signal() == Some(libc::SIGTERM),
+            "combined events allow only exit 1 or TERM after disposal: {status:?}"
+        );
+        drop(owner);
+    }
+    // Actual Drop has no retained ExitStatus: prove disposal/guest closure and
+    // reap separately, without claiming to recover its discarded status.
+    {
+        let (_directory, owner, mut guest) = start();
+        let pid = owner.session.as_ref().unwrap().child.id() as i32;
+        drop(owner);
+        disposed(&mut guest);
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid, &mut status, libc::WNOHANG) },
+            -1,
+            "actual owner Drop did not reap the Swift child"
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ECHILD)
+        );
+    }
+}
+
 fn fixture() -> &'static std::path::Path {
     static FIXTURE: OnceLock<tempfile::TempDir> = OnceLock::new();
     FIXTURE
