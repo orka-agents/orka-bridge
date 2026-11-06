@@ -39,16 +39,31 @@ fn swift_supervisor_peer() {
     let disposed = |guest: &mut UnixStream| {
         let end = Instant::now() + budgets.read;
         let mut marker = [0];
-        read_until(guest, &mut marker, end).expect("missing guest disposal marker");
+        // Sole reader: poll bounds reads even after peer closure, without setting
+        // a socket option on the disconnected Darwin AF_UNIX endpoint.
+        let mut byte = || {
+            loop {
+                let mut descriptor = libc::pollfd {
+                    fd: guest.as_raw_fd(),
+                    events: libc::POLLIN,
+                    revents: 0,
+                };
+                let timeout = remaining(end).unwrap().as_millis().max(1) as i32;
+                let ready = unsafe { libc::poll(&mut descriptor, 1, timeout) };
+                if ready < 0 && std::io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                assert!(ready > 0, "guest disposal data/EOF did not become readable");
+                return guest.read(&mut marker).unwrap();
+            }
+        };
+        assert_eq!(byte(), 1, "missing guest disposal marker");
+        // Release the closure's mutable marker borrow before checking its value.
+        drop(byte);
         assert_eq!(marker, [0xBB], "fake driver was not disposed");
-        guest
-            .set_read_timeout(Some(remaining(end).unwrap()))
-            .unwrap();
-        assert_eq!(
-            guest.read(&mut marker).unwrap(),
-            0,
-            "guest FD not closed after disposal"
-        );
+        let mut descriptor = libc::pollfd { fd: guest.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+        assert!(unsafe { libc::poll(&mut descriptor, 1, remaining(end).unwrap().as_millis().max(1) as i32) } > 0);
+        assert_eq!(guest.read(&mut marker).unwrap(), 0, "guest FD not closed after disposal");
     };
     let unclean = |status: ExitStatus| {
         assert_eq!(
