@@ -68,6 +68,7 @@ pub enum ImageProgress {
     Download { bytes: u64, total: u64 },
     Verifying,
     Verified,
+    Materializing { bytes: u64, total: u64 },
 }
 
 /// A revalidated factory read capability; private installed copies still require verification.

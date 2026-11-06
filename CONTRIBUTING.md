@@ -73,6 +73,21 @@ On Windows, schedule cached manifest reads before acquisition: a concurrent
 staging read can cause a sharing failure during publication, with staging retained.
 The no-follow directory protections are not weakened to avoid this contention.
 
+## Private installed images
+
+The native lifecycle owner can lend its held installation directory and ownership
+file to the private image installer. Only that owner can assert live creation
+permission. Materialization copies and verifies the private OS, kernel and initrd,
+then commits a separate version-one image binding after a no-replace generation
+publication. Incomplete work is not boot-ready and never restores creation authority.
+
+Reopen checks the current installation, platform, state compatibility and immutable
+boot files, and flushes the generation and parent directories before returning. The initial OS hash remains provenance because the guest can mutate
+its private disk. Installed handoff clones contain metadata, not installation locks
+or exclusive disk handles; the backend must revalidate under current ownership
+and retain its normal container inspection and lifetime controls. This API does not
+wire the runtime, start a VM, migrate journals or select a production image.
+
 ## Local development image
 
 Debug builds can read a local engineering image with `BRIDGE_DEV_IMAGE_DIR`.

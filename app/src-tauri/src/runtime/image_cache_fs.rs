@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn sync(dir: &Dir) -> Result<(), ImageError> {
+pub(crate) fn sync(dir: &Dir) -> Result<(), ImageError> {
     #[cfg(unix)]
     let file = dir.open(".").map_err(storage)?.into_std();
     #[cfg(windows)]
@@ -35,13 +35,16 @@ pub(super) fn link(dir: &Dir, from: &str, to: &str) -> Result<(), ImageError> {
     set_name(dir, from, to, 11)
 }
 pub(super) fn publish(dir: &Dir) -> Result<(), ImageError> {
+    publish_named(dir, "staging", "generation-1")
+}
+pub(crate) fn publish_named(dir: &Dir, from: &str, to: &str) -> Result<(), ImageError> {
     #[cfg(windows)]
-    return set_name(dir, "staging", "generation-1", 10);
+    return set_name(dir, from, to, 10);
     #[cfg(unix)]
     {
         use std::{ffi::CString, os::fd::AsRawFd};
-        let from = CString::new("staging").unwrap();
-        let to = CString::new("generation-1").unwrap();
+        let from = CString::new(from).map_err(|_| ImageError::UnsafePath)?;
+        let to = CString::new(to).map_err(|_| ImageError::UnsafePath)?;
         #[cfg(target_os = "linux")]
         // Both fixed leaves are relative to the retained parent; never replace a generation.
         let result = unsafe {
