@@ -456,6 +456,16 @@ mod native {
             self.resources().control.path()
         }
         pub fn connect_control(&self) -> io::Result<super::super::control::ControlConnection<'_>> {
+            self.connect_with(self)
+        }
+        pub fn guest_stream(self: &Arc<Self>) -> io::Result<super::super::control::GuestStream> {
+            self.connect_with(self.clone())
+                .map(super::super::control::GuestStream)
+        }
+        fn connect_with<O: std::borrow::Borrow<Self>>(
+            &self,
+            owner: O,
+        ) -> io::Result<super::super::control::ControlIo<O>> {
             let resources = self.resources();
             if resources.control_started.swap(true, Ordering::AcqRel) {
                 let _ = self.abort();
@@ -466,7 +476,7 @@ mod native {
             }
             resources
                 .control
-                .connect(self)
+                .connect(owner)
                 .map_err(|error| match self.abort() {
                     Ok(()) => error,
                     Err(stop) => io::Error::other(format!(
@@ -516,6 +526,14 @@ mod native {
             let root = wait_handle(resources.process.0, stop_budget(&resources.stop_deadline));
             let stopped = self.abort(); // Always request the whole Job, even on root-wait failure.
             root.and(stopped)
+        }
+        pub(crate) fn stop_deadline(&self) -> std::time::Instant {
+            let resources = self.resources();
+            let _ = stop_budget(&resources.stop_deadline);
+            *resources
+                .stop_deadline
+                .get()
+                .expect("original stop deadline")
         }
         pub fn abort(&self) -> io::Result<()> {
             let resources = self.resources();

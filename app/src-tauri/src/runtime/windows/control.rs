@@ -2,6 +2,7 @@
 use super::{job::OwnedQemuProcess, launch::control_path, security};
 use bridge_runtime_protocol::Uuid;
 use std::{
+    borrow::Borrow,
     fs::{File, OpenOptions},
     io,
     mem::{size_of, zeroed},
@@ -127,14 +128,14 @@ impl ControlEndpoint {
     pub fn path(&self) -> &Path {
         &self.path
     }
-    pub(super) fn connect<'a>(
+    pub(super) fn connect<O: Borrow<OwnedQemuProcess>>(
         &self,
-        owner: &'a OwnedQemuProcess,
-    ) -> io::Result<ControlConnection<'a>> {
+        owner: O,
+    ) -> io::Result<ControlIo<O>> {
         let until = Instant::now() + Duration::from_secs(30);
         security::private_af_object(self.directory.as_raw_handle(), true)?;
         loop {
-            live(owner)?;
+            live(owner.borrow())?;
             match socket_metadata(&self.path) {
                 Ok(file) => {
                     let mut metadata = self
@@ -166,23 +167,23 @@ impl ControlEndpoint {
         }
         let address = address(&self.path)?;
         let raw = loop {
-            live(owner)?;
+            live(owner.borrow())?;
             let socket = self.channel.socket()?;
-            match establish(socket, &address, until, owner) {
+            match establish(socket, &address, until, owner.borrow()) {
                 Ok(()) => break socket,
                 Err(error) if error.raw_os_error() == Some(WSAECONNREFUSED) => wait_retry(until)?,
                 Err(error) => return Err(error),
             }
         };
         let pid = peer_pid(raw)?;
-        let process = owner.process_handle();
+        let process = owner.borrow().process_handle();
         if pid != unsafe { GetProcessId(process.raw()) } {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "AF_UNIX peer is not the retained QEMU process",
             ));
         }
-        live(owner)?;
+        live(owner.borrow())?;
         security::private_af_object(self.directory.as_raw_handle(), true)?;
         let metadata = self
             .channel
@@ -204,7 +205,7 @@ impl ControlEndpoint {
             .peer
             .set(pid)
             .map_err(|_| io::Error::other("AF_UNIX peer already recorded"))?;
-        Ok(ControlConnection {
+        Ok(ControlIo {
             owner,
             channel: self.channel.clone(),
         })
@@ -361,17 +362,18 @@ fn peer_pid(socket: SOCKET) -> io::Result<u32> {
     Ok(pid)
 }
 
-pub struct ControlConnection<'a> {
-    owner: &'a OwnedQemuProcess,
+pub struct ControlIo<O: Borrow<OwnedQemuProcess>> {
+    owner: O,
     channel: Arc<Channel>,
 }
-impl ControlConnection<'_> {
+pub type ControlConnection<'a> = ControlIo<&'a OwnedQemuProcess>;
+impl<O: Borrow<OwnedQemuProcess>> ControlIo<O> {
     pub fn peer_pid(&self) -> u32 {
         *self.channel.peer.get().expect("validated peer")
     }
     fn failure(&self, error: io::Error) -> io::Error {
         self.channel.terminal.store(true, Ordering::Release);
-        match self.owner.abort() {
+        match self.owner.borrow().abort() {
             Ok(()) => error,
             Err(stop) => io::Error::other(format!(
                 "AF_UNIX terminal failure: {error}; QEMU stop unobserved: {stop}"
@@ -382,7 +384,7 @@ impl ControlConnection<'_> {
         if self.channel.terminal.load(Ordering::Acquire) {
             return Err(io::Error::from(io::ErrorKind::BrokenPipe));
         }
-        live(self.owner)?;
+        live(self.owner.borrow())?;
         self.channel.raw()
     }
     pub fn read(&self, output: &mut [u8], deadline: Instant) -> io::Result<usize> {
@@ -452,12 +454,33 @@ impl ControlConnection<'_> {
         operation().map_err(|error| self.failure(error))
     }
 }
-impl Drop for ControlConnection<'_> {
+impl<O: Borrow<OwnedQemuProcess>> Drop for ControlIo<O> {
     fn drop(&mut self) {
         self.channel.terminal.store(true, Ordering::Release);
         // Request termination before releasing a live socket; the owner retains it
         // and all metadata for either observed release or whole-bundle quarantine.
-        let _ = self.owner.abort();
+        let _ = self.owner.borrow().abort();
+    }
+}
+/// Owns the same validated connection and installation lifetime as the borrowed API.
+pub struct GuestStream(pub(super) ControlIo<Arc<OwnedQemuProcess>>);
+impl io::Read for GuestStream {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.0
+            .read(bytes, Instant::now() + Duration::from_secs(120))
+    }
+}
+impl io::Write for GuestStream {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0
+            .write_all(bytes, Instant::now() + Duration::from_secs(30))?;
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.0
+            .usable()
+            .map(|_| ())
+            .map_err(|error| self.0.failure(error))
     }
 }
 #[cfg(test)]

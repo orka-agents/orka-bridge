@@ -41,7 +41,7 @@ fn real_pipe_frames_and_eof_reach_the_bounded_receiver() {
 fn saturated_output_queue_terminates_instead_of_waiting_for_a_reader() {
     let (read, mut write) = pipe();
     write.write_all(b"{}\n{}\n").unwrap();
-    let (tx, _rx) = mpsc::sync_channel(1);
+    let (tx, rx) = mpsc::sync_channel(1);
     let fault = Arc::new(AtomicBool::new(false));
     let seen = fault.clone();
     let worker = std::thread::spawn(move || {
@@ -54,6 +54,7 @@ fn saturated_output_queue_terminates_instead_of_waiting_for_a_reader() {
         Instant::now() + Duration::from_secs(5)
     ));
     assert!(fault.load(Ordering::Acquire));
+    assert_eq!(rx.try_recv().unwrap().unwrap(), b"{}\n");
     drop(write);
 }
 #[test]
