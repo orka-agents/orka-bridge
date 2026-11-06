@@ -147,6 +147,45 @@ fn constructor_rejects_foreign_installation_wrong_platform_and_missing_binding_w
         assert_eq!(snapshot(&root), before);
     }
 }
+#[cfg(unix)]
+#[test]
+fn replaced_root_with_the_same_state_inode_is_rejected_before_effects() {
+    for after_construction in [false, true] {
+        let (temp, mut journal, image) = installation(BackendKind::Apple);
+        let root = temp.path().join("install");
+        let retained = temp.path().join("retained");
+        let before = snapshot(&root);
+        let backend = Backend::default();
+        let events = backend.events.clone();
+        let replace_root = || {
+            fs::rename(&root, &retained).unwrap();
+            fs::create_dir(&root).unwrap();
+            fs::hard_link(retained.join("state.disk"), root.join("state.disk")).unwrap();
+        };
+        if after_construction {
+            let mut worker = RuntimeWorker::new(Box::new(backend), journal, image).unwrap();
+            replace_root();
+            for _ in 0..2 {
+                assert!(matches!(worker.start(), Err(RuntimeError::RetainedState)));
+            }
+        } else {
+            replace_root();
+            assert!(matches!(
+                journal.set_phase(StatePhase::Preparing),
+                Err(RuntimeError::RetainedState)
+            ));
+            assert!(matches!(
+                RuntimeWorker::new(Box::new(backend), journal, image),
+                Err(RuntimeError::RetainedState)
+            ));
+        }
+        assert!(events.lock().unwrap().is_empty());
+        assert_eq!(snapshot(&retained), before);
+        assert_eq!(fs::read(root.join("state.disk")).unwrap(), before.1);
+        assert!(!root.join("record.json").exists());
+        assert!(!root.join("record.next").exists());
+    }
+}
 #[test]
 fn apple_and_qemu_forward_the_same_installed_arc_to_both_specs() {
     for kind in [BackendKind::Qemu, BackendKind::Apple] {

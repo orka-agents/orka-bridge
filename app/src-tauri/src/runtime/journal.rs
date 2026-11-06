@@ -177,6 +177,7 @@ impl Journal {
         &'a self,
         compatibility: &'a str,
     ) -> Result<InstallationImageTarget<'a>, RuntimeError> {
+        self.verify_root()?;
         let target = match self.record.backend {
             BackendKind::Apple => ImageTarget::MacosArm64,
             BackendKind::Qemu => ImageTarget::WindowsAmd64,
@@ -198,7 +199,18 @@ impl Journal {
     pub fn record(&self) -> &InstallationRecord {
         &self.record
     }
+    fn verify_root(&self) -> Result<(), RuntimeError> {
+        // State hardlinks do not prove that our pathname still names this directory.
+        let current = Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())?;
+        if file_identity(&current.into_std_file())?
+            != file_identity(&self.image_root.try_clone()?.into_std_file())?
+        {
+            return Err(RuntimeError::RetainedState);
+        }
+        Ok(())
+    }
     pub fn verify_state(&self) -> Result<(), RuntimeError> {
+        self.verify_root()?;
         if self.record.phase == StatePhase::Empty && self.state.metadata()?.len() != 0 {
             return Err(RuntimeError::RetainedState);
         }
@@ -301,6 +313,7 @@ impl Journal {
         Ok(())
     }
     fn persist(&self, record: &InstallationRecord) -> Result<(), RuntimeError> {
+        self.verify_root()?;
         let bytes = serde_json::to_vec(record).map_err(|_| RuntimeError::RetainedState)?;
         if bytes.len() as u64 > MAX_RECORD {
             return Err(RuntimeError::RetainedState);
