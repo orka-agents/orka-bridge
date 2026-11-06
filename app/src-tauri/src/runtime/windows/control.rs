@@ -153,7 +153,15 @@ impl ControlEndpoint {
                     break;
                 }
                 Err(error) if matches!(error.raw_os_error(), Some(2 | 3)) => wait_retry(until)?,
-                Err(error) => return Err(error),
+                Err(error) => {
+                    return Err(io::Error::new(
+                        error.kind(),
+                        format!(
+                            "opening AF_UNIX socket metadata {}: {error}",
+                            self.path.display()
+                        ),
+                    ))
+                }
             }
         }
         let address = address(&self.path)?;
@@ -204,8 +212,12 @@ impl ControlEndpoint {
 }
 
 fn socket_metadata(path: &Path) -> io::Result<File> {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_READ_ATTRIBUTES, READ_CONTROL};
+    // This capability validates attributes and security, never socket-file data.
+    // GENERIC_READ unnecessarily participates in data sharing and can conflict
+    // with an existing reader that legitimately holds DELETE access.
     OpenOptions::new()
-        .read(true)
+        .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
         .share_mode(3)
         .custom_flags(0x02200000)
         .open(path)
