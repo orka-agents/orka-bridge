@@ -927,29 +927,9 @@ mod native {
         }
         #[test]
         fn retained_members_prove_stop_after_all_members_exit_naturally() {
-            use std::io::Read;
             let job = kill_on_close_job();
-            let make = || {
-                let _guard = spawn_guard().unwrap();
-                let mut child = Command::new("cmd.exe")
-                    .raw_arg("/d /c set /p x=ready & exit 0")
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::null())
-                    .creation_flags(CREATE_NO_WINDOW)
-                    .spawn()
-                    .unwrap();
-                drop(_guard);
-                let mut ready = [0; 5];
-                child.stdout.take().unwrap().read_exact(&mut ready).unwrap();
-                assert_eq!(&ready, b"ready");
-                unsafe {
-                    check(AssignProcessToJobObject(job.0, raw(&child))).unwrap();
-                }
-                child
-            };
-            let mut leader = make();
-            let mut member = make();
+            let mut leader = blocked_member(&job);
+            let mut member = blocked_member(&job);
             let retained = std::sync::Mutex::new(MemberRegistry::default());
             capture_members(
                 job.0,
@@ -976,12 +956,94 @@ mod native {
             assert!(observed.load(Ordering::Acquire));
         }
 
+        #[test]
+        fn owned_member_fixture() {
+            if std::env::var_os("BRIDGE_TEST_OWNED_MEMBER").is_some() {
+                use std::io::Read;
+                println!("OWNED-MEMBER-READY");
+                std::io::stdout().flush().unwrap();
+                std::io::stdin().read_exact(&mut [0; 2]).unwrap();
+                std::process::exit(0);
+            }
+        }
         fn blocked_member(job: &Handle) -> Child {
-            let child = cmd("/d /c set /p x= & exit 0");
+            use std::io::{BufRead, BufReader};
+            let gate = spawn_guard().unwrap();
+            let mut child = Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "runtime::windows::job::native::tests::owned_member_fixture",
+                    "--nocapture",
+                ])
+                .env("BRIDGE_TEST_OWNED_MEMBER", "1")
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .unwrap();
+            drop(gate);
+            // Do not use a command shell whose console helpers can join the Job.
+            let output = child.stdout.take().unwrap();
+            assert!(BufReader::new(output)
+                .lines()
+                .take(8)
+                .any(|line| line.unwrap().contains("OWNED-MEMBER-READY")));
             unsafe {
                 check(AssignProcessToJobObject(job.0, raw(&child))).unwrap();
             }
             child
+        }
+        fn completion_port(job: &Handle) -> Handle {
+            use windows_sys::Win32::System::IO::CreateIoCompletionPort;
+            unsafe {
+                let port = Handle::new(CreateIoCompletionPort(
+                    INVALID_HANDLE_VALUE,
+                    std::ptr::null_mut(),
+                    0,
+                    1,
+                ))
+                .unwrap();
+                let info = JOBOBJECT_ASSOCIATE_COMPLETION_PORT {
+                    CompletionKey: job.0,
+                    CompletionPort: port.0,
+                };
+                check(SetInformationJobObject(
+                    job.0,
+                    JobObjectAssociateCompletionPortInformation,
+                    (&info as *const JOBOBJECT_ASSOCIATE_COMPLETION_PORT).cast(),
+                    size_of::<JOBOBJECT_ASSOCIATE_COMPLETION_PORT>() as u32,
+                ))
+                .unwrap();
+                port
+            }
+        }
+        fn observe_empty_job(job: &Handle, port: &Handle) {
+            use windows_sys::Win32::System::IO::GetQueuedCompletionStatus;
+            let until = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let (mut message, mut key, mut process) = (0, 0, std::ptr::null_mut());
+                let remaining = until.saturating_duration_since(std::time::Instant::now());
+                assert!(
+                    !remaining.is_zero(),
+                    "Job zero-process notification missing"
+                );
+                unsafe {
+                    check(GetQueuedCompletionStatus(
+                        port.0,
+                        &mut message,
+                        &mut key,
+                        &mut process,
+                        remaining.as_millis().min(u32::MAX as u128) as u32,
+                    ))
+                    .unwrap();
+                }
+                assert_eq!(key, job.0 as usize);
+                if message == JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO {
+                    assert_eq!(active(job), 0);
+                    return;
+                }
+            }
         }
         #[test]
         fn contended_member_registry_still_terminates_without_observed_stop() {
@@ -1028,6 +1090,7 @@ mod native {
         #[test]
         fn a_later_unobserved_exit_cannot_join_a_prepared_generation() {
             let job = kill_on_close_job();
+            let port = completion_port(&job);
             let mut leader = blocked_member(&job);
             let registry = std::sync::Mutex::new(MemberRegistry::default());
             {
@@ -1044,6 +1107,11 @@ mod native {
             let mut later = blocked_member(&job);
             later.stdin.take().unwrap().write_all(b"\r\n").unwrap();
             assert!(later.wait().unwrap().success());
+            leader.stdin.take().unwrap().write_all(b"\r\n").unwrap();
+            assert!(leader.wait().unwrap().success());
+            // Construct a genuinely missing historical member, not the proxy
+            // that a signaled process has already left the Job PID list.
+            observe_empty_job(&job, &port);
             let observed = AtomicBool::new(false);
             assert!(stop_job(
                 job.0,
