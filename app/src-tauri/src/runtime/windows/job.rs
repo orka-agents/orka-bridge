@@ -1090,8 +1090,8 @@ mod native {
         #[test]
         fn a_later_unobserved_exit_cannot_join_a_prepared_generation() {
             let job = kill_on_close_job();
-            let port = completion_port(&job);
             let mut leader = blocked_member(&job);
+            let port = completion_port(&job);
             let registry = std::sync::Mutex::new(MemberRegistry::default());
             {
                 let mut members = registry.lock().unwrap();
