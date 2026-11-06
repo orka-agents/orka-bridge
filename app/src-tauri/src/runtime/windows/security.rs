@@ -274,6 +274,121 @@ pub(super) fn private_directory(path: &Path) -> io::Result<File> {
 mod tests {
     use super::*;
     #[test]
+    fn restricting_sids_are_exactly_user_system_and_restricted() {
+        unsafe {
+            let token = restricted_token().unwrap();
+            let original = current_token(TOKEN_QUERY).unwrap();
+            let current = user(original.0).unwrap();
+            let user_sid = (*(current.as_ptr().cast::<TOKEN_USER>())).User.Sid;
+            let mut needed = 0;
+            GetTokenInformation(
+                token.0,
+                TokenRestrictedSids,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            );
+            assert!(needed as usize >= size_of::<TOKEN_GROUPS>());
+            let mut data = vec![0usize; (needed as usize).div_ceil(size_of::<usize>())];
+            check(GetTokenInformation(
+                token.0,
+                TokenRestrictedSids,
+                data.as_mut_ptr().cast(),
+                needed,
+                &mut needed,
+            ))
+            .unwrap();
+            let groups = &*data.as_ptr().cast::<TOKEN_GROUPS>();
+            assert_eq!(
+                groups.GroupCount, 3,
+                "only the approved three restricting SIDs"
+            );
+            let entries =
+                std::slice::from_raw_parts(groups.Groups.as_ptr(), groups.GroupCount as usize);
+            let mut system = std::ptr::null_mut();
+            let mut restricted = std::ptr::null_mut();
+            check(ConvertStringSidToSidW(
+                wide("S-1-5-18").unwrap().as_ptr(),
+                &mut system,
+            ))
+            .unwrap();
+            let system = Local(system);
+            check(ConvertStringSidToSidW(
+                wide("S-1-5-12").unwrap().as_ptr(),
+                &mut restricted,
+            ))
+            .unwrap();
+            let restricted = Local(restricted);
+            for expected in [user_sid, system.0, restricted.0] {
+                assert_eq!(
+                    entries
+                        .iter()
+                        .filter(|entry| EqualSid(entry.Sid, expected) != 0)
+                        .count(),
+                    1
+                );
+            }
+        }
+    }
+    #[test]
+    fn restricted_token_default_dacl_stays_user_and_system_only() {
+        unsafe {
+            let token = restricted_token().unwrap();
+            let original = current_token(TOKEN_QUERY).unwrap();
+            let current = user(original.0).unwrap();
+            let user_sid = (*(current.as_ptr().cast::<TOKEN_USER>())).User.Sid;
+            let mut needed = 0;
+            GetTokenInformation(
+                token.0,
+                TokenDefaultDacl,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            );
+            assert!(needed as usize >= size_of::<TOKEN_DEFAULT_DACL>());
+            let mut data = vec![0usize; (needed as usize).div_ceil(size_of::<usize>())];
+            check(GetTokenInformation(
+                token.0,
+                TokenDefaultDacl,
+                data.as_mut_ptr().cast(),
+                needed,
+                &mut needed,
+            ))
+            .unwrap();
+            let acl = (*(data.as_ptr().cast::<TOKEN_DEFAULT_DACL>())).DefaultDacl;
+            assert!(!acl.is_null());
+            assert_eq!(
+                (*acl).AceCount,
+                2,
+                "RC must not be added to the default DACL"
+            );
+            let mut system = std::ptr::null_mut();
+            check(ConvertStringSidToSidW(
+                wide("S-1-5-18").unwrap().as_ptr(),
+                &mut system,
+            ))
+            .unwrap();
+            let system = Local(system);
+            let mut seen = [false; 2];
+            for index in 0..2 {
+                let mut raw = std::ptr::null_mut();
+                check(GetAce(acl, index, &mut raw)).unwrap();
+                let ace = &*raw.cast::<ACCESS_ALLOWED_ACE>();
+                assert_eq!(ace.Header.AceType, 0); // ACCESS_ALLOWED_ACE_TYPE
+                assert_eq!(ace.Header.AceFlags, 0);
+                assert_eq!(ace.Mask, GENERIC_ALL);
+                let sid = std::ptr::addr_of!(ace.SidStart) as PSID;
+                if EqualSid(sid, user_sid) != 0 {
+                    seen[0] = true;
+                } else {
+                    assert_ne!(EqualSid(sid, system.0), 0);
+                    seen[1] = true;
+                }
+            }
+            assert_eq!(seen, [true, true]);
+        }
+    }
+    #[test]
     fn null_dacl_is_rejected_without_dereferencing_it() {
         use std::os::windows::io::AsRawHandle;
         let t = tempfile::NamedTempFile::new().unwrap();
