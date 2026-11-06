@@ -353,26 +353,35 @@ mod native {
             unsafe { WaitForSingleObject(self.resources().process.0, 0) == WAIT_OBJECT_0 }
         }
         pub fn wait_exit(&self, timeout: Duration) -> io::Result<()> {
-            unsafe {
-                match WaitForSingleObject(
-                    self.resources().process.0,
-                    timeout.as_millis().min(u32::MAX as u128 - 1) as u32,
-                ) {
-                    WAIT_OBJECT_0 => Ok(()),
-                    WAIT_TIMEOUT => Err(io::Error::from(io::ErrorKind::TimedOut)),
-                    _ => Err(io::Error::last_os_error()),
-                }
-            }
+            wait_handle(self.resources().process.0, timeout)
         }
         pub fn abort(&self) -> io::Result<()> {
-            if self.exited() {
-                return Ok(());
-            }
-            unsafe {
-                check(TerminateJobObject(self.resources().job.0, 1))?;
-            }
-            self.wait_exit(Duration::from_secs(45))
+            let resources = self.resources();
+            stop_job(
+                resources.job.0,
+                resources.process.0,
+                Duration::from_secs(45),
+            )
         }
+    }
+    fn wait_handle(handle: HANDLE, timeout: Duration) -> io::Result<()> {
+        unsafe {
+            match WaitForSingleObject(handle, timeout.as_millis().min(u32::MAX as u128 - 1) as u32)
+            {
+                WAIT_OBJECT_0 => Ok(()),
+                WAIT_TIMEOUT => Err(io::Error::from(io::ErrorKind::TimedOut)),
+                _ => Err(io::Error::last_os_error()),
+            }
+        }
+    }
+    fn stop_job(job: HANDLE, leader: HANDLE, timeout: Duration) -> io::Result<()> {
+        if wait_handle(leader, Duration::ZERO).is_ok() {
+            return Ok(());
+        }
+        unsafe {
+            check(TerminateJobObject(job, 1))?;
+        }
+        wait_handle(leader, timeout)
     }
     impl Drop for OwnedQemuProcess {
         fn drop(&mut self) {
@@ -380,6 +389,110 @@ mod native {
             if let Some(resources) = self.resources.take() {
                 release_bundle(resources, observed_stop);
             }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::{
+            fs::OpenOptions,
+            io::Write,
+            os::windows::{fs::OpenOptionsExt, process::CommandExt},
+            process::{Child, Command, Stdio},
+        };
+
+        fn kill_on_close_job() -> Handle {
+            unsafe {
+                let job =
+                    Handle::new(CreateJobObjectW(std::ptr::null(), std::ptr::null())).unwrap();
+                let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = zeroed();
+                limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+                check(SetInformationJobObject(
+                    job.0,
+                    JobObjectExtendedLimitInformation,
+                    (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+                ))
+                .unwrap();
+                job
+            }
+        }
+        fn active(job: &Handle) -> u32 {
+            unsafe {
+                let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = zeroed();
+                check(QueryInformationJobObject(
+                    job.0,
+                    JobObjectBasicAccountingInformation,
+                    (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                    size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                    std::ptr::null_mut(),
+                ))
+                .unwrap();
+                info.ActiveProcesses
+            }
+        }
+        fn cmd(args: &str) -> Child {
+            // Cooperate with app spawns so no product handle is inherited by this tree.
+            let _guard = spawn_guard().unwrap();
+            Command::new("cmd.exe")
+                .raw_arg(args)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn()
+                .unwrap()
+        }
+        fn raw(child: &Child) -> HANDLE {
+            child.as_raw_handle() as HANDLE
+        }
+
+        #[test]
+        fn leader_exit_is_not_job_stop_while_a_descendant_holds_a_capability() {
+            let dir = tempfile::tempdir().unwrap();
+            let held = dir.path().join("held.txt");
+            let exclusive = || OpenOptions::new().read(true).share_mode(0).open(&held);
+            let job = kill_on_close_job();
+            // The leader blocks on stdin until it is in the Job, then leaves a descendant that
+            // keeps the redirected file open after the leader itself exits.
+            let mut leader = cmd(&format!(
+                "/d /c set /p x= & start /b ping -n 120 127.0.0.1 > \"{}\"",
+                held.display()
+            ));
+            unsafe { check(AssignProcessToJobObject(job.0, raw(&leader))).unwrap() };
+            leader.stdin.take().unwrap().write_all(b"\r\n").unwrap();
+            leader.wait().unwrap();
+            assert!(active(&job) >= 1, "descendant stays in the Job");
+            assert_eq!(exclusive().unwrap_err().raw_os_error(), Some(32));
+
+            stop_job(job.0, raw(&leader), Duration::from_secs(45)).unwrap();
+            assert_eq!(active(&job), 0, "observed stop is Job-wide");
+            drop(exclusive().expect("no descendant still holds the file"));
+            // A later teardown of the same empty Job is still an observed stop.
+            stop_job(job.0, raw(&leader), Duration::from_secs(45)).unwrap();
+        }
+
+        #[test]
+        fn job_stop_without_terminate_authority_is_unobserved_after_leader_exit() {
+            let job = kill_on_close_job();
+            let mut leader = cmd("/d /c exit 0");
+            leader.wait().unwrap();
+            let mut query_only = std::ptr::null_mut();
+            unsafe {
+                check(DuplicateHandle(
+                    GetCurrentProcess(),
+                    job.0,
+                    GetCurrentProcess(),
+                    &mut query_only,
+                    4, // JOB_OBJECT_QUERY
+                    0,
+                    0,
+                ))
+                .unwrap();
+            }
+            let query_only = Handle::new(query_only).unwrap();
+            assert!(stop_job(query_only.0, raw(&leader), Duration::from_secs(45)).is_err());
         }
     }
 }
