@@ -38,6 +38,7 @@ fn main() {
         s += &format!("#[path={p:?}] pub mod {name};");
     }
     s += r#"pub(crate) fn check_token(h:windows_sys::Win32::Foundation::HANDLE)->std::io::Result<()> {unsafe {use windows_sys::Win32::Security::*;use windows_sys::Win32::System::Threading::*;let mut raw=std::ptr::null_mut();security::check(OpenProcessToken(h,TOKEN_QUERY,&mut raw))?;let token=security::Handle::new(raw)?;let mut kind=0i32;let mut n=0;security::check(GetTokenInformation(token.raw(),TokenType,(&mut kind as *mut i32).cast(),4,&mut n))?;if IsTokenRestricted(token.raw())==0 || kind!=TokenPrimary{return Err(std::io::ErrorKind::PermissionDenied.into())} Ok(())}} "#;
+    s+="pub(crate) fn check_unix_path(h:windows_sys::Win32::Foundation::HANDLE,directory:bool)->std::io::Result<()> {security::private_object(h,directory,windows_sys::Win32::Security::Authorization::SE_FILE_OBJECT)} ";
     s+="pub(crate) fn check_pipe(h:windows_sys::Win32::Foundation::HANDLE)->std::io::Result<()> {security::private_object(h,true,windows_sys::Win32::Security::Authorization::SE_KERNEL_OBJECT)} }}";
     fs::write(
         PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("source.rs"),

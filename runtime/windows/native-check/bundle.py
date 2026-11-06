@@ -19,7 +19,8 @@ BUNDLE_FILES = (*PRODUCER_FILES, "bridge-native-premises.exe", "runtime-pin.json
                 "producer-run.json", "bundle-provenance.json", "independent-verification.json",
                 "build.log", "probe-dependents.txt", "producer-watch.log",
                 "ci-stdout.txt", "ci-stderr.txt", "ci-controller.json",
-                "ci-owned-pipe-stdout.txt", "ci-owned-pipe-stderr.txt")
+                "ci-owned-pipe-stdout.txt", "ci-owned-pipe-stderr.txt",
+                "ci-af-warmup.json", "ci-af-control.json", "ci-af-private.json", "ci-af-client-stderr.txt")
 
 
 def write_json(path, value):

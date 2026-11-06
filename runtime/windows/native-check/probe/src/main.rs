@@ -24,6 +24,8 @@ mod native {
     mod owned_pipe_trial;
     #[path = "permission_diag.rs"]
     mod permission_diag;
+    #[path = "unix_trial.rs"]
+    mod unix_trial;
     use crate::runtime::{
         self,
         windows::{inputs::*, job::OwnedQemuProcess},
@@ -352,6 +354,10 @@ mod native {
     }
     pub fn run() -> io::Result<()> {
         let args: Vec<_> = std::env::args().collect();
+        if args.get(1).map(String::as_str) == Some("unix-connect") {
+            check(args.len() == 3)?;
+            return unix_trial::client(std::path::Path::new(&args[2]));
+        }
         if args.get(1).map(String::as_str) == Some("check") {
             return controller::run(&args[2..]);
         }
@@ -378,6 +384,7 @@ mod native {
                 "hold-pipe",
                 "hold-guard-only",
                 "try-owned-pipe",
+                "try-unix",
             ]
             .contains(&mode.as_str()),
         )?;
@@ -397,6 +404,11 @@ mod native {
         .map_err(io::Error::other)?;
         let spec = runtime::probe_spec(&journal);
         let name = format!("bridge-premise-{}", bridge_runtime_protocol::Uuid::new_v4());
+        let unix_trial = if mode == "try-unix" {
+            Some(unix_trial::Trial::prepare(&root)?)
+        } else {
+            None
+        };
         // Trial-only host server exists and is already listening BEFORE QEMU starts.
         let mut owned_pipe = if mode == "try-owned-pipe" {
             Some(owned_pipe_trial::Listener::create(&name)?)
@@ -426,7 +438,17 @@ mod native {
         .collect();
         argv.extend([
             OsString::from("-chardev"),
-            format!("pipe,id=guest,path={name}").into(),
+            match &unix_trial {
+                Some(trial) => format!(
+                    "socket,id=guest,path={},server=on,wait=on",
+                    trial
+                        .endpoint
+                        .to_str()
+                        .ok_or_else(|| io::Error::other("AF_UNIX UTF-8 path"))?
+                )
+                .into(),
+                None => format!("pipe,id=guest,path={name}").into(),
+            },
         ]);
         // Reuse the production serial argument to exercise literal comma/Unicode paths.
         let production = runtime::windows::launch::launch_argv(&inputs, &spec, &name)
@@ -505,6 +527,12 @@ mod native {
             }
         }
         let mut status = json!({"sourceHead":crate::SOURCE_HEAD,"pid":unsafe{GetProcessId(process.raw())},"creationTime":creation_time(process.raw())?,"mode":mode,"pipe":name,"root":root,"inherited":inherited,"restrictedPrimary":true,"whpxUsability":"not-tested"});
+        if let Some(trial) = unix_trial {
+            let result = trial.run(&child, process.raw(), &mut stdin, &rx, &errors)?;
+            return emit(
+                json!({"sourceHead":crate::SOURCE_HEAD,"trialOnly":true,"afUnixTrial":result}),
+            );
+        }
         if let Some(listener) = owned_pipe.as_mut() {
             let until = Instant::now() + Duration::from_secs(30);
             let attached = loop {

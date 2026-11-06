@@ -76,7 +76,7 @@ pub(super) fn caller() -> io::Result<(Value, String)> {
         ))
     }
 }
-fn private_root(root: &Path, sid: &str) -> io::Result<()> {
+pub(super) fn private_root(root: &Path, sid: &str) -> io::Result<()> {
     unsafe {
         check(root.is_absolute())?;
         let sddl = wide(&format!("O:{sid}D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)"));
@@ -207,17 +207,22 @@ impl Worker {
             .take()
             .ok_or_else(|| io::Error::other("stderr missing"))?;
         let (tx, rx) = mpsc::sync_channel(2);
+        let messages = if mode == "try-unix" { 2 } else { 1 };
         std::thread::spawn(move || {
             let mut b = BufReader::new(stdout);
-            let mut line = Vec::new();
-            let r = (&mut b)
-                .take(131073)
-                .read_until(b'\n', &mut line)
-                .and_then(|n| {
-                    check(n > 0 && n <= 131072 && line.last() == Some(&b'\n'))?;
-                    serde_json::from_slice(&line).map_err(io::Error::other)
-                });
-            let _ = tx.send(r);
+            for _ in 0..messages {
+                let mut line = Vec::new();
+                let r = (&mut b)
+                    .take(131073)
+                    .read_until(b'\n', &mut line)
+                    .and_then(|n| {
+                        check(n > 0 && n <= 131072 && line.last() == Some(&b'\n'))?;
+                        serde_json::from_slice(&line).map_err(io::Error::other)
+                    });
+                if tx.send(r).is_err() {
+                    break;
+                }
+            }
         });
         let errors = Arc::new(Mutex::new(Vec::new()));
         let out = errors.clone();
@@ -293,7 +298,8 @@ fn one(mode: &str, packet: &Path, root: &Path) -> io::Result<Value> {
 }
 pub(super) fn run(args: &[String]) -> io::Result<()> {
     let trial = args.len() == 4 && args[3] == "--owned-pipe-trial";
-    check(args.len() == 3 || trial)?;
+    let unix_trial = args.len() == 4 && args[3] == "--af-unix-trial";
+    check(args.len() == 3 || trial || unix_trial)?;
     let runtime = PathBuf::from(&args[0]);
     let pin = PathBuf::from(&args[1]);
     let work = PathBuf::from(&args[2]);
@@ -302,6 +308,27 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
     contain_controller()?;
     private_root(&work, &sid)?;
     let (packet, trusted) = packet(&runtime, &pin, &work)?;
+    if unix_trial {
+        let mut worker = Worker::start("try-unix", &packet, &work.join("unix"))?;
+        let first = worker.line()?;
+        let result = if first["stage"] == "af-unix-ready" {
+            check(first["sourceHead"] == crate::SOURCE_HEAD)?;
+            emit(first)?;
+            worker.line()?
+        } else {
+            first
+        };
+        worker.wait(Duration::from_secs(45))?;
+        check(result["sourceHead"] == crate::SOURCE_HEAD && result["trialOnly"] == true)?;
+        let receipt = json!({"status":"af-unix-trial-only","sourceHead":crate::SOURCE_HEAD,"caller":caller,"probeSha256":digest(&fs::read(std::env::current_exe()?)?),"runtimeZipSha256":trusted["runtimeZipSha256"],"producerRun":trusted["producerRun"],"guestBoot":false,"fullContainmentQualified":false,"afUnixTrial":result["afUnixTrial"]});
+        fs::write(
+            work.join("receipt.json"),
+            serde_json::to_vec_pretty(&receipt).map_err(io::Error::other)?,
+        )?;
+        emit(receipt)?;
+        eprintln!("DIAGNOSTIC AF_UNIX EXPERIMENT: not full native containment qualification");
+        return Ok(());
+    }
     if trial {
         let result = one("try-owned-pipe", &packet, &work.join("owned-pipe"))?;
         let receipt = json!({"status":"trial-only","sourceHead":crate::SOURCE_HEAD,"caller":caller,"probeSha256":digest(&fs::read(std::env::current_exe()?)?),"runtimeZipSha256":trusted["runtimeZipSha256"],"producerRun":trusted["producerRun"],"guestBoot":false,"whpxUsability":"not-tested","ownedPipeTrial":result});
