@@ -110,6 +110,14 @@ pub(super) fn restricted_token() -> io::Result<Handle> {
             &mut system,
         ))?;
         let system = Local(system);
+        // Windows grants RESTRICTED access to loader objects such as KnownDlls.
+        // This is a restricting SID, not an ACE in the user/SYSTEM default DACL.
+        let mut restricted_code = std::ptr::null_mut();
+        check(ConvertStringSidToSidW(
+            wide("S-1-5-12")?.as_ptr(),
+            &mut restricted_code,
+        ))?;
+        let restricted_code = Local(restricted_code);
         let restricted = [
             SID_AND_ATTRIBUTES {
                 Sid: sid,
@@ -117,6 +125,10 @@ pub(super) fn restricted_token() -> io::Result<Handle> {
             },
             SID_AND_ATTRIBUTES {
                 Sid: system.0,
+                Attributes: 0,
+            },
+            SID_AND_ATTRIBUTES {
+                Sid: restricted_code.0,
                 Attributes: 0,
             },
         ];
@@ -128,7 +140,7 @@ pub(super) fn restricted_token() -> io::Result<Handle> {
             std::ptr::null(),
             0,
             std::ptr::null(),
-            2,
+            3,
             restricted.as_ptr(),
             &mut token,
         ))?;
