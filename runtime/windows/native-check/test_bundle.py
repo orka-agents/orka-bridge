@@ -119,6 +119,13 @@ class BundleTests(unittest.TestCase):
         for name, digest in records.items():
             self.assertEqual(digest, hashlib.sha256((self.operator / name).read_bytes()).hexdigest())
 
+    def test_every_manifest_candidate_is_retained_by_workflow(self):
+        workflow = (HERE.parents[2] / ".github/workflows/windows-native-check.yml").read_text()
+        upload_paths = workflow.split("          path: |\n", 1)[1].split("          retention-days:", 1)[0]
+        for name in (*bundle.BUNDLE_FILES, "operator-sha256sums.txt"):
+            with self.subTest(name=name):
+                self.assertIn(f"/native-operator/{name}\n", upload_paths)
+
     def test_symlink_in_operator_allowlist_is_rejected(self):
         self.operator.mkdir()
         try:

@@ -272,6 +272,8 @@ jobs:
             ${{ runner.temp }}/native-operator/ci-stdout.txt
             ${{ runner.temp }}/native-operator/ci-stderr.txt
             ${{ runner.temp }}/native-operator/ci-controller.json
+            ${{ runner.temp }}/native-operator/ci-owned-pipe-stdout.txt
+            ${{ runner.temp }}/native-operator/ci-owned-pipe-stderr.txt
             ${{ runner.temp }}/native-operator/operator-sha256sums.txt
           retention-days: 7
           if-no-files-found: error
