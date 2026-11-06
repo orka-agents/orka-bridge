@@ -120,15 +120,15 @@ fn connect_socket(path: &std::path::Path) -> io::Result<OwnedSocket> {
 }
 fn peer_pid(socket: &OwnedSocket) -> io::Result<u32> {
     unsafe {
-        let mut output = [0u8; 16];
+        let mut pid = 0u32;
         let mut bytes = 0;
         if WSAIoctl(
             raw(socket),
             SIO_AF_UNIX_GETPEERPID,
             std::ptr::null(),
             0,
-            output.as_mut_ptr().cast(),
-            output.len() as u32,
+            (&mut pid as *mut u32).cast(),
+            size_of::<u32>() as u32,
             &mut bytes,
             std::ptr::null_mut(),
             None,
@@ -136,8 +136,11 @@ fn peer_pid(socket: &OwnedSocket) -> io::Result<u32> {
         {
             return Err(io::Error::from_raw_os_error(WSAGetLastError()));
         }
-        check((bytes == 4 || bytes == 8) && output[4..bytes as usize].iter().all(|b| *b == 0))?;
-        Ok(u32::from_ne_bytes(output[..4].try_into().unwrap()))
+        // Windows can return zero in the byte-count field on a successful query.
+        // Acceptance depends on the DWORD PID and the caller's owned-PID comparison.
+        eprintln!("[AF-UNIX-PEER] pid={pid} returnedBytes={bytes}");
+        check(pid != 0)?;
+        Ok(pid)
     }
 }
 pub(super) fn client(path: &std::path::Path) -> io::Result<()> {
