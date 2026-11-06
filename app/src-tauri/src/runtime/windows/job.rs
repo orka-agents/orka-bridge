@@ -160,12 +160,27 @@ mod native {
         job: Handle,
         stop_observed: AtomicBool,
         stop_deadline: std::sync::OnceLock<std::time::Instant>,
+        members: std::sync::Mutex<MemberRegistry>,
         stdio: RetainedStdio,
         _ownership: Arc<File>,
         _inputs: Arc<VerifiedWindowsInputs>,
         _cwd: File,
         control: super::super::control::ControlEndpoint,
         control_started: AtomicBool,
+    }
+    #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+    struct ProcessIdentity {
+        pid: u32,
+        created: u64,
+    }
+    struct MemberObservation {
+        handle: Handle,
+        confirmed: Option<ProcessIdentity>,
+    }
+    #[derive(Default)]
+    struct MemberRegistry {
+        entries: Vec<MemberObservation>,
+        prepared_generation: Option<u32>,
     }
     struct RetainedStdio {
         files: (File, File, File),
@@ -382,6 +397,7 @@ mod native {
                         job,
                         stop_observed: AtomicBool::new(false),
                         stop_deadline: std::sync::OnceLock::new(),
+                        members: std::sync::Mutex::new(MemberRegistry::default()),
                         stdio: RetainedStdio::new((stdin, stdout, stderr)),
                         _ownership: ownership,
                         _inputs: inputs,
@@ -467,10 +483,39 @@ mod native {
         pub fn wait_exit(&self, timeout: Duration) -> io::Result<()> {
             wait_handle(self.resources().process.0, timeout)
         }
-        /// Natural quit and any subsequent teardown share the original stop budget.
+        /// Capture every live member before a caller sends graceful QMP quit.
+        /// This begins, rather than renews, the original stop deadline.
+        pub fn prepare_graceful_stop(&self) -> io::Result<()> {
+            let resources = self.resources();
+            let budget = stop_budget(&resources.stop_deadline);
+            let result = (|| {
+                let mut members = resources
+                    .members
+                    .try_lock()
+                    .map_err(|_| io::Error::other("member observation registry unavailable"))?;
+                let generation = capture_members(
+                    resources.job.0,
+                    resources.process.0,
+                    std::time::Instant::now() + budget,
+                    &mut members,
+                )?;
+                members.prepared_generation = Some(generation);
+                Ok(())
+            })();
+            // Never recurse into abort while holding the observation registry.
+            result.map_err(|error| match self.abort() {
+                Ok(()) => error,
+                Err(stop) => io::Error::other(format!(
+                    "graceful preparation failed: {error}; stop unobserved: {stop}"
+                )),
+            })
+        }
+        /// Natural quit and complete Job observation share one stop proof/budget.
         pub fn wait_for_stop(&self) -> io::Result<()> {
             let resources = self.resources();
-            wait_handle(resources.process.0, stop_budget(&resources.stop_deadline))
+            let root = wait_handle(resources.process.0, stop_budget(&resources.stop_deadline));
+            let stopped = self.abort(); // Always request the whole Job, even on root-wait failure.
+            root.and(stopped)
         }
         pub fn abort(&self) -> io::Result<()> {
             let resources = self.resources();
@@ -479,6 +524,7 @@ mod native {
                 resources.process.0,
                 stop_budget(&resources.stop_deadline),
                 &resources.stop_observed,
+                &resources.members,
             )
         }
     }
@@ -532,7 +578,7 @@ mod native {
         }
         Ok(info)
     }
-    fn job_processes(job: HANDLE, deadline: std::time::Instant) -> io::Result<Vec<Handle>> {
+    fn job_process_ids(job: HANDLE, deadline: std::time::Instant) -> io::Result<Vec<u32>> {
         let mut capacity = 16usize;
         loop {
             if std::time::Instant::now() >= deadline {
@@ -587,90 +633,178 @@ mod native {
                     info.NumberOfProcessIdsInList as usize,
                 )
             };
-            let mut processes = Vec::with_capacity(ids.len());
-            for id in ids {
-                if std::time::Instant::now() >= deadline {
-                    return Err(io::Error::from(io::ErrorKind::TimedOut));
-                }
-                let id =
-                    u32::try_from(*id).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-                let process = unsafe {
-                    Handle::new(OpenProcess(
-                        0x00100000 | PROCESS_QUERY_LIMITED_INFORMATION,
-                        0,
-                        id,
-                    ))?
-                };
-                let mut member = 0;
-                unsafe {
-                    check(IsProcessInJob(process.0, job, &mut member))?;
-                }
-                if member == 0 {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("snapshot process {id} no longer belongs to the owned Job"),
-                    ));
-                }
-                processes.push(process);
-            }
-            return Ok(processes);
+            return ids
+                .iter()
+                .map(|id| {
+                    u32::try_from(*id).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
+                })
+                .collect();
         }
+    }
+    fn process_identity(handle: HANDLE) -> io::Result<ProcessIdentity> {
+        unsafe {
+            let pid = GetProcessId(handle);
+            if pid == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let (mut created, mut exit, mut kernel, mut user) =
+                (zeroed(), zeroed(), zeroed(), zeroed());
+            check(GetProcessTimes(
+                handle,
+                &mut created,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            ))?;
+            Ok(ProcessIdentity {
+                pid,
+                created: (u64::from(created.dwHighDateTime) << 32)
+                    | u64::from(created.dwLowDateTime),
+            })
+        }
+    }
+    fn capture_members(
+        job: HANDLE,
+        leader: HANDLE,
+        deadline: std::time::Instant,
+        members: &mut MemberRegistry,
+    ) -> io::Result<u32> {
+        if std::time::Instant::now() >= deadline {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        if members
+            .entries
+            .iter()
+            .any(|entry| entry.confirmed.is_none())
+        {
+            return Err(io::Error::other(
+                "an unconfirmed member capability remains quarantined",
+            ));
+        }
+        let before = accounting(job)?;
+        if members
+            .prepared_generation
+            .is_some_and(|generation| before.TotalProcesses < generation)
+        {
+            return Err(io::Error::other(
+                "Job generation regressed after graceful preparation",
+            ));
+        }
+        let original = process_identity(leader)?;
+        for pid in job_process_ids(job, deadline)? {
+            if std::time::Instant::now() >= deadline {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            let handle = unsafe {
+                Handle::new(OpenProcess(
+                    0x00100000 | PROCESS_QUERY_LIMITED_INFORMATION,
+                    0,
+                    pid,
+                ))?
+            };
+            // Register the capability before any further fallible query. Pending
+            // observations survive errors but cannot contribute to stop proof.
+            let index = members.entries.len();
+            members.entries.push(MemberObservation {
+                handle,
+                confirmed: None,
+            });
+            let raw = members.entries[index].handle.0;
+            let identity = process_identity(raw)?;
+            if identity == original
+                || members.entries[..index]
+                    .iter()
+                    .any(|entry| entry.confirmed == Some(identity))
+            {
+                // An equivalent confirmed capability is already retained, including
+                // its historical membership after that same process has exited.
+                members.entries.pop();
+                continue;
+            }
+            let mut inside = 0;
+            unsafe {
+                check(IsProcessInJob(raw, job, &mut inside))?;
+            }
+            if inside == 0 {
+                return Err(io::Error::other(format!(
+                    "process {pid} is not a confirmed Job member"
+                )));
+            }
+            members.entries[index].confirmed = Some(identity);
+        }
+        let mut known = std::collections::BTreeSet::from([original]);
+        for member in &members.entries {
+            known.insert(
+                member
+                    .confirmed
+                    .ok_or_else(|| io::Error::other("unconfirmed member"))?,
+            );
+        }
+        if known.len() != before.TotalProcesses as usize {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "unobserved Job process history: total={}, active={}, retained={}",
+                    before.TotalProcesses,
+                    before.ActiveProcesses,
+                    known.len()
+                ),
+            ));
+        }
+        let after = accounting(job)?;
+        if after.TotalProcesses != before.TotalProcesses {
+            return Err(io::Error::other(format!(
+                "Job generation changed during capture: {} -> {}",
+                before.TotalProcesses, after.TotalProcesses
+            )));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        Ok(before.TotalProcesses)
     }
     fn stop_job(
         job: HANDLE,
         leader: HANDLE,
         timeout: Duration,
         observed: &AtomicBool,
+        members: &std::sync::Mutex<MemberRegistry>,
     ) -> io::Result<()> {
-        // The private noninheritable Job is assigned exactly once. After a proved
-        // full stop no remaining process or external owner can add a member.
+        // This private Job is assigned once and no external owner can add members.
         if observed.load(Ordering::Acquire) {
             return Ok(());
         }
         let deadline = std::time::Instant::now() + timeout;
-        // ActiveProcesses can reach zero before descendant handles finish closing.
-        // Bind wait-only process handles while they are still in this owned Job.
-        let snapshot = accounting(job).and_then(|before| {
-            let processes = job_processes(job, deadline)?;
-            let leader_id = unsafe { GetProcessId(leader) };
-            if leader_id == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let includes_leader = processes
-                .iter()
-                .any(|process| unsafe { GetProcessId(process.0) } == leader_id);
-            let known = processes.len() + usize::from(!includes_leader);
-            // An unlisted descendant may still be closing handles. Without its
-            // process handle that historical exit is unobserved, not success.
-            if known != before.TotalProcesses as usize {
-                return Err(io::Error::new(io::ErrorKind::InvalidData, format!("unobserved Job process history: total={}, active={}, retained={known}, leader_listed={includes_leader}", before.TotalProcesses, before.ActiveProcesses)));
-            }
-            Ok((before.TotalProcesses, processes))
-        });
-        // Even a failed snapshot must still request termination of the whole Job.
-        unsafe { check(TerminateJobObject(job, 1))? };
-        let (generation, processes) = snapshot?;
+        let mut registry = members
+            .try_lock()
+            .map_err(|_| io::Error::other("member observation registry unavailable"));
+        let snapshot = match &mut registry {
+            Ok(members) => capture_members(job, leader, deadline, members),
+            Err(error) => Err(io::Error::other(error.to_string())),
+        };
+        // Failure to query/lock/capture must NEVER skip whole-Job termination.
+        unsafe {
+            check(TerminateJobObject(job, 1))?;
+        }
+        let generation = snapshot?;
+        let members = registry?;
         wait_handle(
             leader,
             deadline.saturating_duration_since(std::time::Instant::now()),
         )?;
-        for process in &processes {
+        for member in &members.entries {
             wait_handle(
-                process.0,
+                member.handle.0,
                 deadline.saturating_duration_since(std::time::Instant::now()),
             )?;
         }
         loop {
             let info = accounting(job)?;
-            // A process created after the snapshot is unobserved: quarantine, not success.
             if info.TotalProcesses != generation {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Job process generation changed: expected={generation}, observed={}",
-                        info.TotalProcesses
-                    ),
-                ));
+                return Err(io::Error::other(format!(
+                    "Job process generation changed: expected={generation}, observed={}",
+                    info.TotalProcesses
+                )));
             }
             if info.ActiveProcesses == 0 {
                 observed.store(true, Ordering::Release);
@@ -678,7 +812,7 @@ mod native {
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
-                return Err(io::Error::from(io::ErrorKind::TimedOut));
+                return Err(io::ErrorKind::TimedOut.into());
             }
             std::thread::sleep(remaining.min(Duration::from_millis(10)));
         }
@@ -783,14 +917,13 @@ mod native {
             child.as_raw_handle() as HANDLE
         }
 
-        // RED adapter: current production stop ignores capabilities captured earlier.
-        fn stop_with_retained_test(
+        fn stop_fresh(
             job: HANDLE,
             leader: HANDLE,
-            _retained: &[Handle],
+            timeout: Duration,
             observed: &AtomicBool,
         ) -> io::Result<()> {
-            stop_job(job, leader, Duration::from_secs(45), observed)
+            stop_job(job, leader, timeout, observed, &std::sync::Mutex::default())
         }
         #[test]
         fn retained_members_prove_stop_after_all_members_exit_naturally() {
@@ -817,18 +950,204 @@ mod native {
             };
             let mut leader = make();
             let mut member = make();
-            let retained =
-                job_processes(job.0, std::time::Instant::now() + Duration::from_secs(5)).unwrap();
-            assert_eq!(retained.len(), 2);
+            let retained = std::sync::Mutex::new(MemberRegistry::default());
+            capture_members(
+                job.0,
+                raw(&leader),
+                std::time::Instant::now() + Duration::from_secs(5),
+                &mut retained.lock().unwrap(),
+            )
+            .unwrap();
+            assert_eq!(retained.lock().unwrap().entries.len(), 1);
             leader.stdin.take().unwrap().write_all(b"\r\n").unwrap();
             member.stdin.take().unwrap().write_all(b"\r\n").unwrap();
             assert!(leader.wait().unwrap().success());
             assert!(member.wait().unwrap().success());
             assert_eq!(active(&job), 0);
             let observed = AtomicBool::new(false);
-            stop_with_retained_test(job.0, raw(&leader), &retained, &observed)
-                .expect("retained member exit handles plus the unchanged empty Job prove stop");
+            stop_job(
+                job.0,
+                raw(&leader),
+                Duration::from_secs(45),
+                &observed,
+                &retained,
+            )
+            .expect("retained member exit handles plus the unchanged empty Job prove stop");
             assert!(observed.load(Ordering::Acquire));
+        }
+
+        fn blocked_member(job: &Handle) -> Child {
+            let child = cmd("/d /c set /p x= & exit 0");
+            unsafe {
+                check(AssignProcessToJobObject(job.0, raw(&child))).unwrap();
+            }
+            child
+        }
+        #[test]
+        fn contended_member_registry_still_terminates_without_observed_stop() {
+            let job = kill_on_close_job();
+            let mut child = blocked_member(&job);
+            let registry = std::sync::Mutex::new(MemberRegistry::default());
+            let held = registry.lock().unwrap();
+            let observed = AtomicBool::new(false);
+            assert!(stop_job(
+                job.0,
+                raw(&child),
+                Duration::from_secs(5),
+                &observed,
+                &registry
+            )
+            .is_err());
+            wait_handle(raw(&child), Duration::from_secs(45)).unwrap();
+            child.wait().unwrap();
+            assert!(!observed.load(Ordering::Acquire));
+            drop(held);
+        }
+        #[test]
+        fn poisoned_member_registry_still_terminates_without_observed_stop() {
+            let job = kill_on_close_job();
+            let mut child = blocked_member(&job);
+            let registry = std::sync::Mutex::new(MemberRegistry::default());
+            let _ = std::panic::catch_unwind(|| {
+                let _held = registry.lock().unwrap();
+                panic!("injected registry poison");
+            });
+            let observed = AtomicBool::new(false);
+            assert!(stop_job(
+                job.0,
+                raw(&child),
+                Duration::from_secs(5),
+                &observed,
+                &registry
+            )
+            .is_err());
+            wait_handle(raw(&child), Duration::from_secs(45)).unwrap();
+            child.wait().unwrap();
+            assert!(!observed.load(Ordering::Acquire));
+        }
+        #[test]
+        fn a_later_unobserved_exit_cannot_join_a_prepared_generation() {
+            let job = kill_on_close_job();
+            let mut leader = blocked_member(&job);
+            let registry = std::sync::Mutex::new(MemberRegistry::default());
+            {
+                let mut members = registry.lock().unwrap();
+                let generation = capture_members(
+                    job.0,
+                    raw(&leader),
+                    std::time::Instant::now() + Duration::from_secs(5),
+                    &mut members,
+                )
+                .unwrap();
+                members.prepared_generation = Some(generation);
+            }
+            let mut later = blocked_member(&job);
+            later.stdin.take().unwrap().write_all(b"\r\n").unwrap();
+            assert!(later.wait().unwrap().success());
+            let observed = AtomicBool::new(false);
+            assert!(stop_job(
+                job.0,
+                raw(&leader),
+                Duration::from_secs(5),
+                &observed,
+                &registry
+            )
+            .is_err());
+            wait_handle(raw(&leader), Duration::from_secs(45)).unwrap();
+            leader.wait().unwrap();
+            assert!(!observed.load(Ordering::Acquire));
+        }
+        #[test]
+        fn pending_unqueryable_member_keeps_the_entire_bundle_quarantined() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("guard");
+            let guard = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .share_mode(0)
+                .open(&path)
+                .unwrap();
+            let job = kill_on_close_job();
+            let mut child = blocked_member(&job);
+            let mut raw_handle = std::ptr::null_mut();
+            unsafe {
+                check(DuplicateHandle(
+                    GetCurrentProcess(),
+                    raw(&child),
+                    GetCurrentProcess(),
+                    &mut raw_handle,
+                    0x00100000,
+                    0,
+                    0,
+                ))
+                .unwrap();
+            }
+            let handle = Handle::new(raw_handle).unwrap();
+            let mut members = MemberRegistry::default();
+            members.entries.push(MemberObservation {
+                handle,
+                confirmed: None,
+            });
+            assert!(process_identity(raw_handle).is_err());
+            let registry = std::sync::Mutex::new(members);
+            let observed = AtomicBool::new(false);
+            assert!(stop_job(
+                job.0,
+                raw(&child),
+                Duration::from_secs(5),
+                &observed,
+                &registry
+            )
+            .is_err());
+            wait_handle(raw(&child), Duration::from_secs(45)).unwrap();
+            child.wait().unwrap();
+            release_bundle((guard, registry), observed.load(Ordering::Acquire));
+            assert_eq!(
+                OpenOptions::new()
+                    .write(true)
+                    .share_mode(0)
+                    .open(&path)
+                    .unwrap_err()
+                    .raw_os_error(),
+                Some(32)
+            );
+        }
+        #[test]
+        fn repeated_member_preparation_deduplicates_held_identities() {
+            let job = kill_on_close_job();
+            let mut leader = blocked_member(&job);
+            let mut member = blocked_member(&job);
+            let registry = std::sync::Mutex::new(MemberRegistry::default());
+            {
+                let mut members = registry.lock().unwrap();
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let generation =
+                    capture_members(job.0, raw(&leader), deadline, &mut members).unwrap();
+                members.prepared_generation = Some(generation);
+                capture_members(job.0, raw(&leader), deadline, &mut members).unwrap();
+                assert_eq!(members.entries.len(), 1);
+                let mut flags = HANDLE_FLAG_INHERIT;
+                unsafe {
+                    check(GetHandleInformation(
+                        members.entries[0].handle.0,
+                        &mut flags,
+                    ))
+                    .unwrap();
+                }
+                assert_eq!(flags & HANDLE_FLAG_INHERIT, 0);
+            }
+            leader.stdin.take().unwrap().write_all(b"\r\n").unwrap();
+            member.stdin.take().unwrap().write_all(b"\r\n").unwrap();
+            leader.wait().unwrap();
+            member.wait().unwrap();
+            stop_job(
+                job.0,
+                raw(&leader),
+                Duration::from_secs(5),
+                &AtomicBool::new(false),
+                &registry,
+            )
+            .unwrap();
         }
 
         struct SuspendedChild(Child);
@@ -912,7 +1231,7 @@ mod native {
             // Same recheck and whole-bundle release that OwnedQemuProcess::drop uses.
             release_bundle(
                 guard,
-                stop_job(job.0, raw(&child.0), Duration::from_secs(45), &observed).is_ok(),
+                stop_fresh(job.0, raw(&child.0), Duration::from_secs(45), &observed).is_ok(),
             );
             drop(
                 OpenOptions::new()
@@ -943,11 +1262,11 @@ mod native {
             assert_eq!(exclusive().unwrap_err().raw_os_error(), Some(32));
 
             let observed = AtomicBool::new(false);
-            stop_job(job.0, raw(&leader), Duration::from_secs(45), &observed).unwrap();
+            stop_fresh(job.0, raw(&leader), Duration::from_secs(45), &observed).unwrap();
             assert_eq!(active(&job), 0, "observed stop is Job-wide");
             drop(exclusive().expect("no descendant still holds the file"));
             // A later teardown of the same empty Job reuses its proved stop.
-            stop_job(job.0, raw(&leader), Duration::from_secs(45), &observed).unwrap();
+            stop_fresh(job.0, raw(&leader), Duration::from_secs(45), &observed).unwrap();
         }
 
         #[test]
@@ -964,7 +1283,7 @@ mod native {
             }
             assert!(accounting(job.0).unwrap().TotalProcesses > 1);
             let observed = AtomicBool::new(false);
-            assert!(stop_job(job.0, raw(&leader), Duration::from_secs(45), &observed).is_err());
+            assert!(stop_fresh(job.0, raw(&leader), Duration::from_secs(45), &observed).is_err());
             assert!(!observed.load(Ordering::Acquire));
         }
 
@@ -987,7 +1306,7 @@ mod native {
                 .unwrap();
             }
             let query_only = Handle::new(query_only).unwrap();
-            assert!(stop_job(
+            assert!(stop_fresh(
                 query_only.0,
                 raw(&leader),
                 Duration::from_secs(45),
