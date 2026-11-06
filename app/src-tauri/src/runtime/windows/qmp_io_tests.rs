@@ -49,10 +49,12 @@ fn saturated_output_queue_terminates_instead_of_waiting_for_a_reader() {
             seen.store(true, Ordering::Release);
         })
     });
-    assert!(finish_workers(
-        &mut vec![worker],
-        Instant::now() + Duration::from_secs(5)
-    ));
+    let until = Instant::now() + Duration::from_secs(5);
+    // Do not cancel the read here: that could cause a fault before the queue
+    // fills and would test cancellation rather than nonblocking overflow.
+    let exited = unsafe { WaitForSingleObject(worker.as_raw_handle(), 5000) };
+    let _ = finish_workers(&mut vec![worker], until);
+    assert_eq!(exited, WAIT_OBJECT_0);
     assert!(fault.load(Ordering::Acquire));
     assert_eq!(rx.try_recv().unwrap().unwrap(), b"{}\n");
     drop(write);
