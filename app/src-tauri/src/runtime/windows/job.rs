@@ -783,6 +783,54 @@ mod native {
             child.as_raw_handle() as HANDLE
         }
 
+        // RED adapter: current production stop ignores capabilities captured earlier.
+        fn stop_with_retained_test(
+            job: HANDLE,
+            leader: HANDLE,
+            _retained: &[Handle],
+            observed: &AtomicBool,
+        ) -> io::Result<()> {
+            stop_job(job, leader, Duration::from_secs(45), observed)
+        }
+        #[test]
+        fn retained_members_prove_stop_after_all_members_exit_naturally() {
+            use std::io::Read;
+            let job = kill_on_close_job();
+            let make = || {
+                let _guard = spawn_guard().unwrap();
+                let mut child = Command::new("cmd.exe")
+                    .raw_arg("/d /c set /p x=ready & exit 0")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .spawn()
+                    .unwrap();
+                drop(_guard);
+                let mut ready = [0; 5];
+                child.stdout.take().unwrap().read_exact(&mut ready).unwrap();
+                assert_eq!(&ready, b"ready");
+                unsafe {
+                    check(AssignProcessToJobObject(job.0, raw(&child))).unwrap();
+                }
+                child
+            };
+            let mut leader = make();
+            let mut member = make();
+            let retained =
+                job_processes(job.0, std::time::Instant::now() + Duration::from_secs(5)).unwrap();
+            assert_eq!(retained.len(), 2);
+            leader.stdin.take().unwrap().write_all(b"\r\n").unwrap();
+            member.stdin.take().unwrap().write_all(b"\r\n").unwrap();
+            assert!(leader.wait().unwrap().success());
+            assert!(member.wait().unwrap().success());
+            assert_eq!(active(&job), 0);
+            let observed = AtomicBool::new(false);
+            stop_with_retained_test(job.0, raw(&leader), &retained, &observed)
+                .expect("retained member exit handles plus the unchanged empty Job prove stop");
+            assert!(observed.load(Ordering::Acquire));
+        }
+
         struct SuspendedChild(Child);
         impl Drop for SuspendedChild {
             fn drop(&mut self) {
