@@ -521,6 +521,93 @@ pub struct PreparedImage {
     files: [File; 3],
 }
 impl PreparedImage {
+    #[cfg(debug_assertions)]
+    pub(crate) fn from_development(
+        image: crate::dev_image::VerifiedDevImage,
+    ) -> Result<Self, ImageError> {
+        use crate::dev_image::{DevImagePlatform, SOURCE_COMMIT, STATE_COMPATIBILITY_ID};
+        use std::io::Seek;
+        let (receipt_bytes, receipt_sha) = image.declared(0);
+        let mut file = image.manifest().try_clone().map_err(storage)?.into_std();
+        file.rewind().map_err(storage)?;
+        let mut bytes = Vec::new();
+        file.take((receipt_bytes + 1).min(MAX_BINDING + 1))
+            .read_to_end(&mut bytes)
+            .map_err(storage)?;
+        if bytes.len() as u64 != receipt_bytes
+            || format!("{:x}", Sha256::digest(&bytes)) != receipt_sha
+        {
+            return Err(ImageError::Integrity);
+        }
+        // Project authenticated engineering facts, never fabricate a release manifest.
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| ImageError::Integrity)?;
+        let mut direct = serde_json::Map::new();
+        for key in [
+            "kernel",
+            "initrd",
+            "rootSelector",
+            "kernelRelease",
+            "commandLine",
+            "requiredDrivers",
+        ] {
+            direct.insert(key.into(), receipt[key].clone());
+        }
+        let mut provenance = serde_json::Map::new();
+        for key in [
+            "diskSha256",
+            "buildReceiptSha256",
+            "inputSha256",
+            "kernelConfigSha256",
+            "modulesSha256",
+            "endpointSha256",
+            "earlyHookSha256",
+            "buildHookSha256",
+            "extractorSha256",
+            "inspectorSha256",
+            "extractionTools",
+        ] {
+            provenance.insert(key.into(), receipt[key].clone());
+        }
+        provenance.insert("bootReceiptSha256".into(), receipt_sha.clone().into());
+        direct.insert("provenance".into(), provenance.into());
+        let boot: Boot =
+            serde_json::from_value(direct.into()).map_err(|_| ImageError::Integrity)?;
+        for (i, bytes, sha) in [
+            (1, boot.kernel.bytes, &boot.kernel.sha256),
+            (2, boot.initrd.bytes, &boot.initrd.sha256),
+        ] {
+            if image.declared(i) != (bytes, sha.clone()) {
+                return Err(ImageError::Integrity);
+            }
+        }
+        let (disk_bytes, disk_sha256) = image.declared(3);
+        if boot.provenance.disk_sha256 != disk_sha256 {
+            return Err(ImageError::Integrity);
+        }
+        let target = match image.platform() {
+            DevImagePlatform::MacOsArm64 => ImageTarget::MacosArm64,
+            DevImagePlatform::WindowsAmd64 => ImageTarget::WindowsAmd64,
+        };
+        Ok(Self {
+            identity: ImageIdentity {
+                // In engineering sets this common identity slot hashes the raw boot receipt.
+                manifest_sha256: receipt_sha,
+                image_id: format!("engineering-{}", target_name(target)),
+                state_compatibility_id: STATE_COMPATIBILITY_ID.into(),
+                build_source_commit: SOURCE_COMMIT.into(),
+            },
+            target,
+            disk_bytes,
+            disk_sha256,
+            boot,
+            files: [
+                image.disk().try_clone().map_err(storage)?.into_std(),
+                image.kernel().try_clone().map_err(storage)?.into_std(),
+                image.initrd().try_clone().map_err(storage)?.into_std(),
+            ],
+        })
+    }
     pub(crate) fn from_verified(image: VerifiedImageSet) -> Result<Self, ImageError> {
         let descriptor = image.image();
         let raw = descriptor.manifest_bytes();

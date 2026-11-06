@@ -1,4 +1,20 @@
 //! Source preparation precedes Journal ownership; callers materialize under its target.
+
+#[cfg(debug_assertions)]
+pub async fn prepare_development_image(
+    image: &crate::dev_image::VerifiedDevImage,
+    closed: tokio::sync::watch::Receiver<bool>,
+) -> Result<super::image_install::PreparedImage, super::image_types::ImageError> {
+    cancelled(&closed)?;
+    let image = image.try_clone().map_err(|_| ImageError::Integrity)?;
+    blocking(move || {
+        cancelled(&closed)?;
+        let prepared = PreparedImage::from_development(image)?;
+        cancelled(&closed)?;
+        Ok(prepared)
+    })
+    .await
+}
 use super::{
     acquire::{acquire_image, blocking, ImageHttpClient},
     image_cache::{verification::cancelled, ImageCache},
