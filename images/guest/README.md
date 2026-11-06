@@ -38,11 +38,12 @@ an individual worker image or executable. A bundle cannot self-assert
 that it supports the release. Source qualification and production stay distinct.
 
 For source qualification, use the existing same-commit development descriptor
-from [the successful #833 build](https://github.com/orka-agents/orka/actions/runs/41533123834),
+from [the restricted-worker build](https://github.com/orka-agents/orka/actions/runs/42129731205),
 whose `sourceSHA` matches `versions.json`. It records the controller, AI worker,
 general-worker and publisher indexes for both architectures; select their
-platform children and record the actual byte hashes. Package that commit's
-staged source chart, not the older checked-in release chart. A local rebuild
+platform children and record the actual byte hashes. Restore the exact pinned
+staged chart using [kmx's retained-chart extraction instructions](https://github.com/kaimahi-agents/kaimahi/blob/fc811336bfdf4d972525eb78f1cba8a7b7e45b19/docs/kmx.md#source-packaged-restricted-profile),
+not a fresh Helm package or the older checked-in release chart. A local rebuild
 instead requires approved **native builders for each architecture**; no builder
 is provisioned here. Obtain the session loader, node,
 Vekil, Telegram and Teams from their selected upstream sources; missing ARM64
