@@ -10,7 +10,7 @@ use std::{cmp::Ordering, collections::BTreeSet, fmt};
 
 const MAX_MANIFEST: usize = 8 * 1024 * 1024;
 const SCHEMA: &[u8] = include_bytes!("../../../../images/manifest.schema.json");
-const SCHEMA_SHA256: &str = "0347452bb75e172985c252def74cd9380f59c79655ad2dfb8ace48c5e61f596e";
+const SCHEMA_SHA256: &str = "80a867ef73ef29685f3d7e7d4d72365ca823cc9a56ce6e0ea9e1ee3e39b92d21";
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -256,7 +256,10 @@ fn host_cmp(a: &str, b: &str) -> Ordering {
 }
 fn validate_components(c: &Components) -> Result<(), ImageError> {
     check(
-        c.input_schema_version == "bridge-guest-inputs/v1",
+        matches!(
+            c.input_schema_version.as_str(),
+            "bridge-guest-inputs/v1" | "bridge-guest-inputs/v2"
+        ),
         "component schema",
     )?;
     check(
