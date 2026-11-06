@@ -694,15 +694,20 @@ mod native {
         unsafe {
             win(GetExitCodeProcess(process.raw(), &mut exit))?;
         }
-        check(exit == 0)?;
+        if exit != 0 {
+            return Err(io::Error::other(format!(
+                "correlated QMP quit returned but process exit was {exit:#x}"
+            )));
+        }
         let mut byte = [0; 1];
-        check(
-            connection
-                .read(&mut byte, Instant::now() + Duration::from_secs(1))
-                .unwrap_err()
-                .kind()
-                == io::ErrorKind::UnexpectedEof,
-        )?;
+        let terminal = connection
+            .read(&mut byte, Instant::now() + Duration::from_secs(1))
+            .unwrap_err();
+        if terminal.kind() != io::ErrorKind::UnexpectedEof {
+            return Err(io::Error::other(format!(
+                "terminal owner-exit read/Job observation: {terminal}"
+            )));
+        }
         drop(connection);
         child.abort()?;
         drop(rx);
