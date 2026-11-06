@@ -963,7 +963,6 @@ mod native {
             member.stdin.take().unwrap().write_all(b"\r\n").unwrap();
             assert!(leader.wait().unwrap().success());
             assert!(member.wait().unwrap().success());
-            assert_eq!(active(&job), 0);
             let observed = AtomicBool::new(false);
             stop_job(
                 job.0,
@@ -973,6 +972,7 @@ mod native {
                 &retained,
             )
             .expect("retained member exit handles plus the unchanged empty Job prove stop");
+            assert_eq!(active(&job), 0);
             assert!(observed.load(Ordering::Acquire));
         }
 
