@@ -1,8 +1,11 @@
+#[cfg(unix)]
+pub mod apple;
 pub mod client;
 pub mod credentials;
 pub mod identity;
 pub mod journal;
 pub mod snapshot;
+pub mod spawn_guard;
 pub mod types;
 pub mod wire;
 
