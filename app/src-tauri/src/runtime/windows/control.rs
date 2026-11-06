@@ -465,6 +465,12 @@ mod tests {
     use super::*;
     use windows_sys::Win32::Security::{Authorization::*, *};
     use windows_sys::Win32::Storage::FileSystem::{READ_CONTROL, WRITE_DAC};
+    #[test]
+    fn owned_guest_stream_satisfies_the_existing_channel_lifetime() {
+        fn channel<T: std::io::Read + std::io::Write + Send + 'static>() {}
+        channel::<GuestStream>();
+        let _: fn(&Arc<OwnedQemuProcess>) -> io::Result<GuestStream> = OwnedQemuProcess::guest_stream;
+    }
     struct Local(*mut core::ffi::c_void);
     impl Drop for Local {
         fn drop(&mut self) {
