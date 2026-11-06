@@ -55,8 +55,9 @@ final class SupervisorSocket {
         // One bounded read per turn; flooded input cannot park native callbacks.
         var bytes = [UInt8](repeating: 0, count: 9)
         let count = Darwin.read(owner.fileDescriptor, &bytes, bytes.count)
+        let readError = errno
         if count > 0 { receive(Array(bytes.prefix(count))); return }
-        if count < 0 && [EAGAIN, EWOULDBLOCK, EINTR].contains(errno) { return }
+        if count < 0 && [EAGAIN, EWOULDBLOCK, EINTR].contains(readError) { return }
         guard !reportedLoss else { return }
         reportedLoss = true
         close { _ in }

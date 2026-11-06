@@ -13,6 +13,7 @@ final class TerminationObserver {
     private var closed = false
     private var closeOK = false
     private var delivered = false
+    private var readiness: (() -> Void)?
 
     init(queue: DispatchQueue, onTermination: @escaping () -> Void) throws {
         dispatchPrecondition(condition: .onQueue(queue))
@@ -36,8 +37,20 @@ final class TerminationObserver {
         source.resume()
     }
 
-    // Inert signature for the registration-gate regression RED.
-    func whenRegistered(_ completion: @escaping () -> Void) {}
+    // resume() alone is not the kernel-registration observation. Hold the core
+    // through this callback, then release it before starting native operations.
+    func whenRegistered(_ completion: @escaping () -> Void) {
+        dispatchPrecondition(condition: .onQueue(queue))
+        guard !closing else { return }
+        precondition(readiness == nil)
+        readiness = completion
+        source.setRegistrationHandler { [weak self] in
+            guard let self else { return }
+            let callback = self.readiness
+            self.readiness = nil
+            if !self.closing { callback?() }
+        }
+    }
 
     func close(_ completion: @escaping (Bool) -> Void) {
         dispatchPrecondition(condition: .onQueue(queue))
@@ -45,6 +58,7 @@ final class TerminationObserver {
         completions.append(completion)
         guard !closing else { return }
         closing = true
+        readiness = nil
         retainedDuringClose = self
         source.cancel()
     }
