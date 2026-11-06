@@ -214,10 +214,13 @@ private struct IOTests {
         _ = signal(SIGTERM, termSentinel)
         defer { _ = sigaction(SIGTERM, &original, nil) }
         precondition(sigaction(SIGTERM, nil, &before) == 0)
-        let data = Received(), delivered = DispatchSemaphore(value: 0)
+        let data = Received(), delivered = DispatchSemaphore(value: 0), registered = DispatchSemaphore(value: 0)
         let observer = q.sync {
-            try! TerminationObserver(queue: q, onTermination: { data.lost += 1; delivered.signal() })
+            let observer = try! TerminationObserver(queue: q, onTermination: { data.lost += 1; delivered.signal() })
+            observer.whenRegistered { registered.signal() }
+            return observer
         }
+        check(wait(registered), "TERM source registration was not observed")
         precondition(kill(getpid(), SIGTERM) == 0)
         check(wait(delivered), "TERM source did not deliver")
         precondition(kill(getpid(), SIGTERM) == 0)
@@ -271,7 +274,8 @@ private struct IOTests {
                 ownership = nil
                 reference.value = core
                 io.start(receive: { reference.value?.receive($0) }, peerLost: { reference.value?.peerClosed() })
-                core.start()
+                // Hold the configured core until the kernel signal monitor is registered.
+                term.whenRegistered { core.start() }
             } catch {
                 driver?.dispose() // Configured, unstarted driver closes guest before owner.
                 if let fd = ownership { _ = close(fd) }

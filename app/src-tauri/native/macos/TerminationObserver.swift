@@ -36,6 +36,9 @@ final class TerminationObserver {
         source.resume()
     }
 
+    // Inert signature for the registration-gate regression RED.
+    func whenRegistered(_ completion: @escaping () -> Void) {}
+
     func close(_ completion: @escaping (Bool) -> Void) {
         dispatchPrecondition(condition: .onQueue(queue))
         if closed { completion(closeOK); return }
