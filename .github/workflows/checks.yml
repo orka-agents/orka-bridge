@@ -72,6 +72,12 @@ jobs:
           key: app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock') }}
       - run: npm ci
       - run: npm run build
+      - name: Clean Intel Mac shell resource check
+        if: runner.os == 'macOS'
+        run: |
+          test ! -e src-tauri/gen/apple-helper/BridgeVM
+          rustup target add x86_64-apple-darwin --toolchain 1.98.1
+          cargo +1.98.1 check --manifest-path src-tauri/Cargo.toml --locked --target x86_64-apple-darwin --features custom-protocol
       - name: Apple helper build and tests
         if: runner.os == 'macOS'
         run: |

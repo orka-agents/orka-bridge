@@ -106,6 +106,7 @@ private struct BootstrapTests {
                 }
             }
         }
+        fragmentedFrame(q)
         do {
             try rejectsBeforeDriver(q)
             try realFactoryFailure(q)
@@ -116,6 +117,27 @@ private struct BootstrapTests {
         } catch { check(false, "unexpected bootstrap fixture failure") }
         print("Swift helper bootstrap: \(assertions) assertions, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    private static func fragmentedFrame(_ q: DispatchQueue) {
+        let sockets = pair(), written = DispatchSemaphore(value: 0)
+        defer { _ = close(sockets[0]); _ = close(sockets[1]) }
+        var prefix: [UInt8] = [66, 82]
+        precondition(write(sockets[1], &prefix, prefix.count) == prefix.count)
+        q.async {
+            var byte: UInt8 = 0
+            let deadline = DispatchTime.now() + .seconds(5)
+            // Release the rest only after the reader consumes the first fragment.
+            while recv(sockets[0], &byte, 1, MSG_PEEK | MSG_DONTWAIT) > 0 {
+                precondition(DispatchTime.now() < deadline, "first fragment was not consumed")
+                usleep(1000)
+            }
+            var suffix: [UInt8] = [86, 77, 1]
+            precondition(write(sockets[1], &suffix, suffix.count) == suffix.count)
+            written.signal()
+        }
+        check(receive(sockets[0], 5) == [66, 82, 86, 77, 1], "fragmented supervisor frame")
+        wait(written)
     }
 
     private static func rejectsBeforeDriver(_ q: DispatchQueue) throws {
