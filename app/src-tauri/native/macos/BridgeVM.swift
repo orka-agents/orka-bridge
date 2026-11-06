@@ -166,7 +166,13 @@ final class BridgeVM {
         }
         guard !cleanupAttempted else { return }
         cleanupAttempted = true
-        guard driver.canStop else { return } // Quarantine until a terminal event.
+        guard driver.canStop else {
+            // A refused S stays failed even if a later independent event stops
+            // the VM. Terminal observation permits disposal, not retroactive ACK.
+            cleanStop = false
+            if let id = reply?.1 { reply = (69, id) }
+            return
+        }
         pending = .stop
         driver.stop { [weak self] ok in self?.completed(.stop, ok) }
     }
