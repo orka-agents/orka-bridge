@@ -610,5 +610,6 @@ pub fn resolve_image(
         compressed_bytes: a.compressed_bytes,
         disk_sha256: a.uncompressed_sha256.clone(),
         disk_bytes: a.uncompressed_bytes,
+        manifest_bytes: bytes.into(),
     })
 }

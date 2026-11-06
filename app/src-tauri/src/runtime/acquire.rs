@@ -187,6 +187,86 @@ impl ImageHttpClient {
     }
 }
 
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, ImageError> + Send + 'static,
+) -> Result<T, ImageError> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .map_err(|_| ImageError::Storage(std::io::ErrorKind::Other))?
+}
+pub async fn acquire_image(
+    image: &super::image_types::ResolvedImage,
+    cache: &super::image_cache::ImageCache,
+    client: &ImageHttpClient,
+    closed: tokio::sync::watch::Receiver<bool>,
+    progress: impl Fn(super::image_types::ImageProgress) + Send + Sync,
+) -> Result<super::image_types::VerifiedImageSet, ImageError> {
+    use super::image_types::ImageProgress;
+    if client.pin.manifest_sha256 != image.identity().manifest_sha256 {
+        return Err(ImageError::Invalid("image client pin"));
+    }
+    let (store, descriptor, stop) = (cache.clone(), image.clone(), closed.clone());
+    progress(ImageProgress::Verifying);
+    if let Some(set) = blocking(move || store.verified_checked(&descriptor, Some(&stop))).await? {
+        progress(ImageProgress::Verified);
+        return Ok(set);
+    }
+    let (store, descriptor, stop) = (cache.clone(), image.clone(), closed.clone());
+    let tx = std::sync::Arc::new(
+        blocking(move || {
+            super::image_cache::verification::cancelled(&stop)?;
+            store.begin(&descriptor)
+        })
+        .await?,
+    );
+    let total = image.assets().iter().try_fold(0u64, |n, a| {
+        n.checked_add(a.bytes()).ok_or(ImageError::LimitExceeded)
+    })?;
+    let mut done = 0;
+    progress(ImageProgress::Download { bytes: done, total });
+    for (index, asset) in image.assets().iter().enumerate() {
+        let (owner, stop) = (tx.clone(), closed.clone());
+        let pending = blocking(move || {
+            super::image_cache::verification::cancelled(&stop)?;
+            owner.start_asset(index)
+        })
+        .await?;
+        if let Some(file) = pending {
+            let mut file = tokio::fs::File::from_std(file);
+            let url = format!("{}{}", asset.location().base(), asset.location().leaf());
+            client
+                .transfer(
+                    &url,
+                    &mut file,
+                    asset.bytes(),
+                    (Some(asset.bytes()), asset.sha256()),
+                    closed.clone(),
+                    |bytes| {
+                        progress(ImageProgress::Download {
+                            bytes: done + bytes,
+                            total,
+                        })
+                    },
+                )
+                .await?;
+            drop(file);
+            let (owner, stop) = (tx.clone(), closed.clone());
+            blocking(move || {
+                super::image_cache::verification::cancelled(&stop)?;
+                owner.finish_asset(index)
+            })
+            .await?;
+        }
+        done += asset.bytes();
+        progress(ImageProgress::Download { bytes: done, total });
+    }
+    progress(ImageProgress::Verifying);
+    let tx = std::sync::Arc::try_unwrap(tx).map_err(|_| ImageError::Busy)?;
+    let set = blocking(move || tx.commit(&closed)).await?;
+    progress(ImageProgress::Verified);
+    Ok(set)
+}
+
 #[cfg(test)]
 #[path = "image_http_tests.rs"]
 mod tests;
