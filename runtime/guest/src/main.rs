@@ -309,8 +309,7 @@ fn control(
     session: &mut Session,
     system: &mut Linux,
     b: &BootDescriptor,
-    operations: &mut bridge_guest::engine::Operations<bridge_guest::engine::Kmx>,
-    staging: &mut bridge_guest::staging::Staging,
+    serving: &mut Serving,
 ) -> io::Result<bool> {
     let read_phase = if peer == "channel" {
         "channel-read"
@@ -323,12 +322,38 @@ fn control(
         "local-reply-write"
     };
     let r = read(diagnostics::Context::new("serve", read_phase), io, session)?;
-    let (body, stop) = if matches!(r.body, RequestBody::Readiness {} | RequestBody::Shutdown {}) {
+    let credentials = service::credential_request(peer == "channel", &r.body, || {
+        let state = match &r.body {
+            RequestBody::CredentialStatus {} => serving.2.status(),
+            RequestBody::CredentialPublish {
+                expected_generation,
+                token,
+            } => serving.2.publish(*expected_generation, token.as_bytes()),
+            RequestBody::CredentialClear {
+                expected_generation,
+            } => serving.2.clear(*expected_generation),
+            _ => unreachable!("credential dispatcher selects only its closed operations"),
+        };
+        match state {
+            Ok(s) => ResultBody::CredentialState(CredentialState {
+                profile: CREDENTIAL_PROFILE,
+                generation: s.generation,
+                installed: s.installed,
+            }),
+            Err(_) => ResultBody::Error {
+                code: ErrorCode::Unavailable,
+            },
+        }
+    });
+    let (body, stop) = if let Some(reply) = credentials {
+        (reply, false)
+    } else if matches!(r.body, RequestBody::Readiness {} | RequestBody::Shutdown {}) {
         service::handle(system, b, &r)
     } else {
         (
-            operations
-                .handle(staging, &r.body)
+            serving
+                .0
+                .handle(&mut serving.1, &r.body)
                 .unwrap_or(ResultBody::Error {
                     code: ErrorCode::InvalidRequest,
                 }),
@@ -345,6 +370,7 @@ fn control(
 type Serving = (
     bridge_guest::engine::Operations<bridge_guest::engine::Kmx>,
     bridge_guest::staging::Staging,
+    bridge_guest::credentials::CredentialStore,
 );
 fn serve_ready(
     root: &std::path::Path,
@@ -359,7 +385,11 @@ fn serve_ready(
         bridge_guest::staging::Staging::new(root.join("snapshots")),
     )?;
     ready()?;
-    Ok((operations, staging))
+    Ok((
+        operations,
+        staging,
+        bridge_guest::credentials::CredentialStore::default(),
+    ))
 }
 fn run(mode: &str) -> io::Result<()> {
     let stage: &'static str = if mode == "--early" { "early" } else { "serve" };
@@ -441,14 +471,13 @@ fn run(mode: &str) -> io::Result<()> {
         return Ok(());
     }
     let socket = socket.ok_or_else(early::invalid)?;
-    let (mut operations, mut staging) =
-        serve_ready(std::path::Path::new("/var/lib/bridge"), || {
-            write(
-                diagnostics::Context::new(stage, "ready-reply-write"),
-                channel.get_mut(),
-                service::result(&r, ResultBody::Ready {}),
-            )
-        })?;
+    let mut serving = serve_ready(std::path::Path::new("/var/lib/bridge"), || {
+        write(
+            diagnostics::Context::new(stage, "ready-reply-write"),
+            channel.get_mut(),
+            service::result(&r, ResultBody::Ready {}),
+        )
+    })?;
     loop {
         if !channel.buffer().is_empty() {
             if control(
@@ -457,8 +486,7 @@ fn run(mode: &str) -> io::Result<()> {
                 &mut session,
                 &mut system,
                 b,
-                &mut operations,
-                &mut staging,
+                &mut serving,
             )? {
                 return Ok(());
             }
@@ -494,8 +522,7 @@ fn run(mode: &str) -> io::Result<()> {
                 &mut session,
                 &mut system,
                 b,
-                &mut operations,
-                &mut staging,
+                &mut serving,
             )?
         {
             return Ok(());
@@ -529,8 +556,7 @@ fn run(mode: &str) -> io::Result<()> {
                 &mut local,
                 &mut system,
                 b,
-                &mut operations,
-                &mut staging,
+                &mut serving,
             )
             .unwrap_or(false)
             {

@@ -14,9 +14,12 @@ def sha(data):
 def encoded(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
 
-def archive(root: Path, name="controller", architecture="amd64", extra=None):
+def archive(root: Path, name="controller", architecture="amd64", extra=None, variant=None):
     layer = b"synthetic non-bootable layer"
-    config = encoded({"architecture": architecture, "os": "linux", "rootfs": {"type": "layers", "diff_ids": ["sha256:" + sha(layer)]}})
+    config_value = {"architecture": architecture, "os": "linux", "rootfs": {"type": "layers", "diff_ids": ["sha256:" + sha(layer)]}}
+    if variant:
+        config_value["config"] = {"Labels": {"fixture.role": variant}}
+    config = encoded(config_value)
     manifest = encoded({"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json", "config": {"mediaType": "application/vnd.oci.image.config.v1+json", "digest": "sha256:" + sha(config), "size": len(config)}, "layers": [{"mediaType": "application/vnd.oci.image.layer.v1.tar", "digest": "sha256:" + sha(layer), "size": len(layer)}]})
     digest = "sha256:" + sha(manifest)
     index = encoded({"schemaVersion": 2, "manifests": [{"mediaType": "application/vnd.oci.image.manifest.v1+json", "digest": digest, "size": len(manifest)}]})
@@ -31,15 +34,15 @@ def archive(root: Path, name="controller", architecture="amd64", extra=None):
             tar.addfile(info, io.BytesIO(data))
     return {"name": name, "repository": "registry.example.com/fixture/" + name, "manifestDigest": digest, "configDigest": "sha256:" + sha(config), "archive": path.name, "archiveSha256": sha(path.read_bytes())}
 
-def lock(root: Path):
+def lock(root: Path, architecture="amd64"):
     (root / "chart.tgz").write_bytes(b"synthetic-chart")
     (root / "base.qcow2").write_bytes(b"synthetic-base")
     (root / "kind").write_bytes(b"synthetic-kind")
-    value = {"schemaVersion": "bridge-guest-inputs/v1", "architecture": "amd64", "sourceCommit": SOURCE,
+    value = {"schemaVersion": "bridge-guest-inputs/v1", "architecture": architecture, "sourceCommit": SOURCE,
             "orka": {"mode": "source", "identity": SOURCE, "chartPath": "chart.tgz", "chartSha256": sha(b"synthetic-chart")},
-            "components": [archive(root, name) for name in ROLES],
+            "components": [archive(root, name, architecture) for name in ROLES],
             "packages": [{"name": "debian-base", "version": "20261026-2643", "path": "base.qcow2", "sha256": sha(b"synthetic-base")}],
             "tools": [{"name": "kind", "version": "v0.33.0", "path": "kind", "sha256": sha(b"synthetic-kind")}],
             "nodeLocalRef": "", "kmxProfileSha256": None}
-    value["nodeLocalRef"] = "kindest/node:bridge-" + value["components"][0]["manifestDigest"][7:23] + "-amd64"
+    value["nodeLocalRef"] = "kindest/node:bridge-" + value["components"][0]["manifestDigest"][7:23] + "-" + architecture
     return value

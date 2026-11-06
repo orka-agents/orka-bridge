@@ -176,7 +176,7 @@ The Mac bundle includes readable notices in its Resources directory; CI also
 places them beside the portable Windows executable. Both builds embed them in
 the frontend. Preserve these files when redistributing builds.
 
-The app opens Clusters with a runtime chooser and a locked model step. Existing cluster is unavailable on both platforms. Local VM selection writes only an empty preference marker at `setup-v1/local-vm` under the app data directory. It does not download, start or reopen a VM, save agents, connect a model or cluster, or run tests. Selection is never readiness. Model connection stays locked pending supported restricted worker access; there is no guest token channel. Engine diagnostics remain available in Clusters. No runtime or credential state is stored by setup;
+The app opens Clusters with a runtime chooser and a locked model step. Existing cluster is unavailable on both platforms. Local VM selection writes only an empty preference marker at `setup-v1/local-vm` under the app data directory. It does not download, start or reopen a VM, save agents, connect a model or cluster, or run tests. Selection is never readiness. Model connection stays locked; the private Rust credential channel is not wired to setup or model connection. Engine diagnostics remain available in Clusters. No runtime or credential state is stored by setup;
 native webviews can still create their usual cache/profile directories under
 the app identifier `ai.orka.bridge`.
 

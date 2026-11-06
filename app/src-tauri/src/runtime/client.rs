@@ -78,6 +78,54 @@ impl VmClient {
         }
         result
     }
+    fn credential_call(&mut self, request: RequestBody) -> io::Result<CredentialState> {
+        match self.call(request)? {
+            ResultBody::CredentialState(state) => Ok(state),
+            ResultBody::Error { .. } => Err(io::ErrorKind::Unsupported.into()),
+            _ => {
+                self.channel = None;
+                Err(invalid())
+            }
+        }
+    }
+    /// Nonsecret negotiation. An old guest may close its strict protocol session.
+    pub fn credential_status(&mut self) -> io::Result<CredentialState> {
+        self.credential_call(RequestBody::CredentialStatus {})
+    }
+    /// One attempt only. A failed delivery may have committed; never replay it.
+    pub fn deliver_credential(
+        &mut self,
+        token: &CredentialPayload,
+        expected: Option<Uuid>,
+    ) -> io::Result<CredentialState> {
+        let before = self.credential_status()?;
+        if before.generation != expected || before.installed {
+            return Err(invalid());
+        }
+        let state = self.credential_call(RequestBody::CredentialPublish {
+            expected_generation: expected,
+            token: token.clone(),
+        })?;
+        if !state.installed || state.generation.is_none() || state.generation == expected {
+            self.channel = None;
+            return Err(invalid());
+        }
+        Ok(state)
+    }
+    /// File-only primitive; caller must observe gateway Disconnect before clearing.
+    pub fn clear_credential_file(&mut self, expected: Uuid) -> io::Result<CredentialState> {
+        if self.credential_status()?.generation != Some(expected) {
+            return Err(invalid());
+        }
+        let state = self.credential_call(RequestBody::CredentialClear {
+            expected_generation: expected,
+        })?;
+        if state.installed || state.generation.is_none() || state.generation == Some(expected) {
+            self.channel = None;
+            return Err(invalid());
+        }
+        Ok(state)
+    }
     pub fn stage_snapshot(&mut self, s: &Snapshot) -> io::Result<SnapshotId> {
         let upload = Uuid::new_v4();
         let snapshot = s.id();

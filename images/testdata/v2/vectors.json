@@ -695,5 +695,13 @@
     "sha256": "e9c5a30e52f4f33883cf368db338085c1610848431839722b9a8a920854aaa0a",
     "structure": "invalid",
     "compatibility": "compatible"
+  },
+  {
+    "invariant": "producer-model-input-v2",
+    "file": "producer-model-input-v2.json",
+    "sha256": "d00b057fb325c5d77e19dfd75554e8252cf623b10c4604cd49730637d066cdb2",
+    "structure": "valid",
+    "compatibility": "compatible",
+    "platform": "windows"
   }
 ]
