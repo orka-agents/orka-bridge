@@ -34,20 +34,27 @@ impl EngineTransport for ProcessTransport {
             if *closed.borrow() {
                 return Err(EngineError::cancelled());
             }
-            let mut child = Command::new(&self.path)
-                .args(request.action.argv())
-                .stdin(Stdio::null())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()
-                .map_err(|error| {
-                    EngineError::new(if error.kind() == std::io::ErrorKind::NotFound {
-                        ErrorKind::Unavailable
-                    } else {
-                        ErrorKind::Execution
-                    })
-                })?;
+            let spawn = crate::runtime::spawn_guard::run(|| {
+                Command::new(&self.path)
+                    .args(request.action.argv())
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+            });
+            let mut child = tokio::select! {
+                biased;
+                _ = closed.changed() => return Err(EngineError::cancelled()),
+                result = spawn => result,
+            }
+            .map_err(|error| {
+                EngineError::new(if error.kind() == std::io::ErrorKind::NotFound {
+                    ErrorKind::Unavailable
+                } else {
+                    ErrorKind::Execution
+                })
+            })?;
             let stdout = child.stdout.take().expect("piped stdout");
             let stderr = child.stderr.take().expect("piped stderr");
             // Drain both pipes concurrently. On either bound/error, drop readers,
@@ -75,5 +82,53 @@ impl EngineTransport for ProcessTransport {
                 stderr,
             })
         })
+    }
+}
+
+#[cfg(all(test, unix))]
+mod spawn_tests {
+    use super::*;
+    mod descriptor_fixture {
+        include!("../runtime/spawn_descriptor_fixture.rs");
+    }
+    use std::{
+        task::{Context, Poll, Waker},
+        time::Duration,
+    };
+
+    #[tokio::test]
+    async fn actual_kmx_spawn_cannot_inherit_a_private_descriptor_setup_window() {
+        let (window, _directory, path) = descriptor_fixture::descriptor_window();
+        let (_close, receiver) = watch::channel(false);
+        let transport = ProcessTransport::new(path, receiver);
+        let mut call = transport.execute(EngineRequest {
+            action: EngineAction::Version {},
+        });
+        assert!(matches!(
+            call.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+            Poll::Pending
+        ));
+        drop(window);
+        assert_eq!(call.await.unwrap().stdout, b"FIXTURE_ONLY_clean");
+    }
+
+    #[tokio::test]
+    async fn kmx_cancelled_while_waiting_for_fd_guard_never_attempts_spawn() {
+        let held = crate::runtime::spawn_guard::tests::hold();
+        let (close, receiver) = watch::channel(false);
+        let transport =
+            ProcessTransport::new(PathBuf::from("/nonexistent/synthetic-kmx"), receiver);
+        let mut call = transport.execute(EngineRequest {
+            action: EngineAction::Version {},
+        });
+        let poll = call.as_mut().poll(&mut Context::from_waker(Waker::noop()));
+        assert!(
+            matches!(poll, Poll::Pending),
+            "kmx attempted spawn inside FD setup"
+        );
+        close.send(true).unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(1), call).await;
+        drop(held);
+        assert_eq!(result.unwrap().unwrap_err(), EngineError::cancelled());
     }
 }
