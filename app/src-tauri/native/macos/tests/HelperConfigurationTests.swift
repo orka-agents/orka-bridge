@@ -86,12 +86,12 @@ private struct ConfigurationTests {
         let good = ["--config-fd", String(fd)] + f.args
         let parsed = try HelperArguments.parse(good)
         check(parsed.configFD == fd && parsed.descriptors.guest == f.guest[0], "selector not separated")
-        let invalid = [f.args, ["--config-fd"], ["--config-fd", "-1"] + f.args,
-                       ["--config-fd", "+3"] + f.args, ["--config-fd", "2147483648"] + f.args,
-                       ["--config-fd", "2"] + f.args, good + ["--config-fd", String(fd)],
-                       ["--config-fd", String(f.owner.fileDescriptor)] + f.args,
-                       ["--config-fd", String(f.control[0])] + f.args,
-                       ["--config-fd", String(f.guest[1])] + f.args]
+        var invalid: [[String]] = [f.args, ["--config-fd"]]
+        for number in ["-1", "+3", "2147483648", "2", String(f.owner.fileDescriptor),
+                       String(f.control[0]), String(f.guest[1])] {
+            invalid.append(["--config-fd", number] + f.args)
+        }
+        invalid.append(good + ["--config-fd", String(fd)])
         for args in invalid {
             rejects("invalid selector accepted") { _ = try HelperArguments.parse(args) }
             check(([fd, f.owner.fileDescriptor] + f.control + f.guest).allSatisfy {
