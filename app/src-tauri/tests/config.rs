@@ -18,13 +18,13 @@ fn native_window_uses_local_assets_and_fits_a_laptop() {
         serde_json::to_value(&config.app.security.capabilities).unwrap(),
         serde_json::json!([{
             "identifier": "engine",
-            "description": "Typed engine access from the main window only.",
+            "description": "Typed engine and setup access from the main window only.",
             "windows": ["main"],
-            "permissions": ["engine"],
+            "permissions": ["engine", "setup"],
             "local": true
         }])
     );
-    // No implicit capability files may widen this single-command grant.
+    // No implicit capability files may widen these finite command grants.
     assert!(!std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("capabilities")
         .exists());

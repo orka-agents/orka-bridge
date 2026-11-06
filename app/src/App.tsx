@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import mark from './assets/orka-mark.svg';
 import EngineStatus from './components/EngineStatus';
+import Setup from './setup/Setup';
 
 const pages = ['Overview', 'Designer', 'Clusters'] as const;
 type Page = (typeof pages)[number];
@@ -35,7 +36,7 @@ function PageIcon({ page }: { page: Page }) {
 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>('Overview');
+  const [page, setPage] = useState<Page>('Clusters');
   const copy = emptyCopy[page];
   return (
     <div className="app-shell">
@@ -54,15 +55,15 @@ export default function App() {
       </header>
       <main className="page-content" aria-labelledby="page-title">
         <h1 id="page-title">{page}</h1>
-        <section className="card empty-state">
+        {page === 'Clusters' ? <Setup /> : <section className="card empty-state">
           <span className="icon-tile empty-icon"><PageIcon page={page} /></span>
           <div>
             <h2>{copy.title}</h2>
             <p className="empty-status">Nothing is connected yet.</p>
             <p className="muted">{copy.detail}</p>
           </div>
-        </section>
-        {page === 'Clusters' && <EngineStatus />}
+        </section>}
+        {page === 'Clusters' && <details className="engine-diagnostics"><summary>Engine diagnostics</summary><EngineStatus /></details>}
       </main>
     </div>
   );

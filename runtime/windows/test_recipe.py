@@ -224,8 +224,27 @@ class Workflow(unittest.TestCase):
         script = (root / "runtime/windows/build.sh").read_text()
         for required in ("--disable-download", "--disable-tcg", "--enable-whpx", "--audio-drv-list=", "git apply --check", "git apply --index"):
             self.assertIn(required, script)
-        for forbidden in ("pull_request_target", "contents: write", "secrets.", "upload-artifact", "-kernel", "-drive", "-Syu", "setup-msys2"):
+        for forbidden in ("pull_request_target", "contents: write", "secrets.", "-kernel", "-drive", "-Syu", "setup-msys2"):
             self.assertNotIn(forbidden, text + script)
+
+    def test_manual_main_producer_retains_verified_archives(self):
+        root = Path(__file__).resolve().parents[2]
+        text = (root / ".github/workflows/windows-runtime.yml").read_text(encoding="utf-8")
+        self.assertIn("  workflow_dispatch:", text)
+        producer = text.split("  producer:\n", 1)[1]
+        self.assertIn("if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'", producer)
+        upload = producer.split("      - name: Retain verified engineering archives\n", 1)[1]
+        self.assertIn("actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02", upload)
+        self.assertIn("name: bridge-windows-runtime-${{ github.sha }}-${{ github.run_attempt }}", upload)
+        self.assertIn("retention-days: 7", upload)
+        self.assertIn("if-no-files-found: error", upload)
+        self.assertIn("compression-level: 0", upload)
+        files = re.findall(r"^\s+\$\{\{ env.BRIDGE_RUNTIME_OUTPUT \}\}/([^\n]+)$", upload, re.M)
+        self.assertEqual(files, ["bridge-windows-runtime-portable.zip", "bridge-windows-runtime-source.zip",
+                                 "SHA256SUMS", "build-report.json", "verification.json"])
+        self.assertEqual(text.count("uses: actions/upload-artifact@"), 1)
+        self.assertNotIn("if:", upload)  # Default success guard: never upload partial builds.
+        self.assertLess(producer.index("Inspect the verified portable ZIP"), producer.index("Retain verified engineering archives"))
 
     def test_read_only_path_filtered_source_validation(self):
         root = Path(__file__).resolve().parents[2]
@@ -243,7 +262,7 @@ class Workflow(unittest.TestCase):
         self.assertIn("windows-2025", text)
         self.assertIn("check-sources --lock runtime/windows/sources.lock.json", text)
         self.assertIn("python -m unittest discover -s runtime/windows", text)
-        for forbidden in ("pull_request_target", "contents: write", "secrets.", "upload-artifact", "workflow_dispatch"):
+        for forbidden in ("pull_request_target", "contents: write", "secrets."):
             self.assertNotIn(forbidden, text)
         for action in re.findall(r"uses: ([^\s]+)", text):
             self.assertRegex(action, r"@[a-f0-9]{40}$")
