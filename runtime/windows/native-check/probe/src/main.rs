@@ -2,6 +2,54 @@
 compile_error!("probe must use static CRT");
 #[cfg(windows)]
 include!(concat!(env!("OUT_DIR"), "/source.rs"));
+#[cfg(any(windows, test))]
+fn no_vm_prelaunch(reply: &serde_json::Value) -> bool {
+    reply["return"]["status"] == "prelaunch" && reply["return"]["running"] == false
+}
+#[cfg(any(windows, test))]
+fn capture_qmp_line(
+    log: &mut impl std::io::Write,
+    line: &[u8],
+    total: &mut usize,
+) -> std::io::Result<serde_json::Value> {
+    if total.saturating_add(line.len()) > 2 * 1024 * 1024 {
+        return Err(std::io::Error::other("QMP transcript exceeds 2 MiB"));
+    }
+    log.write_all(line)?;
+    log.flush()?;
+    *total += line.len();
+    if line.is_empty() || line.len() > 131072 || line.last() != Some(&b'\n') {
+        return Err(std::io::Error::other(
+            "invalid QMP frame length or termination",
+        ));
+    }
+    serde_json::from_slice(line).map_err(std::io::Error::other)
+}
+#[cfg(test)]
+mod qmp_contract_tests {
+    #[test]
+    fn raw_reply_is_retained_even_when_parsing_fails() {
+        let raw = b"not JSON\n";
+        let mut log = Vec::new();
+        assert!(super::capture_qmp_line(&mut log, raw, &mut 0).is_err());
+        assert_eq!(log, raw);
+    }
+    #[test]
+    fn fixed_no_vm_status_is_exact_prelaunch_not_any_nonrunning_state() {
+        use serde_json::json;
+        assert!(super::no_vm_prelaunch(
+            &json!({"return":{"status":"prelaunch","running":false}})
+        ));
+        for state in ["preconfig", "paused", "shutdown", "internal-error"] {
+            assert!(!super::no_vm_prelaunch(
+                &json!({"return":{"status":state,"running":false}})
+            ));
+        }
+        assert!(!super::no_vm_prelaunch(
+            &json!({"return":{"status":"prelaunch","running":true}})
+        ));
+    }
+}
 #[cfg(not(windows))]
 fn main() {
     eprintln!("BLOCKED: native Windows required");
@@ -76,6 +124,9 @@ mod native {
         head: String,
         pin: ReviewedWindowsPin,
         paths: Paths,
+        endpoint_parent: PathBuf,
+        #[serde(default)]
+        ci_access_proof: bool,
     }
     fn emit(v: Value) -> io::Result<()> {
         println!("{v}");
@@ -261,71 +312,23 @@ mod native {
             Ok(((c.dwHighDateTime as u64) << 32) | c.dwLowDateTime as u64)
         }
     }
-    fn connect(name: &str, process: HANDLE) -> io::Result<File> {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        let path = wide(&format!("\\\\.\\pipe\\{name}"));
-        let mut last_retry = 0;
-        loop {
-            unsafe {
-                check(WaitForSingleObject(process, 0) == WAIT_TIMEOUT)?;
-                if Instant::now() >= deadline {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        format!("pipe connect deadline; last retry Win32={last_retry}"),
-                    ));
-                }
-                let h = CreateFileW(
-                    path.as_ptr(),
-                    GENERIC_READ | GENERIC_WRITE,
-                    0,
-                    std::ptr::null(),
-                    OPEN_EXISTING,
-                    0,
-                    std::ptr::null_mut(),
-                );
-                if h != INVALID_HANDLE_VALUE {
-                    let f = File::from_raw_handle(h);
-                    let (mut pid, mut instances) = (0, 0);
-                    win(GetNamedPipeServerProcessId(h, &mut pid)).map_err(|e| {
-                        io::Error::other(format!("GetNamedPipeServerProcessId: {e}"))
-                    })?;
-                    win(GetNamedPipeInfo(
-                        h,
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        std::ptr::null_mut(),
-                        &mut instances,
-                    ))
-                    .map_err(|e| io::Error::other(format!("GetNamedPipeInfo: {e}")))?;
-                    check(pid == GetProcessId(process) && instances == 1)?;
-                    permission_diag::pipe_security(h);
-                    runtime::windows::check_pipe(h).map_err(|e| {
-                        io::Error::other(format!("source private_object check: {e}"))
-                    })?;
-                    check(WaitForSingleObject(process, 0) == WAIT_TIMEOUT)?;
-                    return Ok(f);
-                }
-                let e = io::Error::last_os_error();
-                if !matches!(e.raw_os_error(), Some(2 | 231)) {
-                    return Err(e);
-                }
-                last_retry = e.raw_os_error().unwrap();
-            }
-            std::thread::sleep(Duration::from_millis(5));
-        }
-    }
-    fn reader(file: File) -> mpsc::Receiver<io::Result<Value>> {
+    fn reader(file: File, path: &PathBuf) -> io::Result<mpsc::Receiver<io::Result<Value>>> {
+        let mut log = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
         let (tx, rx) = mpsc::sync_channel(8);
         std::thread::spawn(move || {
             let mut b = BufReader::new(file);
+            let mut total = 0;
             loop {
                 let mut line = Vec::new();
                 let r = (&mut b)
                     .take(131073)
                     .read_until(b'\n', &mut line)
                     .and_then(|n| {
-                        check(n > 0 && n <= 131072 && line.last() == Some(&b'\n'))?;
-                        serde_json::from_slice(&line).map_err(io::Error::other)
+                        check(n > 0)?;
+                        crate::capture_qmp_line(&mut log, &line, &mut total)
                     });
                 let failed = r.is_err();
                 if tx.send(r).is_err() || failed {
@@ -333,7 +336,7 @@ mod native {
                 }
             }
         });
-        rx
+        Ok(rx)
     }
     fn receive(rx: &mpsc::Receiver<io::Result<Value>>, id: Option<u64>) -> io::Result<Value> {
         let until = Instant::now() + Duration::from_secs(30);
@@ -404,6 +407,13 @@ mod native {
         .map_err(io::Error::other)?;
         let spec = runtime::probe_spec(&journal);
         let name = format!("bridge-premise-{}", bridge_runtime_protocol::Uuid::new_v4());
+        let endpoint = runtime::windows::control::ControlEndpoint::create(&cfg.endpoint_parent)?;
+        let endpoint_path = endpoint.path().to_owned();
+        let ci_control = if mode == "smoke" && cfg.ci_access_proof {
+            Some(unix_trial::control_server()?)
+        } else {
+            None
+        };
         let unix_trial = if mode == "try-unix" {
             Some(unix_trial::Trial::prepare(&root)?)
         } else {
@@ -447,12 +457,24 @@ mod native {
                         .ok_or_else(|| io::Error::other("AF_UNIX UTF-8 path"))?
                 )
                 .into(),
-                None => format!("pipe,id=guest,path={name}").into(),
+                None if mode == "try-owned-pipe" => format!("pipe,id=guest,path={name}").into(),
+                None => format!(
+                    "socket,id=guest,path={},server=on,wait=off",
+                    runtime::windows::launch::qemu_value(&endpoint_path)
+                        .map_err(io::Error::other)?
+                )
+                .into(),
             },
         ]);
         // Reuse the production serial argument to exercise literal comma/Unicode paths.
-        let production = runtime::windows::launch::launch_argv(&inputs, &spec, &name)
-            .map_err(io::Error::other)?;
+        let production = runtime::windows::launch::launch_argv(
+            &inputs,
+            &spec,
+            endpoint_path
+                .to_str()
+                .ok_or_else(|| io::Error::other("AF_UNIX UTF-8 path"))?,
+        )
+        .map_err(io::Error::other)?;
         let at = production
             .iter()
             .position(|a| a == "-serial")
@@ -477,8 +499,13 @@ mod native {
             windows_sys::Win32::System::Diagnostics::Debug::SetErrorMode(0x8003);
         }
         eprintln!("Fixed no-VM QEMU argv: {argv:?}");
-        let mut child =
-            OwnedQemuProcess::spawn_suspended(inputs, spec.ownership.clone(), &root, &argv)?;
+        let mut child = OwnedQemuProcess::spawn_suspended(
+            inputs.clone(),
+            spec.ownership.clone(),
+            &root,
+            &argv,
+            endpoint,
+        )?;
         let process = child.process_handle();
         runtime::windows::check_token(process.raw())
             .map_err(|e| io::Error::other(format!("restricted primary token: {e}")))?;
@@ -505,7 +532,21 @@ mod native {
                 out.extend_from_slice(&buffer[..take]);
             }
         });
-        let rx = reader(stdout);
+        let log_root = if cfg.ci_access_proof && mode == "smoke" {
+            std::env::current_exe()?
+                .parent()
+                .ok_or_else(|| io::Error::other("stage missing"))?
+                .join("logs")
+        } else {
+            root.clone()
+        };
+        let qmp_rx_path = log_root.join("qmp-rx.jsonl");
+        let qmp_tx_path = log_root.join("qmp-tx.jsonl");
+        let mut qmp_tx = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&qmp_tx_path)?;
+        let rx = reader(stdout, &qmp_rx_path)?;
         let traced = loader_trace::enabled()?;
         if traced {
             loader_trace::start(process.clone())?;
@@ -515,18 +556,7 @@ mod native {
             child.resume()?;
             thread_state(process.raw(), "after-resume")?;
         }
-        if mode == "hold-pipe" {
-            let until = Instant::now() + Duration::from_secs(30);
-            let path = wide(&format!("\\\\.\\pipe\\{name}"));
-            loop {
-                if unsafe { WaitNamedPipeW(path.as_ptr(), 1) } != 0 {
-                    break;
-                }
-                check(!child.exited() && Instant::now() < until)?;
-                std::thread::sleep(Duration::from_millis(5));
-            }
-        }
-        let mut status = json!({"sourceHead":crate::SOURCE_HEAD,"pid":unsafe{GetProcessId(process.raw())},"creationTime":creation_time(process.raw())?,"mode":mode,"pipe":name,"root":root,"inherited":inherited,"restrictedPrimary":true,"whpxUsability":"not-tested"});
+        let mut status = json!({"sourceHead":crate::SOURCE_HEAD,"pid":unsafe{GetProcessId(process.raw())},"creationTime":creation_time(process.raw())?,"mode":mode,"control":endpoint_path,"root":root,"inherited":inherited,"restrictedPrimary":true,"whpxUsability":"not-tested"});
         if let Some(trial) = unix_trial {
             let result = trial.run(&child, process.raw(), &mut stdin, &rx, &errors)?;
             return emit(
@@ -601,50 +631,148 @@ mod native {
                 std::thread::sleep(Duration::from_secs(1));
             }
         }
+        if mode == "hold-pipe" {
+            let connection = child.connect_control()?;
+            status["qemuPeerPid"] = json!(connection.peer_pid());
+            emit(status)?;
+            loop {
+                std::thread::sleep(Duration::from_secs(1));
+            }
+        }
         if mode != "smoke" {
             emit(status)?;
             loop {
                 std::thread::sleep(Duration::from_secs(1));
             }
         }
-        let pipe = connect(&name, process.raw()).map_err(|e| {
-            let mut code = 0;
-            unsafe {
-                GetExitCodeProcess(process.raw(), &mut code);
-            }
-            let _ = thread_state(process.raw(), "pipe-failure");
-            io::Error::other(format!(
-                "pipe peer/instance/DACL before QMP: {e}; QEMU status={code:#x}; stderr={}",
-                String::from_utf8_lossy(&errors.lock().unwrap())
-            ))
-        })?;
         if traced {
             return Err(io::Error::other(
                 "diagnostic debugger run cannot qualify as native PASS",
             ));
         }
-        receive(&rx, None)?;
-        for (id, command) in [(1, "qmp_capabilities"), (2, "query-status"), (3, "quit")] {
-            serde_json::to_writer(&mut stdin, &json!({"execute":command,"id":id}))
-                .map_err(io::Error::other)?;
-            stdin.write_all(b"\n")?;
-            stdin.flush()?;
-            let result = receive(&rx, Some(id))?;
-            if id == 2 {
-                check(
-                    result["return"]["status"] == "preconfig"
-                        && result["return"]["running"] == false,
-                )?;
-            }
+        let until = Instant::now() + Duration::from_secs(30);
+        while !endpoint_path.exists() {
+            check(!child.exited() && Instant::now() < until)?;
+            std::thread::sleep(Duration::from_millis(5));
         }
-        child.wait_exit(Duration::from_secs(45))?;
-        drop(pipe);
+        let (_directory, directory_info) =
+            unix_trial::checked_path(endpoint_path.parent().unwrap(), true)?;
+        emit(
+            json!({"stage":"native-control-ready","sourceHead":crate::SOURCE_HEAD,"endpoint":endpoint_path,
+            "control":ci_control.as_ref().map(|c| &c.0),"workerPid":unsafe { GetCurrentProcessId() },"directory":directory_info}),
+        )?;
+        let proof = if cfg.ci_access_proof {
+            Some(unix_trial::access_proof(&endpoint_path, &child)?)
+        } else {
+            None
+        };
+        let connection = child.connect_control().map_err(|e| {
+            io::Error::other(format!(
+                "AF_UNIX peer/metadata before QMP: {e}; stderr={}",
+                String::from_utf8_lossy(&errors.lock().unwrap())
+            ))
+        })?;
+        status["qemuPeerPid"] = json!(connection.peer_pid());
+        let greeting = receive(&rx, None)?;
+        let mut replies = Vec::new();
+        for (id, command) in [(1, "qmp_capabilities"), (2, "query-status"), (3, "quit")] {
+            let mut bytes = serde_json::to_vec(&json!({"execute":command,"id":id}))
+                .map_err(io::Error::other)?;
+            bytes.push(b'\n');
+            qmp_tx.write_all(&bytes)?;
+            qmp_tx.flush()?;
+            stdin.write_all(&bytes)?;
+            stdin.flush()?;
+            let reply = receive(&rx, Some(id))?;
+            if id == 2 {
+                check(crate::no_vm_prelaunch(&reply))?;
+            }
+            replies.push(reply);
+        }
+        child.wait_for_stop()?;
+        let mut exit = 0;
+        unsafe {
+            win(GetExitCodeProcess(process.raw(), &mut exit))?;
+        }
+        check(exit == 0)?;
+        let mut byte = [0; 1];
+        check(
+            connection
+                .read(&mut byte, Instant::now() + Duration::from_secs(1))
+                .unwrap_err()
+                .kind()
+                == io::ErrorKind::UnexpectedEof,
+        )?;
+        drop(connection);
+        child.abort()?;
+        drop(rx);
         drop(child);
+
+        // A second fixed no-VM launch pins local Drop while QEMU is still alive.
+        // Never exit preconfiguration or initialize a machine to manufacture EOF.
+        let endpoint = runtime::windows::control::ControlEndpoint::create(&cfg.endpoint_parent)?;
+        let disconnect_path = endpoint.path().to_owned();
+        let mut disconnect_argv = argv.clone();
+        let at = disconnect_argv
+            .iter()
+            .position(|a| a == "-chardev")
+            .ok_or_else(|| io::Error::other("chardev missing"))?;
+        disconnect_argv[at + 1] = format!(
+            "socket,id=guest,path={},server=on,wait=off",
+            runtime::windows::launch::qemu_value(&disconnect_path).map_err(io::Error::other)?
+        )
+        .into();
+        let mut auxiliary = OwnedQemuProcess::spawn_suspended(
+            inputs,
+            spec.ownership.clone(),
+            &root,
+            &disconnect_argv,
+            endpoint,
+        )?;
+        let (mut auxiliary_in, auxiliary_out, mut auxiliary_err) = auxiliary.take_stdio()?;
+        std::thread::spawn(move || {
+            let mut b = [0; 4096];
+            while auxiliary_err.read(&mut b).is_ok_and(|n| n > 0) {}
+        });
+        let disconnect_rx = log_root.join("qmp-disconnect-rx.jsonl");
+        let disconnect_tx = log_root.join("qmp-disconnect-tx.jsonl");
+        let mut tx = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&disconnect_tx)?;
+        let auxiliary_rx = reader(auxiliary_out, &disconnect_rx)?;
+        auxiliary.resume()?;
+        let live_connection = auxiliary.connect_control()?;
+        receive(&auxiliary_rx, None)?;
+        let command = b"{\"execute\":\"qmp_capabilities\",\"id\":1}\n";
+        tx.write_all(command)?;
+        tx.flush()?;
+        auxiliary_in.write_all(command)?;
+        auxiliary_in.flush()?;
+        let auxiliary_reply = receive(&auxiliary_rx, Some(1))?;
+        check(!auxiliary.exited())?;
+        let peer = live_connection.peer_pid();
+        drop(live_connection);
+        auxiliary.wait_for_stop()?;
+        auxiliary.abort()?;
+        let mut terminated = 0;
+        unsafe {
+            win(GetExitCodeProcess(
+                auxiliary.process_handle().raw(),
+                &mut terminated,
+            ))?;
+        }
+        check(terminated == 1)?;
+        drop(auxiliary_rx);
+        drop(auxiliary);
         drop(spec);
         drop(journal);
         let _j = runtime::journal::Journal::open(&root).map_err(io::Error::other)?;
         emit(
-            json!({"sourceHead":crate::SOURCE_HEAD,"smoke":"passed","details":status,"pipeSecurity":"protected-user-system","processExitObserved":true,"lockReacquired":true}),
+            json!({"sourceHead":crate::SOURCE_HEAD,"smoke":"passed","details":status,
+            "controlSecurity":"protected-directory-user-system","processExitObserved":true,"lockReacquired":true,
+            "otherAccount":proof,"qmp":{"greeting":greeting,"replies":replies,"exitCode":exit,"quitExitObserved":true,"terminalAfterOwnerExit":true,"rx":qmp_rx_path,"tx":qmp_tx_path},
+            "terminalDisconnect":{"peerPid":peer,"exitCode":terminated,"exitObserved":true,"capabilityReply":auxiliary_reply,"rx":disconnect_rx,"tx":disconnect_tx}}),
         )
     }
 }

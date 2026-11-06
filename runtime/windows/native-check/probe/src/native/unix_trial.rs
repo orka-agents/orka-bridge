@@ -19,7 +19,7 @@ fn address(path: &std::path::Path) -> io::Result<SOCKADDR_UN> {
     let text = path
         .to_str()
         .ok_or_else(|| io::Error::other("socket path is not UTF-8"))?;
-    check(path.is_absolute() && text.is_ascii() && !text.contains('\0') && text.len() < 108)?;
+    crate::runtime::windows::launch::validate_control_path(path)?;
     let mut addr: SOCKADDR_UN = unsafe { zeroed() };
     addr.sun_family = AF_UNIX;
     for (out, byte) in addr.sun_path.iter_mut().zip(text.bytes()) {
@@ -63,6 +63,44 @@ fn server(path: &std::path::Path) -> io::Result<OwnedSocket> {
         }
     }
     Ok(socket)
+}
+pub(super) fn control_server() -> io::Result<(PathBuf, OwnedSocket)> {
+    let stage = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| io::Error::other("executable stage missing"))?
+        .to_owned();
+    let path = stage.join("af-control").join("c.sock");
+    let listener = server(&path)?;
+    Ok((path, listener))
+}
+pub(super) fn access_proof(
+    endpoint: &std::path::Path,
+    child: &OwnedQemuProcess,
+) -> io::Result<Value> {
+    let path = std::env::current_exe()?
+        .parent()
+        .ok_or_else(|| io::Error::other("executable stage missing"))?
+        .join("af-unix-proof.json");
+    let until = Instant::now() + Duration::from_secs(30);
+    while !path.exists() {
+        check(!child.exited() && Instant::now() < until)?;
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    check(fs::metadata(&path)?.len() <= 16384)?;
+    let proof: Value = serde_json::from_slice(&fs::read(path)?).map_err(io::Error::other)?;
+    let (_, sid) = controller::caller()?;
+    check(
+        proof["sourceHead"] == crate::SOURCE_HEAD
+            && proof["endpoint"] == endpoint.to_str().unwrap()
+            && proof["primarySid"] == sid
+            && proof["otherSid"].as_str().is_some_and(|s| s != sid)
+            && proof["otherElevated"] == false
+            && proof["controlConnected"] == true
+            && proof["controlPeerPid"] == unsafe { GetCurrentProcessId() }
+            && proof["privateConnected"] == false
+            && proof["privateError"] == WSAEACCES,
+    )?;
+    Ok(proof)
 }
 fn connect_socket(path: &std::path::Path) -> io::Result<OwnedSocket> {
     let socket = socket()?;
@@ -153,7 +191,7 @@ pub(super) fn client(path: &std::path::Path) -> io::Result<()> {
     };
     emit(json!({"sourceHead":crate::SOURCE_HEAD,"caller":caller,"path":path,"result":result}))
 }
-fn descriptor(handle: HANDLE) -> io::Result<Value> {
+pub(super) fn descriptor(handle: HANDLE) -> io::Result<Value> {
     use windows_sys::Win32::Security::{Authorization::*, *};
     unsafe {
         let flags = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
@@ -199,7 +237,7 @@ fn descriptor(handle: HANDLE) -> io::Result<Value> {
         result
     }
 }
-fn checked_path(path: &std::path::Path, directory: bool) -> io::Result<(File, Value)> {
+pub(super) fn checked_path(path: &std::path::Path, directory: bool) -> io::Result<(File, Value)> {
     use std::os::windows::fs::OpenOptionsExt;
     let flags = if directory {
         FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT
@@ -336,13 +374,13 @@ impl Trial {
             let reply = receive(rx, Some(id))?;
             if id == 2 {
                 check(
-                    reply["return"]["status"] == "preconfig" && reply["return"]["running"] == false,
+                    reply["return"]["status"] == "prelaunch" && reply["return"]["running"] == false,
                 )?;
             }
         }
         child.wait_exit(Duration::from_secs(30))?;
         Ok(
-            json!({"candidatePassed":true,"directory":self.directory_info,"socket":endpoint_info,"otherAccount":proof,"qemuPeerPid":pid,"qmpPreconfig":true,"qmpQuitExitObserved":true,"guestBoot":false,"fullContainmentQualified":false}),
+            json!({"candidatePassed":true,"directory":self.directory_info,"socket":endpoint_info,"otherAccount":proof,"qemuPeerPid":pid,"qmpPrelaunch":true,"qmpQuitExitObserved":true,"guestBoot":false,"fullContainmentQualified":false}),
         )
     }
 }

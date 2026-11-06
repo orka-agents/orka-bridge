@@ -207,7 +207,11 @@ impl Worker {
             .take()
             .ok_or_else(|| io::Error::other("stderr missing"))?;
         let (tx, rx) = mpsc::sync_channel(2);
-        let messages = if mode == "try-unix" { 2 } else { 1 };
+        let messages = if mode == "try-unix" || mode == "smoke" {
+            2
+        } else {
+            1
+        };
         std::thread::spawn(move || {
             let mut b = BufReader::new(stdout);
             for _ in 0..messages {
@@ -299,7 +303,8 @@ fn one(mode: &str, packet: &Path, root: &Path) -> io::Result<Value> {
 pub(super) fn run(args: &[String]) -> io::Result<()> {
     let trial = args.len() == 4 && args[3] == "--owned-pipe-trial";
     let unix_trial = args.len() == 4 && args[3] == "--af-unix-trial";
-    check(args.len() == 3 || trial || unix_trial)?;
+    let ci_access = args.len() == 4 && args[3] == "--ci-access-proof";
+    check(args.len() == 3 || trial || unix_trial || ci_access)?;
     let runtime = PathBuf::from(&args[0]);
     let pin = PathBuf::from(&args[1]);
     let work = PathBuf::from(&args[2]);
@@ -308,6 +313,16 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
     contain_controller()?;
     private_root(&work, &sid)?;
     let (packet, trusted) = packet(&runtime, &pin, &work)?;
+    let endpoint_parent = work.join("i-é,");
+    private_root(&endpoint_parent, &sid)?;
+    let mut config: Value =
+        serde_json::from_slice(&fs::read(&packet)?).map_err(io::Error::other)?;
+    config["endpoint_parent"] = json!(endpoint_parent);
+    config["ci_access_proof"] = json!(ci_access);
+    fs::write(
+        &packet,
+        serde_json::to_vec(&config).map_err(io::Error::other)?,
+    )?;
     if unix_trial {
         let mut worker = Worker::start("try-unix", &packet, &work.join("unix"))?;
         let first = worker.line()?;
@@ -342,8 +357,28 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
     }
     let mut cases = Vec::new();
     eprintln!("Native no-VM smoke at {}", crate::SOURCE_HEAD);
-    let smoke = one("smoke", &packet, &work.join("smoke,é space"))?;
-    check(smoke["smoke"] == "passed")?;
+    let mut worker = Worker::start("smoke", &packet, &work.join("smoke,é space"))?;
+    let ready = worker.line()?;
+    check(ready["sourceHead"] == crate::SOURCE_HEAD && ready["stage"] == "native-control-ready")?;
+    if ci_access {
+        emit(ready)?;
+    }
+    let smoke = worker.line()?;
+    worker.wait(Duration::from_secs(45))?;
+    check(
+        smoke["sourceHead"] == crate::SOURCE_HEAD
+            && smoke["smoke"] == "passed"
+            && smoke["qmp"]["quitExitObserved"] == true
+            && smoke["qmp"]["exitCode"] == 0
+            && smoke["terminalDisconnect"]["exitObserved"] == true
+            && smoke["terminalDisconnect"]["exitCode"] == 1,
+    )?;
+    if ci_access {
+        check(
+            smoke["otherAccount"]["privateError"] == 10013
+                && smoke["otherAccount"]["controlConnected"] == true,
+        )?;
+    }
     cases.push(json!({"case":"smoke","result":smoke}));
     for mode in ["hold-created", "hold-pipe", "hold-guard-only"] {
         eprintln!("Native no-VM case {mode}");
