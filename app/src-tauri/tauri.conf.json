@@ -27,9 +27,9 @@
     "security": {
       "capabilities": [{
         "identifier": "engine",
-        "description": "Typed engine access from the main window only.",
+        "description": "Typed engine and setup access from the main window only.",
         "windows": ["main"],
-        "permissions": ["engine"]
+        "permissions": ["engine", "setup"]
       }],
       "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self'; font-src 'self'; object-src 'none'; frame-src 'none'; form-action 'none'",
       "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; style-src 'self' 'unsafe-inline'; font-src 'self'; object-src 'none'; frame-src 'none'; form-action 'none'"
