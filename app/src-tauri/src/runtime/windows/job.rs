@@ -1019,7 +1019,9 @@ mod native {
             }
         }
         fn observe_empty_job(job: &Handle, port: &Handle) {
-            use windows_sys::Win32::System::IO::GetQueuedCompletionStatus;
+            use windows_sys::Win32::System::{
+                SystemServices::JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO, IO::GetQueuedCompletionStatus,
+            };
             let until = std::time::Instant::now() + Duration::from_secs(5);
             loop {
                 let (mut message, mut key, mut process) = (0, 0, std::ptr::null_mut());
