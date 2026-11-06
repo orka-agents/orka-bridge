@@ -11,9 +11,10 @@ use tempfile::tempdir;
 mod image_fixture;
 
 fn make_worker(backend: Box<dyn VmBackend>, journal: Journal) -> RuntimeWorker {
-    let target = journal.image_target("fixture-state-v1").unwrap();
-    let image = fixture_runtime::image_install::open_installed_image(&target).unwrap();
-    drop(target);
+    let image = {
+        let target = journal.image_target("fixture-state-v1").unwrap();
+        fixture_runtime::image_install::open_installed_image(&target).unwrap()
+    };
     RuntimeWorker::new(backend, journal, Arc::new(image)).unwrap()
 }
 

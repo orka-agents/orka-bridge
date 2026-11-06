@@ -68,11 +68,16 @@ pub fn verified(path: &Path, target: ImageTarget) -> VerifiedImageSet {
     .unwrap();
     let cache = ImageCache::open(&path.join("cache")).unwrap();
     let transaction = cache.begin(&image).unwrap();
+    // Seed only this fixture's fresh cache inputs. The public commit below still
+    // verifies every hash/header and decompresses the OS before issuing authority.
+    let staging = path
+        .join("cache/images/v2")
+        .join(&image.identity().manifest_sha256)
+        .join("staging");
     for (index, data) in [compressed, kernel, initrd].iter().enumerate() {
-        let mut file = transaction.start_asset(index).unwrap().unwrap();
+        let mut file = std::fs::File::create_new(staging.join(format!("asset-{index}"))).unwrap();
         file.write_all(data).unwrap();
-        drop(file);
-        transaction.finish_asset(index).unwrap();
+        file.sync_all().unwrap();
     }
     let (_sender, closed) = tokio::sync::watch::channel(false);
     transaction.commit(&closed).unwrap()
