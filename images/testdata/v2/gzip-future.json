@@ -1,0 +1,44 @@
+[
+  {
+    "invariant": "single",
+    "hex": "1f8b08000000000002034b040043beb7e801000000",
+    "payload": "a",
+    "valid": true
+  },
+  {
+    "invariant": "members",
+    "hex": "1f8b08000000000002034b040043beb7e8010000001f8b08000000000002034b0200f9efbe7101000000",
+    "payload": "ab",
+    "valid": true
+  },
+  {
+    "invariant": "nul-padding",
+    "hex": "1f8b08000000000002034b040043beb7e8010000000000",
+    "payload": "a",
+    "valid": true
+  },
+  {
+    "invariant": "inter-member-nul",
+    "hex": "1f8b08000000000002034b040043beb7e801000000001f8b08000000000002034b0200f9efbe7101000000",
+    "payload": "ab",
+    "valid": true
+  },
+  {
+    "invariant": "junk",
+    "hex": "1f8b08000000000002034b040043beb7e80100000078",
+    "payload": "",
+    "valid": false
+  },
+  {
+    "invariant": "leading-nul",
+    "hex": "001f8b08000000000002034b040043beb7e801000000",
+    "payload": "",
+    "valid": false
+  },
+  {
+    "invariant": "truncated",
+    "hex": "1f8b08000000000002034b040043beb7e8010000",
+    "payload": "",
+    "valid": false
+  }
+]
