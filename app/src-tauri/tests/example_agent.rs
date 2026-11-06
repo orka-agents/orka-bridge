@@ -1,8 +1,8 @@
-//! First run copies this example agent and its test into the new agent repository.
-//! The test must fail unless the agent really fetches the page. These checks
-//! catch edits that would let it pass another way: a tool that can return mock
-//! results, recorded tool results, the answer in the prompt or input, or a page
-//! that can change.
+//! First run is meant to copy this example agent and its test into the user's
+//! agent repository. The test must fail unless the agent really fetches the
+//! page. These checks catch edits that would let it pass another way: a tool
+//! that can return mock results, recorded tool results, the answer anywhere the
+//! model can read it, or a page that can change.
 
 const AGENT: &str = include_str!("../example-agent/web-reader.agent.md");
 const TESTS: &str = include_str!("../example-agent/web-reader.agent.test.md");
@@ -92,12 +92,15 @@ fn example_test_passes_only_with_the_fetched_page() {
         checksum.len() == 64 && checksum.bytes().all(lower_hex),
         "expect the page's whole SHA-256 checksum"
     );
-    assert!(
-        !AGENT.contains(checksum),
-        "the prompt gives away the answer"
+    // The answer may appear only on the line that checks it, in any letter case.
+    let fence = case.join("\n").to_ascii_lowercase();
+    assert_eq!(
+        fence.matches(checksum).count(),
+        1,
+        "the input or another field gives away the answer"
     );
     assert!(
-        !input[0].contains(checksum),
-        "the input gives away the answer"
+        !AGENT.to_ascii_lowercase().contains(checksum),
+        "the prompt gives away the answer"
     );
 }

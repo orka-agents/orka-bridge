@@ -7,10 +7,10 @@ schemaVersion: 1
 This test passes only if the agent fetches the page. The page is the SHA-256
 checksum Kubernetes publishes for the kubectl v1.35.0 download for Apple silicon
 Macs. It contains only that checksum and doesn't change after the release, so
-the check compares the answer with the whole page. A model can't recall or
-guess the 64 hexadecimal characters, and the agent's prompt doesn't contain
-them. The agent has no web_search tool, which can return mock results when its
-search backend fails.
+the check compares the answer with the whole page. A model can't guess the 64
+hexadecimal characters and is very unlikely to recall them, and the agent's
+prompt doesn't contain them. The agent has no web_search tool, which can return
+mock results when its search backend fails.
 
 ```yaml agent-test
 id: published-checksum

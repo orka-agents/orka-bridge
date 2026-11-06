@@ -72,7 +72,7 @@ the app was killed mid-run without starting the Task twice.
 - Where do Soul and Skills belong, and how much explanation do they need on screen?
 - When a test fails, what should the person see first: the check that failed, the agent's answer, or the tool calls?
 
-Part of this stage: the example agent's test must fail if its search returns mock results
+Part of this stage: the example agent's test must fail unless the agent really fetches its page
 ([#13](https://github.com/orka-agents/orka-bridge/issues/13)), and Skills belong in the Designer
 ([#4](https://github.com/orka-agents/orka-bridge/issues/4)).
 
