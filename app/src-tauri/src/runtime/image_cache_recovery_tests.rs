@@ -232,6 +232,50 @@ fn resumed_chunks_need_only_remaining_space_not_the_fresh_download_budget() {
     assert!(cache.verified(&image).unwrap().is_some());
 }
 
+#[test]
+fn incomplete_pending_bytes_are_released_before_the_space_recheck() {
+    let mut remaining = Vec::new();
+    for disk in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+        let (image, files) = publication::complete_image();
+        let mut tx = cache.begin(&image).unwrap();
+        let name = if disk {
+            for (i, data) in files.iter().enumerate() {
+                let mut f = tx.start_asset(i).unwrap().unwrap();
+                f.write_all(data).unwrap();
+                drop(f);
+                tx.finish_asset(i).unwrap();
+            }
+            "disk.pending"
+        } else {
+            "pending-0"
+        };
+        let mut partial = regular(&tx.stage, name, true, true).unwrap();
+        partial.write_all(b"obsolete incomplete bytes").unwrap();
+        drop(partial);
+        let path = temp
+            .path()
+            .join("cache/images/v2")
+            .join(&image.identity.manifest_sha256)
+            .join("staging")
+            .join(name);
+        tx.available = Some(0);
+        let error = if disk {
+            let (_sender, closed) = tokio::sync::watch::channel(false);
+            tx.commit(&closed).err()
+        } else {
+            tx.start_asset(0).err()
+        };
+        assert_eq!(error, Some(ImageError::NoSpace));
+        remaining.push((name, std::fs::metadata(path).unwrap().len()));
+    }
+    assert!(
+        remaining.iter().all(|(_, n)| *n == 0),
+        "discard owned incomplete data before quoting space: {remaining:?}"
+    );
+}
+
 pub(crate) type Point = Arc<dyn Fn(&str) -> Result<(), ImageError> + Send + Sync>;
 #[test]
 fn every_publication_boundary_is_recoverable_without_selecting_a_partial_set() {

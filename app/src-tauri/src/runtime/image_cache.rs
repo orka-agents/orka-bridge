@@ -573,9 +573,9 @@ impl CacheTransaction {
             match regular(&self.stage, "os.disk", false, false) {
                 Ok(_) => {} // The complete set is revalidated below before publication.
                 Err(ImageError::Storage(io::ErrorKind::NotFound)) => {
-                    self.space(self.image.disk_bytes)?;
                     let file = regular(&self.stage, "disk.pending", true, true)?;
                     file.set_len(0).map_err(storage)?;
+                    self.space(self.image.disk_bytes)?;
                     decode_gzip(&self.image, &self.stage, file, closed)?;
                     fs::link(&self.stage, "disk.pending", "os.disk")?;
                 }
@@ -649,9 +649,9 @@ impl CacheTransaction {
         if self.published {
             return Err(ImageError::Integrity);
         }
-        self.space(asset.bytes)?;
         let file = regular(&self.stage, &format!("pending-{index}"), true, true)?;
         file.set_len(0).map_err(storage)?;
+        self.space(asset.bytes)?;
         Ok(Some(file))
     }
     pub(crate) fn finish_asset(&self, index: usize) -> Result<(), ImageError> {

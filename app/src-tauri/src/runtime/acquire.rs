@@ -263,6 +263,9 @@ pub async fn acquire_image(
     if client.pin.manifest_sha256 != image.identity().manifest_sha256 {
         return Err(ImageError::Invalid("image client pin"));
     }
+    let total = image.assets().iter().try_fold(0u64, |n, a| {
+        n.checked_add(a.bytes()).ok_or(ImageError::LimitExceeded)
+    })?;
     progress(ImageProgress::Verifying);
     let mut reconciled = false;
     let tx = loop {
@@ -270,6 +273,10 @@ pub async fn acquire_image(
         if let Some(set) =
             blocking(move || store.verified_checked(&descriptor, Some(&stop))).await?
         {
+            progress(ImageProgress::Download {
+                bytes: total,
+                total,
+            });
             progress(ImageProgress::Verified);
             return Ok(set);
         }
@@ -286,9 +293,6 @@ pub async fn acquire_image(
             Err(error) => return Err(error),
         }
     };
-    let total = image.assets().iter().try_fold(0u64, |n, a| {
-        n.checked_add(a.bytes()).ok_or(ImageError::LimitExceeded)
-    })?;
     let mut done = 0;
     progress(ImageProgress::Download { bytes: done, total });
     for (index, asset) in image.assets().iter().enumerate() {

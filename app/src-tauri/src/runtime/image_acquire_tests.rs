@@ -220,9 +220,19 @@ async fn acquisition_streams_assets_reports_progress_and_reuses_without_http() {
     let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
     // No ephemeral root or DNS override: any accidental HTTP request would fail.
     let offline = ImageHttpClient::new(&client.pin).unwrap();
-    acquire_image(&image, &cache, &offline, closed.clone(), |_| {})
-        .await
-        .unwrap();
+    let reused_events = std::sync::Mutex::new(Vec::new());
+    acquire_image(&image, &cache, &offline, closed.clone(), |event| {
+        reused_events.lock().unwrap().push(event)
+    })
+    .await
+    .unwrap();
+    assert!(reused_events
+        .into_inner()
+        .unwrap()
+        .contains(&ImageProgress::Download {
+            bytes: total,
+            total
+        }));
     assert_eq!(server.calls.load(Ordering::SeqCst), files.len());
     let root = temp
         .path()
