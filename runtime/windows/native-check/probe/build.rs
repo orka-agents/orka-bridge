@@ -4,7 +4,7 @@ fn main() {
         .join("../../../../../native-source")
         .canonicalize()
         .unwrap();
-    const EXPECTED: &str = "babe04a65a46962081ba8678022abe0d67364797";
+    const EXPECTED: &str = "d52a02d440b4a35ea011008b5c1a12a15058d15a";
     let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(&repo)
