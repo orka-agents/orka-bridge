@@ -671,8 +671,10 @@ fn copy(
         drop(output);
     }
     context.point(&format!("written-{name}"))?;
-    let mut actual = read_file(stage, name)?;
+    let mut actual = regular(stage, name, true, false)?;
     digest(&mut actual, bytes, sha, || context.stop())?;
+    context.point("payload-flush")?;
+    actual.sync_all().map_err(storage)?;
     *done = done.checked_add(bytes).ok_or(ImageError::NoSpace)?;
     context
         .events
@@ -733,6 +735,15 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
         },
         target: target_name(context.target).into(),
     };
+    if format!("{:x}", Sha256::digest(image.image.manifest_bytes()))
+        != image.image.identity().manifest_sha256
+    {
+        return Err(ImageError::Integrity);
+    }
+    let raw: serde_json::Value =
+        serde_json::from_slice(image.image.manifest_bytes()).map_err(|_| ImageError::Integrity)?;
+    let boot: Boot =
+        serde_json::from_value(raw["directBoot"].clone()).map_err(|_| ImageError::Integrity)?;
     let images = directory(&context.root, std::ffi::OsStr::new("image"))?;
     let binding = if let Some(generation) = read_directory(&images, "1")? {
         let existing: Intent = json(&generation, "intent.json")?;
@@ -755,15 +766,6 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
         image_cache::fs::sync(&stage)?;
         image_cache::fs::sync(&images)?;
         image_cache::fs::sync(&context.root)?;
-        if format!("{:x}", Sha256::digest(image.image.manifest_bytes()))
-            != image.image.identity().manifest_sha256
-        {
-            return Err(ImageError::Integrity);
-        }
-        let raw: serde_json::Value = serde_json::from_slice(image.image.manifest_bytes())
-            .map_err(|_| ImageError::Integrity)?;
-        let boot: Boot =
-            serde_json::from_value(raw["directBoot"].clone()).map_err(|_| ImageError::Integrity)?;
         let total = image
             .image
             .disk_bytes()
@@ -848,7 +850,7 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
                 "qcow2"
             }
             .into(),
-            boot,
+            boot: boot.clone(),
             os,
             kernel,
             initrd,
@@ -863,7 +865,11 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
         context.point("generation-published")?;
         binding
     };
-    if binding.identity != intent.identity {
+    if binding.identity != intent.identity
+        || binding.boot != boot
+        || binding.os.initial_bytes != image.image.disk_bytes()
+        || binding.os.initial_sha256 != image.image.disk_sha256()
+    {
         return Err(ImageError::RetainedImage);
     }
     validate_binding(&binding, &context.target())?;

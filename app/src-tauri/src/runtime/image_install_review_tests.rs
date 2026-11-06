@@ -1,6 +1,82 @@
 use super::*;
 
 #[tokio::test]
+async fn a_complete_unflushed_payload_must_finish_its_flush_on_retry() {
+    let scene = Scene::new();
+    let mut target = scene.target();
+    let (_sender, closed) = watch::channel(false);
+    target.point = Some(Arc::new(|p| {
+        if p == "copy-chunk" {
+            Err(ImageError::Storage(std::io::ErrorKind::Interrupted))
+        } else {
+            Ok(())
+        }
+    }));
+    materialize_image(&scene.image, &target, closed.clone(), |_| {})
+        .await
+        .unwrap_err();
+    assert_eq!(
+        std::fs::metadata(scene.path().join("image/.pending-1/os.disk"))
+            .unwrap()
+            .len(),
+        scene.image.image.disk_bytes()
+    );
+    target.point = Some(Arc::new(|p| {
+        if p == "payload-flush" {
+            Err(ImageError::Storage(std::io::ErrorKind::Interrupted))
+        } else {
+            Ok(())
+        }
+    }));
+    assert_eq!(
+        materialize_image(&scene.image, &target, closed, |_| {})
+            .await
+            .err(),
+        Some(ImageError::Storage(std::io::ErrorKind::Interrupted))
+    );
+    assert!(!scene.path().join("image-binding.json").exists());
+}
+#[tokio::test]
+async fn retried_boot_facts_and_os_payload_must_match_the_supplied_verified_manifest() {
+    let mut outcomes = Vec::new();
+    for change_disk in [false, true] {
+        let scene = Scene::new();
+        let mut target = scene.target();
+        let (_sender, closed) = watch::channel(false);
+        target.point = Some(Arc::new(|p| {
+            if p == "generation-published" {
+                Err(ImageError::Storage(std::io::ErrorKind::Interrupted))
+            } else {
+                Ok(())
+            }
+        }));
+        materialize_image(&scene.image, &target, closed.clone(), |_| {})
+            .await
+            .unwrap_err();
+        let path = scene.path().join("image/1/binding.json");
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        if change_disk {
+            let bytes = vec![b'z'; scene.image.image.disk_bytes() as usize];
+            let sha = hash(&bytes);
+            std::fs::write(scene.path().join("image/1/os.disk"), bytes).unwrap();
+            value["os"]["initialSha256"] = sha.clone().into();
+            value["boot"]["provenance"]["diskSha256"] = sha.into();
+        } else {
+            value["boot"]["kernelRelease"] = "6.2.0-fixture-amd64".into();
+        }
+        std::fs::write(path, serde_json::to_vec(&value).unwrap()).unwrap();
+        outcomes.push(
+            materialize_image(&scene.image, &scene.target(), closed, |_| {})
+                .await
+                .err(),
+        );
+        assert!(!scene.path().join("image-binding.json").exists());
+    }
+    assert_eq!(outcomes, vec![Some(ImageError::RetainedImage); 2]);
+}
+
+#[tokio::test]
 async fn activation_retries_and_reopen_require_the_namespace_flush_to_finish() {
     let mut outcomes = Vec::new();
     for committed in [false, true] {

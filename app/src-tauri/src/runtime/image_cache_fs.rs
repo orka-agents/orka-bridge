@@ -122,7 +122,8 @@ fn set_name(dir: &Dir, from: &str, to: &str, class: i32) -> Result<(), ImageErro
             file.as_raw_handle(),
             &mut status,
             (&info as *const NameInfo).cast(),
-            (std::mem::offset_of!(NameInfo, name) + name.len() * 2) as u32,
+            // Short leaves still require the complete native structure, including tail padding.
+            std::mem::size_of_val(&info) as u32,
             class,
         )
     };

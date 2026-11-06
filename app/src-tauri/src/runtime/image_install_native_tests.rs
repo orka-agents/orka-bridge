@@ -1,5 +1,18 @@
 use super::*;
 
+#[test]
+fn no_replace_publication_handles_a_one_character_destination() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority()).unwrap();
+    root.create_dir("stage").unwrap();
+    image_cache::fs::publish_named(&root, "stage", "1")
+        .expect("a short leaf still needs a complete native information buffer");
+    root.create_dir("other").unwrap();
+    assert!(image_cache::fs::publish_named(&root, "other", "1").is_err());
+    assert!(root.is_dir("other"));
+    assert!(root.is_dir("1"));
+}
+
 #[tokio::test]
 async fn mac_uefi_and_windows_direct_handoffs_keep_the_verified_private_pair() {
     for platform in [ImageTarget::MacosArm64, ImageTarget::WindowsAmd64] {
