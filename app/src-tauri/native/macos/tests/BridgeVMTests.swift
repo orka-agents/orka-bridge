@@ -3,7 +3,9 @@ import Virtualization
 import Darwin
 
 private var failures = 0
+private var assertions = 0
 private func check(_ condition: @autoclosure () -> Bool, _ message: String, line: Int = #line) {
+    assertions += 1
     if !condition() { failures += 1; print("FAIL line \(line): \(message)") }
 }
 private func frame(_ op: UInt8, _ id: UInt64) -> [UInt8] {
@@ -72,7 +74,13 @@ private struct Tests {
     static func main() {
         let q = DispatchQueue(label: "helper-tests")
         q.sync { run(q) }
-        print("Swift helper tests: \(failures) failures")
+        let t = Trace()
+        q.sync {
+            VirtualizationDriver.afterCallback(on: q) { t.terminal.append(true) }
+            check(t.terminal.isEmpty, "native continuation ran before SDK callback returned")
+        }
+        q.sync { check(t.terminal == [true], "native continuation was lost") }
+        print("Swift helper tests: \(assertions) assertions, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }
     static func run(_ q: DispatchQueue) {
@@ -195,6 +203,26 @@ private struct Tests {
             h.driver.ended(.stopped)
             check(h.trace.terminal == [false] && h.trace.writes.count == 1, "late stopped observation replied")
         }
+        do {
+            let h = Harness(q); h.running(); h.core.receive(frame(83,1))
+            // Fault injection: close(2) failure must not produce a success ACK.
+            _ = close(h.fd)
+            h.driver.complete(.stopped)
+            check(h.trace.writes.last == frame(69,1) && h.trace.terminal == [false], "failed ownership close emitted K")
+        }
+        do {
+            var h: Harness? = Harness(q)
+            let driver = h!.driver, fd = h!.fd
+            weak var core = h!.core
+            h!.running(); h = nil
+            check(core != nil && fcntl(fd,F_GETFD) >= 0, "caller drop released a live VM owner")
+            driver.ended(.failed)
+            check(core == nil && fcntl(fd,F_GETFD) == -1, "terminal owner leaked after disposal")
+        }
+        do {
+            _ = try VirtualizationDriver(configuration: VZVirtualMachineConfiguration(), queue: q)
+            check(false, "invalid native configuration reached VM construction")
+        } catch { /* Validation is required before any native VM instance exists. */ }
         check(BridgeVM.successor(UInt64.max) == nil, "ID wrapped")
         check(BridgeVM.successor(255) == 256, "ID successor")
         check(VirtualizationDriver.classify(.stopped) == .stopped, "native stopped mapping")
