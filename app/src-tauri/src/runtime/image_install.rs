@@ -511,6 +511,148 @@ fn installed(binding: Binding) -> InstalledImageSet {
     };
     InstalledImageSet { binding, identity }
 }
+/// Authenticated factory read files, prepared before installation ownership.
+pub struct PreparedImage {
+    identity: ImageIdentity,
+    target: ImageTarget,
+    disk_bytes: u64,
+    disk_sha256: String,
+    boot: Boot,
+    files: [File; 3],
+}
+impl PreparedImage {
+    #[cfg(debug_assertions)]
+    pub(crate) fn from_development(
+        image: crate::dev_image::VerifiedDevImage,
+    ) -> Result<Self, ImageError> {
+        use crate::dev_image::{DevImagePlatform, SOURCE_COMMIT, STATE_COMPATIBILITY_ID};
+        use std::io::Seek;
+        let (receipt_bytes, receipt_sha) = image.declared(0);
+        let mut file = image.manifest().try_clone().map_err(storage)?.into_std();
+        file.rewind().map_err(storage)?;
+        let mut bytes = Vec::new();
+        file.take((receipt_bytes + 1).min(MAX_BINDING + 1))
+            .read_to_end(&mut bytes)
+            .map_err(storage)?;
+        if bytes.len() as u64 != receipt_bytes
+            || format!("{:x}", Sha256::digest(&bytes)) != receipt_sha
+        {
+            return Err(ImageError::Integrity);
+        }
+        // Project authenticated engineering facts, never fabricate a release manifest.
+        let receipt: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| ImageError::Integrity)?;
+        let mut direct = serde_json::Map::new();
+        for key in [
+            "kernel",
+            "initrd",
+            "rootSelector",
+            "kernelRelease",
+            "commandLine",
+            "requiredDrivers",
+        ] {
+            direct.insert(key.into(), receipt[key].clone());
+        }
+        let mut provenance = serde_json::Map::new();
+        for key in [
+            "diskSha256",
+            "buildReceiptSha256",
+            "inputSha256",
+            "kernelConfigSha256",
+            "modulesSha256",
+            "endpointSha256",
+            "earlyHookSha256",
+            "buildHookSha256",
+            "extractorSha256",
+            "inspectorSha256",
+            "extractionTools",
+        ] {
+            provenance.insert(key.into(), receipt[key].clone());
+        }
+        provenance.insert("bootReceiptSha256".into(), receipt_sha.clone().into());
+        direct.insert("provenance".into(), provenance.into());
+        let boot: Boot =
+            serde_json::from_value(direct.into()).map_err(|_| ImageError::Integrity)?;
+        for (i, bytes, sha) in [
+            (1, boot.kernel.bytes, &boot.kernel.sha256),
+            (2, boot.initrd.bytes, &boot.initrd.sha256),
+        ] {
+            if image.declared(i) != (bytes, sha.clone()) {
+                return Err(ImageError::Integrity);
+            }
+        }
+        let (disk_bytes, disk_sha256) = image.declared(3);
+        if boot.provenance.disk_sha256 != disk_sha256 {
+            return Err(ImageError::Integrity);
+        }
+        let target = match image.platform() {
+            DevImagePlatform::MacOsArm64 => ImageTarget::MacosArm64,
+            DevImagePlatform::WindowsAmd64 => ImageTarget::WindowsAmd64,
+        };
+        Ok(Self {
+            identity: ImageIdentity {
+                // In engineering sets this common identity slot hashes the raw boot receipt.
+                manifest_sha256: receipt_sha,
+                image_id: format!("engineering-{}", target_name(target)),
+                state_compatibility_id: STATE_COMPATIBILITY_ID.into(),
+                build_source_commit: SOURCE_COMMIT.into(),
+            },
+            target,
+            disk_bytes,
+            disk_sha256,
+            boot,
+            files: [
+                image.disk().try_clone().map_err(storage)?.into_std(),
+                image.kernel().try_clone().map_err(storage)?.into_std(),
+                image.initrd().try_clone().map_err(storage)?.into_std(),
+            ],
+        })
+    }
+    pub(crate) fn from_verified(image: VerifiedImageSet) -> Result<Self, ImageError> {
+        let descriptor = image.image();
+        let raw = descriptor.manifest_bytes();
+        if format!("{:x}", Sha256::digest(raw)) != descriptor.identity().manifest_sha256 {
+            return Err(ImageError::Integrity);
+        }
+        let raw: serde_json::Value =
+            serde_json::from_slice(raw).map_err(|_| ImageError::Integrity)?;
+        let boot =
+            serde_json::from_value(raw["directBoot"].clone()).map_err(|_| ImageError::Integrity)?;
+        Ok(Self {
+            identity: descriptor.identity().clone(),
+            target: descriptor.target(),
+            disk_bytes: descriptor.disk_bytes(),
+            disk_sha256: descriptor.disk_sha256().into(),
+            boot,
+            files: [
+                image.open_disk()?,
+                image.open_boot(ImageAssetRole::Kernel)?,
+                image.open_boot(ImageAssetRole::Initrd)?,
+            ],
+        })
+    }
+    pub fn identity(&self) -> &ImageIdentity {
+        &self.identity
+    }
+    pub fn target(&self) -> ImageTarget {
+        self.target
+    }
+    pub async fn materialize(
+        self,
+        target: &InstallationImageTarget<'_>,
+        closed: watch::Receiver<bool>,
+        progress: impl Fn(ImageProgress) + Send + Sync,
+    ) -> Result<InstalledImageSet, ImageError> {
+        materialize_with(move || Ok(self), target, closed, progress).await
+    }
+    fn open(&self, index: usize) -> Result<File, ImageError> {
+        use std::io::Seek;
+        let mut file = self.files[index].try_clone().map_err(storage)?;
+        file.rewind().map_err(storage)?;
+        Ok(file)
+    }
+}
+
 struct Context {
     root: Dir,
     owner: Arc<File>,
@@ -690,16 +832,16 @@ fn copy(
         allocated_bytes: allocation(&actual)?,
     })
 }
-fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, ImageError> {
+fn run(image: PreparedImage, context: Context) -> Result<InstalledImageSet, ImageError> {
     context.stop()?;
     validate_target(&context.root, &context.owner, context.id)?;
     if !context.creation_allowed {
         return Err(ImageError::RetainedImage);
     }
-    if image.image.target() != context.target {
+    if image.target() != context.target {
         return Err(ImageError::Incompatible(Incompatibility::Target));
     }
-    if image.image.identity().state_compatibility_id != context.compatibility {
+    if image.identity().state_compatibility_id != context.compatibility {
         return Err(ImageError::RetainedImage);
     }
     let owner = regular(&context.root, "image-owner.lock", true, true)?;
@@ -710,7 +852,7 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
     let _work = WorkOwner(owner, std::process::id());
     match open_installed_image(&context.target()) {
         Ok(set) => {
-            if set.identity.manifest_sha256 != image.image.identity().manifest_sha256 {
+            if set.identity.manifest_sha256 != image.identity().manifest_sha256 {
                 return Err(ImageError::RetainedImage);
             }
             return Ok(set);
@@ -727,22 +869,14 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
         installation_id: context.id,
         image_generation: 1,
         identity: Identity {
-            manifest_sha256: image.image.identity().manifest_sha256.clone(),
-            image_id: image.image.identity().image_id.clone(),
+            manifest_sha256: image.identity().manifest_sha256.clone(),
+            image_id: image.identity().image_id.clone(),
             state_compatibility_id: context.compatibility.clone(),
-            build_source_commit: image.image.identity().build_source_commit.clone(),
+            build_source_commit: image.identity().build_source_commit.clone(),
         },
         target: target_name(context.target).into(),
     };
-    if format!("{:x}", Sha256::digest(image.image.manifest_bytes()))
-        != image.image.identity().manifest_sha256
-    {
-        return Err(ImageError::Integrity);
-    }
-    let raw: serde_json::Value =
-        serde_json::from_slice(image.image.manifest_bytes()).map_err(|_| ImageError::Integrity)?;
-    let boot: Boot =
-        serde_json::from_value(raw["directBoot"].clone()).map_err(|_| ImageError::Integrity)?;
+    let boot = &image.boot;
     let images = directory(&context.root, std::ffi::OsStr::new("image"))?;
     let binding = if let Some(generation) = read_directory(&images, "1")? {
         let existing: Intent = json(&generation, "intent.json")?;
@@ -766,18 +900,13 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
         image_cache::fs::sync(&images)?;
         image_cache::fs::sync(&context.root)?;
         let total = image
-            .image
-            .disk_bytes()
+            .disk_bytes
             .checked_add(boot.kernel.bytes)
             .and_then(|n| n.checked_add(boot.initrd.bytes))
             .ok_or(ImageError::NoSpace)?;
         let mut needed = 0u64;
         for (name, bytes, sha) in [
-            (
-                FILES[0],
-                image.image.disk_bytes(),
-                image.image.disk_sha256(),
-            ),
+            (FILES[0], image.disk_bytes, image.disk_sha256.as_str()),
             (FILES[1], boot.kernel.bytes, boot.kernel.sha256.as_str()),
             (FILES[2], boot.initrd.bytes, boot.initrd.sha256.as_str()),
         ] {
@@ -806,8 +935,8 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
             &context,
             &stage,
             FILES[0],
-            image.open_disk()?,
-            (image.image.disk_bytes(), image.image.disk_sha256()),
+            image.open(0)?,
+            (image.disk_bytes, image.disk_sha256.as_str()),
             &mut done,
             total,
         )?;
@@ -815,7 +944,7 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
             &context,
             &stage,
             FILES[1],
-            image.open_boot(ImageAssetRole::Kernel)?,
+            image.open(1)?,
             (boot.kernel.bytes, &boot.kernel.sha256),
             &mut done,
             total,
@@ -824,7 +953,7 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
             &context,
             &stage,
             FILES[2],
-            image.open_boot(ImageAssetRole::Initrd)?,
+            image.open(2)?,
             (boot.initrd.bytes, &boot.initrd.sha256),
             &mut done,
             total,
@@ -865,9 +994,9 @@ fn run(image: VerifiedImageSet, context: Context) -> Result<InstalledImageSet, I
         binding
     };
     if binding.identity != intent.identity
-        || binding.boot != boot
-        || binding.os.initial_bytes != image.image.disk_bytes()
-        || binding.os.initial_sha256 != image.image.disk_sha256()
+        || &binding.boot != boot
+        || binding.os.initial_bytes != image.disk_bytes
+        || binding.os.initial_sha256 != image.disk_sha256.as_str()
     {
         return Err(ImageError::RetainedImage);
     }
@@ -893,6 +1022,21 @@ pub async fn materialize_image(
     closed: watch::Receiver<bool>,
     progress: impl Fn(ImageProgress) + Send + Sync,
 ) -> Result<InstalledImageSet, ImageError> {
+    let image = image.clone();
+    materialize_with(
+        move || PreparedImage::from_verified(image),
+        target,
+        closed,
+        progress,
+    )
+    .await
+}
+async fn materialize_with(
+    prepare: impl FnOnce() -> Result<PreparedImage, ImageError> + Send + 'static,
+    target: &InstallationImageTarget<'_>,
+    closed: watch::Receiver<bool>,
+    progress: impl Fn(ImageProgress) + Send + Sync,
+) -> Result<InstalledImageSet, ImageError> {
     let (events, mut receive) = mpsc::channel(1);
     let context = Context {
         root: target.root.try_clone().map_err(storage)?,
@@ -908,8 +1052,10 @@ pub async fn materialize_image(
         #[cfg(test)]
         available: target.available,
     };
-    let image = image.clone();
-    let mut job = tokio::task::spawn_blocking(move || run(image, context));
+    let mut job = tokio::task::spawn_blocking(move || {
+        context.stop()?;
+        run(prepare()?, context)
+    });
     loop {
         tokio::select! {
             result = &mut job => {
