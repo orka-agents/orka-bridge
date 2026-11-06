@@ -91,7 +91,10 @@ mod native {
         mem::{size_of, zeroed},
         os::windows::io::AsRawHandle,
         path::Path,
-        sync::Arc,
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
         time::Duration,
     };
     use windows_sys::Win32::{
@@ -109,6 +112,7 @@ mod native {
         process: Arc<Handle>,
         thread: Handle,
         job: Handle,
+        stop_observed: AtomicBool,
         stdio: Option<(File, File, File)>,
         _ownership: Arc<File>,
         _inputs: Arc<VerifiedWindowsInputs>,
@@ -292,6 +296,7 @@ mod native {
                         process: Arc::new(Handle::new(info.hProcess)?),
                         thread: Handle::new(info.hThread)?,
                         job,
+                        stop_observed: AtomicBool::new(false),
                         stdio: Some((stdin, stdout, stderr)),
                         _ownership: ownership,
                         _inputs: inputs,
@@ -361,6 +366,7 @@ mod native {
                 resources.job.0,
                 resources.process.0,
                 Duration::from_secs(45),
+                &resources.stop_observed,
             )
         }
     }
@@ -374,27 +380,146 @@ mod native {
             }
         }
     }
-    fn stop_job(job: HANDLE, leader: HANDLE, timeout: Duration) -> io::Result<()> {
+    fn accounting(job: HANDLE) -> io::Result<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION> {
+        let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
+        unsafe {
+            check(QueryInformationJobObject(
+                job,
+                JobObjectBasicAccountingInformation,
+                (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
+                std::ptr::null_mut(),
+            ))?;
+        }
+        Ok(info)
+    }
+    fn job_processes(job: HANDLE, deadline: std::time::Instant) -> io::Result<Vec<Handle>> {
+        let mut capacity = 16usize;
+        loop {
+            if std::time::Instant::now() >= deadline {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+            // Derive the flexible-array pointer from the allocation, not from a
+            // reference to the one-element array in the FFI struct.
+            let offset = std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList);
+            let size = offset + capacity * size_of::<usize>();
+            let mut storage = vec![0usize; size.div_ceil(size_of::<usize>())];
+            let bytes =
+                u32::try_from(size).map_err(|_| io::Error::from(io::ErrorKind::OutOfMemory))?;
+            let ok = unsafe {
+                QueryInformationJobObject(
+                    job,
+                    JobObjectBasicProcessIdList,
+                    storage.as_mut_ptr().cast(),
+                    bytes,
+                    std::ptr::null_mut(),
+                )
+            };
+            let error = if ok == 0 {
+                Some(io::Error::last_os_error())
+            } else {
+                None
+            };
+            let info = unsafe { &*storage.as_ptr().cast::<JOBOBJECT_BASIC_PROCESS_ID_LIST>() };
+            if let Some(error) = error {
+                if error.raw_os_error() != Some(ERROR_MORE_DATA as i32) {
+                    return Err(error);
+                }
+                capacity = capacity
+                    .checked_mul(2)
+                    .ok_or_else(|| io::Error::from(io::ErrorKind::OutOfMemory))?
+                    .max(info.NumberOfAssignedProcesses as usize);
+                continue;
+            }
+            if info.NumberOfProcessIdsInList as usize > capacity
+                || info.NumberOfProcessIdsInList != info.NumberOfAssignedProcesses
+            {
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
+            }
+            let ids = unsafe {
+                std::slice::from_raw_parts(
+                    storage.as_ptr().cast::<u8>().add(offset).cast::<usize>(),
+                    info.NumberOfProcessIdsInList as usize,
+                )
+            };
+            let mut processes = Vec::with_capacity(ids.len());
+            for id in ids {
+                if std::time::Instant::now() >= deadline {
+                    return Err(io::Error::from(io::ErrorKind::TimedOut));
+                }
+                let id =
+                    u32::try_from(*id).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+                let process = unsafe {
+                    Handle::new(OpenProcess(
+                        0x00100000 | PROCESS_QUERY_LIMITED_INFORMATION,
+                        0,
+                        id,
+                    ))?
+                };
+                let mut member = 0;
+                unsafe {
+                    check(IsProcessInJob(process.0, job, &mut member))?;
+                }
+                if member == 0 {
+                    return Err(io::Error::from(io::ErrorKind::InvalidData));
+                }
+                processes.push(process);
+            }
+            return Ok(processes);
+        }
+    }
+    fn stop_job(
+        job: HANDLE,
+        leader: HANDLE,
+        timeout: Duration,
+        observed: &AtomicBool,
+    ) -> io::Result<()> {
+        // The private noninheritable Job is assigned exactly once. After a proved
+        // full stop no remaining process or external owner can add a member.
+        if observed.load(Ordering::Acquire) {
+            return Ok(());
+        }
         let deadline = std::time::Instant::now() + timeout;
-        // A stopped leader can leave descendants holding inherited capabilities.
-        // Terminate the whole Job and observe it empty before releasing any owner.
+        // ActiveProcesses can reach zero before descendant handles finish closing.
+        // Bind wait-only process handles while they are still in this owned Job.
+        let snapshot = accounting(job).and_then(|before| {
+            let processes = job_processes(job, deadline)?;
+            let leader_id = unsafe { GetProcessId(leader) };
+            if leader_id == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let includes_leader = processes
+                .iter()
+                .any(|process| unsafe { GetProcessId(process.0) } == leader_id);
+            let known = processes.len() + usize::from(!includes_leader);
+            // An unlisted descendant may still be closing handles. Without its
+            // process handle that historical exit is unobserved, not success.
+            if known != before.TotalProcesses as usize {
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
+            }
+            Ok((before.TotalProcesses, processes))
+        });
+        // Even a failed snapshot must still request termination of the whole Job.
         unsafe { check(TerminateJobObject(job, 1))? };
+        let (generation, processes) = snapshot?;
         wait_handle(
             leader,
             deadline.saturating_duration_since(std::time::Instant::now()),
         )?;
+        for process in &processes {
+            wait_handle(
+                process.0,
+                deadline.saturating_duration_since(std::time::Instant::now()),
+            )?;
+        }
         loop {
-            let mut info: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { zeroed() };
-            unsafe {
-                check(QueryInformationJobObject(
-                    job,
-                    JobObjectBasicAccountingInformation,
-                    (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
-                    size_of::<JOBOBJECT_BASIC_ACCOUNTING_INFORMATION>() as u32,
-                    std::ptr::null_mut(),
-                ))?;
+            let info = accounting(job)?;
+            // A process created after the snapshot is unobserved: quarantine, not success.
+            if info.TotalProcesses != generation {
+                return Err(io::Error::from(io::ErrorKind::InvalidData));
             }
             if info.ActiveProcesses == 0 {
+                observed.store(true, Ordering::Release);
                 return Ok(());
             }
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -487,11 +612,30 @@ mod native {
             assert!(active(&job) >= 1, "descendant stays in the Job");
             assert_eq!(exclusive().unwrap_err().raw_os_error(), Some(32));
 
-            stop_job(job.0, raw(&leader), Duration::from_secs(45)).unwrap();
+            let observed = AtomicBool::new(false);
+            stop_job(job.0, raw(&leader), Duration::from_secs(45), &observed).unwrap();
             assert_eq!(active(&job), 0, "observed stop is Job-wide");
             drop(exclusive().expect("no descendant still holds the file"));
-            // A later teardown of the same empty Job is still an observed stop.
-            stop_job(job.0, raw(&leader), Duration::from_secs(45)).unwrap();
+            // A later teardown of the same empty Job reuses its proved stop.
+            stop_job(job.0, raw(&leader), Duration::from_secs(45), &observed).unwrap();
+        }
+
+        #[test]
+        fn unobserved_historical_descendant_exit_cannot_release_the_bundle() {
+            let job = kill_on_close_job();
+            let mut leader = cmd("/d /c set /p x= & start /b ping -n 1 127.0.0.1 > nul");
+            unsafe { check(AssignProcessToJobObject(job.0, raw(&leader))).unwrap() };
+            leader.stdin.take().unwrap().write_all(b"\r\n").unwrap();
+            leader.wait().unwrap();
+            let until = std::time::Instant::now() + Duration::from_secs(10);
+            while active(&job) != 0 {
+                assert!(std::time::Instant::now() < until);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(accounting(job.0).unwrap().TotalProcesses > 1);
+            let observed = AtomicBool::new(false);
+            assert!(stop_job(job.0, raw(&leader), Duration::from_secs(45), &observed).is_err());
+            assert!(!observed.load(Ordering::Acquire));
         }
 
         #[test]
@@ -513,7 +657,13 @@ mod native {
                 .unwrap();
             }
             let query_only = Handle::new(query_only).unwrap();
-            assert!(stop_job(query_only.0, raw(&leader), Duration::from_secs(45)).is_err());
+            assert!(stop_job(
+                query_only.0,
+                raw(&leader),
+                Duration::from_secs(45),
+                &AtomicBool::new(false)
+            )
+            .is_err());
         }
     }
 }
