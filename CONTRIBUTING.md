@@ -81,7 +81,8 @@ Set it to a folder containing `boot-assets.json`, `os.kernel`, `os.initrd`, and
 `npm run tauri dev`. Assemble all four matching files in that folder; do not
 use partial boot exports or convert the disk format.
 
-This temporary source accepts only the pinned `8d807809` engineering set.
+This temporary source accepts only the pinned `afc68ae1` engineering sets
+with the `orka-7916cd1c-native/v1` restricted native profile.
 It checks the exact receipt and each payload's length and SHA-256 using
 read-only handles on a background worker. Its fixed console message reports
 verification, not a running VM. A bad set is unavailable, with no download or
