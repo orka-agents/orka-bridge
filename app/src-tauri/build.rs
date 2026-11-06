@@ -1,11 +1,9 @@
 fn main() {
     println!("cargo:rerun-if-changed=native/macos");
     println!("cargo:rerun-if-changed=../../scripts/build-vm-helper-macos.sh");
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos")
-        && std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("aarch64")
-    {
-        // Tauri copies configured resources during try_build, so this must run
-        // first, including cargo test/clippy and development builds.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        // Every Mac shell includes this inactive arm64 resource, including Intel
+        // shells. Tauri copies it during try_build, so generate it first.
         let manifest = std::path::PathBuf::from(
             std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest directory missing"),
         );

@@ -163,7 +163,8 @@ npm run tauri -- build --no-bundle -- --locked
 For an Apple silicon Mac app, install the Xcode Swift compiler first. Mac Cargo
 builds, tests, clippy and Tauri development compile and ad-hoc sign the bundled
 Apple helper before resource processing; no toolchain is installed automatically.
-The helper remains inactive: building or opening the app does not start a VM.
+The arm64 helper is also included in Intel Mac shell builds; this does not add
+an Intel VM backend. Building or opening the app does not start a VM.
 See [the native helper contract](app/src-tauri/native/macos/README.md).
 
 For the app bundle:

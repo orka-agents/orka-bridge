@@ -18,7 +18,9 @@ The build script compiles Swift 5 for macOS 13, signs ad hoc with only
 `com.apple.security.virtualization`, verifies the signature and publishes
 `app/src-tauri/gen/apple-helper/BridgeVM`. Mac Cargo builds, tests, clippy and
 Tauri development also build it before Tauri copies resources. Nothing installs
-a compiler automatically. Other target platforms do not invoke Swift.
+a compiler automatically. Every Mac shell build includes the fixed arm64 helper,
+including Intel shell builds; this does not add an Intel VM backend. Other target
+platforms do not invoke Swift.
 
 The app bundle includes `Contents/Resources/native/BridgeVM`. A future trusted
 native backend resolves `app.path().resource_dir()?.join("native/BridgeVM")`;

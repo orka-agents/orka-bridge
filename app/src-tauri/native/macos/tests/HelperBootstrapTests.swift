@@ -17,11 +17,24 @@ private func wait(_ semaphore: DispatchSemaphore) {
     check(semaphore.wait(timeout: .now() + 5) == .success, "bootstrap completion timeout")
 }
 private func receive(_ fd: Int32, _ count: Int) -> [UInt8] {
-    var event = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
-    guard poll(&event, 1, 5000) > 0 else { check(false, "supervisor read timeout"); return [] }
-    var bytes = [UInt8](repeating: 0, count: count)
-    let n = read(fd, &bytes, count)
-    return n > 0 ? Array(bytes.prefix(n)) : []
+    let deadline = DispatchTime.now().uptimeNanoseconds + 5_000_000_000
+    var result: [UInt8] = []
+    while result.count < count {
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard now < deadline else { check(false, "supervisor read timeout"); return result }
+        var event = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+        let remaining = Int32((deadline - now + 999_999) / 1_000_000)
+        let ready = poll(&event, 1, remaining)
+        if ready < 0 && errno == EINTR { continue }
+        guard ready > 0 else { check(false, "supervisor read timeout/error"); return result }
+        var bytes = [UInt8](repeating: 0, count: count - result.count)
+        let n = read(fd, &bytes, bytes.count)
+        if n < 0 && errno == EINTR { continue }
+        guard n >= 0 else { check(false, "supervisor read error"); return result }
+        if n == 0 { return result }
+        result.append(contentsOf: bytes.prefix(n))
+    }
+    return result
 }
 private func sentinel(_ signal: Int32) {}
 private final class Trace {
