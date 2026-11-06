@@ -73,8 +73,23 @@ pub fn create_verified<T>(
     Err(failure)
 }
 
+#[cfg(any(windows, test))]
+fn stop_budget(deadline: &std::sync::OnceLock<std::time::Instant>) -> std::time::Duration {
+    let until =
+        deadline.get_or_init(|| std::time::Instant::now() + std::time::Duration::from_secs(45));
+    until.saturating_duration_since(std::time::Instant::now())
+}
 #[cfg(test)]
 mod coordinator_tests {
+    #[test]
+    fn later_cleanup_does_not_restart_an_expired_stop_budget() {
+        let deadline = std::sync::OnceLock::new();
+        deadline
+            .set(std::time::Instant::now() - std::time::Duration::from_secs(1))
+            .unwrap();
+        assert!(super::stop_budget(&deadline).is_zero());
+        assert!(super::stop_budget(&deadline).is_zero());
+    }
     #[test]
     fn inheritance_window_and_async_spawns_share_one_gate() {
         let guard = super::spawn_guard().unwrap();
@@ -144,10 +159,24 @@ mod native {
         thread: Handle,
         job: Handle,
         stop_observed: AtomicBool,
-        stdio: Option<(File, File, File)>,
+        stop_deadline: std::sync::OnceLock<std::time::Instant>,
+        stdio: RetainedStdio,
         _ownership: Arc<File>,
         _inputs: Arc<VerifiedWindowsInputs>,
         _cwd: File,
+    }
+    struct RetainedStdio {
+        files: Option<(File, File, File)>,
+    }
+    impl RetainedStdio {
+        fn new(files: (File, File, File)) -> Self {
+            Self { files: Some(files) }
+        }
+        fn take(&mut self) -> io::Result<(File, File, File)> {
+            self.files
+                .take()
+                .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))
+        }
     }
     struct Attributes {
         ptr: LPPROC_THREAD_ATTRIBUTE_LIST,
@@ -328,7 +357,8 @@ mod native {
                         thread: Handle::new(info.hThread)?,
                         job,
                         stop_observed: AtomicBool::new(false),
-                        stdio: Some((stdin, stdout, stderr)),
+                        stop_deadline: std::sync::OnceLock::new(),
+                        stdio: RetainedStdio::new((stdin, stdout, stderr)),
                         _ownership: ownership,
                         _inputs: inputs,
                         _cwd: cwd_file,
@@ -360,6 +390,7 @@ mod native {
             stop_suspended(
                 resources.job.0,
                 resources.process.0,
+                stop_budget(&resources.stop_deadline),
                 &resources.stop_observed,
             )
         }
@@ -378,7 +409,6 @@ mod native {
                 .expect("live process capability")
                 .stdio
                 .take()
-                .ok_or_else(|| io::Error::from(io::ErrorKind::BrokenPipe))
         }
         pub fn process_handle(&self) -> Arc<Handle> {
             self.resources().process.clone()
@@ -394,7 +424,7 @@ mod native {
             stop_job(
                 resources.job.0,
                 resources.process.0,
-                Duration::from_secs(45),
+                stop_budget(&resources.stop_deadline),
                 &resources.stop_observed,
             )
         }
@@ -409,8 +439,13 @@ mod native {
             }
         }
     }
-    fn stop_suspended(job: HANDLE, leader: HANDLE, observed: &AtomicBool) -> io::Result<()> {
-        let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    fn stop_suspended(
+        job: HANDLE,
+        leader: HANDLE,
+        timeout: Duration,
+        observed: &AtomicBool,
+    ) -> io::Result<()> {
+        let deadline = std::time::Instant::now() + timeout;
         // Before the membership postcondition, only the retained process is authority.
         // It has never resumed, so there cannot be descendants to stop here.
         if wait_handle(leader, Duration::ZERO).is_err() {
@@ -599,6 +634,41 @@ mod native {
             process::{Child, Command, Stdio},
         };
 
+        #[test]
+        fn stdio_duplicates_are_noninheritable_and_originals_survive_quarantine() {
+            let root = tempfile::tempdir().unwrap();
+            let make = |name| {
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .create_new(true)
+                    .share_mode(0)
+                    .open(root.path().join(name))
+                    .unwrap()
+            };
+            let mut stdio = RetainedStdio::new((make("in"), make("out"), make("err")));
+            let copies = stdio.take().unwrap();
+            for file in [&copies.0, &copies.1, &copies.2] {
+                let mut flags = HANDLE_FLAG_INHERIT;
+                unsafe {
+                    check(GetHandleInformation(file.as_raw_handle(), &mut flags)).unwrap();
+                }
+                assert_eq!(flags & HANDLE_FLAG_INHERIT, 0);
+            }
+            assert_eq!(stdio.take().unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+            drop(copies);
+            release_bundle(stdio, false);
+            assert_eq!(
+                OpenOptions::new()
+                    .read(true)
+                    .share_mode(0)
+                    .open(root.path().join("in"))
+                    .unwrap_err()
+                    .raw_os_error(),
+                Some(32),
+                "the quarantined bundle still owns the original object"
+            );
+        }
         fn kill_on_close_job() -> Handle {
             unsafe {
                 let job =
@@ -686,7 +756,13 @@ mod native {
             }
             let query_denied = Handle::new(query_denied).unwrap();
             let observed = AtomicBool::new(false);
-            let error = stop_suspended(query_denied.0, raw(&child.0), &observed).unwrap_err();
+            let error = stop_suspended(
+                query_denied.0,
+                raw(&child.0),
+                Duration::from_secs(45),
+                &observed,
+            )
+            .unwrap_err();
             assert_eq!(error.raw_os_error(), Some(5));
             assert!(wait_handle(raw(&child.0), Duration::ZERO).is_ok());
             assert!(
@@ -715,7 +791,7 @@ mod native {
                 "model a rejected membership postcondition before resume"
             );
             let observed = AtomicBool::new(false);
-            stop_suspended(job.0, raw(&child.0), &observed).unwrap();
+            stop_suspended(job.0, raw(&child.0), Duration::from_secs(45), &observed).unwrap();
             assert!(wait_handle(raw(&child.0), Duration::ZERO).is_ok());
             // Same recheck and whole-bundle release that OwnedQemuProcess::drop uses.
             release_bundle(
