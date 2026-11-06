@@ -18,6 +18,8 @@ fn main() {
 mod native {
     #[path = "controller.rs"]
     mod controller;
+    #[path = "loader_trace.rs"]
+    mod loader_trace;
     #[path = "permission_diag.rs"]
     mod permission_diag;
     use crate::runtime::{
@@ -459,6 +461,10 @@ mod native {
             }
         });
         let rx = reader(stdout);
+        let traced = loader_trace::enabled()?;
+        if traced {
+            loader_trace::start(process.clone())?;
+        }
         thread_state(process.raw(), "before-resume")?;
         if mode != "hold-created" {
             child.resume()?;
@@ -529,6 +535,11 @@ mod native {
                 String::from_utf8_lossy(&errors.lock().unwrap())
             ))
         })?;
+        if traced {
+            return Err(io::Error::other(
+                "diagnostic debugger run cannot qualify as native PASS",
+            ));
+        }
         receive(&rx, None)?;
         for (id, command) in [(1, "qmp_capabilities"), (2, "query-status"), (3, "quit")] {
             serde_json::to_writer(&mut stdin, &json!({"execute":command,"id":id}))
