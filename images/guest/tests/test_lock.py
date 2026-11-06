@@ -18,6 +18,17 @@ class LockTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.value = lock(self.root)
 
+    def test_selected_source_pin_binds_the_restricted_offline_profile(self):
+        self.assertEqual(VERSIONS['orkaSource'], '7916cd1c8c083ade6b10df6ba408f854d930190c')
+        self.assertEqual(VERSIONS.get('sourceOfflineProfile'), {
+            'profile': 'orka-7916cd1c-native/v1',
+            'profileSha256': '6ab8213cae9f1d58fe59f34b2402f93ed951752269decdf750fc2a170bddf223',
+            'kmxSourceCommit': 'fc811336bfdf4d972525eb78f1cba8a7b7e45b19',
+            'chartSha256': '19c50cff36855b8792b4777c89c598cf33ea70180e677e1a4758fc0211f069ed',
+            'artifactsSha256': 'db1dae048af33841a295fdebb55c85d3a122242feade043f85a9e886938d1b3e',
+        })
+        self.assertEqual(VERSIONS['releaseProfiles'], {})
+
     def test_source_lock(self):
         validate_lock(self.value, production=False)
         path = self.root / "input.json"
@@ -30,7 +41,7 @@ class LockTests(unittest.TestCase):
             validate_lock(self.value, production=False)
 
     def test_superseded_source_pin_is_rejected(self):
-        previous = "aa3ca00524347ea4124f6751e16790a019d21d73"
+        previous = "59703d6eac1760aa2dc5fed4dee9dcb74c6e5186"
         self.value["sourceCommit"] = previous
         self.value["orka"]["identity"] = previous
         with self.assertRaisesRegex(ValueError, "source identity"):

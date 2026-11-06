@@ -1,4 +1,6 @@
 pub mod acquire;
+#[cfg(unix)]
+pub mod apple;
 pub mod client;
 pub mod credentials;
 pub mod identity;
@@ -6,6 +8,7 @@ pub mod image_types;
 pub mod journal;
 pub mod manifest;
 pub mod snapshot;
+pub mod spawn_guard;
 pub mod types;
 pub mod wire;
 

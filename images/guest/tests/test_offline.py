@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 
 from guest.offline import member
+from guest.lock import VERSIONS
+from unittest.mock import patch
 from guest.tests.fixtures import encoded, lock, sha
+
+SYNTHETIC_PROFILE = {'profile': 'native-fixture', 'profileSha256': 'a' * 64,
+                     'kmxSourceCommit': '1' * 40, 'chartSha256': sha(b'synthetic-chart'), 'artifactsSha256': sha(b'{}')}
 
 
 def native_inputs(root):
@@ -35,7 +40,36 @@ def native_inputs(root):
     return value, manifest
 
 
+@patch.dict(VERSIONS, {'sourceOfflineProfile': SYNTHETIC_PROFILE})
 class OfflineTests(unittest.TestCase):
+    def test_mutually_consistent_unapproved_profile_inputs_refuse_before_output(self):
+        api = self.api()
+        for mismatch in ('profile', 'profile-id', 'chart', 'descriptor', 'revision'):
+            with self.subTest(mismatch=mismatch), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                value, manifest = native_inputs(root)
+                policy = {'profile': 'native-fixture', 'profileSha256': 'a' * 64, 'kmxSourceCommit': '1' * 40,
+                          'chartSha256': value['orka']['chartSha256'], 'artifactsSha256': sha(b'{}')}
+                if mismatch == 'profile':
+                    value['kmxProfileSha256'] = manifest['profileSha256'] = 'b' * 64
+                elif mismatch == 'profile-id':
+                    manifest['profile'] = 'unapproved-profile'
+                elif mismatch == 'chart':
+                    data = b'mutually consistent but unapproved chart'
+                    (root / 'chart.tgz').write_bytes(data)
+                    value['orka']['chartSha256'] = manifest['chart']['sha256'] = sha(data)
+                elif mismatch == 'descriptor':
+                    data = b'{"unapproved":true}'
+                    (root / 'images.json').write_bytes(data)
+                    next(t for t in value['tools'] if t['name'] == 'orka-images')['sha256'] = manifest['artifacts']['sha256'] = sha(data)
+                else:
+                    manifest['kmx']['revision'] = '2' * 40
+                (root / 'install.json').write_bytes(encoded(manifest))
+                value['tools'][-1]['sha256'] = sha(encoded(manifest))
+                with patch.dict(VERSIONS, {'sourceOfflineProfile': policy}), self.assertRaisesRegex(ValueError, 'source offline'):
+                    api.stage_bundle(value, source=root, out=root / 'out')
+                self.assertFalse((root / 'out').exists())
+
     def api(self):
         try:
             return importlib.import_module('guest.offline')

@@ -11,13 +11,17 @@ from unittest.mock import patch
 
 from guest.offline import stage_bundle
 from guest.tests.fixtures import encoded
-from guest.tests.test_offline import native_inputs
+from guest.tests.test_offline import native_inputs, SYNTHETIC_PROFILE
+from guest.lock import VERSIONS
 
 ORKA_READYZ = '--raw=/api/v1/namespaces/orka-system/services/http:orka-api:api/proxy/readyz'
 
 
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
+        policy = patch.dict(VERSIONS, {'sourceOfflineProfile': SYNTHETIC_PROFILE})
+        policy.start()
+        self.addCleanup(policy.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
