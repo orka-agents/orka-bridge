@@ -2,9 +2,9 @@ name: Image assets
 
 on:
   pull_request:
-    paths: ['images/**', '.github/workflows/images.yml']
+    paths: ['images/**', 'app/src-tauri/src/runtime/manifest.rs', 'app/src-tauri/src/runtime/image_types.rs', 'app/src-tauri/tests/image_manifest.rs', 'runtime/protocol/tests/image_manifest.rs', '.github/workflows/images.yml']
   push:
-    paths: ['images/**', '.github/workflows/images.yml']
+    paths: ['images/**', 'app/src-tauri/src/runtime/manifest.rs', 'app/src-tauri/src/runtime/image_types.rs', 'app/src-tauri/tests/image_manifest.rs', 'runtime/protocol/tests/image_manifest.rs', '.github/workflows/images.yml']
   workflow_dispatch:
     inputs:
       profile:
@@ -29,6 +29,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-jsonschema
           /usr/bin/python3 -c 'import jsonschema'
+      - name: Exercise hash-bound inputs with autocrlf enabled
+        run: |
+          rm -- images/guest/versions.json images/guest/boot_assets.py images/guest/boot_inspect.py
+          git -c core.autocrlf=true checkout-index --force -- images/guest/versions.json images/guest/boot_assets.py images/guest/boot_inspect.py
+          git ls-files --eol -- images/guest/versions.json images/guest/boot_assets.py images/guest/boot_inspect.py
       - name: Test without network
         run: sudo unshare --net sh -c 'PYTHONPATH=images /usr/bin/python3 -m unittest discover -s images -p "test_*.py" -v'
 

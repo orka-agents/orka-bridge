@@ -1,0 +1,699 @@
+[
+  {
+    "invariant": "producer-windows",
+    "file": "producer-windows.json",
+    "sha256": "9e1d165cd836bdb3c065d58452ac472995896d210d163bbf072a05707a79e0e5",
+    "structure": "valid",
+    "compatibility": "compatible",
+    "platform": "windows"
+  },
+  {
+    "invariant": "producer-macos",
+    "file": "producer-macos.json",
+    "sha256": "8461ce705ee300e382884b4ac78e6a0c396fd852bc85b2aa964b8f6947090aee",
+    "structure": "valid",
+    "compatibility": "compatible",
+    "platform": "macos"
+  },
+  {
+    "invariant": "schema-v1",
+    "file": "schema-v1.json",
+    "sha256": "cfbbf2376a56c4aa956196c7f8c88304efd51d37e249f253e228b143f6099bc0",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "publication-claim",
+    "file": "publication-claim.json",
+    "sha256": "1c4c0695a60b5dc4366a20e9559bfcf4543bae24485b44e5f04b55f10c3bfc15",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "image-traversal",
+    "file": "image-traversal.json",
+    "sha256": "dc2b221a487d2f174fcb96f7476a408b435c259902370d37c6c8e3d80f028371",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "bad-commit",
+    "file": "bad-commit.json",
+    "sha256": "d12722fe654f355070b1821defcd3134621dfd04c6aaafd18043ca91d77f9628",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "target-tuple",
+    "file": "target-tuple.json",
+    "sha256": "abf3d06d53295235b24bf6a85846e6123f3b3f6efeca916c47652c1b0f56067d",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "target-format",
+    "file": "target-format.json",
+    "sha256": "d9256d6b457fb1629b263a912d01cf3cfd4235e0ad87aa950d0d3f188e3942f7",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "unknown-nested",
+    "file": "unknown-nested.json",
+    "sha256": "5b9a7375716b34d6cee84f116eff462ca940e77d5acc892928f2491a1ba4aacd",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "wrong-type",
+    "file": "wrong-type.json",
+    "sha256": "0511ee360aeee559607894279c894f3d3b44332a6144ad18628c0d38a20f49ec",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "root-uppercase",
+    "file": "root-uppercase.json",
+    "sha256": "5f610af6a7c5d4698a91c2dd9810b79e9f4efc7daaf77d12baa5f1ea9530ee33",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "root-command-binding",
+    "file": "root-command-binding.json",
+    "sha256": "7300746657d582a7236aafdd620b9baf3d658b51ca89e7018dce662253542aa2",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "root-kind",
+    "file": "root-kind.json",
+    "sha256": "ea6ed6332f206e424c3039ff38b07129dfb1825deb00314b597cf6f05642462d",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "kernel-release",
+    "file": "kernel-release.json",
+    "sha256": "a5a15521297c842c2302500cec4d8d60034ed87651de0a3b49e39824ed4c5361",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "launch-policy",
+    "file": "launch-policy.json",
+    "sha256": "4f4948aaedbbf96a1a17a84d0d1a63711dc8d3f7f689b1c166c91172ed7bf968",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "kernel-format",
+    "file": "kernel-format.json",
+    "sha256": "bb0954c821d900eea529434dd7829e232e8d87eca21aec7c7a27393a95560b29",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "initrd-format",
+    "file": "initrd-format.json",
+    "sha256": "8fe6bac7cfe73686cd7ad807978d395ad25990198ff8d67d42ce1003f918d371",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "initrd-compression",
+    "file": "initrd-compression.json",
+    "sha256": "82dc21ecae476fcfff386115f707c1d587bac45a0dd673a2b651bab1aede6a18",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "boot-name",
+    "file": "boot-name.json",
+    "sha256": "a8e57cfc5a78fbfd88a98099bc8bed6e9ea13e08fb9cf7a2efb0723ee5444aeb",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "boot-zero",
+    "file": "boot-zero.json",
+    "sha256": "53f22ad5a8065ab57bcdc20953c0d41db608115afe34ad3fbf91ebd3dadbd07a",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "boot-disk-binding",
+    "file": "boot-disk-binding.json",
+    "sha256": "15b1344cfd4b96de93276af0a2db6bc6ff908ec2e7e586d803f5c5bf8ee3cf99",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "endpoint-binding",
+    "file": "endpoint-binding.json",
+    "sha256": "66ecfea5f94dea95763d416fbcfa292f872c4d3a134d608781d813e1dfef0ecd",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "runtime-source",
+    "file": "runtime-source.json",
+    "sha256": "3093efa9d0ada51024fb70191701c75786ba0b86c54bd9e9e539e9b7707d7f60",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "chunk-name",
+    "file": "chunk-name.json",
+    "sha256": "20e228afbdcf947aac6b0424852fbea87530b02656ae1a9dd0c12e20769cedb3",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "chunk-order",
+    "file": "chunk-order.json",
+    "sha256": "cc0db841fccc415689c849f7e6b002e2cb94e611cffaf36b651e45d3dd9d32a4",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "chunk-zero",
+    "file": "chunk-zero.json",
+    "sha256": "ff81ca60e55f529560ce2eec464be083341594a9280c0c660bc2016d69841063",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "chunk-ceiling",
+    "file": "chunk-ceiling.json",
+    "sha256": "c4ab8f65c376510d36280ddab2ea063a8e85a4cb15747789a274b51b12e3ae84",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "chunk-total",
+    "file": "chunk-total.json",
+    "sha256": "168143c4e361b06803bb6a3e070e74c51c313d262d0862bbfd57d70475f0e443",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "chunk-hash",
+    "file": "chunk-hash.json",
+    "sha256": "2635c116c058143aeda500d9490e9b87ad1b8d70faaa18c87ce13a913e608e9c",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "component-schema",
+    "file": "component-schema.json",
+    "sha256": "46062e694d8c214d26e76f5a2d4b648cdfb4b555fe73baa0016c63317e4199fe",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "component-hash",
+    "file": "component-hash.json",
+    "sha256": "a620c6fa7fb931d454b42e91127ac1feca5831587576e8a1a121bbecb9345b3e",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "orka-source",
+    "file": "orka-source.json",
+    "sha256": "d7ee08f2d3512ed24f747a2526699ad0a8d7e0ebcd3a3b1c94fae9bcebf2a0b1",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "kubernetes-policy",
+    "file": "kubernetes-policy.json",
+    "sha256": "6a6b757b4837fb9db1c98bd79c9d369c7025fde4b4d6d1f6549d985a03d25515",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "vekil-digest",
+    "file": "vekil-digest.json",
+    "sha256": "9183880a583b851d889a782af81d4bd7378cc39f973d3602fd8d99e744b028b2",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "kind-binding",
+    "file": "kind-binding.json",
+    "sha256": "6a193bed0f71034961d43df708dc93cdef3ca5f11713593919475d58be3b6ee8",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "host-grammar",
+    "file": "host-grammar.json",
+    "sha256": "bc7fcdb546621a3fee72faa4738f0e27b40f1b3c32af41d0930fa3e8d6e67fa9",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "app-grammar",
+    "file": "app-grammar.json",
+    "sha256": "7d438f8020294c6a513d3d7b6ef4e7f5c54abc80be67fe2676b18a0d584176b8",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "tool-name",
+    "file": "tool-name.json",
+    "sha256": "d6f4c24bc7f265bd189b50ebadf8a888b3f655461d53b33f1e7ecdce21b34a4e",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "required-nullable-omitted",
+    "file": "required-nullable-omitted.json",
+    "sha256": "fbb06b99cb747d406455ae8fd778249ad033c4c9589d0b742070016506cd8469",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "required-nullable-null",
+    "file": "required-nullable-null.json",
+    "sha256": "9e1d165cd836bdb3c065d58452ac472995896d210d163bbf072a05707a79e0e5",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "required-nullable-hash",
+    "file": "required-nullable-hash.json",
+    "sha256": "47bcefa48d193467bbf89435895671a44c281b074fc42169b614769d61c1e4c7",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "state-id-harmless-dots",
+    "file": "state-id-harmless-dots.json",
+    "sha256": "30c9b54712dff13ce67c239583586e987553570cb2f8e06872931ed8b0dad06d",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "driver-role-0",
+    "file": "driver-role-0.json",
+    "sha256": "81e862026eb87afe038ce71b0ed1866fe7554288d627d8b01165fa393af5ebce",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "driver-role-1",
+    "file": "driver-role-1.json",
+    "sha256": "7a1005eaf490f96bccd7279850c9762ffe7b6ba4dcbfcef2578959e39414163d",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "driver-role-2",
+    "file": "driver-role-2.json",
+    "sha256": "480ef9d75b55fceb8c72512b8b572ae6ea7ada236f1fd64dabedfbb249c6a4cf",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "driver-role-3",
+    "file": "driver-role-3.json",
+    "sha256": "1e516d01d37171c67f1dda0d097fba2aa5540c9388a7c1da20d71da43e831fa7",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "driver-role-4",
+    "file": "driver-role-4.json",
+    "sha256": "6b0d32062c360d647e2f363a2dbc5fe79f00405e9dcc7605ad286b5860b0251a",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "driver-role-5",
+    "file": "driver-role-5.json",
+    "sha256": "609b3744cd526f7d00b18a14eb90692847ef195320ae04aa124b90e5da31d627",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "extractor-role-0",
+    "file": "extractor-role-0.json",
+    "sha256": "6ca7295e00665f52444aca66d280d48fd7f76d9c99b549a1b557c63cacae28f4",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "extractor-role-1",
+    "file": "extractor-role-1.json",
+    "sha256": "2e43f103c0ca5c71a9dbbb891eebb4c36be9aa3568c7d8d54b75894a2bc4249b",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "extractor-role-2",
+    "file": "extractor-role-2.json",
+    "sha256": "6f764bc290a3d38d08503f66a8c4127b5d8ee3e61aa0844a68e174bbd82f87af",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "extractor-role-3",
+    "file": "extractor-role-3.json",
+    "sha256": "09efe7d0c5561592a1118fe8e1de64b01dddf67d0ae5c6d04f8dc5009571db83",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "tools-order",
+    "file": "tools-order.json",
+    "sha256": "ec7144985e96476afdea014098e881b97732e18af9e2c5193c3486784d1c3c67",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "tools-duplicate",
+    "file": "tools-duplicate.json",
+    "sha256": "5e04ad73fce617e0631fcf9928129eab9ec0c0c725fdea0fa4bfccdb578ac0d8",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "extraction-version-binding",
+    "file": "extraction-version-binding.json",
+    "sha256": "76c51e76bca2dd3f0948f8d278911215ee97e2a60cdd7e243b9cc5a8ab960aa3",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "extraction-hash-binding",
+    "file": "extraction-hash-binding.json",
+    "sha256": "8f97a613a6e8b650e2c87c5b723dec372c3d1c33b115472c97593a1d14fbca5f",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "chunk-geometry",
+    "file": "chunk-geometry.json",
+    "sha256": "8e1d768c83e7d2b8f4d0d96b42fa5c350969fafd1a6c1ac9a306380a0d00afd7",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "h1-layout-osDisk-virtualCapacityBytes",
+    "file": "h1-layout-osDisk-virtualCapacityBytes.json",
+    "sha256": "585c72f1ccec21c42ccb1fcba0bc43dbab8a7111f6cdf8e084efede500dcf629",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "h1-layout-stateDisk-formatPolicy",
+    "file": "h1-layout-stateDisk-formatPolicy.json",
+    "sha256": "86a57ea3cab0d2ddc6763d15826901a453d55054418c6f8999ae73cfc5929a6a",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "h1-layout-transport-protocolMajor",
+    "file": "h1-layout-transport-protocolMajor.json",
+    "sha256": "9f438cefca21b36e29be201da2dcf39664900f2b73c5d8ab580c526927469b28",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "h1-layout-devices-entropy",
+    "file": "h1-layout-devices-entropy.json",
+    "sha256": "1a10bbcd6b6b13b593fb8bdd774bcdd61dc9fa0d64f1c6cf4c20355e9e4dc5cb",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "h1-layout-testResources-vcpus",
+    "file": "h1-layout-testResources-vcpus.json",
+    "sha256": "33b9a46adb9779a82ba9b03e0fb41598919798fb143895bd3a4602283a012d71",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "unicode-4096",
+    "file": "unicode-4096.json",
+    "sha256": "6b5a42597bd773c6ddadd99860458d9fee2a6bfc7384fbda7166dd1a8c603091",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "unicode-4097",
+    "file": "unicode-4097.json",
+    "sha256": "b627264a92206596ff0b09779da7eea6c938cff4d3d7d9d78f997e19a504e40c",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "allowed-controls",
+    "file": "allowed-controls.json",
+    "sha256": "44ab9fa173de907c3fab2ad34df285d7d52760092b34d4af83b8e71780f2df80",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "unicode-blank",
+    "file": "unicode-blank.json",
+    "sha256": "da7de691661fdcc18e58d98cf1716396086ca70f48d682f96c6bfbfcbd23d71a",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "python-blank-control",
+    "file": "python-blank-control.json",
+    "sha256": "f2c631c9025e513773b028bfb2f5171f081e72b88f5dd0945a7f5ffb6906cedd",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "forbidden-control",
+    "file": "forbidden-control.json",
+    "sha256": "4e754df14a9f76dca1dcf524706873e0ca1cd5fcffd309b1a4ca98de5e852b95",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "del-control",
+    "file": "del-control.json",
+    "sha256": "df5d0f7b244bd618fb04113d80ebd14bda72084b8dd6c3f7e999ecf541918bf6",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "zero-width-not-blank",
+    "file": "zero-width-not-blank.json",
+    "sha256": "6b1084520f90ad537cc25a45722b0ca2cdac158689116d13974e6feb98757c10",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "app-policy-01.2.3",
+    "file": "app-policy-01.2.3.json",
+    "sha256": "2a78989d1942c6a61946796ef586cefb766e4e4cf9680c478fdf319122b82ad0",
+    "structure": "valid",
+    "compatibility": "UnsupportedVersionPolicy"
+  },
+  {
+    "invariant": "app-policy-1.2.3-a..b",
+    "file": "app-policy-1.2.3-a..b.json",
+    "sha256": "58d76970260eb7135926c71ed6b83f1a0374cd8d9015e58db7fa927192e19888",
+    "structure": "valid",
+    "compatibility": "UnsupportedVersionPolicy"
+  },
+  {
+    "invariant": "app-policy-184467440737095516160.2.3",
+    "file": "app-policy-184467440737095516160.2.3.json",
+    "sha256": "32f8774b99b963ec0cdff00b61af09bc09f5149a32be30453834cd5ad53554fc",
+    "structure": "valid",
+    "compatibility": "UnsupportedVersionPolicy"
+  },
+  {
+    "invariant": "app-too-new",
+    "file": "app-too-new.json",
+    "sha256": "66ef0a15cdbc557245f312443d98fe4d507ba863b1d0e44b037700fefae776ee",
+    "structure": "valid",
+    "compatibility": "AppVersion"
+  },
+  {
+    "invariant": "app-prerelease",
+    "file": "app-prerelease.json",
+    "sha256": "9f5273e055f5f2cf2cee4c6d57f32a7555dd7d83c2b46612baf042276453eab8",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "app-prerelease-host",
+    "file": "app-prerelease-host.json",
+    "sha256": "9ff5058803c33f6b0f7fd47774ca06a0b5582a51458690d51463a8da41679043",
+    "structure": "valid",
+    "compatibility": "AppVersion",
+    "appVersion": "1.0.0-rc.1"
+  },
+  {
+    "invariant": "host-too-new",
+    "file": "host-too-new.json",
+    "sha256": "4549492d73077a52ebea36d6e2239e204a43069ce5bb350bb85e6fe49e0dd615",
+    "structure": "valid",
+    "compatibility": "HostVersion"
+  },
+  {
+    "invariant": "host-normalize",
+    "file": "host-normalize.json",
+    "sha256": "af2225057355bcd77562e6b6de2e175f276ceac56975c80abeae078357b1b51e",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "host-overflow",
+    "file": "host-overflow.json",
+    "sha256": "a1c3d9d9eb7199957991ecdce76f2f5132049d9c10e7a1bf792b52ec42ce4439",
+    "structure": "valid",
+    "compatibility": "HostVersion"
+  },
+  {
+    "invariant": "host-native-overflow",
+    "file": "host-native-overflow.json",
+    "sha256": "9e1d165cd836bdb3c065d58452ac472995896d210d163bbf072a05707a79e0e5",
+    "structure": "valid",
+    "compatibility": "compatible",
+    "hostVersion": "184467440737095516161.0"
+  },
+  {
+    "invariant": "duplicate-root",
+    "file": "duplicate-root.json",
+    "sha256": "e108a204b80fbf9f4a59f294c3323cd0a89599770a5553ac6f2be6acd87e774d",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "duplicate-nested-escaped",
+    "file": "duplicate-nested-escaped.json",
+    "sha256": "ae38a9def6d8e2a0d4e1833ae29f597ced6269582e1a6233d2706650685949dd",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "driver-extra",
+    "file": "driver-extra.json",
+    "sha256": "f993946240f5bdc067450624980038eecd502dd7b0eee930d2979432bfa0bc96",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "driver-missing",
+    "file": "driver-missing.json",
+    "sha256": "9d76c41cdbfe165de0ead838e30feeb21a430390682c521c140e6458a4d7a207",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "driver-boolean-type",
+    "file": "driver-boolean-type.json",
+    "sha256": "7488715f339d50c58336e8f88daf364f8ab096a76c2ffe40f1e25fa627f25529",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "extractor-extra",
+    "file": "extractor-extra.json",
+    "sha256": "fdcca4554780db3734e29d8792a4d29abdedbafe24c107045398bd55bacc0f09",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "extractor-missing",
+    "file": "extractor-missing.json",
+    "sha256": "c2df61eb1040320d5933bfabbba69efb4c54ddc67a23e24214ae48d2f497bc71",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "chunks-empty",
+    "file": "chunks-empty.json",
+    "sha256": "bab8e6f6a9ed80f030a8c7d085af2dd9513d3da67267929c7cb10ebb85a784c8",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "tools-empty",
+    "file": "tools-empty.json",
+    "sha256": "eecaf2aa29b91b05feb923726792309aa18ae8a63a6dd02ffa4699a583f0a9b6",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "source-provenance-component",
+    "file": "source-provenance-component.json",
+    "sha256": "20c490d8d0cf0a75608997aa3ceb215483028513240637ddfa9e14d66e627e10",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "required-nullable-type",
+    "file": "required-nullable-type.json",
+    "sha256": "24bf63d5b9ceebe8b2a6ddc65d0b75060709619fa11ca8bf337fb1adb1ea5014",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "tool-version-empty",
+    "file": "tool-version-empty.json",
+    "sha256": "556c9b73c0ced84062d0cf0bc46b95d95098590c5f8966c36af39920c56b34a2",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "tool-version-c1-allowed",
+    "file": "tool-version-c1-allowed.json",
+    "sha256": "30d4af88fa51ad0fa5425f41134b97b8565f29cb799a3436b1dbda73bfe33dba",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "app-exact-boundary",
+    "file": "app-exact-boundary.json",
+    "sha256": "9ff5058803c33f6b0f7fd47774ca06a0b5582a51458690d51463a8da41679043",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "host-exact-boundary",
+    "file": "host-exact-boundary.json",
+    "sha256": "68d4a364b03d31ca1a0f360d4a6b6aa5162426ead968a203391437db64b1cb59",
+    "structure": "valid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "host-patch-boundary",
+    "file": "host-patch-boundary.json",
+    "sha256": "b6bd8f441433534cc1a685810673d21538cc7bc0e3568820d33645a409783d70",
+    "structure": "valid",
+    "compatibility": "HostVersion"
+  },
+  {
+    "invariant": "unknown-root",
+    "file": "unknown-root.json",
+    "sha256": "8fdf1c68b61c157416cc01a4ee5d83964d3d8b5d2767e4057a5420f94429bb06",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "unknown-layout",
+    "file": "unknown-layout.json",
+    "sha256": "87f71d46c3eaff3ef8910f170fec61dd0d1850ab074dbdc3ea111899d02f7dc7",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  },
+  {
+    "invariant": "duplicate-array-escaped",
+    "file": "duplicate-array-escaped.json",
+    "sha256": "ad9cee7d3dbff7ddb8b8c5cbd0e413632ce2f97f63e64b139702df61898ed27a",
+    "structure": "invalid",
+    "compatibility": "compatible"
+  }
+]

@@ -1,0 +1,6 @@
+# Integrity pins refer to repository bytes, including on Windows checkouts.
+manifest.schema.json -text
+testdata/v2/*.json -text
+guest/versions.json text eol=lf
+guest/boot_assets.py text eol=lf
+guest/boot_inspect.py text eol=lf
