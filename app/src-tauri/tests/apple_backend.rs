@@ -4,7 +4,7 @@
 #[path = "../src/runtime/spawn_guard.rs"]
 pub mod spawn_guard;
 #[cfg(unix)]
-mod runtime {
+pub mod runtime {
     pub use crate::spawn_guard;
     pub mod credentials {
         include!("../src/runtime/credentials.rs");

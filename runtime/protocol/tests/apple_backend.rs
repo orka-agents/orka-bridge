@@ -3,7 +3,7 @@
 #[path = "../../../app/src-tauri/src/runtime/spawn_guard.rs"]
 pub mod spawn_guard;
 #[cfg(unix)]
-mod runtime {
+pub mod runtime {
     pub use crate::spawn_guard;
     pub mod credentials {
         include!("../../../app/src-tauri/src/runtime/credentials.rs");
