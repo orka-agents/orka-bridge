@@ -288,8 +288,79 @@ pub(super) fn private_directory(path: &Path) -> io::Result<File> {
 }
 
 #[cfg(test)]
+fn private_af_directory(path: &Path) -> io::Result<File> {
+    private_directory(path)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    fn directory_descriptor(path: &Path, dacl: &str) {
+        unsafe {
+            let token = current_token(TOKEN_QUERY).unwrap();
+            let u = user(token.0).unwrap();
+            let sid = (*(u.as_ptr().cast::<TOKEN_USER>())).User.Sid;
+            let mut text = std::ptr::null_mut();
+            check(ConvertSidToStringSidW(sid, &mut text)).unwrap();
+            let allocated = Local(text.cast());
+            let mut n = 0;
+            while *text.add(n) != 0 {
+                n += 1;
+            }
+            let sid = String::from_utf16(std::slice::from_raw_parts(text, n)).unwrap();
+            let sddl = format!("O:{sid}{}", dacl.replace("USER", &sid));
+            let mut sd = std::ptr::null_mut();
+            check(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                wide(&sddl).unwrap().as_ptr(),
+                1,
+                &mut sd,
+                std::ptr::null_mut(),
+            ))
+            .unwrap();
+            let sd = Local(sd);
+            let sa = SECURITY_ATTRIBUTES {
+                nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: sd.0,
+                bInheritHandle: 0,
+            };
+            check(windows_sys::Win32::Storage::FileSystem::CreateDirectoryW(
+                wide_path(path).unwrap().as_ptr(),
+                &sa,
+            ))
+            .unwrap();
+            drop(allocated);
+        }
+    }
+    #[test]
+    fn af_directory_requires_protection_effective_oici_and_exact_principals() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = root.path().join("parent");
+        // No inheritable ACEs: the unprotected child really has only its two ACEs.
+        directory_descriptor(&parent, "D:P(A;;FA;;;USER)(A;;FA;;;SY)");
+        for (name, dacl, expected) in [
+            ("good", "D:P(A;OICI;FA;;;USER)(A;OICI;FA;;;SY)", true),
+            ("unprotected", "D:(A;OICI;FA;;;USER)(A;OICI;FA;;;SY)", false),
+            (
+                "no-propagate",
+                "D:P(A;OICINP;FA;;;USER)(A;OICINP;FA;;;SY)",
+                false,
+            ),
+            (
+                "inherit-only",
+                "D:P(A;OICIIO;FA;;;USER)(A;OICIIO;FA;;;SY)",
+                false,
+            ),
+            (
+                "extra",
+                "D:P(A;OICI;FA;;;USER)(A;OICI;FA;;;SY)(A;OICI;FA;;;WD)",
+                false,
+            ),
+        ] {
+            let path = parent.join(name);
+            directory_descriptor(&path, dacl);
+            assert_eq!(private_af_directory(&path).is_ok(), expected, "{name}");
+        }
+    }
     #[test]
     fn restricting_sids_are_exactly_user_system_and_restricted() {
         unsafe {

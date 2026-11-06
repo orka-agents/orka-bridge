@@ -1,6 +1,44 @@
 use super::inputs::{invalid, VerifiedWindowsInputs};
 use crate::runtime::types::{BackendKind, LaunchSpec, RuntimeError};
-use std::{ffi::OsString, path::Path};
+use std::{
+    ffi::OsString,
+    io,
+    path::{Path, PathBuf},
+};
+
+/// AF_UNIX uses a fixed 108-byte UTF-8 field, including the terminating NUL.
+pub fn validate_control_path(path: &Path) -> io::Result<PathBuf> {
+    let invalid = || {
+        io::Error::new(io::ErrorKind::InvalidInput,
+        "AF_UNIX requires an absolute local UTF-8 endpoint of at most 107 bytes; choose a shorter private endpoint root")
+    };
+    if !path.is_absolute() {
+        return Err(invalid());
+    }
+    let text = path.to_str().ok_or_else(invalid)?;
+    #[cfg(windows)]
+    let text = {
+        use std::path::{Component, Prefix};
+        match path.components().next() {
+            Some(Component::Prefix(p))
+                if matches!(p.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_)) => {}
+            _ => return Err(invalid()),
+        }
+        text.strip_prefix("\\\\?\\").unwrap_or(text)
+    };
+    if text.contains('\0') || text.len() >= 108 {
+        return Err(invalid());
+    }
+    Ok(PathBuf::from(text))
+}
+/// A fresh directory per launch prevents stale socket reuse; no prior file is unlinked.
+pub fn control_path(root: &Path, nonce: bridge_runtime_protocol::Uuid) -> io::Result<PathBuf> {
+    validate_control_path(
+        &root
+            .join(format!("c-{}", nonce.to_string().replace('-', "")))
+            .join("s"),
+    )
+}
 pub fn qemu_value(path: &Path) -> Result<String, RuntimeError> {
     let s = path.to_str().ok_or_else(invalid)?;
     if s.contains('\0') {
@@ -62,18 +100,17 @@ pub fn validate_qcow2_info(bytes: &[u8], expected: u64) -> Result<(), RuntimeErr
 pub fn launch_argv(
     inputs: &VerifiedWindowsInputs,
     spec: &LaunchSpec,
-    pipe: &str,
+    socket: &str,
 ) -> Result<Vec<OsString>, RuntimeError> {
     if spec.backend != BackendKind::Qemu
         || spec.machine_id != b"pc-q35-11.0"
         || spec.state_bytes != 32 * 1024 * 1024 * 1024
         || !spec.root.is_absolute()
         || spec.state_path != spec.root.join("state.disk")
-        || pipe.is_empty()
-        || !pipe.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
     {
         return Err(invalid());
     }
+    let socket = validate_control_path(Path::new(socket))?;
     let mut args: Vec<OsString> = vec![];
     let mut pair = |a: &str, b: OsString| {
         args.push(a.into());
@@ -134,7 +171,14 @@ pub fn launch_argv(
         format!("virtio-net-pci,netdev=net,mac={mac},romfile=").into(),
     );
     pair("-device", "virtio-rng-pci".into());
-    pair("-chardev", format!("pipe,id=guest,path={pipe}").into());
+    pair(
+        "-chardev",
+        format!(
+            "socket,id=guest,path={},server=on,wait=off",
+            qemu_value(&socket)?
+        )
+        .into(),
+    );
     pair("-device", "virtio-serial-pci,id=control".into());
     pair(
         "-device",

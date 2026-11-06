@@ -275,7 +275,8 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
         machine_id: b"pc-q35-11.0".to_vec(),
         mac: [2, 0, 0, 0, 0, 1],
     };
-    let args = launch_argv(&inputs, &spec, "bridge-test").unwrap();
+    let socket = t.path().join("control.sock");
+    let args = launch_argv(&inputs, &spec, socket.to_str().unwrap()).unwrap();
     let strs: Vec<_> = args.iter().map(|x| x.to_str().unwrap()).collect();
     let value = |key| strs[strs.iter().position(|x| *x == key).unwrap() + 1];
     assert_eq!(
@@ -289,6 +290,8 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
     assert_eq!(value("-L"), expected_data.to_str().unwrap());
     assert_eq!(value("-accel"), "whpx");
     assert_eq!(value("-qmp"), "stdio");
+    assert_eq!(value("-chardev"), format!("socket,id=guest,path={},server=on,wait=off", qemu_value(&socket).unwrap()));
+    assert!(!strs.iter().any(|a| a.starts_with("pipe,id=guest") || a.contains("reconnect=")));
     assert_eq!(value("-machine"), "pc-q35-11.0,usb=off");
     assert_eq!(value("-display"), "none");
     assert_eq!(value("-monitor"), "none");
@@ -311,7 +314,7 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
         .any(|a| a.contains("pflash") || a.contains("tcg") || a.contains("wsl")));
     let mut wrong = spec.clone();
     wrong.backend = BackendKind::Apple;
-    assert!(launch_argv(&inputs, &wrong, "bridge-test").is_err());
+    assert!(launch_argv(&inputs, &wrong, socket.to_str().unwrap()).is_err());
 }
 #[test]
 fn spaces_unicode_and_commas_are_literal() {
@@ -324,6 +327,29 @@ fn spaces_unicode_and_commas_are_literal() {
         "\"a b\\\\\\\"c\\\\\""
     );
     assert!(quote_windows_arg("x\0y").is_err());
+}
+#[test]
+fn af_endpoint_paths_are_unique_utf8_and_bounded() {
+    let root = tempfile::tempdir().unwrap();
+    let first = control_path(root.path(), Uuid::new_v4()).unwrap();
+    let second = control_path(root.path(), Uuid::new_v4()).unwrap();
+    assert_ne!(first, second);
+    assert_eq!(first.file_name().unwrap(), "s");
+    assert_eq!(first.parent().unwrap().file_name().unwrap().to_str().unwrap().len(), 34);
+    let prefix = root.path().to_str().unwrap().len() + 1;
+    let at_limit = root.path().join("x".repeat(107 - prefix));
+    assert!(validate_control_path(&at_limit).is_ok());
+    let too_long = root.path().join("x".repeat(108 - prefix));
+    assert!(validate_control_path(&too_long).unwrap_err().to_string().contains("107 bytes"));
+    assert!(validate_control_path(&root.path().join("é")).is_ok());
+    assert!(validate_control_path(&PathBuf::from("relative.sock")).is_err());
+    assert!(validate_control_path(&root.path().join("bad\0socket")).is_err());
+}
+#[cfg(windows)]
+#[test]
+fn af_endpoint_rejects_remote_paths_and_normalizes_local_verbatim_prefix() {
+    assert!(validate_control_path(&PathBuf::from(r"\\server\share\s")).is_err());
+    assert_eq!(validate_control_path(&PathBuf::from(r"\\?\C:\private\s")).unwrap(), PathBuf::from(r"C:\private\s"));
 }
 #[test]
 fn qcow2_backing_chain_wrong_capacity_or_dirty_image_refuses() {
