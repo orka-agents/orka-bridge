@@ -23,11 +23,18 @@ pub struct ImageCache {
     #[cfg(test)]
     available: Option<u64>,
 }
+struct OwnerLock(File);
+impl Drop for OwnerLock {
+    fn drop(&mut self) {
+        // A forked child may retain the file description until exec; it is not an owner.
+        let _ = self.0.unlock();
+    }
+}
 pub struct CacheTransaction {
     directory: Dir,
     stage: Dir,
     image: ResolvedImage,
-    _lock: File,
+    _lock: OwnerLock,
     published: bool,
     #[cfg(test)]
     point: Option<tests::recovery::Point>,
@@ -292,6 +299,7 @@ impl ImageCache {
             std::fs::TryLockError::WouldBlock => ImageError::Busy,
             std::fs::TryLockError::Error(e) => storage(e),
         })?;
+        let lock = OwnerLock(lock);
         if marker(&directory, "ready.json", &record(image, "ready"))? {
             return Err(ImageError::RetainedImage);
         }

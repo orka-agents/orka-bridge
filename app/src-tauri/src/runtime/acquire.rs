@@ -205,20 +205,29 @@ pub async fn acquire_image(
     if client.pin.manifest_sha256 != image.identity().manifest_sha256 {
         return Err(ImageError::Invalid("image client pin"));
     }
-    let (store, descriptor, stop) = (cache.clone(), image.clone(), closed.clone());
     progress(ImageProgress::Verifying);
-    if let Some(set) = blocking(move || store.verified_checked(&descriptor, Some(&stop))).await? {
-        progress(ImageProgress::Verified);
-        return Ok(set);
-    }
-    let (store, descriptor, stop) = (cache.clone(), image.clone(), closed.clone());
-    let tx = std::sync::Arc::new(
-        blocking(move || {
+    let mut reconciled = false;
+    let tx = loop {
+        let (store, descriptor, stop) = (cache.clone(), image.clone(), closed.clone());
+        if let Some(set) =
+            blocking(move || store.verified_checked(&descriptor, Some(&stop))).await?
+        {
+            progress(ImageProgress::Verified);
+            return Ok(set);
+        }
+        let (store, descriptor, stop) = (cache.clone(), image.clone(), closed.clone());
+        match blocking(move || {
             super::image_cache::verification::cancelled(&stop)?;
             store.begin(&descriptor)
         })
-        .await?,
-    );
+        .await
+        {
+            Ok(owner) => break std::sync::Arc::new(owner),
+            // Another owner may commit between the optimistic read and try_lock.
+            Err(ImageError::RetainedImage) if !reconciled => reconciled = true,
+            Err(error) => return Err(error),
+        }
+    };
     let total = image.assets().iter().try_fold(0u64, |n, a| {
         n.checked_add(a.bytes()).ok_or(ImageError::LimitExceeded)
     })?;

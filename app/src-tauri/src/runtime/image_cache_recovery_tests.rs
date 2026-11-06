@@ -1,5 +1,65 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn transaction_drop_releases_ownership_even_while_a_fork_child_holds_the_fd() {
+    const KEY: &str = "BRIDGE_TEST_IMAGE_CACHE_FORK_CHILD";
+    if std::env::var_os(KEY).is_none() {
+        // Keep the controlled fork away from unrelated journals in the parent test process.
+        let name = format!(
+            "{}::transaction_drop_releases_ownership_even_while_a_fork_child_holds_the_fd",
+            module_path!().split_once("::").unwrap().1
+        );
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &name, "--nocapture"])
+            .env(KEY, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return;
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let cache = ImageCache::open(&temp.path().join("cache")).unwrap();
+    let image = image();
+    let owner = cache.begin(&image).unwrap();
+    let mut pipe = [0; 2];
+    assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+    let pid = unsafe { libc::fork() };
+    assert!(pid >= 0);
+    if pid == 0 {
+        unsafe {
+            libc::close(pipe[1]);
+            let mut byte = 0u8;
+            libc::read(pipe[0], (&mut byte as *mut u8).cast(), 1);
+            libc::_exit(0)
+        }
+    }
+    unsafe {
+        libc::close(pipe[0]);
+    }
+    drop(owner);
+    let reopened = cache.begin(&image);
+    let message = reopened.as_ref().err().cloned();
+    let sent = unsafe { libc::write(pipe[1], b"x".as_ptr().cast(), 1) };
+    unsafe {
+        libc::close(pipe[1]);
+    }
+    let mut status = 0;
+    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+    assert_eq!(sent, 1);
+    assert_eq!(waited, pid);
+    assert_eq!(status, 0);
+    assert!(
+        reopened.is_ok(),
+        "cache owner drop retained by inherited fd: {message:?}"
+    );
+}
+
 #[test]
 fn symlinks_or_junctions_in_pin_stage_or_generation_are_never_adopted() {
     for component in ["pin", "stage", "generation"] {
@@ -281,5 +341,7 @@ fn a_crash_before_manifest_publication_recovers_the_same_staging_directory() {
         image.manifest_bytes()
     );
     drop(tx);
-    assert!(cache.begin(&image).is_ok());
+    cache
+        .begin(&image)
+        .expect("owned staging retry after transaction drop");
 }

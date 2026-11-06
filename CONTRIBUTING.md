@@ -56,8 +56,9 @@ not yet select a live image catalog, populate a cache or activate an image.
 
 Native Rust callers can acquire a resolved pinned image into an app-local-data
 cache. Complete chunks resume only for the same manifest and are rehashed before
-reuse. Progress reports cumulative available asset bytes, including reused
-chunks, then verification and image completion; it does not report setup readiness.
+reuse. Progress starts with a cache verification check, reports cumulative
+available asset bytes for any acquisition, including reused chunks, then final
+verification and image completion. It does not report setup readiness.
 A complete cached set is revalidated and reused without HTTP, including after a
 restart. Corrupt cached bytes fail closed rather than triggering a fallback.
 
