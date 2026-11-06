@@ -38,11 +38,12 @@ an individual worker image or executable. A bundle cannot self-assert
 that it supports the release. Source qualification and production stay distinct.
 
 For source qualification, use the existing same-commit development descriptor
-from [the successful #833 build](https://github.com/orka-agents/orka/actions/runs/41533123834),
+from [the restricted-worker build](https://github.com/orka-agents/orka/actions/runs/42129731205),
 whose `sourceSHA` matches `versions.json`. It records the controller, AI worker,
 general-worker and publisher indexes for both architectures; select their
-platform children and record the actual byte hashes. Package that commit's
-staged source chart, not the older checked-in release chart. A local rebuild
+platform children and record the actual byte hashes. Restore the exact pinned
+staged chart using [kmx's retained-chart extraction instructions](https://github.com/kaimahi-agents/kaimahi/blob/fc811336bfdf4d972525eb78f1cba8a7b7e45b19/docs/kmx.md#source-packaged-restricted-profile),
+not a fresh Helm package or the older checked-in release chart. A local rebuild
 instead requires approved **native builders for each architecture**; no builder
 is provisioned here. Obtain the session loader, node,
 Vekil, Telegram and Teams from their selected upstream sources; missing ARM64
@@ -294,9 +295,12 @@ To enable the native six-role profile, select additional hash-locked tools `kmx`
 `helm`, `kubectl`, `kmx-offline-manifest` and `orka-images`. The manifest is the
 original supported `kmx-offline/v1` install.json, selected by hash, not another
 Bridge schema. Its source, platform, complete profile, chart, descriptor, tool and
-six image identities must agree with the input lock. Source qualification uses
-kmx 4844d8dbead61bd70331f52b17ab25afb7d7a463 and Orka 59703d6e; it does not approve
-a production release. Missing tools or references fail rather than download.
+six image identities must agree with the input lock. Source bundles use the
+`versions.json` pins: kmx `fc811336bfdf4d972525eb78f1cba8a7b7e45b19`, Orka
+`7916cd1c8c083ade6b10df6ba408f854d930190c` and profile
+`orka-7916cd1c-native/v1`. The profile selects restricted AI-worker RBAC and
+controller context-token enforcement. This does not approve a production release.
+Missing tools or references fail rather than download.
 
 Assembly normalizes the six OCI archive references with the existing collector,
 retaining original manifest/config/layer bytes. The node additionally becomes a

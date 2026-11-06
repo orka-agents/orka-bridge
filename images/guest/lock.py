@@ -110,6 +110,21 @@ def input_identity(lock: dict) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def validate_source_offline(lock, manifest=None):
+    """The selected source bundle must match reviewed pins, not its own assertions."""
+    if lock['orka']['mode'] != 'source':
+        return
+    selected = VERSIONS['sourceOfflineProfile']
+    tools = {t['name']: t for t in lock['tools']}
+    require({'kmx', 'orka-images', 'kmx-offline-manifest'} <= tools.keys(), 'source offline tools required')
+    require(lock['kmxProfileSha256'] == selected['profileSha256']
+            and lock['orka']['chartSha256'] == selected['chartSha256']
+            and tools['orka-images']['sha256'] == selected['artifactsSha256'], 'source offline profile pins differ')
+    if manifest is not None:
+        require(manifest['profile'] == selected['profile']
+                and manifest['kmx']['revision'] == selected['kmxSourceCommit'], 'source offline profile or kmx revision differs')
+
+
 def validate_lock(lock: dict, *, production: bool) -> None:
     shape(lock, ("schemaVersion", "architecture", "sourceCommit", "orka", "components", "packages", "tools", "nodeLocalRef", "kmxProfileSha256"))
     require(lock["schemaVersion"] == "bridge-guest-inputs/v1", "unsupported input schema")
@@ -156,6 +171,8 @@ def validate_lock(lock: dict, *, production: bool) -> None:
     require("kind" in tools and tools["kind"]["version"] == VERSIONS["kind"], "kind version mismatch")
     bases = [p for p in lock["packages"] if p["name"] == "debian-base"]
     require(len(bases) == 1 and bases[0]["version"] == VERSIONS["debianBase"], "Debian base version mismatch")
+    if orka["mode"] == "source" and "kmx-offline-manifest" in tools:
+        validate_source_offline(lock)
     if orka["mode"] == "release":
         require(approved.get(lock["architecture"]) == input_identity(lock), "release profile input identity mismatch")
 

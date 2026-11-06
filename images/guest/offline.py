@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING
 
 if __package__ or TYPE_CHECKING:
     from .cache import encoded, inspect_archive, write_archive
-    from .lock import checked_file, file_hash, read_json, relative_path, require
+    from .lock import checked_file, file_hash, read_json, relative_path, require, validate_source_offline
 else:
     from cache import encoded, inspect_archive, write_archive
-    from lock import checked_file, file_hash, read_json, relative_path, require
+    from lock import checked_file, file_hash, read_json, relative_path, require, validate_source_offline
 
 NATIVE = {'kind-node', 'controller', 'ai-worker', 'general-worker', 'publisher', 'session-loader'}
 
@@ -61,6 +61,7 @@ def stage_bundle(lock, *, source, out):
     paths = {name: checked_file(source, tools[name]['path'], tools[name]['sha256']) for name in ('kmx', 'kind', 'helm', 'kubectl', 'kmx-offline-manifest', 'orka-images')}
     original = paths['kmx-offline-manifest'].read_bytes()
     manifest = read_json(original)
+    validate_source_offline(lock, manifest)
     require(manifest['schemaVersion'] == 'kmx-offline/v1' and manifest['profileSha256'] == lock['kmxProfileSha256'], 'offline profile identity mismatch')
     require(manifest['platform'] == {'os': 'linux', 'architecture': lock['architecture']} and manifest['orka'] == {'mode': lock['orka']['mode'], 'identity': lock['orka']['identity']}, 'offline source identity mismatch')
     require(manifest['node']['localRef'] == lock['nodeLocalRef'], 'node tag identity mismatch')
