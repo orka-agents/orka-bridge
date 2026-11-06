@@ -205,10 +205,8 @@ private struct Tests {
         }
         do {
             let h = Harness(q); h.running(); h.core.receive(frame(83,1))
-            // Fault injection: close(2) failure must not produce a success ACK.
-            _ = close(h.fd)
-            h.driver.complete(.stopped)
-            check(h.trace.writes.last == frame(69,1) && h.trace.terminal == [false], "failed ownership close emitted K")
+            h.driver.complete(.failed, false)
+            check(h.trace.writes.last == frame(69,1) && h.trace.terminal == [false], "native stop error emitted K")
         }
         do {
             var h: Harness? = Harness(q)
