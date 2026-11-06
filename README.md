@@ -20,7 +20,7 @@ app being built incrementally through pull requests.
 ## The first hour
 
 Open Bridge and it starts a local Orka environment for you, or connects to a cluster you already have. An example agent is ready to use, with a prompt, the
-`web_search` tool enabled, and a test that requires a search to pass.
+`web_fetch` tool enabled, and a test that only passes if the agent fetches a page.
 
 Click Run to execute the test on your Orka, local or connected. You'll see whether it passed, along with the tool calls. Change the
 prompt, add your own tests, and run them again.
