@@ -1,7 +1,7 @@
 # Standalone Windows native-premises check
 
 This bounded driver targets **only**
-`ef0e8da9d07442e419f474c028f07dc2f317ea2d`. Its own driver revision is recorded
+`8d727a4c74808cf9785c764e87c45bf264c6f822`. Its own driver revision is recorded
 separately. CI builds Rust **1.98.1 MSVC x64 with static CRT**; the operator needs
 no Rust, Visual Studio, Git for Windows, Python, or helper script.
 

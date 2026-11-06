@@ -11,14 +11,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import verify
 
-SOURCE_HEAD = "ef0e8da9d07442e419f474c028f07dc2f317ea2d"
+SOURCE_HEAD = "8d727a4c74808cf9785c764e87c45bf264c6f822"
 PRODUCER_HEAD = "006b30f02a3c9cec61f8f3cc32fde6b0d248fc34"
 PRODUCER_RUN = 42120608528
 PRODUCER_FILES = (*verify.ARCHIVES, "SHA256SUMS", "build-report.json", "verification.json")
 BUNDLE_FILES = (*PRODUCER_FILES, "bridge-native-premises.exe", "runtime-pin.json",
                 "producer-run.json", "bundle-provenance.json", "independent-verification.json",
                 "build.log", "probe-dependents.txt", "producer-watch.log",
-                "ci-stdout.txt", "ci-stderr.txt", "ci-controller.json")
+                "ci-stdout.txt", "ci-stderr.txt", "ci-controller.json",
+                "ci-owned-pipe-stdout.txt", "ci-owned-pipe-stderr.txt")
 
 
 def write_json(path, value):

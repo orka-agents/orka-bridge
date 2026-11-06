@@ -20,6 +20,8 @@ mod native {
     mod controller;
     #[path = "loader_trace.rs"]
     mod loader_trace;
+    #[path = "owned_pipe_trial.rs"]
+    mod owned_pipe_trial;
     #[path = "permission_diag.rs"]
     mod permission_diag;
     use crate::runtime::{
@@ -369,7 +371,16 @@ mod native {
             ))?;
             return emit(json!({"sourceHead":crate::SOURCE_HEAD,"lock":"busy"}));
         }
-        check(["smoke", "hold-created", "hold-pipe", "hold-guard-only"].contains(&mode.as_str()))?;
+        check(
+            [
+                "smoke",
+                "hold-created",
+                "hold-pipe",
+                "hold-guard-only",
+                "try-owned-pipe",
+            ]
+            .contains(&mode.as_str()),
+        )?;
         let diagnostic_runtime = cfg.paths.runtime.clone();
         let paths = WindowsInputPaths {
             runtime: cfg.paths.runtime,
@@ -386,6 +397,12 @@ mod native {
         .map_err(io::Error::other)?;
         let spec = runtime::probe_spec(&journal);
         let name = format!("bridge-premise-{}", bridge_runtime_protocol::Uuid::new_v4());
+        // Trial-only host server exists and is already listening BEFORE QEMU starts.
+        let mut owned_pipe = if mode == "try-owned-pipe" {
+            Some(owned_pipe_trial::Listener::create(&name)?)
+        } else {
+            None
+        };
         let mut argv: Vec<OsString> = [
             "--preconfig",
             "-machine",
@@ -488,6 +505,38 @@ mod native {
             }
         }
         let mut status = json!({"sourceHead":crate::SOURCE_HEAD,"pid":unsafe{GetProcessId(process.raw())},"creationTime":creation_time(process.raw())?,"mode":mode,"pipe":name,"root":root,"inherited":inherited,"restrictedPrimary":true,"whpxUsability":"not-tested"});
+        if let Some(listener) = owned_pipe.as_mut() {
+            let until = Instant::now() + Duration::from_secs(30);
+            let attached = loop {
+                if listener.connected(process.raw())? {
+                    break true;
+                }
+                if child.exited() {
+                    // Do not classify a connect/exit race as failure to attach.
+                    break listener.connected(process.raw())?;
+                }
+                check(Instant::now() < until)?;
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            if attached {
+                child.abort()?;
+            }
+            child.wait_exit(Duration::from_secs(45))?;
+            let mut exit = 0;
+            unsafe {
+                win(GetExitCodeProcess(process.raw(), &mut exit))?;
+            }
+            // Permit the bounded stderr pump to observe EOF, without consuming QMP.
+            let until = Instant::now() + Duration::from_secs(1);
+            while errors.lock().unwrap().is_empty() && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let stderr = String::from_utf8_lossy(&errors.lock().unwrap()).into_owned();
+            drop(owned_pipe); // Cancel + observe pending ConnectNamedPipe completion.
+            return emit(
+                json!({"sourceHead":crate::SOURCE_HEAD,"trialOnly":true,"backendAttached":attached,"qemuExitCode":exit,"qemuExitObserved":true,"bridgePipeProtected":true,"bridgePipeUserSystemOnly":true,"rejectRemoteClientsFlag":true,"firstInstance":true,"overlappedCompletionObserved":true,"stderr":stderr}),
+            );
+        }
         if mode == "hold-guard-only" {
             let identity =
                 runtime::identity::file_identity(&spec.ownership).map_err(io::Error::other)?;

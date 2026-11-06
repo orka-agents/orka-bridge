@@ -21,7 +21,7 @@ impl Drop for Watch {
     }
 }
 
-fn caller() -> io::Result<(Value, String)> {
+pub(super) fn caller() -> io::Result<(Value, String)> {
     unsafe {
         let mut raw = std::ptr::null_mut();
         win(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw))?;
@@ -292,7 +292,8 @@ fn one(mode: &str, packet: &Path, root: &Path) -> io::Result<Value> {
     Ok(v)
 }
 pub(super) fn run(args: &[String]) -> io::Result<()> {
-    check(args.len() == 3)?;
+    let trial = args.len() == 4 && args[3] == "--owned-pipe-trial";
+    check(args.len() == 3 || trial)?;
     let runtime = PathBuf::from(&args[0]);
     let pin = PathBuf::from(&args[1]);
     let work = PathBuf::from(&args[2]);
@@ -301,6 +302,17 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
     contain_controller()?;
     private_root(&work, &sid)?;
     let (packet, trusted) = packet(&runtime, &pin, &work)?;
+    if trial {
+        let result = one("try-owned-pipe", &packet, &work.join("owned-pipe"))?;
+        let receipt = json!({"status":"trial-only","sourceHead":crate::SOURCE_HEAD,"caller":caller,"probeSha256":digest(&fs::read(std::env::current_exe()?)?),"runtimeZipSha256":trusted["runtimeZipSha256"],"producerRun":trusted["producerRun"],"guestBoot":false,"whpxUsability":"not-tested","ownedPipeTrial":result});
+        fs::write(
+            work.join("receipt.json"),
+            serde_json::to_vec_pretty(&receipt).map_err(io::Error::other)?,
+        )?;
+        emit(receipt)?;
+        eprintln!("DIAGNOSTIC ONLY: host-owned pipe backend trial, not native qualification");
+        return Ok(());
+    }
     let mut cases = Vec::new();
     eprintln!("Native no-VM smoke at {}", crate::SOURCE_HEAD);
     let smoke = one("smoke", &packet, &work.join("smoke,é space"))?;

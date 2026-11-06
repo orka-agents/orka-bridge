@@ -4,7 +4,7 @@ fn main() {
         .join("../../../../../native-source")
         .canonicalize()
         .unwrap();
-    const EXPECTED: &str = "ef0e8da9d07442e419f474c028f07dc2f317ea2d";
+    const EXPECTED: &str = "8d727a4c74808cf9785c764e87c45bf264c6f822";
     let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(&repo)
@@ -38,7 +38,7 @@ fn main() {
         s += &format!("#[path={p:?}] pub mod {name};");
     }
     s += r#"pub(crate) fn check_token(h:windows_sys::Win32::Foundation::HANDLE)->std::io::Result<()> {unsafe {use windows_sys::Win32::Security::*;use windows_sys::Win32::System::Threading::*;let mut raw=std::ptr::null_mut();security::check(OpenProcessToken(h,TOKEN_QUERY,&mut raw))?;let token=security::Handle::new(raw)?;let mut kind=0i32;let mut n=0;security::check(GetTokenInformation(token.raw(),TokenType,(&mut kind as *mut i32).cast(),4,&mut n))?;if IsTokenRestricted(token.raw())==0 || kind!=TokenPrimary{return Err(std::io::ErrorKind::PermissionDenied.into())} Ok(())}} "#;
-    s+="pub(crate) fn check_pipe(h:windows_sys::Win32::Foundation::HANDLE)->std::io::Result<()> {security::private_object(h,true)} }}";
+    s+="pub(crate) fn check_pipe(h:windows_sys::Win32::Foundation::HANDLE)->std::io::Result<()> {security::private_object(h,true,windows_sys::Win32::Security::Authorization::SE_KERNEL_OBJECT)} }}";
     fs::write(
         PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("source.rs"),
         s,
