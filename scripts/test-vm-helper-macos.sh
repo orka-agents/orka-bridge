@@ -9,6 +9,9 @@ sources=("$native/BridgeVM.swift" "$native/VirtualizationDriver.swift"
          "$native/InheritedDescriptors.swift" "$native/SupervisorSocket.swift" "$native/TerminationObserver.swift"
          "$native/HelperConfiguration.swift" "$native/HelperBootstrap.swift")
 flags=(-swift-version 5 -target arm64-apple-macos13.0 -warnings-as-errors -parse-as-library)
+# Compile the shipping entrypoint separately; tests have their own mains.
+xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/BridgeVMMain.swift" -o "$work/BridgeVM"
+codesign --force --sign - --entitlements "$native/virtualization.entitlements" "$work/BridgeVM"
 # Compile the production core independently of test code as well as in the runner.
 xcrun swiftc "${flags[@]}" -whole-module-optimization -emit-object "${sources[@]}" -o "$work/BridgeVM.o"
 xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/tests/BridgeVMTests.swift" -o "$work/tests"

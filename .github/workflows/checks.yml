@@ -72,6 +72,11 @@ jobs:
           key: app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock') }}
       - run: npm ci
       - run: npm run build
+      - name: Apple helper build and tests
+        if: runner.os == 'macOS'
+        run: |
+          bash ../scripts/build-vm-helper-macos.sh
+          bash ../scripts/test-vm-helper-macos.sh
       - name: Rust checks
         run: |
           cargo +1.98.1 fmt --manifest-path src-tauri/Cargo.toml --all -- --check

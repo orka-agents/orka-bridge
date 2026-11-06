@@ -1,44 +1,89 @@
-# Private Apple helper core
+# Private Apple helper
 
-`BridgeVM` owns lifecycle and the existing private v1 supervisor policy. It is
-production helper code, not an app backend registration or executable launcher.
-`VirtualizationDriver` validates a complete native configuration before creating
-a VZ VM, on the same serial queue used by the core. Tests use deferred fake VM
-operations; no test creates a valid native VM or boots a guest.
+The standalone `BridgeVM` executable composes the lifecycle core, native driver,
+inherited capabilities, supervisor socket and helper-only TERM observer on one
+serial queue. It is bundled but is not registered or launched by the app. No
+Setup, Run, credential delivery or guest handshake is connected here.
 
-Run `bash scripts/test-vm-helper-macos.sh` from the repository root on Apple silicon.
-It compiles production sources independently, then runs the actual-source tests
-with a macOS 13 minimum target and warnings treated as errors.
+## Build and resources
 
-The future verified bootstrap must transfer a configured, unstarted driver and
-an inherited ownership FD, retaining no other VM/configuration references. It
-uses `InheritedDescriptors` to borrow and validate the parent's three FD arguments.
-`SupervisorSocket` takes the supervisor FD, enables nonblocking writes and suppresses
-SIGPIPE. Its sink returns true only for a completed full write; partial writes fail
-without replay. Create the socket and helper-only `TerminationObserver` before
-transferring ownership to the configured core. Bind the read and peer-loss callbacks,
-then use `observer.whenRegistered { core.start() }` to wait for kernel signal
-registration; resuming a dispatch source alone is not that observation. The readiness
-callback holds the unstarted core until registration and is cleared before use or
-on cancellation. All components receive the same serial queue; the supervisor never
-reads the guest endpoint.
+On Apple silicon with the Xcode Swift compiler installed:
 
-The socket cancel handler closes its FD only after active read handlers drain.
-The TERM observer restores the prior disposition after its handlers drain. Terminal
-composition waits for both close completions before exiting; close or restoration
-failure is unclean. Create both adapters before transferring the ownership FD to the
-core. A failed construction must dispose any configured, unstarted driver before
-closing that ownership FD. These libraries do not provide the executable bootstrap.
-The terminal callback may exit zero only for a completed successful S request;
-that is not a guest clean-shutdown acknowledgment. Failed or unobserved teardown
-retains ownership until terminal observation or the parent's bounded process kill.
+```sh
+bash scripts/build-vm-helper-macos.sh
+bash scripts/test-vm-helper-macos.sh
+```
 
-Image materialization/binding, stable identity, EFI/device configuration, guest
-channel extraction, fixed executable resolution, signing and bundling are not
-implemented here. There is no image-path fallback, new guest protocol, host-folder
-mount, renderer interface or VM activation. Host sleep/death reason events require
-a later protocol revision before activation. Native VM/disk-close and process-death
-qualification remain separate from fake-driver and native compilation evidence.
-**Actual VZ attachment and callback/resource-release validation must pass before
-backend activation.** The native tests use socketpairs, signals and a fake driver;
-they do not instantiate a valid VZ VM, attach disks or boot a guest.
+The build script compiles Swift 5 for macOS 13, signs ad hoc with only
+`com.apple.security.virtualization`, verifies the signature and publishes
+`app/src-tauri/gen/apple-helper/BridgeVM`. Mac Cargo builds, tests, clippy and
+Tauri development also build it before Tauri copies resources. Nothing installs
+a compiler automatically. Other target platforms do not invoke Swift.
+
+The app bundle includes `Contents/Resources/native/BridgeVM`. A future trusted
+native backend resolves `app.path().resource_dir()?.join("native/BridgeVM")`;
+there is no environment, renderer or downloaded executable selector. This is
+development packaging, not Developer-ID signing or notarization qualification.
+CI checks the real built and extracted resource without launching the helper:
+
+```sh
+bash scripts/check-vm-helper-bundle-macos.sh path/to/Bridge.app
+```
+
+## Private native input
+
+Arguments must start with `--config-fd N`, followed by the unchanged three
+pairs `--supervisor-fd N --guest-fd N --ownership-fd N` (those pairs may be
+reordered). The fourth selector is stripped before `InheritedDescriptors.parse`.
+The config FD must be a readable regular file distinct from the three inherited
+capabilities. Parsing borrows all descriptors; successful parsing permits adoption.
+The reader closes the adopted config FD, reads at offset zero and caps input at
+64 KiB. No pathname arguments, credential input or new renderer IPC is provided.
+
+The exact JSON fields are `version` (1), `installationPath`, `osDiskPath`,
+`stateDiskPath` (absolute strings), `machineId` (1–4096 byte integers holding the
+SDK representation), `mac` (six byte integers, locally administered unicast) and
+`createEFI` (boolean). Unknown fields and invalid representations are rejected.
+Only fixed exit status reaches diagnostics; errors never print SDK messages,
+paths or identity bytes. The separate guest diagnostic serial writes to
+`/dev/null`; it is not forwarded into app logs or the supervisor channel.
+
+The future producer uses the existing record and verified `LaunchSpec` under
+current installation ownership: paths derive from its root, installed image and
+state disk; ID bytes and MAC come from its record, never another identity file.
+It creates a mode-0600 `create_new`/`O_CLOEXEC` temporary regular config file under
+the locked root, writes and rewinds it, unlinks it before spawn and retains its FD
+through guarded spawn. Its own `pre_exec` clears config CLOEXEC in addition to
+`AppleHelperOwner`'s existing three-descriptor hook. No producer or persistent
+config file is added here. Initial SDK machine-ID generation before
+`Journal::create` belongs to the later native backend, not this launch ABI.
+
+## Devices and lifetime
+
+Configuration uses UEFI, four CPUs, 6 GiB RAM, writable virtio disks named
+`bridge-os` and `bridge-state`, entropy, NAT with the recorded MAC, the nonconsole
+port zero `ai.orka.bridge.control` and a separate diagnostic serial. No shared
+host folder or direct-Linux fallback exists. The only new installation file is
+`efi.vars`: explicit creation refuses an existing path; reopen requires an
+existing regular, non-symlink store. A partial or invalid store remains retained,
+without replacement or automatic repair. Recovery is a later caller decision.
+Path checks do not freeze other host writers; the caller must retain ownership
+and the existing installed-image preflight.
+
+The socket and TERM observer exist before ownership transfers to `BridgeVM`.
+`whenRegistered` gates start on actual kernel signal registration, not just source
+resumption. Failed construction disposes an unstarted driver and closes its guest
+handles before ownership. On terminal observation, the driver releases native
+references and guest handles before the core closes ownership. Exit waits for
+socket cancellation close and TERM disposition restoration; only completed
+successful supervisor Stop plus both closes permits zero status. A Stop ACK is
+not a guest clean-shutdown acknowledgment. Unobserved teardown retains ownership
+until terminal observation or the parent's bounded process kill.
+
+Tests exercise actual configuration objects and production composition with fake
+VM operations, real sockets and signals; SDK-using test executables are signed.
+They do not construct a valid native VM, attach a real installed image or boot a
+guest. **Actual VZ attachment and callback/resource-release validation must pass
+before backend activation.** Host sleep/death reason events still require the
+later protocol revision. Compilation and bundle checks do not establish guest
+boot, Orka readiness, NAT operation or production credential containment.
