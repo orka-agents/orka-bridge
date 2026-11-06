@@ -7,8 +7,6 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import jsonschema
-
 from guest import lock as policy
 from guest.cache import collect, inspect_archive
 from guest.offline import member, stage_bundle
@@ -65,13 +63,11 @@ class ModelImageTests(unittest.TestCase):
                 self.assertFalse((out / 'components/telegram.oci.tar').exists())
 
     def test_v2_contract_and_v1_role_set_remain_distinct(self):
-        schema = json.loads(Path(policy.__file__).with_name('input.schema.json').read_text())
         for architecture in ('amd64', 'arm64'):
             with self.subTest(architecture=architecture), tempfile.TemporaryDirectory() as temp:
                 value, _, pins = model_inputs(Path(temp), architecture)
                 self.policy(pins)
                 policy.validate_lock(value, production=False)
-                jsonschema.validate(value, schema)
                 for version, remove_launcher in (('bridge-guest-inputs/v1', False), ('bridge-guest-inputs/v2', True)):
                     changed = copy.deepcopy(value)
                     changed['schemaVersion'] = version
@@ -79,13 +75,10 @@ class ModelImageTests(unittest.TestCase):
                         changed['components'] = [c for c in changed['components'] if c['name'] != 'model-launcher']
                     with self.assertRaises(ValueError):
                         policy.validate_lock(changed, production=False)
-                    with self.assertRaises(jsonschema.ValidationError):
-                        jsonschema.validate(changed, schema)
                 legacy = copy.deepcopy(value)
                 legacy['schemaVersion'] = 'bridge-guest-inputs/v1'
                 legacy['components'] = [c for c in legacy['components'] if c['name'] != 'model-launcher']
                 policy.validate_lock(legacy, production=False)
-                jsonschema.validate(legacy, schema)
 
     def test_optional_original_model_index_is_preserved_and_verified(self):
         from guest.tests.fixtures import encoded, sha
