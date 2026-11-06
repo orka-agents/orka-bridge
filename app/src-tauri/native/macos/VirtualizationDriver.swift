@@ -17,9 +17,10 @@ final class VirtualizationDriver: NSObject, MachineDriver, VZVirtualMachineDeleg
         machine?.delegate = self
     }
 
-    // Behaviour-preserving inline seam for the callback-drain regression RED.
+    // Leave the SDK callback/delegate stack first: it can still retain the VM
+    // argument and its attachments. Only a later serial turn may release authority.
     static func afterCallback(on queue: DispatchQueue, _ continuation: @escaping () -> Void) {
-        continuation()
+        queue.async { continuation() }
     }
 
     static func classify(_ state: VZVirtualMachine.State) -> MachineState {
@@ -42,7 +43,9 @@ final class VirtualizationDriver: NSObject, MachineDriver, VZVirtualMachineDeleg
 
     func start(_ completion: @escaping (Bool) -> Void) {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard let vm = machine, vm.canStart else { completion(false); return }
+        guard let vm = machine, vm.canStart else {
+            Self.afterCallback(on: queue) { completion(false) }; return
+        }
         vm.start { result in
             let ok = (try? result.get()) != nil
             Self.afterCallback(on: self.queue) { completion(ok) }
@@ -50,7 +53,9 @@ final class VirtualizationDriver: NSObject, MachineDriver, VZVirtualMachineDeleg
     }
     func pause(_ completion: @escaping (Bool) -> Void) {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard let vm = machine, vm.canPause else { completion(false); return }
+        guard let vm = machine, vm.canPause else {
+            Self.afterCallback(on: queue) { completion(false) }; return
+        }
         vm.pause { result in
             let ok = (try? result.get()) != nil
             Self.afterCallback(on: self.queue) { completion(ok) }
@@ -58,7 +63,9 @@ final class VirtualizationDriver: NSObject, MachineDriver, VZVirtualMachineDeleg
     }
     func resume(_ completion: @escaping (Bool) -> Void) {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard let vm = machine, vm.canResume else { completion(false); return }
+        guard let vm = machine, vm.canResume else {
+            Self.afterCallback(on: queue) { completion(false) }; return
+        }
         vm.resume { result in
             let ok = (try? result.get()) != nil
             Self.afterCallback(on: self.queue) { completion(ok) }
@@ -66,7 +73,9 @@ final class VirtualizationDriver: NSObject, MachineDriver, VZVirtualMachineDeleg
     }
     func stop(_ completion: @escaping (Bool) -> Void) {
         dispatchPrecondition(condition: .onQueue(queue))
-        guard let vm = machine, vm.canStop else { completion(false); return }
+        guard let vm = machine, vm.canStop else {
+            Self.afterCallback(on: queue) { completion(false) }; return
+        }
         // VZ stop is destructive. Success is not a guest clean-shutdown receipt.
         vm.stop { error in
             let ok = error == nil

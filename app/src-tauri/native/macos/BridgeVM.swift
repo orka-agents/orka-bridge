@@ -4,6 +4,7 @@ enum MachineState { case stopped, running, paused, transitioning, failed }
 
 // The native implementation owns the sole VM/configuration references. Success
 // means the operation completed; the core independently checks observed state.
+// Deliver SDK completions/delegate events only after their native stacks unwind.
 protocol MachineDriver: AnyObject {
     var state: MachineState { get }
     var canStart: Bool { get }
@@ -180,7 +181,10 @@ final class BridgeVM {
         done = true
         driver.didEnd = nil
         driver.dispose()
-        do { try owner.close() } catch { cleanStop = false }
+        do { try owner.close() } catch {
+            cleanStop = false
+            if let id = reply?.1 { reply = (69, id) }
+        }
         if writable, let (opcode, id) = reply {
             if !output(Self.frame(opcode, id)) { cleanStop = false }
         }
