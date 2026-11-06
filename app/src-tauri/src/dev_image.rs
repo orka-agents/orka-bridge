@@ -85,7 +85,7 @@ const MAC_PINS: Pins = Pins {
         FilePin {
             name: "boot-assets.json",
             bytes: 12546,
-            sha256: digest(b"77518696b514004b78fd3390dd6103565b54c2f5b0bb01fad6d035e19ef97a22"),
+            sha256: digest(b"a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27"),
         },
         FilePin {
             name: "os.kernel",
@@ -94,13 +94,13 @@ const MAC_PINS: Pins = Pins {
         },
         FilePin {
             name: "os.initrd",
-            bytes: 35046676,
-            sha256: digest(b"0b5b9f353e5acfa91a6e0ed2f0f28ee6d22ce48664d2a7b7b98d45f0439aa369"),
+            bytes: 35046667,
+            sha256: digest(b"606891f6e94ce5c4263bbc5360d7fdb6bb874b2109478e4e9e67322fd47d7f20"),
         },
         FilePin {
             name: "os.raw",
             bytes: 17179869184,
-            sha256: digest(b"b99c4e062151f1a8ad3fe68fdcc6d81ca4c550bbc5e3d4e64dfc7c405c81a075"),
+            sha256: digest(b"9eb75d4a9de5f2e922157dc597601d7f10d3b71f3c52fd6ffd3f18d59c6a799b"),
         },
     ],
 };
@@ -111,7 +111,7 @@ const WINDOWS_PINS: Pins = Pins {
         FilePin {
             name: "boot-assets.json",
             bytes: 12504,
-            sha256: digest(b"4c8007757f1814eab249c84fbdbc51cbd8736aa16938b006a063079adf2c583b"),
+            sha256: digest(b"91393279cd7588a7e667e8870678e65babc332dae3269328b17d6ffccb5fb480"),
         },
         FilePin {
             name: "os.kernel",
@@ -120,13 +120,13 @@ const WINDOWS_PINS: Pins = Pins {
         },
         FilePin {
             name: "os.initrd",
-            bytes: 16215285,
-            sha256: digest(b"dc96ba25f698e17d041d87046ddd33cde9a0c5757f4bf6c6356e44776fd8f2d2"),
+            bytes: 16215313,
+            sha256: digest(b"51a5e3f113b2c445f2bd9e889f9e9819e1188937e2035c878f48a4d30adb9d61"),
         },
         FilePin {
             name: "os.qcow2",
-            bytes: 1732706304,
-            sha256: digest(b"56f75f268bc1739ae80edd12a5a5e5c11241286d71608b145a0087e1c8a2eed0"),
+            bytes: 3753902080,
+            sha256: digest(b"a0207fbf8d07001e25b07691daa5d17a3f7c2f7b7bd0b1c7d5b6250ef306e488"),
         },
     ],
 };

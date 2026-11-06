@@ -52,6 +52,27 @@ The tests generate their CA, certificates and private keys entirely in memory at
 runtime. They never write keys or alter the host trust store. This transport does
 not yet select a live image catalog, populate a cache or activate an image.
 
+## Verified image cache
+
+Native Rust callers can acquire a resolved pinned image into an app-local-data
+cache. Complete chunks resume only for the same manifest and are rehashed before
+reuse. Progress starts with a cache verification check, reports cumulative
+available asset bytes for any acquisition, including reused chunks, then final
+verification and image completion. It does not report setup readiness.
+A complete cached set is revalidated and reused without HTTP, including after a
+restart. Corrupt cached bytes fail closed rather than triggering a fallback.
+
+The cache uses nonblocking per-pin ownership, no-follow handles, bounded gzip
+member decoding and free-space checks. It flushes files and directory metadata,
+publishes a complete generation without replacing an existing one, and writes
+the final selector last. Interrupted owned staging can resume; nothing is evicted
+or garbage-collected. Read capabilities do not freeze other writers, so future
+installation code must verify its private destination copies. This API does not
+materialize an installation, start a VM or select a production image catalog.
+On Windows, schedule cached manifest reads before acquisition: a concurrent
+staging read can cause a sharing failure during publication, with staging retained.
+The no-follow directory protections are not weakened to avoid this contention.
+
 ## Local development image
 
 Debug builds can read a local engineering image with `BRIDGE_DEV_IMAGE_DIR`.
@@ -60,7 +81,8 @@ Set it to a folder containing `boot-assets.json`, `os.kernel`, `os.initrd`, and
 `npm run tauri dev`. Assemble all four matching files in that folder; do not
 use partial boot exports or convert the disk format.
 
-This temporary source accepts only the pinned `8d807809` engineering set.
+This temporary source accepts only the pinned `afc68ae1` engineering sets
+with the `orka-7916cd1c-native/v1` restricted native profile.
 It checks the exact receipt and each payload's length and SHA-256 using
 read-only handles on a background worker. Its fixed console message reports
 verification, not a running VM. A bad set is unavailable, with no download or

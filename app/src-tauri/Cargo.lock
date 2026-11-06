@@ -2425,6 +2425,7 @@ dependencies = [
  "bridge-runtime-protocol",
  "cap-fs-ext",
  "cap-std",
+ "flate2",
  "libc",
  "rcgen",
  "reqwest",
