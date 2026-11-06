@@ -5,6 +5,8 @@ pub use uuid::Uuid;
 
 mod operations;
 pub use operations::*;
+mod credentials;
+pub use credentials::*;
 pub fn encode_chunk(bytes: &[u8]) -> String {
     STANDARD.encode(bytes)
 }
@@ -65,6 +67,14 @@ pub enum EngineActionWire {
 )]
 pub enum RequestBody {
     Boot(BootDescriptor),
+    CredentialStatus {},
+    CredentialPublish {
+        expected_generation: Option<Uuid>,
+        token: CredentialPayload,
+    },
+    CredentialClear {
+        expected_generation: Uuid,
+    },
     Engine(EngineActionWire),
     Chunk {
         data: String,
@@ -113,6 +123,7 @@ pub struct WireRequest {
     deny_unknown_fields
 )]
 pub enum ResultBody {
+    CredentialState(CredentialState),
     Ready {},
     Snapshot {
         snapshot: SnapshotId,
@@ -214,6 +225,15 @@ impl Frame {
             Self::Hello(h) => (h.version, h.guest_nonce, 1),
             Self::Request(r) => {
                 match &r.body {
+                    RequestBody::CredentialPublish {
+                        expected_generation,
+                        ..
+                    } if expected_generation.is_some_and(|id| id.is_nil()) => {
+                        return Err(ProtocolError::Invalid)
+                    }
+                    RequestBody::CredentialClear {
+                        expected_generation,
+                    } if expected_generation.is_nil() => return Err(ProtocolError::Invalid),
                     RequestBody::Boot(b)
                         if b.installation_id.is_nil()
                             || b.state_fs_uuid != b.installation_id
@@ -270,6 +290,11 @@ impl Frame {
                 (r.version, r.boot_nonce, r.request_id)
             }
             Self::Result(r) => {
+                if let ResultBody::CredentialState(state) = &r.body {
+                    if !state.valid() {
+                        return Err(ProtocolError::Invalid);
+                    }
+                }
                 if let ResultBody::Chunk { data } = &r.body {
                     chunk(data)?;
                 }
