@@ -29,6 +29,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3-jsonschema
           /usr/bin/python3 -c 'import jsonschema'
+      - name: Exercise hash-bound inputs with autocrlf enabled
+        run: >-
+          git -c core.autocrlf=true checkout-index --force --
+          images/guest/versions.json images/guest/boot_assets.py images/guest/boot_inspect.py
       - name: Test without network
         run: sudo unshare --net sh -c 'PYTHONPATH=images /usr/bin/python3 -m unittest discover -s images -p "test_*.py" -v'
 
