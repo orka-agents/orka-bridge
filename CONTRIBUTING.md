@@ -39,6 +39,29 @@ are guaranteed to stop.
 Run debug engine tests and clippy as well as release checks: process transport
 code is compiled only when debug assertions are enabled.
 
+## Local development image
+
+Debug builds can read a local engineering image with `BRIDGE_DEV_IMAGE_DIR`.
+Set it to a folder containing `boot-assets.json`, `os.kernel`, `os.initrd`, and
+`os.raw` on Apple silicon Mac or `os.qcow2` on Windows x64, then run
+`npm run tauri dev`. Assemble all four matching files in that folder; do not
+use partial boot exports or convert the disk format.
+
+This temporary source accepts only the pinned `8d807809` engineering set.
+It checks the exact receipt and each payload's length and SHA-256 using
+read-only handles on a background worker. Its fixed console message reports
+verification, not a running VM. A bad set is unavailable, with no download or
+alternate-image fallback. The factory is never opened for writing. The app
+retains verified source handles for future integration; no backend consumes
+them yet. A future consumer must verify its private installed copies before
+booting, because a read-only handle does not freeze another writer's changes.
+
+The selector, verifier and engineering pins are compiled out when debug
+assertions are disabled. Release builds cannot enable this source through an
+environment variable or feature flag. This is not the production image
+acquisition path, publication approval, VM startup, or credential delivery;
+the runtime chooser and model step remain unchanged.
+
 ## Checks and builds
 
 Run the commands in [AGENTS.md](AGENTS.md#checks). Also run `npm audit` to
