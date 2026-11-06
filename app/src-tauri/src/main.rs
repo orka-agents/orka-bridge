@@ -34,6 +34,20 @@ fn main() {
         .manage(RuntimeState::default())
         .setup(|app| {
             app.manage(Arc::new(SetupStore::new(app.path().app_data_dir().ok())));
+            #[cfg(debug_assertions)]
+            if std::env::var_os("BRIDGE_DEV_IMAGE_DIR").is_some() {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn_blocking(move || {
+                    match bridge_engine::dev_image::from_environment() {
+                        Ok(Some(image)) => {
+                            handle.manage(image);
+                            eprintln!("Local development image verified; VM integration remains unavailable.");
+                        }
+                        Ok(None) => {}
+                        Err(_) => eprintln!("Local development image unavailable."),
+                    }
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
