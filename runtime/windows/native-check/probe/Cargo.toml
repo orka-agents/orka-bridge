@@ -15,4 +15,4 @@ sha2 = "=0.10.9"
 semver = "=1.0.28"
 tokio = { version = "=1.54.1", features = ["sync", "rt", "time"] }
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_IO", "Win32_System_SystemInformation", "Win32_System_Diagnostics_ProcessSnapshotting", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_Memory"] }
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_IO", "Win32_System_SystemInformation", "Win32_System_Diagnostics_ProcessSnapshotting", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_Console", "Win32_System_WindowsProgramming", "Wdk_Foundation", "Wdk_Storage_FileSystem", "Wdk_System_Memory"] }

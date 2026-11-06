@@ -328,6 +328,69 @@ fn one(mode: &str, packet: &Path, root: &Path) -> io::Result<Value> {
     check(v["sourceHead"] == crate::SOURCE_HEAD)?;
     Ok(v)
 }
+fn guard_only_case(packet: &Path, root: &Path, sid: &str) -> io::Result<Value> {
+    let event = super::guard_case::GuardEvent::create(sid)?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let tick = unsafe { GetTickCount64() }
+        .checked_add(crate::guard_probe::WINDOW_MS)
+        .ok_or_else(|| io::Error::other("guard tick overflow"))?;
+    let mut worker = Worker::start_guard(packet, root, &event.name, tick)?;
+    let before = worker.line_until(deadline)?;
+    check(
+        before["sourceHead"] == crate::SOURCE_HEAD
+            && before["mode"] == "hold-guard-only"
+            && before["stage"] == "guard-before-close",
+    )?;
+    let pid = before["pid"]
+        .as_u64()
+        .and_then(|v| u32::try_from(v).ok())
+        .ok_or_else(|| io::Error::other("guard child PID missing"))?;
+    let watch =
+        Watch(unsafe { OpenProcess(0x00100000 | PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) });
+    check(
+        !watch.0.is_null()
+            && creation_time(watch.0)?
+                == before["creationTime"]
+                    .as_u64()
+                    .ok_or_else(|| io::Error::other("guard creation time missing"))?,
+    )?;
+    check(unsafe { WaitForSingleObject(watch.0, 0) } == WAIT_TIMEOUT)?;
+    event.signal()?;
+    let after = worker.line_until(deadline)?;
+    check(
+        after["sourceHead"] == crate::SOURCE_HEAD
+            && after["stage"] == "guard-after-close"
+            && after["pid"] == before["pid"]
+            && after["creationTime"] == before["creationTime"]
+            && after["guardIdentity"] == before["guardIdentity"]
+            && after["knownGuardHandle"] == before["knownGuardHandle"]
+            && after["knownGuardClosed"] == true
+            && after["explicitGuardInheritance"] == true,
+    )?;
+    let busy = one("check-busy", packet, root)?;
+    check(busy["lock"] == "busy" && unsafe { WaitForSingleObject(watch.0, 0) } == WAIT_TIMEOUT)?;
+    event.signal()?;
+    let stopped = worker.line_until(deadline)?;
+    check(
+        stopped["sourceHead"] == crate::SOURCE_HEAD
+            && stopped["stage"] == "guard-child-stopped"
+            && stopped["pid"] == before["pid"]
+            && stopped["creationTime"] == before["creationTime"]
+            && stopped["ownedChildStopObserved"] == true,
+    )?;
+    check(unsafe { WaitForSingleObject(watch.0, 0) } == WAIT_OBJECT_0)?;
+    check(worker.child.as_mut().unwrap().try_wait()?.is_none())?;
+    let free = one("check-free", packet, root)?;
+    check(free["lock"] == "free" && worker.child.as_mut().unwrap().try_wait()?.is_none())?;
+    let proof = json!({"knownGuardClosed":after["knownGuardClosed"],
+        "explicitGuardInheritance":after["explicitGuardInheritance"],"busyWhileChildAlive":true,
+        "ownedChildStopObserved":true,"freeWhileParentAlive":true});
+    check(crate::guard_probe::direct_guard_property(&proof))?;
+    worker.kill_observe()?;
+    Ok(
+        json!({"before":before,"after":after,"stopped":stopped,"busy":busy,"free":free,"proof":proof}),
+    )
+}
 pub(super) fn run(args: &[String]) -> io::Result<()> {
     let trial = args.len() == 4 && args[3] == "--owned-pipe-trial";
     let unix_trial = args.len() == 4 && args[3] == "--af-unix-trial";
@@ -411,61 +474,12 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
     for mode in ["hold-created", "hold-pipe", "hold-guard-only"] {
         eprintln!("Native no-VM case {mode}");
         let root = work.join(mode);
-        let (mut worker, ready) = if mode == "hold-guard-only" {
-            let event = super::guard_case::GuardEvent::create(&sid)?;
-            let deadline = Instant::now() + Duration::from_secs(30);
-            let tick = unsafe { GetTickCount64() }
-                .checked_add(crate::guard_probe::WINDOW_MS)
-                .ok_or_else(|| io::Error::other("guard tick overflow"))?;
-            let worker = Worker::start_guard(&packet, &root, &event.name, tick)?;
-            let before = worker.line_until(deadline)?;
-            check(
-                before["mode"] == mode
-                    && before["sourceHead"] == crate::SOURCE_HEAD
-                    && before["stage"] == "guard-before-close",
-            )?;
-            let guard = serde_json::from_value(before["guardIdentity"].clone())
-                .map_err(io::Error::other)?;
-            let canary = serde_json::from_value(before["canaryIdentity"].clone())
-                .map_err(io::Error::other)?;
-            let target = worker.child.as_ref().unwrap().as_raw_handle();
-            let positive = super::guard_case::snapshot(
-                "guard-parent-before-close",
-                target,
-                &guard,
-                &canary,
-                deadline,
-            )?;
-            check(crate::guard_probe::parent_counts(&positive, 1))?;
-            event.signal()?;
-            let mut after = worker.line_until(deadline)?;
-            check(
-                after["mode"] == mode
-                    && after["sourceHead"] == crate::SOURCE_HEAD
-                    && after["stage"] == "guard-after-close"
-                    && after["pid"] == before["pid"]
-                    && after["creationTime"] == before["creationTime"]
-                    && after["guardIdentity"] == before["guardIdentity"]
-                    && after["canaryIdentity"] == before["canaryIdentity"]
-                    && after["childGuardHandles"] == 1,
-            )?;
-            let negative = super::guard_case::snapshot(
-                "guard-parent-after-close",
-                target,
-                &guard,
-                &canary,
-                deadline,
-            )?;
-            check(crate::guard_probe::parent_counts(&negative, 0))?;
-            after["parentSnapshotBeforeClose"] = positive;
-            after["parentSnapshotAfterClose"] = negative;
-            after["parentGuardHandles"] = json!(0);
-            (worker, after)
-        } else {
-            let worker = Worker::start(mode, &packet, &root)?;
-            let ready = worker.line()?;
-            (worker, ready)
-        };
+        if mode == "hold-guard-only" {
+            cases.push(json!({"case":mode,"result":guard_only_case(&packet, &root, &sid)?}));
+            continue;
+        }
+        let mut worker = Worker::start(mode, &packet, &root)?;
+        let ready = worker.line()?;
         check(ready["mode"] == mode && ready["sourceHead"] == crate::SOURCE_HEAD)?;
         let pid = ready["pid"]
             .as_u64()
@@ -485,9 +499,6 @@ pub(super) fn run(args: &[String]) -> io::Result<()> {
         check(unsafe { WaitForSingleObject(watch.0, 0) } == WAIT_TIMEOUT)?;
         let busy = one("check-busy", &packet, &root)?;
         check(busy["lock"] == "busy")?;
-        if mode == "hold-guard-only" {
-            check(ready["parentGuardHandles"] == 0 && ready["childGuardHandles"] == 1)?;
-        }
         worker.kill_observe()?;
         check(unsafe { WaitForSingleObject(watch.0, 45000) } == WAIT_OBJECT_0)?;
         let free = one("check-free", &packet, &root)?;

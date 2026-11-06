@@ -34,10 +34,16 @@ impl GuardProbe {
         Ok(remaining as u32)
     }
 }
-pub fn parent_counts(value: &Value, copies: u64) -> bool {
-    value["guardCopies"] == copies
-        && value["unrelatedCanaries"] == 1
-        && value["inheritedJobs"].as_u64().is_some_and(|n| n >= 1)
+pub fn direct_guard_property(value: &Value) -> bool {
+    [
+        "knownGuardClosed",
+        "explicitGuardInheritance",
+        "busyWhileChildAlive",
+        "ownedChildStopObserved",
+        "freeWhileParentAlive",
+    ]
+    .iter()
+    .all(|field| value[*field] == true)
 }
 pub fn missing_pss_type(phase: &str, index: usize, handle: usize, flags: i32) -> io::Error {
     io::Error::other(format!("phase={phase} entry={index} handle={handle:#x} flags={flags:#x}: snapshot lacks object type name"))
@@ -59,6 +65,25 @@ mod tests {
         ] {
             assert!(message.contains(field), "missing {field}: {message}");
         }
+    }
+    #[test]
+    fn direct_guard_proof_does_not_depend_on_parent_inventory() {
+        let proof = serde_json::json!({"knownGuardClosed":true,"explicitGuardInheritance":true,
+            "busyWhileChildAlive":true,"ownedChildStopObserved":true,
+            "freeWhileParentAlive":true,"parentPssError":"missing type"});
+        assert!(direct_guard_property(&proof));
+        for field in [
+            "knownGuardClosed",
+            "explicitGuardInheritance",
+            "busyWhileChildAlive",
+            "ownedChildStopObserved",
+            "freeWhileParentAlive",
+        ] {
+            let mut failed = proof.clone();
+            failed[field] = Value::Bool(false);
+            assert!(!direct_guard_property(&failed), "{field}");
+        }
+        assert!(!direct_guard_property(&serde_json::json!({})));
     }
     fn name() -> String {
         format!("Local\\bridge-guard-{}", "a".repeat(32))
@@ -84,24 +109,5 @@ mod tests {
         assert_eq!(probe.remaining(30999).unwrap(), 1);
         assert!(probe.remaining(31000).is_err());
         assert!(probe.remaining(31001).is_err());
-    }
-    #[test]
-    fn missing_metadata_never_supplies_parent_counts() {
-        assert!(!parent_counts(
-            &serde_json::json!({"error":"missing type","flags":0}),
-            0
-        ));
-        assert!(!parent_counts(
-            &serde_json::json!({"guardCopies":0,"unrelatedCanaries":1,"inheritedJobs":0}),
-            0
-        ));
-        assert!(parent_counts(
-            &serde_json::json!({"guardCopies":1,"unrelatedCanaries":1,"inheritedJobs":1}),
-            1
-        ));
-        assert!(parent_counts(
-            &serde_json::json!({"guardCopies":0,"unrelatedCanaries":1,"inheritedJobs":1}),
-            0
-        ));
     }
 }

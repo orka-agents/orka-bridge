@@ -20,7 +20,7 @@ Success requires exit zero, one final JSON receipt with `status: passed`, the ex
 - **smoke:** restricted atomic launch, exclusion of unrelated handles, protected AF directory and exact socket owner/ACL/tag checks, kernel peer PID bound to the retained QEMU, correlated successful QMP greeting/capability/status/quit replies and observed exit;
 - **hold-created:** parent death before the suspended child is resumed;
 - **hold-pipe:** the retained historical case name now holds an established, validated AF connection while the parent is killed;
-- **hold-guard-only:** only the child retains the original ownership-file capability after the parent copy is deliberately closed.
+- **hold-guard-only:** the parent successfully closes its known ownership-file handle; the explicit child inheritance is checked and a competing launcher sees Busy while the child is alive. The owned Job is then stopped while the parent remains alive, and the same file must become free before the parent exits. This tests that the child, not a remaining parent handle, held the file. Incidental parent handle 0x48 metadata is logged for information only; complete parent PSS metadata is not required.
 
 Smoke requires exact QMP status `prelaunch` with `running: false`, quit acknowledgment and exit code zero. It also starts a second identical no-VM process, then drops its live control connection and requires owned-Job teardown with observed exit. Bridge never reconnects after a terminal channel event. This does not promise to beat QEMU's internal re-listen race against a hostile same-user actor.
 

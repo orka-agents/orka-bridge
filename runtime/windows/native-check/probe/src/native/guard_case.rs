@@ -1,4 +1,4 @@
-//! Guard-only coordination and off-process, deadline-bounded metadata observation.
+//! Direct guard-close and sharing proof; incidental handle metadata is diagnostic only.
 use super::*;
 use crate::guard_probe::GuardProbe;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -46,7 +46,7 @@ impl GuardEvent {
         };
         let raw = unsafe {
             SetLastError(0);
-            CreateEventW(&attributes, 1, 0, wide(&name).as_ptr())
+            CreateEventW(&attributes, 0, 0, wide(&name).as_ptr())
         };
         if raw.is_null() {
             return Err(io::Error::last_os_error());
@@ -136,7 +136,7 @@ fn check_event_security(raw: HANDLE, user: &str) -> io::Result<()> {
         check(users == 1 && systems == 1)
     }
 }
-pub(super) fn wait_for_close(probe: &GuardProbe, event: OwnedHandle) -> io::Result<()> {
+pub(super) fn wait_for_signal(probe: &GuardProbe, event: &OwnedHandle) -> io::Result<()> {
     match unsafe { WaitForSingleObject(event.as_raw_handle(), probe.remaining(GetTickCount64())?) }
     {
         WAIT_OBJECT_0 => Ok(()),
@@ -158,113 +158,102 @@ pub(super) fn open(probe: &GuardProbe) -> io::Result<OwnedHandle> {
     check(flags & HANDLE_FLAG_INHERIT == 0)?;
     Ok(handle)
 }
-pub(super) fn snapshot(
-    phase: &'static str,
-    worker: HANDLE,
-    guard: &runtime::identity::FileIdentity,
-    canary: &runtime::identity::FileIdentity,
-    deadline: Instant,
-) -> io::Result<Value> {
-    let mut raw = std::ptr::null_mut();
-    unsafe {
-        win(DuplicateHandle(
-            GetCurrentProcess(),
-            worker,
-            GetCurrentProcess(),
-            &mut raw,
-            0,
-            0,
-            DUPLICATE_SAME_ACCESS,
-        ))?;
-    }
-    let target = unsafe { OwnedHandle::from_raw_handle(raw) };
-    let (guard, canary) = (guard.clone(), canary.clone());
-    let (send, receive) = mpsc::sync_channel(1);
-    // The observer owns target, buffers and all duplicates, even if the caller's
-    // deadline expires. On timeout the controller fails/exits, never joins it.
-    std::thread::spawn(move || {
-        let _ = send.send(handle_snapshot(
-            phase,
-            target.as_raw_handle(),
-            &guard,
-            &canary,
-        ));
-    });
-    let result = receive
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-        .map_err(|_| {
-            io::Error::new(io::ErrorKind::TimedOut, "guard snapshot deadline exceeded")
-        })??;
-    check(Instant::now() < deadline)?;
-    Ok(result)
-}
 
+/// Best-effort description of a parent-owned handle; never supplies a proof predicate.
+pub(super) fn describe_parent_handle(raw: HANDLE, guard: HANDLE) -> Value {
+    use windows_sys::Wdk::Foundation::{NtQueryObject, ObjectTypeInformation};
+    use windows_sys::Win32::System::{
+        Console::*, WindowsProgramming::PUBLIC_OBJECT_TYPE_INFORMATION,
+    };
+    unsafe {
+        let mut flags = 0;
+        let info = GetHandleInformation(raw, &mut flags);
+        let info_error = if info == 0 {
+            Some(GetLastError())
+        } else {
+            None
+        };
+        // Query only the object TYPE, never its name or synchronous file state.
+        let mut storage = [0usize; 1024];
+        let mut length = 0;
+        let status = NtQueryObject(
+            raw,
+            ObjectTypeInformation,
+            storage.as_mut_ptr().cast(),
+            std::mem::size_of_val(&storage) as u32,
+            &mut length,
+        );
+        let mut kind = None;
+        if status >= 0 {
+            let header = &*storage.as_ptr().cast::<PUBLIC_OBJECT_TYPE_INFORMATION>();
+            let start = header.TypeName.Buffer as usize;
+            let bytes = header.TypeName.Length as usize;
+            let base = storage.as_ptr() as usize;
+            if bytes > 0
+                && bytes.is_multiple_of(2)
+                && start.is_multiple_of(2)
+                && start >= base
+                && start
+                    .checked_add(bytes)
+                    .is_some_and(|end| end <= base + std::mem::size_of_val(&storage))
+            {
+                kind = String::from_utf16(std::slice::from_raw_parts(
+                    header.TypeName.Buffer,
+                    bytes / 2,
+                ))
+                .ok();
+            }
+        }
+        let standards = [
+            ("stdin", STD_INPUT_HANDLE),
+            ("stdout", STD_OUTPUT_HANDLE),
+            ("stderr", STD_ERROR_HANDLE),
+        ]
+        .map(|(name, which)| {
+            let handle = GetStdHandle(which);
+            json!({"name":name, "handle":format!("{:#x}",handle as usize),"matches":handle==raw})
+        });
+        json!({"handle":format!("{:#x}",raw as usize),"matchesGuard":raw==guard,
+            "standardHandles":standards,"inherit":if info!=0 {Some(flags & HANDLE_FLAG_INHERIT !=0)} else {None},
+            "handleInformationError":info_error,"objectType":kind,"objectTypeStatus":format!("{:#x}",status),
+            "objectTypeReturnedBytes":length,"diagnosticOnly":true})
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn pending_pipe_reader_fixture() {
-        if std::env::var_os("BRIDGE_GUARD_PIPE_FIXTURE").is_some() {
-            println!("PIPE-READY");
-            std::io::stdout().flush().unwrap();
-            let mut byte = [0];
-            let _ = std::io::stdin().read_exact(&mut byte);
+    fn known_handle_close_releases_its_sharing_lock() {
+        use std::os::windows::{fs::OpenOptionsExt, io::IntoRawHandle};
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("guard");
+        let file = fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .share_mode(0)
+            .open(&path)
+            .unwrap();
+        assert_eq!(
+            fs::OpenOptions::new()
+                .read(true)
+                .open(&path)
+                .unwrap_err()
+                .raw_os_error(),
+            Some(32)
+        );
+        let raw = file.into_raw_handle();
+        unsafe {
+            win(CloseHandle(raw)).unwrap();
         }
+        assert!(fs::OpenOptions::new().read(true).open(&path).is_ok());
     }
     #[test]
-    fn pending_pipe_read_cannot_extend_the_snapshot_result_deadline() {
-        use std::{
-            os::windows::process::CommandExt,
-            process::{Command, Stdio},
-        };
-        let root = tempfile::tempdir().unwrap();
-        let one = fs::File::create(root.path().join("guard")).unwrap();
-        let two = fs::File::create(root.path().join("canary")).unwrap();
-        let guard = runtime::identity::file_identity(&one).unwrap();
-        let canary = runtime::identity::file_identity(&two).unwrap();
-        let gate = runtime::spawn_guard::blocking_guard();
-        let mut child = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "native::guard_case::tests::pending_pipe_reader_fixture",
-                "--nocapture",
-            ])
-            .env("BRIDGE_GUARD_PIPE_FIXTURE", "1")
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn()
-            .unwrap();
-        drop(gate);
-        let output = child.stdout.take().unwrap();
-        let (ready_send, ready_receive) = mpsc::sync_channel(1);
-        std::thread::spawn(move || {
-            for line in BufReader::new(output).lines().take(16) {
-                if line.is_ok_and(|s| s.contains("PIPE-READY")) {
-                    let _ = ready_send.send(());
-                    break;
-                }
-            }
-        });
-        let ready = ready_receive.recv_timeout(Duration::from_secs(5));
-        let start = Instant::now();
-        // Either complete metadata or a strict metadata error is acceptable here;
-        // an observer blocked in a synchronous kernel query cannot delay failure.
-        let _ = snapshot(
-            "pending-pipe-fixture",
-            child.as_raw_handle(),
-            &guard,
-            &canary,
-            start + Duration::from_millis(100),
-        );
-        let elapsed = start.elapsed();
-        if child.try_wait().unwrap().is_none() {
-            child.kill().unwrap();
-        }
-        child.wait().unwrap();
-        assert!(ready.is_ok(), "pending-read fixture reached its read");
-        assert!(elapsed < Duration::from_secs(2));
+    fn unavailable_diagnostic_metadata_is_not_a_proof_failure() {
+        let value = describe_parent_handle(std::ptr::null_mut(), std::ptr::null_mut());
+        assert_eq!(value["diagnosticOnly"], true);
+        assert!(value["objectType"].is_null());
+        assert!(value["handleInformationError"].as_u64().is_some());
     }
     #[test]
     fn guard_event_is_private_noninherited_and_signals_once() {
@@ -274,11 +263,13 @@ mod tests {
         let now = unsafe { GetTickCount64() };
         let probe = GuardProbe::parse(&event.name, &(now + 1000).to_string(), now).unwrap();
         let worker = open(&probe).unwrap();
-        assert_eq!(
-            unsafe { WaitForSingleObject(worker.as_raw_handle(), 0) },
-            WAIT_TIMEOUT
-        );
-        event.signal().unwrap();
-        wait_for_close(&probe, worker).unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                unsafe { WaitForSingleObject(worker.as_raw_handle(), 0) },
+                WAIT_TIMEOUT
+            );
+            event.signal().unwrap();
+            wait_for_signal(&probe, &worker).unwrap();
+        }
     }
 }

@@ -555,31 +555,40 @@ mod native {
             let mut ready = json!({"sourceHead":crate::SOURCE_HEAD,"mode":mode,
                 "stage":"guard-before-close","pid":unsafe{GetProcessId(process.raw())},
                 "creationTime":creation_time(process.raw())?,"guardIdentity":identity,
-                "canaryIdentity":canary_id,"root":root,"inherited":inherited,"restrictedPrimary":true});
+                "canaryIdentity":canary_id,"root":root,"inherited":inherited,"restrictedPrimary":true,
+                "knownGuardHandle":format!("{:#x}",spec.ownership.as_raw_handle() as usize)});
+            let diagnostic = guard_case::describe_parent_handle(
+                0x48usize as HANDLE,
+                spec.ownership.as_raw_handle(),
+            );
+            eprintln!("parent handle 0x48 (diagnostic only): {diagnostic}");
+            ready["parentHandle48Diagnostic"] = diagnostic;
             emit(ready.clone())?;
-            guard_case::wait_for_close(&probe, event)?;
+            guard_case::wait_for_signal(&probe, &event)?;
             let original = spec.ownership.as_raw_handle();
-            std::mem::forget(child);
+            // The deliberate raw close must never be followed by Rust dropping
+            // this shared File: its numeric slot can subsequently be reused.
+            let child = std::mem::ManuallyDrop::new(child);
             std::mem::forget(spec);
             std::mem::forget(journal);
             unsafe {
                 win(CloseHandle(original))?;
             }
-            let child_snapshot = handle_snapshot(
-                "guard-child-after-close",
-                process.raw(),
-                &identity,
-                &canary_id,
-            )?;
-            check(
-                child_snapshot["guardCopies"] == 1
-                    && child_snapshot["inheritedJobs"] == 0
-                    && child_snapshot["unrelatedCanaries"] == 0,
-            )?;
             ready["stage"] = json!("guard-after-close");
-            ready["childGuardHandles"] = json!(1);
-            ready["childSnapshot"] = child_snapshot;
+            ready["knownGuardClosed"] = json!(true);
+            ready["explicitGuardInheritance"] = json!(
+                inherited["guardCopies"] == 1
+                    && inherited["inheritedJobs"] == 0
+                    && inherited["unrelatedCanaries"] == 0
+            );
+            emit(ready.clone())?;
+            // Controller checks Busy first, then requests owned-Job stop.
+            guard_case::wait_for_signal(&probe, &event)?;
+            child.abort()?;
+            ready["stage"] = json!("guard-child-stopped");
+            ready["ownedChildStopObserved"] = json!(true);
             emit(ready)?;
+            // Remain alive while the controller proves the file is free.
             loop {
                 std::thread::sleep(Duration::from_secs(1));
             }
