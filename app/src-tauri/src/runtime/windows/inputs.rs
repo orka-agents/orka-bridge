@@ -70,7 +70,6 @@ pub struct WindowsInputPaths {
 }
 pub struct VerifiedWindowsInputs {
     pub(super) paths: WindowsInputPaths,
-    pub(super) boot: DirectBoot,
     inventory: Vec<FilePin>,
     _held: Vec<File>,
 }
@@ -280,7 +279,6 @@ pub fn verify_windows_inputs(
     }
     let mut inputs = VerifiedWindowsInputs {
         paths,
-        boot: b.clone(),
         inventory: pin.runtime_files.clone(),
         _held: held,
     };
