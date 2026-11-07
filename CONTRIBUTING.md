@@ -124,6 +124,17 @@ raw pinned boot receipt, not a release manifest. Its compatibility ID is
 VM or reports whole-setup readiness. Backend selection, launch validation and
 the visible setup connection remain the native runtime caller's responsibility.
 
+## Private Apple session
+
+Trusted Mac Rust callers can compose the installed Apple image, journal and
+bundled helper with `runtime::apple_session::AppleVmSession`. It verifies serving
+Ready before supplying the existing VM engine transport. Pause, resume and stop
+observe native helper completion; failed cleanup retains ownership. One revocable
+guest descriptor serves one client; no renderer, Setup, Run or model hookup is
+added. The separate SDK identity initializer is future setup input, not a new
+installation factory. Real VZ disk-handle release remains unqualified by these
+synthetic CI tests.
+
 ## Local development image
 
 Debug builds can read a local engineering image with `BRIDGE_DEV_IMAGE_DIR`.
@@ -177,7 +188,7 @@ The Mac bundle includes readable notices in its Resources directory; CI also
 places them beside the portable Windows executable. Both builds embed them in
 the frontend. Preserve these files when redistributing builds.
 
-The app opens Clusters with a runtime chooser and a locked model step. Existing cluster is unavailable on both platforms. Local VM selection writes only an empty preference marker at `setup-v1/local-vm` under the app data directory. It does not download, start or reopen a VM, save agents, connect a model or cluster, or run tests. Selection is never readiness. Model connection stays locked; the private Rust credential channel is not wired to setup or model connection. Engine diagnostics remain available in Clusters. No runtime or credential state is stored by setup;
+The app opens Clusters with a runtime chooser and a locked model step. Existing cluster is unavailable on both platforms. Local VM selection writes only an empty preference marker at `setup-v1/local-vm` under the app data directory. It does not download, start or reopen a VM, save agents, connect a model or cluster, or run tests. Selection is never readiness. Model connection stays locked in the UI. Trusted native Rust callers can associate a captured sign-in with an installation-bound OS-store slot, deliver it over the private guest channel and invoke the fixed kmx Connect operation. Setup stores only opaque association and acknowledged lifecycle metadata, never credential bytes. Uncertain completion is retained without automatic capture or replay; explicit sign-out acknowledges Disconnect and file clear before removing the host slot. These calls require a rebuilt guest handler and matching kmx bundle; they do not activate the UI or prove model inference. Connected or uncertain bindings cannot yet be reused or removed after a new VM lease; confirmed-owned-stop recovery remains a follow-up. A previously acknowledged clear still permits host-only cleanup. Engine diagnostics remain available in Clusters;
 native webviews can still create their usual cache/profile directories under
 the app identifier `ai.orka.bridge`.
 

@@ -32,7 +32,11 @@ fn storage_error() -> SetupError {
     }
 }
 
-/// Owns only a preference. It cannot install a backend, connect a model or hold credentials.
+#[path = "setup_model.rs"]
+mod model;
+pub use model::ModelSetupState;
+
+/// Owns preferences and an opaque sign-in association, never stored secret bytes.
 pub struct SetupStore {
     root: Option<PathBuf>,
     access: Mutex<()>,
