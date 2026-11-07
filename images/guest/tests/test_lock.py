@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from guest.lock import load_lock, validate_lock, locked_file, input_identity, VERSIONS
+from guest.lock import load_lock, validate_lock, locked_file, input_identity, VERSIONS, MODEL_IMAGES
 from unittest.mock import patch
 from guest.tests.fixtures import lock
 
@@ -23,10 +23,11 @@ class LockTests(unittest.TestCase):
         self.assertEqual(VERSIONS.get('sourceOfflineProfile'), {
             'profile': 'orka-7916cd1c-native/v1',
             'profileSha256': '6ab8213cae9f1d58fe59f34b2402f93ed951752269decdf750fc2a170bddf223',
-            'kmxSourceCommit': 'fc811336bfdf4d972525eb78f1cba8a7b7e45b19',
+            'kmxSourceCommit': 'b8238bddb54632dbc40c8cc10bbb07463234b03c',
             'chartSha256': '19c50cff36855b8792b4777c89c598cf33ea70180e677e1a4758fc0211f069ed',
             'artifactsSha256': 'db1dae048af33841a295fdebb55c85d3a122242feade043f85a9e886938d1b3e',
         })
+        self.assertEqual(set(MODEL_IMAGES), {VERSIONS['sourceOfflineProfile']['kmxSourceCommit']})
         self.assertEqual(VERSIONS['releaseProfiles'], {})
 
     def test_source_lock(self):
