@@ -283,6 +283,9 @@ jobs:
             ${{ runner.temp }}/native-operator/build-report.json
             ${{ runner.temp }}/native-operator/verification.json
             ${{ runner.temp }}/native-operator/bridge-native-premises.exe
+            ${{ runner.temp }}/native-operator/ci-state.log
+            ${{ runner.temp }}/native-operator/ci-state-receipt.json
+            ${{ runner.temp }}/native-operator/ci-state-stderr.txt
             ${{ runner.temp }}/native-operator/runtime-pin.json
             ${{ runner.temp }}/native-operator/producer-run.json
             ${{ runner.temp }}/native-operator/bundle-provenance.json
