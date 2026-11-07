@@ -50,6 +50,27 @@ pub(crate) fn failing_peer(mode: &str, opcode: u8) -> String {
         ),
     )
 }
+// Only the operation under test gets short budgets; native startup stays unchanged.
+struct OperationBudgets(AppleBackend);
+impl VmBackend for OperationBudgets {
+    fn create_state(&mut self, spec: &LaunchSpec) -> Result<(), RuntimeError> {
+        self.0.create_state(spec)
+    }
+    fn start(&mut self, spec: &LaunchSpec) -> Result<BackendHandle, RuntimeError> {
+        let handle = self.0.start(spec)?;
+        super::super::apple::failure_fixture::shorten(self.0.owner.as_mut().unwrap());
+        Ok(handle)
+    }
+    fn stop(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
+        self.0.stop(handle)
+    }
+    fn pause(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
+        self.0.pause(handle)
+    }
+    fn resume(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
+        self.0.resume(handle)
+    }
+}
 #[test]
 fn failed_operations_revoke_guest_and_retain_original_worker_lock() {
     use std::io::Write;
@@ -57,12 +78,7 @@ fn failed_operations_revoke_guest_and_retain_original_worker_lock() {
         for mode in ["ack", "eof", "hang"] {
             let (t, j, image) = installation();
             let resources = resource(&failing_peer(mode, opcode));
-            let mut backend = AppleBackend::new(resources.path().to_path_buf());
-            // Native test utility shortens observation, never production budgets.
-            backend.owner = Some(super::super::apple::AppleHelperOwner::new(
-                j.spec(Uuid::new_v4(), image.clone()).ownership,
-            ));
-            super::super::apple::failure_fixture::shorten(backend.owner.as_mut().unwrap());
+            let backend = OperationBudgets(AppleBackend::new(resources.path().to_path_buf()));
             let mut worker =
                 crate::runtime::RuntimeWorker::new(Box::new(backend), j, image).unwrap();
             worker.start().unwrap();
