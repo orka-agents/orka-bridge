@@ -387,6 +387,15 @@ impl<O: Borrow<OwnedQemuProcess>> ControlIo<O> {
         live(self.owner.borrow())?;
         self.channel.raw()
     }
+    fn read_socket(&self) -> io::Result<SOCKET> {
+        if self.channel.terminal.load(Ordering::Acquire) {
+            return Err(io::ErrorKind::BrokenPipe.into());
+        }
+        if self.owner.borrow().stopping_deadline().is_none() {
+            live(self.owner.borrow())?;
+        }
+        self.channel.raw()
+    }
     pub fn read(&self, output: &mut [u8], deadline: Instant) -> io::Result<usize> {
         if output.is_empty() {
             return Ok(0);
@@ -398,7 +407,7 @@ impl<O: Borrow<OwnedQemuProcess>> ControlIo<O> {
             .stopping_deadline()
             .map_or(until, |stop| until.min(stop));
         let mut operation = || loop {
-            let socket = self.usable()?;
+            let socket = self.read_socket()?;
             if Instant::now() >= until {
                 return Err(io::Error::from(io::ErrorKind::TimedOut));
             }

@@ -47,11 +47,12 @@ pub fn establish(
         .spec
         .boot_nonce;
     let result = exchange(worker, channel, nonce, host_utc);
-    if result.is_err() {
+    if let Err(ref exchange) = result {
         if let Err(stop) = worker.stop() {
-            return Err(
-                io::Error::other(format!("boot exchange failed; stop unobserved: {stop}")).into(),
-            );
+            return Err(io::Error::other(format!(
+                "boot exchange failed: {exchange}; stop unobserved: {stop}"
+            ))
+            .into());
         }
     }
     result

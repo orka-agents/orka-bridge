@@ -221,6 +221,15 @@ fn fixture() -> (TempDir, ReviewedWindowsPin, WindowsInputPaths) {
     (t, pin, paths)
 }
 #[test]
+fn runtime_reopen_does_not_require_the_original_source_image_files() {
+    let (_temp, pin, paths) = fixture();
+    for path in [&paths.kernel, &paths.initrd, &paths.factory] {
+        fs::remove_file(path).unwrap();
+    }
+    let inputs = verify_windows_runtime(&pin.runtime_files, paths.runtime).unwrap();
+    inputs.recheck_runtime().unwrap();
+}
+#[test]
 fn initrd_compression_matches_the_publisher_contract() {
     let (_t, mut pin, paths) = fixture();
     for compression in ["gzip", "xz", "zstd", "cpio-prefix"] {

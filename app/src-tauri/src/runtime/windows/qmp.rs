@@ -200,7 +200,9 @@ impl<T: Transport> Qmp<T> {
         let result = (|| {
             self.command(if running { "cont" } else { "stop" }, until)?;
             let status = self.query_status(until)?;
-            if status.running != running || (running && status.status != "running") {
+            if status.running != running
+                || status.status != if running { "running" } else { "paused" }
+            {
                 return Err(invalid());
             }
             Ok(())

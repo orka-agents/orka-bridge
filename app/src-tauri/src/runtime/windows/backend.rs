@@ -65,6 +65,57 @@ mod native {
         qmp: Qmp<NativeTransport>,
         guest: Option<GuestStream>,
     }
+    pub(super) fn pin_boot(
+        image: &crate::runtime::image_install::InstalledImageSet,
+        root: &Path,
+    ) -> Result<Vec<File>, RuntimeError> {
+        use sha2::{Digest, Sha256};
+        use std::{
+            io::Read,
+            os::windows::fs::{MetadataExt, OpenOptionsExt},
+        };
+        let mut held = Vec::new();
+        for (path, identity, (bytes, sha)) in [
+            (
+                image.kernel_path(),
+                image.kernel_identity(),
+                image.kernel_pin(),
+            ),
+            (
+                image.initrd_path(),
+                image.initrd_identity(),
+                image.initrd_pin(),
+            ),
+        ] {
+            let mut file = OpenOptions::new()
+                .read(true)
+                .share_mode(1)
+                .custom_flags(0x00200000)
+                .open(root.join(path))?;
+            let metadata = file.metadata()?;
+            if !metadata.is_file()
+                || metadata.file_attributes() & 0x400 != 0
+                || metadata.len() != bytes
+                || crate::runtime::identity::file_identity(&file)? != *identity
+            {
+                return Err(RuntimeError::RetainedState);
+            }
+            let mut digest = Sha256::new();
+            let mut buffer = [0; 65536];
+            loop {
+                let n = file.read(&mut buffer)?;
+                if n == 0 {
+                    break;
+                }
+                digest.update(&buffer[..n]);
+            }
+            if format!("{:x}", digest.finalize()) != sha {
+                return Err(RuntimeError::RetainedState);
+            }
+            held.push(file);
+        }
+        Ok(held)
+    }
     impl WindowsBackend {
         pub fn new(inputs: Arc<VerifiedWindowsInputs>) -> Self {
             Self {
@@ -157,12 +208,14 @@ mod native {
                     .to_str()
                     .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?,
             )?;
-            let mut child = OwnedQemuProcess::spawn_suspended(
+            let boot = pin_boot(&spec.image, &spec.root)?;
+            let mut child = OwnedQemuProcess::spawn_with_boot(
                 self.inputs.clone(),
                 spec.ownership.clone(),
                 &spec.root,
                 &args,
                 endpoint,
+                boot,
             )?;
             let stdio = child.take_stdio()?;
             let owner = Arc::new(child);
@@ -304,9 +357,8 @@ mod native {
                     vm.owner.wait_for_stop()?;
                 }
             }
-            if vm.owner.exit_code()? != 0 {
-                return Err(std::io::Error::other("QEMU exited unsuccessfully").into());
-            }
+            // Stop success is held whole-Job termination proof, not a clean
+            // guest exit. The session reports exit status independently.
             Ok(())
         }
         fn pause(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
@@ -327,6 +379,9 @@ mod native {
 pub(crate) use native::Lease;
 #[cfg(windows)]
 pub use native::WindowsBackend;
+#[cfg(all(test, windows))]
+#[path = "backend_boot_tests.rs"]
+mod boot_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -337,7 +392,7 @@ mod tests {
         let home = std::env::var_os("USERPROFILE").unwrap();
         let temp = tempfile::tempdir_in(home).unwrap();
         let root = temp.path().join("install");
-        let _journal = crate::runtime::journal::Journal::create(
+        let mut journal = crate::runtime::journal::Journal::create(
             &root,
             crate::runtime::types::BackendKind::Qemu,
             b"pc-q35-11.0".to_vec(),
@@ -345,6 +400,9 @@ mod tests {
         .unwrap();
         let endpoint = crate::runtime::windows::control::ControlEndpoint::create(&root).unwrap();
         assert!(endpoint.path().parent().unwrap().is_dir());
+        journal
+            .set_phase(crate::runtime::journal::StatePhase::Preparing)
+            .unwrap();
     }
     #[test]
     fn prepared_state_is_filled_without_replacing_its_held_identity() {

@@ -381,6 +381,52 @@ fn handshake_negative_first_boot_write_keeps_new_consumed_after_cleanup() {
 }
 
 #[test]
+fn readiness_refusal_keeps_the_sequenced_channel_open() {
+    use std::io::{Read, Write};
+    struct Channel(std::io::Cursor<Vec<u8>>);
+    impl Read for Channel {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.0.read(b)
+        }
+    }
+    impl Write for Channel {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let nonce = Uuid::new_v4();
+    let mut bytes = Vec::new();
+    for (request_id, body) in [
+        (
+            3,
+            ResultBody::Error {
+                code: ErrorCode::Unavailable,
+            },
+        ),
+        (4, ResultBody::Ready {}),
+    ] {
+        bytes.extend(
+            encode(&Frame::Result(WireResult {
+                version: VERSION,
+                boot_nonce: nonce,
+                request_id,
+                body,
+            }))
+            .unwrap(),
+        );
+    }
+    let mut client = fixture_runtime::client::VmClient::established(
+        Box::new(Channel(std::io::Cursor::new(bytes))),
+        nonce,
+    )
+    .unwrap();
+    assert!(client.readiness().is_err());
+    client.readiness().unwrap();
+}
+#[test]
 fn exclusive_directory_lock_and_persistent_random_identity() {
     let (temp, j) = create();
     let root = temp.path().join("install");

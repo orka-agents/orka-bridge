@@ -91,15 +91,18 @@ impl VmClient {
     pub fn readiness(&mut self) -> io::Result<()> {
         self.ready_call(RequestBody::Readiness {})
     }
-    pub fn shutdown(&mut self) -> io::Result<()> {
+    pub(super) fn shutdown(&mut self) -> io::Result<()> {
         self.ready_call(RequestBody::Shutdown {})
     }
     fn ready_call(&mut self, body: RequestBody) -> io::Result<()> {
-        if matches!(self.call(body)?, ResultBody::Ready {}) {
-            return Ok(());
+        match self.call(body)? {
+            ResultBody::Ready {} => Ok(()),
+            ResultBody::Error { .. } => Err(io::Error::other("guest runtime refused request")),
+            _ => {
+                self.channel = None;
+                Err(invalid())
+            }
         }
-        self.channel = None;
-        Err(invalid())
     }
     /// Nonsecret negotiation. An old guest may close its strict protocol session.
     pub fn credential_status(&mut self) -> io::Result<CredentialState> {

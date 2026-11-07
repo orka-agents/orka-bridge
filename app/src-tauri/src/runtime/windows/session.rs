@@ -8,6 +8,7 @@ pub struct WindowsSession {
     client: Option<VmClient>,
     owner: Arc<OwnedQemuProcess>,
     lease: Lease,
+    shutdown_clean: bool,
 }
 impl WindowsSession {
     pub fn start(mut worker: RuntimeWorker, host_utc: u64) -> Result<Self, RuntimeError> {
@@ -27,6 +28,7 @@ impl WindowsSession {
             client: Some(client),
             owner,
             lease,
+            shutdown_clean: false,
         })
     }
     pub fn client_mut(&mut self) -> Result<&mut VmClient, RuntimeError> {
@@ -34,21 +36,34 @@ impl WindowsSession {
     }
     pub fn shutdown(&mut self) -> Result<(), RuntimeError> {
         if self.client.is_none() {
-            return self.worker.stop();
+            self.worker.stop()?;
+            return if self.shutdown_clean {
+                Ok(())
+            } else {
+                Err(RuntimeError::Closed)
+            };
         }
         // Begin the same original budget before a guest can acknowledge and
         // exit. GuestStream clamps its native I/O to this existing deadline.
         self.lease.prepare_shutdown()?;
         let ack = self.client.as_mut().expect("live client").shutdown();
-        let stopped = self.worker.stop();
+        let stopped = self.worker.stop().and_then(|()| {
+            if self.owner.exit_code()? == 0 {
+                Ok(())
+            } else {
+                Err(io_error("QEMU exited unsuccessfully".into()))
+            }
+        });
         self.client = None;
-        match (ack, stopped) {
+        let result = match (ack, stopped) {
             (Err(ack), Err(stop)) => Err(io_error(format!(
                 "guest shutdown failed: {ack}; stop unobserved: {stop}"
             ))),
             (Err(ack), Ok(())) => Err(ack.into()),
             (Ok(()), stop) => stop,
-        }
+        };
+        self.shutdown_clean = result.is_ok();
+        result
     }
     pub fn diagnostics(&self) -> Result<super::backend::Diagnostics, RuntimeError> {
         self.lease.diagnostics()

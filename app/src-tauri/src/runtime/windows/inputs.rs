@@ -252,8 +252,23 @@ pub fn verify_windows_inputs(
     {
         return Err(invalid());
     }
+    let held = vec![
+        checked(&paths.kernel, b.kernel.bytes, &b.kernel.sha256)?,
+        checked(&paths.initrd, b.initrd.bytes, &b.initrd.sha256)?,
+        checked(&paths.factory, pin.image.bytes, &pin.image.sha256)?,
+    ];
+    let mut inputs = verify_windows_runtime(&pin.runtime_files, paths.runtime.clone())?;
+    inputs.paths = paths;
+    inputs._held.extend(held);
+    Ok(inputs)
+}
+/// Runtime archive authority is independent of the separately installed image.
+pub fn verify_windows_runtime(
+    files: &[FilePin],
+    runtime: PathBuf,
+) -> Result<VerifiedWindowsInputs, RuntimeError> {
     let mut names = BTreeSet::new();
-    for row in &pin.runtime_files {
+    for row in files {
         if !relative(&row.name) || !names.insert(row.name.to_lowercase()) {
             return Err(invalid());
         }
@@ -269,18 +284,18 @@ pub fn verify_windows_inputs(
     {
         return Err(invalid());
     }
-    let held = vec![
-        checked(&paths.kernel, b.kernel.bytes, &b.kernel.sha256)?,
-        checked(&paths.initrd, b.initrd.bytes, &b.initrd.sha256)?,
-        checked(&paths.factory, pin.image.bytes, &pin.image.sha256)?,
-    ];
-    if !paths.runtime.is_absolute() {
+    if !runtime.is_absolute() {
         return Err(invalid());
     }
     let mut inputs = VerifiedWindowsInputs {
-        paths,
-        inventory: pin.runtime_files.clone(),
-        _held: held,
+        paths: WindowsInputPaths {
+            runtime,
+            kernel: PathBuf::new(),
+            initrd: PathBuf::new(),
+            factory: PathBuf::new(),
+        },
+        inventory: files.to_vec(),
+        _held: Vec::new(),
     };
     inputs._held.extend(inputs.check_runtime()?);
     Ok(inputs)

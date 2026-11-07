@@ -117,6 +117,17 @@ fn cpu_control_is_correlated_and_observes_requested_state() {
     );
 }
 #[test]
+fn pause_cannot_hide_an_io_error_state() {
+    let (wire, _) = wire(&[
+        HELLO,
+        CAPS,
+        b"{\"return\":{},\"id\":2}\n",
+        b"{\"return\":{\"status\":\"io-error\",\"running\":false},\"id\":3}\n",
+    ]);
+    let mut q = Qmp::negotiate(wire, deadline()).unwrap();
+    assert!(q.set_running(false, deadline()).is_err());
+}
+#[test]
 fn cpu_control_cannot_succeed_on_unobserved_running_state() {
     let (wire, state) = wire(&[
         HELLO,
