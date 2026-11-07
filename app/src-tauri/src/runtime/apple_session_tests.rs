@@ -14,6 +14,8 @@ use std::{
     os::unix::net::UnixStream,
     time::{Duration, Instant},
 };
+#[path = "apple_session_extra_tests.rs"]
+mod extra;
 fn serving_peer(mode: &str) -> String {
     let extra = format!(
         r#"
@@ -22,8 +24,9 @@ def guest():
     f=g.makefile('rb',buffering=0)
     def send(frame): g.sendall(json.dumps(frame,separators=(',',':')).encode()+b'\n')
     send({{'type':'hello','body':{{'version':1,'stage':'early','guestNonce':'11111111-1111-4111-8111-111111111111','acceptedBootNonce':None}}}})
-    if '{mode}'=='failed-send':
-        g.shutdown(socket.SHUT_RD)
+    if '{mode}'=='peer-eof':
+        f.close()
+        g.close()
         return
     b=json.loads(f.readline())
     assert b['body']['body']['op']=='boot' and b['body']['body']['body']['stateCreation']=='new'
@@ -38,6 +41,9 @@ def guest():
     assert b['body']['requestId']==2
     assert b['body']['body']['body']['stateCreation']=='existing'
     send({{'type':'result','body':{{'version':1,'bootNonce':nonce,'requestId':2,'body':{{'op':'ready','body':{{}}}}}}}})
+    if '{mode}'=='engine':
+        f.readline()
+        open(c['installationPath']+'/request-seen','x').close()
 threading.Thread(target=guest,daemon=True).start()
 "#
     );
@@ -67,9 +73,9 @@ fn wrong_ready_nonce_cleans_up_without_replay_and_keeps_consumed_record() {
     );
 }
 #[test]
-fn integrated_failed_early_send_observes_stop_and_retains_consumption() {
+fn peer_eof_after_hello_observes_stop_and_retains_consumption() {
     let (t, journal, image) = installation();
-    let resources = resource(&serving_peer("failed-send"));
+    let resources = resource(&serving_peer("peer-eof"));
     assert!(AppleVmSession::launch(resources.path().to_path_buf(), journal, image, 1).is_err());
     assert_eq!(
         Journal::open(&t.path().join("install"))
