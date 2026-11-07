@@ -1,4 +1,6 @@
 use super::*;
+#[path = "apple_input_tests.rs"]
+mod input_tests;
 use std::{io::Read, os::fd::AsRawFd, sync::OnceLock};
 
 // Synthetic descriptors/signals only: this ignored Mac test does not qualify VZ.

@@ -119,6 +119,9 @@ private struct BootstrapTests {
                 }
             }
         }
+        let identity = HelperBootstrap.machineIdentifier()
+        check((1...4096).contains(identity.count), "bounded raw SDK identity")
+        check(VZGenericMachineIdentifier(dataRepresentation: identity) != nil, "SDK identity reopens")
         fragmentedFrame(q)
         do {
             try rejectsBeforeDriver(q)
