@@ -3,16 +3,36 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/bridge-swift-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
+# The generator cross-compiles arm64; Intel host metadata must not reject it.
+# Only uname is controlled here; compilation and signature checks stay real.
+mkdir "$work/intel-host"
+printf '%s\n' '#!/bin/sh' \
+    'if [ "$1" = -m ]; then echo x86_64; else exec /usr/bin/uname "$@"; fi' \
+    >"$work/intel-host/uname"
+chmod 0755 "$work/intel-host/uname"
+PATH="$work/intel-host:$PATH" bash "$root/scripts/build-vm-helper-macos.sh"
 xcrun swiftc --version
 native="$root/app/src-tauri/native/macos"
 sources=("$native/BridgeVM.swift" "$native/VirtualizationDriver.swift"
-         "$native/InheritedDescriptors.swift" "$native/SupervisorSocket.swift" "$native/TerminationObserver.swift")
+         "$native/InheritedDescriptors.swift" "$native/SupervisorSocket.swift" "$native/TerminationObserver.swift"
+         "$native/HelperConfiguration.swift" "$native/HelperBootstrap.swift")
 flags=(-swift-version 5 -target arm64-apple-macos13.0 -warnings-as-errors -parse-as-library)
+# Compile the shipping entrypoint separately; tests have their own mains.
+xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/BridgeVMMain.swift" -o "$work/BridgeVM"
+codesign --force --sign - --entitlements "$native/virtualization.entitlements" "$work/BridgeVM"
 # Compile the production core independently of test code as well as in the runner.
 xcrun swiftc "${flags[@]}" -whole-module-optimization -emit-object "${sources[@]}" -o "$work/BridgeVM.o"
 xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/tests/BridgeVMTests.swift" -o "$work/tests"
 xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/tests/SupervisorIOTests.swift" -o "$work/io-tests"
+xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/tests/HelperConfigurationTests.swift" -o "$work/configuration-tests"
+for runner in tests io-tests configuration-tests; do
+    codesign --force --sign - --entitlements "$native/virtualization.entitlements" "$work/$runner"
+done
 "$work/tests"
+"$work/configuration-tests"
+xcrun swiftc "${flags[@]}" "${sources[@]}" "$native/tests/HelperBootstrapTests.swift" -o "$work/bootstrap-tests"
+codesign --force --sign - --entitlements "$native/virtualization.entitlements" "$work/bootstrap-tests"
+"$work/bootstrap-tests"
 # Both new suites must run: an I/O assertion failure must not hide peer failures.
 status=0
 if ! "$work/io-tests"; then status=1; fi
