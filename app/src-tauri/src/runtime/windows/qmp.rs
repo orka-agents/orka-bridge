@@ -207,6 +207,12 @@ impl<T: Transport> Qmp<T> {
         })();
         self.checked(result)
     }
+    pub fn wait_for_stop(&mut self) -> io::Result<()> {
+        let result = self.io.wait_for_stop();
+        self.checked(result)?;
+        self.active = false;
+        Ok(())
+    }
     pub fn prepare_stop(&mut self) -> io::Result<Instant> {
         let result = self.io.prepare_stop();
         self.checked(result)

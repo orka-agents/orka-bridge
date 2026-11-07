@@ -288,8 +288,10 @@ mod native {
         }
         fn stop(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
             let mut vm = vm(handle)?;
-            if vm.owner.exited() {
-                vm.owner.wait_for_stop()?;
+            if vm.owner.stopping_deadline().is_some() || vm.owner.exited() {
+                // A guest ACK schedules poweroff; it is not filesystem flush
+                // completion. Prepared guest shutdown must remain wait-only.
+                vm.qmp.wait_for_stop()?;
             } else {
                 let until = vm
                     .owner
