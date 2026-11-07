@@ -2,6 +2,7 @@ pub mod acquire;
 #[cfg(unix)]
 pub mod apple;
 pub mod client;
+pub mod credential_store;
 pub mod credentials;
 pub mod identity;
 pub mod image_cache;
