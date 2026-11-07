@@ -24,12 +24,13 @@ def guest():
     f=g.makefile('rb',buffering=0)
     def send(frame): g.sendall(json.dumps(frame,separators=(',',':')).encode()+b'\n')
     send({{'type':'hello','body':{{'version':1,'stage':'early','guestNonce':'11111111-1111-4111-8111-111111111111','acceptedBootNonce':None}}}})
+    b=json.loads(f.readline())
+    assert b['body']['body']['op']=='boot' and b['body']['body']['body']['stateCreation']=='new'
+    # Reading Boot proves the host consumed creation before this EOF.
     if '{mode}'=='peer-eof':
         f.close()
         g.close()
         return
-    b=json.loads(f.readline())
-    assert b['body']['body']['op']=='boot' and b['body']['body']['body']['stateCreation']=='new'
     nonce=b['body']['bootNonce']
     ready={{'type':'result','body':{{'version':1,'bootNonce':nonce,'requestId':1,'body':{{'op':'ready','body':{{}}}}}}}}
     hello={{'type':'hello','body':{{'version':1,'stage':'serve','guestNonce':'22222222-2222-4222-8222-222222222222','acceptedBootNonce':nonce}}}}
@@ -73,7 +74,7 @@ fn wrong_ready_nonce_cleans_up_without_replay_and_keeps_consumed_record() {
     );
 }
 #[test]
-fn peer_eof_after_hello_observes_stop_and_retains_consumption() {
+fn peer_eof_after_early_boot_observes_stop_and_retains_consumption() {
     let (t, journal, image) = installation();
     let resources = resource(&serving_peer("peer-eof"));
     assert!(AppleVmSession::launch(resources.path().to_path_buf(), journal, image, 1).is_err());
