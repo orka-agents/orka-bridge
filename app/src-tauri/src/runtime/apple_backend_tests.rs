@@ -53,7 +53,7 @@ pub(crate) fn failing_peer(mode: &str, opcode: u8) -> String {
 #[test]
 fn failed_operations_revoke_guest_and_retain_original_worker_lock() {
     use std::io::Write;
-    for opcode in [b'P', b'R'] {
+    for &opcode in b"PR" {
         for mode in ["ack", "eof", "hang"] {
             let (t, j, image) = installation();
             let resources = resource(&failing_peer(mode, opcode));

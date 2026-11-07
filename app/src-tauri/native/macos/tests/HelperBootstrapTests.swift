@@ -123,6 +123,7 @@ private struct BootstrapTests {
         check((1...4096).contains(identity.count), "bounded raw SDK identity")
         check(VZGenericMachineIdentifier(dataRepresentation: identity) != nil, "SDK identity reopens")
         initializerProcess()
+        hungInitializerCleanup()
         fragmentedFrame(q)
         do {
             try rejectsBeforeDriver(q)
@@ -145,28 +146,92 @@ private struct BootstrapTests {
             try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
             defer { try? FileManager.default.removeItem(at: root) }
             for args in [["--machine-identifier"], ["--machine-identifier", "extra"]] {
-                let process = Process(), pipe = Pipe()
-                process.executableURL = helper; process.arguments = args
-                process.environment = [:]; process.currentDirectoryURL = root
-                process.standardOutput = pipe; process.standardError = FileHandle.nullDevice
-                try process.run()
-                let end = Date().addingTimeInterval(5)
-                while process.isRunning && Date() < end { Thread.sleep(forTimeInterval: 0.002) }
-                if process.isRunning { process.terminate() }
-                check(!process.isRunning, "initializer child exit is bounded")
-                process.waitUntilExit()
-                let bytes = pipe.fileHandleForReading.readDataToEndOfFile()
+                let (pid, output) = try spawnInitializer([helper.path] + args, in: root)
+                guard let status = try finishInitializer(pid, until: .now() + .seconds(5)) else {
+                    check(false, "initializer cleanup exit unobserved"); continue
+                }
+                let bytes = output.readDataToEndOfFile()
                 if args.count == 1 {
-                    check(process.terminationStatus == 0, "initializer exit success")
+                    check(status == 0, "initializer exit success")
                     check((1...4096).contains(bytes.count), "raw stdout identity bound")
                     check(VZGenericMachineIdentifier(dataRepresentation: bytes) != nil, "raw stdout SDK validity")
                 } else {
-                    check(process.terminationStatus != 0 && bytes.isEmpty, "extra initializer arguments refuse")
+                    check(status != 0 && bytes.isEmpty, "extra initializer arguments refuse")
                 }
                 let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
                 check(files.isEmpty, "initializer wrote no installation files")
             }
         } catch { check(false, "initializer process fixture failed") }
+    }
+
+    // POSIX owns the unreaped direct PID; Foundation Process may reap asynchronously.
+    private static func spawnInitializer(_ command: [String], in root: URL) throws -> (pid_t, FileHandle) {
+        var output: [Int32] = [-1, -1]
+        guard pipe(&output) == 0 else { throw SupervisorIOError.system }
+        var actions: posix_spawn_file_actions_t? = nil
+        guard posix_spawn_file_actions_init(&actions) == 0 else {
+            _ = close(output[0]); _ = close(output[1]); throw SupervisorIOError.system
+        }
+        defer { posix_spawn_file_actions_destroy(&actions); _ = close(output[1]) }
+        guard posix_spawn_file_actions_adddup2(&actions, output[1], STDOUT_FILENO) == 0,
+              posix_spawn_file_actions_addclose(&actions, output[0]) == 0,
+              posix_spawn_file_actions_addclose(&actions, output[1]) == 0,
+              posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0) == 0,
+              posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0) == 0 else {
+            _ = close(output[0]); throw SupervisorIOError.system
+        }
+        var args = (["sh", "-c", "cd \"$1\" && shift && exec \"$@\"", "initializer", root.path] + command)
+            .map { strdup($0) } + [nil]
+        defer { for arg in args { free(arg) } }
+        var environment: [UnsafeMutablePointer<CChar>?] = [nil]
+        var pid: pid_t = 0
+        guard posix_spawn(&pid, "/bin/sh", &actions, nil, &args, &environment) == 0 else {
+            _ = close(output[0]); throw SupervisorIOError.system
+        }
+        return (pid, FileHandle(fileDescriptor: output[0], closeOnDealloc: true))
+    }
+    private static func waitInitializer(_ pid: pid_t, until end: DispatchTime) throws -> Int32? {
+        var status: Int32 = 0
+        while true {
+            let result = waitpid(pid, &status, WNOHANG)
+            if result == pid { return status }
+            if result < 0 {
+                if errno == EINTR { continue }
+                throw SupervisorIOError.system
+            }
+            if DispatchTime.now() >= end { return nil }
+            usleep(2000)
+        }
+    }
+    private static func finishInitializer(_ pid: pid_t, until end: DispatchTime) throws -> Int32? {
+        if let status = try waitInitializer(pid, until: end) { return status }
+        guard kill(pid, SIGTERM) == 0 else { throw SupervisorIOError.system }
+        var status: Int32 = 0
+        while true {
+            if waitpid(pid, &status, 0) == pid { return status }
+            if errno != EINTR { throw SupervisorIOError.system }
+        }
+    }
+    private static func hungInitializerCleanup() {
+        do {
+            let (pid, output) = try spawnInitializer(
+                ["/bin/sh", "-c", "trap '' TERM; printf ready; while :; do :; done"],
+                in: FileManager.default.temporaryDirectory)
+            check(receive(output.fileDescriptor, 5) == Array("ready".utf8), "hung child installed TERM-ignore")
+            let done = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async {
+                do { check(try finishInitializer(pid, until: .now()) != nil, "hung child exit observed") }
+                catch { check(false, "hung child cleanup error") }
+                done.signal()
+            }
+            let bounded = done.wait(timeout: .now() + .milliseconds(300)) == .success
+            if !bounded {
+                // The cleanup waiter still owns this unreaped PID, so it cannot be reused.
+                _ = kill(pid, SIGKILL)
+                wait(done)
+            }
+            check(bounded, "TERM-ignoring child cleanup returns within its bound")
+        } catch { check(false, "hung initializer fixture failed") }
     }
 
     private static func fragmentedFrame(_ q: DispatchQueue) {

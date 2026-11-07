@@ -261,14 +261,6 @@ impl Drop for AppleHelperOwner {
         }
     }
 }
-#[cfg(test)]
-pub(crate) mod failure_fixture {
-    use super::*;
-    pub(crate) fn shorten(owner: &mut AppleHelperOwner) {
-        owner.budgets.read = Duration::from_millis(100);
-        owner.budgets.cleanup = Duration::ZERO;
-    }
-}
 fn io_error(error: io::Error) -> HelperError {
     HelperError::Io(if error.kind() == io::ErrorKind::WouldBlock {
         io::ErrorKind::TimedOut
@@ -327,4 +319,13 @@ fn wait_until(child: &mut Child, end: Instant) -> io::Result<Option<ExitStatus>>
         );
     }
     Ok(None)
+}
+#[cfg(test)]
+pub mod failure_fixture {
+    use super::*;
+    // Exported only in test crates: the owner-only harness has no backend caller.
+    pub fn shorten(owner: &mut AppleHelperOwner) {
+        owner.budgets.read = Duration::from_millis(100);
+        owner.budgets.cleanup = Duration::ZERO;
+    }
 }

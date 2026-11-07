@@ -64,7 +64,7 @@ fn coalesced_early_ready_and_serve_hello_publish_only_after_correlated_ready() {
 }
 #[test]
 fn failed_public_pause_or_resume_never_republishes_transport() {
-    for opcode in [b'P', b'R'] {
+    for &opcode in b"PR" {
         for mode in ["ack", "eof"] {
             let (t, journal, image) = installation();
             let peer = serving_peer("good").replace(

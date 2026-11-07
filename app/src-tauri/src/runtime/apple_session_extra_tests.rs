@@ -11,28 +11,32 @@ fn stopping_with_an_inflight_engine_client_revokes_its_only_guest_capability() {
         AppleVmSession::launch(resources.path().to_path_buf(), journal, image, 1).unwrap();
     let transport = session.transport.take().unwrap();
     // Materialization above owns its runtime; enter the engine runtime afterward.
-    tokio::runtime::Runtime::new().unwrap().block_on(async {
-        let task = tokio::spawn(async move {
-            transport
-                .execute(EngineRequest {
-                    action: EngineAction::Version {},
-                })
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let task = tokio::spawn(async move {
+                transport
+                    .execute(EngineRequest {
+                        action: EngineAction::Version {},
+                    })
+                    .await
+            });
+            let seen = t.path().join("install/request-seen");
+            let end = Instant::now() + Duration::from_secs(2);
+            while !seen.exists() {
+                assert!(Instant::now() < end, "engine request did not reach peer");
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            session.stop().unwrap();
+            assert!(tokio::time::timeout(Duration::from_secs(2), task)
                 .await
+                .unwrap()
+                .unwrap()
+                .is_err());
+            assert!(session.transport().is_none());
         });
-        let seen = t.path().join("install/request-seen");
-        let end = Instant::now() + Duration::from_secs(2);
-        while !seen.exists() {
-            assert!(Instant::now() < end, "engine request did not reach peer");
-            tokio::time::sleep(Duration::from_millis(2)).await;
-        }
-        session.stop().unwrap();
-        assert!(tokio::time::timeout(Duration::from_secs(2), task)
-            .await
-            .unwrap()
-            .unwrap()
-            .is_err());
-        assert!(session.transport().is_none());
-    });
 }
 #[test]
 fn helper_ack_alone_never_establishes_guest_transport() {

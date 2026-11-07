@@ -10,7 +10,8 @@ use std::{
         unix::fs::{OpenOptionsExt, PermissionsExt},
     },
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::{Child, Command, Stdio},
+    sync::mpsc::{self, Sender},
     time::{Duration, Instant},
 };
 
@@ -73,6 +74,7 @@ pub fn machine_identifier(resource_root: &Path) -> Result<Vec<u8>, RuntimeError>
 }
 pub(crate) fn identifier_with_deadline(root: &Path, end: Instant) -> Result<Vec<u8>, RuntimeError> {
     let path = helper_path(root)?;
+    let reaper = identifier_waiter()?; // Thread creation must succeed before any Child exists.
     let (mut child, mut pipe) = spawn_guard::run_blocking(|| -> io::Result<_> {
         let mut child = Command::new(path)
             .arg("--machine-identifier")
@@ -157,18 +159,43 @@ pub(crate) fn identifier_with_deadline(root: &Path, end: Instant) -> Result<Vec<
     })();
     if result.is_err() {
         let _ = child.kill();
-        let cleanup = Instant::now() + Duration::from_secs(10);
-        loop {
-            if child.try_wait()?.is_some() {
-                break;
-            }
-            if Instant::now() >= cleanup {
-                return Err(RuntimeError::RetainedState);
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
+        reap_identifier(child, Instant::now() + Duration::from_secs(10), reaper)?;
     }
     result.map_err(RuntimeError::Io)
+}
+fn identifier_waiter() -> io::Result<Sender<Child>> {
+    let (sender, receiver) = mpsc::channel::<Child>();
+    std::thread::Builder::new().spawn(move || {
+        if let Ok(mut child) = receiver.recv() {
+            let _ = child.wait();
+        }
+    })?;
+    Ok(sender)
+}
+fn reap_identifier(
+    mut child: Child,
+    cleanup: Instant,
+    reaper: Sender<Child>,
+) -> Result<(), RuntimeError> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return Ok(()),
+            Ok(None) => {}
+            Err(error) => {
+                reaper
+                    .send(child)
+                    .expect("identity waiter owns its receiver until transfer");
+                return Err(RuntimeError::Io(error));
+            }
+        }
+        if Instant::now() >= cleanup {
+            reaper
+                .send(child)
+                .expect("identity waiter owns its receiver until transfer");
+            return Err(RuntimeError::RetainedState);
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 #[cfg(test)]
 #[path = "apple_input_tests.rs"]

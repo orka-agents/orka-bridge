@@ -65,6 +65,60 @@ fn config_is_unlinked_private_rewound_and_uses_numeric_sdk_arrays() {
     );
 }
 #[test]
+fn expired_cleanup_retains_a_live_child_until_its_later_exit_is_reaped() {
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    let reaper = identifier_waiter().unwrap();
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", "read line"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let input = child.stdin.take().unwrap();
+    let pid = child.id();
+    assert!(matches!(
+        reap_identifier(child, Instant::now(), reaper),
+        Err(RuntimeError::RetainedState)
+    ));
+    // The direct child cannot exit until the test releases this input endpoint.
+    drop(input);
+    let end = Instant::now() + Duration::from_secs(1);
+    let reaped = loop {
+        let mut info = unsafe { std::mem::zeroed::<libc::siginfo_t>() };
+        let result = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                pid as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if result == -1 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD) {
+            break true;
+        }
+        if Instant::now() >= end {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    if !reaped {
+        // Reap only the test-owned, still-unreaped PID after the RED observation.
+        let mut status = 0;
+        assert_eq!(
+            unsafe { libc::waitpid(pid as i32, &mut status, 0) },
+            pid as i32
+        );
+    }
+    assert!(
+        reaped,
+        "bounded return discarded the only owner of a later-exiting child"
+    );
+}
+#[test]
 fn initializer_accepts_only_bounded_raw_success_and_reaps_exact_child() {
     use std::os::unix::fs::PermissionsExt;
     for (body, succeeds) in [
