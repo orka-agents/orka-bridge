@@ -24,7 +24,7 @@ pub(super) fn installation() -> (tempfile::TempDir, Journal, Arc<InstalledImageS
     let target = journal
         .image_target(&verified.image().identity().state_compatibility_id)
         .unwrap();
-    let (_, closed) = tokio::sync::watch::channel(false);
+    let (_sender, closed) = tokio::sync::watch::channel(false);
     let image = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
