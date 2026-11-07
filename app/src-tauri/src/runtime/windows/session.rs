@@ -42,12 +42,20 @@ impl WindowsSession {
         let ack = self.client.as_mut().expect("live client").shutdown();
         let stopped = self.worker.stop();
         self.client = None;
-        ack.map_err(RuntimeError::from)?;
-        stopped
+        match (ack, stopped) {
+            (Err(ack), Err(stop)) => Err(io_error(format!(
+                "guest shutdown failed: {ack}; stop unobserved: {stop}"
+            ))),
+            (Err(ack), Ok(())) => Err(ack.into()),
+            (Ok(()), stop) => stop,
+        }
     }
     pub fn diagnostics(&self) -> Result<super::backend::Diagnostics, RuntimeError> {
         self.lease.diagnostics()
     }
+}
+fn io_error(message: String) -> RuntimeError {
+    std::io::Error::other(message).into()
 }
 impl Drop for WindowsSession {
     fn drop(&mut self) {

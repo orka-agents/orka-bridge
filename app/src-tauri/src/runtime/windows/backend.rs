@@ -270,6 +270,8 @@ mod native {
             if result.is_ok() {
                 fs::remove_file(path)?;
             } else {
+                // Preserve partial scratch evidence, including when the exact
+                // original owner/process bundle has been quarantined.
                 self.failed = true;
             }
             result
