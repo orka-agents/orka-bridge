@@ -13,7 +13,7 @@ struct State {
     actions: Vec<&'static str>,
 }
 struct Wire {
-    rx: VecDeque<Vec<u8>>,
+    rx: VecDeque<Received>,
     state: Arc<Mutex<State>>,
     stop: Instant,
 }
@@ -21,10 +21,6 @@ impl Transport for Wire {
     fn receive(&mut self, _: Instant) -> io::Result<Received> {
         self.rx
             .pop_front()
-            .map(|bytes| Received {
-                bytes,
-                failure: None,
-            })
             .ok_or_else(|| io::ErrorKind::UnexpectedEof.into())
     }
     fn send(&mut self, bytes: &[u8], _: Instant) -> io::Result<()> {
@@ -49,7 +45,13 @@ fn wire(frames: &[&[u8]]) -> (Wire, Arc<Mutex<State>>) {
     let state = Arc::new(Mutex::new(State::default()));
     (
         Wire {
-            rx: frames.iter().map(|b| b.to_vec()).collect(),
+            rx: frames
+                .iter()
+                .map(|b| Received {
+                    bytes: b.to_vec(),
+                    failure: None,
+                })
+                .collect(),
             state: state.clone(),
             stop: Instant::now() + Duration::from_secs(45),
         },
@@ -132,6 +134,22 @@ fn fragmented_and_oversized_frames_are_bounded_by_real_reader() {
     );
 }
 #[test]
+fn known_transport_failure_captures_bytes_without_accepting_a_valid_reply() {
+    let (mut wire, state) = wire(&[HELLO, CAPS]);
+    let bytes = b"{\"return\":{\"status\":\"running\",\"running\":true},\"id\":2}\n".to_vec();
+    wire.rx.push_back(Received {
+        bytes: bytes.clone(),
+        failure: Some(io::ErrorKind::BrokenPipe.into()),
+    });
+    let mut q = Qmp::negotiate(wire, deadline()).unwrap();
+    assert_eq!(
+        q.query_status(deadline()).unwrap_err().kind(),
+        io::ErrorKind::BrokenPipe
+    );
+    assert!(q.transcript().rx.ends_with(&bytes));
+    assert!(state.lock().unwrap().actions.contains(&"abort"));
+}
+#[test]
 fn refill_error_keeps_the_consumed_fragment() {
     struct Broken {
         consumed: bool,
@@ -171,7 +189,10 @@ fn transcript_limit_is_terminal_without_unbounded_capture() {
             serde_json::to_vec(&serde_json::json!({"event":"NOISE","data":"x".repeat(65536)}))
                 .unwrap();
         bytes.push(b'\n');
-        wire.rx.push_back(bytes);
+        wire.rx.push_back(Received {
+            bytes,
+            failure: None,
+        });
     }
     let mut q = Qmp::negotiate(wire, deadline()).unwrap();
     assert!(q.query_status(deadline()).is_err());
