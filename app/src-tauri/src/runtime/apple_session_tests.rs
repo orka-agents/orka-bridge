@@ -63,6 +63,38 @@ fn coalesced_early_ready_and_serve_hello_publish_only_after_correlated_ready() {
     assert!(session.transport().is_none());
 }
 #[test]
+fn failed_public_pause_or_resume_never_republishes_transport() {
+    for opcode in [b'P', b'R'] {
+        for mode in ["ack", "eof"] {
+            let (t, journal, image) = installation();
+            let peer = serving_peer("good").replace(
+                "s.sendall(b'K'+b[1:])",
+                &format!("if b[0]=={opcode}:\n        {}\n        sys.exit(7)\n    s.sendall(b'K'+b[1:])",
+                    if mode == "ack" { "s.sendall(b'X'+b[1:])" } else { "s.close()" }),
+            );
+            let resources = resource(&peer);
+            let mut session =
+                AppleVmSession::launch(resources.path().to_path_buf(), journal, image, 1).unwrap();
+            assert!(if opcode == b'P' {
+                session.pause()
+            } else {
+                session.resume()
+            }
+            .is_err());
+            assert!(session.transport().is_none());
+            assert!(session.pause().is_err());
+            assert!(session.resume().is_err());
+            assert!(session.transport().is_none());
+            assert!(session.stop().is_err());
+            drop(session);
+            assert!(matches!(
+                Journal::open(&t.path().join("install")),
+                Err(RuntimeError::Busy)
+            ));
+        }
+    }
+}
+#[test]
 fn wrong_ready_nonce_cleans_up_without_replay_and_keeps_consumed_record() {
     let (t, journal, image) = installation();
     let resources = resource(&serving_peer("bad"));
