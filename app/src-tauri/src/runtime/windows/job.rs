@@ -1037,10 +1037,16 @@ mod native {
             }
         }
         fn observe_empty_job(job: &Handle, port: &Handle) {
+            observe_empty_job_until(
+                job,
+                port,
+                std::time::Instant::now() + Duration::from_secs(5),
+            );
+        }
+        fn observe_empty_job_until(job: &Handle, port: &Handle, until: std::time::Instant) {
             use windows_sys::Win32::System::{
                 SystemServices::JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO, IO::GetQueuedCompletionStatus,
             };
-            let until = std::time::Instant::now() + Duration::from_secs(5);
             loop {
                 let (mut message, mut key, mut process) = (0, 0, std::ptr::null_mut());
                 let remaining = until.saturating_duration_since(std::time::Instant::now());
@@ -1205,6 +1211,7 @@ mod native {
             let job = kill_on_close_job();
             let mut leader = blocked_member(&job);
             let mut member = blocked_member(&job);
+            let port = completion_port(&job);
             let registry = std::sync::Mutex::new(MemberRegistry::default());
             {
                 let mut members = registry.lock().unwrap();
@@ -1224,14 +1231,16 @@ mod native {
                 }
                 assert_eq!(flags & HANDLE_FLAG_INHERIT, 0);
             }
+            let until = std::time::Instant::now() + Duration::from_secs(5);
             leader.stdin.take().unwrap().write_all(b"\r\n").unwrap();
             member.stdin.take().unwrap().write_all(b"\r\n").unwrap();
             leader.wait().unwrap();
             member.wait().unwrap();
+            observe_empty_job_until(&job, &port, until);
             stop_job(
                 job.0,
                 raw(&leader),
-                Duration::from_secs(5),
+                until.saturating_duration_since(std::time::Instant::now()),
                 &AtomicBool::new(false),
                 &registry,
             )
