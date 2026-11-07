@@ -64,6 +64,14 @@ fn deadline() -> Instant {
 const HELLO: &[u8] = b"{\"QMP\":{\"version\":{},\"capabilities\":[]}}\r\n";
 const CAPS: &[u8] = b"{\"return\":{},\"id\":1}\n";
 #[test]
+fn guest_shutdown_prepares_the_original_budget_without_sending_quit() {
+    let (wire, state) = wire(&[HELLO, CAPS]);
+    let original = wire.stop;
+    let mut q = Qmp::negotiate(wire, deadline()).unwrap();
+    assert_eq!(q.prepare_stop().unwrap(), original);
+    assert_eq!(state.lock().unwrap().actions, ["send", "prepare"]);
+}
+#[test]
 fn cpu_control_is_correlated_and_observes_requested_state() {
     let (wire, state) = wire(&[
         HELLO,

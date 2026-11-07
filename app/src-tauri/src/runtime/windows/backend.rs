@@ -189,6 +189,14 @@ mod native {
         }
     }
     impl Lease {
+        pub(crate) fn prepare_shutdown(&self) -> Result<(), RuntimeError> {
+            self.0
+                .lock()
+                .map_err(|_| RuntimeError::Closed)?
+                .qmp
+                .prepare_stop()?;
+            Ok(())
+        }
         pub(crate) fn guest(&self) -> Result<GuestStream, RuntimeError> {
             self.0
                 .lock()
@@ -285,7 +293,12 @@ mod native {
                     .owner
                     .stopping_deadline()
                     .unwrap_or_else(|| Instant::now() + Duration::from_secs(45));
-                vm.qmp.quit(until)?;
+                if vm.qmp.quit(until).is_err() {
+                    // A guest may close QMP while completing its acknowledged
+                    // poweroff. Only independent held exits and exit0 can prove
+                    // stop; a forced abort's nonzero exit never becomes clean.
+                    vm.owner.wait_for_stop()?;
+                }
             }
             if vm.owner.exit_code()? != 0 {
                 return Err(std::io::Error::other("QEMU exited unsuccessfully").into());

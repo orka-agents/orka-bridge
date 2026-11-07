@@ -38,7 +38,7 @@ impl WindowsSession {
         }
         // Begin the same original budget before a guest can acknowledge and
         // exit. GuestStream clamps its native I/O to this existing deadline.
-        self.owner.prepare_graceful_stop()?;
+        self.lease.prepare_shutdown()?;
         let ack = self.client.as_mut().expect("live client").shutdown();
         let stopped = self.worker.stop();
         self.client = None;
