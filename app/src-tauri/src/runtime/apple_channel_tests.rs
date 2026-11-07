@@ -1,9 +1,4 @@
 use super::*;
-impl GuestSlot {
-    fn active(&self) -> bool {
-        self.inner.state.lock().unwrap().active
-    }
-}
 use std::{
     io::{Read, Write},
     os::unix::net::UnixStream,
@@ -13,15 +8,16 @@ use std::{
 fn surviving_wrapper_has_no_fd_and_blocked_read_stops_without_io_lock_deadlock() {
     let (socket, mut peer) = UnixStream::pair().unwrap();
     let slot = GuestSlot::new(socket);
-    let mut client = slot.channel();
+    let client = slot.channel();
+    let (configured, ready) = std::sync::mpsc::channel();
     let reader = std::thread::spawn(move || {
         let mut b = [0];
-        client.read(&mut b)
+        client.io(false, |mut socket| {
+            configured.send(()).unwrap(); // Timeout is configured before revocation.
+            socket.read(&mut b)
+        })
     });
-    // Synchronize on actual scoped I/O, not a guessed sleep.
-    while !slot.active() {
-        std::thread::yield_now();
-    }
+    ready.recv_timeout(Duration::from_secs(1)).unwrap();
     let mut second = slot.channel();
     assert_eq!(
         second.write(b"x").unwrap_err().kind(),
@@ -42,14 +38,23 @@ fn scoped_reference_timeout_never_reports_success() {
     let (socket, _) = UnixStream::pair().unwrap();
     let slot = GuestSlot::new(socket);
     let scoped = slot.acquire().unwrap();
+    let socket = Arc::downgrade(scoped.socket.as_ref().unwrap());
     slot.seal();
     assert_eq!(
         slot.revoke(Instant::now()).unwrap_err().kind(),
         std::io::ErrorKind::TimedOut
     );
+    assert!(
+        socket.upgrade().is_some(),
+        "a scoped I/O reference still owns the descriptor"
+    );
     drop(scoped);
     slot.revoke(Instant::now() + Duration::from_secs(1))
         .unwrap();
+    assert!(
+        socket.upgrade().is_none(),
+        "the actual UnixStream was dropped and its descriptor closed"
+    );
 }
 #[test]
 fn drip_reads_do_not_renew_total_deadline() {

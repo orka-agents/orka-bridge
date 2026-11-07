@@ -38,7 +38,7 @@ while True:
     if b[0]==83: sys.exit(0)
 "#;
 pub(crate) fn failing_peer(mode: &str, opcode: u8) -> String {
-    PEER.replace(
+    PEER.replace("s.sendall(b'BRVM\\x01')", "import signal\nsignal.signal(signal.SIGTERM, signal.SIG_IGN)\nopen(c['installationPath']+'/pid','w').write(str(os.getpid()))\ns.sendall(b'BRVM\\x01')").replace(
         "s.sendall(b'K'+b[1:])",
         &format!(
             r#"
@@ -89,6 +89,12 @@ fn failed_operations_revoke_guest_and_retain_original_worker_lock() {
                 "unobserved exit cannot become Stop success"
             );
             drop(worker);
+            let pid = fs::read_to_string(t.path().join("install/pid"))
+                .unwrap()
+                .parse::<i32>()
+                .unwrap();
+            let mut status = 0;
+            assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
             assert!(matches!(
                 Journal::open(&t.path().join("install")),
                 Err(RuntimeError::Busy)

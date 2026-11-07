@@ -81,10 +81,18 @@ impl AppleVmSession {
         self.worker.stop()
     }
     pub fn pause(&mut self) -> Result<(), RuntimeError> {
-        self.worker.pause()
+        let result = self.worker.pause();
+        if result.is_err() {
+            self.transport = None;
+        }
+        result
     }
     pub fn resume(&mut self) -> Result<(), RuntimeError> {
-        self.worker.resume()
+        let result = self.worker.resume();
+        if result.is_err() {
+            self.transport = None;
+        }
+        result
     }
 }
 fn read_frame(channel: &mut Channel) -> Result<Frame, RuntimeError> {

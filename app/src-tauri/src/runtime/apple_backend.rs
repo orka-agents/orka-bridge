@@ -159,14 +159,26 @@ impl VmBackend for AppleBackend {
         if self.poisoned {
             return Err(RuntimeError::RetainedState);
         }
-        self.owner.as_mut().unwrap().pause().map_err(helper_error)
+        match self.owner.as_mut().unwrap().pause().map_err(helper_error) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = self.stop(handle); // Revoke even when poisoned cleanup cannot confirm exit.
+                Err(error)
+            }
+        }
     }
     fn resume(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
         self.selected(handle)?;
         if self.poisoned {
             return Err(RuntimeError::RetainedState);
         }
-        self.owner.as_mut().unwrap().resume().map_err(helper_error)
+        match self.owner.as_mut().unwrap().resume().map_err(helper_error) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = self.stop(handle);
+                Err(error)
+            }
+        }
     }
 }
 #[cfg(test)]
