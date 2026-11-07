@@ -78,6 +78,60 @@ impl VmClient {
         }
         result
     }
+    pub fn boot_nonce(&self) -> Uuid {
+        self.nonce
+    }
+
+    /// Probe before loading a stored secret; an old strict peer may close here.
+    pub fn model_status(&mut self) -> io::Result<ModelState> {
+        self.model_call(RequestBody::ModelStatus {})
+    }
+    pub fn connect_model(
+        &mut self,
+        generation: Uuid,
+        selection: ModelSelection,
+    ) -> io::Result<ModelState> {
+        if generation.is_nil() || !selection.valid() {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let state = self.model_call(RequestBody::ModelConnect {
+            generation,
+            selection: selection.clone(),
+        })?;
+        if state
+            .connection
+            .as_ref()
+            .is_some_and(|c| c.generation != generation || c.selection != selection)
+        {
+            self.channel = None;
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        Ok(state)
+    }
+    pub fn disconnect_model(&mut self, connection: &ModelConnection) -> io::Result<ModelState> {
+        let state = self.model_call(RequestBody::ModelDisconnect {
+            connection: connection.id,
+        })?;
+        if state.credential.generation != Some(connection.generation)
+            || state.connection.as_ref().is_some_and(|c| c != connection)
+        {
+            self.channel = None;
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        Ok(state)
+    }
+    fn model_call(&mut self, request: RequestBody) -> io::Result<ModelState> {
+        match self.call(request)? {
+            ResultBody::ModelState(state) => Ok(state),
+            ResultBody::Error {
+                code: ErrorCode::Unavailable,
+            } => Err(io::ErrorKind::Unsupported.into()),
+            _ => {
+                self.channel = None;
+                Err(io::ErrorKind::InvalidData.into())
+            }
+        }
+    }
     fn credential_call(&mut self, request: RequestBody) -> io::Result<CredentialState> {
         match self.call(request)? {
             ResultBody::CredentialState(state) => Ok(state),

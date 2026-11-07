@@ -2,7 +2,7 @@ use bridge_guest::{
     diagnostics,
     early::{self, BootSystem},
     linux::{self, Linux},
-    peer,
+    model, peer,
     service::{self, Session},
 };
 use bridge_runtime_protocol::*;
@@ -323,8 +323,11 @@ fn control(
     };
     let r = read(diagnostics::Context::new("serve", read_phase), io, session)?;
     let credentials = service::credential_request(peer == "channel", &r.body, || {
-        let state = match &r.body {
-            RequestBody::CredentialStatus {} => serving.2.status(),
+        private_result(&mut serving.3, &r.body, || match &r.body {
+            RequestBody::CredentialStatus {}
+            | RequestBody::ModelStatus {}
+            | RequestBody::ModelConnect { .. }
+            | RequestBody::ModelDisconnect { .. } => serving.2.status(),
             RequestBody::CredentialPublish {
                 expected_generation,
                 token,
@@ -333,17 +336,7 @@ fn control(
                 expected_generation,
             } => serving.2.clear(*expected_generation),
             _ => unreachable!("credential dispatcher selects only its closed operations"),
-        };
-        match state {
-            Ok(s) => ResultBody::CredentialState(CredentialState {
-                profile: CREDENTIAL_PROFILE,
-                generation: s.generation,
-                installed: s.installed,
-            }),
-            Err(_) => ResultBody::Error {
-                code: ErrorCode::Unavailable,
-            },
-        }
+        })
     });
     let (body, stop) = if let Some(reply) = credentials {
         (reply, false)
@@ -367,13 +360,45 @@ fn control(
     )?;
     Ok(stop)
 }
+fn private_result<R: model::Runner>(
+    lifecycle: &mut model::ModelLifecycle<R>,
+    request: &RequestBody,
+    run: impl FnOnce() -> io::Result<bridge_guest::credentials::State>,
+) -> ResultBody {
+    if matches!(
+        request,
+        RequestBody::CredentialPublish { .. } | RequestBody::CredentialClear { .. }
+    ) && !lifecycle.allows_credential_mutation()
+    {
+        return ResultBody::Error {
+            code: ErrorCode::Unavailable,
+        };
+    }
+    match run() {
+        Ok(s) => {
+            let credential = CredentialState {
+                profile: CREDENTIAL_PROFILE,
+                generation: s.generation,
+                installed: s.installed,
+            };
+            lifecycle
+                .handle(credential.clone(), request)
+                .unwrap_or(ResultBody::CredentialState(credential))
+        }
+        Err(_) => ResultBody::Error {
+            code: ErrorCode::Unavailable,
+        },
+    }
+}
 type Serving = (
     bridge_guest::engine::Operations<bridge_guest::engine::Kmx>,
     bridge_guest::staging::Staging,
     bridge_guest::credentials::CredentialStore,
+    model::ModelLifecycle<model::Kmx>,
 );
 fn serve_ready(
     root: &std::path::Path,
+    installation: Uuid,
     ready: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<Serving> {
     let operations = diagnostics::context(
@@ -389,6 +414,7 @@ fn serve_ready(
         operations,
         staging,
         bridge_guest::credentials::CredentialStore::default(),
+        model::ModelLifecycle::new(model::Kmx::new(installation)),
     ))
 }
 fn run(mode: &str) -> io::Result<()> {
@@ -471,13 +497,17 @@ fn run(mode: &str) -> io::Result<()> {
         return Ok(());
     }
     let socket = socket.ok_or_else(early::invalid)?;
-    let mut serving = serve_ready(std::path::Path::new("/var/lib/bridge"), || {
-        write(
-            diagnostics::Context::new(stage, "ready-reply-write"),
-            channel.get_mut(),
-            service::result(&r, ResultBody::Ready {}),
-        )
-    })?;
+    let mut serving = serve_ready(
+        std::path::Path::new("/var/lib/bridge"),
+        b.installation_id,
+        || {
+            write(
+                diagnostics::Context::new(stage, "ready-reply-write"),
+                channel.get_mut(),
+                service::result(&r, ResultBody::Ready {}),
+            )
+        },
+    )?;
     loop {
         if !channel.buffer().is_empty() {
             if control(
@@ -606,6 +636,226 @@ mod tests {
             state_bytes: STATE_BYTES,
             host_utc: 1,
         }
+    }
+    struct ModelRunner;
+    impl model::Runner for ModelRunner {
+        fn execute(&mut self, command: &model::ModelCommand) -> model::Outcome {
+            let connection = match command {
+                model::ModelCommand::Connect {
+                    generation,
+                    selection,
+                } => ModelConnection {
+                    id: Uuid::from_u128(7),
+                    generation: *generation,
+                    selection: selection.clone(),
+                },
+                model::ModelCommand::Disconnect { connection } => connection.clone(),
+            };
+            model::Outcome {
+                connection: Some(connection),
+                success: true,
+            }
+        }
+    }
+    fn metadata() -> io::Result<bridge_guest::credentials::State> {
+        Ok(bridge_guest::credentials::State {
+            generation: Some(Uuid::from_u128(5)),
+            installed: true,
+        })
+    }
+    fn private_state(
+        lifecycle: &mut model::ModelLifecycle<ModelRunner>,
+        request: &RequestBody,
+    ) -> ModelState {
+        match service::credential_request(true, request, || {
+            private_result(lifecycle, request, metadata)
+        })
+        .unwrap()
+        {
+            ResultBody::ModelState(s) => s,
+            other => panic!("model dispatch returned {other:?}"),
+        }
+    }
+    #[test]
+    fn private_dispatch_connect_status_disconnect_preserves_one_lifecycle() {
+        let mut lifecycle = model::ModelLifecycle::new(ModelRunner);
+        let connect = RequestBody::ModelConnect {
+            generation: Uuid::from_u128(5),
+            selection: ModelSelection {
+                provider: "copilot".into(),
+                model: "gpt-4.1".into(),
+            },
+        };
+        assert_eq!(
+            private_state(&mut lifecycle, &RequestBody::ModelStatus {}).phase,
+            ModelPhase::Idle
+        );
+        let ready = private_state(&mut lifecycle, &connect);
+        assert_eq!(ready.phase, ModelPhase::Ready);
+        assert_eq!(ready.connection.unwrap().id, Uuid::from_u128(7));
+        assert_eq!(ready.credential.generation, Some(Uuid::from_u128(5)));
+        assert_eq!(
+            private_state(&mut lifecycle, &RequestBody::ModelStatus {}).phase,
+            ModelPhase::Ready
+        );
+        let stopped = private_state(
+            &mut lifecycle,
+            &RequestBody::ModelDisconnect {
+                connection: Uuid::from_u128(7),
+            },
+        );
+        assert_eq!(stopped.phase, ModelPhase::Idle);
+        assert!(stopped.connection.is_none());
+        assert!(stopped.credential.installed);
+    }
+    #[test]
+    fn private_dispatch_denies_local_and_blocks_live_credential_mutation_before_store_call() {
+        let mut lifecycle = model::ModelLifecycle::new(ModelRunner);
+        let connect = RequestBody::ModelConnect {
+            generation: Uuid::from_u128(5),
+            selection: ModelSelection {
+                provider: "copilot".into(),
+                model: "gpt-4.1".into(),
+            },
+        };
+        for request in [
+            &RequestBody::ModelStatus {},
+            &connect,
+            &RequestBody::ModelDisconnect {
+                connection: Uuid::from_u128(7),
+            },
+        ] {
+            assert_eq!(
+                service::credential_request(false, request, || panic!("local callback executed")),
+                Some(ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                })
+            );
+        }
+        lifecycle.handle(
+            CredentialState {
+                profile: CREDENTIAL_PROFILE,
+                generation: Some(Uuid::from_u128(5)),
+                installed: true,
+            },
+            &connect,
+        );
+        for request in [
+            RequestBody::CredentialPublish {
+                expected_generation: Some(Uuid::from_u128(5)),
+                token: CredentialPayload::new(b"synthetic").unwrap(),
+            },
+            RequestBody::CredentialClear {
+                expected_generation: Uuid::from_u128(5),
+            },
+        ] {
+            let called = std::cell::Cell::new(false);
+            let reply = service::credential_request(true, &request, || {
+                private_result(&mut lifecycle, &request, || {
+                    called.set(true);
+                    metadata()
+                })
+            });
+            assert_eq!(
+                reply,
+                Some(ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                })
+            );
+            assert!(
+                !called.get(),
+                "live credential mutation must not touch the store"
+            );
+        }
+    }
+    #[test]
+    fn private_dispatch_unknown_retains_mutation_gate_and_status_but_store_errors_are_safe() {
+        struct Uncertain;
+        impl model::Runner for Uncertain {
+            fn execute(&mut self, _: &model::ModelCommand) -> model::Outcome {
+                model::Outcome {
+                    connection: None,
+                    success: false,
+                }
+            }
+        }
+        let mut lifecycle = model::ModelLifecycle::new(Uncertain);
+        let connect = RequestBody::ModelConnect {
+            generation: Uuid::from_u128(5),
+            selection: ModelSelection {
+                provider: "copilot".into(),
+                model: "gpt-4.1".into(),
+            },
+        };
+        let reply = service::credential_request(true, &connect, || {
+            private_result(&mut lifecycle, &connect, metadata)
+        });
+        assert!(matches!(
+            reply,
+            Some(ResultBody::ModelState(ModelState {
+                phase: ModelPhase::Unknown,
+                connection: None,
+                ..
+            }))
+        ));
+        for request in [
+            RequestBody::CredentialPublish {
+                expected_generation: Some(Uuid::from_u128(5)),
+                token: CredentialPayload::new(b"synthetic").unwrap(),
+            },
+            RequestBody::CredentialClear {
+                expected_generation: Uuid::from_u128(5),
+            },
+        ] {
+            assert_eq!(
+                private_result(&mut lifecycle, &request, || panic!(
+                    "unknown mutation touched store"
+                )),
+                ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                }
+            );
+        }
+        for request in [
+            RequestBody::CredentialStatus {},
+            RequestBody::ModelStatus {},
+        ] {
+            let reply = private_result(&mut lifecycle, &request, metadata);
+            match reply {
+                ResultBody::CredentialState(s) => assert!(s.installed),
+                ResultBody::ModelState(s) => {
+                    assert_eq!(s.phase, ModelPhase::Unknown);
+                    assert!(s.credential.installed);
+                }
+                _ => panic!("status must remain allowed"),
+            }
+            assert_eq!(
+                private_result(&mut lifecycle, &request, || Err(
+                    io::ErrorKind::PermissionDenied.into()
+                )),
+                ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                }
+            );
+        }
+        let mut idle = model::ModelLifecycle::new(Uncertain);
+        let clear = RequestBody::CredentialClear {
+            expected_generation: Uuid::from_u128(5),
+        };
+        let reply = private_result(&mut idle, &clear, || {
+            Ok(bridge_guest::credentials::State {
+                generation: Some(Uuid::from_u128(5)),
+                installed: false,
+            })
+        });
+        assert_eq!(
+            reply,
+            ResultBody::CredentialState(CredentialState {
+                profile: CREDENTIAL_PROFILE,
+                generation: Some(Uuid::from_u128(5)),
+                installed: false,
+            })
+        );
     }
     #[test]
     fn initial_hello_waits_through_host_not_connected_hup() {
@@ -1023,14 +1273,14 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("operations"), b"not a directory").unwrap();
         let mut acknowledged = false;
-        assert!(serve_ready(root.path(), || {
+        assert!(serve_ready(root.path(), Uuid::new_v4(), || {
             acknowledged = true;
             Ok(())
         })
         .is_err());
         assert!(!acknowledged);
         fs::remove_file(root.path().join("operations")).unwrap();
-        assert!(serve_ready(root.path(), || {
+        assert!(serve_ready(root.path(), Uuid::new_v4(), || {
             acknowledged = true;
             Ok(())
         })
