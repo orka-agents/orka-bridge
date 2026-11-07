@@ -83,6 +83,7 @@ jobs:
         run: |
           bash ../scripts/build-vm-helper-macos.sh
           bash ../scripts/test-vm-helper-macos.sh
+          cargo +1.98.1 test --manifest-path ../runtime/Cargo.toml --locked -p bridge-runtime-protocol --test runtime_core --test windows_backend
       - name: Rust checks
         run: |
           cargo +1.98.1 fmt --manifest-path src-tauri/Cargo.toml --all -- --check

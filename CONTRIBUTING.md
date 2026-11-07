@@ -124,6 +124,17 @@ raw pinned boot receipt, not a release manifest. Its compatibility ID is
 VM or reports whole-setup readiness. Backend selection, launch validation and
 the visible setup connection remain the native runtime caller's responsibility.
 
+## Private Apple session
+
+Trusted Mac Rust callers can compose the installed Apple image, journal and
+bundled helper with `runtime::apple_session::AppleVmSession`. It verifies serving
+Ready before supplying the existing VM engine transport. Pause, resume and stop
+observe native helper completion; failed cleanup retains ownership. One revocable
+guest descriptor serves one client; no renderer, Setup, Run or model hookup is
+added. The separate SDK identity initializer is future setup input, not a new
+installation factory. Real VZ disk-handle release remains unqualified by these
+synthetic CI tests.
+
 ## Local development image
 
 Debug builds can read a local engineering image with `BRIDGE_DEV_IMAGE_DIR`.
