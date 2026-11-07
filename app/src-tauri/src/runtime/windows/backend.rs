@@ -334,14 +334,14 @@ mod tests {
     fn new_journal_root_is_the_protected_parent_required_by_containment() {
         let home = std::env::var_os("USERPROFILE").unwrap();
         let temp = tempfile::tempdir_in(home).unwrap();
-        let journal = crate::runtime::journal::Journal::create(
-            &temp.path().join("install"),
+        let root = temp.path().join("install");
+        let _journal = crate::runtime::journal::Journal::create(
+            &root,
             crate::runtime::types::BackendKind::Qemu,
             b"pc-q35-11.0".to_vec(),
         )
         .unwrap();
-        let endpoint =
-            crate::runtime::windows::control::ControlEndpoint::create(journal.root()).unwrap();
+        let endpoint = crate::runtime::windows::control::ControlEndpoint::create(&root).unwrap();
         assert!(endpoint.path().parent().unwrap().is_dir());
     }
     #[test]
