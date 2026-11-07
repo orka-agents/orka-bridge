@@ -1,6 +1,8 @@
 pub mod acquire;
 #[cfg(unix)]
 pub mod apple;
+#[cfg(unix)]
+pub mod apple_input;
 pub mod client;
 pub mod credentials;
 pub mod identity;

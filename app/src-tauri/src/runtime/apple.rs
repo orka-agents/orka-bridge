@@ -68,7 +68,7 @@ impl AppleHelperOwner {
     }
     /// `command` is trusted native configuration, never renderer input. The later
     /// adapter resolves a fixed bundled executable and verified image capabilities.
-    pub fn start(&mut self, mut command: Command) -> Result<UnixStream, HelperError> {
+    pub fn start(&mut self, mut command: Command, config: File) -> Result<UnixStream, HelperError> {
         self.available()?;
         if self.session.is_some() {
             return Err(HelperError::Busy);
@@ -82,6 +82,7 @@ impl AppleHelperOwner {
             guest.set_read_timeout(Some(self.budgets.read))?;
             guest.set_write_timeout(Some(self.budgets.write))?;
             let fds = [
+                config.as_raw_fd(),
                 helper_control.as_raw_fd(),
                 helper_guest.as_raw_fd(),
                 owner.as_raw_fd(),
@@ -91,9 +92,14 @@ impl AppleHelperOwner {
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
-            for (name, fd) in ["--supervisor-fd", "--guest-fd", "--ownership-fd"]
-                .into_iter()
-                .zip(fds)
+            for (name, fd) in [
+                "--config-fd",
+                "--supervisor-fd",
+                "--guest-fd",
+                "--ownership-fd",
+            ]
+            .into_iter()
+            .zip(fds)
             {
                 command.arg(name).arg(fd.to_string());
             }
@@ -110,7 +116,7 @@ impl AppleHelperOwner {
                 });
             }
             let child = command.spawn()?;
-            drop((helper_control, helper_guest, owner));
+            drop((config, helper_control, helper_guest, owner));
             Ok((
                 Session {
                     child,
