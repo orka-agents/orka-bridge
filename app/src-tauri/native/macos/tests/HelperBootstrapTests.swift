@@ -224,24 +224,23 @@ private struct BootstrapTests {
     private static func hungInitializerCleanup() {
         do {
             let (pid, output) = try spawnInitializer(
-                ["/bin/sh", "-c", "trap '' TERM; printf ready; while :; do :; done"],
+                ["/usr/bin/python3", "-c", "import os,signal\nsignal.signal(signal.SIGTERM,signal.SIG_IGN)\nsignal.alarm(2)\nos.write(1,b'ready')\nwhile True: pass"],
                 in: FileManager.default.temporaryDirectory)
             check(receive(output.fileDescriptor, 5) == Array("ready".utf8), "hung child installed TERM-ignore")
             let done = DispatchSemaphore(value: 0)
             DispatchQueue.global().async {
                 do {
                     let status = try finishInitializer(pid, until: .now())
-                    check(status != nil, "hung child exit observed")
+                    if let status = status {
+                        check((status & 0x7f) == SIGKILL, "TERM-ignore requires owned KILL exit")
+                    } else { check(false, "hung child cleanup exit unobserved") }
                 }
                 catch { check(false, "hung child cleanup error") }
                 done.signal()
             }
             let bounded = done.wait(timeout: .now() + .milliseconds(300)) == .success
-            if !bounded {
-                // The cleanup waiter still owns this unreaped PID, so it cannot be reused.
-                _ = kill(pid, SIGKILL)
-                wait(done)
-            }
+            // The fixture's own alarm bounds a RED run; no competing waiter signals a PID.
+            if !bounded { wait(done) }
             check(bounded, "TERM-ignoring child cleanup returns within its bound")
         } catch { check(false, "hung initializer fixture failed") }
     }
