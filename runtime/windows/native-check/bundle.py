@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 import verify
 
-SOURCE_HEAD = "c3a2e920702b029472d1fb840a3cf21a1252cb6f"
+SOURCE_HEAD = "7bec6ae15764680c887c7103b9c62d8b3fab3a52"
 PRODUCER_HEAD = "006b30f02a3c9cec61f8f3cc32fde6b0d248fc34"
 PRODUCER_RUN = 42120608528
 PRODUCER_FILES = (*verify.ARCHIVES, "SHA256SUMS", "build-report.json", "verification.json")

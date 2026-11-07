@@ -8,7 +8,7 @@ fn main() {
         })
         .canonicalize()
         .unwrap();
-    const EXPECTED: &str = "c3a2e920702b029472d1fb840a3cf21a1252cb6f";
+    const EXPECTED: &str = "7bec6ae15764680c887c7103b9c62d8b3fab3a52";
     let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(&repo)

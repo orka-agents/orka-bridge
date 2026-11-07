@@ -43,7 +43,7 @@ class BundleTests(unittest.TestCase):
         self.prepare()
         pin = json.loads((self.operator / "runtime-pin.json").read_text())
         self.assertEqual(set(pin), {"head", "producerRun", "producerHead", "runtimeZipSha256", "runtimeFiles"})
-        self.assertEqual(pin["head"], "c3a2e920702b029472d1fb840a3cf21a1252cb6f")
+        self.assertEqual(pin["head"], "7bec6ae15764680c887c7103b9c62d8b3fab3a52")
         self.assertEqual(pin["producerRun"], 42120608528)
         self.assertEqual(pin["producerHead"], self.run["headSha"])
         names = [row["name"] for row in pin["runtimeFiles"]]
