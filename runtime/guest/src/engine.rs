@@ -352,7 +352,7 @@ impl Runner for Kmx {
     }
 }
 // Caller supplies a newly-owned, unreaped child in its own process group.
-fn collect(
+pub(crate) fn collect(
     mut child: std::process::Child,
     timeout: std::time::Duration,
 ) -> io::Result<EngineResult> {

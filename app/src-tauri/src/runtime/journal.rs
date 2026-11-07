@@ -354,13 +354,13 @@ impl Journal {
     }
 }
 #[cfg(unix)]
-fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
+pub(crate) fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
     fs::rename(from, to)?;
     File::open(to.parent().unwrap())?.sync_all()?;
     Ok(())
 }
 #[cfg(windows)]
-fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
+pub(crate) fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
