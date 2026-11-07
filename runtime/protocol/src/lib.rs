@@ -7,6 +7,8 @@ mod operations;
 pub use operations::*;
 mod credentials;
 pub use credentials::*;
+mod model;
+pub use model::*;
 pub fn encode_chunk(bytes: &[u8]) -> String {
     STANDARD.encode(bytes)
 }
@@ -67,6 +69,14 @@ pub enum EngineActionWire {
 )]
 pub enum RequestBody {
     Boot(BootDescriptor),
+    ModelStatus {},
+    ModelConnect {
+        generation: Uuid,
+        selection: ModelSelection,
+    },
+    ModelDisconnect {
+        connection: Uuid,
+    },
     CredentialStatus {},
     CredentialPublish {
         expected_generation: Option<Uuid>,
@@ -123,6 +133,7 @@ pub struct WireRequest {
     deny_unknown_fields
 )]
 pub enum ResultBody {
+    ModelState(ModelState),
     CredentialState(CredentialState),
     Ready {},
     Snapshot {
@@ -225,6 +236,15 @@ impl Frame {
             Self::Hello(h) => (h.version, h.guest_nonce, 1),
             Self::Request(r) => {
                 match &r.body {
+                    RequestBody::ModelConnect {
+                        generation,
+                        selection,
+                    } if generation.is_nil() || !selection.valid() => {
+                        return Err(ProtocolError::Invalid)
+                    }
+                    RequestBody::ModelDisconnect { connection } if connection.is_nil() => {
+                        return Err(ProtocolError::Invalid)
+                    }
                     RequestBody::CredentialPublish {
                         expected_generation,
                         ..
@@ -290,6 +310,11 @@ impl Frame {
                 (r.version, r.boot_nonce, r.request_id)
             }
             Self::Result(r) => {
+                if let ResultBody::ModelState(state) = &r.body {
+                    if !state.valid() {
+                        return Err(ProtocolError::Invalid);
+                    }
+                }
                 if let ResultBody::CredentialState(state) = &r.body {
                     if !state.valid() {
                         return Err(ProtocolError::Invalid);
