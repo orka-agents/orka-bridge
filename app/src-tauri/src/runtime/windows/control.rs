@@ -2,6 +2,7 @@
 use super::{job::OwnedQemuProcess, launch::control_path, security};
 use bridge_runtime_protocol::Uuid;
 use std::{
+    borrow::Borrow,
     fs::{File, OpenOptions},
     io,
     mem::{size_of, zeroed},
@@ -127,14 +128,14 @@ impl ControlEndpoint {
     pub fn path(&self) -> &Path {
         &self.path
     }
-    pub(super) fn connect<'a>(
+    pub(super) fn connect<O: Borrow<OwnedQemuProcess>>(
         &self,
-        owner: &'a OwnedQemuProcess,
-    ) -> io::Result<ControlConnection<'a>> {
+        owner: O,
+    ) -> io::Result<ControlIo<O>> {
         let until = Instant::now() + Duration::from_secs(30);
         security::private_af_object(self.directory.as_raw_handle(), true)?;
         loop {
-            live(owner)?;
+            live(owner.borrow())?;
             match socket_metadata(&self.path) {
                 Ok(file) => {
                     let mut metadata = self
@@ -166,23 +167,23 @@ impl ControlEndpoint {
         }
         let address = address(&self.path)?;
         let raw = loop {
-            live(owner)?;
+            live(owner.borrow())?;
             let socket = self.channel.socket()?;
-            match establish(socket, &address, until, owner) {
+            match establish(socket, &address, until, owner.borrow()) {
                 Ok(()) => break socket,
                 Err(error) if error.raw_os_error() == Some(WSAECONNREFUSED) => wait_retry(until)?,
                 Err(error) => return Err(error),
             }
         };
         let pid = peer_pid(raw)?;
-        let process = owner.process_handle();
+        let process = owner.borrow().process_handle();
         if pid != unsafe { GetProcessId(process.raw()) } {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 "AF_UNIX peer is not the retained QEMU process",
             ));
         }
-        live(owner)?;
+        live(owner.borrow())?;
         security::private_af_object(self.directory.as_raw_handle(), true)?;
         let metadata = self
             .channel
@@ -204,7 +205,7 @@ impl ControlEndpoint {
             .peer
             .set(pid)
             .map_err(|_| io::Error::other("AF_UNIX peer already recorded"))?;
-        Ok(ControlConnection {
+        Ok(ControlIo {
             owner,
             channel: self.channel.clone(),
         })
@@ -361,17 +362,18 @@ fn peer_pid(socket: SOCKET) -> io::Result<u32> {
     Ok(pid)
 }
 
-pub struct ControlConnection<'a> {
-    owner: &'a OwnedQemuProcess,
+pub struct ControlIo<O: Borrow<OwnedQemuProcess>> {
+    owner: O,
     channel: Arc<Channel>,
 }
-impl ControlConnection<'_> {
+pub type ControlConnection<'a> = ControlIo<&'a OwnedQemuProcess>;
+impl<O: Borrow<OwnedQemuProcess>> ControlIo<O> {
     pub fn peer_pid(&self) -> u32 {
         *self.channel.peer.get().expect("validated peer")
     }
     fn failure(&self, error: io::Error) -> io::Error {
         self.channel.terminal.store(true, Ordering::Release);
-        match self.owner.abort() {
+        match self.owner.borrow().abort() {
             Ok(()) => error,
             Err(stop) => io::Error::other(format!(
                 "AF_UNIX terminal failure: {error}; QEMU stop unobserved: {stop}"
@@ -382,7 +384,7 @@ impl ControlConnection<'_> {
         if self.channel.terminal.load(Ordering::Acquire) {
             return Err(io::Error::from(io::ErrorKind::BrokenPipe));
         }
-        live(self.owner)?;
+        live(self.owner.borrow())?;
         self.channel.raw()
     }
     pub fn read(&self, output: &mut [u8], deadline: Instant) -> io::Result<usize> {
@@ -417,15 +419,15 @@ impl ControlConnection<'_> {
         };
         operation().map_err(|error| self.failure(error))
     }
-    pub fn write_all(&self, input: &[u8], deadline: Instant) -> io::Result<()> {
+    fn write_some(&self, input: &[u8], deadline: Instant) -> io::Result<usize> {
+        if input.is_empty() {
+            return Ok(0);
+        }
         let until = deadline.min(Instant::now() + Duration::from_secs(30));
-        let operation = || {
-            let mut input = input;
-            while !input.is_empty() {
+        write_count(
+            until,
+            || {
                 let socket = self.usable()?;
-                if Instant::now() >= until {
-                    return Err(io::Error::from(io::ErrorKind::TimedOut));
-                }
                 let count = unsafe {
                     send(
                         socket,
@@ -434,30 +436,72 @@ impl ControlConnection<'_> {
                         0,
                     )
                 };
-                if count > 0 {
-                    input = &input[count as usize..];
-                    continue;
+                if count < 0 {
+                    Err(wsa_error())
+                } else {
+                    Ok(count as usize)
                 }
-                if count == 0 {
-                    return Err(io::Error::from(io::ErrorKind::WriteZero));
-                }
-                let error = wsa_error();
-                if error.raw_os_error() != Some(WSAEWOULDBLOCK) {
-                    return Err(error);
-                }
-                poll(socket, POLLWRNORM, until)?;
-            }
-            Ok(())
-        };
-        operation().map_err(|error| self.failure(error))
+            },
+            || poll(self.channel.raw()?, POLLWRNORM, until),
+        )
+        .map_err(|error| self.failure(error))
+    }
+    pub fn write_all(&self, mut input: &[u8], deadline: Instant) -> io::Result<()> {
+        let until = deadline.min(Instant::now() + Duration::from_secs(30));
+        while !input.is_empty() {
+            let count = self.write_some(input, until)?;
+            input = &input[count..];
+        }
+        Ok(())
     }
 }
-impl Drop for ControlConnection<'_> {
+fn write_count(
+    until: Instant,
+    mut send: impl FnMut() -> io::Result<usize>,
+    mut wait: impl FnMut() -> io::Result<()>,
+) -> io::Result<usize> {
+    loop {
+        if Instant::now() >= until {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        match send() {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(count) => return Ok(count),
+            Err(error) if error.raw_os_error() == Some(WSAEWOULDBLOCK) => wait()?,
+            Err(error) => return Err(error),
+        }
+    }
+}
+impl<O: Borrow<OwnedQemuProcess>> Drop for ControlIo<O> {
     fn drop(&mut self) {
         self.channel.terminal.store(true, Ordering::Release);
         // Request termination before releasing a live socket; the owner retains it
         // and all metadata for either observed release or whole-bundle quarantine.
-        let _ = self.owner.abort();
+        let _ = self.owner.borrow().abort();
+    }
+}
+/// Owns the same validated connection and installation lifetime as the borrowed API.
+pub struct GuestStream(pub(super) ControlIo<Arc<OwnedQemuProcess>>);
+impl io::Read for GuestStream {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        self.0
+            .read(bytes, Instant::now() + Duration::from_secs(120))
+    }
+}
+impl io::Write for GuestStream {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0
+            .write_some(bytes, Instant::now() + Duration::from_secs(30))
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.0
+            .write_all(bytes, Instant::now() + Duration::from_secs(30))
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.0
+            .usable()
+            .map(|_| ())
+            .map_err(|error| self.0.failure(error))
     }
 }
 #[cfg(test)]
@@ -465,6 +509,32 @@ mod tests {
     use super::*;
     use windows_sys::Win32::Security::{Authorization::*, *};
     use windows_sys::Win32::Storage::FileSystem::{READ_CONTROL, WRITE_DAC};
+    #[test]
+    fn write_reports_first_progress_without_a_second_send() {
+        let mut sends = 0;
+        let count = write_count(
+            Instant::now() + Duration::from_secs(5),
+            || {
+                sends += 1;
+                if sends == 1 {
+                    Ok(2)
+                } else {
+                    Err(io::ErrorKind::BrokenPipe.into())
+                }
+            },
+            || panic!("a successful partial send needs no wait"),
+        )
+        .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(sends, 1);
+    }
+    #[test]
+    fn owned_guest_stream_satisfies_the_existing_channel_lifetime() {
+        fn channel<T: std::io::Read + std::io::Write + Send + 'static>() {}
+        channel::<GuestStream>();
+        let _: fn(&Arc<OwnedQemuProcess>) -> io::Result<GuestStream> =
+            OwnedQemuProcess::guest_stream;
+    }
     struct Local(*mut core::ffi::c_void);
     impl Drop for Local {
         fn drop(&mut self) {
