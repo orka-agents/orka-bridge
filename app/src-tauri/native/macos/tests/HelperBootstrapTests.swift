@@ -204,13 +204,22 @@ private struct BootstrapTests {
         }
     }
     private static func finishInitializer(_ pid: pid_t, until end: DispatchTime) throws -> Int32? {
-        if let status = try waitInitializer(pid, until: end) { return status }
-        guard kill(pid, SIGTERM) == 0 else { throw SupervisorIOError.system }
-        var status: Int32 = 0
-        while true {
-            if waitpid(pid, &status, 0) == pid { return status }
-            if errno != EINTR { throw SupervisorIOError.system }
+        var observed = false
+        defer {
+            if !observed {
+                // Keep the unreaped direct-child owner after a bounded failure.
+                DispatchQueue.global().async {
+                    var status: Int32 = 0
+                    while waitpid(pid, &status, 0) < 0 && errno == EINTR {}
+                }
+            }
         }
+        if let status = try waitInitializer(pid, until: end) { observed = true; return status }
+        guard kill(pid, SIGTERM) == 0 || errno == ESRCH else { throw SupervisorIOError.system }
+        if let status = try waitInitializer(pid, until: .now() + .milliseconds(50)) { observed = true; return status }
+        guard kill(pid, SIGKILL) == 0 || errno == ESRCH else { throw SupervisorIOError.system }
+        if let status = try waitInitializer(pid, until: .now() + .milliseconds(50)) { observed = true; return status }
+        return nil
     }
     private static func hungInitializerCleanup() {
         do {
