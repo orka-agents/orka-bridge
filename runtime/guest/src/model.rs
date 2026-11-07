@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn argv_is_fixed_and_values_are_single_arguments_not_options() {
         let mut selection = selection();
-        selection.model = "--odd model/with:punctuation".into();
+        selection.model = "--odd-model/with:punctuation;id".into();
         assert!(selection.valid());
         let kmx = Kmx::new(Uuid::parse_str("12345678-1234-4abc-8def-123456789abc").unwrap());
         let cmd = kmx.command(&ModelCommand::Connect {
@@ -514,7 +514,7 @@ mod tests {
                 "--namespace=orka-system",
                 "--route=copilot",
                 "--provider=copilot",
-                "--model=--odd model/with:punctuation",
+                "--model=--odd-model/with:punctuation;id",
                 "--credential-generation=00000000-0000-4000-8000-000000000001",
                 "-o=jsonl",
             ]

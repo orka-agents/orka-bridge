@@ -8,9 +8,17 @@ pub struct ModelSelection {
 }
 impl ModelSelection {
     pub fn valid(&self) -> bool {
-        [&self.provider, &self.model]
-            .iter()
-            .all(|s| !s.trim().is_empty() && s.len() <= 4096 && !s.contains('\0'))
+        let p = self.provider.as_bytes();
+        !p.is_empty()
+            && p.len() <= 45
+            && p.first().is_some_and(u8::is_ascii_alphanumeric)
+            && p.last().is_some_and(u8::is_ascii_alphanumeric)
+            && p.iter()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'-')
+            && !self.model.is_empty()
+            && self.model.len() <= 256
+            && self.model.bytes().all(|b| (b'!'..=b'~').contains(&b))
+            && !self.model.eq_ignore_ascii_case("auto")
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]

@@ -13,11 +13,206 @@ use std::{
 
 const SECRET: &[u8] = b"synthetic-model-only";
 
+fn permissions(root: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(root, fs::Permissions::from_mode(mode)).unwrap();
+}
+
+#[test]
+fn root_fd_lock_excludes_all_mutations_and_releases_after_return() {
+    let (_tmp, setup, install) = selected_setup();
+    let root = setup.root.as_deref().unwrap();
+    let owner = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("model-owner.lock"))
+        .unwrap();
+    owner.try_lock().unwrap();
+    let vault = FakeVault::default();
+    assert!(setup.associate_secret(install, SECRET, &vault).is_err());
+    assert_eq!(vault.counts(), (0, 0, 0));
+    drop(owner);
+    setup.associate_secret(install, SECRET, &vault).unwrap();
+    let owner = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root.join("model-owner.lock"))
+        .unwrap();
+    owner.try_lock().unwrap();
+    let (mut client, worker) = peer(Uuid::new_v4(), |_| Some(idle()));
+    assert!(setup
+        .connect_model(install, selection(), &mut client, &vault)
+        .is_err());
+    assert!(setup
+        .sign_out_model(install, Some(&mut client), &vault)
+        .is_err());
+    drop(client);
+    worker.join().unwrap().assert_empty();
+    assert_eq!(vault.counts(), (1, 0, 0));
+    drop(owner);
+    setup.sign_out_model(install, None, &vault).unwrap();
+    setup.associate_secret(install, SECRET, &vault).unwrap();
+}
+
+#[test]
+fn independent_setup_instance_cannot_enter_live_save_transaction() {
+    use std::sync::Barrier;
+    let (tmp, setup, install) = selected_setup();
+    let entered = Arc::new(Barrier::new(2));
+    let resume = Arc::new(Barrier::new(2));
+    let (entered_save, resume_save) = (entered.clone(), resume.clone());
+    let vault = FakeVault {
+        observe_save: Some(Box::new(move |_| {
+            entered_save.wait();
+            resume_save.wait();
+        })),
+        ..FakeVault::default()
+    };
+    let worker = thread::spawn(move || setup.associate_secret(install, SECRET, &vault));
+    entered.wait();
+    let second = SetupStore::new(Some(tmp.path().to_owned()));
+    let second_vault = FakeVault::default();
+    let association = second.associate_secret(install, SECRET, &second_vault);
+    let (mut client, peer_worker) = peer(Uuid::new_v4(), |_| Some(idle()));
+    let connect = second.connect_model(install, selection(), &mut client, &second_vault);
+    let signout = second.sign_out_model(install, Some(&mut client), &second_vault);
+    resume.wait();
+    assert!(worker.join().unwrap().is_ok());
+    assert!(association.is_err() && connect.is_err() && signout.is_err());
+    drop(client);
+    peer_worker.join().unwrap().assert_empty();
+    assert_eq!(second_vault.counts(), (0, 0, 0));
+    second.sign_out_model(install, None, &second_vault).unwrap();
+}
+
+#[test]
+fn exact_slot_reservation_is_visible_before_os_save() {
+    let (_tmp, setup, install) = selected_setup();
+    let root = setup.root.as_ref().unwrap().clone();
+    let vault = FakeVault {
+        observe_save: Some(Box::new(move |slot| {
+            let raw = fs::read(root.join("model-v1")).expect("reservation before OS mutation");
+            let binding: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+            assert_eq!(binding["slot"], slot.to_string());
+            assert_eq!(binding["installation"], install.to_string());
+            assert_eq!(binding["phase"], "storing");
+            assert!(!raw.windows(SECRET.len()).any(|part| part == SECRET));
+        })),
+        ..FakeVault::default()
+    };
+    assert!(
+        setup
+            .associate_secret(install, SECRET, &vault)
+            .unwrap()
+            .associated
+    );
+}
+
+#[test]
+fn os_save_apply_then_error_keeps_uuid_for_explicit_host_signout() {
+    let (_tmp, setup, install) = selected_setup();
+    let vault = FakeVault {
+        apply_then_error: true,
+        ..FakeVault::default()
+    };
+    assert!(setup.associate_secret(install, SECRET, &vault).is_err());
+    let binding = read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .expect("uncertain save retains exact slot");
+    assert!(vault.slots.lock().unwrap().contains_key(&binding.slot));
+    let status = setup.model_binding_status().unwrap();
+    assert!(!status.associated && !status.ready && status.unknown);
+    let (mut client, worker) = peer(Uuid::new_v4(), |_| Some(idle()));
+    assert!(setup
+        .connect_model(install, selection(), &mut client, &vault)
+        .is_err());
+    assert!(setup.associate_secret(install, SECRET, &vault).is_err());
+    setup
+        .sign_out_model(install, Some(&mut client), &vault)
+        .unwrap();
+    drop(client);
+    worker.join().unwrap().assert_empty();
+    assert_eq!(
+        *vault.calls.lock().unwrap(),
+        vec![("save", binding.slot), ("delete", binding.slot)]
+    );
+    assert!(vault.slots.lock().unwrap().is_empty());
+    assert!(read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .is_none());
+}
+
+#[test]
+fn reservation_publication_failure_precedes_os_save() {
+    let (_tmp, setup, install) = selected_setup();
+    let root = setup.root.as_deref().unwrap();
+    fs::write(root.join("model-owner.lock"), b"").unwrap();
+    permissions(root, 0o500);
+    let vault = FakeVault::default();
+    let result = setup.associate_secret(install, SECRET, &vault);
+    permissions(root, 0o700);
+    assert!(result.is_err());
+    assert_eq!(vault.counts(), (0, 0, 0));
+    assert!(read_binding(root).unwrap().is_none());
+    setup.associate_secret(install, SECRET, &vault).unwrap();
+}
+
+#[test]
+fn visible_publication_with_directory_sync_error_never_deletes_os_slot() {
+    let (_tmp, setup, install) = selected_setup();
+    let root = setup.root.as_deref().unwrap();
+    let vault = FakeVault::default();
+    *vault.block_publish.lock().unwrap() = Some((root.to_owned(), 0o300));
+    let result = setup.associate_secret(install, SECRET, &vault);
+    permissions(root, 0o700);
+    assert!(result.is_err());
+    let binding = read_binding(root).unwrap().unwrap();
+    assert_eq!(binding.phase, Phase::Stored);
+    assert!(vault.slots.lock().unwrap().contains_key(&binding.slot));
+    assert_eq!(vault.counts(), (1, 0, 0));
+    assert!(!setup.model_binding_status().unwrap().ready);
+    setup.sign_out_model(install, None, &vault).unwrap();
+    assert!(vault.slots.lock().unwrap().is_empty());
+    assert!(!fs::read_dir(root).unwrap().any(|entry| entry
+        .unwrap()
+        .file_name()
+        .to_string_lossy()
+        .starts_with("model-next-")));
+}
+
+#[test]
+fn invalid_selection_refuses_before_actual_wire_or_os_load() {
+    let (_tmp, setup, install, vault) = associated();
+    let (mut client, worker) = peer(Uuid::new_v4(), |_| Some(idle()));
+    for (provider, model) in [
+        ("p".repeat(46), "valid".into()),
+        ("copilot".into(), "auto".into()),
+        ("copilot".into(), "has space".into()),
+        ("copilot".into(), "x".repeat(257)),
+    ] {
+        assert!(setup
+            .connect_model(
+                install,
+                ModelSelection { provider, model },
+                &mut client,
+                &vault
+            )
+            .is_err());
+    }
+    drop(client);
+    worker.join().unwrap().assert_empty();
+    assert_eq!(vault.counts(), (1, 0, 0));
+}
+
 #[derive(Default)]
 struct FakeVault {
     deny_save: bool,
     deny_delete: Mutex<bool>,
-    block_publish: Mutex<Option<std::path::PathBuf>>,
+    block_publish: Mutex<Option<(std::path::PathBuf, u32)>>,
+    observe_save: Option<Box<dyn Fn(Uuid) + Send + Sync>>,
+    apply_then_error: bool,
     calls: Mutex<Vec<(&'static str, Uuid)>>,
     slots: Mutex<HashMap<Uuid, Vec<u8>>>,
 }
@@ -36,9 +231,15 @@ impl CredentialStore for FakeVault {
         if self.deny_save {
             return Err(StoreError::Unavailable);
         }
+        if let Some(observe) = &self.observe_save {
+            observe(slot);
+        }
         self.slots.lock().unwrap().insert(slot, secret.to_vec());
-        if let Some(path) = self.block_publish.lock().unwrap().take() {
-            fs::create_dir(path).unwrap();
+        if let Some((path, mode)) = self.block_publish.lock().unwrap().take() {
+            permissions(&path, mode);
+        }
+        if self.apply_then_error {
+            return Err(StoreError::Unavailable);
         }
         Ok(())
     }
@@ -184,13 +385,12 @@ fn denied_save_leaves_no_association_plaintext_fallback_or_load() {
     assert!(setup.associate_secret(install, SECRET, &vault).is_err());
     assert!(!setup.model_binding_status().unwrap().associated);
     let root = setup.root.as_deref().unwrap();
-    assert!(read_binding(root).unwrap().is_none());
-    let entries: Vec<_> = fs::read_dir(root)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .collect();
-    assert_eq!(entries, vec![root.join("local-vm")]);
-    assert_eq!(fs::read(&entries[0]).unwrap(), b"");
+    assert!(setup.model_binding_status().unwrap().unknown);
+    assert!(read_binding(root).unwrap().is_some());
+    for entry in fs::read_dir(root).unwrap() {
+        let bytes = fs::read(entry.unwrap().path()).unwrap();
+        assert!(!bytes.windows(SECRET.len()).any(|part| part == SECRET));
+    }
     let (mut client, worker) = peer(Uuid::new_v4(), |_| panic!("no associated secret"));
     assert!(setup
         .connect_model(install, selection(), &mut client, &vault)
@@ -460,7 +660,7 @@ fn acknowledged_clear_allows_explicit_host_cleanup_retry_without_guest_or_load()
 }
 
 #[test]
-fn association_persist_failure_deletes_exact_new_slot_not_unowned_slot_or_file() {
+fn publication_failure_retains_exact_new_slot_not_unowned_slot_or_file() {
     let (_tmp, setup, install) = selected_setup();
     let vault = FakeVault::default();
     let unowned = Uuid::new_v4();
@@ -472,20 +672,22 @@ fn association_persist_failure_deletes_exact_new_slot_not_unowned_slot_or_file()
     let root = setup.root.as_deref().unwrap();
     let sentinel = b"unowned-file-unchanged";
     fs::write(root.join("unowned-note"), sentinel).unwrap();
-    *vault.block_publish.lock().unwrap() = Some(root.join("model-v1"));
+    *vault.block_publish.lock().unwrap() = Some((root.to_owned(), 0o500));
     assert!(setup.associate_secret(install, SECRET, &vault).is_err());
+    permissions(root, 0o700);
     {
         let calls = vault.calls.lock().unwrap();
-        assert_eq!(calls.len(), 2);
+        assert_eq!(calls.len(), 1);
         let generated = calls[0].1;
         assert_ne!(generated, unowned);
-        assert_eq!(*calls, vec![("save", generated), ("delete", generated)]);
+        assert_eq!(*calls, vec![("save", generated)]);
+        assert_eq!(read_binding(root).unwrap().unwrap().slot, generated);
         let slots = vault.slots.lock().unwrap();
-        assert_eq!(slots.len(), 1);
+        assert_eq!(slots.len(), 2);
         assert_eq!(slots.get(&unowned).unwrap(), b"unowned-synthetic");
     }
     assert_eq!(fs::read(root.join("unowned-note")).unwrap(), sentinel);
-    assert!(root.join("model-v1").is_dir());
+    assert!(root.join("model-v1").is_file());
     assert!(
         !fs::read_dir(root).unwrap().any(|e| e
             .unwrap()
@@ -494,7 +696,7 @@ fn association_persist_failure_deletes_exact_new_slot_not_unowned_slot_or_file()
             .starts_with("model-next")),
         "failed publication must clean only its owned temporary"
     );
-    fs::remove_dir(root.join("model-v1")).unwrap();
+    setup.sign_out_model(install, None, &vault).unwrap();
     assert!(
         setup
             .associate_secret(install, SECRET, &vault)
