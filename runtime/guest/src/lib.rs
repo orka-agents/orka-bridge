@@ -5,6 +5,8 @@ pub mod early;
 pub mod engine;
 #[cfg(target_os = "linux")]
 pub mod linux;
+#[cfg(target_os = "linux")]
+pub mod model;
 pub mod peer;
 pub mod service;
 pub mod staging;

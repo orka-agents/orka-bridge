@@ -5,6 +5,10 @@ pub mod dev_image;
 
 // Native desktop CI compiles these same sources in the application as well.
 extern crate self as bridge_engine;
+#[cfg(target_os = "macos")]
+#[path = "../../../app/src-tauri/src/engine/mod.rs"]
+pub mod engine;
+#[cfg(not(target_os = "macos"))]
 #[allow(dead_code)]
 pub mod engine {
     pub mod types {

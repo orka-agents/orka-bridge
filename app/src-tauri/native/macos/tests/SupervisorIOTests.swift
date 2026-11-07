@@ -255,7 +255,11 @@ private struct IOTests {
             var observer: TerminationObserver?
             var ownership: Int32?
             do {
-                let fd = try InheritedDescriptors.parse(Array(CommandLine.arguments.dropFirst(2)))
+                let args = Array(CommandLine.arguments.dropFirst(2))
+                guard args.count == 8, args[0] == "--config-fd",
+                      let config = Int32(args[1]), config >= 3 else { exit(1) }
+                let fd = try InheritedDescriptors.parse(Array(args.dropFirst(2)))
+                _ = close(config)
                 ownership = fd.ownership
                 let machine = try GuestFakeDriver(fd.guest, q)
                 driver = machine
