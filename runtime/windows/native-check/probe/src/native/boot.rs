@@ -144,11 +144,13 @@ pub fn run(args: &[String]) -> io::Result<()> {
 pub fn state(args: &[String]) -> io::Result<()> {
     check(args.len() == 3)?;
     let runtime = PathBuf::from(&args[0]);
+    eprintln!("state stage: trusted runtime pin");
     let trusted = runtime_pin(&PathBuf::from(&args[1]))?;
     let work = PathBuf::from(&args[2]);
     fs::create_dir(&work)?;
     let (config, _) = super::controller::packet(&runtime, &PathBuf::from(&args[1]), &work)?;
     let cfg: Config = serde_json::from_slice(&fs::read(config)?).map_err(io::Error::other)?;
+    eprintln!("state stage: verify runtime and inert inputs");
     let inputs = Arc::new(
         verify_windows_inputs(
             &cfg.pin,
@@ -161,16 +163,19 @@ pub fn state(args: &[String]) -> io::Result<()> {
         )
         .map_err(io::Error::other)?,
     );
+    eprintln!("state stage: create held Journal");
     let root = work.join("installation");
     let journal =
         runtime::journal::Journal::create(&root, BackendKind::Qemu, b"pc-q35-11.0".to_vec())
             .map_err(io::Error::other)?;
+    eprintln!("state stage: verify inert image source");
     let verified = crate::native_image_fixture::verified(&work, ImageTarget::WindowsAmd64);
     let target = journal
         .image_target(&verified.image().identity().state_compatibility_id)
         .map_err(io::Error::other)?;
     let (_sender, closed) = tokio::sync::watch::channel(false);
     let rt = tokio::runtime::Builder::new_current_thread().build()?;
+    eprintln!("state stage: materialize inert installed image");
     let installed = rt
         .block_on(runtime::image_install::materialize_image(
             &verified,
@@ -179,11 +184,13 @@ pub fn state(args: &[String]) -> io::Result<()> {
             |_| {},
         ))
         .map_err(|e| io::Error::other(format!("{e:?}")))?;
+    eprintln!("state stage: build borrowed-owner spec");
     let spec = runtime::probe_spec(&journal, Arc::new(installed));
     let before = runtime::identity::file_identity(&File::open(&spec.state_path)?)
         .map_err(io::Error::other)?;
     let mut backend = runtime::windows::backend::WindowsBackend::new(inputs);
     let failure = backend.failure_diagnostics();
+    eprintln!("state stage: actual owned qemu-img create/copy");
     let result = backend.create_state(&spec);
     fs::write(work.join("qemu-img-stderr.txt"), failure.stderr()?)?;
     result.map_err(io::Error::other)?;
