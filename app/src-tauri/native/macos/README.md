@@ -3,7 +3,8 @@
 The standalone `BridgeVM` executable composes the lifecycle core, native driver,
 inherited capabilities, supervisor socket and helper-only TERM observer on one
 serial queue. It is bundled but is not registered or launched by the app. No
-Setup, Run, credential delivery or guest handshake is connected here.
+Setup, Run or credential delivery is connected here. The private Rust session
+composes the serving handshake for trusted native callers only.
 
 ## Build and resources
 
@@ -23,7 +24,7 @@ including Intel shell builds; this does not add an Intel VM backend. Generation
 can cross-compile from either Mac host CPU; the executable test runners require
 Apple silicon. Other target platforms do not invoke Swift.
 
-The app bundle includes `Contents/Resources/native/BridgeVM`. A future trusted
+The app bundle includes `Contents/Resources/native/BridgeVM`. The trusted
 native backend resolves `app.path().resource_dir()?.join("native/BridgeVM")`;
 there is no environment, renderer or downloaded executable selector. This is
 development packaging, not Developer-ID signing or notarization qualification.
@@ -51,15 +52,28 @@ Only fixed exit status reaches diagnostics; errors never print SDK messages,
 paths or identity bytes. The separate guest diagnostic serial writes to
 `/dev/null`; it is not forwarded into app logs or the supervisor channel.
 
-The future producer uses the existing record and verified `LaunchSpec` under
-current installation ownership: paths derive from its root, installed image and
-state disk; ID bytes and MAC come from its record, never another identity file.
-It creates a mode-0600 `create_new`/`O_CLOEXEC` temporary regular config file under
-the locked root, writes and rewinds it, unlinks it before spawn and retains its FD
-through guarded spawn. Its own `pre_exec` clears config CLOEXEC in addition to
-`AppleHelperOwner`'s existing three-descriptor hook. No producer or persistent
-config file is added here. Initial SDK machine-ID generation before
-`Journal::create` belongs to the later native backend, not this launch ABI.
+The producer uses the existing record and verified `LaunchSpec` under current
+installation ownership. It uses the installed guest-mutable OS directly and
+resizes the journal's existing state inode in place to 32 GiB. Immutable boot
+files retain the merged image preflight; the initial OS hash is provenance.
+The mode-0600, CLOEXEC config file is unlinked immediately before bounded JSON
+writing and rewind. Guarded spawn transfers only the four selected capabilities
+without changing parent CLOEXEC flags or inheriting ambient credentials.
+
+The exact single argument `--machine-identifier` returns 1–4096 raw SDK identity
+bytes on stdout without constructing a VM or writing installation files.
+The native stdio-only initializer bounds output, enforces an absolute deadline
+and reaps its child. This is future setup input before `Journal::create`;
+reopen always uses the recorded identity, not a fresh candidate.
+
+The backend retains one helper owner and the same installation capability after
+stop or poison. EFI creation permission belongs only to its first prepared
+launch and is consumed before launch; subsequent starts require the retained
+store. The session delegates Early/New and Serve/Existing to `RuntimeWorker`.
+It publishes the existing engine transport only after correlated Ready. Stop
+unpublishes and seals guest I/O, observes native exit, then revokes the one socket
+and awaits scoped references before returning success. Uncertain cleanup retains
+ownership. This is not registry selection, setup readiness or credential delivery.
 
 ## Devices and lifetime
 

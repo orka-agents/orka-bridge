@@ -1,3 +1,4 @@
+use super::*;
 use crate::runtime::apple_channel::GuestSlot;
 use crate::runtime::{
     apple_backend::{
@@ -5,11 +6,9 @@ use crate::runtime::{
         AppleBackend,
     },
     apple_input::tests::installation,
-    apple_session::*,
     journal::Journal,
     RuntimeWorker,
 };
-use bridge_runtime_protocol::*;
 use std::{
     io::Write,
     os::unix::net::UnixStream,
