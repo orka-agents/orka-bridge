@@ -327,6 +327,14 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
             qemu_value(&committed_os).unwrap()
         )
     );
+    assert_eq!(
+        value("-kernel"),
+        spec.root.join(spec.image.kernel_path()).to_str().unwrap()
+    );
+    assert_eq!(
+        value("-initrd"),
+        spec.root.join(spec.image.initrd_path()).to_str().unwrap()
+    );
     assert_eq!(value("-accel"), "whpx");
     assert_eq!(value("-qmp"), "stdio");
     assert_eq!(
