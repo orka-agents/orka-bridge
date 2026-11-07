@@ -1,7 +1,5 @@
 use crate::runtime as fixture_runtime;
-use crate::runtime::{
-    apple_input::*, image_install::*, image_types::*, journal::Journal, types::*,
-};
+use crate::runtime::{apple_input::*, image_install::*, image_types::*, journal::Journal};
 use std::{
     fs,
     io::{Read, Seek},
