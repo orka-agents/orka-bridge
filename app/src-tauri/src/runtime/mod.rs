@@ -7,6 +7,9 @@ pub mod apple_backend;
 pub(crate) mod apple_channel;
 #[cfg(unix)]
 pub mod apple_input;
+#[cfg(all(target_os = "macos", test))]
+#[path = "apple_session_tests.rs"]
+mod apple_session_red_tests;
 pub mod client;
 pub mod credentials;
 pub mod identity;
