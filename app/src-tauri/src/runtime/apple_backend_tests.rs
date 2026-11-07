@@ -1,10 +1,9 @@
+use super::*;
 use crate::runtime::{
-    apple_backend::*,
     apple_input::tests::installation,
     journal::{Journal, StatePhase},
-    types::*,
 };
-use bridge_runtime_protocol::{Uuid, STATE_BYTES};
+
 use std::{
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
@@ -52,11 +51,14 @@ fn state_resize_preserves_journal_inode_and_rejects_symlink_or_wrong_size() {
     assert!(backend.create_state(&wrong).is_err());
     j.set_phase(StatePhase::Preparing).unwrap();
     j.finish_preparation().unwrap();
+    let image = spec.image.clone();
     drop(j);
     drop(backend);
+    drop(spec);
+    drop(wrong);
     let mut reopened = Journal::open(&t.path().join("install")).unwrap();
     assert!(
-        reopened.begin_boot(spec.image.clone()).is_err(),
+        reopened.begin_boot(image).is_err(),
         "Prepared reopen cannot restore New"
     );
 }

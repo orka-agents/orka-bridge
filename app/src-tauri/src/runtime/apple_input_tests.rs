@@ -10,7 +10,7 @@ mod fixture {
     include!("../../tests/support/runtime_image_fixture.rs");
 }
 
-pub(super) fn installation() -> (tempfile::TempDir, Journal, Arc<InstalledImageSet>) {
+pub(crate) fn installation() -> (tempfile::TempDir, Journal, Arc<InstalledImageSet>) {
     let temp = tempfile::tempdir().unwrap();
     let verified = fixture::verified(temp.path(), ImageTarget::MacosArm64);
     let journal = Journal::create(

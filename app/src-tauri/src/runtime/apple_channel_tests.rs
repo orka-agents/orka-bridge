@@ -1,4 +1,4 @@
-use crate::runtime::apple_channel::*;
+use super::*;
 impl GuestSlot {
     fn active(&self) -> bool {
         self.inner.state.lock().unwrap().active

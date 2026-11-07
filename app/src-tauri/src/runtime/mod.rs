@@ -1,12 +1,10 @@
 pub mod acquire;
 #[cfg(unix)]
 pub mod apple;
-#[cfg(all(unix, test))]
-#[path = "apple_backend_tests.rs"]
-mod apple_backend_red_tests;
-#[cfg(all(unix, test))]
-#[path = "apple_channel_tests.rs"]
-mod apple_channel_red_tests;
+#[cfg(unix)]
+pub mod apple_backend;
+#[cfg(unix)]
+pub(crate) mod apple_channel;
 #[cfg(unix)]
 pub mod apple_input;
 pub mod client;
