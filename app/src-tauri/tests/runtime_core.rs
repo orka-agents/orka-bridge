@@ -161,6 +161,226 @@ fn buffered_boot_handoff_preserves_ready2_read_ahead_for_the_client() {
         })
     ));
 }
+// Mutations must not let a failed exchange retain a live backend or issue New twice.
+fn check_failed_handshake(case: &str, stage: Stage) {
+    use std::io::{Read, Write};
+    struct Channel {
+        bytes: std::io::Cursor<Vec<u8>>,
+        writes: Arc<Mutex<Vec<u8>>>,
+        root: std::path::PathBuf,
+        fail_write: bool,
+    }
+    impl Read for Channel {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.bytes.read(b)
+        }
+    }
+    impl Write for Channel {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            // Capture the attempted descriptor even when no bytes reach the guest.
+            self.writes.lock().unwrap().extend_from_slice(b);
+            if self.fail_write {
+                let record: serde_json::Value =
+                    serde_json::from_slice(&fs::read(self.root.join("record.json")).unwrap())
+                        .unwrap();
+                assert_eq!(record["phase"], "consumed");
+                return Err(std::io::ErrorKind::BrokenPipe.into());
+            }
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let transcript = |nonce, bad: bool| {
+        let mut bytes = Vec::new();
+        for (current, id, guest) in [(Stage::Early, 1, 3), (Stage::Serve, 2, 4)] {
+            let reject = bad && current == stage;
+            bytes.extend(
+                encode(&Frame::Hello(hello(
+                    current,
+                    nonce,
+                    if reject && case == "repeated-guest" {
+                        3
+                    } else {
+                        guest
+                    },
+                )))
+                .unwrap(),
+            );
+            if reject && matches!(case, "repeated-guest" | "boot-write") {
+                break;
+            }
+            let mut reply = WireResult {
+                version: VERSION,
+                boot_nonce: nonce,
+                request_id: id,
+                body: ResultBody::Ready {},
+            };
+            if reject {
+                match case {
+                    "id" => reply.request_id = 99,
+                    "version" => reply.version = VERSION + 1,
+                    "nonce" => reply.boot_nonce = Uuid::from_u128(99),
+                    "body" => {
+                        reply.body = ResultBody::Error {
+                            code: ErrorCode::Unavailable,
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Bypass encode validation only to deliver deliberately invalid wire input.
+            let mut frame = serde_json::to_vec(&Frame::Result(reply)).unwrap();
+            frame.push(b'\n');
+            if reject && case == "truncated" {
+                frame.pop();
+            }
+            if reject && case == "oversized" {
+                frame.pop();
+                frame.resize(MAX_FRAME, b' ');
+                frame.push(b'\n');
+            }
+            bytes.extend(frame);
+            if reject {
+                break;
+            }
+        }
+        bytes
+    };
+    let (temp, journal) = create();
+    let root = temp.path().join("install");
+    let backend = Backend {
+        stop_root: Some(root.clone()),
+        ..Backend::default()
+    };
+    let events = backend.events.clone();
+    let mut worker = make_worker(Box::new(backend), journal);
+    worker.start().unwrap();
+    let nonce = worker.lease().unwrap().spec.boot_nonce;
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let result = fixture_runtime::handshake::establish(
+        &mut worker,
+        Box::new(Channel {
+            bytes: std::io::Cursor::new(transcript(nonce, true)),
+            writes: writes.clone(),
+            root: root.clone(),
+            fail_write: case == "boot-write",
+        }),
+        123,
+    );
+    assert!(result.is_err(), "{case} at {stage:?} accepted");
+    if case == "boot-write" {
+        assert!(
+            matches!(result, Err(RuntimeError::Io(e)) if e.kind() == std::io::ErrorKind::BrokenPipe)
+        );
+    }
+    assert!(
+        worker.lease().is_none(),
+        "{case} at {stage:?} retained lease"
+    );
+    assert_eq!(*events.lock().unwrap(), vec!["create", "start", "stop"]);
+    let requests = |writes: &Arc<Mutex<Vec<u8>>>| -> Vec<WireRequest> {
+        writes
+            .lock()
+            .unwrap()
+            .split(|b| *b == b'\n')
+            .filter(|b| !b.is_empty())
+            .map(|b| match serde_json::from_slice(b).unwrap() {
+                Frame::Request(request) => request,
+                _ => panic!("host sent a non-request"),
+            })
+            .collect()
+    };
+    let attempted = requests(&writes);
+    assert_eq!(
+        attempted.len(),
+        if stage == Stage::Early || case == "repeated-guest" {
+            1
+        } else {
+            2
+        }
+    );
+    assert!(matches!(
+        &attempted[0].body,
+        RequestBody::Boot(BootDescriptor {
+            state_creation: StateCreation::New,
+            ..
+        })
+    ));
+    if attempted.len() == 2 {
+        assert!(matches!(
+            &attempted[1].body,
+            RequestBody::Boot(BootDescriptor {
+                state_creation: StateCreation::Existing,
+                ..
+            })
+        ));
+    }
+    let record: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("record.json")).unwrap()).unwrap();
+    assert_eq!(record["phase"], "consumed");
+    assert!(matches!(Journal::open(&root), Err(RuntimeError::Busy)));
+    drop(worker);
+    assert_eq!(*events.lock().unwrap(), vec!["create", "start", "stop"]);
+
+    // Reopen the actual durable journal and complete a fresh exchange, not a flag check.
+    let backend = Backend::default();
+    let events = backend.events.clone();
+    let mut worker = make_worker(Box::new(backend), Journal::open(&root).unwrap());
+    worker.start().unwrap();
+    let next = worker.lease().unwrap().spec.boot_nonce;
+    assert_ne!(next, nonce);
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let client = fixture_runtime::handshake::establish(
+        &mut worker,
+        Box::new(Channel {
+            bytes: std::io::Cursor::new(transcript(next, false)),
+            writes: writes.clone(),
+            root: root.clone(),
+            fail_write: false,
+        }),
+        123,
+    )
+    .unwrap();
+    let retried = requests(&writes);
+    assert_eq!(retried.len(), 2);
+    assert!(retried.iter().all(|r| matches!(
+        &r.body,
+        RequestBody::Boot(BootDescriptor {
+            state_creation: StateCreation::Existing,
+            ..
+        })
+    )));
+    drop(client);
+    worker.stop().unwrap();
+    assert_eq!(*events.lock().unwrap(), vec!["start", "stop"]);
+}
+
+#[test]
+fn handshake_negative_ready_fields_stop_backend_without_new_retry() {
+    for stage in [Stage::Early, Stage::Serve] {
+        for case in ["id", "version", "nonce", "body"] {
+            check_failed_handshake(case, stage);
+        }
+    }
+}
+
+#[test]
+fn handshake_negative_repeated_nonce_and_frames_stop_backend_without_new_retry() {
+    check_failed_handshake("repeated-guest", Stage::Serve);
+    for stage in [Stage::Early, Stage::Serve] {
+        for case in ["truncated", "oversized"] {
+            check_failed_handshake(case, stage);
+        }
+    }
+}
+
+#[test]
+fn handshake_negative_first_boot_write_keeps_new_consumed_after_cleanup() {
+    check_failed_handshake("boot-write", Stage::Early);
+}
+
 #[test]
 fn exclusive_directory_lock_and_persistent_random_identity() {
     let (temp, j) = create();

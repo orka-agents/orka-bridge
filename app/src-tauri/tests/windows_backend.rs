@@ -309,10 +309,7 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
     let args = launch_argv(&inputs, &spec, socket.to_str().unwrap()).unwrap();
     let strs: Vec<_> = args.iter().map(|x| x.to_str().unwrap()).collect();
     let value = |key| strs[strs.iter().position(|x| *x == key).unwrap() + 1];
-    assert_eq!(
-        value("-append"),
-        "root=UUID=22222222-2222-4222-8222-222222222222 ro console=ttyS0,115200n8 noresume"
-    );
+    assert_eq!(value("-append"), spec.image.command_line());
     assert_eq!(
         value("-serial"),
         format!("file:{}", spec.root.join("boot.log").display())

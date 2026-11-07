@@ -143,7 +143,7 @@ pub fn launch_argv(
         "-initrd",
         spec.root.join(spec.image.initrd_path()).into_os_string(),
     );
-    pair("-append", inputs.boot.command_line.clone().into());
+    pair("-append", spec.image.command_line().into());
     // Legacy -serial file: consumes a literal path, unlike -drive key/value syntax.
     let mut serial = OsString::from("file:");
     serial.push(spec.root.join("boot.log"));

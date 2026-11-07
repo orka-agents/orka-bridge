@@ -227,6 +227,13 @@ mod native {
             if self.failed || spec.backend != BackendKind::Qemu {
                 return Err(RuntimeError::Unavailable);
             }
+            let mut state = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&spec.state_path)?;
+            if state.metadata()?.len() != 0 {
+                return Err(RuntimeError::RetainedState);
+            }
             let path = spec.root.join(format!(
                 "state-{}.qcow2",
                 bridge_runtime_protocol::Uuid::new_v4()
@@ -248,10 +255,6 @@ mod native {
                     ],
                 )?;
                 self.inspect(spec, &path, spec.state_bytes)?;
-                let mut state = OpenOptions::new()
-                    .read(true)
-                    .write(true)
-                    .open(&spec.state_path)?;
                 fill_state(&mut scratch, &mut state)?;
                 Ok(())
             })();
