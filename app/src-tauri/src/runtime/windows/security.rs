@@ -359,7 +359,7 @@ pub(super) fn private_af_directory(path: &Path) -> io::Result<File> {
     private_af_object(file.as_raw_handle(), true)?;
     Ok(file)
 }
-pub(super) fn create_af_directory(path: &Path) -> io::Result<File> {
+pub(crate) fn create_af_directory(path: &Path) -> io::Result<File> {
     unsafe {
         let token = current_token(TOKEN_QUERY)?;
         let u = user(token.0)?;

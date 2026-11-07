@@ -329,6 +329,21 @@ pub use native::WindowsBackend;
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+    #[cfg(windows)]
+    #[test]
+    fn new_journal_root_is_the_protected_parent_required_by_containment() {
+        let home = std::env::var_os("USERPROFILE").unwrap();
+        let temp = tempfile::tempdir_in(home).unwrap();
+        let journal = crate::runtime::journal::Journal::create(
+            &temp.path().join("install"),
+            crate::runtime::types::BackendKind::Qemu,
+            b"pc-q35-11.0".to_vec(),
+        )
+        .unwrap();
+        let endpoint =
+            crate::runtime::windows::control::ControlEndpoint::create(journal.root()).unwrap();
+        assert!(endpoint.path().parent().unwrap().is_dir());
+    }
     #[test]
     fn prepared_state_is_filled_without_replacing_its_held_identity() {
         let t = tempfile::tempdir().unwrap();

@@ -102,7 +102,7 @@ impl Journal {
             fs::DirBuilder::new().mode(0o700).create(&root)?;
         }
         #[cfg(windows)]
-        fs::create_dir(&root)?;
+        let _created_root = super::windows::security::create_af_directory(&root)?;
         #[cfg(unix)]
         File::open(root.parent().ok_or(RuntimeError::RetainedState)?)?.sync_all()?;
         let root = fs::canonicalize(&root)?;
