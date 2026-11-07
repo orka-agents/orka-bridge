@@ -37,6 +37,65 @@ while True:
     s.sendall(b'K'+b[1:])
     if b[0]==83: sys.exit(0)
 "#;
+pub(crate) fn failing_peer(mode: &str, opcode: u8) -> String {
+    PEER.replace(
+        "s.sendall(b'K'+b[1:])",
+        &format!(
+            r#"
+    if b[0]=={opcode}:
+        if '{mode}'=='ack': s.sendall(b'X'+b[1:])
+        if '{mode}'=='eof': s.close()
+        while True: pass
+    s.sendall(b'K'+b[1:])"#
+        ),
+    )
+}
+#[test]
+fn failed_operations_revoke_guest_and_retain_original_worker_lock() {
+    use std::io::Write;
+    for opcode in [b'P', b'R'] {
+        for mode in ["ack", "eof", "hang"] {
+            let (t, j, image) = installation();
+            let resources = resource(&failing_peer(mode, opcode));
+            let mut backend = AppleBackend::new(resources.path().to_path_buf());
+            // Native test utility shortens observation, never production budgets.
+            backend.owner = Some(super::super::apple::AppleHelperOwner::new(
+                j.spec(Uuid::new_v4(), image.clone()).ownership,
+            ));
+            super::super::apple::failure_fixture::shorten(backend.owner.as_mut().unwrap());
+            let mut worker =
+                crate::runtime::RuntimeWorker::new(Box::new(backend), j, image).unwrap();
+            worker.start().unwrap();
+            let slot = worker
+                .lease()
+                .unwrap()
+                .handle
+                .get::<AppleBackendHandle>()
+                .unwrap()
+                .guest
+                .clone();
+            assert!(if opcode == b'P' {
+                worker.pause()
+            } else {
+                worker.resume()
+            }
+            .is_err());
+            assert_eq!(
+                slot.channel().write(b"forbidden").unwrap_err().kind(),
+                std::io::ErrorKind::NotConnected
+            );
+            assert!(
+                worker.stop().is_err(),
+                "unobserved exit cannot become Stop success"
+            );
+            drop(worker);
+            assert!(matches!(
+                Journal::open(&t.path().join("install")),
+                Err(RuntimeError::Busy)
+            ));
+        }
+    }
+}
 #[test]
 fn state_resize_preserves_journal_inode_and_rejects_symlink_or_wrong_size() {
     let (t, mut j, image) = installation();
