@@ -220,7 +220,10 @@ private struct BootstrapTests {
             check(receive(output.fileDescriptor, 5) == Array("ready".utf8), "hung child installed TERM-ignore")
             let done = DispatchSemaphore(value: 0)
             DispatchQueue.global().async {
-                do { check(try finishInitializer(pid, until: .now()) != nil, "hung child exit observed") }
+                do {
+                    let status = try finishInitializer(pid, until: .now())
+                    check(status != nil, "hung child exit observed")
+                }
                 catch { check(false, "hung child cleanup error") }
                 done.signal()
             }
