@@ -127,12 +127,15 @@ pub fn run(args: &[String]) -> io::Result<()> {
     drop(session);
     drop(image);
     drop(rt);
-    let free = runtime::journal::Journal::open(&root).is_ok();
+    let reopened = runtime::journal::Journal::open(&root);
+    let free = reopened.is_ok();
+    let ownership_error = reopened.err().map(|error| error.to_string());
     let receipt = json!({"status":if passed&&free {"passed"} else {"failed"},"sourceHead":crate::SOURCE_HEAD,
         "producerRun":trusted["producerRun"],"runtimeZipSha256":trusted["runtimeZipSha256"],
         "guestBoot":true,"accelerator":"whpx","earlyAndServeReady":true,"clientReadiness":ready.is_ok(),
         "shutdownAckAndExit0AndWholeJobStop":shutdown.is_ok(),"ownershipReleased":free,
-        "elapsedMs":started.elapsed().as_millis(),"modelExecution":false,"tokenExecution":false});
+        "elapsedMs":started.elapsed().as_millis(),"modelExecution":false,"tokenExecution":false,
+        "readinessError":ready.err().map(|e|e.to_string()),"shutdownError":shutdown.err().map(|e|e.to_string()),"ownershipError":ownership_error});
     save(&root, receipt)?;
     if passed && free {
         println!("PASS: Windows backend/session WHPX boot and observed shutdown");
