@@ -392,6 +392,11 @@ impl<O: Borrow<OwnedQemuProcess>> ControlIo<O> {
             return Ok(0);
         }
         let until = deadline.min(Instant::now() + Duration::from_secs(120));
+        let until = self
+            .owner
+            .borrow()
+            .stopping_deadline()
+            .map_or(until, |stop| until.min(stop));
         let mut operation = || loop {
             let socket = self.usable()?;
             if Instant::now() >= until {
@@ -424,6 +429,11 @@ impl<O: Borrow<OwnedQemuProcess>> ControlIo<O> {
             return Ok(0);
         }
         let until = deadline.min(Instant::now() + Duration::from_secs(30));
+        let until = self
+            .owner
+            .borrow()
+            .stopping_deadline()
+            .map_or(until, |stop| until.min(stop));
         write_count(
             until,
             || {

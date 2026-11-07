@@ -51,6 +51,117 @@ fn install_image(journal: &Journal, verified: &fixture_runtime::image_types::Ver
         .unwrap();
 }
 #[test]
+fn buffered_boot_handoff_preserves_ready2_read_ahead_for_the_client() {
+    use std::io::{Read, Write};
+    struct Channel {
+        bytes: std::io::Cursor<Vec<u8>>,
+        writes: Arc<Mutex<Vec<u8>>>,
+    }
+    impl Read for Channel {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.bytes.read(b)
+        }
+    }
+    impl Write for Channel {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.writes.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let (_temp, journal) = create();
+    let mut worker = make_worker(Box::new(Backend::default()), journal);
+    worker.start().unwrap();
+    let nonce = worker.lease().unwrap().spec.boot_nonce;
+    let mut bytes = Vec::new();
+    for (stage, id, guest) in [
+        (Stage::Early, 1, Uuid::new_v4()),
+        (Stage::Serve, 2, Uuid::new_v4()),
+    ] {
+        bytes.extend(
+            encode(&Frame::Hello(StageHello {
+                version: VERSION,
+                stage,
+                guest_nonce: guest,
+                accepted_boot_nonce: if stage == Stage::Serve {
+                    Some(nonce)
+                } else {
+                    None
+                },
+            }))
+            .unwrap(),
+        );
+        bytes.extend(
+            encode(&Frame::Result(WireResult {
+                version: VERSION,
+                boot_nonce: nonce,
+                request_id: id,
+                body: ResultBody::Ready {},
+            }))
+            .unwrap(),
+        );
+    }
+    bytes.extend(
+        encode(&Frame::Result(WireResult {
+            version: VERSION,
+            boot_nonce: nonce,
+            request_id: 3,
+            body: ResultBody::Ready {},
+        }))
+        .unwrap(),
+    );
+    let writes = Arc::new(Mutex::new(Vec::new()));
+    let mut client = fixture_runtime::handshake::establish(
+        &mut worker,
+        Box::new(Channel {
+            bytes: std::io::Cursor::new(bytes),
+            writes: writes.clone(),
+        }),
+        123,
+    )
+    .unwrap();
+    client.readiness().unwrap();
+    let frames: Vec<Frame> = writes
+        .lock()
+        .unwrap()
+        .split(|b| *b == b'\n')
+        .filter(|b| !b.is_empty())
+        .map(|b| serde_json::from_slice(b).unwrap())
+        .collect();
+    assert!(matches!(
+        &frames[0],
+        Frame::Request(WireRequest {
+            request_id: 1,
+            body: RequestBody::Boot(BootDescriptor {
+                state_creation: StateCreation::New,
+                ..
+            }),
+            ..
+        })
+    ));
+    assert!(matches!(
+        &frames[1],
+        Frame::Request(WireRequest {
+            request_id: 2,
+            body: RequestBody::Boot(BootDescriptor {
+                state_creation: StateCreation::Existing,
+                ..
+            }),
+            ..
+        })
+    ));
+    assert!(matches!(
+        &frames[2],
+        Frame::Request(WireRequest {
+            request_id: 3,
+            body: RequestBody::Readiness {},
+            ..
+        })
+    ));
+}
+#[test]
 fn exclusive_directory_lock_and_persistent_random_identity() {
     let (temp, j) = create();
     let root = temp.path().join("install");

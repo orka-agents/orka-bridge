@@ -196,6 +196,17 @@ impl<T: Transport> Qmp<T> {
         })();
         self.checked(result)
     }
+    pub fn set_running(&mut self, running: bool, until: Instant) -> io::Result<()> {
+        let result = (|| {
+            self.command(if running { "cont" } else { "stop" }, until)?;
+            let status = self.query_status(until)?;
+            if status.running != running || (running && status.status != "running") {
+                return Err(invalid());
+            }
+            Ok(())
+        })();
+        self.checked(result)
+    }
     pub fn quit(&mut self, until: Instant) -> io::Result<()> {
         let result = (|| {
             self.usable(until)?;

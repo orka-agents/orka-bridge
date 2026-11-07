@@ -1,4 +1,5 @@
 //! Windows launch inputs and native capabilities. No Setup or renderer entry point.
+pub mod backend;
 #[cfg(windows)]
 pub mod control;
 pub mod inputs;
@@ -9,3 +10,5 @@ pub mod qmp;
 pub mod qmp_io;
 #[cfg(windows)]
 pub mod security;
+#[cfg(windows)]
+pub mod session;

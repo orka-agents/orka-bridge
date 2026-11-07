@@ -3,6 +3,7 @@ pub mod acquire;
 pub mod apple;
 pub mod client;
 pub mod credentials;
+pub mod handshake;
 pub mod identity;
 pub mod image_cache;
 pub mod image_install;

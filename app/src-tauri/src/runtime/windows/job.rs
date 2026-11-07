@@ -289,11 +289,35 @@ mod native {
             argv: &[OsString],
             control: super::super::control::ControlEndpoint,
         ) -> io::Result<Self> {
+            Self::spawn_executable(
+                inputs,
+                ownership,
+                cwd,
+                argv,
+                control,
+                "qemu-system-x86_64.exe",
+            )
+        }
+        pub(crate) fn spawn_image_tool(
+            inputs: Arc<VerifiedWindowsInputs>,
+            ownership: Arc<File>,
+            cwd: &Path,
+            argv: &[OsString],
+            control: super::super::control::ControlEndpoint,
+        ) -> io::Result<Self> {
+            Self::spawn_executable(inputs, ownership, cwd, argv, control, "qemu-img.exe")
+        }
+        fn spawn_executable(
+            inputs: Arc<VerifiedWindowsInputs>,
+            ownership: Arc<File>,
+            cwd: &Path,
+            argv: &[OsString],
+            control: super::super::control::ControlEndpoint,
+            name: &str,
+        ) -> io::Result<Self> {
             inputs.recheck_runtime().map_err(io::Error::other)?;
             let cwd_file = private_directory(cwd)?;
-            let exe = inputs
-                .executable("qemu-system-x86_64.exe")
-                .map_err(io::Error::other)?;
+            let exe = inputs.executable(name).map_err(io::Error::other)?;
             let mut command = quote_windows_arg(
                 exe.to_str()
                     .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?,
@@ -486,6 +510,19 @@ mod native {
         }
         pub fn process_handle(&self) -> Arc<Handle> {
             self.resources().process.clone()
+        }
+        pub(crate) fn stopping_deadline(&self) -> Option<std::time::Instant> {
+            self.resources().stop_deadline.get().copied()
+        }
+        pub fn exit_code(&self) -> io::Result<u32> {
+            if !self.exited() {
+                return Err(io::ErrorKind::WouldBlock.into());
+            }
+            let mut code = 0;
+            unsafe {
+                check(GetExitCodeProcess(self.resources().process.0, &mut code))?;
+            }
+            Ok(code)
         }
         pub fn exited(&self) -> bool {
             unsafe { WaitForSingleObject(self.resources().process.0, 0) == WAIT_OBJECT_0 }
