@@ -134,7 +134,7 @@ fn contain_controller() -> io::Result<()> {
 fn digest(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
-fn packet(runtime: &Path, pin: &Path, work: &Path) -> io::Result<(PathBuf, Value)> {
+pub(super) fn packet(runtime: &Path, pin: &Path, work: &Path) -> io::Result<(PathBuf, Value)> {
     let trusted: Value = serde_json::from_slice(&fs::read(pin)?).map_err(io::Error::other)?;
     check(
         trusted["head"] == crate::SOURCE_HEAD

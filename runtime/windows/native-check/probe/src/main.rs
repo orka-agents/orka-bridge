@@ -66,6 +66,8 @@ fn main() {
 }
 #[cfg(windows)]
 mod native {
+    #[path = "boot.rs"]
+    mod boot;
     #[path = "controller.rs"]
     mod controller;
     #[path = "guard_case.rs"]
@@ -382,6 +384,13 @@ mod native {
         if args.get(1).map(String::as_str) == Some("unix-connect") {
             check(args.len() == 3)?;
             return unix_trial::client(std::path::Path::new(&args[2]));
+        }
+        #[cfg(debug_assertions)]
+        if args.get(1).map(String::as_str) == Some("vm-check") {
+            return boot::run(&args[2..]);
+        }
+        if args.get(1).map(String::as_str) == Some("state-check") {
+            return boot::state(&args[2..]);
         }
         if args.get(1).map(String::as_str) == Some("check") {
             return controller::run(&args[2..]);

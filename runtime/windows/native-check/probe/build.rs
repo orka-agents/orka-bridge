@@ -1,10 +1,14 @@
 use std::{env, fs, path::PathBuf, process::Command};
 fn main() {
-    let repo = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
-        .join("../../../../../native-source")
+    let repo = env::var_os("BRIDGE_NATIVE_SOURCE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
+                .join("../../../../../boot-source")
+        })
         .canonicalize()
         .unwrap();
-    const EXPECTED: &str = "d52a02d440b4a35ea011008b5c1a12a15058d15a";
+    const EXPECTED: &str = "efee4164fab2340d01fc160fff44d0c89fac3b42";
     let head = Command::new("git")
         .args(["rev-parse", "HEAD"])
         .current_dir(&repo)
@@ -24,6 +28,7 @@ fn main() {
     );
     let root = repo.join("app/src-tauri/src");
     let runtime = root.join("runtime/mod.rs");
+    let dev_image = root.join("dev_image.rs");
     let types = root.join("engine/types.rs");
     let security = root.join("runtime/windows/security.rs");
     let fixture = repo.join("app/src-tauri/tests/support/runtime_image_fixture.rs");
@@ -33,6 +38,7 @@ fn main() {
         }}
         }}
         pub mod engine {{ #[path={types:?}] pub mod types; }}
+        #[cfg(debug_assertions)] #[path={dev_image:?}] pub mod dev_image;
         // Independent proof checks use the same source validator in this parent scope.
         #[allow(clippy::duplicate_mod)] #[path={security:?}] mod proof_security;
         mod fixture_runtime {{ pub use crate::runtime::*; }}

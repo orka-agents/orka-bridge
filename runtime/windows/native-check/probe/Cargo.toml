@@ -11,7 +11,7 @@ rcgen = { version = "=0.14.10", default-features = false, features = ["ring"] }
 rustls = { version = "=0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
 tokio-rustls = { version = "=0.26.5", default-features = false, features = ["ring", "tls12"] }
 [dependencies]
-bridge-runtime-protocol = { path = "../../../../../native-source/runtime/protocol" }
+bridge-runtime-protocol = { path = "../../../../../boot-source/runtime/protocol" }
 cap-std = "=4.0.3"
 cap-fs-ext = "=4.0.3"
 libc = "=0.2.191"

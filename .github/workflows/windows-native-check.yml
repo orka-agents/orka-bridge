@@ -1,7 +1,7 @@
 name: Windows native premises
 on:
   push:
-    branches: [ci/windows-native-check]
+    branches: [ci/windows-boot-kit]
     paths:
       - 'runtime/windows/native-check/**'
       - '.github/workflows/windows-native-check.yml'
@@ -36,8 +36,8 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          path: native-source
-          ref: d52a02d440b4a35ea011008b5c1a12a15058d15a
+          path: boot-source
+          ref: efee4164fab2340d01fc160fff44d0c89fac3b42
           persist-credentials: false
       - name: Initialize diagnostic directory and assert source identity
         run: |
@@ -45,9 +45,9 @@ jobs:
           $output = Join-Path $env:RUNNER_TEMP 'native-operator'
           New-Item -ItemType Directory -Path $output -ErrorAction Stop | Out-Null
           "NATIVE_OUTPUT=$output" >> $env:GITHUB_ENV
-          $head = git -C native-source rev-parse HEAD
-          if ($LASTEXITCODE -ne 0 -or $head -ne 'd52a02d440b4a35ea011008b5c1a12a15058d15a') { throw 'Wrong source head' }
-          $dirty = git -C native-source status --porcelain --untracked-files=all
+          $head = git -C boot-source rev-parse HEAD
+          if ($LASTEXITCODE -ne 0 -or $head -ne 'efee4164fab2340d01fc160fff44d0c89fac3b42') { throw 'Wrong source head' }
+          $dirty = git -C boot-source status --porcelain --untracked-files=all
           if ($LASTEXITCODE -ne 0 -or $dirty) { throw 'Source checkout is not clean' }
           git -C driver diff --exit-code 006b30f02a3c9cec61f8f3cc32fde6b0d248fc34 -- runtime/windows/recipe.py runtime/windows/verify.py runtime/windows/sources.lock.json runtime/windows/packages.lock.json
           if ($LASTEXITCODE -ne 0) { throw 'Producer verifier or external locks changed' }
@@ -67,13 +67,14 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/native-target
           RUSTFLAGS: -Ctarget-feature=+crt-static
+          CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'true'
         run: |
           $ErrorActionPreference = 'Stop'
-          cargo +1.98.1-x86_64-pc-windows-msvc test --release --locked --manifest-path native-source/runtime/Cargo.toml -p bridge-runtime-protocol --test windows_backend restricted_token_default_dacl_stays_user_and_system_only
+          cargo +1.98.1-x86_64-pc-windows-msvc test --release --locked --manifest-path boot-source/runtime/Cargo.toml -p bridge-runtime-protocol --test windows_backend restricted_token_default_dacl_stays_user_and_system_only
           if ($LASTEXITCODE -ne 0) { throw 'Default DACL regression failed' }
-          cargo +1.98.1-x86_64-pc-windows-msvc test --release --locked --manifest-path native-source/runtime/Cargo.toml -p bridge-runtime-protocol --test windows_backend restricting_sids_are_exactly_user_system_and_restricted
+          cargo +1.98.1-x86_64-pc-windows-msvc test --release --locked --manifest-path boot-source/runtime/Cargo.toml -p bridge-runtime-protocol --test windows_backend restricting_sids_are_exactly_user_system_and_restricted
           if ($LASTEXITCODE -ne 0) { throw 'Exact restricting SID regression failed' }
-          $pipeTest = @(cargo +1.98.1-x86_64-pc-windows-msvc test --release --locked --manifest-path native-source/runtime/Cargo.toml -p bridge-runtime-protocol --test windows_backend pipe_query_accepts_only_protected_user_system_dacl 2>&1)
+          $pipeTest = @(cargo +1.98.1-x86_64-pc-windows-msvc test --release --locked --manifest-path boot-source/runtime/Cargo.toml -p bridge-runtime-protocol --test windows_backend pipe_query_accepts_only_protected_user_system_dacl 2>&1)
           $pipeTest | ForEach-Object { Write-Output $_ }
           if ($LASTEXITCODE -ne 0 -or ($pipeTest -join "`n") -notmatch 'test result: ok\. 1 passed; 0 failed;') { throw 'Protected pipe query regression failed or matched no test' }
           cargo +1.98.1-x86_64-pc-windows-msvc build --release --locked --manifest-path driver/runtime/windows/native-check/probe/Cargo.toml 2>&1 | Tee-Object -FilePath (Join-Path $env:NATIVE_OUTPUT 'build.log')
@@ -127,6 +128,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Independent producer verification or bundle assembly failed' }
           Copy-Item (Join-Path $env:NATIVE_OUTPUT 'bridge-native-premises.exe'), (Join-Path $env:NATIVE_OUTPUT 'runtime-pin.json') -Destination $stage
           Copy-Item -LiteralPath $env:NATIVE_GUARD_TEST_EXE -Destination (Join-Path $stage 'bridge-guard-tests.exe')
+      - name: Exercise actual owned qemu-img and retained state identity
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $work = Join-Path ($env:SystemDrive + '\') ('bs-' + $env:GITHUB_RUN_ID)
+          & (Join-Path $env:NATIVE_STAGE 'bridge-native-premises.exe') state-check (Join-Path $env:NATIVE_STAGE 'runtime') (Join-Path $env:NATIVE_OUTPUT 'runtime-pin.json') $work 2>&1 | Tee-Object -FilePath (Join-Path $env:NATIVE_OUTPUT 'ci-state.log')
+          if ($LASTEXITCODE -ne 0) { throw 'Actual owned qemu-img state preparation failed' }
+          Copy-Item (Join-Path $work 'receipt.json') -Destination (Join-Path $env:NATIVE_OUTPUT 'ci-state-receipt.json')
+          Copy-Item (Join-Path $work 'qemu-img-stderr.txt') -Destination (Join-Path $env:NATIVE_OUTPUT 'ci-state-stderr.txt')
       - name: Full four-case native qualification with required account challenge
         timeout-minutes: 12
         run: |
@@ -136,7 +145,7 @@ jobs:
           $created = $false; $otherCreated = $false
           $name = 'bnc' + [guid]::NewGuid().ToString('N').Substring(0, 12)
           $otherName = 'bno' + [guid]::NewGuid().ToString('N').Substring(0, 12)
-          $result = [ordered]@{ status = 'failed'; sourceHead = 'd52a02d440b4a35ea011008b5c1a12a15058d15a'; fullFourCaseQualification = $true; controllerExitObserved = $false; accountRemoved = $false; otherAccountRemoved = $false; diagnosticLoaderTrace = $false }
+          $result = [ordered]@{ status = 'failed'; sourceHead = 'efee4164fab2340d01fc160fff44d0c89fac3b42'; fullFourCaseQualification = $true; controllerExitObserved = $false; accountRemoved = $false; otherAccountRemoved = $false; diagnosticLoaderTrace = $false }
           function Grant-Access([string]$Path, [string[]]$Rules) {
             & icacls.exe $Path /inheritance:r /grant:r @Rules | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'Cannot stage required access rights' }
