@@ -21,6 +21,13 @@ use windows_sys::Win32::{
 const QUEUED_FRAMES: usize = 32;
 type Frame = io::Result<Received>;
 type WriteRequest = (Vec<u8>, SyncSender<io::Result<()>>);
+#[derive(Clone)]
+pub struct StderrCapture(Arc<Mutex<Vec<u8>>>);
+impl StderrCapture {
+    pub fn snapshot(&self) -> io::Result<Vec<u8>> {
+        stderr_snapshot(&self.0)
+    }
+}
 pub struct NativeTransport {
     owner: Arc<OwnedQemuProcess>,
     incoming: Option<Receiver<Frame>>,
@@ -185,6 +192,9 @@ impl NativeTransport {
             })?;
         self.workers.push(thread);
         Ok(())
+    }
+    pub fn stderr_capture(&self) -> StderrCapture {
+        StderrCapture(self.stderr.clone())
     }
     pub fn stderr(&self) -> io::Result<Vec<u8>> {
         stderr_snapshot(&self.stderr)

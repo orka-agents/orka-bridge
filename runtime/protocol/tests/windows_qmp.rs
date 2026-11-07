@@ -65,25 +65,47 @@ const HELLO: &[u8] = b"{\"QMP\":{\"version\":{},\"capabilities\":[]}}\r\n";
 const CAPS: &[u8] = b"{\"return\":{},\"id\":1}\n";
 #[test]
 fn cpu_control_is_correlated_and_observes_requested_state() {
-    let (wire,state)=wire(&[HELLO,CAPS,
+    let (wire, state) = wire(&[
+        HELLO,
+        CAPS,
         b"{\"return\":{},\"id\":2}\n",
         b"{\"return\":{\"status\":\"running\",\"running\":true},\"id\":3}\n",
         b"{\"return\":{},\"id\":4}\n",
-        b"{\"return\":{\"status\":\"paused\",\"running\":false},\"id\":5}\n"]);
-    let mut q=Qmp::negotiate(wire,deadline()).unwrap();
-    q.set_running(true,deadline()).unwrap();
-    q.set_running(false,deadline()).unwrap();
-    let s=state.lock().unwrap();
-    let requests:Vec<serde_json::Value>=s.writes.iter().map(|b|serde_json::from_slice(b).unwrap()).collect();
-    assert_eq!(requests.iter().map(|v|v["execute"].as_str().unwrap()).collect::<Vec<_>>(),
-        ["qmp_capabilities","cont","query-status","stop","query-status"]);
+        b"{\"return\":{\"status\":\"paused\",\"running\":false},\"id\":5}\n",
+    ]);
+    let mut q = Qmp::negotiate(wire, deadline()).unwrap();
+    q.set_running(true, deadline()).unwrap();
+    q.set_running(false, deadline()).unwrap();
+    let s = state.lock().unwrap();
+    let requests: Vec<serde_json::Value> = s
+        .writes
+        .iter()
+        .map(|b| serde_json::from_slice(b).unwrap())
+        .collect();
+    assert_eq!(
+        requests
+            .iter()
+            .map(|v| v["execute"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        [
+            "qmp_capabilities",
+            "cont",
+            "query-status",
+            "stop",
+            "query-status"
+        ]
+    );
 }
 #[test]
 fn cpu_control_cannot_succeed_on_unobserved_running_state() {
-    let (wire,state)=wire(&[HELLO,CAPS,b"{\"return\":{},\"id\":2}\n",
-        b"{\"return\":{\"status\":\"paused\",\"running\":false},\"id\":3}\n"]);
-    let mut q=Qmp::negotiate(wire,deadline()).unwrap();
-    assert!(q.set_running(true,deadline()).is_err());
+    let (wire, state) = wire(&[
+        HELLO,
+        CAPS,
+        b"{\"return\":{},\"id\":2}\n",
+        b"{\"return\":{\"status\":\"paused\",\"running\":false},\"id\":3}\n",
+    ]);
+    let mut q = Qmp::negotiate(wire, deadline()).unwrap();
+    assert!(q.set_running(true, deadline()).is_err());
     assert!(state.lock().unwrap().actions.contains(&"abort"));
 }
 #[test]

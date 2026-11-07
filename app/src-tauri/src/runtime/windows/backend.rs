@@ -40,9 +40,23 @@ mod native {
         sync::{Arc, Mutex},
         time::{Duration, Instant},
     };
+    #[derive(Clone, Default)]
+    pub struct FailureDiagnostics(
+        Arc<Mutex<Option<crate::runtime::windows::qmp_io::StderrCapture>>>,
+    );
+    impl FailureDiagnostics {
+        pub fn stderr(&self) -> std::io::Result<Vec<u8>> {
+            self.0
+                .lock()
+                .map_err(|_| std::io::Error::other("diagnostics poisoned"))?
+                .as_ref()
+                .map_or(Ok(Vec::new()), |capture| capture.snapshot())
+        }
+    }
     pub struct WindowsBackend {
         inputs: Arc<VerifiedWindowsInputs>,
         failed: bool,
+        diagnostics: FailureDiagnostics,
     }
     #[derive(Clone)]
     pub(crate) struct Lease(pub Arc<Mutex<Vm>>);
@@ -56,7 +70,11 @@ mod native {
             Self {
                 inputs,
                 failed: false,
+                diagnostics: FailureDiagnostics::default(),
             }
+        }
+        pub fn failure_diagnostics(&self) -> FailureDiagnostics {
+            self.diagnostics.clone()
         }
         fn tool(&self, spec: &LaunchSpec, args: &[OsString]) -> Result<Vec<u8>, RuntimeError> {
             let endpoint = ControlEndpoint::create(&spec.root)?;
@@ -70,6 +88,11 @@ mod native {
             let stdio = child.take_stdio()?;
             let owner = Arc::new(child);
             let mut io = NativeTransport::new(owner.clone(), stdio)?;
+            *self
+                .diagnostics
+                .0
+                .lock()
+                .map_err(|_| RuntimeError::Closed)? = Some(io.stderr_capture());
             let until = io.prepare_stop()?;
             owner.resume()?;
             let mut output = Vec::new();
@@ -144,6 +167,11 @@ mod native {
             let stdio = child.take_stdio()?;
             let owner = Arc::new(child);
             let transport = NativeTransport::new(owner.clone(), stdio)?;
+            *self
+                .diagnostics
+                .0
+                .lock()
+                .map_err(|_| RuntimeError::Closed)? = Some(transport.stderr_capture());
             owner.resume()?;
             let until = Instant::now() + Duration::from_secs(30);
             let mut qmp = Qmp::negotiate(transport, until)?;
