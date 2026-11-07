@@ -134,6 +134,14 @@ fn fragmented_and_oversized_frames_are_bounded_by_real_reader() {
     );
 }
 #[test]
+fn readonly_transport_diagnostics_survive_an_exchange_failure() {
+    let (wire, state) = wire(&[HELLO, CAPS, b"invalid\n"]);
+    let mut q = Qmp::negotiate(wire, deadline()).unwrap();
+    assert!(q.query_status(deadline()).is_err());
+    let transport: &Wire = q.transport();
+    assert!(Arc::ptr_eq(&transport.state, &state));
+}
+#[test]
 fn known_transport_failure_captures_bytes_without_accepting_a_valid_reply() {
     let (mut wire, state) = wire(&[HELLO, CAPS]);
     let bytes = b"{\"return\":{\"status\":\"running\",\"running\":true},\"id\":2}\n".to_vec();

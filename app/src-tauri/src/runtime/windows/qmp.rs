@@ -103,6 +103,10 @@ impl<T: Transport> Qmp<T> {
         q.checked(result)?;
         Ok(q)
     }
+    /// Diagnostics remain accessible without exposing mutable exchanges.
+    pub fn transport(&self) -> &T {
+        &self.io
+    }
     pub fn transcript(&self) -> &Transcript {
         &self.transcript
     }
