@@ -57,7 +57,7 @@ impl WindowsSession {
         self.client = None;
         let result = match (ack, stopped) {
             (Err(ack), Err(stop)) => Err(io_error(format!(
-                "guest shutdown failed: {ack}; stop unobserved: {stop}"
+                "guest shutdown failed: {ack}; shutdown completion failed: {stop}"
             ))),
             (Err(ack), Ok(())) => Err(ack.into()),
             (Ok(()), stop) => stop,

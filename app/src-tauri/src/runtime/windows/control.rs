@@ -518,7 +518,7 @@ impl io::Write for GuestStream {
     }
     fn flush(&mut self) -> io::Result<()> {
         self.0
-            .usable()
+            .read_socket()
             .map(|_| ())
             .map_err(|error| self.0.failure(error))
     }
