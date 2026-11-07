@@ -91,6 +91,9 @@ impl VmClient {
     pub fn readiness(&mut self) -> io::Result<()> {
         self.ready_call(RequestBody::Readiness {})
     }
+    // Lifecycle shutdown is routed by the native Windows session; other
+    // platform session adapters are not connected in this slice.
+    #[cfg_attr(not(windows), allow(dead_code))]
     pub(super) fn shutdown(&mut self) -> io::Result<()> {
         self.ready_call(RequestBody::Shutdown {})
     }
