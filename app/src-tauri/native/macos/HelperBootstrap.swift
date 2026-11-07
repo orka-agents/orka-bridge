@@ -1,10 +1,12 @@
 import Foundation
+import Virtualization
 import Darwin
 
 private final class BootstrapCoreReference { weak var value: BridgeVM? }
 
 // Standalone helper composition only. No app registration or guest handshake.
 enum HelperBootstrap {
+    static func machineIdentifier() -> Data { VZGenericMachineIdentifier().dataRepresentation }
     static func terminalExitCode(cleanStop: Bool, socketClosed: Bool, signalRestored: Bool) -> Int32 {
         cleanStop && socketClosed && signalRestored ? 0 : 1
     }

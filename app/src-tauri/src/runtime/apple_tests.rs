@@ -1,4 +1,5 @@
 use super::*;
+fn config() -> File { tempfile::tempfile().unwrap() }
 use std::{io::Read, os::fd::AsRawFd, sync::OnceLock};
 
 // Synthetic descriptors/signals only: this ignored Mac test does not qualify VZ.
@@ -26,9 +27,9 @@ fn swift_supervisor_peer() {
         owner.budgets = budgets;
         let mut command = Command::new(&executable);
         command.arg("--synthetic-peer");
-        // The actual owner supplies exactly three FD arguments and clears env/stdio.
+        // The actual owner supplies exactly four FD arguments and clears env/stdio.
         let guest = owner
-            .start(command)
+            .start(command, config())
             .expect("Swift peer did not send BRVM readiness");
         let mut marker = [0];
         read_until(&guest, &mut marker, Instant::now() + budgets.read).unwrap();
@@ -217,7 +218,7 @@ fn assert_reaped(d: &tempfile::TempDir) {
 fn helper_owns_only_selected_channels_and_cannot_inherit_ambient_tokens() {
     let (d, mut owner, cmd) = setup("normal");
     let parent_flags = unsafe { libc::fcntl(owner.ownership.as_raw_fd(), libc::F_GETFD) };
-    let mut guest = owner.start(cmd).unwrap();
+    let mut guest = owner.start(cmd, config()).unwrap();
     let mut bytes = [0; 11];
     guest.read_exact(&mut bytes).unwrap();
     assert_eq!(&bytes, b"guest-only\n");
@@ -233,7 +234,7 @@ fn helper_owns_only_selected_channels_and_cannot_inherit_ambient_tokens() {
 #[test]
 fn supervisor_eof_reaches_helper_without_any_termination_signal() {
     let (d, mut owner, cmd) = setup("normal");
-    let _guest = owner.start(cmd).unwrap();
+    let _guest = owner.start(cmd, config()).unwrap();
     let session = owner.session.as_mut().unwrap();
     session.control = None;
     assert!(
@@ -252,13 +253,13 @@ fn idle_pause_and_resume_do_not_poison_a_safe_owner() {
     let disconnected = HelperError::Io(std::io::ErrorKind::NotConnected);
     assert_eq!(owner.pause().unwrap_err(), disconnected);
     assert_eq!(owner.resume().unwrap_err(), disconnected);
-    let _guest = owner.start(cmd).unwrap();
+    let _guest = owner.start(cmd, config()).unwrap();
     owner.stop().unwrap();
     assert_eq!(owner.pause().unwrap_err(), disconnected);
     assert_eq!(owner.resume().unwrap_err(), disconnected);
     let mut again = Command::new(fixture().join("helper"));
     again.arg("normal").arg(d.path().join("pid"));
-    let _next_guest = owner.start(again).unwrap();
+    let _next_guest = owner.start(again, config()).unwrap();
     owner.stop().unwrap();
     assert_reaped(&d);
 }
@@ -266,7 +267,7 @@ fn idle_pause_and_resume_do_not_poison_a_safe_owner() {
 #[test]
 fn guest_parent_endpoint_is_not_inherited_by_the_helper() {
     let (d, mut owner, cmd) = setup("guest-eof");
-    let mut guest = owner.start(cmd).unwrap();
+    let mut guest = owner.start(cmd, config()).unwrap();
     let mut bytes = [0; 11];
     guest.read_exact(&mut bytes).unwrap();
     drop(guest);
@@ -280,9 +281,9 @@ fn guest_parent_endpoint_is_not_inherited_by_the_helper() {
 #[test]
 fn busy_owner_never_starts_another_process() {
     let (d, mut owner, cmd) = setup("normal");
-    let _guest = owner.start(cmd).unwrap();
+    let _guest = owner.start(cmd, config()).unwrap();
     assert_eq!(
-        owner.start(Command::new("/must-not-execute")).unwrap_err(),
+        owner.start(Command::new("/must-not-execute"), config()).unwrap_err(),
         HelperError::Busy
     );
     owner.stop().unwrap();
@@ -291,9 +292,9 @@ fn busy_owner_never_starts_another_process() {
 #[test]
 fn bad_startup_permanently_poisons_owner_before_retry() {
     let (d, mut owner, cmd) = setup("bad-ready");
-    assert_eq!(owner.start(cmd).unwrap_err(), HelperError::Protocol);
+    assert_eq!(owner.start(cmd, config()).unwrap_err(), HelperError::Protocol);
     assert_eq!(
-        owner.start(Command::new("/must-not-execute")).unwrap_err(),
+        owner.start(Command::new("/must-not-execute"), config()).unwrap_err(),
         HelperError::Poisoned
     );
     assert_reaped(&d);
@@ -302,11 +303,11 @@ fn bad_startup_permanently_poisons_owner_before_retry() {
 fn mismatched_reply_and_helper_failure_poison_without_replay() {
     for mode in ["stale", "error"] {
         let (d, mut owner, cmd) = setup(mode);
-        let _guest = owner.start(cmd).unwrap();
+        let _guest = owner.start(cmd, config()).unwrap();
         assert_eq!(owner.pause().unwrap_err(), HelperError::Protocol);
         assert_eq!(owner.resume().unwrap_err(), HelperError::Poisoned);
         assert_eq!(
-            owner.start(Command::new("/must-not-execute")).unwrap_err(),
+            owner.start(Command::new("/must-not-execute"), config()).unwrap_err(),
             HelperError::Poisoned
         );
         assert_reaped(&d);
@@ -315,7 +316,7 @@ fn mismatched_reply_and_helper_failure_poison_without_replay() {
 #[test]
 fn response_fragments_do_not_restart_the_absolute_deadline() {
     let (d, mut owner, cmd) = setup("fragment");
-    let _guest = owner.start(cmd).unwrap();
+    let _guest = owner.start(cmd, config()).unwrap();
     owner.budgets.read = Duration::from_millis(35);
     assert_eq!(
         owner.pause().unwrap_err(),
@@ -328,10 +329,10 @@ fn response_fragments_do_not_restart_the_absolute_deadline() {
 fn stop_requires_observed_successful_exit_not_only_an_ack() {
     for mode in ["exit-bad", "hang-stop"] {
         let (d, mut owner, cmd) = setup(mode);
-        let _guest = owner.start(cmd).unwrap();
+        let _guest = owner.start(cmd, config()).unwrap();
         assert!(owner.stop().is_err());
         assert_eq!(
-            owner.start(Command::new("/must-not-execute")).unwrap_err(),
+            owner.start(Command::new("/must-not-execute"), config()).unwrap_err(),
             HelperError::Poisoned
         );
         assert_reaped(&d);
@@ -340,7 +341,7 @@ fn stop_requires_observed_successful_exit_not_only_an_ack() {
 #[test]
 fn dropping_live_owner_reaps_before_releasing_its_lock() {
     let (d, mut owner, cmd) = setup("normal");
-    let _guest = owner.start(cmd).unwrap();
+    let _guest = owner.start(cmd, config()).unwrap();
     let probe = File::open(d.path().join("lock")).unwrap();
     assert!(probe.try_lock().is_err());
     drop(owner);
@@ -355,9 +356,9 @@ fn unobserved_start_exit_is_distinct_and_drop_retains_lock_without_retry() {
     // No observation budget: still an actual child, not a mocked wait result.
     // The fixture sends a bad header only after installing TERM-ignore and its PID receipt.
     owner.budgets.cleanup = Duration::ZERO;
-    assert_eq!(owner.start(cmd).unwrap_err(), HelperError::ExitUnobserved);
+    assert_eq!(owner.start(cmd, config()).unwrap_err(), HelperError::ExitUnobserved);
     assert_eq!(
-        owner.start(Command::new("/must-not-execute")).unwrap_err(),
+        owner.start(Command::new("/must-not-execute"), config()).unwrap_err(),
         HelperError::ExitUnobserved
     );
     drop(owner);

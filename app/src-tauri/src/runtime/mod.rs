@@ -1,6 +1,14 @@
 pub mod acquire;
 #[cfg(unix)]
 pub mod apple;
+#[cfg(unix)]
+pub mod apple_backend;
+#[cfg(unix)]
+pub(crate) mod apple_channel;
+#[cfg(unix)]
+pub mod apple_input;
+#[cfg(target_os = "macos")]
+pub mod apple_session;
 pub mod client;
 pub mod credentials;
 pub mod identity;

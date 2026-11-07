@@ -119,6 +119,10 @@ private struct BootstrapTests {
                 }
             }
         }
+        let identity = HelperBootstrap.machineIdentifier()
+        check((1...4096).contains(identity.count), "bounded raw SDK identity")
+        check(VZGenericMachineIdentifier(dataRepresentation: identity) != nil, "SDK identity reopens")
+        initializerProcess()
         fragmentedFrame(q)
         do {
             try rejectsBeforeDriver(q)
@@ -130,6 +134,39 @@ private struct BootstrapTests {
         } catch { check(false, "unexpected bootstrap fixture failure") }
         print("Swift helper bootstrap: \(assertions) assertions, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    private static func initializerProcess() {
+        let native = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let helper = native.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("gen/apple-helper/BridgeVM")
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        do {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+            defer { try? FileManager.default.removeItem(at: root) }
+            for args in [["--machine-identifier"], ["--machine-identifier", "extra"]] {
+                let process = Process(), pipe = Pipe()
+                process.executableURL = helper; process.arguments = args
+                process.environment = [:]; process.currentDirectoryURL = root
+                process.standardOutput = pipe; process.standardError = FileHandle.nullDevice
+                try process.run()
+                let end = Date().addingTimeInterval(5)
+                while process.isRunning && Date() < end { Thread.sleep(forTimeInterval: 0.002) }
+                if process.isRunning { process.terminate() }
+                check(!process.isRunning, "initializer child exit is bounded")
+                process.waitUntilExit()
+                let bytes = pipe.fileHandleForReading.readDataToEndOfFile()
+                if args.count == 1 {
+                    check(process.terminationStatus == 0, "initializer exit success")
+                    check((1...4096).contains(bytes.count), "raw stdout identity bound")
+                    check(VZGenericMachineIdentifier(dataRepresentation: bytes) != nil, "raw stdout SDK validity")
+                } else {
+                    check(process.terminationStatus != 0 && bytes.isEmpty, "extra initializer arguments refuse")
+                }
+                let files = try FileManager.default.contentsOfDirectory(atPath: root.path)
+                check(files.isEmpty, "initializer wrote no installation files")
+            }
+        } catch { check(false, "initializer process fixture failed") }
     }
 
     private static func fragmentedFrame(_ q: DispatchQueue) {
