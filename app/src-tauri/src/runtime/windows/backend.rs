@@ -403,6 +403,21 @@ mod tests {
         journal
             .set_phase(crate::runtime::journal::StatePhase::Preparing)
             .unwrap();
+        assert_eq!(
+            journal.record().phase,
+            crate::runtime::journal::StatePhase::Preparing
+        );
+        use std::os::windows::fs::OpenOptionsExt;
+        let delete = std::fs::OpenOptions::new()
+            .access_mode(0x00010000)
+            .share_mode(7)
+            .custom_flags(0x02200000)
+            .open(&root)
+            .unwrap_err();
+        assert_eq!(delete.raw_os_error(), Some(32));
+        let moved = temp.path().join("moved");
+        assert!(std::fs::rename(&root, &moved).is_err());
+        assert!(root.is_dir() && !moved.exists());
     }
     #[test]
     fn prepared_state_is_filled_without_replacing_its_held_identity() {
