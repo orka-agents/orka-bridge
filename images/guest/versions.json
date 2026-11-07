@@ -14,7 +14,7 @@
   "sourceOfflineProfile": {
     "profile": "orka-7916cd1c-native/v1",
     "profileSha256": "6ab8213cae9f1d58fe59f34b2402f93ed951752269decdf750fc2a170bddf223",
-    "kmxSourceCommit": "b8238bddb54632dbc40c8cc10bbb07463234b03c",
+    "kmxSourceCommit": "642fe0ea41584980751af9840844ae6f844e4a61",
     "chartSha256": "19c50cff36855b8792b4777c89c598cf33ea70180e677e1a4758fc0211f069ed",
     "artifactsSha256": "db1dae048af33841a295fdebb55c85d3a122242feade043f85a9e886938d1b3e"
   },
