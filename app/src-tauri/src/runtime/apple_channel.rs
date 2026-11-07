@@ -74,7 +74,12 @@ impl GuestSlot {
         let socket = self.inner.state.lock().unwrap().socket.take();
         // No mutex is held during shutdown; this wakes a blocked scoped read.
         if let Some(socket) = socket {
-            socket.shutdown(Shutdown::Both)?;
+            // Darwin reports ENOTCONN after the observed helper has closed its end.
+            if let Err(error) = socket.shutdown(Shutdown::Both) {
+                if error.kind() != io::ErrorKind::NotConnected {
+                    return Err(error);
+                }
+            }
             drop(socket);
         }
         let mut state = self.inner.state.lock().unwrap();
