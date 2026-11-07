@@ -1,6 +1,6 @@
 #[path = "../../../app/src-tauri/src/runtime/windows/qmp.rs"]
 mod qmp;
-use qmp::{Qmp, Transport};
+use qmp::{Qmp, Received, Transport};
 use std::{
     collections::VecDeque,
     io,
@@ -18,9 +18,13 @@ struct Wire {
     stop: Instant,
 }
 impl Transport for Wire {
-    fn receive(&mut self, _: Instant) -> io::Result<Vec<u8>> {
+    fn receive(&mut self, _: Instant) -> io::Result<Received> {
         self.rx
             .pop_front()
+            .map(|bytes| Received {
+                bytes,
+                failure: None,
+            })
             .ok_or_else(|| io::ErrorKind::UnexpectedEof.into())
     }
     fn send(&mut self, bytes: &[u8], _: Instant) -> io::Result<()> {
@@ -120,12 +124,44 @@ fn expired_original_stop_deadline_sends_no_quit_and_aborts() {
 fn fragmented_and_oversized_frames_are_bounded_by_real_reader() {
     let raw = b"{\"return\":{},\"id\":1}\n";
     let mut reader = io::BufReader::with_capacity(2, io::Cursor::new(raw));
-    assert_eq!(qmp::read_frame(&mut reader).unwrap(), raw);
+    assert_eq!(qmp::read_frame(&mut reader).unwrap().bytes, raw);
     let mut reader = io::BufReader::new(io::Cursor::new(vec![b'x'; qmp::MAX_FRAME + 10]));
     assert_eq!(
-        qmp::read_frame(&mut reader).unwrap().len(),
+        qmp::read_frame(&mut reader).unwrap().bytes.len(),
         qmp::MAX_FRAME + 1
     );
+}
+#[test]
+fn refill_error_keeps_the_consumed_fragment() {
+    struct Broken {
+        consumed: bool,
+    }
+    impl io::Read for Broken {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            unreachable!()
+        }
+    }
+    impl io::BufRead for Broken {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            if self.consumed {
+                Err(io::ErrorKind::Interrupted.into())
+            } else {
+                Ok(b"partial")
+            }
+        }
+        fn consume(&mut self, count: usize) {
+            assert_eq!(count, 7);
+            self.consumed = true;
+        }
+    }
+    let result = qmp::read_frame(&mut Broken { consumed: false });
+    assert!(
+        result.is_ok(),
+        "consumed bytes must survive the refill error"
+    );
+    let received = result.unwrap();
+    assert_eq!(received.bytes, b"partial");
+    assert_eq!(received.failure.unwrap().kind(), io::ErrorKind::Interrupted);
 }
 #[test]
 fn transcript_limit_is_terminal_without_unbounded_capture() {

@@ -1,6 +1,6 @@
 use crate::runtime::windows::{
     job::OwnedQemuProcess,
-    qmp::{read_frame, Transport, MAX_TRANSCRIPT},
+    qmp::{read_frame, Received, Transport, MAX_TRANSCRIPT},
 };
 use std::{
     fs::File,
@@ -18,7 +18,8 @@ use windows_sys::Win32::{
     Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
     System::{Threading::WaitForSingleObject, IO::CancelSynchronousIo},
 };
-type Frame = io::Result<Vec<u8>>;
+const QUEUED_FRAMES: usize = 32;
+type Frame = io::Result<Received>;
 type WriteRequest = (Vec<u8>, SyncSender<io::Result<()>>);
 pub struct NativeTransport {
     owner: Arc<OwnedQemuProcess>,
@@ -34,12 +35,17 @@ fn stdout_pump(file: File, tx: SyncSender<Frame>, mut fault: impl FnMut(&io::Err
     let mut reader = BufReader::new(file);
     loop {
         match read_frame(&mut reader) {
-            Ok(bytes) => {
-                if tx.try_send(Ok(bytes)).is_err() {
+            Ok(received) => {
+                let terminal = received.failure.as_ref().map(io::Error::kind);
+                if tx.try_send(Ok(received)).is_err() {
                     fault(&io::Error::new(
                         io::ErrorKind::BrokenPipe,
                         "QMP output queue unavailable",
                     ));
+                    break;
+                }
+                if let Some(kind) = terminal {
+                    fault(&kind.into());
                     break;
                 }
             }
@@ -108,7 +114,7 @@ impl NativeTransport {
     /// Resume the retained child before negotiating QMP; never rediscover pipes.
     pub fn new(owner: Arc<OwnedQemuProcess>, stdio: (File, File, File)) -> io::Result<Self> {
         let (mut stdin, stdout, stderr) = stdio;
-        let (frames, receive) = mpsc::sync_channel(32);
+        let (frames, receive) = mpsc::sync_channel(QUEUED_FRAMES);
         let (send, requests) = mpsc::sync_channel::<WriteRequest>(1);
         let mut io = Self {
             owner,
@@ -180,9 +186,51 @@ impl NativeTransport {
         self.workers.push(thread);
         Ok(())
     }
-    pub fn stderr(&self) -> Arc<Mutex<Vec<u8>>> {
-        self.stderr.clone()
+    pub fn stderr(&self) -> io::Result<Vec<u8>> {
+        stderr_snapshot(&self.stderr)
     }
+}
+fn stderr_snapshot(capture: &Mutex<Vec<u8>>) -> io::Result<Vec<u8>> {
+    capture
+        .lock()
+        .map(|bytes| bytes.clone())
+        .map_err(|_| io::Error::other("QMP stderr capture poisoned"))
+}
+fn receive_frame(
+    rx: &Receiver<Frame>,
+    failed: &AtomicBool,
+    until: Instant,
+) -> io::Result<Received> {
+    let first = if failed.load(Ordering::Acquire) {
+        rx.try_recv()
+            .map_err(|_| io::Error::from(io::ErrorKind::BrokenPipe))
+    } else {
+        rx.recv_timeout(left(until)?).map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => io::Error::from(io::ErrorKind::TimedOut),
+            mpsc::RecvTimeoutError::Disconnected => io::Error::from(io::ErrorKind::UnexpectedEof),
+        })
+    }?;
+    let mut received = first?;
+    if failed.load(Ordering::Acquire) {
+        received
+            .failure
+            .get_or_insert_with(|| io::ErrorKind::BrokenPipe.into());
+        // Retain already-read terminal output, but never turn known failure into
+        // a successful exchange. The finite queue and transcript cap bound this.
+        for _ in 0..QUEUED_FRAMES {
+            let Ok(next) = rx.try_recv() else {
+                break;
+            };
+            if let Ok(next) = next {
+                let count = next
+                    .bytes
+                    .len()
+                    .min(MAX_TRANSCRIPT.saturating_sub(received.bytes.len()));
+                received.bytes.extend_from_slice(&next.bytes[..count]);
+            }
+        }
+    }
+    Ok(received)
 }
 fn left(until: Instant) -> io::Result<Duration> {
     let left = until.saturating_duration_since(Instant::now());
@@ -193,23 +241,12 @@ fn left(until: Instant) -> io::Result<Duration> {
     }
 }
 impl Transport for NativeTransport {
-    fn receive(&mut self, until: Instant) -> io::Result<Vec<u8>> {
-        if self.failed.load(Ordering::Acquire) {
-            return Err(io::ErrorKind::BrokenPipe.into());
-        }
-        let result = self
-            .incoming
-            .as_ref()
-            .ok_or(io::ErrorKind::BrokenPipe)?
-            .recv_timeout(left(until)?)
-            .map_err(|error| match error {
-                mpsc::RecvTimeoutError::Timeout => io::ErrorKind::TimedOut,
-                mpsc::RecvTimeoutError::Disconnected => io::ErrorKind::UnexpectedEof,
-            })?;
-        if self.failed.load(Ordering::Acquire) {
-            return Err(io::ErrorKind::BrokenPipe.into());
-        }
-        result
+    fn receive(&mut self, until: Instant) -> io::Result<Received> {
+        receive_frame(
+            self.incoming.as_ref().ok_or(io::ErrorKind::BrokenPipe)?,
+            &self.failed,
+            until,
+        )
     }
     fn send(&mut self, bytes: &[u8], until: Instant) -> io::Result<()> {
         if self.failed.load(Ordering::Acquire) {

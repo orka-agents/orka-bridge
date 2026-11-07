@@ -6,8 +6,12 @@ use std::{
 };
 pub const MAX_FRAME: usize = 128 * 1024;
 pub const MAX_TRANSCRIPT: usize = 2 * 1024 * 1024;
+pub struct Received {
+    pub bytes: Vec<u8>,
+    pub failure: Option<io::Error>,
+}
 pub trait Transport {
-    fn receive(&mut self, deadline: Instant) -> io::Result<Vec<u8>>;
+    fn receive(&mut self, deadline: Instant) -> io::Result<Received>;
     fn send(&mut self, bytes: &[u8], deadline: Instant) -> io::Result<()>;
     fn prepare_stop(&mut self) -> io::Result<Instant>;
     fn wait_for_stop(&mut self) -> io::Result<()>;
@@ -40,13 +44,25 @@ fn remaining(until: Instant) -> io::Result<()> {
     }
 }
 /// Retain a partial or oversized frame too; the caller records it before validation.
-pub fn read_frame(reader: &mut impl BufRead) -> io::Result<Vec<u8>> {
+pub fn read_frame(reader: &mut impl BufRead) -> io::Result<Received> {
     let mut bytes = Vec::new();
     while bytes.len() <= MAX_FRAME {
-        let chunk = reader.fill_buf()?;
-        if chunk.is_empty() {
-            break;
-        }
+        let chunk = match reader.fill_buf() {
+            Ok(chunk) if !chunk.is_empty() => chunk,
+            result => {
+                let error = result
+                    .err()
+                    .unwrap_or_else(|| io::ErrorKind::UnexpectedEof.into());
+                return if bytes.is_empty() {
+                    Err(error)
+                } else {
+                    Ok(Received {
+                        bytes,
+                        failure: Some(error),
+                    })
+                };
+            }
+        };
         let count = chunk
             .iter()
             .position(|b| *b == b'\n')
@@ -62,7 +78,10 @@ pub fn read_frame(reader: &mut impl BufRead) -> io::Result<Vec<u8>> {
     if bytes.is_empty() {
         Err(io::ErrorKind::UnexpectedEof.into())
     } else {
-        Ok(bytes)
+        Ok(Received {
+            bytes,
+            failure: None,
+        })
     }
 }
 impl<T: Transport> Qmp<T> {
@@ -116,8 +135,12 @@ impl<T: Transport> Qmp<T> {
     }
     fn frame(&mut self, until: Instant) -> io::Result<Value> {
         self.usable(until)?;
-        let bytes = self.io.receive(until)?;
+        let received = self.io.receive(until)?;
+        let bytes = received.bytes;
         self.capture(&bytes, false)?;
+        if let Some(error) = received.failure {
+            return Err(error);
+        }
         if bytes.len() > MAX_FRAME || bytes.last() != Some(&b'\n') {
             return Err(invalid());
         }

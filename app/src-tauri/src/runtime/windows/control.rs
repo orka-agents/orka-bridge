@@ -419,15 +419,15 @@ impl<O: Borrow<OwnedQemuProcess>> ControlIo<O> {
         };
         operation().map_err(|error| self.failure(error))
     }
-    pub fn write_all(&self, input: &[u8], deadline: Instant) -> io::Result<()> {
+    fn write_some(&self, input: &[u8], deadline: Instant) -> io::Result<usize> {
+        if input.is_empty() {
+            return Ok(0);
+        }
         let until = deadline.min(Instant::now() + Duration::from_secs(30));
-        let operation = || {
-            let mut input = input;
-            while !input.is_empty() {
+        write_count(
+            until,
+            || {
                 let socket = self.usable()?;
-                if Instant::now() >= until {
-                    return Err(io::Error::from(io::ErrorKind::TimedOut));
-                }
                 let count = unsafe {
                     send(
                         socket,
@@ -436,22 +436,40 @@ impl<O: Borrow<OwnedQemuProcess>> ControlIo<O> {
                         0,
                     )
                 };
-                if count > 0 {
-                    input = &input[count as usize..];
-                    continue;
+                if count < 0 {
+                    Err(wsa_error())
+                } else {
+                    Ok(count as usize)
                 }
-                if count == 0 {
-                    return Err(io::Error::from(io::ErrorKind::WriteZero));
-                }
-                let error = wsa_error();
-                if error.raw_os_error() != Some(WSAEWOULDBLOCK) {
-                    return Err(error);
-                }
-                poll(socket, POLLWRNORM, until)?;
-            }
-            Ok(())
-        };
-        operation().map_err(|error| self.failure(error))
+            },
+            || poll(self.channel.raw()?, POLLWRNORM, until),
+        )
+        .map_err(|error| self.failure(error))
+    }
+    pub fn write_all(&self, mut input: &[u8], deadline: Instant) -> io::Result<()> {
+        let until = deadline.min(Instant::now() + Duration::from_secs(30));
+        while !input.is_empty() {
+            let count = self.write_some(input, until)?;
+            input = &input[count..];
+        }
+        Ok(())
+    }
+}
+fn write_count(
+    until: Instant,
+    mut send: impl FnMut() -> io::Result<usize>,
+    mut wait: impl FnMut() -> io::Result<()>,
+) -> io::Result<usize> {
+    loop {
+        if Instant::now() >= until {
+            return Err(io::ErrorKind::TimedOut.into());
+        }
+        match send() {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(count) => return Ok(count),
+            Err(error) if error.raw_os_error() == Some(WSAEWOULDBLOCK) => wait()?,
+            Err(error) => return Err(error),
+        }
     }
 }
 impl<O: Borrow<OwnedQemuProcess>> Drop for ControlIo<O> {
@@ -473,8 +491,11 @@ impl io::Read for GuestStream {
 impl io::Write for GuestStream {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.0
-            .write_all(bytes, Instant::now() + Duration::from_secs(30))?;
-        Ok(bytes.len())
+            .write_some(bytes, Instant::now() + Duration::from_secs(30))
+    }
+    fn write_all(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.0
+            .write_all(bytes, Instant::now() + Duration::from_secs(30))
     }
     fn flush(&mut self) -> io::Result<()> {
         self.0
@@ -488,6 +509,25 @@ mod tests {
     use super::*;
     use windows_sys::Win32::Security::{Authorization::*, *};
     use windows_sys::Win32::Storage::FileSystem::{READ_CONTROL, WRITE_DAC};
+    #[test]
+    fn write_reports_first_progress_without_a_second_send() {
+        let mut sends = 0;
+        let count = write_count(
+            Instant::now() + Duration::from_secs(5),
+            || {
+                sends += 1;
+                if sends == 1 {
+                    Ok(2)
+                } else {
+                    Err(io::ErrorKind::BrokenPipe.into())
+                }
+            },
+            || panic!("a successful partial send needs no wait"),
+        )
+        .unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(sends, 1);
+    }
     #[test]
     fn owned_guest_stream_satisfies_the_existing_channel_lifetime() {
         fn channel<T: std::io::Read + std::io::Write + Send + 'static>() {}

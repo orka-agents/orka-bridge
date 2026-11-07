@@ -30,7 +30,10 @@ fn real_pipe_frames_and_eof_reach_the_bounded_receiver() {
     write.write_all(b"{}}\n").unwrap();
     drop(write);
     assert_eq!(
-        rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap(),
+        rx.recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+            .bytes,
         b"{\"QMP\":{}}\n"
     );
     assert!(rx.recv_timeout(Duration::from_secs(5)).unwrap().is_err());
@@ -56,8 +59,37 @@ fn saturated_output_queue_terminates_instead_of_waiting_for_a_reader() {
     let _ = finish_workers(&mut vec![worker], until);
     assert_eq!(exited, WAIT_OBJECT_0);
     assert!(fault.load(Ordering::Acquire));
-    assert_eq!(rx.try_recv().unwrap().unwrap(), b"{}\n");
+    assert_eq!(rx.try_recv().unwrap().unwrap().bytes, b"{}\n");
     drop(write);
+}
+#[test]
+fn terminal_pipe_output_survives_failure_before_receive() {
+    let (read, mut write) = pipe();
+    write.write_all(b"{}\npartial").unwrap();
+    drop(write);
+    let (tx, rx) = mpsc::sync_channel(4);
+    let failed = Arc::new(AtomicBool::new(false));
+    let flag = failed.clone();
+    let worker = std::thread::spawn(move || {
+        stdout_pump(read, tx, move |_| {
+            flag.store(true, Ordering::Release);
+        })
+    });
+    assert_eq!(
+        unsafe { WaitForSingleObject(worker.as_raw_handle(), 5000) },
+        WAIT_OBJECT_0
+    );
+    worker.join().unwrap();
+    let received = receive_frame(&rx, &failed, Instant::now() + Duration::from_secs(5)).unwrap();
+    assert_eq!(received.bytes, b"{}\npartial");
+    assert!(received.failure.is_some());
+}
+#[test]
+fn stderr_snapshot_cannot_enlarge_the_capture() {
+    let capture = Mutex::new(vec![b'x'; MAX_TRANSCRIPT]);
+    let mut snapshot = stderr_snapshot(&capture).unwrap();
+    snapshot.push(b'x');
+    assert_eq!(capture.lock().unwrap().len(), MAX_TRANSCRIPT);
 }
 #[test]
 fn synchronous_read_is_cancelled_with_writer_still_open() {
