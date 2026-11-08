@@ -17,7 +17,7 @@ function record(value: unknown, keys: string[]): value is Record<string, unknown
 const text = (value: unknown, max = 4096): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const verdict = (value: unknown): value is Verdict => value === 'passed' || value === 'failed' || value === 'unknown';
 function valid(value: unknown): value is RunSnapshot {
-  if (!record(value, ['state', 'canRun', 'report', 'acknowledged', 'pending', 'error']) || !['idle', 'running', 'complete', 'unknown'].includes(String(value.state)) || typeof value.canRun !== 'boolean' || value.state === 'running' && value.canRun || value.error !== null && !(typeof value.error === 'string' && Object.hasOwn(errors, value.error))) return false;
+  if (!record(value, ['state', 'canRun', 'report', 'acknowledged', 'pending', 'error']) || typeof value.state !== 'string' || !['idle', 'running', 'complete', 'unknown'].includes(value.state) || typeof value.canRun !== 'boolean' || value.state === 'running' && value.canRun || value.error !== null && !(typeof value.error === 'string' && Object.hasOwn(errors, value.error))) return false;
   if (!Array.isArray(value.acknowledged) || value.acknowledged.length > 33 || !value.acknowledged.every(r => record(r, ['kind', 'name', 'uid']) && (r.kind === 'Agent' || r.kind === 'Task') && text(r.name) && text(r.uid))) return false;
   if (value.pending !== null && !(record(value.pending, ['kind', 'name']) && (value.pending.kind === 'Agent' || value.pending.kind === 'Task') && text(value.pending.name))) return false;
   if (value.report === null) return value.state !== 'complete';

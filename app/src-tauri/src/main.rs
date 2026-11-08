@@ -73,7 +73,7 @@ fn main() {
             app.manage(if vm.status() == LocalVmStatus::NotIntegrated { EngineState::configured() }
                 else { EngineState::with_transport(vm.clone()) });
             app.manage(store.clone()); app.manage(vm.clone());
-            app.manage(bridge_engine::example_run::ExampleRun::new(tauri::async_runtime::handle().inner().clone()));
+            app.manage(bridge_engine::example_run::ExampleRun::new(tauri::async_runtime::handle().inner().clone(), bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE));
             tauri::async_runtime::spawn(async move {
                 if local_vm::resume_selected(store, &vm).await.is_err() {
                     eprintln!("The saved setup choice could not be read.");

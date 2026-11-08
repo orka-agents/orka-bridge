@@ -46,10 +46,10 @@ struct State {
     snapshot: RunSnapshot,
     handle: Option<RunHandle>,
 }
-pub struct ExampleRun(Mutex<State>, tokio::runtime::Handle);
+pub struct ExampleRun(Mutex<State>, tokio::runtime::Handle, bool);
 impl ExampleRun {
     /// The native shell supplies its runtime; a blocking IPC thread need not enter it.
-    pub fn new(runtime: tokio::runtime::Handle) -> Arc<Self> {
+    pub fn new(runtime: tokio::runtime::Handle, model_image_available: bool) -> Arc<Self> {
         Arc::new(Self(
             Mutex::new(State {
                 snapshot: RunSnapshot {
@@ -63,16 +63,20 @@ impl ExampleRun {
                 handle: None,
             }),
             runtime,
+            model_image_available,
         ))
     }
     /// Observation only, including after a renderer remount; never submits or loads credentials.
     pub fn status(&self, vm: &LocalVm) -> RunSnapshot {
         let mut snapshot = self.0.lock().unwrap().snapshot.clone();
         snapshot.can_run =
-            snapshot.state != RunState::Running && vm.status() == LocalVmStatus::Ready;
+            self.2 && snapshot.state != RunState::Running && vm.status() == LocalVmStatus::Ready;
         snapshot
     }
     pub fn start(self: &Arc<Self>, vm: Arc<LocalVm>) -> RunSnapshot {
+        if !self.2 {
+            return self.status(&vm);
+        }
         {
             let mut state = self.0.lock().unwrap();
             if state.snapshot.state == RunState::Running {

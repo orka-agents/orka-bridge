@@ -215,7 +215,7 @@ async fn finished(run: &ExampleRun, vm: &LocalVm) -> bridge_engine::example_run:
 #[tokio::test]
 async fn example_uses_one_client_exact_pair_and_retains_receipts_after_waiter_is_gone() {
     let (vm, posts, stopped) = fixture(false, false).await;
-    let run = ExampleRun::new(tokio::runtime::Handle::current());
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true);
     assert_eq!(run.start(vm.clone()).state, RunState::Running);
     run.start(vm.clone()); // duplicate renderer command cannot submit twice
     let result = finished(&run, &vm).await;
@@ -248,7 +248,7 @@ fn blocking_ipc_caller_does_not_need_an_entered_tokio_runtime() {
         .enable_all()
         .build()
         .unwrap();
-    let run = ExampleRun::new(runtime.handle().clone());
+    let run = ExampleRun::new(runtime.handle().clone(), true);
     let vm = LocalVm::unavailable();
     assert_eq!(run.start(vm.clone()).state, RunState::Running);
     let result = runtime.block_on(finished(&run, &vm));
@@ -256,9 +256,24 @@ fn blocking_ipc_caller_does_not_need_an_entered_tokio_runtime() {
     assert_eq!(result.error, Some("session"));
 }
 #[tokio::test]
+async fn unsupported_image_never_probes_or_retires_the_shared_client() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), false);
+    assert!(!run.status(&vm).can_run);
+    assert_eq!(run.start(vm.clone()).state, RunState::Idle);
+    assert!(posts.lock().unwrap().is_empty());
+    // The refusal must leave the original channel usable, not discover support by probing.
+    assert!(vm
+        .with_client(|_, client| client.model_status())
+        .await
+        .unwrap()
+        .is_ok());
+    vm.shutdown().await.unwrap();
+}
+#[tokio::test]
 async fn absent_completed_tools_stays_unknown_with_contains_passed() {
     let (vm, _, _) = fixture(true, false).await;
-    let run = ExampleRun::new(tokio::runtime::Handle::current());
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true);
     run.start(vm.clone());
     let result = finished(&run, &vm).await;
     let report = result.report.unwrap();
@@ -276,7 +291,7 @@ async fn absent_completed_tools_stays_unknown_with_contains_passed() {
 #[tokio::test]
 async fn uncertain_task_write_keeps_agent_and_pending_task_without_retry() {
     let (vm, posts, _) = fixture(false, true).await;
-    let run = ExampleRun::new(tokio::runtime::Handle::current());
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true);
     run.start(vm.clone());
     let result = finished(&run, &vm).await;
     assert_eq!(result.state, RunState::Unknown);
