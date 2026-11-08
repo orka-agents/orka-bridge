@@ -72,6 +72,24 @@ class ValidatorTests(unittest.TestCase):
             kube.command("get", "agents", as_user=api.CREATOR_A),
         )
 
+    def test_preflight_rejects_suffixed_kind_builds(self):
+        api = load_validator()
+
+        class FakeRunner:
+            def run(self, args):
+                self.calls.append(args)
+                return subprocess.CompletedProcess(args, 0, self.output, b"")
+
+        runner = FakeRunner()
+        for version in ("v0.33.0-alpha+123456", "v0.33.0+123456", "v0.33.0-custom"):
+            with self.subTest(version=version):
+                runner.calls = []
+                runner.output = f"kind {version} go1.25 linux/amd64\n".encode()
+                self.assertEqual(version, api.parse_kind_version(runner.output))
+                with self.assertRaisesRegex(api.ValidationError, "kind v0.33.0 is required"):
+                    api.preflight(runner, "kind", "kubectl", "podman")
+                self.assertEqual([["kind", "version"]], runner.calls)
+
     def test_matrix_has_isolation_escalation_and_unsafe_controls(self):
         api = load_validator()
         checks = api.access_matrix()

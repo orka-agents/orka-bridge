@@ -205,7 +205,7 @@ def resolve_tool(value: str) -> str:
 
 
 def parse_kind_version(output: bytes) -> str:
-    match = re.search(rb"\b(v\d+\.\d+\.\d+)\b", output)
+    match = re.match(rb"kind\s+(v\d+\.\d+\.\d+\S*)(?:\s|$)", output)
     if not match:
         raise ValidationError("could not read kind version")
     return match.group(1).decode()
