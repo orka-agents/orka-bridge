@@ -50,6 +50,7 @@ async fn windows_session_startup_inside_tokio_reaches_child_creation_without_pan
         })
         .collect();
     let inputs = Arc::new(verify_windows_runtime(&pins, runtime_root).unwrap());
+    let installation = image.installation_id();
     let result = blocking_start(move |_| {
         let worker = RuntimeWorker::new(
             Box::new(crate::runtime::windows::backend::WindowsBackend::new(
@@ -59,7 +60,7 @@ async fn windows_session_startup_inside_tokio_reaches_child_creation_without_pan
             Arc::new(image),
         )?;
         let session = crate::runtime::windows::session::WindowsSession::start(worker, 0)?;
-        Ok(Box::new(NativeSession(session)) as Box<dyn LocalSession>)
+        Ok(Box::new(NativeSession(session, installation)) as Box<dyn LocalSession>)
     })
     .await;
     // The real backend reaches CreateProcessW, which refuses the inert fixture.
