@@ -16,6 +16,8 @@ const OWNER: &str = "bridge-guest";
 /// Renew well before the ten-minute expiry so no request is sent with a stale token.
 const RENEW_AFTER: Duration = Duration::from_secs(8 * 60);
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(20);
+// Include lazy setup in one budget, below the native channel's 120-second read bound.
+const REQUEST_BUDGET: Duration = Duration::from_secs(90);
 
 fn failed() -> io::Error {
     io::Error::other("orka transport unavailable")
@@ -91,6 +93,7 @@ pub struct Orka {
     context: String,
     rbac: bool,
     token: Option<Token>,
+    previous_token: Option<String>,
     forward: Option<Forward>,
     client: Option<reqwest::blocking::Client>,
 }
@@ -104,6 +107,7 @@ impl Orka {
             context: format!("--context=kind-bridge-{}", installation.simple()),
             rbac: false,
             token: None,
+            previous_token: None,
             forward: None,
             client: None,
         }
@@ -126,7 +130,10 @@ impl Orka {
         command
     }
     /// Bounded output (engine::collect); stdin is a small fixed manifest or null.
-    fn run(&self, args: &[&str], input: Option<&[u8]>) -> io::Result<Vec<u8>> {
+    fn run(&self, args: &[&str], input: Option<&[u8]>, deadline: Instant) -> io::Result<Vec<u8>> {
+        if Instant::now() >= deadline {
+            return Err(failed());
+        }
         let mut command = self.command(args);
         command.stdin(if input.is_some() {
             Stdio::piped()
@@ -139,26 +146,41 @@ impl Orka {
             let written = stdin.write_all(input);
             drop(stdin);
             if written.is_err() {
-                let _ = crate::engine::collect(child, COMMAND_TIMEOUT);
+                let _ = crate::engine::collect(
+                    child,
+                    deadline
+                        .saturating_duration_since(Instant::now())
+                        .min(COMMAND_TIMEOUT),
+                );
                 return Err(failed());
             }
         }
-        let out = crate::engine::collect(child, COMMAND_TIMEOUT)?;
+        let out = crate::engine::collect(
+            child,
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(COMMAND_TIMEOUT),
+        )?;
         if out.exit != 0 {
             return Err(failed());
         }
         Ok(out.stdout)
     }
     /// Reuse only exact owned objects; create missing ones; never overwrite.
-    fn identity(&mut self) -> io::Result<()> {
+    fn identity(&mut self, deadline: Instant) -> io::Result<()> {
         for (kind, expected) in manifests() {
             let found = self.run(
                 &["get", kind, IDENTITY, "--ignore-not-found", "-o", "json"],
                 None,
+                deadline,
             )?;
             let found = if found.iter().all(u8::is_ascii_whitespace) {
                 let manifest = serde_json::to_vec(&expected)?;
-                self.run(&["create", "-f", "-", "-o", "json"], Some(&manifest))?
+                self.run(
+                    &["create", "-f", "-", "-o", "json"],
+                    Some(&manifest),
+                    deadline,
+                )?
             } else {
                 found
             };
@@ -170,8 +192,12 @@ impl Orka {
         self.rbac = true;
         Ok(())
     }
-    fn renew(&mut self) -> io::Result<()> {
-        let bytes = self.run(&["create", "token", IDENTITY, "--duration=10m"], None)?;
+    fn renew(&mut self, deadline: Instant) -> io::Result<()> {
+        let bytes = self.run(
+            &["create", "token", IDENTITY, "--duration=10m"],
+            None,
+            deadline,
+        )?;
         let value = String::from_utf8(bytes)
             .map_err(|_| failed())?
             .trim_end()
@@ -179,13 +205,16 @@ impl Orka {
         if value.is_empty() || value.len() > 8192 || !value.bytes().all(|b| b.is_ascii_graphic()) {
             return Err(failed());
         }
+        // Eight-minute renewal overlaps the requested ten-minute lifetime.
+        // Only the immediately preceding token can still be valid at the next renewal.
+        self.previous_token = self.token.take().map(|token| token.value);
         self.token = Some(Token {
             value,
             issued: Instant::now(),
         });
         Ok(())
     }
-    fn forward(&self) -> io::Result<Forward> {
+    fn forward(&self, deadline: Instant) -> io::Result<Forward> {
         let mut child = self
             .command(&[
                 "port-forward",
@@ -213,7 +242,13 @@ impl Orka {
             let _ = io::copy(&mut stdout, &mut io::sink());
         });
         std::thread::spawn(move || io::copy(&mut stderr, &mut io::sink()));
-        let line = rx.recv_timeout(COMMAND_TIMEOUT).map_err(|_| failed())?;
+        let line = rx
+            .recv_timeout(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .min(COMMAND_TIMEOUT),
+            )
+            .map_err(|_| failed())?;
         // The guest image pins kubectl; require its loopback banner and fail closed.
         forward.port = std::str::from_utf8(&line)
             .ok()
@@ -226,16 +261,23 @@ impl Orka {
     }
     /// One HTTP attempt per call: never retried or replayed, including POSTs.
     pub fn execute(&mut self, request: &OrkaRequest) -> io::Result<EngineResult> {
+        self.execute_until(request, Instant::now() + REQUEST_BUDGET)
+    }
+    fn execute_until(
+        &mut self,
+        request: &OrkaRequest,
+        deadline: Instant,
+    ) -> io::Result<EngineResult> {
         let post = request.validate().map_err(|_| failed())?;
         if !self.rbac {
-            self.identity()?;
+            self.identity(deadline)?;
         }
         if self
             .token
             .as_ref()
             .is_none_or(|t| t.issued.elapsed() >= RENEW_AFTER)
         {
-            self.renew()?;
+            self.renew(deadline)?;
         }
         match &self.forward {
             Some(f) if !f.alive() => {
@@ -243,7 +285,7 @@ impl Orka {
                 return Err(failed());
             }
             Some(_) => {}
-            None => self.forward = Some(self.forward()?),
+            None => self.forward = Some(self.forward(deadline)?),
         }
         if self.client.is_none() {
             self.client = Some(
@@ -281,23 +323,33 @@ impl Orka {
                 .header("Content-Type", "application/json")
                 .body(serde_json::to_vec(body)?);
         }
-        let response = http.send().map_err(|_| failed())?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(failed());
+        }
+        let response = http
+            .timeout(remaining.min(Duration::from_secs(10)))
+            .send()
+            .map_err(|_| failed())?;
         let status = response.status().as_u16();
         let mut raw = Vec::new();
         response
             .take(MAX_ORKA_REPLY as u64 + 1)
             .read_to_end(&mut raw)
             .map_err(|_| failed())?;
-        if raw.len() > MAX_ORKA_REPLY {
+        if raw.len() > MAX_ORKA_REPLY || Instant::now() >= deadline {
             return Err(failed());
         }
         let body = serde_json::from_slice(&raw).unwrap_or(Value::Null);
         let stdout = serde_json::to_vec(&OrkaReply { status, body })?;
-        let secret = token.value.as_bytes();
         if stdout.len() > MAX_FILE
-            || [&raw, &stdout]
-                .iter()
-                .any(|b| b.windows(secret.len()).any(|w| w == secret))
+            || std::iter::once(token.value.as_str())
+                .chain(self.previous_token.as_deref())
+                .any(|secret| {
+                    [&raw, &stdout]
+                        .iter()
+                        .any(|b| b.windows(secret.len()).any(|w| w == secret.as_bytes()))
+                })
         {
             return Err(failed());
         }
@@ -656,6 +708,28 @@ esac
     }
 
     #[test]
+    fn first_run_setup_shares_one_deadline_and_never_sends_a_late_post() {
+        let s = server(vec![http("201 Created", "{}")]);
+        let (dir, mut orka) = kube(s.port);
+        let script = fs::read_to_string(&orka.kubectl).unwrap();
+        fs::write(
+            &orka.kubectl,
+            script.replace("#!/bin/sh\n", "#!/bin/sh\nsleep 0.04\n"),
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_millis(70);
+        assert!(orka.execute_until(&create(), deadline).is_err());
+        assert!(
+            s.seen.lock().unwrap().is_empty(),
+            "no POST after setup exhausts its budget"
+        );
+        assert!(
+            log(dir.path()).len() < 8,
+            "the budget spans setup commands, not each command separately"
+        );
+    }
+
+    #[test]
     fn token_renews_before_expiry_and_a_lost_post_is_never_replayed() {
         let s = server(vec![http("201 Created", "{}"), None, http("200 OK", "{}")]);
         let (dir, mut orka) = kube(s.port);
@@ -738,6 +812,44 @@ esac
             files >= 4,
             "records and the completed result were inspected"
         );
+    }
+    #[test]
+    fn rotated_bearer_echo_is_refused_before_operation_cache_publication() {
+        let s = server(vec![
+            http("200 OK", "{}"),
+            http("200 OK", r#"{"echo":"synthetic-bearer-1"}"#),
+            http("200 OK", r#"{"echo":"\u0073ynthetic-bearer-1"}"#),
+        ]);
+        let (_dir, mut orka) = kube(s.port);
+        orka.execute(&get(&format!("agents/{RUN}"))).unwrap();
+        orka.token.as_mut().unwrap().issued -= RENEW_AFTER;
+        let root = tempfile::tempdir().unwrap();
+        let staging = crate::staging::Staging::new(root.path().join("snapshots")).unwrap();
+        let runner = crate::engine::GuestRunner {
+            kmx: crate::engine::Kmx,
+            orka,
+        };
+        let mut ops = crate::engine::Operations::new(root.path().join("ops"), runner).unwrap();
+        for _ in 0..2 {
+            assert_eq!(
+                ops.execute(
+                    Uuid::new_v4(),
+                    EngineActionWire::Orka {
+                        request: get(&format!("agents/{RUN}"))
+                    },
+                    None,
+                    &staging
+                )
+                .unwrap(),
+                OperationState::Unknown
+            );
+        }
+        for entry in walk(&root.path().join("ops")) {
+            assert!(
+                !String::from_utf8_lossy(&fs::read(entry).unwrap()).contains("synthetic-bearer")
+            );
+        }
+        assert_eq!(s.seen.lock().unwrap().len(), 3);
     }
     fn walk(path: &Path) -> Vec<PathBuf> {
         let mut out = Vec::new();

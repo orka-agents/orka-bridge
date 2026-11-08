@@ -86,9 +86,8 @@ impl ExampleRun {
             state.snapshot.can_run = false;
             state.snapshot.error = None;
             state.snapshot.report = None;
-            state.snapshot.pending = None;
-            state.snapshot.acknowledged.clear();
-            state.handle = None;
+            // Keep remote identities through session/model preflight failures.
+            // record() replaces them when submission returns a new handle.
         }
         let owner = self.clone();
         let target = vm.clone();
