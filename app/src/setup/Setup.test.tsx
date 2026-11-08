@@ -19,6 +19,22 @@ function native() {
 }
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 
+test('running native session unlocks only its explicit model command', async () => {
+  vi.stubGlobal('isTauri', true);
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'engine_call') throw { kind: 'unavailable' };
+    if (command === 'setup_connect_model') return { ready: true };
+    throw new Error('Forbidden command');
+  });
+  mockIPC(ipc); render(<App />);
+  const connect = await screen.findByRole('button', { name: 'Use GitHub sign-in' });
+  expect(connect.hasAttribute('disabled')).toBe(false);
+  expect(ipc.mock.calls.some(([command]) => command === 'setup_connect_model')).toBe(false);
+  fireEvent.click(connect);
+  expect(await screen.findByText('Model connected: copilot / gpt-5.6-terra.')).toBeTruthy();
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toEqual([['setup_connect_model', {}]]);
+});
 test('first launch is a native-backed chooser with no runtime or credential effects', async () => {
   const ipc = native();
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);

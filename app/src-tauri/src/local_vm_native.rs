@@ -222,6 +222,7 @@ impl LocalFactory for NativeFactory {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| RuntimeError::Unavailable)?
                 .as_secs();
+            let installation = installed.1.installation_id();
             #[cfg(windows)]
             let session = runtime::windows::session::WindowsSession::start(
                 runtime::RuntimeWorker::new(
@@ -238,19 +239,45 @@ impl LocalFactory for NativeFactory {
                 installed.1,
                 utc,
             )?;
-            Ok(Box::new(NativeSession(session)) as Box<dyn LocalSession>)
+            Ok(Box::new(NativeSession(session, installation)) as Box<dyn LocalSession>)
         }))
     }
 }
 #[cfg(all(debug_assertions, windows))]
-struct NativeSession(crate::runtime::windows::session::WindowsSession);
+struct NativeSession(
+    crate::runtime::windows::session::WindowsSession,
+    bridge_runtime_protocol::Uuid,
+);
 #[cfg(all(debug_assertions, all(target_os = "macos", target_arch = "aarch64")))]
-struct NativeSession(crate::runtime::apple_session::AppleVmSession);
+struct NativeSession(
+    crate::runtime::apple_session::AppleVmSession,
+    bridge_runtime_protocol::Uuid,
+);
 #[cfg(all(
     debug_assertions,
     any(windows, all(target_os = "macos", target_arch = "aarch64"))
 ))]
 impl LocalSession for NativeSession {
+    fn with_client(
+        &mut self,
+        work: &mut dyn FnMut(
+            bridge_runtime_protocol::Uuid,
+            &mut VmClient,
+        ) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        #[cfg(windows)]
+        {
+            work(self.1, self.0.client_mut()?)
+        }
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            self.0
+                .transport()
+                .ok_or(RuntimeError::Unavailable)?
+                .borrow_client(|client| work(self.1, client))
+                .map_err(|_| RuntimeError::Unavailable)?
+        }
+    }
     fn execute(&mut self, request: EngineRequest) -> TransportFuture<'_> {
         #[cfg(windows)]
         {
