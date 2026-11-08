@@ -12,6 +12,12 @@ test.each([null, [], {}, 'SECRET_MARKER', { ...snapshot, selected: 'existingClus
   expect(result.ok).toBe(false);
   expect(JSON.stringify(result)).not.toContain('SECRET_MARKER');
 });
+test.each(['idle', 'preparing', 'installing', 'starting', 'ready', 'closing', 'closed', 'failed'])('accepts finite native runtime phase %s without unlocking models', async localVm => {
+  vi.stubGlobal('isTauri', true);
+  const value = { ...snapshot, selected: 'localVm', localVm };
+  mockIPC(() => value);
+  expect(await setupStatus()).toEqual({ ok: true, status: value });
+});
 test('no-argument selection requires an acknowledgement of that selection', async () => {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn(() => snapshot); mockIPC(ipc);

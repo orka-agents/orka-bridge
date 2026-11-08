@@ -28,7 +28,7 @@ For development only, set `BRIDGE_DEV_KMX_PATH` to a kmx executable before
 `npm run tauri dev`. Release builds ignore this override and cannot select
 the development process transport. No helper is discovered or downloaded.
 
-The native engine bridge accepts only version and read-only Agent list requests. Two separate no-argument setup commands read availability and retain the local VM choice; neither starts a runtime or handles credentials.
+The native engine bridge accepts only version and read-only Agent list requests. No-argument setup commands read state, retain the Local VM choice and start its configured development runtime, or read the fixed example. They accept no paths, targets or credentials from the renderer.
 Replies contain validated version or identity fields, not raw diagnostics.
 No credential input channel is provided here; runtime integration must define
 that separately. Closing the main window signals cancellation. While the app's
@@ -130,10 +130,10 @@ Trusted Mac Rust callers can compose the installed Apple image, journal and
 bundled helper with `runtime::apple_session::AppleVmSession`. It verifies serving
 Ready before supplying the existing VM engine transport. Pause, resume and stop
 observe native helper completion; failed cleanup retains ownership. One revocable
-guest descriptor serves one client; no renderer, Setup, Run or model hookup is
-added. The separate SDK identity initializer is future setup input, not a new
-installation factory. Real VZ disk-handle release remains unqualified by these
-synthetic CI tests.
+guest descriptor serves one client. The local development factory obtains SDK
+identity only when creating a journal, then retains it for reopen. Model and Run
+activation remain separate. Real VZ disk-handle release remains unqualified by
+these synthetic CI tests.
 
 ## Local development image
 
@@ -145,19 +145,28 @@ use partial boot exports or convert the disk format.
 
 This temporary source accepts only the pinned `afc68ae1` engineering sets
 with the `orka-7916cd1c-native/v1` restricted native profile.
-It checks the exact receipt and each payload's length and SHA-256 using
-read-only handles on a background worker. Its fixed console message reports
-verification, not a running VM. A bad set is unavailable, with no download or
-alternate-image fallback. The factory is never opened for writing. The app
-retains verified source handles for future integration; no backend consumes
-them yet. A future consumer must verify its private installed copies before
-booting, because a read-only handle does not freeze another writer's changes.
+On Local VM selection, it checks the exact receipt and payload lengths and
+SHA-256 on a background worker, then installs verified private copies under the
+existing journal owner before boot. The factory is never opened for writing.
+A bad set fails without download or alternate-image fallback. Selection and
+installation are not readiness: the screen reports a running runtime only after
+the delivered native session establishes the guest connection.
+
+Windows development builds also need the authenticated portable QEMU tree at
+`native/qemu` beside the executable. Its `provenance/runtime-manifest.json` is
+pinned to 117615 bytes and SHA-256
+`a1dead19c0d1dcef558008e556cd9bd4a8c5082daf4ecea6f531d03173748385`.
+That hash authenticates the inventory before all 416 files, including the
+manifest, are verified and retained. The app uses WHPX, not PATH discovery, a
+host QEMU installation, WSL or an accelerator fallback. CI's Windows artifact
+includes an embedded-frontend development executable under `development/`;
+stage the matching portable tree before launching it.
 
 The selector, verifier and engineering pins are compiled out when debug
 assertions are disabled. Release builds cannot enable this source through an
 environment variable or feature flag. This is not the production image
-acquisition path, publication approval, VM startup, or credential delivery;
-the runtime chooser and model step remain unchanged.
+acquisition path or publication approval. No model credentials or inference
+are exercised by starting this local runtime.
 
 ## Checks and builds
 
@@ -188,7 +197,7 @@ The Mac bundle includes readable notices in its Resources directory; CI also
 places them beside the portable Windows executable. Both builds embed them in
 the frontend. Preserve these files when redistributing builds.
 
-The app opens Clusters with a runtime chooser and a locked model step. Existing cluster is unavailable on both platforms. Local VM selection writes only an empty preference marker at `setup-v1/local-vm` under the app data directory. It does not download, start or reopen a VM, save agents, connect a model or cluster, or run tests. Selection is never readiness. Model connection stays locked in the UI. Trusted native Rust callers can associate a captured sign-in with an installation-bound OS-store slot, deliver it over the private guest channel and invoke the fixed kmx Connect operation. Setup stores only opaque association and acknowledged lifecycle metadata, never credential bytes. Uncertain completion is retained without automatic capture or replay; explicit sign-out acknowledges Disconnect and file clear before removing the host slot. These calls require a rebuilt guest handler and matching kmx bundle; they do not activate the UI or prove model inference. Connected or uncertain bindings cannot yet be reused or removed after a new VM lease; confirmed-owned-stop recovery remains a follow-up. A previously acknowledged clear still permits host-only cleanup. Engine diagnostics remain available in Clusters;
+The app opens Clusters with a runtime chooser and a locked model step. Existing cluster is unavailable on both platforms. Local VM selection retains an empty preference marker at `setup-v1/local-vm` under the app data directory and starts the configured development runtime. A saved choice resumes at native initialization, reusing its committed installed image, journal identity and state disk without needing the factory source. Interrupted installations without a committed image remain errors; no reset, recreation or guessed retry is performed. Closing or quitting bars work and waits for startup, active engine I/O and the session's shutdown attempt. Failed shutdown remains a failure with the existing backend retention behavior. Selection is never readiness. The fixed web-reader pair can be opened read-only in Designer; opening it does not submit Agent or Task resources. Model connection stays locked in the UI. Trusted native Rust callers can associate a captured sign-in with an installation-bound OS-store slot, deliver it over the private guest channel and invoke the fixed kmx Connect operation. Setup stores only opaque association and acknowledged lifecycle metadata, never credential bytes. Uncertain completion is retained without automatic capture or replay; explicit sign-out acknowledges Disconnect and file clear before removing the host slot. These calls require a rebuilt guest handler and matching kmx bundle; they do not activate the UI or prove model inference. Connected or uncertain bindings cannot yet be reused or removed after a new VM lease; confirmed-owned-stop recovery remains a follow-up. A previously acknowledged clear still permits host-only cleanup. Engine diagnostics remain available in Clusters;
 native webviews can still create their usual cache/profile directories under
 the app identifier `ai.orka.bridge`.
 

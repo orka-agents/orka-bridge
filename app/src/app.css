@@ -70,5 +70,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .setup-button { border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-chrome); padding: 7px 12px; margin-top: 12px; }
 .setup-button:not(:disabled):hover { background: var(--color-hover); }
 .setup-button:disabled { cursor: not-allowed; color: var(--color-text-secondary); }
+.example-source { font-family: var(--font-mono); font-size: 0.8125rem; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 28rem; margin: 0; }
 .engine-diagnostics { max-width: 760px; margin-top: 16px; }
 .engine-diagnostics summary { cursor: pointer; color: var(--color-text-secondary); }

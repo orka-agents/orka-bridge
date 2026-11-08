@@ -381,7 +381,7 @@ pub(crate) use native::Lease;
 pub use native::WindowsBackend;
 #[cfg(all(test, windows))]
 #[path = "backend_boot_tests.rs"]
-mod boot_tests;
+pub(crate) mod boot_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
