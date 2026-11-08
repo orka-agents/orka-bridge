@@ -16,12 +16,7 @@ async fn native_startup_from_tokio_can_enter_the_windows_spawn_window() {
 }
 
 #[cfg(all(debug_assertions, windows))]
-mod fixture_runtime {
-    pub use crate::runtime::{image_cache, image_types, manifest};
-}
-#[cfg(all(debug_assertions, windows))]
-#[path = "../tests/support/runtime_image_fixture.rs"]
-mod fixture;
+use crate::runtime::windows::backend::boot_tests::fixture;
 
 #[cfg(all(debug_assertions, windows))]
 #[tokio::test]

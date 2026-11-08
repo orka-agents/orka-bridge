@@ -12,7 +12,7 @@ mod fixture_runtime {
     pub use crate::runtime::{image_cache, image_types, manifest};
 }
 #[path = "../../../tests/support/runtime_image_fixture.rs"]
-mod fixture;
+pub(crate) mod fixture;
 #[test]
 fn installed_boot_pins_deny_writes_and_reject_changed_bytes() {
     let home = std::env::var_os("USERPROFILE").unwrap();
