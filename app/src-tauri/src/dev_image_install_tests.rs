@@ -179,7 +179,7 @@ async fn frozen_windows_source_materializes_actual_pinned_bytes() {
     );
     let installed = prepared.materialize(&target, closed, |_| {}).await.unwrap();
     installed.revalidate(&target).unwrap();
-    assert_eq!(installed.initial_os_bytes(), 3786539008);
-    assert_eq!(installed.initial_os_sha256(), "d6b5da35a08d297dca0e09fd4f03815005c66cc23db3032f74a8519bcbfdeec2");
+    assert_eq!(installed.initial_os_bytes(), 3711172608);
+    assert_eq!(installed.initial_os_sha256(), "daccffc3f36ee117100b6006ed0894c52e843df9c014badeba5abf9a23686bfc");
     assert_eq!(installed.kernel_release(), "6.1.0-54-cloud-amd64");
 }
