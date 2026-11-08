@@ -144,6 +144,15 @@ mod native {
         pub fn failure_diagnostics(&self) -> FailureDiagnostics {
             self.diagnostics.clone()
         }
+        fn copy_state(&self, scratch: &mut File, state: &mut File) -> Result<(), RuntimeError> {
+            *self
+                .diagnostics
+                .capture
+                .lock()
+                .map_err(|_| RuntimeError::Closed)? = None;
+            self.diagnostics.enter("Fill private state disk")?;
+            fill_state(scratch, state).map_err(Into::into)
+        }
         fn tool(&self, spec: &LaunchSpec, args: &[OsString]) -> Result<Vec<u8>, RuntimeError> {
             *self
                 .diagnostics
@@ -355,7 +364,7 @@ mod native {
                     ],
                 )?;
                 self.inspect(spec, &path, spec.state_bytes)?;
-                fill_state(&mut scratch, &mut state)?;
+                self.copy_state(&mut scratch, &mut state)?;
                 Ok(())
             })();
             drop(scratch);
@@ -470,6 +479,21 @@ mod native {
             assert!(backend.tool(&spec, &[]).is_err());
             assert!(backend.diagnostics.stderr().unwrap().is_empty());
             assert_eq!(backend.diagnostics.stage(), "Run qemu-img");
+
+            let mut scratch = tempfile::tempfile().unwrap();
+            use std::io::Write;
+            scratch.write_all(b"prepared state").unwrap();
+            let mut readonly_state = File::open(&spec.state_path).unwrap();
+            *backend.diagnostics.capture.lock().unwrap() = Some(qmp_io::tests::captured_stderr(
+                b"successful inspection warning",
+            ));
+            // Copying into a read-only held file fails without a process or disk-full simulation.
+            assert!(backend
+                .copy_state(&mut scratch, &mut readonly_state)
+                .is_err());
+            assert!(backend.diagnostics.stderr().unwrap().is_empty());
+            assert_eq!(backend.diagnostics.stage(), "Fill private state disk");
+            assert_eq!(readonly_state.metadata().unwrap().len(), 0);
         }
     }
 }
