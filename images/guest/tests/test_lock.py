@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-from guest.lock import load_lock, validate_lock, locked_file, input_identity, VERSIONS
+from guest.lock import load_lock, validate_lock, locked_file, input_identity, validate_source_offline, VERSIONS, MODEL_IMAGES
 from unittest.mock import patch
 from guest.tests.fixtures import lock
 
@@ -23,11 +23,31 @@ class LockTests(unittest.TestCase):
         self.assertEqual(VERSIONS.get('sourceOfflineProfile'), {
             'profile': 'orka-7916cd1c-native/v1',
             'profileSha256': '6ab8213cae9f1d58fe59f34b2402f93ed951752269decdf750fc2a170bddf223',
-            'kmxSourceCommit': 'fc811336bfdf4d972525eb78f1cba8a7b7e45b19',
+            'kmxSourceCommit': '642fe0ea41584980751af9840844ae6f844e4a61',
             'chartSha256': '19c50cff36855b8792b4777c89c598cf33ea70180e677e1a4758fc0211f069ed',
             'artifactsSha256': 'db1dae048af33841a295fdebb55c85d3a122242feade043f85a9e886938d1b3e',
         })
+        self.assertEqual(set(MODEL_IMAGES), {VERSIONS['sourceOfflineProfile']['kmxSourceCommit']})
         self.assertEqual(VERSIONS['releaseProfiles'], {})
+
+    def test_source_offline_accepts_merged_kmx_and_rejects_superseded_revision(self):
+        selected = VERSIONS['sourceOfflineProfile']
+        self.value['kmxProfileSha256'] = selected['profileSha256']
+        self.value['orka']['chartSha256'] = selected['chartSha256']
+        self.value['tools'].extend([
+            {'name': 'kmx'},
+            {'name': 'orka-images', 'sha256': selected['artifactsSha256']},
+            {'name': 'kmx-offline-manifest'},
+        ])
+        manifest = {'profile': 'orka-7916cd1c-native/v1',
+                    'kmx': {'revision': '642fe0ea41584980751af9840844ae6f844e4a61'}}
+        try:
+            validate_source_offline(self.value, manifest)
+        except ValueError as error:
+            self.fail(f'merged kmx source revision must be accepted: {error}')
+        manifest['kmx']['revision'] = 'b8238bddb54632dbc40c8cc10bbb07463234b03c'
+        with self.assertRaisesRegex(ValueError, 'source offline profile or kmx revision differs'):
+            validate_source_offline(self.value, manifest)
 
     def test_source_lock(self):
         validate_lock(self.value, production=False)
