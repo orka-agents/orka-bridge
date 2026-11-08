@@ -229,6 +229,26 @@ test('a transient setup read failure recovers while off Clusters', async () => {
   expect(await within(screen.getByRole('navigation')).findByText('Setting up, step 2 of 4', {}, { timeout: 2000 })).toBeTruthy();
 });
 
+test('a transient setup read failure does not invalidate an admitted model connection', async () => {
+  let fail = false;
+  let finishConnect!: (value: unknown) => void;
+  mockIPC(command => {
+    if (command === 'setup_status') return fail ? Promise.reject(new Error('read failed')) : { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_connect_model') return new Promise(resolve => { finishConnect = resolve; });
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  vi.stubGlobal('isTauri', true);
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  fail = true;
+  await within(screen.getByRole('navigation')).findByText('Workspace unavailable', {}, { timeout: 2000 });
+  await act(async () => { finishConnect({ ready: true }); });
+  expect(screen.getByRole('button', { name: 'Model connected' }).matches(':disabled')).toBe(true);
+  fail = false;
+  expect(await within(screen.getByRole('contentinfo')).findByText('AI connected', {}, { timeout: 2000 })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Model connected' }).matches(':disabled')).toBe(true);
+});
+
 test('Clusters reads setup and version without fetch or legacy IPC', async () => {
   const ipc = vi.fn(command => command === 'setup_status'
     ? { selected: null, localVm: 'notIntegrated', model: 'locked' }

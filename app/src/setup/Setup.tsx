@@ -30,7 +30,10 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     void setupStatus().then(result => {
       if (request !== epoch.current) return;
       if (result.ok) { setStatus(result.status); setError(undefined); }
-      else { setStatus(undefined); setError(result.message); }
+      else {
+        // An unreadable observation pauses actions, not an already admitted connection.
+        setError(result.message);
+      }
       const waiting = result.ok && pending(result.status.localVm);
       setBusy(waiting);
       timer.current = setTimeout(() => setCheck(value => value + 1), waiting ? 250 : 1000);
@@ -63,7 +66,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
         <h2 id="setup-title">Choose where your agents run</h2>
         <p className="muted">{status?.localVm === 'notIntegrated' ? 'This saves a choice only. Nothing is downloaded or started.'
           : 'Local VM uses the verified development image and starts Orka on this computer.'}</p>
-        <fieldset disabled={busy || !status}>
+        <fieldset disabled={busy || !status || !!error}>
           <legend>Runtime</legend>
           <label><input type="radio" name="runtime" checked={status?.selected === 'localVm'}
             onChange={() => { void chooseLocal(); }} />
@@ -86,7 +89,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
             onClick={() => { setBusy(true); setError(undefined); setCheck(value => value + 1); }}>Check again</button>
         </div>}
       </section>
-      <Model enabled={status?.localVm === 'ready' && status.model === 'available'} onState={onModelState} />
+      <Model enabled={status?.localVm === 'ready' && status.model === 'available'} paused={!!error} onState={onModelState} />
     </div>
     </>
   );
