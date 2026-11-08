@@ -20,6 +20,13 @@ pub struct SetupSnapshot {
     model: &'static str,
 }
 
+impl SetupSnapshot {
+    pub fn with_local_vm(mut self, state: &'static str) -> Self {
+        self.local_vm = state;
+        self
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct SetupError {
     kind: &'static str,

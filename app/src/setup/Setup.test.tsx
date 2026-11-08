@@ -100,6 +100,28 @@ test('a failed initial read can be checked again without changing the saved choi
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
+test('selection shows real startup states and only a ready session can open the example', async () => {
+  native(); let selected: 'localVm' | null = null; let reads = 0;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_select_local') { selected = 'localVm'; return { ...status(selected), localVm: 'preparing' }; }
+    if (command === 'setup_status') return { ...status(selected), localVm: selected === null ? 'idle' : ++reads === 1 ? 'starting' : 'ready' };
+    if (command === 'setup_example') return { agent: 'exact agent source', tests: 'exact test source' };
+    throw { kind: 'unavailable' };
+  }); mockIPC(ipc);
+  const user = userEvent.setup(); render(<App />);
+  await screen.findByText('Native setup available');
+  expect(screen.queryByRole('button', { name: 'Open example' })).toBeNull();
+  await user.click(screen.getByRole('radio', { name: /Local VM/ }));
+  expect(screen.queryByText('Orka is running on this computer.')).toBeNull();
+  expect(await screen.findByText('Orka is running on this computer.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Connect model' }).matches(':disabled')).toBe(true);
+  expect(ipc.mock.calls.filter(([name]) => name === 'setup_select_local')).toHaveLength(1);
+  await user.click(screen.getByRole('button', { name: 'Open example' }));
+  expect(await screen.findByText('exact agent source')).toBeTruthy();
+  expect(screen.getByText('exact test source')).toBeTruthy();
+  expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_select_local', 'setup_example', 'engine_call'].includes(name))).toBe(true);
+});
+
 test('keyboard selection does not enable the existing route or duplicate the save', async () => {
   const ipc = native(); const user = userEvent.setup(); render(<App />);
   await screen.findByText('Native setup available');

@@ -1,4 +1,4 @@
 [[permission]]
 identifier = "setup"
-description = "Reads setup availability and saves only the local VM preference."
-commands.allow = ["setup_status", "setup_select_local"]
+description = "Reads local runtime state, selects the local VM and reads the fixed example."
+commands.allow = ["setup_status", "setup_select_local", "setup_example"]
