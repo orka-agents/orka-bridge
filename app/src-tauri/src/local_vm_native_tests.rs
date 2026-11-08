@@ -97,7 +97,7 @@ fn failed_start_retains_stage_stderr_and_existing_installation() {
         error,
         Ok(b"qemu: diagnostic\n".to_vec()),
     );
-    let text = reported.to_string();
+    let text = failure_reason(&reported);
     assert!(text.contains("Connect guest control"));
     assert!(text.contains("control connection refused"));
     let failures: Vec<_> = fs::read_dir(root)
