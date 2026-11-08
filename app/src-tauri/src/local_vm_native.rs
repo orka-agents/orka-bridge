@@ -26,6 +26,26 @@ use std::path::PathBuf;
 ))]
 use std::{fs, path::Path};
 
+#[cfg(any(
+    all(
+        debug_assertions,
+        any(windows, all(target_os = "macos", target_arch = "aarch64"))
+    ),
+    test
+))]
+async fn blocking_start(
+    work: impl FnOnce(tokio::runtime::Handle) -> Result<Box<dyn LocalSession>, RuntimeError>
+        + Send
+        + 'static,
+) -> Result<Box<dyn LocalSession>, RuntimeError> {
+    let runtime = tokio::runtime::Handle::current();
+    // Only async image operations may enter block_on. Synchronous backend
+    // calls must run outside that context, including inheritable-handle guards.
+    tokio::task::spawn_blocking(move || work(runtime))
+        .await
+        .map_err(|_| RuntimeError::Unavailable)?
+}
+
 /// Release has no approved image catalog; native development uses the existing
 /// verified source override or its own committed installation, never renderer paths.
 pub fn configured(resources: Option<PathBuf>, data: Option<PathBuf>) -> Arc<LocalVm> {
@@ -141,96 +161,85 @@ impl LocalFactory for NativeFactory {
         progress: Arc<dyn Fn(LocalVmStatus) + Send + Sync>,
     ) -> StartFuture<'_> {
         let (resources, root) = (self.resources.clone(), self.root.clone());
-        Box::pin(async move {
-            let runtime = tokio::runtime::Handle::current();
-            tokio::task::spawn_blocking(move || {
-                runtime.block_on(async move {
-                    use crate::{
-                        dev_image,
-                        runtime::{self, types::BackendKind},
-                    };
-                    if *closed.borrow() {
-                        return Err(RuntimeError::Closed);
-                    }
-                    #[cfg(windows)]
-                    let inputs = {
-                        runtime::windows::launch::control_path(
-                            &root,
-                            bridge_runtime_protocol::Uuid::nil(),
-                        )?;
-                        let path = resources.join("native/qemu");
-                        Arc::new(verify_windows_runtime(
-                            &read_runtime_manifest(&path, &runtime_manifest_pin())?,
-                            path,
-                        )?)
-                    };
-                    let installed = match reopen(&root, dev_image::STATE_COMPATIBILITY_ID)? {
-                        Some(existing) => existing,
-                        None => {
-                            let image = dev_image::from_environment()
-                                .map_err(|_| RuntimeError::Unavailable)?
-                                .ok_or(RuntimeError::Unavailable)?;
-                            let prepared = runtime::setup_adapter::prepare_development_image(
-                                &image,
-                                closed.clone(),
-                            )
-                            .await?;
-                            if *closed.borrow() {
-                                return Err(RuntimeError::Closed);
-                            }
-                            #[cfg(windows)]
-                            let (backend, identity) = (BackendKind::Qemu, b"pc-q35-11.0".to_vec());
-                            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-                            let (backend, identity) = (
-                                BackendKind::Apple,
-                                runtime::apple_input::machine_identifier(&resources)?,
-                            );
-                            if *closed.borrow() {
-                                return Err(RuntimeError::Closed);
-                            }
-                            fs::create_dir_all(root.parent().ok_or(RuntimeError::Unavailable)?)?;
-                            let journal = Journal::create(&root, backend, identity)?;
-                            progress(LocalVmStatus::Installing);
-                            let image = prepared
-                                .materialize(
-                                    &journal.image_target(dev_image::STATE_COMPATIBILITY_ID)?,
-                                    closed.clone(),
-                                    |_| {},
-                                )
-                                .await?;
-                            (journal, Arc::new(image))
-                        }
-                    };
-                    if *closed.borrow() {
-                        return Err(RuntimeError::Closed);
-                    }
-                    progress(LocalVmStatus::Starting);
-                    let utc = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
+        Box::pin(blocking_start(move |runtime| {
+            use crate::{
+                dev_image,
+                runtime::{self, types::BackendKind},
+            };
+            if *closed.borrow() {
+                return Err(RuntimeError::Closed);
+            }
+            #[cfg(windows)]
+            let inputs = {
+                runtime::windows::launch::control_path(
+                    &root,
+                    bridge_runtime_protocol::Uuid::nil(),
+                )?;
+                let path = resources.join("native/qemu");
+                Arc::new(verify_windows_runtime(
+                    &read_runtime_manifest(&path, &runtime_manifest_pin())?,
+                    path,
+                )?)
+            };
+            let installed = match reopen(&root, dev_image::STATE_COMPATIBILITY_ID)? {
+                Some(existing) => existing,
+                None => {
+                    let image = dev_image::from_environment()
                         .map_err(|_| RuntimeError::Unavailable)?
-                        .as_secs();
+                        .ok_or(RuntimeError::Unavailable)?;
+                    let prepared = runtime.block_on(
+                        runtime::setup_adapter::prepare_development_image(&image, closed.clone()),
+                    )?;
+                    if *closed.borrow() {
+                        return Err(RuntimeError::Closed);
+                    }
                     #[cfg(windows)]
-                    let session = runtime::windows::session::WindowsSession::start(
-                        runtime::RuntimeWorker::new(
-                            Box::new(runtime::windows::backend::WindowsBackend::new(inputs)),
-                            installed.0,
-                            installed.1,
-                        )?,
-                        utc,
-                    )?;
+                    let (backend, identity) = (BackendKind::Qemu, b"pc-q35-11.0".to_vec());
                     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-                    let session = runtime::apple_session::AppleVmSession::launch(
-                        resources,
-                        installed.0,
-                        installed.1,
-                        utc,
-                    )?;
-                    Ok(Box::new(NativeSession(session)) as Box<dyn LocalSession>)
-                })
-            })
-            .await
-            .map_err(|_| RuntimeError::Unavailable)?
-        })
+                    let (backend, identity) = (
+                        BackendKind::Apple,
+                        runtime::apple_input::machine_identifier(&resources)?,
+                    );
+                    if *closed.borrow() {
+                        return Err(RuntimeError::Closed);
+                    }
+                    fs::create_dir_all(root.parent().ok_or(RuntimeError::Unavailable)?)?;
+                    let journal = Journal::create(&root, backend, identity)?;
+                    progress(LocalVmStatus::Installing);
+                    let image = runtime.block_on(prepared.materialize(
+                        &journal.image_target(dev_image::STATE_COMPATIBILITY_ID)?,
+                        closed.clone(),
+                        |_| {},
+                    ))?;
+                    (journal, Arc::new(image))
+                }
+            };
+            if *closed.borrow() {
+                return Err(RuntimeError::Closed);
+            }
+            progress(LocalVmStatus::Starting);
+            let utc = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|_| RuntimeError::Unavailable)?
+                .as_secs();
+            #[cfg(windows)]
+            let session = runtime::windows::session::WindowsSession::start(
+                runtime::RuntimeWorker::new(
+                    Box::new(runtime::windows::backend::WindowsBackend::new(inputs)),
+                    installed.0,
+                    installed.1,
+                )?,
+                utc,
+            )?;
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            let session = runtime::apple_session::AppleVmSession::launch(
+                resources,
+                installed.0,
+                installed.1,
+                utc,
+            )?;
+            Ok(Box::new(NativeSession(session)) as Box<dyn LocalSession>)
+        }))
     }
 }
 #[cfg(all(debug_assertions, windows))]

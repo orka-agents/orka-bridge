@@ -2,6 +2,84 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::fs;
 
+// Native startup must acquire the real Windows inheritance gate after returning
+// from async image work, not while its blocking worker is inside block_on.
+#[tokio::test]
+async fn native_startup_from_tokio_can_enter_the_windows_spawn_window() {
+    let result = blocking_start(|runtime| {
+        runtime.block_on(async { tokio::task::yield_now().await });
+        let _guard = crate::runtime::windows::job::spawn_guard()?;
+        Err(std::io::Error::from_raw_os_error(193).into())
+    })
+    .await;
+    assert!(matches!(result, Err(RuntimeError::Io(error)) if error.raw_os_error() == Some(193)));
+}
+
+#[cfg(all(debug_assertions, windows))]
+mod fixture_runtime {
+    pub use crate::runtime::{image_cache, image_types, manifest};
+}
+#[cfg(all(debug_assertions, windows))]
+#[path = "../tests/support/runtime_image_fixture.rs"]
+mod fixture;
+
+#[cfg(all(debug_assertions, windows))]
+#[tokio::test]
+async fn windows_session_startup_inside_tokio_reaches_child_creation_without_panicking() {
+    use crate::runtime::{
+        image_install::materialize_image, image_types::ImageTarget, RuntimeWorker,
+    };
+    let temp = tempfile::tempdir_in(std::env::var_os("USERPROFILE").unwrap()).unwrap();
+    let root = temp.path().join("install");
+    let journal = Journal::create(&root, BackendKind::Qemu, b"pc-q35-11.0".to_vec()).unwrap();
+    let verified = fixture::verified(temp.path(), ImageTarget::WindowsAmd64);
+    let target = journal
+        .image_target(&verified.image().identity().state_compatibility_id)
+        .unwrap();
+    let (_sender, closed) = watch::channel(false);
+    let image = materialize_image(&verified, &target, closed, |_| {})
+        .await
+        .unwrap();
+    let runtime_root = temp.path().join("runtime");
+    fs::create_dir_all(runtime_root.join("bin")).unwrap();
+    let bytes = b"inert, not an executable";
+    let pins: Vec<_> = ["bin/qemu-img.exe", "bin/qemu-system-x86_64.exe"]
+        .into_iter()
+        .map(|name| {
+            fs::write(runtime_root.join(name), bytes).unwrap();
+            FilePin {
+                name: name.into(),
+                bytes: bytes.len() as u64,
+                sha256: format!("{:x}", Sha256::digest(bytes)),
+            }
+        })
+        .collect();
+    let inputs = Arc::new(verify_windows_runtime(&pins, runtime_root).unwrap());
+    let result = blocking_start(move |_| {
+        let worker = RuntimeWorker::new(
+            Box::new(crate::runtime::windows::backend::WindowsBackend::new(
+                inputs,
+            )),
+            journal,
+            Arc::new(image),
+        )?;
+        let session = crate::runtime::windows::session::WindowsSession::start(worker, 0)?;
+        Ok(Box::new(NativeSession(session)) as Box<dyn LocalSession>)
+    })
+    .await;
+    // The real backend reaches CreateProcessW, which refuses the inert fixture.
+    // A panic is mapped to Unavailable instead, so it cannot satisfy this check.
+    match result {
+        Err(RuntimeError::Io(error)) => assert!(
+            matches!(error.raw_os_error(), Some(193 | 216)),
+            "expected ERROR_BAD_EXE_FORMAT or ERROR_EXE_MACHINE_TYPE_MISMATCH: {error:?}"
+        ),
+        Err(error) => panic!("expected native executable refusal, got {error:?}"),
+        Ok(_) => panic!("inert fixture must not start a session"),
+    }
+    assert_eq!(fs::metadata(root.join("state.disk")).unwrap().len(), 0);
+}
+
 #[test]
 fn authenticated_nested_manifest_is_part_of_the_complete_runtime_inventory() {
     let temp = tempfile::tempdir().unwrap();
