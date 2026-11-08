@@ -33,7 +33,7 @@ export default function Model({ enabled }: { enabled: boolean }) {
     </button>
     {busy && <p role="status">Reading the sign-in, storing it and connecting the guest model…</p>}
     {ready && <><p role="status">Model connected: copilot / gpt-5.6-terra.</p>
-      <p className="muted">The guest acknowledged Connect. This does not prove inference; run the example to test it.</p></>}
+      <p className="muted">The guest acknowledged Connect. This does not prove inference.</p></>}
     {error && <p role="alert">{error}</p>}
   </section>;
 }

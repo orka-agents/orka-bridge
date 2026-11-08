@@ -100,6 +100,43 @@ async fn client_callback_is_once_native_and_closed_admission_never_calls_it() {
     assert!(vm.with_client(|_, _| panic!("closed")).await.is_err());
     assert_eq!(p.calls.load(Ordering::SeqCst), 1);
 }
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn pinned_mac_model_refusal_keeps_the_session_channel_untouched() {
+    let p = Arc::new(Probe::default());
+    let vm = LocalVm::new(Arc::new(Factory(p.clone(), Uuid::new_v4())));
+    ready(&vm).await;
+    let root = tempfile::tempdir().unwrap();
+    let setup = Arc::new(bridge_engine::setup::SetupStore::new(Some(
+        root.path().to_owned(),
+    )));
+    setup.select_local().unwrap();
+    assert_eq!(
+        vm.connect_model(setup).await.unwrap_err().kind,
+        "modelGuest"
+    );
+    assert_eq!(p.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(vm.status(), LocalVmStatus::Ready);
+    assert!(!root.path().join("setup-v1/model-v1").exists());
+    vm.shutdown().await.unwrap();
+}
+#[tokio::test]
+async fn completion_after_close_is_not_admitted_as_success() {
+    let p = Arc::new(Probe::default());
+    let vm = LocalVm::new(Arc::new(Factory(p.clone(), Uuid::new_v4())));
+    ready(&vm).await;
+    let close = vm.clone();
+    let result = vm
+        .with_client(move |_, _| {
+            close.request_close();
+            true
+        })
+        .await;
+    assert!(matches!(result, Err(RuntimeError::Closed)));
+    vm.shutdown().await.unwrap();
+    assert_eq!(p.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(p.stops.load(Ordering::SeqCst), 1);
+}
 #[tokio::test]
 async fn cancelled_capture_or_connect_waiter_keeps_custody_and_excludes_duplicate_until_stop() {
     let p = Arc::new(Probe::default());

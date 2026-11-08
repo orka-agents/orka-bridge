@@ -25,19 +25,23 @@ pub fn example() -> ExamplePair {
     }
 }
 
+// The pinned Mac guest predates model RPCs; probing it retires its shared channel.
+// Enable Mac model setup only when its matching development image is delivered.
+const MODEL_IMAGE_AVAILABLE: bool = !cfg!(target_os = "macos");
+
 pub async fn setup_status(
     store: Arc<crate::setup::SetupStore>,
     vm: &LocalVm,
 ) -> Result<crate::setup::SetupSnapshot, crate::setup::SetupError> {
     let selected = store.status_async().await?;
     let phase = vm.status();
-    Ok(selected
-        .with_local_vm(phase.as_str())
-        .with_model(if phase == LocalVmStatus::Ready {
+    Ok(selected.with_local_vm(phase.as_str()).with_model(
+        if phase == LocalVmStatus::Ready && MODEL_IMAGE_AVAILABLE {
             "available"
         } else {
             "locked"
-        }))
+        },
+    ))
 }
 pub async fn select_local(
     store: Arc<crate::setup::SetupStore>,
@@ -46,13 +50,13 @@ pub async fn select_local(
     let selected = store.select_local_async().await?;
     vm.start();
     let phase = vm.status();
-    Ok(selected
-        .with_local_vm(phase.as_str())
-        .with_model(if phase == LocalVmStatus::Ready {
+    Ok(selected.with_local_vm(phase.as_str()).with_model(
+        if phase == LocalVmStatus::Ready && MODEL_IMAGE_AVAILABLE {
             "available"
         } else {
             "locked"
-        }))
+        },
+    ))
 }
 pub async fn resume_selected(
     store: Arc<crate::setup::SetupStore>,
@@ -207,6 +211,7 @@ impl LocalVm {
         }));
     }
     /// Native callers keep typed results local; renderer commands wrap fixed work only.
+    /// Closing during admitted work returns Closed after completion; effects may have applied.
     pub async fn with_client<T: Send + 'static>(
         &self,
         work: impl FnOnce(bridge_runtime_protocol::Uuid, &mut VmClient) -> T + Send + 'static,
@@ -235,6 +240,9 @@ impl LocalVm {
                     result = Some(work(id, client));
                     Ok(())
                 })?;
+            if !inner.ready() {
+                return Err(RuntimeError::Closed);
+            }
             result.ok_or(RuntimeError::Unavailable)
         })
         .await
@@ -244,6 +252,9 @@ impl LocalVm {
         &self,
         setup: Arc<crate::setup::SetupStore>,
     ) -> Result<crate::setup::ModelSetupState, crate::setup::SetupError> {
+        if !MODEL_IMAGE_AVAILABLE {
+            return Err(crate::setup::SetupError::model("modelGuest"));
+        }
         let runtime = tokio::runtime::Handle::current();
         self.with_client(move |id, client| {
             setup.connect_stored_model(

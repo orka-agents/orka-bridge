@@ -165,7 +165,7 @@ The selector, verifier and engineering pins are compiled out when debug
 assertions are disabled. Release builds cannot enable this source through an
 environment variable or feature flag. This is not the production image
 acquisition path or publication approval. No model credentials or inference
-are exercised by starting this local runtime. Windows development pins now use the rebuilt guest model handler and kmx Connect fix; Mac pins remain unchanged pending a matching image. Existing installations with the old Windows compatibility ID are retained and refused, not reset or upgraded.
+are exercised by starting this local runtime. Windows development pins now use the rebuilt guest model handler and kmx Connect fix; Mac pins remain unchanged and its model step stays locked pending a matching image. Existing installations with the old Windows compatibility ID are retained and refused, not reset or upgraded.
 
 ## Checks and builds
 

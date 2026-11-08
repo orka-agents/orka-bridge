@@ -272,7 +272,14 @@ async fn setup_selection_persists_then_starts_but_status_never_starts() {
     phase(&vm, LocalVmStatus::Ready).await;
     let value = serde_json::to_value(local_vm::setup_status(store, &vm).await.unwrap()).unwrap();
     assert_eq!(value["localVm"], "ready");
-    assert_eq!(value["model"], "available");
+    assert_eq!(
+        value["model"],
+        if cfg!(target_os = "macos") {
+            "locked"
+        } else {
+            "available"
+        }
+    );
     assert!(
         !temp.path().join("setup-v1/model-v1").exists(),
         "status must not capture or associate a sign-in"

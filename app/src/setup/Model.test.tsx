@@ -23,6 +23,7 @@ test('explicit sign-in uses no renderer arguments, excludes duplicate clicks and
   await act(async () => { complete({ ready: true }); });
   expect(screen.getByText('Model connected: copilot / gpt-5.6-terra.')).toBeTruthy();
   expect(screen.getByText(/does not prove inference/)).toBeTruthy();
+  expect(screen.queryByText(/run the example/)).toBeNull();
 });
 test('known native stage error is shown without raw message; unknown errors never echo', async () => {
   invoke.mockRejectedValue({ kind: 'modelConnect', message: 'synthetic-private-token /path/raw-stderr' });
