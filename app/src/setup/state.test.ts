@@ -19,11 +19,26 @@ test.each(['idle', 'preparing', 'installing', 'starting', 'ready', 'closing', 'c
   mockIPC(() => value);
   expect(await setupStatus()).toEqual({ ok: true, status: value });
 });
-test('model availability requires the selected running session', async () => {
+test.each([null, 'Starting the local VM failed: Runtime operation failed: Busy',
+  'Stopping the local VM failed: Runtime operation failed: RetainedState'])('preserves native failure reason %j on reads and selection', async localVmError => {
   vi.stubGlobal('isTauri', true);
-  const value = { selected: 'localVm', localVm: 'ready', model: 'available' };
+  const value = { ...snapshot, selected: 'localVm', localVm: 'failed', localVmError };
   mockIPC(() => value);
   expect(await setupStatus()).toEqual({ ok: true, status: value });
+  expect(await selectLocal()).toEqual({ ok: true, status: value });
+});
+test.each([42, false, {}, ['native failure']])('rejects malformed native failure reason %j', async localVmError => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => ({ ...snapshot, selected: 'localVm', localVmError }));
+  expect((await setupStatus()).ok).toBe(false);
+  expect((await selectLocal()).ok).toBe(false);
+});
+test.each([false, true])('model availability requires the selected running session, with error field %j', async withError => {
+  vi.stubGlobal('isTauri', true);
+  const value = { selected: 'localVm', localVm: 'ready', model: 'available', ...(withError ? { localVmError: null } : {}) };
+  mockIPC(() => value);
+  expect(await setupStatus()).toEqual({ ok: true, status: value });
+  expect(await selectLocal()).toEqual({ ok: true, status: value });
   for (const localVm of ['starting', 'closed', 'notIntegrated']) {
     mockIPC(() => ({ ...value, localVm }));
     expect((await setupStatus()).ok).toBe(false);

@@ -33,15 +33,7 @@ pub async fn setup_status(
     store: Arc<crate::setup::SetupStore>,
     vm: &LocalVm,
 ) -> Result<crate::setup::SetupSnapshot, crate::setup::SetupError> {
-    let selected = store.status_async().await?;
-    let phase = vm.status();
-    Ok(selected.with_local_vm(phase.as_str()).with_model(
-        if phase == LocalVmStatus::Ready && MODEL_IMAGE_AVAILABLE {
-            "available"
-        } else {
-            "locked"
-        },
-    ))
+    Ok(vm.snapshot(store.status_async().await?))
 }
 pub async fn select_local(
     store: Arc<crate::setup::SetupStore>,
@@ -49,14 +41,7 @@ pub async fn select_local(
 ) -> Result<crate::setup::SetupSnapshot, crate::setup::SetupError> {
     let selected = store.select_local_async().await?;
     vm.start();
-    let phase = vm.status();
-    Ok(selected.with_local_vm(phase.as_str()).with_model(
-        if phase == LocalVmStatus::Ready && MODEL_IMAGE_AVAILABLE {
-            "available"
-        } else {
-            "locked"
-        },
-    ))
+    Ok(vm.snapshot(selected))
 }
 pub async fn resume_selected(
     store: Arc<crate::setup::SetupStore>,
@@ -96,6 +81,13 @@ impl LocalVmStatus {
         }
     }
 }
+fn failure_reason(error: &RuntimeError) -> String {
+    match error {
+        RuntimeError::Io(error) => error.to_string(),
+        _ => error.to_string(),
+    }
+}
+
 pub type StartFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Box<dyn LocalSession>, RuntimeError>> + Send + 'a>>;
 pub trait LocalFactory: Send + Sync {
@@ -121,6 +113,7 @@ pub trait LocalSession: Send {
 }
 struct State {
     phase: LocalVmStatus,
+    failure: Option<String>,
     closing: bool,
     close_started: bool,
     stopped: Option<bool>,
@@ -137,6 +130,13 @@ impl Inner {
         let mut state = self.state.lock().unwrap();
         if !state.closing {
             state.phase = phase;
+        }
+    }
+    fn fail(&self, reason: String) {
+        let mut state = self.state.lock().unwrap();
+        state.failure = Some(reason);
+        if !state.closing {
+            state.phase = LocalVmStatus::Failed;
         }
     }
     fn ready(&self) -> bool {
@@ -159,6 +159,7 @@ impl LocalVm {
                     } else {
                         LocalVmStatus::NotIntegrated
                     },
+                    failure: None,
                     closing: false,
                     close_started: false,
                     stopped: None,
@@ -179,6 +180,19 @@ impl LocalVm {
     }
     pub fn status(&self) -> LocalVmStatus {
         self.inner.state.lock().unwrap().phase
+    }
+    fn snapshot(&self, snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
+        let state = self.inner.state.lock().unwrap();
+        // Publish phase, failure text and model availability from the same observation.
+        snapshot
+            .with_local_vm(state.phase.as_str(), state.failure.clone())
+            .with_model(
+                if state.phase == LocalVmStatus::Ready && MODEL_IMAGE_AVAILABLE {
+                    "available"
+                } else {
+                    "locked"
+                },
+            )
     }
     pub fn start(self: &Arc<Self>) {
         let mut state = self.inner.state.lock().unwrap();
@@ -205,7 +219,10 @@ impl LocalVm {
                     *session = Some(live);
                     inner.publish(LocalVmStatus::Ready);
                 }
-                Err(_) => inner.publish(LocalVmStatus::Failed),
+                Err(error) => inner.fail(format!(
+                    "Starting the local VM failed: {}",
+                    failure_reason(&error)
+                )),
             }
             successful
         }));
@@ -296,13 +313,22 @@ impl LocalVm {
                         None => true,
                     };
                     let mut session = inner.session.clone().lock_owned().await;
+                    let stop_inner = inner.clone();
                     let stopped = tokio::task::spawn_blocking(move || {
-                        let result = session.as_mut().map_or(Ok(()), |s| s.stop());
-                        if result.is_ok() {
-                            session.take();
+                        match session.as_mut().map_or(Ok(()), |s| s.stop()) {
+                            Ok(()) => {
+                                session.take();
+                                true
+                            }
+                            Err(error) => {
+                                // On failure keep the original session/quarantined worker.
+                                stop_inner.fail(format!(
+                                    "Stopping the local VM failed: {}",
+                                    failure_reason(&error)
+                                ));
+                                false
+                            }
                         }
-                        // On failure keep the original session/quarantined worker.
-                        result.is_ok()
                     })
                     .await
                     .unwrap_or(false)

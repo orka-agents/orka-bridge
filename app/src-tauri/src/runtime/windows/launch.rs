@@ -39,7 +39,34 @@ pub fn control_path(root: &Path, nonce: bridge_runtime_protocol::Uuid) -> io::Re
             .join("s"),
     )
 }
+fn qemu_path(path: &Path) -> OsString {
+    #[cfg(windows)]
+    {
+        use std::{
+            os::windows::ffi::{OsStrExt, OsStringExt},
+            path::{Component, Prefix},
+        };
+        // QEMU's firmware lookup appends '/' before calling CRT access(). A
+        // verbatim prefix disables Windows separator normalization, so use the
+        // equivalent DOS/UNC spelling only at this external argv boundary.
+        let wide: Vec<_> = path.as_os_str().encode_wide().collect();
+        if let Some(Component::Prefix(prefix)) = path.components().next() {
+            match prefix.kind() {
+                Prefix::VerbatimDisk(_) => return OsString::from_wide(&wide[4..]),
+                Prefix::VerbatimUNC(_, _) => {
+                    let mut unc = vec![b'\\' as u16; 2];
+                    unc.extend_from_slice(&wide[8..]);
+                    return OsString::from_wide(&unc);
+                }
+                _ => {}
+            }
+        }
+    }
+    path.as_os_str().to_owned()
+}
+
 pub fn qemu_value(path: &Path) -> Result<String, RuntimeError> {
+    let path = qemu_path(path);
     let s = path.to_str().ok_or_else(invalid)?;
     if s.contains('\0') {
         return Err(invalid());
@@ -116,10 +143,7 @@ pub fn launch_argv(
         args.push(a.into());
         args.push(b);
     };
-    pair(
-        "-L",
-        inputs.paths.runtime.join("share/qemu").into_os_string(),
-    );
+    pair("-L", qemu_path(&inputs.paths.runtime.join("share/qemu")));
     for (a, b) in [
         ("-machine", "pc-q35-11.0,usb=off"),
         ("-accel", "whpx"),
@@ -137,16 +161,16 @@ pub fn launch_argv(
     pair("-uuid", spec.installation_id.to_string().into());
     pair(
         "-kernel",
-        spec.root.join(spec.image.kernel_path()).into_os_string(),
+        qemu_path(&spec.root.join(spec.image.kernel_path())),
     );
     pair(
         "-initrd",
-        spec.root.join(spec.image.initrd_path()).into_os_string(),
+        qemu_path(&spec.root.join(spec.image.initrd_path())),
     );
     pair("-append", spec.image.command_line().into());
     // Legacy -serial file: consumes a literal path, unlike -drive key/value syntax.
     let mut serial = OsString::from("file:");
-    serial.push(spec.root.join("boot.log"));
+    serial.push(qemu_path(&spec.root.join("boot.log")));
     pair("-serial", serial);
     for (id, path) in [
         ("os", spec.root.join(spec.image.disk_path())),

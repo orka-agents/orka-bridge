@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 
 const localStates = ['notIntegrated', 'idle', 'preparing', 'installing', 'starting', 'ready', 'closing', 'closed', 'failed'] as const;
 export type LocalVmState = (typeof localStates)[number];
-export type SetupStatus = { selected: 'localVm' | null; localVm: LocalVmState; model: 'locked' | 'available' };
+export type SetupStatus = { selected: 'localVm' | null; localVm: LocalVmState; localVmError?: string | null; model: 'locked' | 'available' };
 function isLocalState(value: unknown): value is LocalVmState {
   return typeof value === 'string' && localStates.some(state => state === value);
 }
@@ -13,16 +13,21 @@ async function call(command: 'setup_status' | 'setup_select_local'): Promise<Res
   try {
     const value = await invoke<unknown>(command);
     if (typeof value !== 'object' || value === null || Array.isArray(value)
-      || Object.keys(value).sort().join(',') !== 'localVm,model,selected'
+      || Object.keys(value).some(key => !['localVm', 'localVmError', 'model', 'selected'].includes(key))
       || !('selected' in value) || (value.selected !== null && value.selected !== 'localVm')
       || !('localVm' in value) || !isLocalState(value.localVm)
+      || ('localVmError' in value && value.localVmError !== null && typeof value.localVmError !== 'string')
       || (value.localVm === 'ready' && value.selected !== 'localVm')
       || !('model' in value) || (value.model !== 'locked' && value.model !== 'available')
       || (value.model === 'available' && value.localVm !== 'ready')
       || (command === 'setup_select_local' && value.selected !== 'localVm')) {
       return { ok: false, message: 'Setup information is not supported by this build.' };
     }
-    return { ok: true, status: { selected: value.selected, localVm: value.localVm, model: value.model } };
+    const status: SetupStatus = { selected: value.selected, localVm: value.localVm, model: value.model };
+    if ('localVmError' in value && (value.localVmError === null || typeof value.localVmError === 'string')) {
+      status.localVmError = value.localVmError;
+    }
+    return { ok: true, status };
   } catch {
     return { ok: false, message: 'The setup choice could not be read or saved.' };
   }

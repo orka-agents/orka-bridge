@@ -41,12 +41,29 @@ mod native {
         time::{Duration, Instant},
     };
     #[derive(Clone, Default)]
-    pub struct FailureDiagnostics(
-        Arc<Mutex<Option<crate::runtime::windows::qmp_io::StderrCapture>>>,
-    );
+    pub struct FailureDiagnostics {
+        capture: Arc<Mutex<Option<crate::runtime::windows::qmp_io::StderrCapture>>>,
+        stage: Arc<Mutex<&'static str>>,
+    }
     impl FailureDiagnostics {
+        pub fn stage(&self) -> &'static str {
+            self.stage
+                .lock()
+                .map(|stage| {
+                    if stage.is_empty() {
+                        "Prepare local VM"
+                    } else {
+                        *stage
+                    }
+                })
+                .unwrap_or("Prepare local VM")
+        }
+        fn enter(&self, stage: &'static str) -> Result<(), RuntimeError> {
+            *self.stage.lock().map_err(|_| RuntimeError::Closed)? = stage;
+            Ok(())
+        }
         pub fn stderr(&self) -> std::io::Result<Vec<u8>> {
-            self.0
+            self.capture
                 .lock()
                 .map_err(|_| std::io::Error::other("diagnostics poisoned"))?
                 .as_ref()
@@ -127,7 +144,22 @@ mod native {
         pub fn failure_diagnostics(&self) -> FailureDiagnostics {
             self.diagnostics.clone()
         }
+        fn copy_state(&self, scratch: &mut File, state: &mut File) -> Result<(), RuntimeError> {
+            *self
+                .diagnostics
+                .capture
+                .lock()
+                .map_err(|_| RuntimeError::Closed)? = None;
+            self.diagnostics.enter("Fill private state disk")?;
+            fill_state(scratch, state).map_err(Into::into)
+        }
         fn tool(&self, spec: &LaunchSpec, args: &[OsString]) -> Result<Vec<u8>, RuntimeError> {
+            *self
+                .diagnostics
+                .capture
+                .lock()
+                .map_err(|_| RuntimeError::Closed)? = None;
+            self.diagnostics.enter("Run qemu-img")?;
             let endpoint = ControlEndpoint::create(&spec.root)?;
             let mut child = OwnedQemuProcess::spawn_image_tool(
                 self.inputs.clone(),
@@ -141,7 +173,7 @@ mod native {
             let mut io = NativeTransport::new(owner.clone(), stdio)?;
             *self
                 .diagnostics
-                .0
+                .capture
                 .lock()
                 .map_err(|_| RuntimeError::Closed)? = Some(io.stderr_capture());
             let until = io.prepare_stop()?;
@@ -199,6 +231,13 @@ mod native {
         fn start_vm(&self, spec: &LaunchSpec) -> Result<BackendHandle, RuntimeError> {
             self.inspect(spec, &spec.root.join(spec.image.disk_path()), 0)?;
             self.inspect(spec, &spec.state_path, spec.state_bytes)?;
+            // Image-tool output must not be attributed to a later VM-launch failure.
+            *self
+                .diagnostics
+                .capture
+                .lock()
+                .map_err(|_| RuntimeError::Closed)? = None;
+            self.diagnostics.enter("Prepare QEMU control endpoint")?;
             let endpoint = ControlEndpoint::create(&spec.root)?;
             let args = launch_argv(
                 &self.inputs,
@@ -208,7 +247,9 @@ mod native {
                     .to_str()
                     .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?,
             )?;
+            self.diagnostics.enter("Pin installed boot files")?;
             let boot = pin_boot(&spec.image, &spec.root)?;
+            self.diagnostics.enter("Create QEMU process")?;
             let mut child = OwnedQemuProcess::spawn_with_boot(
                 self.inputs.clone(),
                 spec.ownership.clone(),
@@ -217,23 +258,30 @@ mod native {
                 endpoint,
                 boot,
             )?;
+            self.diagnostics.enter("Open QEMU standard I/O")?;
             let stdio = child.take_stdio()?;
             let owner = Arc::new(child);
             let transport = NativeTransport::new(owner.clone(), stdio)?;
             *self
                 .diagnostics
-                .0
+                .capture
                 .lock()
                 .map_err(|_| RuntimeError::Closed)? = Some(transport.stderr_capture());
+            self.diagnostics.enter("Resume QEMU process")?;
             owner.resume()?;
+            self.diagnostics.enter("Negotiate QMP")?;
             let until = Instant::now() + Duration::from_secs(30);
             let mut qmp = Qmp::negotiate(transport, until)?;
+            self.diagnostics.enter("Check QEMU prelaunch status")?;
             let status = qmp.query_status(until)?;
             if status.running || status.status != "prelaunch" {
                 return Err(std::io::Error::other("QEMU did not remain prelaunch").into());
             }
+            self.diagnostics.enter("Connect guest control")?;
             let guest = owner.guest_stream()?;
+            self.diagnostics.enter("Start guest CPUs")?;
             qmp.set_running(true, Instant::now() + Duration::from_secs(30))?;
+            self.diagnostics.enter("Establish guest session")?;
             Ok(BackendHandle::new(Lease(Arc::new(Mutex::new(Vm {
                 owner,
                 qmp,
@@ -316,7 +364,7 @@ mod native {
                     ],
                 )?;
                 self.inspect(spec, &path, spec.state_bytes)?;
-                fill_state(&mut scratch, &mut state)?;
+                self.copy_state(&mut scratch, &mut state)?;
                 Ok(())
             })();
             drop(scratch);
@@ -372,6 +420,80 @@ mod native {
                 .qmp
                 .set_running(true, Instant::now() + Duration::from_secs(30))
                 .map_err(Into::into)
+        }
+    }
+    #[cfg(test)]
+    mod diagnostic_tests {
+        use super::*;
+        use crate::runtime::{
+            image_install::materialize_image,
+            image_types::ImageTarget,
+            journal::Journal,
+            windows::{inputs, qmp_io},
+        };
+        use bridge_runtime_protocol::Uuid;
+        #[test]
+        fn failed_image_tool_does_not_report_a_previous_invocations_stderr() {
+            let temp = tempfile::tempdir_in(std::env::var_os("USERPROFILE").unwrap()).unwrap();
+            let root = temp.path().join("install");
+            let journal =
+                Journal::create(&root, BackendKind::Qemu, b"pc-q35-11.0".to_vec()).unwrap();
+            let source = temp.path().join("source");
+            fs::create_dir(&source).unwrap();
+            let verified =
+                super::super::boot_tests::fixture::verified(&source, ImageTarget::WindowsAmd64);
+            let target = journal
+                .image_target(&verified.image().identity().state_compatibility_id)
+                .unwrap();
+            let (_sender, closed) = tokio::sync::watch::channel(false);
+            let image = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(materialize_image(&verified, &target, closed, |_| {}))
+                .unwrap();
+            let mut spec = journal.spec(Uuid::new_v4(), Arc::new(image));
+            spec.root = temp.path().join("missing-root");
+            let runtime = temp.path().join("runtime");
+            fs::create_dir_all(runtime.join("bin")).unwrap();
+            let mut files = Vec::new();
+            for name in ["bin/qemu-system-x86_64.exe", "bin/qemu-img.exe"] {
+                fs::write(runtime.join(name), b"abc").unwrap();
+                files.push(inputs::FilePin {
+                    name: name.into(),
+                    bytes: 3,
+                    sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+                        .into(),
+                });
+            }
+            let backend = WindowsBackend::new(Arc::new(
+                inputs::verify_windows_runtime(&files, runtime).unwrap(),
+            ));
+            *backend.diagnostics.capture.lock().unwrap() = Some(qmp_io::tests::captured_stderr(
+                b"previous image-tool warning",
+            ));
+            assert_eq!(
+                backend.diagnostics.stderr().unwrap(),
+                b"previous image-tool warning"
+            );
+            // Endpoint creation fails before spawning anything or creating a new capture.
+            assert!(backend.tool(&spec, &[]).is_err());
+            assert!(backend.diagnostics.stderr().unwrap().is_empty());
+            assert_eq!(backend.diagnostics.stage(), "Run qemu-img");
+
+            let mut scratch = tempfile::tempfile().unwrap();
+            use std::io::Write;
+            scratch.write_all(b"prepared state").unwrap();
+            let mut readonly_state = File::open(&spec.state_path).unwrap();
+            *backend.diagnostics.capture.lock().unwrap() = Some(qmp_io::tests::captured_stderr(
+                b"successful inspection warning",
+            ));
+            // Copying into a read-only held file fails without a process or disk-full simulation.
+            assert!(backend
+                .copy_state(&mut scratch, &mut readonly_state)
+                .is_err());
+            assert!(backend.diagnostics.stderr().unwrap().is_empty());
+            assert_eq!(backend.diagnostics.stage(), "Fill private state disk");
+            assert_eq!(readonly_state.metadata().unwrap().len(), 0);
         }
     }
 }

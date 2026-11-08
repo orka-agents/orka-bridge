@@ -293,6 +293,105 @@ fn runtime_exe_or_dll_changed_before_launch_refuses() {
         assert!(verified.recheck_runtime().is_err(), "{name}");
     }
 }
+#[cfg(windows)]
+#[test]
+fn verbatim_dos_and_unc_values_keep_unicode_and_comma_escaping() {
+    for (path, expected) in [
+        (r"\\?\C:\runtime,é\share/qemu", r"C:\runtime,,é\share/qemu"),
+        (
+            r"\\?\UNC\host\share\runtime,é\share/qemu",
+            r"\\host\share\runtime,,é\share/qemu",
+        ),
+        (r"C:\runtime,é\share/qemu", r"C:\runtime,,é\share/qemu"),
+    ] {
+        assert_eq!(qemu_value(std::path::Path::new(path)).unwrap(), expected);
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn canonical_app_paths_reach_firmware_boot_files_and_disks_without_rust_normalization() {
+    use std::{io::Read, os::windows::io::FromRawHandle, ptr};
+    use windows_sys::Win32::{Foundation::INVALID_HANDLE_VALUE, Storage::FileSystem::*};
+    unsafe extern "C" {
+        fn _waccess(path: *const u16, mode: i32) -> i32;
+    }
+    // QEMU's firmware search uses CRT access(). Rust and CreateFileW alone
+    // normalize paths more generously and would miss this failure.
+    fn raw_open(path: &str) -> fs::File {
+        let wide: Vec<_> = path.encode_utf16().chain(Some(0)).collect();
+        assert_eq!(
+            unsafe { _waccess(wide.as_ptr(), 4) },
+            0,
+            "QEMU cannot access {path:?}"
+        );
+        let handle = unsafe {
+            CreateFileW(
+                wide.as_ptr(),
+                FILE_GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                ptr::null(),
+                OPEN_EXISTING,
+                FILE_ATTRIBUTE_NORMAL,
+                ptr::null_mut(),
+            )
+        };
+        assert_ne!(
+            handle,
+            INVALID_HANDLE_VALUE,
+            "QEMU path {path:?}: {}",
+            std::io::Error::last_os_error()
+        );
+        unsafe { fs::File::from_raw_handle(handle.cast()) }
+    }
+    let (t, pin, mut paths) = fixture();
+    let canonical = fs::canonicalize(t.path()).unwrap();
+    assert!(canonical.to_str().unwrap().starts_with(r"\\?\"));
+    paths.runtime = canonical.join("runtime");
+    let inputs = verify_windows_inputs(&pin, paths).unwrap();
+    let root = canonical.join("install,é space");
+    let (installation_id, image) = installed_fixture(&root);
+    fs::write(root.join("boot.log"), b"").unwrap();
+    let spec = LaunchSpec {
+        installation_id,
+        image,
+        generation: 1,
+        boot_nonce: Uuid::new_v4(),
+        ownership: std::sync::Arc::new(fs::File::open(root.join("owner.lock")).unwrap()),
+        state_path: root.join("state.disk"),
+        root,
+        state_bytes: 32 * 1024 * 1024 * 1024,
+        backend: BackendKind::Qemu,
+        machine_id: b"pc-q35-11.0".to_vec(),
+        mac: [2, 0, 0, 0, 0, 1],
+    };
+    let socket = t.path().join("control.sock");
+    let args = launch_argv(&inputs, &spec, socket.to_str().unwrap()).unwrap();
+    let value = |key: &str| {
+        args[args.iter().position(|a| a == key).unwrap() + 1]
+            .to_str()
+            .unwrap()
+    };
+    let mut firmware = Vec::new();
+    raw_open(&format!("{}/test-firmware.bin", value("-L")))
+        .read_to_end(&mut firmware)
+        .unwrap();
+    assert_eq!(firmware, b"abc");
+    raw_open(value("-kernel"));
+    raw_open(value("-initrd"));
+    raw_open(value("-serial").strip_prefix("file:").unwrap());
+    for pair in args.windows(2).filter(|pair| pair[0] == "-drive") {
+        let path = pair[1]
+            .to_str()
+            .unwrap()
+            .split_once("file=")
+            .unwrap()
+            .1
+            .replace(",,", ",");
+        raw_open(&path);
+    }
+}
+
 #[test]
 fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
     let (t, pin, paths) = fixture();

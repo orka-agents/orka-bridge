@@ -351,7 +351,7 @@ pub(super) fn private_af_object(handle: HANDLE, directory: bool) -> io::Result<(
         Ok(())
     }
 }
-pub(super) fn private_af_directory(path: &Path) -> io::Result<File> {
+pub(crate) fn private_af_directory(path: &Path) -> io::Result<File> {
     use std::os::windows::io::AsRawHandle;
     let file = OpenOptions::new()
         .read(true)

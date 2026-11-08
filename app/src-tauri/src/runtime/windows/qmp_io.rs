@@ -332,4 +332,4 @@ impl Drop for NativeTransport {
 }
 #[cfg(test)]
 #[path = "qmp_io_tests.rs"]
-mod tests;
+pub(crate) mod tests;
