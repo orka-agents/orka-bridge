@@ -9,6 +9,8 @@ mod credentials;
 pub use credentials::*;
 mod model;
 pub use model::*;
+mod orka;
+pub use orka::*;
 pub fn encode_chunk(bytes: &[u8]) -> String {
     STANDARD.encode(bytes)
 }
@@ -59,6 +61,7 @@ pub struct StageHello {
 pub enum EngineActionWire {
     Version {},
     ListAgents { context: String, namespace: String },
+    Orka { request: OrkaRequest },
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -210,6 +213,9 @@ pub fn validate_hello(hello: &StageHello, stage: Stage, nonce: Uuid) -> Result<(
     Ok(())
 }
 pub fn validate_action(action: &EngineActionWire) -> Result<(), ProtocolError> {
+    if let EngineActionWire::Orka { request } = action {
+        request.validate()?;
+    }
     if let EngineActionWire::ListAgents { context, namespace } = action {
         if [context, namespace]
             .iter()

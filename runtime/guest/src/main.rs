@@ -307,7 +307,7 @@ fn control(
     peer: &'static str,
     io: &mut BufReader<impl Read + Write + AsRawFd>,
     session: &mut Session,
-    system: &mut Linux,
+    system: &mut impl BootSystem,
     b: &BootDescriptor,
     serving: &mut Serving,
 ) -> io::Result<bool> {
@@ -338,8 +338,24 @@ fn control(
             _ => unreachable!("credential dispatcher selects only its closed operations"),
         })
     });
+    // Orka authoring is physical-channel authority, never the root-local socket.
+    let local_orka = peer != "channel"
+        && matches!(
+            &r.body,
+            RequestBody::Execute {
+                action: EngineActionWire::Orka { .. },
+                ..
+            } | RequestBody::Engine(EngineActionWire::Orka { .. })
+        );
     let (body, stop) = if let Some(reply) = credentials {
         (reply, false)
+    } else if local_orka {
+        (
+            ResultBody::Error {
+                code: ErrorCode::Unavailable,
+            },
+            false,
+        )
     } else if matches!(r.body, RequestBody::Readiness {} | RequestBody::Shutdown {}) {
         service::handle(system, b, &r)
     } else {
@@ -391,7 +407,7 @@ fn private_result<R: model::Runner>(
     }
 }
 type Serving = (
-    bridge_guest::engine::Operations<bridge_guest::engine::Kmx>,
+    bridge_guest::engine::Operations<bridge_guest::engine::GuestRunner>,
     bridge_guest::staging::Staging,
     bridge_guest::credentials::CredentialStore,
     model::ModelLifecycle<model::Kmx>,
@@ -403,7 +419,10 @@ fn serve_ready(
 ) -> io::Result<Serving> {
     let operations = diagnostics::context(
         diagnostics::Context::new("serve", "operations-store-init"),
-        bridge_guest::engine::Operations::new(root.join("operations"), bridge_guest::engine::Kmx),
+        bridge_guest::engine::Operations::new(
+            root.join("operations"),
+            bridge_guest::engine::GuestRunner::new(installation),
+        ),
     )?;
     let staging = diagnostics::context(
         diagnostics::Context::new("serve", "staging-store-init"),
@@ -1267,6 +1286,110 @@ mod tests {
         assert_eq!(read(CTX, &mut guest, &mut session).unwrap().request_id, 4);
         assert!(guest.get_ref().reads < 16);
         sender.join().unwrap();
+    }
+    #[test]
+    fn local_socket_orka_is_refused_before_operations_even_with_a_valid_id() {
+        struct NoSystem;
+        impl BootSystem for NoSystem {
+            fn probe(&mut self) -> io::Result<early::Disk> {
+                unreachable!()
+            }
+            fn format(&mut self, _: Uuid) -> io::Result<()> {
+                unreachable!()
+            }
+            fn mount_state(&mut self) -> io::Result<()> {
+                unreachable!()
+            }
+            fn identity(&mut self) -> io::Result<Option<early::Identity>> {
+                unreachable!()
+            }
+            fn initialize(&mut self, _: &early::Identity) -> io::Result<()> {
+                unreachable!()
+            }
+            fn bind_persistent(&mut self) -> io::Result<()> {
+                unreachable!()
+            }
+            fn credentials(&mut self) -> io::Result<()> {
+                unreachable!()
+            }
+            fn ready(&mut self, _: &BootDescriptor) -> io::Result<()> {
+                unreachable!()
+            }
+            fn save_boot(&mut self, _: &BootDescriptor) -> io::Result<()> {
+                unreachable!()
+            }
+            fn shutdown(&mut self) -> io::Result<()> {
+                unreachable!()
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let b = boot();
+        let mut serving = serve_ready(root.path(), b.installation_id, || Ok(())).unwrap();
+        let request = OrkaRequest {
+            path: "agents".into(),
+            after: None,
+            body: Some(
+                serde_json::json!({"name":"bridge-run-0123456789abcdef0123456789abcdef",
+                "namespace":"orka-system","spec":{}}),
+            ),
+        };
+        let operation = Uuid::new_v4();
+        for (id, body) in [
+            (
+                3,
+                RequestBody::Execute {
+                    operation,
+                    action: EngineActionWire::Orka {
+                        request: request.clone(),
+                    },
+                    snapshot: None,
+                },
+            ),
+            (4, RequestBody::Engine(EngineActionWire::Orka { request })),
+        ] {
+            let (mut host, guest) = UnixStream::pair().unwrap();
+            host.write_all(
+                &encode(&Frame::Request(WireRequest {
+                    version: VERSION,
+                    boot_nonce: b.boot_nonce,
+                    request_id: id,
+                    body,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let mut guest = BufReader::new(guest);
+            let mut local = Session::local(b.clone()).unwrap();
+            assert!(!control(
+                "local",
+                &mut guest,
+                &mut local,
+                &mut NoSystem,
+                &b,
+                &mut serving
+            )
+            .unwrap());
+            drop(guest);
+            let mut bytes = Vec::new();
+            host.read_to_end(&mut bytes).unwrap();
+            let Frame::Result(reply) = serde_json::from_slice(&bytes).unwrap() else {
+                panic!("expected result");
+            };
+            assert_eq!(
+                reply.body,
+                ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                }
+            );
+        }
+        assert_eq!(
+            fs::read_dir(root.path().join("operations"))
+                .unwrap()
+                .filter(|e| e.as_ref().unwrap().file_type().unwrap().is_file())
+                .count(),
+            0,
+            "no operation record was created"
+        );
     }
     #[test]
     fn readiness_is_not_acknowledged_if_serving_store_initialization_fails() {

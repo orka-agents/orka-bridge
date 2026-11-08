@@ -5,7 +5,7 @@ pub use source::{Assertion, ParsedPair, RunCase};
 #[path = "run_http.rs"]
 mod http;
 use bridge_runtime_protocol::{SnapshotId, Uuid};
-pub use http::{NativeRunTarget, RunLimits};
+pub use http::{NativeRunTarget, RunFuture, RunLimits, RunTransport};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::fmt;
@@ -20,18 +20,21 @@ pub enum ErrorKind {
     Response,
     Identity,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum Verdict {
     Passed,
     Failed,
     Unknown,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct AssertionReport {
     pub id: String,
+    pub kind: &'static str,
     pub verdict: Verdict,
 }
-#[derive(Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CaseReport {
     pub id: String,
     pub phase: String,
@@ -41,7 +44,7 @@ pub struct CaseReport {
     pub assertions: Vec<AssertionReport>,
     pub verdict: Verdict,
 }
-#[derive(Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct RunReport {
     pub cases: Vec<CaseReport>,
     pub verdict: Verdict,
@@ -204,16 +207,21 @@ impl fmt::Display for RunError {
 }
 impl std::error::Error for RunError {}
 
-pub struct NativeRunner {
-    http: http::Http,
+pub struct NativeRunner<'a> {
+    http: Box<dyn RunTransport + 'a>,
     id: Uuid,
 }
-impl NativeRunner {
+impl NativeRunner<'static> {
     pub fn new(target: NativeRunTarget, limits: RunLimits) -> Result<Self, ErrorKind> {
-        Ok(Self {
-            http: http::Http::new(target, limits)?,
+        Ok(Self::with_transport(http::Http::new(target, limits)?))
+    }
+}
+impl<'a> NativeRunner<'a> {
+    pub fn with_transport(transport: impl RunTransport + 'a) -> Self {
+        Self {
+            http: Box::new(transport),
             id: Uuid::new_v4(),
-        })
+        }
     }
     /// No POST retry, replacement, adoption or automatic deletion. Dropping this
     /// future cannot stop remote work; a failed write retains its attempted name.
@@ -241,9 +249,9 @@ impl NativeRunner {
         pending: &mut Option<PendingMutation>,
     ) -> Result<(), ErrorKind> {
         let deadline = self.http.deadline();
-        let namespace = &self.http.target.namespace;
+        let namespace = self.http.namespace();
         let name = format!("bridge-run-{}", Uuid::new_v4().simple());
-        let spec = json!({"providerRef":{"name":self.http.target.provider},"model":{"name":handle.pair.model()},"systemPrompt":{"inline":handle.pair.prompt()},"tools":handle.pair.tools().iter().map(|name| json!({"name":name})).collect::<Vec<_>>()});
+        let spec = json!({"providerRef":{"name":self.http.provider()},"model":{"name":handle.pair.model()},"systemPrompt":{"inline":handle.pair.prompt()},"tools":handle.pair.tools().iter().map(|name| json!({"name":name})).collect::<Vec<_>>()});
         *pending = Some(PendingMutation {
             kind: "Agent",
             name: name.clone(),

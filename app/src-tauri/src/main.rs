@@ -48,6 +48,21 @@ async fn setup_connect_model(
     Ok(ModelReply { ready: model.ready })
 }
 
+#[tauri::command]
+fn setup_run_status(
+    state: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> bridge_engine::example_run::RunSnapshot {
+    state.status(vm.inner())
+}
+#[tauri::command]
+fn setup_run_example(
+    state: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> bridge_engine::example_run::RunSnapshot {
+    state.inner().start(vm.inner().clone())
+}
+
 fn main() {
     let closing = AtomicBool::new(false);
     let completed = Arc::new(AtomicBool::new(false));
@@ -58,6 +73,7 @@ fn main() {
             app.manage(if vm.status() == LocalVmStatus::NotIntegrated { EngineState::configured() }
                 else { EngineState::with_transport(vm.clone()) });
             app.manage(store.clone()); app.manage(vm.clone());
+            app.manage(bridge_engine::example_run::ExampleRun::new(tauri::async_runtime::handle().inner().clone(), bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE));
             tauri::async_runtime::spawn(async move {
                 if local_vm::resume_selected(store, &vm).await.is_err() {
                     eprintln!("The saved setup choice could not be read.");
@@ -65,7 +81,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_example, setup_connect_model])
+        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_example, setup_connect_model, setup_run_status, setup_run_example])
         .build(tauri::generate_context!())
         .expect("error while building Bridge")
         .run(move |app, event| {

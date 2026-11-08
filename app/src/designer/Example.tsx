@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { loadExample, type ExamplePair } from '../setup/state';
+import Run from './Run';
 export default function Example() {
   const [pair, setPair] = useState<ExamplePair>();
   const [error, setError] = useState<string>();
@@ -15,6 +16,7 @@ export default function Example() {
     <h2 id="example-title">Read-only example</h2>
     <p className="muted">These are the original web-reader agent and test files. Opening them doesn't run a test or connect a model.</p>
     {error ? <p role="alert">{error}</p> : !pair ? <p role="status">Opening the example…</p> : <>
+      <Run />
       <h3>web-reader.agent.md</h3>
       <pre className="example-source" tabIndex={0} aria-label="Agent file, read-only">{pair.agent}</pre>
       <h3>web-reader.agent.test.md</h3>

@@ -81,6 +81,35 @@ impl Default for RunLimits {
         }
     }
 }
+pub type RunFuture<'a> =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, ErrorKind>> + Send + 'a>>;
+/// Native-owned request transport; implementations never accept renderer targets.
+pub trait RunTransport: Send + Sync {
+    fn namespace(&self) -> &str;
+    fn provider(&self) -> &str;
+    fn limits(&self) -> RunLimits;
+    fn request<'a>(
+        &'a self,
+        path: &'a str,
+        after: Option<u64>,
+        body: Option<&'a Value>,
+        deadline: Instant,
+    ) -> RunFuture<'a>;
+    fn deadline(&self) -> Instant {
+        Instant::now() + self.limits().operation_timeout
+    }
+    fn pause(
+        &self,
+        deadline: Instant,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ErrorKind>> + Send + '_>>
+    {
+        Box::pin(async move {
+            timeout_at(deadline, tokio::time::sleep(self.limits().poll_interval))
+                .await
+                .map_err(|_| ErrorKind::Deadline)
+        })
+    }
+}
 pub(super) struct Http {
     pub target: NativeRunTarget,
     pub limits: RunLimits,
@@ -173,9 +202,27 @@ impl Http {
         .await
         .map_err(|_| ErrorKind::Deadline)?
     }
-    pub async fn pause(&self, deadline: Instant) -> Result<(), ErrorKind> {
-        timeout_at(deadline, tokio::time::sleep(self.limits.poll_interval))
-            .await
-            .map_err(|_| ErrorKind::Deadline)
+}
+impl RunTransport for Http {
+    fn namespace(&self) -> &str {
+        &self.target.namespace
+    }
+    fn provider(&self) -> &str {
+        &self.target.provider
+    }
+    fn limits(&self) -> RunLimits {
+        self.limits
+    }
+    fn deadline(&self) -> Instant {
+        Http::deadline(self)
+    }
+    fn request<'a>(
+        &'a self,
+        path: &'a str,
+        after: Option<u64>,
+        body: Option<&'a Value>,
+        deadline: Instant,
+    ) -> RunFuture<'a> {
+        Box::pin(Http::request(self, path, after, body, deadline))
     }
 }

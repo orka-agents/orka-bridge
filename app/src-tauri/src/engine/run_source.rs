@@ -204,6 +204,10 @@ impl RunCase {
                 };
                 AssertionReport {
                     id: assertion.id().into(),
+                    kind: match assertion {
+                        Assertion::Contains { .. } => "contains",
+                        Assertion::ToolCalled { .. } => "toolCalled",
+                    },
                     verdict,
                 }
             })
