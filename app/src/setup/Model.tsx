@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { connectModel } from './model';
+import { connectModel } from './modelState';
 
 export default function Model({ enabled }: { enabled: boolean }) {
   const [busy, setBusy] = useState(false);
