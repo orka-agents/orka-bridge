@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import mark from './assets/orka-mark.svg';
 import EngineStatus from './components/EngineStatus';
 import Setup from './setup/Setup';
@@ -61,6 +61,8 @@ function ComingButton({ label, reason }: { label: string; reason: string }) {
 
 export default function App() {
   const [page, setPage] = useState<Page>('Clusters');
+  const content = useRef<HTMLElement>(null);
+  useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);
   const [engineReady, setEngineReady] = useState(false);
   const ready = useCallback(() => setEngineReady(true), []);
@@ -123,7 +125,7 @@ export default function App() {
           <span className="host-chip" title={detail}><span className={`live-dot ${tone}`} aria-hidden="true" />This computer<span className="sr-only">: {detail}</span></span>
         </div>
       </header>
-      <main className="page-content" aria-labelledby="page-title">
+      <main ref={content} className="page-content" aria-labelledby="page-title">
         {page !== 'Clusters' && <div className="page-heading">
           <h1 id="page-title">{page}</h1>
           {page === 'Designer' && <div className="heading-actions">

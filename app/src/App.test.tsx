@@ -41,6 +41,14 @@ test('keyboard_activation', async () => {
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Clusters');
 });
 
+test('navigation starts at the page heading after scrolling another page', async () => {
+  const user = userEvent.setup(); render(<App />);
+  const main = screen.getByRole('main');
+  main.scrollTop = 300;
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  expect(main.scrollTop).toBe(0);
+});
+
 test('honest_empty_states', async () => {
   const user = userEvent.setup();
   render(<App />);
