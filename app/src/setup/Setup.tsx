@@ -33,7 +33,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
       else { setStatus(undefined); setError(result.message); }
       const waiting = result.ok && pending(result.status.localVm);
       setBusy(waiting);
-      if (result.ok) timer.current = setTimeout(() => setCheck(value => value + 1), waiting ? 250 : 1000);
+      timer.current = setTimeout(() => setCheck(value => value + 1), waiting ? 250 : 1000);
       onStatus?.(result.ok ? result.status : undefined);
     });
     return () => { epoch.current++; clearTimeout(timer.current); };

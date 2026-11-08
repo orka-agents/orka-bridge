@@ -67,7 +67,7 @@ test.each([
   ['preparing', 'localVm', 'Getting workspace ready', 'Setting up, step 2 of 4'],
   ['installing', 'localVm', 'Getting workspace ready', 'Setting up, step 2 of 4'],
   ['starting', 'localVm', 'Starting workspace', 'Setting up, step 2 of 4'],
-  ['ready', 'localVm', 'Choose the AI', 'Setting up, step 3 of 4'],
+  ['ready', 'localVm', 'AI connection unavailable', 'AI unavailable'],
   ['failed', 'localVm', 'Workspace could not start', 'Setup paused'],
   ['closed', 'localVm', 'Workspace stopped', 'Workspace stopped'],
   ['notIntegrated', null, 'Workspace unavailable', 'Workspace unavailable'],
@@ -97,7 +97,7 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
 
 test('setup refreshes while another page is open', async () => {
   let localVm = 'ready';
-  mockIPC(command => command === 'setup_status' ? { selected: 'localVm', localVm, model: 'locked' } : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
+  mockIPC(command => command === 'setup_status' ? { selected: 'localVm', localVm, model: localVm === 'ready' ? 'available' : 'locked' } : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
   await within(screen.getByRole('contentinfo')).findByText('Choose the AI');
@@ -179,6 +179,54 @@ test('an unavailable example is not reported as still opening', async () => {
   await user.click(await screen.findByRole('button', { name: 'Open example' }));
   expect(await within(screen.getByRole('navigation')).findByText('Example unavailable')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).queryByText('Opening example…')).toBeNull();
+});
+
+test.each(['unknown', 'unavailable'])('background check status preserves %s outcomes', async state => {
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_example') return { agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
+    if (command === 'setup_run_status') return state === 'unavailable' ? Promise.reject(new Error('IPC failed'))
+      : { state: 'unknown', canRun: false, report: null, acknowledged: [], pending: { kind: 'Task', name: 'maybe-created' }, error: 'observe' };
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  vi.stubGlobal('isTauri', true);
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  const expected = state === 'unknown' ? 'Check result unknown' : 'Check status unavailable';
+  await within(screen.getByRole('contentinfo')).findByText(expected);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  expect(within(screen.getByRole('contentinfo')).getByText(expected)).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText(`reader, ${expected.toLowerCase()}`)).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByRole('status').textContent).toContain(expected);
+});
+
+test('Open example retries a failed read without discarding successful runs', async () => {
+  let fail = true;
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_example') return fail ? Promise.reject(new Error('read failed')) : { agent: '---\nname: recovered-reader\n---\nRead.', tests: 'Check' };
+    if (command === 'setup_run_status') return { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  vi.stubGlobal('isTauri', true);
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await within(screen.getByRole('navigation')).findByText('Example unavailable');
+  await user.click(screen.getByRole('button', { name: 'Clusters' })); fail = false;
+  await user.click(screen.getByRole('button', { name: 'Open example' }));
+  expect(await within(screen.getByRole('navigation')).findByText('recovered-reader, read-only')).toBeTruthy();
+});
+
+test('a transient setup read failure recovers while off Clusters', async () => {
+  let fail = true;
+  mockIPC(command => command === 'setup_status' ? fail ? Promise.reject(new Error('read failed'))
+    : { selected: 'localVm', localVm: 'starting', model: 'locked' }
+    : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
+  vi.stubGlobal('isTauri', true);
+  const user = userEvent.setup(); render(<App />);
+  await within(screen.getByRole('navigation')).findByText('Workspace unavailable');
+  await user.click(screen.getByRole('button', { name: 'Overview' })); fail = false;
+  expect(await within(screen.getByRole('navigation')).findByText('Setting up, step 2 of 4', {}, { timeout: 2000 })).toBeTruthy();
 });
 
 test('Clusters reads setup and version without fetch or legacy IPC', async () => {

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { loadExample, type ExamplePair } from '../setup/state';
 import Run from './Run';
 import type { RunSnapshot } from './run-api';
-export default function Example({ onPair, onRun }: { onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot) => void }) {
+export default function Example({ onPair, onRun }: { onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void }) {
   const [pair, setPair] = useState<ExamplePair>();
   const [error, setError] = useState<string>();
   useEffect(() => {

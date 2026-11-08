@@ -64,6 +64,7 @@ export default function App() {
   const content = useRef<HTMLElement>(null);
   useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);
+  const [exampleAttempt, setExampleAttempt] = useState(0);
   const [engineReady, setEngineReady] = useState(false);
   const ready = useCallback(() => setEngineReady(true), []);
   const [setup, setSetup] = useState<SetupStatus>();
@@ -72,6 +73,8 @@ export default function App() {
   const [agentName, setAgentName] = useState<string>();
   const [exampleState, setExampleState] = useState<'loading' | 'loaded' | 'failed'>('loading');
   const [run, setRun] = useState<RunSnapshot>();
+  const [runUnavailable, setRunUnavailable] = useState(false);
+  const observeRun = useCallback((snapshot: RunSnapshot | undefined) => { setRun(snapshot); setRunUnavailable(!snapshot); }, []);
   const observeSetup = useCallback((status: SetupStatus | undefined) => { setSetup(status); setChecking(false); }, []);
   const observePair = useCallback((pair: ExamplePair | undefined) => {
     setExampleState(pair ? 'loaded' : 'failed');
@@ -81,13 +84,16 @@ export default function App() {
   const [setupLine, detail, tone] = setup ? workspaceCopy[setup.localVm]
     : checking ? ['Checking workspace…', 'Checking workspace…', 'wait'] : ['Workspace unavailable', 'Workspace unavailable', 'wait'];
   const workspaceReady = setup?.localVm === 'ready';
-  const modelDetail = model === 'connecting' ? 'Connecting the AI…' : model === 'connected' ? 'AI connected'
+  const modelDetail = setup?.model === 'locked' ? 'AI connection unavailable'
+    : model === 'connecting' ? 'Connecting the AI…' : model === 'connected' ? 'AI connected'
     : model === 'failed' ? 'AI connection needs attention' : detail;
   const cases = run?.report?.cases;
-  const checks = run?.state === 'running' ? 'Running checks…' : cases
+  const checks = runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
+    : run?.state === 'running' ? 'Running checks…' : cases
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} checks passing` : undefined;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
-  const agentStatus = run?.state === 'running' ? 'running checks'
+  const agentStatus = runUnavailable ? 'check status unavailable' : run?.state === 'unknown' ? 'check result unknown'
+    : run?.state === 'running' ? 'running checks'
     : failedChecks ? `${failedChecks} ${failedChecks === 1 ? 'check' : 'checks'} failing`
     : cases?.some(check => check.verdict === 'unknown') ? 'check result unknown'
     : cases ? 'checks passing' : 'read-only';
@@ -95,8 +101,9 @@ export default function App() {
     Overview: checks ?? 'No agents yet',
     Designer: agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Read-only example' : 'Opening example…',
-    Clusters: workspaceReady && run?.state === 'complete' ? 'This computer ready'
-      : workspaceReady && model === 'connected' ? 'AI connected' : setupLine,
+    Clusters: !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
+      : model === 'connected' ? run?.state === 'complete' ? 'This computer ready' : 'AI connected'
+      : model === 'idle' ? setupLine : modelDetail,
   };
   const copy = emptyCopy[page];
   return (
@@ -135,9 +142,12 @@ export default function App() {
         </div>}
         <div hidden={page !== 'Clusters'}>
           <Setup active={page === 'Clusters'} onReady={ready} onStatus={observeSetup} onModelState={setModel}
-            onOpenExample={() => { setExampleOpen(true); setPage('Designer'); }} />
+            onOpenExample={() => {
+              if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
+              setExampleOpen(true); setPage('Designer');
+            }} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example onPair={observePair} onRun={setRun} /></div>}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} onPair={observePair} onRun={observeRun} /></div>}
         {page !== 'Clusters' && !(page === 'Designer' && exampleOpen) && <section className="card empty-state">
           <span className="icon-tile empty-icon"><PageIcon page={page} /></span>
           <div>
@@ -154,6 +164,10 @@ export default function App() {
         {detail !== setupLine || workspaceReady ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : detail}</span></> : null}
         {agentName && <><span aria-hidden="true">·</span><span>Read-only example</span></>}
         {checks && <span className="checks-status">{checks}</span>}
+        <span className="sr-only" role="status" aria-atomic="true">{[
+          page !== 'Clusters' ? (workspaceReady ? `This computer ready · ${modelDetail}` : `${setupLine} · ${detail}`) : undefined,
+          page !== 'Designer' ? checks : undefined,
+        ].filter(Boolean).join(' · ')}</span>
       </footer>
     </div>
   );
