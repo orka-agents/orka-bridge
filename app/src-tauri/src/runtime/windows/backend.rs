@@ -49,8 +49,14 @@ mod native {
         pub fn stage(&self) -> &'static str {
             self.stage
                 .lock()
-                .map(|stage| *stage)
-                .unwrap_or("Start QEMU")
+                .map(|stage| {
+                    if stage.is_empty() {
+                        "Prepare local VM"
+                    } else {
+                        *stage
+                    }
+                })
+                .unwrap_or("Prepare local VM")
         }
         fn enter(&self, stage: &'static str) -> Result<(), RuntimeError> {
             *self.stage.lock().map_err(|_| RuntimeError::Closed)? = stage;
@@ -211,6 +217,12 @@ mod native {
         fn start_vm(&self, spec: &LaunchSpec) -> Result<BackendHandle, RuntimeError> {
             self.inspect(spec, &spec.root.join(spec.image.disk_path()), 0)?;
             self.inspect(spec, &spec.state_path, spec.state_bytes)?;
+            // Image-tool output must not be attributed to a later VM-launch failure.
+            *self
+                .diagnostics
+                .capture
+                .lock()
+                .map_err(|_| RuntimeError::Closed)? = None;
             self.diagnostics.enter("Prepare QEMU control endpoint")?;
             let endpoint = ControlEndpoint::create(&spec.root)?;
             let args = launch_argv(

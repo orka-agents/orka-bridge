@@ -77,6 +77,13 @@ impl LocalVmStatus {
         }
     }
 }
+fn failure_reason(error: &RuntimeError) -> String {
+    match error {
+        RuntimeError::Io(error) => error.to_string(),
+        _ => error.to_string(),
+    }
+}
+
 pub type StartFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Box<dyn LocalSession>, RuntimeError>> + Send + 'a>>;
 pub trait LocalFactory: Send + Sync {
@@ -189,7 +196,10 @@ impl LocalVm {
                     *session = Some(live);
                     inner.publish(LocalVmStatus::Ready);
                 }
-                Err(error) => inner.fail(format!("Starting the local VM failed: {error}")),
+                Err(error) => inner.fail(format!(
+                    "Starting the local VM failed: {}",
+                    failure_reason(&error)
+                )),
             }
             successful
         }));
@@ -226,7 +236,10 @@ impl LocalVm {
                             }
                             Err(error) => {
                                 // On failure keep the original session/quarantined worker.
-                                stop_inner.fail(format!("Stopping the local VM failed: {error}"));
+                                stop_inner.fail(format!(
+                                    "Stopping the local VM failed: {}",
+                                    failure_reason(&error)
+                                ));
                                 false
                             }
                         }

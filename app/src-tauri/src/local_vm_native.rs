@@ -54,7 +54,7 @@ fn retain_start_failure(
     stderr: std::io::Result<Vec<u8>>,
 ) -> RuntimeError {
     use std::io::Write;
-    let reason = error.to_string();
+    let reason = failure_reason(&error);
     let (stderr, capture_error) = match stderr {
         Ok(bytes) => (bytes, None),
         Err(error) => (Vec::new(), Some(error.to_string())),

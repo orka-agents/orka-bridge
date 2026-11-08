@@ -34,7 +34,9 @@ impl LocalFactory for Factory {
             progress(LocalVmStatus::Installing);
             p.launch.notified().await;
             if p.fail_launch {
-                return Err(RuntimeError::Io(std::io::Error::other("launch detail")));
+                return Err(RuntimeError::Io(std::io::Error::other(
+                    "launch detail\nDetails: C:\\VM\\failure",
+                )));
             }
             Ok(Box::new(Session(p)) as Box<dyn LocalSession>)
         })
@@ -231,7 +233,6 @@ async fn setup_retains_the_actual_stop_error_after_repeated_close() {
         .as_str()
         .expect("stop reason retained");
     assert!(reason.contains("Stopping"), "{reason}");
-    assert!(reason.contains("Runtime operation failed: Io("), "{reason}");
     assert!(reason.contains("stop detail"), "{reason}");
     assert_eq!(failed["localVm"], "failed");
     assert_eq!(failed["selected"], "localVm");
@@ -266,8 +267,10 @@ async fn setup_retains_the_actual_start_error_including_during_close() {
                 .as_str()
                 .expect("start reason retained");
             assert!(reason.contains("Starting"), "{reason}");
-            assert!(reason.contains("Runtime operation failed: Io("), "{reason}");
-            assert!(reason.contains("launch detail"), "{reason}");
+            assert!(
+                reason.contains("launch detail\nDetails: C:\\VM\\failure"),
+                "{reason}"
+            );
         }
         assert!(vm.shutdown().await.is_err());
         let failed =
@@ -277,8 +280,10 @@ async fn setup_retains_the_actual_start_error_including_during_close() {
             .as_str()
             .expect("start reason survives close");
         assert!(reason.contains("Starting"), "{reason}");
-        assert!(reason.contains("Runtime operation failed: Io("), "{reason}");
-        assert!(reason.contains("launch detail"), "{reason}");
+        assert!(
+            reason.contains("launch detail\nDetails: C:\\VM\\failure"),
+            "{reason}"
+        );
         assert_eq!(failed["localVm"], "failed");
         assert!(vm.shutdown().await.is_err());
         let again =
