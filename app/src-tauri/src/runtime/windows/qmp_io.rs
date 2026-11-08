@@ -21,6 +21,13 @@ use windows_sys::Win32::{
 const QUEUED_FRAMES: usize = 32;
 type Frame = io::Result<Received>;
 type WriteRequest = (Vec<u8>, SyncSender<io::Result<()>>);
+#[derive(Clone)]
+pub struct StderrCapture(Arc<Mutex<Vec<u8>>>);
+impl StderrCapture {
+    pub fn snapshot(&self) -> io::Result<Vec<u8>> {
+        stderr_snapshot(&self.0)
+    }
+}
 pub struct NativeTransport {
     owner: Arc<OwnedQemuProcess>,
     incoming: Option<Receiver<Frame>>,
@@ -109,6 +116,16 @@ fn finish_workers(workers: &mut Vec<JoinHandle<()>>, until: Instant) -> bool {
     }
     true
 }
+fn finish_io(
+    outgoing: &mut Option<SyncSender<WriteRequest>>,
+    incoming: &mut Option<Receiver<Frame>>,
+    workers: &mut Vec<JoinHandle<()>>,
+    until: Instant,
+) -> bool {
+    drop(outgoing.take());
+    drop(incoming.take());
+    finish_workers(workers, until)
+}
 impl NativeTransport {
     /// Take these noninheritable stdio copies before wrapping the process in Arc.
     /// Resume the retained child before negotiating QMP; never rediscover pipes.
@@ -185,6 +202,9 @@ impl NativeTransport {
             })?;
         self.workers.push(thread);
         Ok(())
+    }
+    pub fn stderr_capture(&self) -> StderrCapture {
+        StderrCapture(self.stderr.clone())
     }
     pub fn stderr(&self) -> io::Result<Vec<u8>> {
         stderr_snapshot(&self.stderr)
@@ -272,7 +292,21 @@ impl Transport for NativeTransport {
         Ok(self.owner.stop_deadline())
     }
     fn wait_for_stop(&mut self) -> io::Result<()> {
-        self.owner.wait_for_stop()
+        self.owner.wait_for_stop()?;
+        self.stopping.store(true, Ordering::Release);
+        if finish_io(
+            &mut self.outgoing,
+            &mut self.incoming,
+            &mut self.workers,
+            self.owner.stop_deadline(),
+        ) {
+            Ok(())
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "owned transport workers did not stop",
+            ))
+        }
     }
     fn abort(&mut self) {
         let _ = self.owner.abort();
@@ -281,10 +315,13 @@ impl Transport for NativeTransport {
 impl Drop for NativeTransport {
     fn drop(&mut self) {
         self.stopping.store(true, Ordering::Release);
-        drop(self.outgoing.take());
-        drop(self.incoming.take());
         let stopped = self.owner.abort().is_ok();
-        let finished = finish_workers(&mut self.workers, self.owner.stop_deadline());
+        let finished = finish_io(
+            &mut self.outgoing,
+            &mut self.incoming,
+            &mut self.workers,
+            self.owner.stop_deadline(),
+        );
         if !stopped || !finished {
             // Keep the entire original bundle if either process or I/O teardown
             // is unobserved. Pending workers also keep their exact pipe copies.

@@ -135,9 +135,15 @@ pub fn launch_argv(
         pair(a, b.into());
     }
     pair("-uuid", spec.installation_id.to_string().into());
-    pair("-kernel", inputs.paths.kernel.clone().into_os_string());
-    pair("-initrd", inputs.paths.initrd.clone().into_os_string());
-    pair("-append", inputs.boot.command_line.clone().into());
+    pair(
+        "-kernel",
+        spec.root.join(spec.image.kernel_path()).into_os_string(),
+    );
+    pair(
+        "-initrd",
+        spec.root.join(spec.image.initrd_path()).into_os_string(),
+    );
+    pair("-append", spec.image.command_line().into());
     // Legacy -serial file: consumes a literal path, unlike -drive key/value syntax.
     let mut serial = OsString::from("file:");
     serial.push(spec.root.join("boot.log"));

@@ -221,6 +221,15 @@ fn fixture() -> (TempDir, ReviewedWindowsPin, WindowsInputPaths) {
     (t, pin, paths)
 }
 #[test]
+fn runtime_reopen_does_not_require_the_original_source_image_files() {
+    let (_temp, pin, paths) = fixture();
+    for path in [&paths.kernel, &paths.initrd, &paths.factory] {
+        fs::remove_file(path).unwrap();
+    }
+    let inputs = verify_windows_runtime(&pin.runtime_files, paths.runtime).unwrap();
+    inputs.recheck_runtime().unwrap();
+}
+#[test]
 fn initrd_compression_matches_the_publisher_contract() {
     let (_t, mut pin, paths) = fixture();
     for compression in ["gzip", "xz", "zstd", "cpio-prefix"] {
@@ -309,10 +318,7 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
     let args = launch_argv(&inputs, &spec, socket.to_str().unwrap()).unwrap();
     let strs: Vec<_> = args.iter().map(|x| x.to_str().unwrap()).collect();
     let value = |key| strs[strs.iter().position(|x| *x == key).unwrap() + 1];
-    assert_eq!(
-        value("-append"),
-        "root=UUID=22222222-2222-4222-8222-222222222222 ro console=ttyS0,115200n8 noresume"
-    );
+    assert_eq!(value("-append"), spec.image.command_line());
     assert_eq!(
         value("-serial"),
         format!("file:{}", spec.root.join("boot.log").display())
@@ -326,6 +332,14 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
             "if=none,id=os,format=qcow2,cache=writeback,file={}",
             qemu_value(&committed_os).unwrap()
         )
+    );
+    assert_eq!(
+        value("-kernel"),
+        spec.root.join(spec.image.kernel_path()).to_str().unwrap()
+    );
+    assert_eq!(
+        value("-initrd"),
+        spec.root.join(spec.image.initrd_path()).to_str().unwrap()
     );
     assert_eq!(value("-accel"), "whpx");
     assert_eq!(value("-qmp"), "stdio");

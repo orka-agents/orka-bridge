@@ -279,7 +279,9 @@ pub(super) fn private_directory(path: &Path) -> io::Result<File> {
     }
     let f = OpenOptions::new()
         .read(true)
-        .share_mode(1)
+        // Journal publication needs write-compatible directory sharing; DELETE
+        // remains excluded so the retained namespace cannot be moved or removed.
+        .share_mode(3)
         .custom_flags(0x02200000)
         .open(path)?;
     use std::os::windows::io::AsRawHandle;
@@ -353,13 +355,13 @@ pub(super) fn private_af_directory(path: &Path) -> io::Result<File> {
     use std::os::windows::io::AsRawHandle;
     let file = OpenOptions::new()
         .read(true)
-        .share_mode(1)
+        .share_mode(3)
         .custom_flags(0x02200000)
         .open(path)?;
     private_af_object(file.as_raw_handle(), true)?;
     Ok(file)
 }
-pub(super) fn create_af_directory(path: &Path) -> io::Result<File> {
+pub(crate) fn create_af_directory(path: &Path) -> io::Result<File> {
     unsafe {
         let token = current_token(TOKEN_QUERY)?;
         let u = user(token.0)?;

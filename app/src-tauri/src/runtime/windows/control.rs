@@ -387,13 +387,27 @@ impl<O: Borrow<OwnedQemuProcess>> ControlIo<O> {
         live(self.owner.borrow())?;
         self.channel.raw()
     }
+    fn read_socket(&self) -> io::Result<SOCKET> {
+        if self.channel.terminal.load(Ordering::Acquire) {
+            return Err(io::ErrorKind::BrokenPipe.into());
+        }
+        if self.owner.borrow().stopping_deadline().is_none() {
+            live(self.owner.borrow())?;
+        }
+        self.channel.raw()
+    }
     pub fn read(&self, output: &mut [u8], deadline: Instant) -> io::Result<usize> {
         if output.is_empty() {
             return Ok(0);
         }
         let until = deadline.min(Instant::now() + Duration::from_secs(120));
+        let until = self
+            .owner
+            .borrow()
+            .stopping_deadline()
+            .map_or(until, |stop| until.min(stop));
         let mut operation = || loop {
-            let socket = self.usable()?;
+            let socket = self.read_socket()?;
             if Instant::now() >= until {
                 return Err(io::Error::from(io::ErrorKind::TimedOut));
             }
@@ -424,6 +438,11 @@ impl<O: Borrow<OwnedQemuProcess>> ControlIo<O> {
             return Ok(0);
         }
         let until = deadline.min(Instant::now() + Duration::from_secs(30));
+        let until = self
+            .owner
+            .borrow()
+            .stopping_deadline()
+            .map_or(until, |stop| until.min(stop));
         write_count(
             until,
             || {
@@ -499,7 +518,7 @@ impl io::Write for GuestStream {
     }
     fn flush(&mut self) -> io::Result<()> {
         self.0
-            .usable()
+            .read_socket()
             .map(|_| ())
             .map_err(|error| self.0.failure(error))
     }

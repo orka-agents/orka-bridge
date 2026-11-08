@@ -12,6 +12,7 @@ pub mod apple_session;
 pub mod client;
 pub mod credential_store;
 pub mod credentials;
+pub mod handshake;
 pub mod identity;
 pub mod image_cache;
 pub mod image_install;

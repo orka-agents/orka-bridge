@@ -183,6 +183,20 @@ impl InstalledImageSet {
     pub fn os_identity(&self) -> &FileIdentity {
         &self.binding.os.identity
     }
+    #[cfg(windows)]
+    pub(crate) fn kernel_pin(&self) -> (u64, &str) {
+        (
+            self.binding.kernel.initial_bytes,
+            &self.binding.kernel.initial_sha256,
+        )
+    }
+    #[cfg(windows)]
+    pub(crate) fn initrd_pin(&self) -> (u64, &str) {
+        (
+            self.binding.initrd.initial_bytes,
+            &self.binding.initrd.initial_sha256,
+        )
+    }
     pub fn kernel_identity(&self) -> &FileIdentity {
         &self.binding.kernel.identity
     }

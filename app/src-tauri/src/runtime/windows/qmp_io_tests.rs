@@ -16,6 +16,28 @@ fn pipe() -> (File, File) {
     }
 }
 #[test]
+fn stop_disconnects_the_idle_writer_and_observes_its_thread_exit() {
+    let (tx, rx) = mpsc::sync_channel(1);
+    let (_, input) = mpsc::sync_channel(1);
+    let worker = std::thread::spawn(move || while let Ok((_bytes, _reply)) = rx.recv() {});
+    let mut workers = vec![worker];
+    let mut output = Some(tx);
+    let mut input = Some(input);
+    assert!(finish_io(
+        &mut output,
+        &mut input,
+        &mut workers,
+        Instant::now() + Duration::from_secs(5)
+    ));
+    assert!(output.is_none() && input.is_none() && workers.is_empty());
+    assert!(finish_io(
+        &mut output,
+        &mut input,
+        &mut workers,
+        Instant::now() - Duration::from_secs(1)
+    ));
+}
+#[test]
 fn real_pipe_frames_and_eof_reach_the_bounded_receiver() {
     let (read, mut write) = pipe();
     let (tx, rx) = mpsc::sync_channel(2);

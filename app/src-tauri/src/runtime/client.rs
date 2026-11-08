@@ -142,6 +142,25 @@ impl VmClient {
             }
         }
     }
+    pub fn readiness(&mut self) -> io::Result<()> {
+        self.ready_call(RequestBody::Readiness {})
+    }
+    // Lifecycle shutdown is routed by the native Windows session; other
+    // platform session adapters are not connected in this slice.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(super) fn shutdown(&mut self) -> io::Result<()> {
+        self.ready_call(RequestBody::Shutdown {})
+    }
+    fn ready_call(&mut self, body: RequestBody) -> io::Result<()> {
+        match self.call(body)? {
+            ResultBody::Ready {} => Ok(()),
+            ResultBody::Error { .. } => Err(io::Error::other("guest runtime refused request")),
+            _ => {
+                self.channel = None;
+                Err(invalid())
+            }
+        }
+    }
     /// Nonsecret negotiation. An old guest may close its strict protocol session.
     pub fn credential_status(&mut self) -> io::Result<CredentialState> {
         self.credential_call(RequestBody::CredentialStatus {})
