@@ -1,0 +1,2 @@
+# Embedded example bytes must match the public source on every host.
+app/src-tauri/example-agent/*.md text eol=lf
