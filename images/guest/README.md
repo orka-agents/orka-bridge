@@ -42,7 +42,7 @@ from [the restricted-worker build](https://github.com/orka-agents/orka/actions/r
 whose `sourceSHA` matches `versions.json`. It records the controller, AI worker,
 general-worker and publisher indexes for both architectures; select their
 platform children and record the actual byte hashes. Restore the exact pinned
-staged chart using [kmx's retained-chart extraction instructions](https://github.com/kaimahi-agents/kaimahi/blob/642fe0ea41584980751af9840844ae6f844e4a61/docs/kmx.md#source-packaged-restricted-profile),
+staged chart using [kmx's retained-chart extraction instructions](https://github.com/kaimahi-agents/kaimahi/blob/1a99465719e74ffea231b3597c6ae8e675708129/docs/kmx.md#source-packaged-restricted-profile),
 not a fresh Helm package or the older checked-in release chart. A local rebuild
 instead requires approved **native builders for each architecture**; no builder
 is provisioned here. Obtain the session loader, node,
@@ -315,7 +315,7 @@ To enable the native six-role profile, select additional hash-locked tools `kmx`
 original supported `kmx-offline/v1` install.json, selected by hash, not another
 Bridge schema. Its source, platform, complete profile, chart, descriptor, tool and
 six image identities must agree with the input lock. Source bundles use the
-`versions.json` pins: kmx `642fe0ea41584980751af9840844ae6f844e4a61`, Orka
+`versions.json` pins: kmx `1a99465719e74ffea231b3597c6ae8e675708129`, Orka
 `7916cd1c8c083ade6b10df6ba408f854d930190c` and profile
 `orka-7916cd1c-native/v1`. The profile selects restricted AI-worker RBAC and
 controller context-token enforcement. This does not approve a production release.
