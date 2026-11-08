@@ -145,6 +145,11 @@ mod native {
             self.diagnostics.clone()
         }
         fn tool(&self, spec: &LaunchSpec, args: &[OsString]) -> Result<Vec<u8>, RuntimeError> {
+            *self
+                .diagnostics
+                .capture
+                .lock()
+                .map_err(|_| RuntimeError::Closed)? = None;
             self.diagnostics.enter("Run qemu-img")?;
             let endpoint = ControlEndpoint::create(&spec.root)?;
             let mut child = OwnedQemuProcess::spawn_image_tool(
@@ -406,6 +411,65 @@ mod native {
                 .qmp
                 .set_running(true, Instant::now() + Duration::from_secs(30))
                 .map_err(Into::into)
+        }
+    }
+    #[cfg(test)]
+    mod diagnostic_tests {
+        use super::*;
+        use crate::runtime::{
+            image_install::materialize_image,
+            image_types::ImageTarget,
+            journal::Journal,
+            windows::{inputs, qmp_io},
+        };
+        use bridge_runtime_protocol::Uuid;
+        #[test]
+        fn failed_image_tool_does_not_report_a_previous_invocations_stderr() {
+            let temp = tempfile::tempdir_in(std::env::var_os("USERPROFILE").unwrap()).unwrap();
+            let root = temp.path().join("install");
+            let journal =
+                Journal::create(&root, BackendKind::Qemu, b"pc-q35-11.0".to_vec()).unwrap();
+            let source = temp.path().join("source");
+            fs::create_dir(&source).unwrap();
+            let verified =
+                super::super::boot_tests::fixture::verified(&source, ImageTarget::WindowsAmd64);
+            let target = journal
+                .image_target(&verified.image().identity().state_compatibility_id)
+                .unwrap();
+            let (_sender, closed) = tokio::sync::watch::channel(false);
+            let image = tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(materialize_image(&verified, &target, closed, |_| {}))
+                .unwrap();
+            let mut spec = journal.spec(Uuid::new_v4(), Arc::new(image));
+            spec.root = temp.path().join("missing-root");
+            let runtime = temp.path().join("runtime");
+            fs::create_dir_all(runtime.join("bin")).unwrap();
+            let mut files = Vec::new();
+            for name in ["bin/qemu-system-x86_64.exe", "bin/qemu-img.exe"] {
+                fs::write(runtime.join(name), b"abc").unwrap();
+                files.push(inputs::FilePin {
+                    name: name.into(),
+                    bytes: 3,
+                    sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+                        .into(),
+                });
+            }
+            let backend = WindowsBackend::new(Arc::new(
+                inputs::verify_windows_runtime(&files, runtime).unwrap(),
+            ));
+            *backend.diagnostics.capture.lock().unwrap() = Some(qmp_io::tests::captured_stderr(
+                b"previous image-tool warning",
+            ));
+            assert_eq!(
+                backend.diagnostics.stderr().unwrap(),
+                b"previous image-tool warning"
+            );
+            // Endpoint creation fails before spawning anything or creating a new capture.
+            assert!(backend.tool(&spec, &[]).is_err());
+            assert!(backend.diagnostics.stderr().unwrap().is_empty());
+            assert_eq!(backend.diagnostics.stage(), "Run qemu-img");
         }
     }
 }

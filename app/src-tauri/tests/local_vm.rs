@@ -235,6 +235,7 @@ async fn setup_retains_the_actual_stop_error_after_repeated_close() {
     assert!(reason.contains("Stopping"), "{reason}");
     assert!(reason.contains("stop detail"), "{reason}");
     assert_eq!(failed["localVm"], "failed");
+    assert_eq!(failed["model"], "locked");
     assert_eq!(failed["selected"], "localVm");
     assert!(vm.shutdown().await.is_err());
     let again = serde_json::to_value(local_vm::setup_status(store, &vm).await.unwrap()).unwrap();
@@ -285,6 +286,7 @@ async fn setup_retains_the_actual_start_error_including_during_close() {
             "{reason}"
         );
         assert_eq!(failed["localVm"], "failed");
+        assert_eq!(failed["model"], "locked");
         assert!(vm.shutdown().await.is_err());
         let again =
             serde_json::to_value(local_vm::setup_status(store, &vm).await.unwrap()).unwrap();
@@ -354,7 +356,18 @@ async fn setup_selection_persists_then_starts_but_status_never_starts() {
     let value = serde_json::to_value(local_vm::setup_status(store, &vm).await.unwrap()).unwrap();
     assert_eq!(value["localVm"], "ready");
     assert!(value.get("localVmError").unwrap().is_null());
-    assert_eq!(value["model"], "locked");
+    assert_eq!(
+        value["model"],
+        if cfg!(target_os = "macos") {
+            "locked"
+        } else {
+            "available"
+        }
+    );
+    assert!(
+        !temp.path().join("setup-v1/model-v1").exists(),
+        "status must not capture or associate a sign-in"
+    );
     vm.shutdown().await.unwrap();
 }
 #[tokio::test]

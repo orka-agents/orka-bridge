@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 
 const localStates = ['notIntegrated', 'idle', 'preparing', 'installing', 'starting', 'ready', 'closing', 'closed', 'failed'] as const;
 export type LocalVmState = (typeof localStates)[number];
-export type SetupStatus = { selected: 'localVm' | null; localVm: LocalVmState; localVmError?: string | null; model: 'locked' };
+export type SetupStatus = { selected: 'localVm' | null; localVm: LocalVmState; localVmError?: string | null; model: 'locked' | 'available' };
 function isLocalState(value: unknown): value is LocalVmState {
   return typeof value === 'string' && localStates.some(state => state === value);
 }
@@ -18,7 +18,8 @@ async function call(command: 'setup_status' | 'setup_select_local'): Promise<Res
       || !('localVm' in value) || !isLocalState(value.localVm)
       || ('localVmError' in value && value.localVmError !== null && typeof value.localVmError !== 'string')
       || (value.localVm === 'ready' && value.selected !== 'localVm')
-      || !('model' in value) || value.model !== 'locked'
+      || !('model' in value) || (value.model !== 'locked' && value.model !== 'available')
+      || (value.model === 'available' && value.localVm !== 'ready')
       || (command === 'setup_select_local' && value.selected !== 'localVm')) {
       return { ok: false, message: 'Setup information is not supported by this build.' };
     }

@@ -1,6 +1,7 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { afterEach, expect, test, vi } from 'vitest';
 import { selectLocal, setupStatus } from './state';
+
 const snapshot = { selected: null, localVm: 'notIntegrated', model: 'locked' };
 afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
 
@@ -31,6 +32,17 @@ test.each([42, false, {}, ['native failure']])('rejects malformed native failure
   mockIPC(() => ({ ...snapshot, selected: 'localVm', localVmError }));
   expect((await setupStatus()).ok).toBe(false);
   expect((await selectLocal()).ok).toBe(false);
+});
+test.each([false, true])('model availability requires the selected running session, with error field %j', async withError => {
+  vi.stubGlobal('isTauri', true);
+  const value = { selected: 'localVm', localVm: 'ready', model: 'available', ...(withError ? { localVmError: null } : {}) };
+  mockIPC(() => value);
+  expect(await setupStatus()).toEqual({ ok: true, status: value });
+  expect(await selectLocal()).toEqual({ ok: true, status: value });
+  for (const localVm of ['starting', 'closed', 'notIntegrated']) {
+    mockIPC(() => ({ ...value, localVm }));
+    expect((await setupStatus()).ok).toBe(false);
+  }
 });
 test('no-argument selection requires an acknowledgement of that selection', async () => {
   vi.stubGlobal('isTauri', true);

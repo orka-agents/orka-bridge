@@ -1,4 +1,8 @@
 use super::*;
+
+pub(crate) fn captured_stderr(bytes: &[u8]) -> StderrCapture {
+    StderrCapture(Arc::new(Mutex::new(bytes.to_vec())))
+}
 use std::os::windows::io::FromRawHandle;
 fn pipe() -> (File, File) {
     unsafe {

@@ -1,7 +1,7 @@
 //! App-level custody of one delivered native session; not a second VM lifecycle.
 use crate::{
     engine::{types::*, EngineTransport, TransportFuture},
-    runtime::types::RuntimeError,
+    runtime::{client::VmClient, types::RuntimeError},
 };
 use serde::Serialize;
 use std::{
@@ -24,6 +24,10 @@ pub fn example() -> ExamplePair {
         tests: include_str!("../example-agent/web-reader.agent.test.md"),
     }
 }
+
+// The pinned Mac guest predates model RPCs; probing it retires its shared channel.
+// Enable Mac model setup only when its matching development image is delivered.
+const MODEL_IMAGE_AVAILABLE: bool = !cfg!(target_os = "macos");
 
 pub async fn setup_status(
     store: Arc<crate::setup::SetupStore>,
@@ -94,6 +98,16 @@ pub trait LocalFactory: Send + Sync {
     ) -> StartFuture<'_>;
 }
 pub trait LocalSession: Send {
+    /// Only called under the whole-session blocking custody; no client transfer.
+    fn with_client(
+        &mut self,
+        _work: &mut dyn FnMut(
+            bridge_runtime_protocol::Uuid,
+            &mut VmClient,
+        ) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unavailable)
+    }
     fn execute(&mut self, request: EngineRequest) -> TransportFuture<'_>;
     fn stop(&mut self) -> Result<(), RuntimeError>;
 }
@@ -169,7 +183,16 @@ impl LocalVm {
     }
     fn snapshot(&self, snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
         let state = self.inner.state.lock().unwrap();
-        snapshot.with_local_vm(state.phase.as_str(), state.failure.clone())
+        // Publish phase, failure text and model availability from the same observation.
+        snapshot
+            .with_local_vm(state.phase.as_str(), state.failure.clone())
+            .with_model(
+                if state.phase == LocalVmStatus::Ready && MODEL_IMAGE_AVAILABLE {
+                    "available"
+                } else {
+                    "locked"
+                },
+            )
     }
     pub fn start(self: &Arc<Self>) {
         let mut state = self.inner.state.lock().unwrap();
@@ -203,6 +226,69 @@ impl LocalVm {
             }
             successful
         }));
+    }
+    /// Native callers keep typed results local; renderer commands wrap fixed work only.
+    /// Closing during admitted work returns Closed after completion; effects may have applied.
+    pub async fn with_client<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(bridge_runtime_protocol::Uuid, &mut VmClient) -> T + Send + 'static,
+    ) -> Result<T, RuntimeError> {
+        if !self.inner.ready() {
+            return Err(RuntimeError::Unavailable);
+        }
+        let mut session = self
+            .inner
+            .session
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| RuntimeError::Busy)?;
+        let inner = self.inner.clone();
+        tokio::task::spawn_blocking(move || {
+            if !inner.ready() {
+                return Err(RuntimeError::Closed);
+            }
+            let mut work = Some(work);
+            let mut result = None;
+            session
+                .as_mut()
+                .ok_or(RuntimeError::Unavailable)?
+                .with_client(&mut |id, client| {
+                    let work = work.take().ok_or(RuntimeError::Unavailable)?;
+                    result = Some(work(id, client));
+                    Ok(())
+                })?;
+            if !inner.ready() {
+                return Err(RuntimeError::Closed);
+            }
+            result.ok_or(RuntimeError::Unavailable)
+        })
+        .await
+        .map_err(|_| RuntimeError::Unavailable)?
+    }
+    pub async fn connect_model(
+        &self,
+        setup: Arc<crate::setup::SetupStore>,
+    ) -> Result<crate::setup::ModelSetupState, crate::setup::SetupError> {
+        if !MODEL_IMAGE_AVAILABLE {
+            return Err(crate::setup::SetupError::model("modelGuest"));
+        }
+        let runtime = tokio::runtime::Handle::current();
+        self.with_client(move |id, client| {
+            setup.connect_stored_model(
+                id,
+                client,
+                &crate::runtime::credential_store::OsCredentialStore,
+                || runtime.block_on(crate::runtime::credentials::capture_stored_github_token()),
+            )
+        })
+        .await
+        .map_err(|error| {
+            crate::setup::SetupError::model(if matches!(error, RuntimeError::Busy) {
+                "modelBusy"
+            } else {
+                "modelSession"
+            })
+        })?
     }
     pub fn request_close(&self) {
         let mut state = self.inner.state.lock().unwrap();

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { selectLocal, setupStatus, type LocalVmState, type SetupStatus } from './state';
+import Model from './Model';
+import { type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
+
 const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting', 'closing'].includes(state);
 const runtimeCopy: Record<LocalVmState, string> = {
   notIntegrated: 'VM integration is not included in this build.',
@@ -66,7 +68,7 @@ export default function Setup({ onOpenExample, onReady }: { onOpenExample: () =>
         {status && <div className="setup-availability">
           <h3>Native setup available</h3>
           <p className="muted">{runtimeCopy[status.localVm]}</p>
-          {status.localVm === 'failed' && status.localVmError && <p>{status.localVmError}</p>}
+          {status.localVm === 'failed' && status.localVmError && <p role="alert">{status.localVmError}</p>}
           {status.localVm === 'ready' && <button type="button" className="setup-button" onClick={onOpenExample}>Open example</button>}
         </div>}
         {error && <div role="alert"><p>{error}</p>
@@ -74,11 +76,7 @@ export default function Setup({ onOpenExample, onReady }: { onOpenExample: () =>
             onClick={() => { setBusy(true); setError(undefined); setCheck(value => value + 1); }}>Check again</button>
         </div>}
       </section>
-      <section className="card setup-model" aria-labelledby="model-title">
-        <h2 id="model-title">Model connection locked</h2>
-        <p className="muted">Model connection isn't enabled on this screen. No credentials are sent.</p>
-        <button type="button" className="setup-button" disabled>Connect model</button>
-      </section>
+      <Model enabled={status?.localVm === 'ready' && status.model === 'available'} />
     </div>
   );
 }

@@ -286,6 +286,8 @@ impl LocalFactory for NativeFactory {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_err(|_| RuntimeError::Unavailable)?
                 .as_secs();
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            let installation = installed.1.installation_id();
             #[cfg(windows)]
             let native = start_windows_session(inputs, installed.0, installed.1, &root, utc)?;
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
@@ -296,7 +298,7 @@ impl LocalFactory for NativeFactory {
                 utc,
             )?;
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            let native = NativeSession(session);
+            let native = NativeSession(session, installation);
             Ok(Box::new(native) as Box<dyn LocalSession>)
         }))
     }
@@ -312,6 +314,7 @@ fn start_windows_session(
     // Keep the verified private root non-replaceable even if failed startup or
     // shutdown releases its worker before diagnostics are written.
     let diagnostic_root = crate::runtime::windows::security::private_af_directory(root)?;
+    let installation = image.installation_id();
     let backend = crate::runtime::windows::backend::WindowsBackend::new(inputs);
     let failure = backend.failure_diagnostics();
     let result = crate::runtime::RuntimeWorker::new(Box::new(backend), journal, image)
@@ -319,6 +322,7 @@ fn start_windows_session(
     match result {
         Ok(session) => Ok(NativeSession {
             session,
+            installation,
             root: root.to_owned(),
             _diagnostic_root: diagnostic_root,
         }),
@@ -333,16 +337,40 @@ fn start_windows_session(
 #[cfg(all(debug_assertions, windows))]
 struct NativeSession {
     session: crate::runtime::windows::session::WindowsSession,
+    installation: bridge_runtime_protocol::Uuid,
     root: PathBuf,
     _diagnostic_root: fs::File,
 }
 #[cfg(all(debug_assertions, all(target_os = "macos", target_arch = "aarch64")))]
-struct NativeSession(crate::runtime::apple_session::AppleVmSession);
+struct NativeSession(
+    crate::runtime::apple_session::AppleVmSession,
+    bridge_runtime_protocol::Uuid,
+);
 #[cfg(all(
     debug_assertions,
     any(windows, all(target_os = "macos", target_arch = "aarch64"))
 ))]
 impl LocalSession for NativeSession {
+    fn with_client(
+        &mut self,
+        work: &mut dyn FnMut(
+            bridge_runtime_protocol::Uuid,
+            &mut VmClient,
+        ) -> Result<(), RuntimeError>,
+    ) -> Result<(), RuntimeError> {
+        #[cfg(windows)]
+        {
+            work(self.installation, self.session.client_mut()?)
+        }
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        {
+            self.0
+                .transport()
+                .ok_or(RuntimeError::Unavailable)?
+                .borrow_client(|client| work(self.1, client))
+                .map_err(|_| RuntimeError::Unavailable)?
+        }
+    }
     fn execute(&mut self, request: EngineRequest) -> TransportFuture<'_> {
         #[cfg(windows)]
         {

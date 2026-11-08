@@ -60,7 +60,10 @@ async fn windows_session_startup_inside_tokio_reaches_child_creation_without_pan
         Err(RuntimeError::Io(error)) => {
             let reason = error.to_string();
             assert!(reason.contains("Run qemu-img"), "{reason}");
-            assert!(reason.contains("193") || reason.contains("216"), "{reason}");
+            assert!(
+                reason.contains("(os error 193)") || reason.contains("(os error 216)"),
+                "{reason}"
+            );
             assert!(reason.contains("Details:"), "{reason}");
         }
         Err(error) => panic!("expected native executable refusal, got {error:?}"),
