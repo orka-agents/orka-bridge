@@ -265,6 +265,26 @@ impl VmClient {
         }
         Ok(operation)
     }
+    /// Trusted native Run only; uses the original request sequence and never retries a POST.
+    pub fn orka_request(&mut self, request: OrkaRequest) -> io::Result<OrkaReply> {
+        if request.validate().is_err() || self.channel.is_none() {
+            return Err(invalid());
+        }
+        let operation = Uuid::new_v4();
+        match self.call(RequestBody::Execute {
+            operation,
+            action: EngineActionWire::Orka { request },
+            snapshot: None,
+        })? {
+            ResultBody::Operation { operation: id, .. } if id == operation => {}
+            _ => return Err(invalid()),
+        }
+        let result = self.result(operation)?;
+        if result.exit != 0 {
+            return Err(invalid());
+        }
+        serde_json::from_slice(&result.stdout).map_err(|_| invalid())
+    }
     pub fn status(&mut self, operation: Uuid) -> io::Result<OperationInfo> {
         let unknown = || OperationInfo {
             state: OperationState::Unknown,
