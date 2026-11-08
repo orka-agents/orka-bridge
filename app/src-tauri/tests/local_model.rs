@@ -111,10 +111,8 @@ async fn pinned_mac_model_refusal_keeps_the_session_channel_untouched() {
         root.path().to_owned(),
     )));
     setup.select_local().unwrap();
-    assert_eq!(
-        vm.connect_model(setup).await.unwrap_err().kind,
-        "modelGuest"
-    );
+    let error = serde_json::to_value(vm.connect_model(setup).await.unwrap_err()).unwrap();
+    assert_eq!(error["kind"], "modelGuest");
     assert_eq!(p.calls.load(Ordering::SeqCst), 0);
     assert_eq!(vm.status(), LocalVmStatus::Ready);
     assert!(!root.path().join("setup-v1/model-v1").exists());
