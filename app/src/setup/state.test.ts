@@ -1,6 +1,7 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { afterEach, expect, test, vi } from 'vitest';
 import { selectLocal, setupStatus } from './state';
+
 const snapshot = { selected: null, localVm: 'notIntegrated', model: 'locked' };
 afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
 
@@ -17,6 +18,16 @@ test.each(['idle', 'preparing', 'installing', 'starting', 'ready', 'closing', 'c
   const value = { ...snapshot, selected: 'localVm', localVm };
   mockIPC(() => value);
   expect(await setupStatus()).toEqual({ ok: true, status: value });
+});
+test('model availability requires the selected running session', async () => {
+  vi.stubGlobal('isTauri', true);
+  const value = { selected: 'localVm', localVm: 'ready', model: 'available' };
+  mockIPC(() => value);
+  expect(await setupStatus()).toEqual({ ok: true, status: value });
+  for (const localVm of ['starting', 'closed', 'notIntegrated']) {
+    mockIPC(() => ({ ...value, localVm }));
+    expect((await setupStatus()).ok).toBe(false);
+  }
 });
 test('no-argument selection requires an acknowledgement of that selection', async () => {
   vi.stubGlobal('isTauri', true);

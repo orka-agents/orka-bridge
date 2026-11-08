@@ -47,6 +47,14 @@ impl CapturedGithubToken {
     }
 }
 
+#[cfg(test)]
+impl TryFrom<&[u8]> for CapturedGithubToken {
+    type Error = CaptureError;
+    fn try_from(raw: &[u8]) -> Result<Self, Self::Error> {
+        parse(raw.to_vec())
+    }
+}
+
 fn parse(raw: Vec<u8>) -> Result<CapturedGithubToken, CaptureError> {
     if raw.len() > MAX_CAPTURE {
         return Err(CaptureError::InvalidOutput);

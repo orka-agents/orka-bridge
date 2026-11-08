@@ -35,6 +35,19 @@ fn setup_example() -> ExamplePair {
     local_vm::example()
 }
 
+#[derive(serde::Serialize)]
+struct ModelReply {
+    ready: bool,
+}
+#[tauri::command]
+async fn setup_connect_model(
+    state: tauri::State<'_, Arc<SetupStore>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> Result<ModelReply, SetupError> {
+    let model = vm.connect_model(Arc::clone(state.inner())).await?;
+    Ok(ModelReply { ready: model.ready })
+}
+
 fn main() {
     let closing = AtomicBool::new(false);
     let completed = Arc::new(AtomicBool::new(false));
@@ -52,7 +65,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_example])
+        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_example, setup_connect_model])
         .build(tauri::generate_context!())
         .expect("error while building Bridge")
         .run(move |app, event| {

@@ -21,6 +21,10 @@ pub struct SetupSnapshot {
 }
 
 impl SetupSnapshot {
+    pub fn with_model(mut self, state: &'static str) -> Self {
+        self.model = state;
+        self
+    }
     pub fn with_local_vm(mut self, state: &'static str) -> Self {
         self.local_vm = state;
         self
@@ -31,6 +35,32 @@ impl SetupSnapshot {
 pub struct SetupError {
     kind: &'static str,
     message: &'static str,
+}
+impl SetupError {
+    pub(crate) fn model(kind: &'static str) -> Self {
+        let message = match kind {
+            "modelCaptureUnavailable" => {
+                "Install GitHub CLI and sign in to github.com before connecting."
+            }
+            "modelCaptureFailed" => {
+                "The stored GitHub sign-in could not be read. Check your GitHub CLI sign-in."
+            }
+            "modelCaptureInvalid" => "The stored GitHub sign-in returned invalid credential data.",
+            "modelCaptureTimedOut" => "Reading the stored GitHub sign-in timed out.",
+            "modelStore" => "The native credential store could not save or load the sign-in.",
+            "modelGuest" => "The guest model handler is unavailable or is not idle.",
+            "modelDelivery" => {
+                "Private credential delivery was not acknowledged. Completion is unknown."
+            }
+            "modelConnect" => {
+                "Guest Connect did not acknowledge a ready model. Completion is unknown."
+            }
+            "modelBusy" => "Another operation is using the local VM. Wait for it to finish.",
+            "modelSession" => "The local VM is not available for model connection.",
+            _ => "The stored model connection is unavailable or its completion is unknown.",
+        };
+        Self { kind, message }
+    }
 }
 fn storage_error() -> SetupError {
     SetupError {
