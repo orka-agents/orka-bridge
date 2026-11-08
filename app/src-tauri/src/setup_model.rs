@@ -107,6 +107,44 @@ fn state(b: Option<&Binding>, ready: bool) -> ModelSetupState {
     }
 }
 impl SetupStore {
+    /// Fixed explicit app intent. Capture is never automatic and never repeats an association.
+    pub fn connect_stored_model(
+        &self,
+        installation: Uuid,
+        client: &mut VmClient,
+        store: &impl CredentialStore,
+        capture: impl FnOnce() -> Result<CapturedGithubToken, crate::runtime::credentials::CaptureError>,
+    ) -> Result<ModelSetupState, SetupError> {
+        let binding = self.model_binding_status()?;
+        if !binding.associated && !binding.unknown {
+            // A serving VM can still have an older handler. Probe before host capture/save.
+            let before = client
+                .model_status()
+                .map_err(|_| SetupError::model("modelGuest"))?;
+            if before.phase != ModelPhase::Idle || before.credential.installed {
+                return Err(SetupError::model("modelGuest"));
+            }
+            use crate::runtime::credentials::CaptureError;
+            let token = capture().map_err(|error| {
+                SetupError::model(match error {
+                    CaptureError::Unavailable => "modelCaptureUnavailable",
+                    CaptureError::Failed => "modelCaptureFailed",
+                    CaptureError::InvalidOutput => "modelCaptureInvalid",
+                    CaptureError::TimedOut => "modelCaptureTimedOut",
+                })
+            })?;
+            self.associate_captured(installation, &token, store)?;
+        }
+        self.connect_model(
+            installation,
+            ModelSelection {
+                provider: "copilot".into(),
+                model: "gpt-5.6-terra".into(),
+            },
+            client,
+            store,
+        )
+    }
     /// Explicit native intent only. Neither setup status nor reopen captures a sign-in.
     pub fn associate_captured(
         &self,
@@ -141,7 +179,9 @@ impl SetupStore {
         };
         // Reserve the exact slot durably: save can apply and then report an error.
         write_binding(root, &b)?;
-        store.save(b.slot, secret).map_err(|_| unavailable())?;
+        store
+            .save(b.slot, secret)
+            .map_err(|_| SetupError::model("modelStore"))?;
         b.phase = Phase::Stored;
         // Publication can be visible even when the final directory flush fails.
         write_binding(root, &b)?;
@@ -194,25 +234,31 @@ impl SetupStore {
             return Ok(state(Some(&b), true));
         }
         // An older image must be rejected before retrieving any secret.
-        let before = client.model_status().map_err(|_| unavailable())?;
+        let before = client
+            .model_status()
+            .map_err(|_| SetupError::model("modelGuest"))?;
         if before.phase != ModelPhase::Idle || before.credential.installed {
-            return Err(unavailable());
+            return Err(SetupError::model("modelGuest"));
         }
-        let secret = store.load(b.slot).map_err(|_| unavailable())?;
+        let secret = store
+            .load(b.slot)
+            .map_err(|_| SetupError::model("modelStore"))?;
         b.phase = Phase::Pending;
         b.nonce = Some(client.boot_nonce());
         write_binding(root, &b)?; // durable barrier before either guest mutation
         let delivered = client
             .deliver_credential(&secret, before.credential.generation)
-            .map_err(|_| unavailable())?;
-        let generation = delivered.generation.ok_or_else(unavailable)?;
+            .map_err(|_| SetupError::model("modelDelivery"))?;
+        let generation = delivered
+            .generation
+            .ok_or_else(|| SetupError::model("modelDelivery"))?;
         let remote = client
             .connect_model(generation, selection)
-            .map_err(|_| unavailable())?;
+            .map_err(|_| SetupError::model("modelConnect"))?;
         b.connection = remote.connection;
         if remote.phase != ModelPhase::Ready {
             write_binding(root, &b)?;
-            return Err(unavailable());
+            return Err(SetupError::model("modelConnect"));
         }
         b.phase = Phase::Connected;
         write_binding(root, &b)?;
@@ -267,6 +313,88 @@ mod scenarios;
 mod tests {
     use super::*;
     use crate::runtime::credential_store::StoreError;
+    #[test]
+    fn unsupported_guest_cannot_capture_or_save_first_sign_in() {
+        struct Closed;
+        impl Read for Closed {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Ok(0)
+            }
+        }
+        impl Write for Closed {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = SetupStore::new(Some(tmp.path().to_owned()));
+        setup.select_local().unwrap();
+        let mut client = VmClient::established(Box::new(Closed), Uuid::new_v4()).unwrap();
+        let mut captures = 0;
+        let error = setup
+            .connect_stored_model(Uuid::new_v4(), &mut client, &Store, || {
+                captures += 1;
+                Err(crate::runtime::credentials::CaptureError::Failed)
+            })
+            .unwrap_err();
+        assert_eq!(
+            captures, 0,
+            "unsupported guest must refuse before first capture"
+        );
+        assert_eq!(error.kind, "modelGuest");
+        assert!(!tmp.path().join("setup-v1/model-v1").exists());
+    }
+    #[test]
+    fn explicit_capture_failure_is_visible_without_reserving_or_saving_a_slot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = SetupStore::new(Some(tmp.path().to_owned()));
+        setup.select_local().unwrap();
+        struct Idle(std::io::Cursor<Vec<u8>>);
+        impl Read for Idle {
+            fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+                self.0.read(b)
+            }
+        }
+        impl Write for Idle {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let nonce = Uuid::new_v4();
+        let response = encode(&Frame::Result(WireResult {
+            version: VERSION,
+            boot_nonce: nonce,
+            request_id: 3,
+            body: ResultBody::ModelState(ModelState {
+                phase: ModelPhase::Idle,
+                connection: None,
+                credential: CredentialState {
+                    profile: CREDENTIAL_PROFILE,
+                    generation: None,
+                    installed: false,
+                },
+            }),
+        }))
+        .unwrap();
+        let mut client =
+            VmClient::established(Box::new(Idle(std::io::Cursor::new(response))), nonce).unwrap();
+        let error = setup
+            .connect_stored_model(Uuid::new_v4(), &mut client, &Store, || {
+                Err(crate::runtime::credentials::CaptureError::Failed)
+            })
+            .unwrap_err();
+        assert_eq!(error.kind, "modelCaptureFailed");
+        assert!(!setup.model_binding_status().unwrap().associated);
+        assert!(!tmp.path().join("setup-v1/model-v1").exists());
+        let encoded = serde_json::to_string(&error).unwrap();
+        assert!(!encoded.contains("synthetic-model-only"));
+    }
     struct Store;
     impl CredentialStore for Store {
         fn save(&self, _: Uuid, secret: &[u8]) -> Result<(), StoreError> {
@@ -414,7 +542,9 @@ mod tests {
         let mut client = VmClient::established(Box::new(a), Uuid::new_v4()).unwrap();
         assert!(
             setup
-                .connect_model(install, connection.selection.clone(), &mut client, &vault)
+                .connect_stored_model(install, &mut client, &vault, || panic!(
+                    "stored binding must not recapture"
+                ))
                 .unwrap()
                 .ready
         );

@@ -26,8 +26,25 @@ pub enum DevImageDiskFormat {
     Qcow2,
 }
 
-pub const STATE_COMPATIBILITY_ID: &str = "engineering-afc68ae1";
-pub(crate) const SOURCE_COMMIT: &str = "afc68ae14e9702d148b01b243cc2a27d90fde5a6";
+impl DevImagePlatform {
+    pub const fn state_compatibility_id(self) -> &'static str {
+        match self {
+            Self::MacOsArm64 => "engineering-afc68ae1",
+            Self::WindowsAmd64 => "engineering-fcc64fc7",
+        }
+    }
+    pub const fn source_commit(self) -> &'static str {
+        match self {
+            Self::MacOsArm64 => "afc68ae14e9702d148b01b243cc2a27d90fde5a6",
+            Self::WindowsAmd64 => "fcc64fc7501113feab07b24813ff4b6d0c7e8941",
+        }
+    }
+}
+pub const STATE_COMPATIBILITY_ID: &str = if cfg!(windows) {
+    DevImagePlatform::WindowsAmd64.state_compatibility_id()
+} else {
+    DevImagePlatform::MacOsArm64.state_compatibility_id()
+};
 
 pub struct VerifiedDevImage {
     platform: DevImagePlatform,
@@ -138,7 +155,7 @@ const WINDOWS_PINS: Pins = Pins {
         FilePin {
             name: "boot-assets.json",
             bytes: 12504,
-            sha256: digest(b"91393279cd7588a7e667e8870678e65babc332dae3269328b17d6ffccb5fb480"),
+            sha256: digest(b"69783addb11d948a983d02ba020cce985a9c02f9fe259064768d161add7fd6a7"),
         },
         FilePin {
             name: "os.kernel",
@@ -147,13 +164,13 @@ const WINDOWS_PINS: Pins = Pins {
         },
         FilePin {
             name: "os.initrd",
-            bytes: 16215313,
-            sha256: digest(b"51a5e3f113b2c445f2bd9e889f9e9819e1188937e2035c878f48a4d30adb9d61"),
+            bytes: 16268190,
+            sha256: digest(b"2d04f4018d0e4430940d2d350d9d43cea13ca34e84a3ee9e105c00b1c1987579"),
         },
         FilePin {
             name: "os.qcow2",
-            bytes: 3753902080,
-            sha256: digest(b"a0207fbf8d07001e25b07691daa5d17a3f7c2f7b7bd0b1c7d5b6250ef306e488"),
+            bytes: 3786539008,
+            sha256: digest(b"d6b5da35a08d297dca0e09fd4f03815005c66cc23db3032f74a8519bcbfdeec2"),
         },
     ],
 };
@@ -369,6 +386,44 @@ mod tests {
             file.read_to_end(&mut actual).unwrap();
             assert_eq!(&actual, expected);
         }
+    }
+
+    #[test]
+    fn delivered_amd_model_image_and_arm_identity_stay_separate() {
+        assert_eq!(
+            WINDOWS_PINS.files[0].sha256,
+            digest(b"69783addb11d948a983d02ba020cce985a9c02f9fe259064768d161add7fd6a7")
+        );
+        assert_eq!(WINDOWS_PINS.files[2].bytes, 16268190);
+        assert_eq!(
+            WINDOWS_PINS.files[2].sha256,
+            digest(b"2d04f4018d0e4430940d2d350d9d43cea13ca34e84a3ee9e105c00b1c1987579")
+        );
+        assert_eq!(WINDOWS_PINS.files[3].bytes, 3786539008);
+        assert_eq!(
+            WINDOWS_PINS.files[3].sha256,
+            digest(b"d6b5da35a08d297dca0e09fd4f03815005c66cc23db3032f74a8519bcbfdeec2")
+        );
+        assert_eq!(
+            DevImagePlatform::WindowsAmd64.source_commit(),
+            "fcc64fc7501113feab07b24813ff4b6d0c7e8941"
+        );
+        assert_eq!(
+            DevImagePlatform::WindowsAmd64.state_compatibility_id(),
+            "engineering-fcc64fc7"
+        );
+        assert_eq!(
+            DevImagePlatform::MacOsArm64.source_commit(),
+            "afc68ae14e9702d148b01b243cc2a27d90fde5a6"
+        );
+        assert_eq!(
+            DevImagePlatform::MacOsArm64.state_compatibility_id(),
+            "engineering-afc68ae1"
+        );
+        assert_eq!(
+            MAC_PINS.files[0].sha256,
+            digest(b"a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27")
+        );
     }
 
     // Reject-all stubs, incorrect handle rewinding, or identity selection break this.

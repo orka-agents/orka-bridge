@@ -568,7 +568,7 @@ impl PreparedImage {
     pub(crate) fn from_development(
         image: crate::dev_image::VerifiedDevImage,
     ) -> Result<Self, ImageError> {
-        use crate::dev_image::{DevImagePlatform, SOURCE_COMMIT, STATE_COMPATIBILITY_ID};
+        use crate::dev_image::DevImagePlatform;
         use std::io::Seek;
         let (receipt_bytes, receipt_sha) = image.declared(0);
         let mut file = image.manifest().try_clone().map_err(storage)?.into_std();
@@ -637,8 +637,8 @@ impl PreparedImage {
                 // In engineering sets this common identity slot hashes the raw boot receipt.
                 manifest_sha256: receipt_sha,
                 image_id: format!("engineering-{}", target_name(target)),
-                state_compatibility_id: STATE_COMPATIBILITY_ID.into(),
-                build_source_commit: SOURCE_COMMIT.into(),
+                state_compatibility_id: image.platform().state_compatibility_id().into(),
+                build_source_commit: image.platform().source_commit().into(),
             },
             target,
             disk_bytes,
