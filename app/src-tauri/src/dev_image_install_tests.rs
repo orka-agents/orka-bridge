@@ -139,7 +139,7 @@ async fn engineering_binding_does_not_restore_release_compatibility_or_creation(
     );
     open_installed_image(&no_creation).unwrap();
     let old = InstallationImageTarget::from_owned_installation(
-        &root, &owner, id, ImageTarget::WindowsAmd64, "engineering-afc68ae1", false,
+        &root, &owner, id, ImageTarget::WindowsAmd64, "engineering-a3c5c9e", false,
     );
     let binding = fs::read(path.join("image-binding.json")).unwrap();
     assert!(matches!(open_installed_image(&old), Err(ImageError::RetainedImage)));
@@ -179,7 +179,7 @@ async fn frozen_windows_source_materializes_actual_pinned_bytes() {
     );
     let installed = prepared.materialize(&target, closed, |_| {}).await.unwrap();
     installed.revalidate(&target).unwrap();
-    assert_eq!(installed.initial_os_bytes(), 3711172608);
-    assert_eq!(installed.initial_os_sha256(), "daccffc3f36ee117100b6006ed0894c52e843df9c014badeba5abf9a23686bfc");
+    assert_eq!(installed.initial_os_bytes(), 3599433728);
+    assert_eq!(installed.initial_os_sha256(), "6b89b922b09368cb552ec8e11e5f95a55fec80dd5c01a36b24d26c736d27f0b9");
     assert_eq!(installed.kernel_release(), "6.1.0-54-cloud-amd64");
 }
