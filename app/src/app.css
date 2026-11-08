@@ -2,8 +2,9 @@
   color-scheme: light;
   --color-text: #0B0B0C;
   --color-text-secondary: #4B4C52;
-  --color-page: #FFFFFF;
-  --color-card: #FFFFFF;
+  --color-text-tertiary: #65666D;
+  --color-page: #FCFCFD;
+  --color-card: #FCFCFD;
   --color-chrome: #FAFAFA;
   --color-hover: #F0F0F2;
   --color-border: #E8E8EB;
@@ -13,8 +14,8 @@
   --color-status-pending: #B45309;
   --color-status-running: #0369A1;
   --color-status-succeeded: #15803D;
-  --color-status-failed: #DC2626;
-  --color-status-cancelled: #71717A;
+  --color-status-failed: #B91C1C;
+  --color-status-cancelled: #65666D;
   --mark-filter: none;
   --font-ui: 'Geist Variable', -apple-system, 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'Geist Mono Variable', ui-monospace, Menlo, Consolas, monospace;
@@ -24,10 +25,11 @@
     color-scheme: dark;
     --color-text: #F4F4F5;
     --color-text-secondary: #A1A1A9;
+    --color-text-tertiary: #8A8A92;
     --color-page: #0E0E10;
     --color-card: #1B1B1E;
     --color-chrome: #121214;
-    --color-hover: #242428;
+    --color-hover: #121214;
     --color-border: #26262A;
     --color-border-strong: #353539;
     --color-action: #F4F4F5;
@@ -36,7 +38,7 @@
     --color-status-running: #4CB8F5;
     --color-status-succeeded: #4ADE80;
     --color-status-failed: #F87171;
-    --color-status-cancelled: #8B8B93;
+    --color-status-cancelled: #8A8A92;
     --mark-filter: invert(1);
   }
 }
@@ -45,20 +47,20 @@ html, body, #root { min-height: 100%; margin: 0; }
 body {
   background: var(--color-page);
   color: var(--color-text);
-  font: 400 0.8125rem/1.53846 var(--font-ui);
+  font: 400 0.875rem/1.57143 var(--font-ui);
   -webkit-font-smoothing: antialiased;
 }
 h1, h2, p { margin: 0; }
-h1 { font-size: 1.5rem; font-weight: 600; line-height: 1.16667; letter-spacing: -0.02em; }
-h2 { font-size: 0.9375rem; font-weight: 600; line-height: 1.33333; }
+h1 { font-size: 1.625rem; font-weight: 600; line-height: 1.23077; letter-spacing: -0.02em; }
+h2 { font-size: 1rem; font-weight: 600; line-height: 1.375; }
 button { font: inherit; color: inherit; cursor: pointer; }
 :focus-visible { outline: 2px solid var(--color-action); outline-offset: 3px; }
 .muted { color: var(--color-text-secondary); }
 .icon { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .icon-tile { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; flex: none; border-radius: 6px; color: var(--color-action); background: var(--color-icon-tile); }
-.card { padding: 20px; border-radius: 10px; background: var(--color-card); box-shadow: 0 0 0 1px var(--color-border); }
+.card { padding: 20px 24px; border-radius: 10px; background: var(--color-card); box-shadow: 0 0 0 1px var(--color-border); }
 .setup { max-width: 760px; display: grid; gap: 16px; margin-top: 20px; }
-.setup h3 { font-size: 0.8125rem; font-weight: 600; margin: 0; }
+.setup h3 { font-size: 0.875rem; font-weight: 600; margin: 0; }
 .setup p { max-width: 70ch; margin-top: 6px; }
 .setup fieldset { border: 0; padding: 0; margin: 16px 0 12px; }
 .setup legend { font-weight: 600; margin-bottom: 8px; }
@@ -70,6 +72,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .setup-button { border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-chrome); padding: 7px 12px; margin-top: 12px; }
 .setup-button:not(:disabled):hover { background: var(--color-hover); }
 .setup-button:disabled { cursor: not-allowed; color: var(--color-text-secondary); }
-.example-source { font-family: var(--font-mono); font-size: 0.8125rem; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 28rem; margin: 0; }
+.example-source { font-family: var(--font-mono); font-size: 0.75rem; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 28rem; margin: 0; }
 .engine-diagnostics { max-width: 760px; margin-top: 16px; }
 .engine-diagnostics summary { cursor: pointer; color: var(--color-text-secondary); }

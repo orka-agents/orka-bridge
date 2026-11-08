@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { errors, runCall, type RunSnapshot } from './run-api';
-export default function Run() {
+export default function Run({ onSnapshot }: { onSnapshot?: (snapshot: RunSnapshot) => void }) {
   const [snapshot, setSnapshot] = useState<RunSnapshot>();
   const [message, setMessage] = useState<string>();
   const [sending, setSending] = useState(false);
@@ -15,6 +15,7 @@ export default function Run() {
     void observe(); const timer = window.setInterval(() => { void observe(); }, 500);
     return () => { active.current = false; window.clearInterval(timer); };
   }, []);
+  useEffect(() => { if (snapshot) onSnapshot?.(snapshot); }, [snapshot, onSnapshot]);
   const start = async () => {
     if (sending || !snapshot?.canRun) return;
     setSending(true);

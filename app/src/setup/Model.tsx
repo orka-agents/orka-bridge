@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { connectModel } from './modelState';
 
-export default function Model({ enabled }: { enabled: boolean }) {
+export type ModelState = 'idle' | 'connecting' | 'connected' | 'failed';
+export default function Model({ enabled, onState }: { enabled: boolean; onState?: (state: ModelState) => void }) {
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string>();
@@ -13,6 +14,9 @@ export default function Model({ enabled }: { enabled: boolean }) {
     if (!enabled) { setBusy(false); setReady(false); setError(undefined); }
     return () => { epoch.current++; };
   }, [enabled]);
+  useEffect(() => {
+    onState?.(!enabled ? 'idle' : busy ? 'connecting' : ready ? 'connected' : error ? 'failed' : 'idle');
+  }, [enabled, busy, ready, error, onState]);
   async function connect() {
     if (!enabled || active.current || ready) return;
     active.current = true;
