@@ -46,6 +46,70 @@ async fn blocking_start(
         .map_err(|_| RuntimeError::Unavailable)?
 }
 
+#[cfg(any(all(debug_assertions, windows), test))]
+fn retain_start_failure(
+    root: &Path,
+    stage: &str,
+    error: RuntimeError,
+    stderr: std::io::Result<Vec<u8>>,
+) -> RuntimeError {
+    use std::io::Write;
+    let reason = error.to_string();
+    let (stderr, capture_error) = match stderr {
+        Ok(bytes) => (bytes, None),
+        Err(error) => (Vec::new(), Some(error.to_string())),
+    };
+    let directory = root.join(format!(
+        "startup-failure-{}",
+        bridge_runtime_protocol::Uuid::new_v4()
+    ));
+    let saved = (|| -> std::io::Result<()> {
+        // Fresh names never overwrite evidence or follow an existing file.
+        #[cfg(windows)]
+        let _held = crate::runtime::windows::security::create_af_directory(&directory)?;
+        #[cfg(not(windows))]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            fs::DirBuilder::new().mode(0o700).create(&directory)?;
+        }
+        for (name, bytes) in [
+            ("qemu-stderr.txt", stderr.clone()),
+            (
+                "failure.json",
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "stage": stage, "reason": reason, "stderrCaptureError": capture_error,
+                }))?,
+            ),
+        ] {
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = options.open(directory.join(name))?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
+        }
+        Ok(())
+    })();
+    let diagnostic: String = String::from_utf8_lossy(&stderr)
+        .trim()
+        .chars()
+        .take(2048)
+        .collect();
+    let mut message = format!("{stage}: {reason}");
+    if !diagnostic.is_empty() {
+        message.push_str(&format!(". QEMU: {diagnostic}"));
+    }
+    match saved {
+        Ok(()) => message.push_str(&format!(". Details: {}", directory.display())),
+        Err(error) => message.push_str(&format!(". Could not save diagnostics: {error}")),
+    }
+    std::io::Error::other(message).into()
+}
+
 /// Release has no approved image catalog; native development uses the existing
 /// verified source override or its own committed installation, never renderer paths.
 pub fn configured(resources: Option<PathBuf>, data: Option<PathBuf>) -> Arc<LocalVm> {
@@ -223,14 +287,7 @@ impl LocalFactory for NativeFactory {
                 .map_err(|_| RuntimeError::Unavailable)?
                 .as_secs();
             #[cfg(windows)]
-            let session = runtime::windows::session::WindowsSession::start(
-                runtime::RuntimeWorker::new(
-                    Box::new(runtime::windows::backend::WindowsBackend::new(inputs)),
-                    installed.0,
-                    installed.1,
-                )?,
-                utc,
-            )?;
+            let native = start_windows_session(inputs, installed.0, installed.1, &root, utc)?;
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             let session = runtime::apple_session::AppleVmSession::launch(
                 resources,
@@ -238,12 +295,47 @@ impl LocalFactory for NativeFactory {
                 installed.1,
                 utc,
             )?;
-            Ok(Box::new(NativeSession(session)) as Box<dyn LocalSession>)
+            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+            let native = NativeSession(session);
+            Ok(Box::new(native) as Box<dyn LocalSession>)
         }))
     }
 }
 #[cfg(all(debug_assertions, windows))]
-struct NativeSession(crate::runtime::windows::session::WindowsSession);
+fn start_windows_session(
+    inputs: Arc<crate::runtime::windows::inputs::VerifiedWindowsInputs>,
+    journal: Journal,
+    image: Arc<InstalledImageSet>,
+    root: &Path,
+    utc: u64,
+) -> Result<NativeSession, RuntimeError> {
+    // Keep the verified private root non-replaceable even if failed startup or
+    // shutdown releases its worker before diagnostics are written.
+    let diagnostic_root = crate::runtime::windows::security::private_af_directory(root)?;
+    let backend = crate::runtime::windows::backend::WindowsBackend::new(inputs);
+    let failure = backend.failure_diagnostics();
+    let result = crate::runtime::RuntimeWorker::new(Box::new(backend), journal, image)
+        .and_then(|worker| crate::runtime::windows::session::WindowsSession::start(worker, utc));
+    match result {
+        Ok(session) => Ok(NativeSession {
+            session,
+            root: root.to_owned(),
+            _diagnostic_root: diagnostic_root,
+        }),
+        Err(error) => Err(retain_start_failure(
+            root,
+            failure.stage(),
+            error,
+            failure.stderr(),
+        )),
+    }
+}
+#[cfg(all(debug_assertions, windows))]
+struct NativeSession {
+    session: crate::runtime::windows::session::WindowsSession,
+    root: PathBuf,
+    _diagnostic_root: fs::File,
+}
 #[cfg(all(debug_assertions, all(target_os = "macos", target_arch = "aarch64")))]
 struct NativeSession(crate::runtime::apple_session::AppleVmSession);
 #[cfg(all(
@@ -256,7 +348,7 @@ impl LocalSession for NativeSession {
         {
             Box::pin(async move {
                 let client = self
-                    .0
+                    .session
                     .client_mut()
                     .map_err(|_| EngineError::new(ErrorKind::Unavailable))?;
                 let id = client
@@ -288,7 +380,14 @@ impl LocalSession for NativeSession {
     fn stop(&mut self) -> Result<(), RuntimeError> {
         #[cfg(windows)]
         {
-            self.0.shutdown()
+            self.session.shutdown().map_err(|error| {
+                let stderr = self
+                    .session
+                    .diagnostics()
+                    .map(|diagnostics| diagnostics.stderr)
+                    .map_err(|error| std::io::Error::other(error.to_string()));
+                retain_start_failure(&self.root, "Shut down guest", error, stderr)
+            })
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         self.0.stop()

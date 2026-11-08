@@ -41,12 +41,23 @@ mod native {
         time::{Duration, Instant},
     };
     #[derive(Clone, Default)]
-    pub struct FailureDiagnostics(
-        Arc<Mutex<Option<crate::runtime::windows::qmp_io::StderrCapture>>>,
-    );
+    pub struct FailureDiagnostics {
+        capture: Arc<Mutex<Option<crate::runtime::windows::qmp_io::StderrCapture>>>,
+        stage: Arc<Mutex<&'static str>>,
+    }
     impl FailureDiagnostics {
+        pub fn stage(&self) -> &'static str {
+            self.stage
+                .lock()
+                .map(|stage| *stage)
+                .unwrap_or("Start QEMU")
+        }
+        fn enter(&self, stage: &'static str) -> Result<(), RuntimeError> {
+            *self.stage.lock().map_err(|_| RuntimeError::Closed)? = stage;
+            Ok(())
+        }
         pub fn stderr(&self) -> std::io::Result<Vec<u8>> {
-            self.0
+            self.capture
                 .lock()
                 .map_err(|_| std::io::Error::other("diagnostics poisoned"))?
                 .as_ref()
@@ -128,6 +139,7 @@ mod native {
             self.diagnostics.clone()
         }
         fn tool(&self, spec: &LaunchSpec, args: &[OsString]) -> Result<Vec<u8>, RuntimeError> {
+            self.diagnostics.enter("Run qemu-img")?;
             let endpoint = ControlEndpoint::create(&spec.root)?;
             let mut child = OwnedQemuProcess::spawn_image_tool(
                 self.inputs.clone(),
@@ -141,7 +153,7 @@ mod native {
             let mut io = NativeTransport::new(owner.clone(), stdio)?;
             *self
                 .diagnostics
-                .0
+                .capture
                 .lock()
                 .map_err(|_| RuntimeError::Closed)? = Some(io.stderr_capture());
             let until = io.prepare_stop()?;
@@ -199,6 +211,7 @@ mod native {
         fn start_vm(&self, spec: &LaunchSpec) -> Result<BackendHandle, RuntimeError> {
             self.inspect(spec, &spec.root.join(spec.image.disk_path()), 0)?;
             self.inspect(spec, &spec.state_path, spec.state_bytes)?;
+            self.diagnostics.enter("Prepare QEMU control endpoint")?;
             let endpoint = ControlEndpoint::create(&spec.root)?;
             let args = launch_argv(
                 &self.inputs,
@@ -208,7 +221,9 @@ mod native {
                     .to_str()
                     .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?,
             )?;
+            self.diagnostics.enter("Pin installed boot files")?;
             let boot = pin_boot(&spec.image, &spec.root)?;
+            self.diagnostics.enter("Create QEMU process")?;
             let mut child = OwnedQemuProcess::spawn_with_boot(
                 self.inputs.clone(),
                 spec.ownership.clone(),
@@ -217,23 +232,30 @@ mod native {
                 endpoint,
                 boot,
             )?;
+            self.diagnostics.enter("Open QEMU standard I/O")?;
             let stdio = child.take_stdio()?;
             let owner = Arc::new(child);
             let transport = NativeTransport::new(owner.clone(), stdio)?;
             *self
                 .diagnostics
-                .0
+                .capture
                 .lock()
                 .map_err(|_| RuntimeError::Closed)? = Some(transport.stderr_capture());
+            self.diagnostics.enter("Resume QEMU process")?;
             owner.resume()?;
+            self.diagnostics.enter("Negotiate QMP")?;
             let until = Instant::now() + Duration::from_secs(30);
             let mut qmp = Qmp::negotiate(transport, until)?;
+            self.diagnostics.enter("Check QEMU prelaunch status")?;
             let status = qmp.query_status(until)?;
             if status.running || status.status != "prelaunch" {
                 return Err(std::io::Error::other("QEMU did not remain prelaunch").into());
             }
+            self.diagnostics.enter("Connect guest control")?;
             let guest = owner.guest_stream()?;
+            self.diagnostics.enter("Start guest CPUs")?;
             qmp.set_running(true, Instant::now() + Duration::from_secs(30))?;
+            self.diagnostics.enter("Establish guest session")?;
             Ok(BackendHandle::new(Lease(Arc::new(Mutex::new(Vm {
                 owner,
                 qmp,

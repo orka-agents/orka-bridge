@@ -34,7 +34,7 @@ impl LocalFactory for Factory {
             progress(LocalVmStatus::Installing);
             p.launch.notified().await;
             if p.fail_launch {
-                return Err(RuntimeError::Unavailable);
+                return Err(RuntimeError::Io(std::io::Error::other("launch detail")));
             }
             Ok(Box::new(Session(p)) as Box<dyn LocalSession>)
         })
@@ -72,7 +72,7 @@ impl LocalSession for Session {
         self.0.stops.fetch_add(1, Ordering::SeqCst);
         self.0.order.lock().unwrap().push("stop");
         if self.0.fail_stop {
-            Err(RuntimeError::Unavailable)
+            Err(RuntimeError::Io(std::io::Error::other("stop detail")))
         } else {
             Ok(())
         }
@@ -212,6 +212,82 @@ async fn failed_stop_cannot_claim_closed_clean_or_restart() {
     assert_eq!(p.stops.load(Ordering::SeqCst), 1);
 }
 #[tokio::test]
+async fn setup_retains_the_actual_stop_error_after_repeated_close() {
+    use bridge_engine::{local_vm, setup::SetupStore};
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SetupStore::new(Some(temp.path().to_owned())));
+    let p = Arc::new(Probe {
+        fail_stop: true,
+        ..Probe::default()
+    });
+    let vm = owner(p.clone());
+    local_vm::select_local(store.clone(), &vm).await.unwrap();
+    p.launch.notify_one();
+    phase(&vm, LocalVmStatus::Ready).await;
+    assert!(vm.shutdown().await.is_err());
+    let failed =
+        serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap()).unwrap();
+    let reason = failed["localVmError"]
+        .as_str()
+        .expect("stop reason retained");
+    assert!(reason.contains("Stopping"), "{reason}");
+    assert!(reason.contains("Runtime operation failed: Io("), "{reason}");
+    assert!(reason.contains("stop detail"), "{reason}");
+    assert_eq!(failed["localVm"], "failed");
+    assert_eq!(failed["selected"], "localVm");
+    assert!(vm.shutdown().await.is_err());
+    let again = serde_json::to_value(local_vm::setup_status(store, &vm).await.unwrap()).unwrap();
+    assert_eq!(again, failed);
+    assert_eq!(p.stops.load(Ordering::SeqCst), 1);
+}
+#[tokio::test]
+async fn setup_retains_the_actual_start_error_including_during_close() {
+    use bridge_engine::{local_vm, setup::SetupStore};
+    for during_close in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(SetupStore::new(Some(temp.path().to_owned())));
+        let p = Arc::new(Probe {
+            fail_launch: true,
+            ..Probe::default()
+        });
+        let vm = owner(p.clone());
+        local_vm::select_local(store.clone(), &vm).await.unwrap();
+        phase(&vm, LocalVmStatus::Installing).await;
+        if during_close {
+            vm.request_close();
+        }
+        p.launch.notify_one();
+        if !during_close {
+            phase(&vm, LocalVmStatus::Failed).await;
+            let failed =
+                serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap())
+                    .unwrap();
+            let reason = failed["localVmError"]
+                .as_str()
+                .expect("start reason retained");
+            assert!(reason.contains("Starting"), "{reason}");
+            assert!(reason.contains("Runtime operation failed: Io("), "{reason}");
+            assert!(reason.contains("launch detail"), "{reason}");
+        }
+        assert!(vm.shutdown().await.is_err());
+        let failed =
+            serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap())
+                .unwrap();
+        let reason = failed["localVmError"]
+            .as_str()
+            .expect("start reason survives close");
+        assert!(reason.contains("Starting"), "{reason}");
+        assert!(reason.contains("Runtime operation failed: Io("), "{reason}");
+        assert!(reason.contains("launch detail"), "{reason}");
+        assert_eq!(failed["localVm"], "failed");
+        assert!(vm.shutdown().await.is_err());
+        let again =
+            serde_json::to_value(local_vm::setup_status(store, &vm).await.unwrap()).unwrap();
+        assert_eq!(again, failed);
+        assert_eq!(p.stops.load(Ordering::SeqCst), 0);
+    }
+}
+#[tokio::test]
 async fn native_unconfigured_owner_never_starts_from_selection() {
     let vm = LocalVm::unavailable();
     vm.start();
@@ -272,6 +348,7 @@ async fn setup_selection_persists_then_starts_but_status_never_starts() {
     phase(&vm, LocalVmStatus::Ready).await;
     let value = serde_json::to_value(local_vm::setup_status(store, &vm).await.unwrap()).unwrap();
     assert_eq!(value["localVm"], "ready");
+    assert!(value.get("localVmError").unwrap().is_null());
     assert_eq!(value["model"], "locked");
     vm.shutdown().await.unwrap();
 }

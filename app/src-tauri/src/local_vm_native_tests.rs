@@ -21,9 +21,7 @@ use crate::runtime::windows::backend::boot_tests::fixture;
 #[cfg(all(debug_assertions, windows))]
 #[tokio::test]
 async fn windows_session_startup_inside_tokio_reaches_child_creation_without_panicking() {
-    use crate::runtime::{
-        image_install::materialize_image, image_types::ImageTarget, RuntimeWorker,
-    };
+    use crate::runtime::{image_install::materialize_image, image_types::ImageTarget};
     let temp = tempfile::tempdir_in(std::env::var_os("USERPROFILE").unwrap()).unwrap();
     let root = temp.path().join("install");
     let journal = Journal::create(&root, BackendKind::Qemu, b"pc-q35-11.0".to_vec()).unwrap();
@@ -50,29 +48,88 @@ async fn windows_session_startup_inside_tokio_reaches_child_creation_without_pan
         })
         .collect();
     let inputs = Arc::new(verify_windows_runtime(&pins, runtime_root).unwrap());
+    let launch_root = root.clone();
     let result = blocking_start(move |_| {
-        let worker = RuntimeWorker::new(
-            Box::new(crate::runtime::windows::backend::WindowsBackend::new(
-                inputs,
-            )),
-            journal,
-            Arc::new(image),
-        )?;
-        let session = crate::runtime::windows::session::WindowsSession::start(worker, 0)?;
-        Ok(Box::new(NativeSession(session)) as Box<dyn LocalSession>)
+        let native = start_windows_session(inputs, journal, Arc::new(image), &launch_root, 0)?;
+        Ok(Box::new(native) as Box<dyn LocalSession>)
     })
     .await;
     // The real backend reaches CreateProcessW, which refuses the inert fixture.
     // A panic is mapped to Unavailable instead, so it cannot satisfy this check.
     match result {
-        Err(RuntimeError::Io(error)) => assert!(
-            matches!(error.raw_os_error(), Some(193 | 216)),
-            "expected ERROR_BAD_EXE_FORMAT or ERROR_EXE_MACHINE_TYPE_MISMATCH: {error:?}"
-        ),
+        Err(RuntimeError::Io(error)) => {
+            let reason = error.to_string();
+            assert!(reason.contains("Run qemu-img"), "{reason}");
+            assert!(reason.contains("193") || reason.contains("216"), "{reason}");
+            assert!(reason.contains("Details:"), "{reason}");
+        }
         Err(error) => panic!("expected native executable refusal, got {error:?}"),
         Ok(_) => panic!("inert fixture must not start a session"),
     }
     assert_eq!(fs::metadata(root.join("state.disk")).unwrap().len(), 0);
+    let evidence: Vec<_> = fs::read_dir(&root)
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("startup-failure-")
+                .then_some(path)
+        })
+        .collect();
+    assert_eq!(evidence.len(), 1);
+    assert!(evidence[0].join("failure.json").is_file());
+    assert!(evidence[0].join("qemu-stderr.txt").is_file());
+}
+
+#[test]
+fn failed_start_retains_stage_stderr_and_existing_installation() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::write(root.join("boot.log"), b"").unwrap();
+    fs::write(root.join("record.json"), b"retained record").unwrap();
+    let error = RuntimeError::Io(std::io::Error::other("control connection refused"));
+    let reported = retain_start_failure(
+        root,
+        "Connect guest control",
+        error,
+        Ok(b"qemu: diagnostic\n".to_vec()),
+    );
+    let text = reported.to_string();
+    assert!(text.contains("Connect guest control"));
+    assert!(text.contains("control connection refused"));
+    let failures: Vec<_> = fs::read_dir(root)
+        .unwrap()
+        .filter_map(|e| {
+            let path = e.unwrap().path();
+            path.file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("startup-failure-")
+                .then_some(path)
+        })
+        .collect();
+    assert_eq!(failures.len(), 1);
+    let details: serde_json::Value =
+        serde_json::from_slice(&fs::read(failures[0].join("failure.json")).unwrap()).unwrap();
+    assert_eq!(details["stage"], "Connect guest control");
+    assert!(details["reason"]
+        .as_str()
+        .unwrap()
+        .contains("control connection refused"));
+    assert_eq!(
+        fs::read(failures[0].join("qemu-stderr.txt")).unwrap(),
+        b"qemu: diagnostic\n"
+    );
+    assert!(text.contains(failures[0].to_str().unwrap()));
+    assert_eq!(
+        fs::read(root.join("record.json")).unwrap(),
+        b"retained record"
+    );
+    assert_eq!(fs::read(root.join("boot.log")).unwrap(), b"");
 }
 
 #[test]

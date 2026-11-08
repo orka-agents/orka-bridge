@@ -18,6 +18,20 @@ test.each(['idle', 'preparing', 'installing', 'starting', 'ready', 'closing', 'c
   mockIPC(() => value);
   expect(await setupStatus()).toEqual({ ok: true, status: value });
 });
+test.each([null, 'Starting the local VM failed: Runtime operation failed: Busy',
+  'Stopping the local VM failed: Runtime operation failed: RetainedState'])('preserves native failure reason %j on reads and selection', async localVmError => {
+  vi.stubGlobal('isTauri', true);
+  const value = { ...snapshot, selected: 'localVm', localVm: 'failed', localVmError };
+  mockIPC(() => value);
+  expect(await setupStatus()).toEqual({ ok: true, status: value });
+  expect(await selectLocal()).toEqual({ ok: true, status: value });
+});
+test.each([42, false, {}, ['native failure']])('rejects malformed native failure reason %j', async localVmError => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => ({ ...snapshot, selected: 'localVm', localVmError }));
+  expect((await setupStatus()).ok).toBe(false);
+  expect((await selectLocal()).ok).toBe(false);
+});
 test('no-argument selection requires an acknowledgement of that selection', async () => {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn(() => snapshot); mockIPC(ipc);

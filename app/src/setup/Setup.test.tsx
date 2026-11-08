@@ -122,6 +122,23 @@ test('selection shows real startup states and only a ready session can open the 
   expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_select_local', 'setup_example', 'engine_call'].includes(name))).toBe(true);
 });
 
+test.each([
+  'Starting the local VM failed: Runtime operation failed: Io(<b data-vm-error>launch detail</b>)',
+  'Stopping the local VM failed: Runtime operation failed: Io(<b data-vm-error>stop detail</b>)',
+])('shows retained failure reason as plain text without new actions: %s', async localVmError => {
+  native();
+  mockIPC(command => command === 'setup_status'
+    ? { ...status('localVm'), localVm: 'failed', localVmError }
+    : Promise.reject({ kind: 'unavailable' }));
+  render(<App />);
+  expect(await screen.findByText(localVmError)).toBeTruthy();
+  expect(document.querySelector('[data-vm-error]')).toBeNull();
+  expect(screen.getByText('Local VM selected.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open example' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Connect model' }).matches(':disabled')).toBe(true);
+});
+
 test('keyboard selection does not enable the existing route or duplicate the save', async () => {
   const ipc = native(); const user = userEvent.setup(); render(<App />);
   await screen.findByText('Native setup available');

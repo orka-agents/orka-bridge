@@ -17,12 +17,14 @@ pub enum SetupChoice {
 pub struct SetupSnapshot {
     pub selected: Option<SetupChoice>,
     local_vm: &'static str,
+    local_vm_error: Option<String>,
     model: &'static str,
 }
 
 impl SetupSnapshot {
-    pub fn with_local_vm(mut self, state: &'static str) -> Self {
+    pub fn with_local_vm(mut self, state: &'static str, error: Option<String>) -> Self {
         self.local_vm = state;
+        self.local_vm_error = error;
         self
     }
 }
@@ -120,6 +122,7 @@ fn snapshot(root: &Path) -> Result<SetupSnapshot, SetupError> {
         selected: selected(root)?.then_some(SetupChoice::LocalVm),
         // Selection is not runtime readiness. These gates have no renderer override.
         local_vm: "notIntegrated",
+        local_vm_error: None,
         model: "locked",
     })
 }

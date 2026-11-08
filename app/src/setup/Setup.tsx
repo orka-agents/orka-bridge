@@ -66,6 +66,7 @@ export default function Setup({ onOpenExample, onReady }: { onOpenExample: () =>
         {status && <div className="setup-availability">
           <h3>Native setup available</h3>
           <p className="muted">{runtimeCopy[status.localVm]}</p>
+          {status.localVm === 'failed' && status.localVmError && <p>{status.localVmError}</p>}
           {status.localVm === 'ready' && <button type="button" className="setup-button" onClick={onOpenExample}>Open example</button>}
         </div>}
         {error && <div role="alert"><p>{error}</p>
