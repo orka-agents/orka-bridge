@@ -3,13 +3,14 @@ import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import Example from './Example';
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
-test('native example is a fixed read-only pair with no authoring or credential action', async () => {
+test('opening the fixed pair only observes Run, without authoring or credential action', async () => {
   vi.stubGlobal('isTauri', true);
-  const ipc = vi.fn(() => ({ agent: 'agent source', tests: 'test source' })); mockIPC(ipc);
+  const ipc = vi.fn(command => command === 'setup_example' ? { agent: 'agent source', tests: 'test source' } : { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null }); mockIPC(ipc);
   render(<Example />);
   expect(await screen.findByText('agent source')).toBeTruthy(); expect(screen.getByText('test source')).toBeTruthy();
-  expect(screen.queryByRole('textbox')).toBeNull(); expect(screen.queryByRole('button', { name: 'Run' })).toBeNull();
-  expect(ipc).toHaveBeenCalledExactlyOnceWith('setup_example', {});
+  expect(screen.queryByRole('textbox')).toBeNull(); expect((await screen.findByRole('button', { name: 'Run test' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(ipc).toHaveBeenCalledWith('setup_example', {});
+  expect(ipc.mock.calls.every(([cmd]) => ['setup_example', 'setup_run_status'].includes(cmd))).toBe(true);
 });
 test.each([null, {}, { agent: 'SECRET_MARKER', tests: '', extra: 'secret' }])('malformed fixed reader reply cannot render private data', async value => {
   vi.stubGlobal('isTauri', true); mockIPC(() => value); render(<Example />);

@@ -270,7 +270,7 @@ impl Fixture {
             worker,
         }
     }
-    fn runner(&self) -> NativeRunner {
+    fn runner(&self) -> NativeRunner<'static> {
         NativeRunner::new(
             NativeRunTarget::new(&self.url, "sandbox", "provider", Some("sensitive-token"))
                 .unwrap(),
@@ -285,6 +285,47 @@ impl Fixture {
 }
 fn pair() -> ParsedPair {
     ParsedPair::parse(AGENT.as_bytes(), TESTS.as_bytes()).unwrap()
+}
+#[tokio::test]
+async fn native_runner_accepts_a_borrowed_transport_without_a_second_http_target() {
+    use bridge_engine::engine::run::{RunFuture, RunTransport};
+    struct Borrowed<'a> {
+        requests: &'a Mutex<Vec<String>>,
+    }
+    impl RunTransport for Borrowed<'_> {
+        fn namespace(&self) -> &str {
+            "orka-system"
+        }
+        fn provider(&self) -> &str {
+            "copilot"
+        }
+        fn limits(&self) -> RunLimits {
+            RunLimits::default()
+        }
+        fn request<'a>(
+            &'a self,
+            path: &'a str,
+            _after: Option<u64>,
+            body: Option<&'a Value>,
+            _deadline: tokio::time::Instant,
+        ) -> RunFuture<'a> {
+            Box::pin(async move {
+                self.requests.lock().unwrap().push(path.into());
+                let body = body.unwrap();
+                assert_eq!(body["namespace"], "orka-system");
+                assert_eq!(body["spec"]["providerRef"]["name"], "copilot");
+                Err(bridge_engine::engine::run::ErrorKind::Transport)
+            })
+        }
+    }
+    let requests = Mutex::new(Vec::new());
+    let runner = NativeRunner::with_transport(Borrowed {
+        requests: &requests,
+    });
+    let error = runner.submit(pair()).await.unwrap_err();
+    assert_eq!(requests.lock().unwrap().as_slice(), ["agents"]);
+    assert_eq!(error.pending.unwrap().kind, "Agent");
+    assert!(error.handle.agent().is_none());
 }
 #[tokio::test]
 async fn submits_exact_mapping_and_observes_only_acknowledged_unique_resources() {
