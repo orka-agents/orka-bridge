@@ -1,6 +1,11 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 
-export type SetupStatus = { selected: 'localVm' | null; localVm: 'notIntegrated'; model: 'locked' };
+const localStates = ['notIntegrated', 'idle', 'preparing', 'installing', 'starting', 'ready', 'closing', 'closed', 'failed'] as const;
+export type LocalVmState = (typeof localStates)[number];
+export type SetupStatus = { selected: 'localVm' | null; localVm: LocalVmState; model: 'locked' };
+function isLocalState(value: unknown): value is LocalVmState {
+  return typeof value === 'string' && localStates.some(state => state === value);
+}
 type Result = { ok: true; status: SetupStatus } | { ok: false; message: string };
 
 async function call(command: 'setup_status' | 'setup_select_local'): Promise<Result> {
@@ -10,7 +15,8 @@ async function call(command: 'setup_status' | 'setup_select_local'): Promise<Res
     if (typeof value !== 'object' || value === null || Array.isArray(value)
       || Object.keys(value).sort().join(',') !== 'localVm,model,selected'
       || !('selected' in value) || (value.selected !== null && value.selected !== 'localVm')
-      || !('localVm' in value) || value.localVm !== 'notIntegrated'
+      || !('localVm' in value) || !isLocalState(value.localVm)
+      || (value.localVm === 'ready' && value.selected !== 'localVm')
       || !('model' in value) || value.model !== 'locked'
       || (command === 'setup_select_local' && value.selected !== 'localVm')) {
       return { ok: false, message: 'Setup information is not supported by this build.' };
@@ -22,3 +28,18 @@ async function call(command: 'setup_status' | 'setup_select_local'): Promise<Res
 }
 export const setupStatus = () => call('setup_status');
 export const selectLocal = () => call('setup_select_local');
+
+export type ExamplePair = { agent: string; tests: string };
+export async function loadExample(): Promise<{ ok: true; pair: ExamplePair } | { ok: false; message: string }> {
+  if (!isTauri()) return { ok: false, message: 'The native example is not available in this preview.' };
+  try {
+    const value = await invoke<unknown>('setup_example');
+    if (typeof value === 'object' && value !== null && !Array.isArray(value)
+      && Object.keys(value).sort().join(',') === 'agent,tests'
+      && 'agent' in value && typeof value.agent === 'string' && value.agent.length > 0 && value.agent.length <= 65536
+      && 'tests' in value && typeof value.tests === 'string' && value.tests.length > 0 && value.tests.length <= 65536) {
+      return { ok: true, pair: { agent: value.agent, tests: value.tests } };
+    }
+  } catch { /* Rejected native data never crosses into the page. */ }
+  return { ok: false, message: 'The example could not be opened.' };
+}

@@ -100,6 +100,12 @@ jobs:
           cp src-tauri/target/release/orka-bridge.exe windows-artifact/
           cp public/licenses/*.txt windows-artifact/licenses/
           for notice in public/licenses/*.txt; do cmp "$notice" "windows-artifact/licenses/${notice##*/}"; done
+          # Embedded frontend, but debug-only local-image integration remains enabled.
+          npm run tauri -- build --debug --no-bundle -- --locked
+          mkdir -p windows-artifact/development/licenses
+          cp src-tauri/target/debug/orka-bridge.exe windows-artifact/development/
+          cp public/licenses/*.txt windows-artifact/development/licenses/
+          for notice in public/licenses/*.txt; do cmp "$notice" "windows-artifact/development/licenses/${notice##*/}"; done
       - name: Mac app bundle and native walk
         if: runner.os == 'macOS'
         run: |

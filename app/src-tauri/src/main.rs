@@ -1,9 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use bridge_engine::engine::{types::*, EngineState};
-use bridge_engine::runtime::RuntimeState;
+use bridge_engine::local_vm::{self, ExamplePair, LocalVm, LocalVmStatus};
 use bridge_engine::setup::{SetupError, SetupSnapshot, SetupStore};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use tauri::Manager;
 
 #[tauri::command]
@@ -13,60 +16,62 @@ async fn engine_call(
 ) -> Result<EngineReply, EngineError> {
     state.call(request).await
 }
-
 #[tauri::command]
 async fn setup_status(
     state: tauri::State<'_, Arc<SetupStore>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
 ) -> Result<SetupSnapshot, SetupError> {
-    Arc::clone(state.inner()).status_async().await
+    local_vm::setup_status(Arc::clone(state.inner()), vm.inner()).await
 }
-
 #[tauri::command]
 async fn setup_select_local(
     state: tauri::State<'_, Arc<SetupStore>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
 ) -> Result<SetupSnapshot, SetupError> {
-    Arc::clone(state.inner()).select_local_async().await
+    local_vm::select_local(Arc::clone(state.inner()), vm.inner()).await
+}
+#[tauri::command]
+fn setup_example() -> ExamplePair {
+    local_vm::example()
 }
 
 fn main() {
+    let closing = AtomicBool::new(false);
+    let completed = Arc::new(AtomicBool::new(false));
     tauri::Builder::default()
-        .manage(EngineState::configured())
-        .manage(RuntimeState::default())
         .setup(|app| {
-            app.manage(Arc::new(SetupStore::new(app.path().app_data_dir().ok())));
-            #[cfg(debug_assertions)]
-            if std::env::var_os("BRIDGE_DEV_IMAGE_DIR").is_some() {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn_blocking(move || {
-                    match bridge_engine::dev_image::from_environment() {
-                        Ok(Some(image)) => {
-                            handle.manage(image);
-                            eprintln!("Local development image verified; VM integration remains unavailable.");
-                        }
-                        Ok(None) => {}
-                        Err(_) => eprintln!("Local development image unavailable."),
-                    }
-                });
-            }
+            let store = Arc::new(SetupStore::new(app.path().app_data_dir().ok()));
+            let vm = local_vm::configured(app.path().resource_dir().ok(), app.path().app_local_data_dir().ok());
+            app.manage(if vm.status() == LocalVmStatus::NotIntegrated { EngineState::configured() }
+                else { EngineState::with_transport(vm.clone()) });
+            app.manage(store.clone()); app.manage(vm.clone());
+            tauri::async_runtime::spawn(async move {
+                if local_vm::resume_selected(store, &vm).await.is_err() {
+                    eprintln!("The saved setup choice could not be read.");
+                }
+            });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            engine_call,
-            setup_status,
-            setup_select_local
-        ])
-        .on_window_event(|window, event| {
-            if window.label() == "main"
-                && matches!(
-                    event,
-                    tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-                )
-            {
-                window.state::<EngineState>().shutdown();
-                // No backend is configured yet. A future backend must observe stop.
-                let _ = window.state::<RuntimeState>().shutdown();
-            }
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running Bridge");
+        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_example])
+        .build(tauri::generate_context!())
+        .expect("error while building Bridge")
+        .run(move |app, event| {
+            if completed.load(Ordering::SeqCst) { return; }
+            let requested = match event {
+                tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } if label == "main" => { api.prevent_close(); true }
+                tauri::RunEvent::ExitRequested { api, .. } => { api.prevent_exit(); true }
+                _ => false,
+            };
+            if !requested || closing.swap(true, Ordering::SeqCst) { return; }
+            let vm = app.state::<Arc<LocalVm>>().inner().clone();
+            vm.request_close(); // Native event thread: bar late Ready before scheduling async work.
+            app.state::<EngineState>().shutdown();
+            let handle = app.clone(); let completed = completed.clone();
+            tauri::async_runtime::spawn(async move {
+                let clean = vm.shutdown().await.is_ok();
+                if !clean { eprintln!("Local VM startup or shutdown did not finish successfully; cleanup was not reported as clean."); }
+                completed.store(true, Ordering::SeqCst);
+                handle.exit(if clean { 0 } else { 1 });
+            });
+        });
 }

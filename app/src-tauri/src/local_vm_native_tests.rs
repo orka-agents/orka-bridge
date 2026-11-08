@@ -1,0 +1,75 @@
+use super::*;
+use sha2::{Digest, Sha256};
+use std::fs;
+
+#[test]
+fn authenticated_nested_manifest_is_part_of_the_complete_runtime_inventory() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    fs::create_dir(root.join("bin")).unwrap();
+    fs::create_dir(root.join("provenance")).unwrap();
+    let bytes = b"inert runtime fixture";
+    let sha = format!("{:x}", Sha256::digest(bytes));
+    for name in ["qemu-img.exe", "qemu-system-x86_64.exe"] {
+        fs::write(root.join("bin").join(name), bytes).unwrap();
+    }
+    let manifest = serde_json::to_vec(&serde_json::json!({"files":[
+        {"path":"bin/qemu-img.exe","bytes":bytes.len(),"sha256":sha},
+        {"path":"bin/qemu-system-x86_64.exe","bytes":bytes.len(),"sha256":sha}
+    ]}))
+    .unwrap();
+    // Test authority is independently retained here, not read from that file.
+    let pin = FilePin {
+        name: "provenance/runtime-manifest.json".into(),
+        bytes: manifest.len() as u64,
+        sha256: format!("{:x}", Sha256::digest(&manifest)),
+    };
+    fs::write(root.join(&pin.name), &manifest).unwrap();
+    let pins = read_runtime_manifest(root, &pin).unwrap();
+    assert_eq!(pins.len(), 3);
+    assert_eq!(pins.last().unwrap().name, pin.name);
+    let inputs = verify_windows_runtime(&pins, root.to_owned()).unwrap();
+    inputs.recheck_runtime().unwrap();
+    fs::write(root.join("extra"), b"not authorized").unwrap();
+    assert!(inputs.recheck_runtime().is_err());
+    fs::remove_file(root.join("extra")).unwrap();
+    drop(inputs); // Windows retains no-write handles until the capability ends.
+    let mut changed = manifest.clone();
+    changed[0] ^= 1;
+    fs::write(root.join(&pin.name), changed).unwrap();
+    assert!(read_runtime_manifest(root, &pin).is_err());
+    assert!(verify_windows_runtime(&pins, root.to_owned()).is_err());
+}
+#[test]
+fn missing_manifest_and_untrusted_self_description_cannot_supply_runtime_pins() {
+    let temp = tempfile::tempdir().unwrap();
+    assert!(read_runtime_manifest(temp.path(), &runtime_manifest_pin()).is_err());
+    fs::create_dir(temp.path().join("provenance")).unwrap();
+    fs::write(
+        temp.path().join("provenance/runtime-manifest.json"),
+        br#"{"files":[],"sha256":"pretend"}"#,
+    )
+    .unwrap();
+    assert!(read_runtime_manifest(temp.path(), &runtime_manifest_pin()).is_err());
+}
+#[test]
+fn reopen_never_creates_or_repairs_missing_or_incomplete_installations() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("local-vm-v1");
+    assert!(reopen(&root, "engineering-afc68ae1").unwrap().is_none());
+    assert!(!root.exists());
+    let journal = Journal::create(&root, BackendKind::Qemu, b"pc-q35-11.0".to_vec()).unwrap();
+    drop(journal);
+    let before = fs::read(root.join("record.json")).unwrap();
+    assert!(reopen(&root, "engineering-afc68ae1").is_err());
+    assert_eq!(fs::read(root.join("record.json")).unwrap(), before);
+    assert_eq!(fs::metadata(root.join("state.disk")).unwrap().len(), 0);
+    assert!(!root.join("image-binding.json").exists());
+}
+#[test]
+fn factory_configuration_without_native_paths_cannot_activate_a_session() {
+    assert_eq!(
+        configured(None, None).status(),
+        LocalVmStatus::NotIntegrated
+    );
+}
