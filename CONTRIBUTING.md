@@ -43,7 +43,8 @@ code is compiled only when debug assertions are enabled.
 Rust callers can parse an exact agent/test byte pair and use `engine::run` to
 submit fresh Orka Agents and Tasks, then observe acknowledged identities using
 GET only. Targets and bearer credentials must come from trusted native config,
-not the renderer; there is no ambient cluster, provider fallback or new IPC.
+not the renderer; there is no ambient cluster or provider fallback. The fixed
+example's Run and status commands take no arguments.
 Supports schemaVersion 1 source with tool entries declared `kind: builtin`, plus
 `contains` and `toolCalled`. Unknown fields refuse before writes. This narrow
 parser expects unindented backtick `yaml agent-test` fences; it is not a general
@@ -52,7 +53,25 @@ events are positive evidence only; missing/unavailable events stay unknown. A fa
 Task cannot pass, even when individual assertions match. Requests and observation
 are bounded; timeout/drop does not stop remote work. Retain the in-memory handle
 and error's acknowledged/possibly-created identities. No POST retry, overwrite,
-adoption, deletion or persisted history is provided. VM/chooser hookup is separate.
+adoption, deletion or persisted history is provided.
+
+In a development app with a running local VM and an acknowledged model connection,
+Designer can run the unchanged web-reader pair. The same serialized VM client carries
+Run requests; no host Orka port or second VM client is opened. The result shows the
+answer, attributable completed tool names, `contains` and `toolCalled` verdicts.
+Opening the example or reading Run status does not submit work. Duplicate Run calls
+while it is active only observe it. A dropped page or IPC waiter does not lose the
+native receipts; uncertain submissions retain acknowledged and possibly-created names.
+
+The guest image must include the current Orka request handler. Older images cannot
+run this path and report an unconfirmed result rather than replaying writes. On first
+Run, the guest creates or verifies its `bridge-native-run` ServiceAccount, namespaced
+Role and RoleBinding in `orka-system`. The Role permits create/get on Agents and Tasks
+and get on Tools and Providers, not Secrets. A ten-minute Kubernetes bearer stays in
+guest memory and is renewed before expiry. The guest owns a loopback-only forwarding
+process to its Orka service; request diagnostics and bearer values are never returned
+to the app. Result bodies, including answers, use the existing guest operation cache.
+Closing waits for admitted client I/O and native shutdown; it is not remote Task cancellation.
 
 ## Image transport
 
