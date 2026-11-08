@@ -222,6 +222,15 @@ fn native_pins() -> Option<&'static Pins> {
         None
     }
 }
+/// Total pinned bytes for this target's engineering image; no I/O or acquisition.
+pub(crate) fn pinned_image_bytes() -> Option<u64> {
+    image_bytes_for(native_pins()?)
+}
+fn image_bytes_for(pins: &Pins) -> Option<u64> {
+    pins.files
+        .iter()
+        .try_fold(0u64, |sum, pin| sum.checked_add(pin.bytes))
+}
 fn from_config(
     source: Option<OsString>,
     pins: Option<&Pins>,
@@ -657,6 +666,16 @@ mod tests {
         assert_eq!(
             native_pins().unwrap().platform,
             DevImagePlatform::WindowsAmd64
+        );
+    }
+
+    #[test]
+    fn pinned_image_bytes_sum_each_platform_pins() {
+        assert_eq!(image_bytes_for(&MAC_PINS), Some(17_259_087_309));
+        assert_eq!(image_bytes_for(&WINDOWS_PINS), Some(3_651_994_962));
+        assert_eq!(
+            pinned_image_bytes(),
+            native_pins().and_then(image_bytes_for)
         );
     }
 

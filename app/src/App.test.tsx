@@ -1,10 +1,11 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from './App';
 
-afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
+beforeEach(() => { localStorage.setItem('bridge.welcomeSeen.v1', '1'); });
+afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 test('navigation_order', () => {
   render(<App />);
@@ -18,11 +19,11 @@ test('navigation_order', () => {
 test('selected_heading', async () => {
   const user = userEvent.setup();
   render(<App />);
-  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Clusters');
+  expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
   for (const name of ['Designer', 'Clusters', 'Overview']) {
     await user.click(screen.getByRole('button', { name }));
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
-    expect(screen.getByRole('main', { name })).toBeTruthy();
+    expect(await screen.findByRole('main', { name: name === 'Clusters' ? 'Where should your agents run?' : name })).toBeTruthy();
     const selected = screen.getAllByRole('button').filter(button => button.getAttribute('aria-current') === 'page');
     expect(selected).toEqual([screen.getByRole('button', { name })]);
   }
@@ -38,7 +39,7 @@ test('keyboard_activation', async () => {
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Designer');
   await user.tab();
   await user.keyboard('{Enter}');
-  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Clusters');
+  expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
 });
 
 test('honest_empty_states', async () => {
@@ -62,14 +63,14 @@ test('Clusters reads setup and version without fetch or legacy IPC', async () =>
   vi.stubGlobal('isTauri', true);
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
   const user = userEvent.setup(); render(<App />);
-  expect(await screen.findByText('Native setup available')).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();
   await user.click(screen.getByText('Engine diagnostics'));
   expect(await screen.findByRole('heading', { name: 'Engine available' })).toBeTruthy();
   expect(screen.getByText('Version v0.4.2. Cluster readiness has not been checked.')).toBeTruthy();
-  expect(ipc.mock.calls.map(call => call[0])).toEqual(['setup_status', 'engine_call']);
+  expect(ipc.mock.calls.map(call => call[0])).toEqual(['setup_requirements', 'setup_status', 'engine_call']);
   expect(ipc).toHaveBeenCalledWith('engine_call', { request: { action: { type: 'version' } } });
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(screen.queryByRole('heading', { name: 'Engine available' })).toBeNull();
-  expect(ipc).toHaveBeenCalledTimes(2);
+  expect(ipc).toHaveBeenCalledTimes(3);
   expect(fetch).not.toHaveBeenCalled();
 });

@@ -33,6 +33,65 @@ impl SetupSnapshot {
     }
 }
 
+/// Native build facts for the welcome screen; no renderer input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupRequirements {
+    memory_bytes: u64,
+    image_bytes: u64,
+    state_disk_bytes: u64,
+}
+fn requirements_from(image_bytes: Option<u64>) -> Option<SetupRequirements> {
+    Some(SetupRequirements {
+        memory_bytes: bridge_runtime_protocol::MEMORY_BYTES,
+        image_bytes: image_bytes?,
+        state_disk_bytes: bridge_runtime_protocol::STATE_BYTES,
+    })
+}
+/// Release builds carry no engineering pins and report none.
+#[cfg(debug_assertions)]
+pub fn setup_requirements() -> Option<SetupRequirements> {
+    requirements_from(crate::dev_image::pinned_image_bytes())
+}
+#[cfg(not(debug_assertions))]
+pub fn setup_requirements() -> Option<SetupRequirements> {
+    requirements_from(None)
+}
+
+#[cfg(test)]
+mod requirements_tests {
+    use super::*;
+    #[test]
+    fn requirements_use_protocol_sizes_and_exact_fields() {
+        let r = requirements_from(Some(7)).unwrap();
+        assert_eq!(
+            serde_json::to_value(r).unwrap(),
+            serde_json::json!({
+                "memoryBytes": bridge_runtime_protocol::MEMORY_BYTES,
+                "imageBytes": 7,
+                "stateDiskBytes": bridge_runtime_protocol::STATE_BYTES
+            })
+        );
+        assert_eq!(requirements_from(None), None);
+    }
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn release_reports_no_requirements() {
+        assert_eq!(setup_requirements(), None);
+    }
+    #[cfg(all(
+        debug_assertions,
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "windows", target_arch = "x86_64")
+        )
+    ))]
+    #[test]
+    fn debug_supported_target_reports_pinned_bytes() {
+        assert!(setup_requirements().unwrap().image_bytes > 0);
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct SetupError {
     kind: &'static str,

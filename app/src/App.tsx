@@ -58,7 +58,7 @@ export default function App() {
         </nav>
       </header>
       <main className="page-content" aria-labelledby="page-title">
-        <h1 id="page-title">{page}</h1>
+        {page !== 'Clusters' && <h1 id="page-title">{page}</h1>}
         {page === 'Clusters' ? <Setup onReady={ready} onOpenExample={() => { setExampleOpen(true); setPage('Designer'); }} />
           : page === 'Designer' && exampleOpen ? <Example /> : <section className="card empty-state">
           <span className="icon-tile empty-icon"><PageIcon page={page} /></span>

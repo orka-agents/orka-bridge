@@ -417,6 +417,7 @@ fn os_root_is_not_installation_uuid_and_launch_vector_is_fixed() {
     let args = launch_argv(&inputs, &spec, socket.to_str().unwrap()).unwrap();
     let strs: Vec<_> = args.iter().map(|x| x.to_str().unwrap()).collect();
     let value = |key| strs[strs.iter().position(|x| *x == key).unwrap() + 1];
+    assert_eq!(value("-m"), "6144");
     assert_eq!(value("-append"), spec.image.command_line());
     assert_eq!(
         value("-serial"),
