@@ -2,7 +2,7 @@
   {
     "invariant": "producer-windows",
     "file": "producer-windows.json",
-    "sha256": "e0928eabf24353a0a6d3654fe87c44d4856b0d92626aac79b93327f252f39591",
+    "sha256": "d3c88eb9830c38dc8d16d222d2c4dd0d298a5a2c4a3fa44647a23fdeec407876",
     "structure": "valid",
     "compatibility": "compatible",
     "platform": "windows"
@@ -10,7 +10,7 @@
   {
     "invariant": "producer-macos",
     "file": "producer-macos.json",
-    "sha256": "8179e73d1778fccf0ecb65a9fa056a9ad48b1014a26fdc148aeaef4932570b8f",
+    "sha256": "8a3e178420d76872c7c784130f2a7a70409ea3e972d3dfd9007aed6846223a4a",
     "structure": "valid",
     "compatibility": "compatible",
     "platform": "macos"
@@ -699,7 +699,7 @@
   {
     "invariant": "producer-model-input-v2",
     "file": "producer-model-input-v2.json",
-    "sha256": "95a21d9ff095ebb22836394669944d7c61d6fff7c65b17f47f6fb04f98e94c07",
+    "sha256": "d32eb235dc76529117a224be363036ac9c4c44ee6dc0e51f71ec42053a16b169",
     "structure": "valid",
     "compatibility": "compatible",
     "platform": "windows"
