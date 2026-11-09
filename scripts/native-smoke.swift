@@ -2,8 +2,16 @@ import AppKit
 import CoreGraphics
 import Vision
 
+// What OCR read from the screenshot being checked, kept with the reason if a check fails.
+var evidence: (file: String, text: String)?
 func require(_ condition: Bool, _ message: String) {
-    if !condition { fputs("\(message)\n", stderr); exit(1) }
+    if condition { return }
+    var report = "\(message)\n"
+    if let evidence {
+        report += evidence.text
+        try? report.write(toFile: evidence.file, atomically: true, encoding: .utf8)
+    }
+    fputs(report, stderr); exit(1)
 }
 let output = CommandLine.arguments[1]
 let theme = CommandLine.arguments[3]
@@ -83,16 +91,26 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     command.arguments = ["-x", "-o", "-l", String(window()!.0), file]
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture Bridge")
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
+    let observations = request.results ?? []
+    // Record what OCR read before any check, so a failure shows whether the page had rendered.
+    let read = observations.map {
+        String(format: "%.2f ", 1 - $0.boundingBox.maxY) + ($0.topCandidates(1).first?.string ?? "")
+    }
+    let transcript = "\(name).png OCR (count \(read.count), top edge as a fraction of window height):\n"
+        + read.map { "\($0)\n" }.joined()
+    let record = "\(output)/\(name).txt"
+    try transcript.write(toFile: record, atomically: true, encoding: .utf8)
+    evidence = (record, transcript)
+    defer { evidence = nil }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
         let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(NSColorSpace.deviceRGB)
         else { fatalError("Cannot sample native screenshot") }
     let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
     require(theme == "dark" ? brightness < 0.2 : brightness > 0.9,
             "Native screenshot does not show the expected \(theme) theme")
-    let request = VNRecognizeTextRequest()
-    request.recognitionLevel = .accurate
-    try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
-    let observations = request.results ?? []
     if page == "Clusters" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Native setup available") && text.contains("VM integration is not included"),

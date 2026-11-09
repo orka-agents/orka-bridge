@@ -232,3 +232,4 @@ minimum dimensions. In Clusters it also checks the actual release setup IPC repo
 macOS Keyboard Navigation, then restores the runner's prior preferences. Captures contain only the app window.
 Review visible changes in these captures and report anything not exercised,
 such as platform input feel or installer behavior.
+Each capture keeps the text OCR read beside it, and a failed check prints that text after its reason, so an unrendered page can be told apart from a page showing a different state.
