@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { errors, runCall, type RunSnapshot } from './run-api';
-export default function Run({ onSnapshot, blocked = false, stale = false, onStart }: { onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void }) {
+import { sameSource, type SourceId } from './agent-api';
+export default function Run({ onSnapshot, blocked = false, stale = false, onStart, source }: { onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId }) {
   const [snapshot, setSnapshot] = useState<RunSnapshot>();
   const [message, setMessage] = useState<string>();
   const [sending, setSending] = useState(false);
   const active = useRef(false);
+  const sourceCurrent = sameSource(source, snapshot?.source);
   useEffect(() => {
     active.current = true;
     const observe = async () => {
@@ -15,7 +17,7 @@ export default function Run({ onSnapshot, blocked = false, stale = false, onStar
     void observe(); const timer = window.setInterval(() => { void observe(); }, 500);
     return () => { active.current = false; window.clearInterval(timer); };
   }, []);
-  useEffect(() => { if (snapshot || message) onSnapshot?.(message ? undefined : snapshot); }, [snapshot, message, onSnapshot]);
+  useEffect(() => { if (snapshot || message) onSnapshot?.(message ? undefined : snapshot ? { ...snapshot, sourceCurrent } : undefined); }, [snapshot, message, onSnapshot, sourceCurrent]);
   const start = async () => {
     if (sending || blocked || !snapshot?.canRun) return;
     setSending(true);
@@ -25,7 +27,7 @@ export default function Run({ onSnapshot, blocked = false, stale = false, onStar
     setSending(false);
   };
   const running = sending || snapshot?.state === 'running';
-  const outdated = stale || (snapshot?.sourceCurrent === false && !!snapshot.report);
+  const outdated = stale || (sourceCurrent === false && !!snapshot?.report);
   return <div className="example-run" aria-labelledby="run-title">
     <h3 id="run-title">Test on the local VM</h3>
     <p className="muted">Run creates an Orka Agent and Task from these exact files. Connect the model in Clusters first.</p>

@@ -337,12 +337,12 @@ async fn edited_disk_prompt_is_the_actual_posted_resource() {
     assert!(posts.lock().unwrap()[0]["spec"]
         .to_string()
         .contains("Read the edited prompt on disk."));
-    assert!(result.source_current);
-    // Native reports survive a renderer reload, but reopening the edited pair
-    // must not make the older report current again.
+    assert_eq!(result.source.as_ref(), Some(&folder.open().unwrap().source));
+    // Native reports retain their captured source across renderer reloads. The
+    // renderer compares that identity with the newly opened/displayed pair.
     folder.save("another draft after Run".into()).unwrap();
-    folder.open().unwrap();
-    assert!(!run.status(&vm).source_current);
+    let reopened = folder.open().unwrap();
+    assert_ne!(run.status(&vm).source.as_ref(), Some(&reopened.source));
     vm.shutdown().await.unwrap();
 }
 #[tokio::test]

@@ -115,7 +115,7 @@ test('an edit during a delayed Run reply keeps the earlier result stale', async 
 });
 test('remounting with an old native report keeps it visibly stale', async () => {
   vi.stubGlobal('isTauri', true);
-  mockIPC(command => command === 'agent_open' ? pair : { ...idle, state: 'complete', sourceCurrent: false, report: { verdict: 'passed', cases: [{ id: 'reads-page', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } });
+  mockIPC(command => command === 'agent_open' ? { ...pair, source: { agent: 'b'.repeat(64), tests: 'c'.repeat(64) } } : { ...idle, state: 'complete', source: { agent: 'a'.repeat(64), tests: 'c'.repeat(64) }, report: { verdict: 'passed', cases: [{ id: 'reads-page', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } });
   render(<Example />);
   expect(await screen.findByText('Earlier test verdict: passed')).toBeTruthy();
   expect(screen.queryByText('Test verdict: passed')).toBeNull();

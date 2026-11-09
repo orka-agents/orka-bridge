@@ -19,11 +19,11 @@ type Result<T> = std::result::Result<T, &'static str>;
 pub struct AgentPair {
     pub agent: String,
     pub tests: String,
+    pub source: SnapshotId,
 }
 pub struct AgentFolder {
     home: Option<PathBuf>,
     lock: Mutex<()>,
-    current: Mutex<Option<SnapshotId>>,
 }
 fn invalid() -> io::Error {
     io::ErrorKind::InvalidData.into()
@@ -128,15 +128,7 @@ impl AgentFolder {
         Self {
             home,
             lock: Mutex::new(()),
-            current: Mutex::new(None),
         }
-    }
-    pub fn current_snapshot(&self) -> Option<SnapshotId> {
-        self.current.lock().unwrap().clone()
-    }
-    fn remember(&self, pair: &AgentPair) {
-        *self.current.lock().unwrap() =
-            Some(SnapshotId::of(pair.agent.as_bytes(), pair.tests.as_bytes()));
     }
     fn with<T>(&self, work: impl FnOnce(&Dir) -> io::Result<T>) -> Result<T> {
         let _guard = self
@@ -199,21 +191,27 @@ impl AgentFolder {
                     return Err(invalid());
                 }
             }
+            // Retry a prior working-file rename's failed namespace flush even
+            // when the visible bytes already match the next save/open.
+            sync(&root)?;
             work(&root)
         };
         operation().map_err(|_| "The local agent folder could not be read or saved. Check that it is a Bridge-managed folder with regular files, then retry.")
     }
     fn pair(root: &Dir) -> io::Result<AgentPair> {
+        let agent = String::from_utf8(read(root, AGENT, MAX_FILE)?).map_err(|_| invalid())?;
+        let tests = String::from_utf8(read(root, TESTS, MAX_FILE)?).map_err(|_| invalid())?;
+        let source = SnapshotId::of(agent.as_bytes(), tests.as_bytes());
         Ok(AgentPair {
-            agent: String::from_utf8(read(root, AGENT, MAX_FILE)?).map_err(|_| invalid())?,
-            tests: String::from_utf8(read(root, TESTS, MAX_FILE)?).map_err(|_| invalid())?,
+            agent,
+            tests,
+            source,
         })
     }
     pub fn open(&self) -> Result<AgentPair> {
         self.with(|root| {
             let pair = Self::pair(root)?;
             git::commit(root, &pair)?; // Dirty reopen is committed, never silently reported Saved.
-            self.remember(&pair);
             Ok(pair)
         })
     }
@@ -229,9 +227,9 @@ impl AgentFolder {
                 git::commit(root, &pair)?;
                 replace(root, AGENT, content.as_bytes())?;
                 pair.agent = content;
+                pair.source = SnapshotId::of(pair.agent.as_bytes(), pair.tests.as_bytes());
             }
             git::commit(root, &pair)?; // Failure leaves draft bytes; retry reconciles disk with HEAD.
-            self.remember(&pair);
             Ok(pair)
         })
     }
@@ -262,7 +260,6 @@ impl AgentFolder {
             {
                 return Err(invalid());
             }
-            self.remember(&pair);
             Ok(snapshot)
         })
     }

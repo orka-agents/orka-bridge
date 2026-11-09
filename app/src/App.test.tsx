@@ -212,8 +212,8 @@ test.each(['unknown', 'unavailable'])('background check status preserves %s outc
 test('a retained native report for older source is stale in the shared chrome', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
-    : command === 'agent_open' ? { agent: '---\nname: reader\n---\nEdited file.', tests: 'Checks' }
-    : { state: 'complete', canRun: false, sourceCurrent: false, report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null });
+    : command === 'agent_open' ? { agent: '---\nname: reader\n---\nEdited file.', tests: 'Checks', source: { agent: 'b'.repeat(64), tests: 'c'.repeat(64) } }
+    : { state: 'complete', canRun: false, source: { agent: 'a'.repeat(64), tests: 'c'.repeat(64) }, report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null });
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('Checks not run since your change')).toBeTruthy();

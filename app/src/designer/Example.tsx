@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { ExamplePair } from '../setup/state';
-import { agentCall, agentInfo, type SaveState } from './agent-api';
+import { agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
 import type { RunSnapshot } from './run-api';
 
@@ -9,7 +9,7 @@ export default function Example({ active = true, actions, onPair, onRun, onSaveS
   onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void;
   onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
 }) {
-  const [pair, setPair] = useState<ExamplePair>();
+  const [pair, setPair] = useState<AgentPair>();
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string>();
   const [saveState, setSaveState] = useState<SaveState>('saved');
@@ -80,7 +80,7 @@ export default function Example({ active = true, actions, onPair, onRun, onSaveS
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
-        <Run onSnapshot={onRun} blocked={saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />
+        <Run source={pair.source} onSnapshot={onRun} blocked={saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />
         <details className="check-source"><summary>Check file: web-reader.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Check file, read-only">{pair.tests}</pre></details>
       </div>
     </>}

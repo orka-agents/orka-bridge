@@ -2,16 +2,27 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 import type { ExamplePair } from '../setup/state';
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error';
-export async function agentCall(command: 'agent_open' | 'agent_save', content?: string): Promise<ExamplePair> {
+export type SourceId = { agent: string; tests: string };
+export type AgentPair = ExamplePair & { source?: SourceId };
+export function isSourceId(value: unknown): value is SourceId {
+  return typeof value === 'object' && value !== null && Object.keys(value).sort().join(',') === 'agent,tests'
+    && 'agent' in value && typeof value.agent === 'string' && /^[a-f0-9]{64}$/.test(value.agent)
+    && 'tests' in value && typeof value.tests === 'string' && /^[a-f0-9]{64}$/.test(value.tests);
+}
+export function sameSource(left?: SourceId, right?: SourceId | null): boolean | undefined {
+  return left && right ? left.agent === right.agent && left.tests === right.tests : undefined;
+}
+export async function agentCall(command: 'agent_open' | 'agent_save', content?: string): Promise<AgentPair> {
   if (!isTauri()) throw Error('Open the desktop app to edit your agent.');
   try {
     const value = await invoke<unknown>(command, content === undefined ? {} : { content });
     if (typeof value === 'object' && value !== null && !Array.isArray(value)
-      && Object.keys(value).sort().join(',') === 'agent,tests'
+      && ['agent,tests', 'agent,source,tests'].includes(Object.keys(value).sort().join(','))
+      && (!('source' in value) || isSourceId(value.source))
       && 'agent' in value && typeof value.agent === 'string'
       && 'tests' in value && typeof value.tests === 'string' && value.tests.length > 0
       && new TextEncoder().encode(value.agent).length <= 1048576
-      && new TextEncoder().encode(value.tests).length <= 1048576) return { agent: value.agent, tests: value.tests };
+      && new TextEncoder().encode(value.tests).length <= 1048576) return { agent: value.agent, tests: value.tests, ...('source' in value ? { source: value.source as SourceId } : {}) };
   } catch { /* Never display native paths or file contents from an error. */ }
   throw Error(command === 'agent_open' ? 'Your agent folder could not be opened.' : 'Your changes could not be saved. Your draft is still here.');
 }
