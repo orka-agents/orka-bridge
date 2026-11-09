@@ -92,12 +92,18 @@ jobs:
           cargo +1.98.1 clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
           cargo +1.98.1 test --release --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol
           cargo +1.98.1 clippy --release --manifest-path src-tauri/Cargo.toml --locked --all-targets --features custom-protocol -- -D warnings
+      - name: Windows dummy credential-store round trip
+        if: runner.os == 'Windows'
+        run: |
+          cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --lib runtime::credential_store::tests::native_synthetic_roundtrip_uses_only_a_new_owned_slot -- --exact --ignored --nocapture
       - name: Windows executable
         if: runner.os == 'Windows'
         run: |
+          cargo +1.98.1 build --release --manifest-path src-tauri/Cargo.toml --locked --example credential-store-check --features custom-protocol
           npm run tauri -- build --no-bundle -- --locked
           mkdir -p windows-artifact/licenses
           cp src-tauri/target/release/orka-bridge.exe windows-artifact/
+          cp src-tauri/target/release/examples/credential-store-check.exe windows-artifact/
           cp public/licenses/*.txt windows-artifact/licenses/
           for notice in public/licenses/*.txt; do cmp "$notice" "windows-artifact/licenses/${notice##*/}"; done
           # Embedded frontend, but debug-only local-image integration remains enabled.

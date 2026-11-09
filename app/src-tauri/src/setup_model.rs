@@ -36,6 +36,7 @@ fn unavailable() -> SetupError {
     SetupError {
         kind: "modelUnavailable",
         message: "The stored model connection is unavailable or its completion is unknown.",
+        native: None,
     }
 }
 fn read_binding(root: &Path) -> Result<Option<Binding>, SetupError> {
@@ -179,9 +180,7 @@ impl SetupStore {
         };
         // Reserve the exact slot durably: save can apply and then report an error.
         write_binding(root, &b)?;
-        store
-            .save(b.slot, secret)
-            .map_err(|_| SetupError::model("modelStore"))?;
+        store.save(b.slot, secret).map_err(SetupError::store)?;
         b.phase = Phase::Stored;
         // Publication can be visible even when the final directory flush fails.
         write_binding(root, &b)?;
@@ -240,9 +239,7 @@ impl SetupStore {
         if before.phase != ModelPhase::Idle || before.credential.installed {
             return Err(SetupError::model("modelGuest"));
         }
-        let secret = store
-            .load(b.slot)
-            .map_err(|_| SetupError::model("modelStore"))?;
+        let secret = store.load(b.slot).map_err(SetupError::store)?;
         b.phase = Phase::Pending;
         b.nonce = Some(client.boot_nonce());
         write_binding(root, &b)?; // durable barrier before either guest mutation

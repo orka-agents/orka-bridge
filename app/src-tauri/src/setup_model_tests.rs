@@ -2,7 +2,7 @@
 #![cfg(unix)]
 
 use super::*;
-use crate::runtime::credential_store::StoreError;
+use crate::runtime::credential_store::{NativeCall, StoreError};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
@@ -209,6 +209,8 @@ fn invalid_selection_refuses_before_actual_wire_or_os_load() {
 #[derive(Default)]
 struct FakeVault {
     deny_save: bool,
+    save_error: Option<StoreError>,
+    load_error: Option<StoreError>,
     deny_delete: Mutex<bool>,
     block_publish: Mutex<Option<(std::path::PathBuf, u32)>>,
     observe_save: Option<Box<dyn Fn(Uuid) + Send + Sync>>,
@@ -228,6 +230,9 @@ impl CredentialStore for FakeVault {
         assert!(!slot.is_nil());
         assert_eq!(secret, SECRET);
         self.calls.lock().unwrap().push(("save", slot));
+        if let Some(error) = self.save_error {
+            return Err(error);
+        }
         if self.deny_save {
             return Err(StoreError::Unavailable);
         }
@@ -245,6 +250,9 @@ impl CredentialStore for FakeVault {
     }
     fn load(&self, slot: Uuid) -> Result<CredentialPayload, StoreError> {
         self.calls.lock().unwrap().push(("load", slot));
+        if let Some(error) = self.load_error {
+            return Err(error);
+        }
         let slots = self.slots.lock().unwrap();
         CredentialPayload::new(slots.get(&slot).ok_or(StoreError::Unavailable)?)
             .map_err(|_| StoreError::Invalid)
@@ -399,6 +407,99 @@ fn denied_save_leaves_no_association_plaintext_fallback_or_load() {
     worker.join().unwrap().assert_empty();
     assert_eq!(vault.counts(), (1, 0, 0));
     assert!(vault.slots.lock().unwrap().is_empty());
+}
+
+const WRITE_FAILURE: StoreError = StoreError::Native {
+    call: NativeCall::CredWriteW,
+    code: 1312,
+};
+const READ_FAILURE: StoreError = StoreError::Native {
+    call: NativeCall::CredReadW,
+    code: 1168,
+};
+const STORE_MESSAGE: &str = "The native credential store could not save or load the sign-in.";
+
+// Diagnostics are built only from finite typed data, so no slot, target or secret can enter.
+fn assert_redacted(error: &SetupError, slot: Uuid, install: Uuid) {
+    let wire = serde_json::to_string(error).unwrap();
+    let text = format!("{wire} {} {error:?}", error.diagnostic());
+    for private in [
+        std::str::from_utf8(SECRET).unwrap().to_owned(),
+        slot.to_string(),
+        install.to_string(),
+        "ai.orka.bridge".to_owned(),
+    ] {
+        assert!(!text.contains(&private), "diagnostic leaked {private}");
+    }
+    // The renderer-facing error stays the fixed kind and message with no native detail.
+    assert_eq!(
+        wire,
+        format!("{{\"kind\":\"modelStore\",\"message\":\"{STORE_MESSAGE}\"}}")
+    );
+}
+
+#[test]
+fn native_save_failure_is_diagnosed_without_cleaning_the_reservation() {
+    let (_tmp, setup, install) = selected_setup();
+    let vault = FakeVault {
+        save_error: Some(WRITE_FAILURE),
+        ..FakeVault::default()
+    };
+    let error = setup.associate_secret(install, SECRET, &vault).unwrap_err();
+    assert_eq!(error.kind, "modelStore");
+    assert_eq!(
+        error.diagnostic(),
+        format!("{STORE_MESSAGE} (CredWriteW, Windows error 1312)")
+    );
+    let binding = read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .expect("failed save keeps the exact reservation");
+    assert_eq!(binding.phase, Phase::Storing);
+    assert_redacted(&error, binding.slot, install);
+    assert_eq!(vault.counts(), (1, 0, 0), "no retry or cleanup");
+}
+
+#[test]
+fn native_load_failure_is_diagnosed_before_any_guest_mutation() {
+    let (_tmp, setup, install) = selected_setup();
+    let vault = FakeVault {
+        load_error: Some(READ_FAILURE),
+        ..FakeVault::default()
+    };
+    setup.associate_secret(install, SECRET, &vault).unwrap();
+    let (mut client, worker) = peer(Uuid::new_v4(), |_| Some(idle()));
+    let error = setup
+        .connect_model(install, selection(), &mut client, &vault)
+        .unwrap_err();
+    assert_eq!(error.kind, "modelStore");
+    assert_eq!(
+        error.diagnostic(),
+        format!("{STORE_MESSAGE} (CredReadW, Windows error 1168)")
+    );
+    let binding = read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.phase, Phase::Stored);
+    assert_redacted(&error, binding.slot, install);
+    drop(client);
+    assert_eq!(worker.join().unwrap().publications(), 0);
+    assert_eq!(vault.counts(), (1, 1, 0));
+}
+
+#[test]
+fn non_native_store_failures_and_other_errors_have_only_their_fixed_message() {
+    let (_tmp, setup, install) = selected_setup();
+    let vault = FakeVault {
+        deny_save: true,
+        ..FakeVault::default()
+    };
+    let error = setup.associate_secret(install, SECRET, &vault).unwrap_err();
+    assert_eq!(error.kind, "modelStore");
+    assert_eq!(error.diagnostic(), STORE_MESSAGE);
+    assert_eq!(
+        SetupError::model("modelGuest").diagnostic(),
+        "The guest model handler is unavailable or is not idle."
+    );
 }
 
 #[test]

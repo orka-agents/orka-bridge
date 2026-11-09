@@ -156,6 +156,53 @@ test.each([
   expect(screen.getByRole('button', { name: 'Connect model' }).matches(':disabled')).toBe(true);
 });
 
+const nativeDetail = 'Connecting the model failed: The native credential store could not save or load the sign-in. (CredWriteW, Windows error 1312)';
+test('a ready VM shows its retained model diagnostic as plain text and keeps the example and model enabled', async () => {
+  native();
+  mockIPC(command => command === 'setup_status'
+    ? { selected: 'localVm', localVm: 'ready', localVmError: '<b data-vm-error>' + nativeDetail + '</b>', model: 'available' }
+    : Promise.reject({ kind: 'unavailable' }));
+  render(<App />);
+  expect((await screen.findByRole('alert')).textContent).toBe('<b data-vm-error>' + nativeDetail + '</b>');
+  expect(document.querySelector('[data-vm-error]')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Open example' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Use GitHub sign-in' }).hasAttribute('disabled')).toBe(false);
+});
+
+test('a failed model connect refreshes setup status so the retained native diagnostic appears', async () => {
+  native(); let failed = false;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_status') {
+      return { selected: 'localVm', localVm: 'ready', model: 'available', localVmError: failed ? nativeDetail : null };
+    }
+    if (command === 'setup_connect_model') { failed = true; throw { kind: 'modelStore', message: '/private/SECRET_MARKER' }; }
+    throw { kind: 'unavailable' };
+  }); mockIPC(ipc);
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  const alerts = await screen.findAllByRole('alert');
+  expect(alerts.map(alert => alert.textContent)).toEqual([nativeDetail,
+    'The native credential store could not save or load the sign-in.']);
+  expect(document.body.textContent).not.toContain('SECRET_MARKER');
+  expect(ipc.mock.calls.filter(([name]) => name === 'setup_connect_model')).toHaveLength(1);
+});
+
+test('a successful model connect refreshes setup status and clears the retained diagnostic', async () => {
+  native(); let connected = false;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_status') {
+      return { selected: 'localVm', localVm: 'ready', model: 'available', localVmError: connected ? null : nativeDetail };
+    }
+    if (command === 'setup_connect_model') { connected = true; return { ready: true }; }
+    throw { kind: 'unavailable' };
+  }); mockIPC(ipc);
+  const user = userEvent.setup(); render(<App />);
+  expect((await screen.findByRole('alert')).textContent).toBe(nativeDetail);
+  await user.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  expect(await screen.findByText('Model connected: copilot / gpt-5.6-terra.')).toBeTruthy();
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+});
+
 test('keyboard selection does not enable the existing route or duplicate the save', async () => {
   const ipc = native(); const user = userEvent.setup(); render(<App />);
   await screen.findByText('Native setup available');

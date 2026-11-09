@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { connectModel } from './modelState';
 
-export default function Model({ enabled }: { enabled: boolean }) {
+export default function Model({ enabled, onSettled }: { enabled: boolean; onSettled?: () => void }) {
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string>();
@@ -23,6 +23,8 @@ export default function Model({ enabled }: { enabled: boolean }) {
     active.current = false; setBusy(false);
     if (result.ok) setReady(true);
     else setError(result.message);
+    // The native side retains the diagnostic; refresh the setup status to show it.
+    onSettled?.();
   }
   return <section className="card setup-model" aria-labelledby="model-title" aria-busy={busy}>
     <h2 id="model-title">{enabled ? 'Connect a model' : 'Model connection locked'}</h2>

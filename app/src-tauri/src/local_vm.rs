@@ -114,6 +114,8 @@ pub trait LocalSession: Send {
 struct State {
     phase: LocalVmStatus,
     failure: Option<String>,
+    // First unresolved Connect failure; never changes the VM phase.
+    model_failure: Option<String>,
     closing: bool,
     close_started: bool,
     stopped: Option<bool>,
@@ -160,6 +162,7 @@ impl LocalVm {
                         LocalVmStatus::NotIntegrated
                     },
                     failure: None,
+                    model_failure: None,
                     closing: false,
                     close_started: false,
                     stopped: None,
@@ -185,7 +188,13 @@ impl LocalVm {
         let state = self.inner.state.lock().unwrap();
         // Publish phase, failure text and model availability from the same observation.
         snapshot
-            .with_local_vm(state.phase.as_str(), state.failure.clone())
+            .with_local_vm(
+                state.phase.as_str(),
+                state
+                    .failure
+                    .clone()
+                    .or_else(|| state.model_failure.clone()),
+            )
             .with_model(
                 if state.phase == LocalVmStatus::Ready && MODEL_IMAGE_AVAILABLE {
                     "available"
@@ -273,22 +282,36 @@ impl LocalVm {
             return Err(crate::setup::SetupError::model("modelGuest"));
         }
         let runtime = tokio::runtime::Handle::current();
-        self.with_client(move |id, client| {
-            setup.connect_stored_model(
-                id,
-                client,
-                &crate::runtime::credential_store::OsCredentialStore,
-                || runtime.block_on(crate::runtime::credentials::capture_stored_github_token()),
-            )
-        })
-        .await
-        .map_err(|error| {
-            crate::setup::SetupError::model(if matches!(error, RuntimeError::Busy) {
-                "modelBusy"
-            } else {
-                "modelSession"
+        let outcome = self
+            .with_client(move |id, client| {
+                setup.connect_stored_model(
+                    id,
+                    client,
+                    &crate::runtime::credential_store::OsCredentialStore,
+                    || runtime.block_on(crate::runtime::credentials::capture_stored_github_token()),
+                )
             })
-        })?
+            .await
+            .map_err(|error| {
+                crate::setup::SetupError::model(if matches!(error, RuntimeError::Busy) {
+                    "modelBusy"
+                } else {
+                    "modelSession"
+                })
+            })?;
+        // Only an attempted Connect is retained. Keep the first diagnostic until a success:
+        // a retry over the deliberately retained reservation reports only a generic error.
+        let mut state = self.inner.state.lock().unwrap();
+        match &outcome {
+            Ok(_) => state.model_failure = None,
+            Err(error) => {
+                state.model_failure.get_or_insert_with(|| {
+                    format!("Connecting the model failed: {}", error.diagnostic())
+                });
+            }
+        }
+        drop(state);
+        outcome
     }
     pub fn request_close(&self) {
         let mut state = self.inner.state.lock().unwrap();
