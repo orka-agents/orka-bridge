@@ -2,6 +2,43 @@ use super::*;
 use crate::setup::{ModelSetupState, SetupError, SetupStore};
 use bridge_runtime_protocol::*;
 
+#[tokio::test]
+async fn restart_cannot_reuse_the_previous_sessions_model_acknowledgment() {
+    struct Factory;
+    impl LocalFactory for Factory {
+        fn launch(
+            &self,
+            mut closed: watch::Receiver<bool>,
+            _: Arc<dyn Fn(LocalProgress) + Send + Sync>,
+        ) -> StartFuture<'_> {
+            Box::pin(async move {
+                if !*closed.borrow() {
+                    let _ = closed.changed().await;
+                }
+                Err(RuntimeError::Closed)
+            })
+        }
+    }
+    let vm = LocalVm::new(Arc::new(Factory));
+    vm.inner
+        .publish(LocalProgress::Status(LocalVmStatus::Ready));
+    vm.inner.model_result(&Ok(ModelSetupState {
+        associated: true,
+        ready: true,
+        unknown: false,
+        connection: None,
+    }));
+    assert!(vm.model_connected());
+    vm.inner
+        .publish(LocalProgress::Status(LocalVmStatus::Cancelled));
+    vm.start();
+    // Completing a new workspace boot is not a new model acknowledgment.
+    vm.inner
+        .publish(LocalProgress::Status(LocalVmStatus::Ready));
+    assert!(!vm.model_connected());
+    vm.shutdown().await.unwrap();
+}
+
 #[test]
 fn model_failure_details_survive_generic_retry_without_failing_the_running_vm() {
     let tmp = tempfile::tempdir().unwrap();

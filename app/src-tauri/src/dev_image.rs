@@ -205,6 +205,28 @@ pub fn from_environment() -> Result<Option<VerifiedDevImage>, DevImageError> {
         |path| Dir::open_ambient_dir(path, cap_std::ambient_authority()),
     )
 }
+pub fn from_environment_cancellable(
+    closed: &tokio::sync::watch::Receiver<bool>,
+) -> Result<Option<VerifiedDevImage>, DevImageError> {
+    let Some(source) = std::env::var_os("BRIDGE_DEV_IMAGE_DIR") else {
+        return Ok(None);
+    };
+    if source.is_empty() {
+        return Err(DevImageError);
+    }
+    let pins = native_pins().ok_or(DevImageError)?;
+    let check = || {
+        if *closed.borrow() {
+            Err(io::ErrorKind::Interrupted.into())
+        } else {
+            Ok(())
+        }
+    };
+    check().map_err(|_| DevImageError)?;
+    let root = Dir::open_ambient_dir(Path::new(&source), cap_std::ambient_authority())
+        .map_err(|_| DevImageError)?;
+    verify_checked(&root, pins, &check).map(Some)
+}
 fn native_pins() -> Option<&'static Pins> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
@@ -247,21 +269,37 @@ fn from_config(
     verify(&root, pins).map(Some)
 }
 fn verify(root: &Dir, pins: &Pins) -> Result<VerifiedDevImage, DevImageError> {
+    verify_checked(root, pins, &|| Ok(()))
+}
+fn verify_checked(
+    root: &Dir,
+    pins: &Pins,
+    check: &impl Fn() -> io::Result<()>,
+) -> Result<VerifiedDevImage, DevImageError> {
     let result = (|| {
         Ok::<_, io::Error>(VerifiedDevImage {
             platform: pins.platform,
             pins: pins.files,
             files: [
-                verified_file(root, &pins.files[0])?,
-                verified_file(root, &pins.files[1])?,
-                verified_file(root, &pins.files[2])?,
-                verified_file(root, &pins.files[3])?,
+                verified_file_checked(root, &pins.files[0], check)?,
+                verified_file_checked(root, &pins.files[1], check)?,
+                verified_file_checked(root, &pins.files[2], check)?,
+                verified_file_checked(root, &pins.files[3], check)?,
             ],
         })
     })();
     result.map_err(|_| DevImageError)
 }
+#[cfg(test)]
 fn verified_file(root: &Dir, pin: &FilePin) -> io::Result<File> {
+    verified_file_checked(root, pin, &|| Ok(()))
+}
+fn verified_file_checked(
+    root: &Dir,
+    pin: &FilePin,
+    check: &impl Fn() -> io::Result<()>,
+) -> io::Result<File> {
+    check()?;
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
     #[cfg(unix)]
@@ -283,6 +321,7 @@ fn verified_file(root: &Dir, pin: &FilePin) -> io::Result<File> {
     // One extra byte detects growth while bounding reads even with a writer.
     let mut limited = file.by_ref().take(pin.bytes + 1);
     loop {
+        check()?;
         let n = limited.read(&mut buffer)?;
         if n == 0 {
             break;
@@ -290,6 +329,7 @@ fn verified_file(root: &Dir, pin: &FilePin) -> io::Result<File> {
         bytes += n as u64;
         hash.update(&buffer[..n]);
     }
+    check()?;
     let actual: [u8; 32] = hash.finalize().into();
     if bytes != pin.bytes || actual != pin.sha256 {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
@@ -397,6 +437,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn verification_checks_cancellation_between_hash_reads() {
+        let mut fixture = Fixture::new(DevImagePlatform::WindowsAmd64);
+        fixture.data[3] = vec![42; 3 * 1024 * 1024];
+        fs::write(fixture.path(3), &fixture.data[3]).unwrap();
+        fixture.pins.files[3].bytes = fixture.data[3].len() as u64;
+        fixture.pins.files[3].sha256 = Sha256::digest(&fixture.data[3]).into();
+        let reads = std::cell::Cell::new(0);
+        let result = verified_file_checked(&fixture.root(), &fixture.pins.files[3], &|| {
+            reads.set(reads.get() + 1);
+            if reads.get() >= 3 {
+                Err(io::ErrorKind::Interrupted.into())
+            } else {
+                Ok(())
+            }
+        });
+        assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::Interrupted));
+        assert_eq!(reads.get(), 3);
+    }
     #[test]
     fn delivered_amd_model_image_and_arm_identity_stay_separate() {
         assert_eq!(

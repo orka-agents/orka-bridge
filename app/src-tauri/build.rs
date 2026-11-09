@@ -18,6 +18,8 @@ fn main() {
             "engine_call",
             "setup_status",
             "setup_select_local",
+            "setup_cancel_local",
+            "setup_change_local",
             "setup_example",
             "agent_open",
             "agent_save",

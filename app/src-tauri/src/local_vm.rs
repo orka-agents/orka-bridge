@@ -9,7 +9,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
 };
-use tokio::sync::{watch, Mutex as AsyncMutex, Notify};
+use tokio::sync::{watch, Mutex as AsyncMutex};
 #[path = "local_vm_native.rs"]
 mod native;
 pub use native::configured;
@@ -39,14 +39,41 @@ pub async fn select_local(
     store: Arc<crate::setup::SetupStore>,
     vm: &Arc<LocalVm>,
 ) -> Result<crate::setup::SetupSnapshot, crate::setup::SetupError> {
+    let _choice = vm.choice.lock().await;
     let selected = store.select_local_async().await?;
     vm.start();
     Ok(vm.snapshot(selected))
+}
+pub async fn cancel_local(
+    store: Arc<crate::setup::SetupStore>,
+    vm: &Arc<LocalVm>,
+) -> Result<crate::setup::SetupSnapshot, crate::setup::SetupError> {
+    vm.cancel()
+        .await
+        .map_err(|_| crate::setup::SetupError::model("modelSession"))?;
+    setup_status(store, vm).await
+}
+pub async fn change_local(
+    store: Arc<crate::setup::SetupStore>,
+    vm: &Arc<LocalVm>,
+) -> Result<crate::setup::SetupSnapshot, crate::setup::SetupError> {
+    let vm = vm.clone();
+    // The confirmed change owns stop + preference removal even if IPC is dropped.
+    tokio::spawn(async move {
+        let _choice = vm.choice.lock().await;
+        vm.cancel()
+            .await
+            .map_err(|_| crate::setup::SetupError::model("modelSession"))?;
+        Ok(vm.snapshot(store.clear_local_async().await?))
+    })
+    .await
+    .map_err(|_| crate::setup::SetupError::model("modelSession"))?
 }
 pub async fn resume_selected(
     store: Arc<crate::setup::SetupStore>,
     vm: &Arc<LocalVm>,
 ) -> Result<(), crate::setup::SetupError> {
+    let _choice = vm.choice.lock().await;
     if store.status_async().await?.selected.is_some() {
         vm.start();
     }
@@ -64,6 +91,7 @@ pub enum LocalVmStatus {
     Ready,
     Closing,
     Closed,
+    Cancelled,
     Failed,
 }
 impl LocalVmStatus {
@@ -77,6 +105,7 @@ impl LocalVmStatus {
             Self::Ready => "ready",
             Self::Closing => "closing",
             Self::Closed => "closed",
+            Self::Cancelled => "cancelled",
             Self::Failed => "failed",
         }
     }
@@ -88,13 +117,19 @@ fn failure_reason(error: &RuntimeError) -> String {
     }
 }
 
+pub use crate::setup::{WorkspacePhase, WorkspaceProgress};
+#[derive(Clone, Copy, Debug)]
+pub enum LocalProgress {
+    Status(LocalVmStatus),
+    Image(crate::runtime::image_types::ImageProgress),
+}
 pub type StartFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Box<dyn LocalSession>, RuntimeError>> + Send + 'a>>;
 pub trait LocalFactory: Send + Sync {
     fn launch(
         &self,
         closed: watch::Receiver<bool>,
-        progress: Arc<dyn Fn(LocalVmStatus) + Send + Sync>,
+        progress: Arc<dyn Fn(LocalProgress) + Send + Sync>,
     ) -> StartFuture<'_>;
 }
 pub trait LocalSession: Send {
@@ -119,6 +154,147 @@ struct State {
     close_started: bool,
     stopped: Option<bool>,
     startup: Option<tokio::task::JoinHandle<bool>>,
+    terminal: bool,
+    cancelled: watch::Sender<bool>,
+    completion: watch::Sender<Option<bool>>,
+    progress: Option<ProgressClock>,
+}
+struct ProgressClock {
+    started: std::time::Instant,
+    phase: WorkspacePhase,
+    bytes: Option<u64>,
+    total: Option<u64>,
+    sample: Option<(std::time::Instant, u64)>,
+    remaining: Option<u64>,
+}
+impl ProgressClock {
+    fn observe(&mut self, bytes: u64, total: u64, retained: bool, now: std::time::Instant) {
+        let advanced = self.bytes != Some(bytes);
+        self.bytes = Some(bytes);
+        self.total = Some(total);
+        self.remaining = None;
+        if retained || self.sample.is_none() {
+            self.sample = Some((now, bytes));
+        } else if let Some((time, previous)) = self.sample {
+            // Average fresh movement over the transfer, not a single 64 KiB chunk.
+            // A quarter-second sample avoids sub-millisecond events erasing the ETA.
+            let nanos = now.saturating_duration_since(time).as_nanos();
+            if advanced && bytes > previous && nanos >= 250_000_000 && bytes < total {
+                self.remaining = u64::try_from(
+                    (total - bytes) as u128 * nanos / (bytes - previous) as u128 / 1_000_000,
+                )
+                .ok();
+            }
+        }
+    }
+    fn snapshot(&self) -> WorkspaceProgress {
+        WorkspaceProgress {
+            phase: self.phase,
+            bytes: self.bytes,
+            total_bytes: self.total,
+            elapsed_ms: u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            remaining_ms: self.remaining,
+        }
+    }
+}
+#[cfg(test)]
+mod progress_tests {
+    use super::*;
+    #[test]
+    fn startup_snapshot_has_native_elapsed_without_fake_bytes_or_eta() {
+        let vm = LocalVm::unavailable();
+        vm.inner
+            .publish(LocalProgress::Status(LocalVmStatus::Starting));
+        let mut state = vm.inner.state.lock().unwrap();
+        let progress = state
+            .progress
+            .as_mut()
+            .expect("startup has a monotonic clock");
+        progress.started = std::time::Instant::now() - std::time::Duration::from_secs(42);
+        let snapshot = serde_json::to_value(progress.snapshot()).unwrap();
+        assert_eq!(snapshot["phase"], "starting");
+        assert!(snapshot["elapsedMs"].as_u64().unwrap() >= 42000);
+        assert!(
+            snapshot["bytes"].is_null()
+                && snapshot["totalBytes"].is_null()
+                && snapshot["remainingMs"].is_null()
+        );
+    }
+    #[test]
+    fn eta_stays_useful_for_sub_millisecond_copy_events() {
+        let now = std::time::Instant::now();
+        let total = 3 * 1024 * 1024 * 1024u64;
+        let mut clock = ProgressClock {
+            started: now,
+            phase: WorkspacePhase::Materializing,
+            bytes: None,
+            total: None,
+            sample: None,
+            remaining: None,
+        };
+        clock.observe(0, total, true, now);
+        for i in 1..=20_000u64 {
+            clock.observe(
+                i * 65536,
+                total,
+                false,
+                now + std::time::Duration::from_micros(i * 160 + 4000),
+            );
+        }
+        let remaining = clock
+            .remaining
+            .expect("a sustained fast copy has a measured ETA");
+        assert!((4600..=4800).contains(&remaining), "{remaining}");
+    }
+    #[test]
+    fn eta_uses_fresh_movement_not_retained_bytes_or_stalled_samples() {
+        let now = std::time::Instant::now();
+        let mut clock = ProgressClock {
+            started: now,
+            phase: WorkspacePhase::Materializing,
+            bytes: None,
+            total: None,
+            sample: None,
+            remaining: None,
+        };
+        clock.observe(800, 1000, true, now);
+        assert!(clock.remaining.is_none());
+        clock.observe(
+            850,
+            1000,
+            false,
+            now + std::time::Duration::from_millis(500),
+        );
+        assert_eq!(clock.remaining, Some(1500));
+        clock.observe(
+            950,
+            1000,
+            true,
+            now + std::time::Duration::from_millis(1000),
+        );
+        assert!(clock.remaining.is_none());
+        clock.observe(
+            975,
+            1000,
+            false,
+            now + std::time::Duration::from_millis(1500),
+        );
+        assert_eq!(clock.remaining, Some(500));
+        clock.observe(
+            975,
+            1000,
+            false,
+            now + std::time::Duration::from_millis(2000),
+        );
+        assert!(clock.remaining.is_none());
+        clock.observe(
+            1000,
+            1000,
+            false,
+            now + std::time::Duration::from_millis(2500),
+        );
+        assert!(clock.remaining.is_none());
+    }
 }
 #[cfg(test)]
 #[path = "local_vm_model_tests.rs"]
@@ -127,8 +303,6 @@ mod model_tests;
 struct Inner {
     state: Mutex<State>,
     session: Arc<AsyncMutex<Option<Box<dyn LocalSession>>>>,
-    closed: watch::Sender<bool>,
-    finished: Notify,
 }
 impl Inner {
     fn model_result(
@@ -151,15 +325,63 @@ impl Inner {
             _ => {}
         }
     }
-    fn publish(&self, phase: LocalVmStatus) {
+    fn publish(&self, progress: LocalProgress) {
+        use crate::runtime::image_types::ImageProgress;
         let mut state = self.state.lock().unwrap();
-        if !state.closing {
-            state.phase = phase;
+        if state.closing {
+            return;
+        }
+        match progress {
+            LocalProgress::Status(phase) => {
+                state.phase = phase;
+                if phase == LocalVmStatus::Starting {
+                    state.progress = Some(ProgressClock {
+                        started: std::time::Instant::now(),
+                        phase: WorkspacePhase::Starting,
+                        bytes: None,
+                        total: None,
+                        sample: None,
+                        remaining: None,
+                    });
+                } else if !matches!(phase, LocalVmStatus::Preparing | LocalVmStatus::Installing) {
+                    state.progress = None;
+                }
+            }
+            LocalProgress::Image(event) => {
+                let (phase, count) = match event {
+                    ImageProgress::Verifying => (WorkspacePhase::Verifying, None),
+                    ImageProgress::Materializing { bytes, total } => {
+                        (WorkspacePhase::Materializing, Some((bytes, total, false)))
+                    }
+                    ImageProgress::Retained { bytes, total } => {
+                        (WorkspacePhase::Materializing, Some((bytes, total, true)))
+                    }
+                    _ => return,
+                };
+                let now = std::time::Instant::now();
+                let clock = state.progress.get_or_insert(ProgressClock {
+                    started: now,
+                    phase,
+                    bytes: None,
+                    total: None,
+                    sample: None,
+                    remaining: None,
+                });
+                if clock.phase != phase {
+                    clock.phase = phase;
+                    clock.sample = None;
+                    clock.remaining = None;
+                }
+                if let Some((bytes, total, retained)) = count {
+                    clock.observe(bytes, total, retained, now);
+                }
+            }
         }
     }
     fn fail(&self, reason: String) {
         let mut state = self.state.lock().unwrap();
         state.failure = Some(reason);
+        state.progress = None;
         if !state.closing {
             state.phase = LocalVmStatus::Failed;
         }
@@ -172,10 +394,12 @@ impl Inner {
 pub struct LocalVm {
     inner: Arc<Inner>,
     factory: Option<Arc<dyn LocalFactory>>,
+    choice: AsyncMutex<()>,
 }
 impl LocalVm {
     fn make(factory: Option<Arc<dyn LocalFactory>>) -> Arc<Self> {
-        let (closed, _) = watch::channel(false);
+        let (cancelled, _) = watch::channel(false);
+        let (completion, _) = watch::channel(None);
         Arc::new(Self {
             inner: Arc::new(Inner {
                 state: Mutex::new(State {
@@ -190,12 +414,15 @@ impl LocalVm {
                     close_started: false,
                     stopped: None,
                     startup: None,
+                    terminal: false,
+                    cancelled,
+                    completion,
+                    progress: None,
                 }),
                 session: Arc::new(AsyncMutex::new(None)),
-                closed,
-                finished: Notify::new(),
             }),
             factory,
+            choice: AsyncMutex::new(()),
         })
     }
     pub fn new(factory: Arc<dyn LocalFactory>) -> Arc<Self> {
@@ -212,8 +439,9 @@ impl LocalVm {
         let state = self.inner.state.lock().unwrap();
         !state.closing && state.phase == LocalVmStatus::Ready && state.model_connected
     }
-    fn snapshot(&self, snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
+    fn snapshot(&self, mut snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
         let state = self.inner.state.lock().unwrap();
+        snapshot.workspace_progress = state.progress.as_ref().map(ProgressClock::snapshot);
         // Publish phase, failure text and model availability from the same observation.
         snapshot
             .with_local_vm(state.phase.as_str(), state.failure.clone())
@@ -227,13 +455,24 @@ impl LocalVm {
     }
     pub fn start(self: &Arc<Self>) {
         let mut state = self.inner.state.lock().unwrap();
-        if state.closing || state.phase != LocalVmStatus::Idle {
+        if state.terminal
+            || state.closing
+            || !matches!(state.phase, LocalVmStatus::Idle | LocalVmStatus::Cancelled)
+        {
             return;
         }
         let Some(factory) = self.factory.clone() else {
             return;
         };
         state.phase = LocalVmStatus::Preparing;
+        state.model_connected = false;
+        state.failure = None;
+        state.close_started = false;
+        state.stopped = None;
+        state.progress = None;
+        state.cancelled = watch::channel(false).0;
+        state.completion = watch::channel(None).0;
+        let cancelled = state.cancelled.subscribe();
         let inner = self.inner.clone();
         // Stored before releasing the admission lock. Dropping an IPC waiter does
         // not drop this task or any installation/handshake job it awaits.
@@ -242,16 +481,24 @@ impl LocalVm {
                 let i = inner.clone();
                 Arc::new(move |phase| i.publish(phase))
             };
-            let result = factory.launch(inner.closed.subscribe(), progress).await;
-            let cancelled = matches!(&result, Err(RuntimeError::Closed)) && *inner.closed.borrow();
-            let successful = result.is_ok() || cancelled;
+            let result = factory.launch(cancelled.clone(), progress).await;
+            let cancelled_error = *cancelled.borrow()
+                && matches!(
+                    &result,
+                    Err(RuntimeError::Closed
+                        | RuntimeError::Image(crate::runtime::image_types::ImageError::Cancelled))
+                );
+            let successful = result.is_ok() || cancelled_error;
             let mut session = inner.session.lock().await;
             match result {
                 Ok(live) => {
                     *session = Some(live);
-                    inner.publish(LocalVmStatus::Ready);
+                    inner.publish(LocalProgress::Status(LocalVmStatus::Ready));
                 }
-                Err(RuntimeError::Closed) if cancelled => {}
+                Err(
+                    RuntimeError::Closed
+                    | RuntimeError::Image(crate::runtime::image_types::ImageError::Cancelled),
+                ) if cancelled_error => {}
                 Err(error) => inner.fail(format!(
                     "Starting the local VM failed: {}",
                     failure_reason(&error)
@@ -329,21 +576,36 @@ impl LocalVm {
     }
     pub fn request_close(&self) {
         let mut state = self.inner.state.lock().unwrap();
-        if !state.closing {
-            state.closing = true;
+        state.terminal = true;
+        if state.stopped == Some(true) {
+            state.phase = LocalVmStatus::Closed;
+        } else if state.stopped.is_none() {
             state.phase = LocalVmStatus::Closing;
-            self.inner.closed.send_replace(true);
         }
+        state.closing = true;
+        state.progress = None;
+        state.cancelled.send_replace(true);
+    }
+    pub async fn cancel(&self) -> Result<(), RuntimeError> {
+        self.stop(false).await
     }
     pub async fn shutdown(&self) -> Result<(), RuntimeError> {
         self.request_close();
-        {
+        self.stop(true).await
+    }
+    async fn stop(&self, terminal: bool) -> Result<(), RuntimeError> {
+        let mut completion = {
             let mut state = self.inner.state.lock().unwrap();
+            state.terminal |= terminal;
             if !state.close_started {
+                state.closing = true;
+                state.phase = LocalVmStatus::Closing;
+                state.progress = None;
+                state.cancelled.send_replace(true);
                 state.close_started = true;
                 let startup = state.startup.take();
                 let inner = self.inner.clone();
-                // The close job owns its custody independently of any waiter.
+                // Custody survives dropped cancel, change and shutdown IPC waiters.
                 tokio::spawn(async move {
                     let started = match startup {
                         Some(task) => matches!(task.await, Ok(true)),
@@ -358,7 +620,7 @@ impl LocalVm {
                                 true
                             }
                             Err(error) => {
-                                // On failure keep the original session/quarantined worker.
+                                // Never replace a late session whose native stop failed.
                                 stop_inner.fail(format!(
                                     "Stopping the local VM failed: {}",
                                     failure_reason(&error)
@@ -371,28 +633,32 @@ impl LocalVm {
                     .unwrap_or(false)
                         && started;
                     let mut state = inner.state.lock().unwrap();
-                    state.phase = if stopped {
+                    state.phase = if !stopped {
+                        LocalVmStatus::Failed
+                    } else if state.terminal {
                         LocalVmStatus::Closed
                     } else {
-                        LocalVmStatus::Failed
+                        LocalVmStatus::Cancelled
                     };
                     state.stopped = Some(stopped);
-                    inner.finished.notify_waiters();
+                    state.closing = state.terminal || !stopped;
+                    state.completion.send_replace(Some(stopped));
                 });
             }
-        }
+            state.completion.subscribe()
+        };
         loop {
-            let notified = self.inner.finished.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            if let Some(ok) = self.inner.state.lock().unwrap().stopped {
+            if let Some(ok) = *completion.borrow_and_update() {
                 return if ok {
                     Ok(())
                 } else {
                     Err(RuntimeError::Unavailable)
                 };
             }
-            notified.await;
+            completion
+                .changed()
+                .await
+                .map_err(|_| RuntimeError::Unavailable)?;
         }
     }
 }

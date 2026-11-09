@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { ExamplePair } from '../setup/state';
+import { loadExample, type ExamplePair } from '../setup/state';
 import { agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
 import type { RunSnapshot } from './run-api';
 
-export default function Example({ active = true, actions, onPair, onRun, onSaveState, onStale }: {
-  active?: boolean; actions?: ReactNode;
+export default function Example({ active = true, readOnly = false, actions, onPair, onRun, onSaveState, onStale }: {
+  active?: boolean; readOnly?: boolean; actions?: ReactNode;
   onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void;
   onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
 }) {
@@ -20,19 +20,20 @@ export default function Example({ active = true, actions, onPair, onRun, onSaveS
   const lineEnding = useRef('\n'); const needsCommit = useRef(false);
   useEffect(() => {
     let mounted = true;
-    void agentCall('agent_open').then(value => {
+    const open = readOnly ? loadExample().then(result => { if (!result.ok) throw Error(result.message); return result.pair; }) : agentCall('agent_open');
+    void open.then(value => {
       if (!mounted) return;
       setPair(value); setDraft(value.agent); latest.current = saved.current = value.agent;
       lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n'; onPair?.(value);
     }, () => { if (mounted) { setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined); } });
     return () => { mounted = false; };
-  }, [onPair]);
+  }, [onPair, readOnly]);
   useEffect(() => { onSaveState?.(saveState); }, [saveState, onSaveState]);
   useEffect(() => { onStale?.(stale); }, [stale, onStale]);
 
   const flush = useCallback(async (retry = false) => {
     clearTimeout(timer.current);
-    if (busy.current) return;
+    if (readOnly || busy.current) return;
     if (!retry && !needsCommit.current && latest.current === saved.current) { setSaveState('saved'); return; }
     busy.current = true; setSaveState('saving'); setError(undefined);
     try {
@@ -47,9 +48,10 @@ export default function Example({ active = true, actions, onPair, onRun, onSaveS
       needsCommit.current = false; setSaveState('saved');
     } catch { needsCommit.current = true; setSaveState('error'); setError('Your changes could not be saved. Your draft is still here.'); }
     finally { busy.current = false; }
-  }, [onPair]);
+  }, [onPair, readOnly]);
   useEffect(() => () => { clearTimeout(timer.current); }, []);
   const edit = (value: string) => {
+    if (readOnly) return;
     const content = value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current);
     latest.current = content; setDraft(content); setStale(!pair?.source || content !== saved.current); setError(undefined);
     setSaveState('dirty'); clearTimeout(timer.current);
@@ -71,18 +73,19 @@ export default function Example({ active = true, actions, onPair, onRun, onSaveS
     </div>
     {!pair ? error ? <p role="alert">{error}</p> : <p role="status">Opening your agent…</p> : <>
       <div className="designer-file card">
-        <div className="file-toolbar"><h2>{view === 'File' ? 'web-reader.agent.md' : 'Instructions and settings'}</h2><span className="muted" role="status">{saveLabel}</span></div>
+        <div className="file-toolbar"><h2>{view === 'File' ? 'web-reader.agent.md' : 'Instructions and settings'}</h2><span className="muted" role="status">{readOnly ? 'Read-only during setup' : saveLabel}</span></div>
         {view === 'File' ? <>
           <label className="sr-only" htmlFor="agent-file">Agent file</label>
-          <p className="muted" id="file-hint">Changes save automatically in your agent’s folder. Each save is kept in its Git history.</p>
-          <textarea id="agent-file" aria-describedby="file-hint" className="agent-editor" spellCheck={false} value={draft} onChange={event => edit(event.target.value)} onBlur={() => { void flush(); }} onKeyDown={event => {
+          <p className="muted" id="file-hint">{readOnly ? 'You can read the example while your workspace gets ready. Editing opens after setup.' : 'Changes save automatically in your agent’s folder. Each save is kept in its Git history.'}</p>
+          <textarea readOnly={readOnly} id="agent-file" aria-describedby="file-hint" className="agent-editor" spellCheck={false} value={draft} onChange={event => edit(event.target.value)} onBlur={() => { void flush(); }} onKeyDown={event => {
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void flush(); }
           }} />
-        </> : <><p className="muted">Edit the raw file in File view. Form editing is coming.</p><pre className="example-source" tabIndex={0} aria-label="Agent file, read-only">{draft}</pre></>}
+        </> : <><p className="muted">{readOnly ? 'Read the instructions now. You can change them after setup.' : 'Edit the raw file in File view. Form editing is coming.'}</p><pre className="example-source" tabIndex={0} aria-label={readOnly ? 'Instructions, read-only' : 'Agent file, read-only'}>{readOnly ? draft.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, '') : draft}</pre></>}
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
-        <Run source={pair.source} onSnapshot={onRun} blocked={saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />
+        {readOnly ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
+          : <Run source={pair.source} onSnapshot={onRun} blocked={saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />}
         <details className="check-source"><summary>Check file: web-reader.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Check file, read-only">{pair.tests}</pre></details>
       </div>
     </>}
