@@ -149,7 +149,7 @@ not a duplicated ownership file. The result remains metadata-only.
 
 Engineering identity is explicit: the common manifest-hash slot identifies its
 raw pinned boot receipt, not a release manifest. Its compatibility ID is
-`engineering-afc68ae1` on Mac and `engineering-a41d68bb` on Windows. Neither source preparation nor materialization starts a
+`engineering-afc68ae1` on Mac and `engineering-1756ab0c` on Windows. Neither source preparation nor materialization starts a
 VM or reports whole-setup readiness. Backend selection, launch validation and
 the visible setup connection remain the native runtime caller's responsibility.
 
@@ -172,7 +172,7 @@ Set it to a folder containing `boot-assets.json`, `os.kernel`, `os.initrd`, and
 `npm run tauri dev`. Assemble all four matching files in that folder; do not
 use partial boot exports or convert the disk format.
 
-This temporary source accepts the pinned `afc68ae1` Mac and `a41d68bb`
+This temporary source accepts the pinned `afc68ae1` Mac and `1756ab0c`
 Windows engineering sets with the `orka-7916cd1c-native/v1` restricted native profile.
 After Continue on the local workspace choice, it checks the exact receipt and payload lengths and
 SHA-256 on a background worker, then installs verified private copies under the
