@@ -232,4 +232,4 @@ minimum dimensions. On first run it advances from the welcome to the workspace c
 macOS Keyboard Navigation, then restores the runner's prior preferences. Captures contain only the app window.
 Review visible changes in these captures and report anything not exercised,
 such as platform input feel or installer behavior.
-Each capture keeps the text OCR read beside it, and a failed check prints that text after its reason, so an unrendered page can be told apart from a page showing a different state.
+Each capture keeps the text OCR read beside it. A failed check prints its reason followed by the latest capture's text and adds the reason to that file, so an unrendered page can be told apart from a page showing a different state.
