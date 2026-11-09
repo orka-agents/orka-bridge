@@ -305,6 +305,22 @@ async fn disk_pair_to_cluster_checks_pass() {
     );
 }
 #[tokio::test]
+async fn agent_access_probe_requests_only_one_item() {
+    let api = Arc::new(ApiFixture::default());
+    let _ = access(&api).await;
+    let calls = api.wire.calls.lock().unwrap();
+    let path = calls
+        .iter()
+        .find(|c| c.0.starts_with("GET /api/v1/agents?"))
+        .unwrap()
+        .0
+        .trim_start_matches("GET ");
+    let url = reqwest::Url::parse(&format!("http://fixture{path}")).unwrap();
+    assert!(url.query_pairs().any(|(k, v)| k == "limit" && v == "1"));
+    drop(calls);
+    assert_eq!(api.wire.posts(), 0);
+}
+#[tokio::test]
 async fn metadata_continue_is_distinct_from_event_after_cursor() {
     let api = Arc::new(ApiFixture::default());
     *api.wire.mode.lock().unwrap() = "paged";

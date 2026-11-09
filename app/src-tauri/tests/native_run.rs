@@ -257,7 +257,7 @@ impl Fixture {
                 }
                 let payload = if b.fault == "oversize" {
                     "x".repeat(1024 * 1024 + 1)
-                } else if b.fault == "malformed" {
+                } else if matches!(b.fault, "malformed" | "401" | "403") {
                     "secret-server-body".into()
                 } else {
                     response.to_string()

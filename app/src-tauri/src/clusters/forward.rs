@@ -66,7 +66,7 @@ fn access_error(error: ErrorKind) -> AccessOutcome {
     }
 }
 
-/// One Pod lease for the whole attempt. Never reconnect, reselect or retry a write.
+/// One opened Pod stream for the attempt. Never reconnect, reselect or retry a write.
 pub struct OrkaStreamTransport {
     connection: Connection,
     namespace: String,
@@ -214,6 +214,8 @@ impl Connection {
     ) -> Result<Self, ErrorKind> {
         timeout_at(deadline, async {
             let peer = select_peer(creator, binding).await?;
+            // Kubernetes forwards by name without a UID precondition; peer UID
+            // is discovery metadata, not authenticated stream attestation.
             let forward = Api::<Pod>::namespaced(creator.clone(), &peer.pod_namespace)
                 .portforward(&peer.pod_name, &[peer.port])
                 .await
@@ -279,6 +281,10 @@ impl Connection {
             let mut url = reqwest::Url::parse("http://orka.invalid/").unwrap();
             url.set_path(&format!("/api/v1/{path}"));
             url.query_pairs_mut().append_pair("namespace", namespace);
+            if path == "agents" && body.is_none() {
+                // This is an access probe, not an inventory of full Agent specs.
+                url.query_pairs_mut().append_pair("limit", "1");
+            }
             if let Some(after) = after {
                 let key = if path.ends_with("/events") {
                     "after"
@@ -308,9 +314,9 @@ impl Connection {
                 )))
                 .map_err(|_| ErrorKind::Configuration)?;
             let mut sender = self.sender.lock().await;
+            let sender = sender.as_mut().ok_or(ErrorKind::Transport)?;
+            sender.ready().await.map_err(|_| ErrorKind::Transport)?;
             let response = sender
-                .as_mut()
-                .ok_or(ErrorKind::Transport)?
                 .send_request(request)
                 .await
                 .map_err(|_| ErrorKind::Transport)?;
@@ -453,6 +459,84 @@ async fn select_peer(creator: &Client, binding: &TargetBinding) -> Result<Forwar
 mod tests {
     use super::*;
     use std::sync::Arc;
+    #[tokio::test]
+    async fn waits_for_sender_readiness_without_closing_a_healthy_connection() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (client, mut server) = tokio::io::duplex(8192);
+        let (mut sender, driver) = http1::handshake(TokioIo::new(client)).await.unwrap();
+        // Fill Hyper's one initial queue slot before its driver is polled.
+        let first = sender.send_request(
+            Request::builder()
+                .uri("/first")
+                .header(header::HOST, "orka")
+                .body(Full::new(Bytes::new()))
+                .unwrap(),
+        );
+        assert!(!sender.is_ready());
+        let (release, gate) = tokio::sync::oneshot::channel();
+        let driver = tokio::spawn(async move {
+            let _ = gate.await;
+            let _ = driver.await;
+        });
+        let connection = Connection {
+            peer: ForwardPeer {
+                pod_name: "fixture".into(),
+                pod_namespace: "fixture".into(),
+                pod_uid: "fixture".into(),
+                port: 80,
+            },
+            sender: AsyncMutex::new(Some(sender)),
+            drivers: Mutex::new(Drivers {
+                forward: None,
+                http: Some(driver),
+            }),
+            closing: AsyncMutex::new(None),
+            closed: AtomicBool::new(false),
+        };
+        let mut next = Box::pin(connection.request(
+            "agents",
+            "agents",
+            "synthetic",
+            &["synthetic"],
+            None,
+            None,
+            Instant::now() + Duration::from_secs(2),
+        ));
+        std::future::poll_fn(|cx| {
+            assert!(next.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        assert!(
+            !connection.closed.load(Ordering::SeqCst),
+            "a temporarily unready sender must not close the lease"
+        );
+        release.send(()).unwrap();
+        let responder = tokio::spawn(async move {
+            for _ in 0..2 {
+                let mut bytes = Vec::new();
+                loop {
+                    let mut byte = [0];
+                    server.read_exact(&mut byte).await.unwrap();
+                    bytes.push(byte[0]);
+                    if bytes.ends_with(b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                server
+                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}")
+                    .await
+                    .unwrap();
+            }
+        });
+        let consume_first = async {
+            first.await.unwrap().into_body().collect().await.unwrap();
+        };
+        let (value, ()) = tokio::join!(next, consume_first);
+        assert_eq!(value.unwrap(), serde_json::json!({}));
+        responder.await.unwrap();
+        connection.close().await;
+    }
     #[tokio::test]
     async fn close_aborts_and_joins_drivers() {
         struct Exited(Arc<AtomicBool>);
