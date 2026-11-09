@@ -211,6 +211,7 @@ mod credential_tests {
                     ResultBody::ModelState(ModelState {
                         phase: ModelPhase::Idle,
                         connection: None,
+                        diagnostic: None,
                         credential: CredentialState {
                             profile: CREDENTIAL_PROFILE,
                             generation: None,

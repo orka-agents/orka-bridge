@@ -355,6 +355,7 @@ fn credential(generation: Option<Uuid>, installed: bool) -> CredentialState {
 }
 fn idle() -> ResultBody {
     ResultBody::ModelState(ModelState {
+        diagnostic: None,
         phase: ModelPhase::Idle,
         connection: None,
         credential: credential(None, false),
@@ -369,6 +370,7 @@ fn connection() -> ModelConnection {
 }
 fn remote(connection: &ModelConnection, phase: ModelPhase) -> ResultBody {
     ResultBody::ModelState(ModelState {
+        diagnostic: None,
         phase,
         connection: Some(connection.clone()),
         credential: credential(Some(connection.generation), true),
@@ -455,6 +457,217 @@ fn older_peer_framed_unavailable_precedes_secret_load_and_delivery() {
             .phase,
         Phase::Stored
     );
+}
+
+#[test]
+fn failed_connect_retains_only_typed_guest_diagnostics_in_setup_details() {
+    let (_tmp, setup, install, vault) = associated();
+    let expected = connection();
+    let diagnostic = ModelDiagnostic {
+        classification: ModelDiagnosticClass::Exit,
+        elapsed_ms: 9980,
+        exit_code: Some(1),
+        stage: Some(ModelStage::Model),
+        error_code: Some(ModelErrorCode::ExecutionUnknown),
+        stderr: Some(ModelStderr::ExecutionUnknown),
+    };
+    let failure = diagnostic.clone();
+    let (mut client, worker) = peer(Uuid::new_v4(), move |request| {
+        Some(match &request.body {
+            RequestBody::ModelStatus {} => idle(),
+            RequestBody::CredentialStatus {} => {
+                ResultBody::CredentialState(credential(None, false))
+            }
+            RequestBody::CredentialPublish { .. } => {
+                ResultBody::CredentialState(credential(Some(expected.generation), true))
+            }
+            RequestBody::ModelConnect { .. } => ResultBody::ModelState(ModelState {
+                phase: ModelPhase::Unknown,
+                connection: Some(expected.clone()),
+                credential: credential(Some(expected.generation), true),
+                diagnostic: Some(failure.clone()),
+            }),
+            _ => panic!("unexpected request"),
+        })
+    });
+    let error = setup
+        .connect_model(install, selection(), &mut client, &vault)
+        .unwrap_err();
+    drop(client);
+    worker.join().unwrap();
+    let detail = error.model_detail().expect("retained diagnostic");
+    assert!(detail.contains("execution_unknown"));
+    assert!(detail.contains("9980"));
+    assert!(detail.contains("The execution outcome is unknown."));
+    assert!(!detail.contains(std::str::from_utf8(SECRET).unwrap()));
+    assert_eq!(serde_json::to_value(error).unwrap()["kind"], "modelConnect");
+}
+
+#[test]
+fn pending_ready_ack_is_reconciled_without_republishing_or_loading_sign_in() {
+    let (_tmp, setup, install, vault) = associated();
+    let nonce = Uuid::new_v4();
+    let conn = connection();
+    let root = setup.root.as_deref().unwrap();
+    let mut binding = read_binding(root).unwrap().unwrap();
+    binding.phase = Phase::Pending;
+    binding.nonce = Some(nonce);
+    write_binding(root, &binding).unwrap();
+    let expected = conn.clone();
+    let (mut client, worker) = peer(nonce, move |request| {
+        assert!(matches!(request.body, RequestBody::ModelStatus {}));
+        Some(remote(&expected, ModelPhase::Ready))
+    });
+    let result = setup.connect_model(install, selection(), &mut client, &vault);
+    drop(client);
+    let traffic = worker.join().unwrap();
+    assert!(result.unwrap().ready);
+    assert_eq!(traffic.frames.len(), 1);
+    assert_eq!(vault.counts(), (1, 0, 0));
+    let binding = read_binding(root).unwrap().unwrap();
+    assert_eq!(binding.phase, Phase::Connected);
+    assert_eq!(binding.connection, Some(conn));
+}
+
+#[test]
+fn pending_without_id_retries_only_the_installed_generation_without_capture() {
+    let (_tmp, setup, install, vault) = associated();
+    let nonce = Uuid::new_v4();
+    let conn = connection();
+    let root = setup.root.as_deref().unwrap();
+    let mut binding = read_binding(root).unwrap().unwrap();
+    binding.phase = Phase::Pending;
+    binding.nonce = Some(nonce);
+    write_binding(root, &binding).unwrap();
+    let expected = conn.clone();
+    let (mut client, worker) = peer(nonce, move |request| {
+        Some(match &request.body {
+            RequestBody::ModelStatus {} => ResultBody::ModelState(ModelState {
+                diagnostic: None,
+                phase: ModelPhase::Unknown,
+                connection: None,
+                credential: credential(Some(expected.generation), true),
+            }),
+            RequestBody::ModelConnect {
+                generation,
+                selection,
+            } => {
+                assert_eq!(*generation, expected.generation);
+                assert_eq!(*selection, expected.selection);
+                remote(&expected, ModelPhase::Ready)
+            }
+            _ => panic!("retry must not republish a credential"),
+        })
+    });
+    let result =
+        setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+    drop(client);
+    let traffic = worker.join().unwrap();
+    assert!(result.unwrap().ready);
+    assert_eq!(traffic.frames.len(), 2);
+    assert_eq!(vault.counts(), (1, 0, 0));
+    assert_eq!(read_binding(root).unwrap().unwrap().connection, Some(conn));
+}
+
+#[test]
+fn pending_known_failure_disconnects_and_clears_before_a_fresh_connect() {
+    let (_tmp, setup, install, vault) = associated();
+    let nonce = Uuid::new_v4();
+    let old = connection();
+    let new = connection();
+    let cleared = Uuid::new_v4();
+    let root = setup.root.as_deref().unwrap();
+    let mut binding = read_binding(root).unwrap().unwrap();
+    binding.phase = Phase::Pending;
+    binding.nonce = Some(nonce);
+    binding.connection = Some(old.clone());
+    write_binding(root, &binding).unwrap();
+    let expected = new.clone();
+    let mut step = 0;
+    let (mut client, worker) = peer(nonce, move |request| {
+        step += 1;
+        Some(match (step, &request.body) {
+            (1, RequestBody::ModelStatus {}) => remote(&old, ModelPhase::Unknown),
+            (2, RequestBody::ModelDisconnect { connection }) => {
+                assert_eq!(*connection, old.id);
+                ResultBody::ModelState(ModelState {
+                    diagnostic: None,
+                    phase: ModelPhase::Idle,
+                    connection: None,
+                    credential: credential(Some(old.generation), true),
+                })
+            }
+            (3, RequestBody::CredentialStatus {}) => {
+                ResultBody::CredentialState(credential(Some(old.generation), true))
+            }
+            (
+                4,
+                RequestBody::CredentialClear {
+                    expected_generation,
+                },
+            ) => {
+                assert_eq!(*expected_generation, old.generation);
+                ResultBody::CredentialState(credential(Some(cleared), false))
+            }
+            (5, RequestBody::ModelStatus {}) => ResultBody::ModelState(ModelState {
+                diagnostic: None,
+                phase: ModelPhase::Idle,
+                connection: None,
+                credential: credential(Some(cleared), false),
+            }),
+            (6, RequestBody::CredentialStatus {}) => {
+                ResultBody::CredentialState(credential(Some(cleared), false))
+            }
+            (
+                7,
+                RequestBody::CredentialPublish {
+                    expected_generation,
+                    token,
+                },
+            ) => {
+                assert_eq!(*expected_generation, Some(cleared));
+                assert_eq!(token.as_bytes(), SECRET);
+                ResultBody::CredentialState(credential(Some(expected.generation), true))
+            }
+            (
+                8,
+                RequestBody::ModelConnect {
+                    generation,
+                    selection,
+                },
+            ) => {
+                assert_eq!(*generation, expected.generation);
+                assert_eq!(*selection, expected.selection);
+                remote(&expected, ModelPhase::Ready)
+            }
+            _ => panic!("unexpected retry step {step}"),
+        })
+    });
+    let result =
+        setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+    drop(client);
+    let traffic = worker.join().unwrap();
+    assert!(result.unwrap().ready);
+    assert_eq!(traffic.frames.len(), 8);
+    assert_eq!(vault.counts(), (1, 1, 0));
+    assert_eq!(read_binding(root).unwrap().unwrap().connection, Some(new));
+}
+
+#[test]
+fn pending_wrong_lease_never_probes_or_replays_connect() {
+    let (_tmp, setup, install, vault) = associated();
+    let root = setup.root.as_deref().unwrap();
+    let mut binding = read_binding(root).unwrap().unwrap();
+    binding.phase = Phase::Pending;
+    binding.nonce = Some(Uuid::new_v4());
+    write_binding(root, &binding).unwrap();
+    let (mut client, worker) = peer(Uuid::new_v4(), |_| panic!("wrong lease"));
+    assert!(setup
+        .connect_model(install, selection(), &mut client, &vault)
+        .is_err());
+    drop(client);
+    worker.join().unwrap().assert_empty();
+    assert_eq!(vault.counts(), (1, 0, 0));
 }
 
 #[test]
@@ -591,12 +804,15 @@ fn failed_same_lease_health_check_persists_unknown_without_load_or_republication
     assert!(vault.slots.lock().unwrap().contains_key(&binding.slot));
     assert_eq!(read_binding(root).unwrap().unwrap().phase, Phase::Pending);
     assert!(setup.model_binding_status().unwrap().unknown);
-    let (mut fresh, worker) = peer(nonce, |_| panic!("unknown health cannot retry Connect"));
+    let (mut fresh, worker) = peer(nonce, |request| {
+        assert!(matches!(request.body, RequestBody::ModelStatus {}));
+        None // No observation: explicit retry must still not repeat a mutation.
+    });
     assert!(setup
         .connect_model(install, selection(), &mut fresh, &vault)
         .is_err());
     drop(fresh);
-    worker.join().unwrap().assert_empty();
+    assert_eq!(worker.join().unwrap().frames.len(), 1);
     assert_eq!(vault.counts(), (1, 0, 0));
 }
 
@@ -626,6 +842,7 @@ fn acknowledged_clear_allows_explicit_host_cleanup_retry_without_guest_or_load()
             RequestBody::ModelDisconnect { connection } => {
                 assert_eq!(*connection, expected.id);
                 ResultBody::ModelState(ModelState {
+                    diagnostic: None,
                     phase: ModelPhase::Idle,
                     connection: None,
                     credential: credential(Some(expected.generation), true),

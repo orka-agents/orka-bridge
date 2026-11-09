@@ -37,8 +37,22 @@ impl SetupSnapshot {
 pub struct SetupError {
     kind: &'static str,
     message: &'static str,
+    #[serde(skip)]
+    diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>,
 }
 impl SetupError {
+    pub(crate) fn connect(diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>) -> Self {
+        Self {
+            diagnostic,
+            ..Self::model("modelConnect")
+        }
+    }
+    pub(crate) fn model_detail(&self) -> Option<String> {
+        self.diagnostic
+            .as_ref()
+            .and_then(|d| serde_json::to_string(d).ok())
+            .map(|detail| format!("{} Guest Connect: {detail}", self.message))
+    }
     pub(crate) fn model(kind: &'static str) -> Self {
         let message = match kind {
             "modelCaptureUnavailable" => {
@@ -61,13 +75,18 @@ impl SetupError {
             "modelSession" => "The local VM is not available for model connection.",
             _ => "The stored model connection is unavailable or its completion is unknown.",
         };
-        Self { kind, message }
+        Self {
+            kind,
+            message,
+            diagnostic: None,
+        }
     }
 }
 fn storage_error() -> SetupError {
     SetupError {
         kind: "storage",
         message: "The setup choice could not be read or saved.",
+        diagnostic: None,
     }
 }
 

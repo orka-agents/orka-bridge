@@ -81,7 +81,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
         {status && <div className="setup-availability">
           <h3>Native setup available</h3>
           <p className="muted">{runtimeCopy[status.localVm]}</p>
-          {status.localVm === 'failed' && status.localVmError && <p role="alert">{status.localVmError}</p>}
+          {status.localVmError && <p role="alert">{status.localVmError}</p>}
           {status.localVm === 'ready' && <button type="button" className="setup-button" onClick={onOpenExample}>Open example</button>}
         </div>}
         {error && <div role="alert"><p>{error}</p>
@@ -89,7 +89,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
             onClick={() => { setBusy(true); setError(undefined); setCheck(value => value + 1); }}>Check again</button>
         </div>}
       </section>
-      <Model enabled={status?.localVm === 'ready' && status.model === 'available'} paused={!!error} onState={onModelState} />
+      <Model enabled={status?.localVm === 'ready' && status.model === 'available'} paused={!!error} onState={onModelState} onSettled={() => setCheck(value => value + 1)} />
     </div>
     </>
   );
