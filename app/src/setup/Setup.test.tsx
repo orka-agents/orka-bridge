@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import App from '../App';
@@ -225,5 +225,6 @@ test('late responses cannot update another page or mark an unacknowledged choice
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   complete(status('localVm'));
   await waitFor(() => expect(screen.getByRole('main', { name: 'Designer' })).toBeTruthy());
-  expect(screen.queryByText('Local VM selected.')).toBeNull();
+  expect(within(screen.getByRole('main', { name: 'Designer' })).queryByRole('status')).toBeNull();
+  expect(screen.getByText('Local VM selected.').closest('[hidden]')).toBeTruthy();
 });

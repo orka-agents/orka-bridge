@@ -56,9 +56,13 @@ Thread.sleep(forTimeInterval: 2)
 func mouse(_ type: CGEventType, _ point: CGPoint) {
     CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
 }
-func click(_ fraction: CGFloat) {
+func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) {
+    guard let label = observations.first(where: {
+        1 - $0.boundingBox.maxY < 0.10 && $0.topCandidates(1).first?.string == page
+    }) else { fatalError("Native tab label not visible: \(page)") }
     let rect = window()!.1
-    let point = CGPoint(x: rect.minX + rect.width * fraction, y: rect.minY + 55)
+    let point = CGPoint(x: rect.minX + label.boundingBox.midX * rect.width,
+                        y: rect.minY + (1 - label.boundingBox.midY) * rect.height)
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.5)
 }
@@ -151,12 +155,15 @@ for _ in 0..<30 {
 }
 require(window() != nil, "Relaunched Bridge window did not appear")
 Thread.sleep(forTimeInterval: 2)
-try capture("choice-retained", "Clusters")
-click(0.25)
-try capture("overview", "Overview")
-click(0.55); try capture("designer-pointer", "Designer")
-click(0.85); try capture("clusters-pointer", "Clusters")
-key(48, shift: true); key(48, shift: true); key(49)
+let retained = try capture("choice-retained", "Clusters")
+clickTab("Overview", retained)
+let overview = try capture("overview", "Overview")
+clickTab("Designer", overview)
+let designer = try capture("designer-pointer", "Designer")
+clickTab("Clusters", designer)
+try capture("clusters-pointer", "Clusters")
+// The keyboard-reachable Search explanation adds a stop after navigation.
+key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
 try capture("overview-keyboard", "Overview")
 key(48); key(49); try capture("designer-keyboard", "Designer")
 key(48); key(36); try capture("clusters-keyboard", "Clusters")
