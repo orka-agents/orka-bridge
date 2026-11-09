@@ -7,6 +7,20 @@ const TESTS: &str = "web-reader.agent.test.md";
 fn root(home: &Path) -> std::path::PathBuf {
     home.join("Orka/agents/web-reader")
 }
+fn git(root: &Path, args: &[&str]) -> Vec<u8> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
 fn committed(root: &Path, name: &str) -> Vec<u8> {
     let repo = git2::Repository::open(root).unwrap();
     let tree = repo
@@ -42,6 +56,147 @@ fn initializes_without_vm_and_reopens_exact_drafts_with_committed_bytes() {
     );
     assert_eq!(reopened.save(String::new()).unwrap().agent, "");
     assert_eq!(committed(&path, AGENT), b"");
+}
+#[test]
+fn packed_history_reopens_saves_and_captures_exact_bytes() {
+    let home = tempfile::tempdir().unwrap();
+    let folder = AgentFolder::new(Some(home.path().into()));
+    let original = folder.open().unwrap();
+    let path = root(home.path());
+    let head = fs::read_to_string(path.join(".git/HEAD")).unwrap();
+    git(&path, &["gc", "--prune=now"]);
+    // The packed reader must not discover the creator's external object stores.
+    fs::write(
+        path.join(".git/objects/info/alternates"),
+        b"/not-an-object-store\n",
+    )
+    .unwrap();
+    // Side files are ordinary Git metadata, not inputs to the packed HEAD reader.
+    fs::write(path.join(".git/objects/pack/extra.keep"), b"keep").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        "/not-a-pack-input",
+        path.join(".git/objects/pack/extra.bitmap"),
+    )
+    .unwrap();
+    let name = head.trim();
+    assert!(!path
+        .join(".git/objects")
+        .join(&name[..2])
+        .join(&name[2..])
+        .exists());
+    let reopened = AgentFolder::new(Some(home.path().into()));
+    assert_eq!(reopened.open().unwrap().agent, original.agent);
+    let draft = "edited after packing\r\n🦀";
+    assert_eq!(reopened.save(draft.into()).unwrap().agent, draft);
+    assert_eq!(committed(&path, AGENT), draft.as_bytes());
+    assert_eq!(committed(&path, TESTS), original.tests.as_bytes());
+    let repo = git2::Repository::open(&path).unwrap();
+    let commit = repo.head().unwrap().peel_to_commit().unwrap();
+    assert_eq!(commit.parent_id(0).unwrap().to_string(), name);
+    let snapshot = reopened.capture().unwrap();
+    assert_eq!(snapshot.file(FileSlot::Agent), draft.as_bytes());
+    assert_eq!(snapshot.file(FileSlot::Tests), original.tests.as_bytes());
+    drop(commit);
+    drop(repo);
+    fs::remove_file(path.join(".git/objects/info/alternates")).unwrap();
+    git(&path, &["gc", "--prune=now"]);
+    assert_eq!(
+        reopened.capture().unwrap().file(FileSlot::Agent),
+        draft.as_bytes()
+    );
+    git(&path, &["fsck", "--full"]);
+    assert_eq!(git(&path, &["status", "--porcelain"]), b"");
+}
+#[cfg(unix)]
+#[test]
+fn packed_inputs_keep_no_follow_and_single_link_boundaries() {
+    use std::os::unix::fs::symlink;
+    for (extension, hardlink) in [
+        ("directory", false),
+        ("idx", false),
+        ("pack", false),
+        ("idx", true),
+        ("pack", true),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let folder = AgentFolder::new(Some(home.path().into()));
+        let original = folder.open().unwrap();
+        let path = root(home.path());
+        git(&path, &["gc", "--prune=now"]);
+        let head = fs::read(path.join(".git/HEAD")).unwrap();
+        let packs = path.join(".git/objects/pack");
+        if extension == "directory" {
+            fs::rename(&packs, outside.path().join("pack")).unwrap();
+            symlink(outside.path().join("pack"), &packs).unwrap();
+        } else {
+            let input = fs::read_dir(&packs)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|name| name.extension().is_some_and(|ext| ext == extension))
+                .unwrap();
+            let target = outside.path().join("input");
+            if hardlink {
+                fs::hard_link(&input, &target).unwrap();
+            } else {
+                fs::rename(&input, &target).unwrap();
+                symlink(&target, &input).unwrap();
+            }
+        }
+        assert!(folder.open().is_err(), "{extension} hardlink={hardlink}");
+        assert!(folder.save("must not replace".into()).is_err());
+        assert!(folder.capture().is_err());
+        assert_eq!(
+            fs::read(path.join(AGENT)).unwrap(),
+            original.agent.as_bytes()
+        );
+        assert_eq!(fs::read(path.join(".git/HEAD")).unwrap(), head);
+    }
+}
+#[test]
+fn corrupt_packed_or_loose_head_refuses_before_replacing_the_draft() {
+    for damaged in ["idx", "pack", "loose", "directory"] {
+        let home = tempfile::tempdir().unwrap();
+        let folder = AgentFolder::new(Some(home.path().into()));
+        let original = folder.open().unwrap();
+        let path = root(home.path());
+        git(&path, &["gc", "--prune=now"]);
+        let head = fs::read(path.join(".git/HEAD")).unwrap();
+        if damaged == "loose" {
+            let name = std::str::from_utf8(&head).unwrap().trim();
+            let prefix = path.join(".git/objects").join(&name[..2]);
+            fs::create_dir_all(&prefix).unwrap();
+            fs::write(prefix.join(&name[2..]), b"corrupt loose HEAD").unwrap();
+        } else {
+            let input = fs::read_dir(path.join(".git/objects/pack"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|name| {
+                    name.extension().is_some_and(|ext| {
+                        ext == if damaged == "directory" {
+                            "pack"
+                        } else {
+                            damaged
+                        }
+                    })
+                })
+                .unwrap();
+            // Git makes packs read-only; replace the fixture instead of truncating it.
+            fs::rename(&input, input.with_extension("discarded")).unwrap();
+            if damaged == "directory" {
+                fs::create_dir(input).unwrap();
+            } else {
+                fs::write(input, b"corrupt packed HEAD").unwrap();
+            }
+        }
+        assert!(folder.save("must not replace".into()).is_err(), "{damaged}");
+        assert_eq!(
+            fs::read(path.join(AGENT)).unwrap(),
+            original.agent.as_bytes()
+        );
+        assert_eq!(fs::read(path.join(".git/HEAD")).unwrap(), head);
+    }
 }
 #[test]
 fn unrelated_directory_and_missing_home_never_overwrite_existing_data() {
@@ -247,20 +402,7 @@ fn ordinary_git_fsck_log_show_and_status_agree_with_saved_document() {
     let folder = AgentFolder::new(Some(home.path().into()));
     folder.save("exact Git bytes\\r\\n🦀".into()).unwrap();
     let path = root(home.path());
-    let git = |args: &[&str]| {
-        let out = std::process::Command::new("git")
-            .arg("-C")
-            .arg(&path)
-            .args(args)
-            .output()
-            .unwrap();
-        assert!(
-            out.status.success(),
-            "{}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        out.stdout
-    };
+    let git = |args: &[&str]| git(&path, args);
     git(&["fsck", "--full"]);
     assert_eq!(
         git(&["log", "-1", "--format=%an <%ae>"]),
