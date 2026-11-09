@@ -5,7 +5,7 @@ use std::{fs, path::Path, sync::Arc};
 const AGENT: &str = "web-reader.agent.md";
 const TESTS: &str = "web-reader.agent.test.md";
 fn root(home: &Path) -> std::path::PathBuf {
-    home.join("Orka/agents/web-reader")
+    home.join("Orka").join("agents").join("web-reader")
 }
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
     let output = std::process::Command::new("git")
@@ -39,6 +39,8 @@ fn initializes_without_vm_and_reopens_exact_drafts_with_committed_bytes() {
     let home = tempfile::tempdir().unwrap();
     let folder = AgentFolder::new(Some(home.path().into()));
     let pair = folder.open().unwrap();
+    assert_eq!(pair.path.as_deref(), root(home.path()).join(AGENT).to_str());
+    assert_eq!(folder.save(pair.agent.clone()).unwrap().path, pair.path);
     assert!(pair.agent.contains("web_fetch"));
     assert!(pair.tests.contains("toolCalled"));
     let (path, doc) = folder.source().unwrap();

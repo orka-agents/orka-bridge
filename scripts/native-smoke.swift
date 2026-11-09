@@ -152,6 +152,47 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" 
     initial = try capture("chooser", "Clusters")
 }
 if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) {
+    // The owned form works before any workspace exists. Exercise its real writer,
+    // not injected renderer data; the later setup preview must remain read-only.
+    // Welcome focuses the choice heading. Search, Clusters, then Designer are
+    // the three preceding keyboard stops; don't depend on OCR splitting tab copy.
+    key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
+    let form = try capture("agent-form", "Designer")
+    guard let label = form.first(where: {
+        let text = $0.topCandidates(1).first?.string ?? ""
+        return text == "Instructions" || (text.hasPrefix("Instructions ") && text.contains("What the agent"))
+    }) else {
+        fatalError("Instructions field is not visible")
+    }
+    let owned = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
+    let before = try String(contentsOf: owned, encoding: .utf8)
+    let rect = window()!.1
+    let fieldPoint = CGPoint(x: rect.midX,
+        y: rect.minY + (1 - label.boundingBox.midY) * rect.height + 70)
+    mouse(.leftMouseDown, fieldPoint); mouse(.leftMouseUp, fieldPoint)
+    for down in [true, false] {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 125, keyDown: down)!
+        event.flags = .maskCommand; event.post(tap: .cghidEventTap)
+    }
+    let suffix = " Native form probe \(UUID().uuidString)."
+    for character in suffix.utf16 {
+        var unit = character
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
+            event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+            event.post(tap: .cghidEventTap)
+        }
+    }
+    var saved = false
+    for _ in 0..<20 {
+        if (try String(contentsOf: owned, encoding: .utf8)) == before + suffix { saved = true; break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(saved, "Native form did not preserve the file and append the exact instructions suffix")
+    let savedForm = try capture("agent-form-saved", "Designer")
+    require(savedForm.contains { $0.topCandidates(1).first?.string == "Saved" }, "Form save was not acknowledged")
+    clickTab("Clusters", savedForm)
+    initial = try capture("chooser-after-form", "Clusters")
     // Selecting the default radio does not start anything; Continue is explicit.
     clickText("Continue", in: initial)
 }

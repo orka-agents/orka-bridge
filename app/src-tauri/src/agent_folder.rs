@@ -1,4 +1,4 @@
-//! One native-owned, VM-independent document. No renderer paths or Git processes.
+//! One native-owned document. Paths are outbound display data, never write inputs.
 use crate::runtime::snapshot::{AgentDocument, Snapshot};
 use bridge_runtime_protocol::{FileSlot, SnapshotId, Uuid, MAX_FILE};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
@@ -20,6 +20,8 @@ pub struct AgentPair {
     pub agent: String,
     pub tests: String,
     pub source: SnapshotId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 pub struct AgentFolder {
     home: Option<PathBuf>,
@@ -200,7 +202,17 @@ impl AgentFolder {
         };
         operation().map_err(|_| "The local agent folder could not be read or saved. Check that it is a Bridge-managed folder with regular files, then retry.")
     }
-    fn pair(root: &Dir) -> io::Result<AgentPair> {
+    fn display_path(&self) -> Option<String> {
+        self.home.as_ref().and_then(|home| {
+            home.join("Orka")
+                .join("agents")
+                .join("web-reader")
+                .join(AGENT)
+                .to_str()
+                .map(str::to_owned)
+        })
+    }
+    fn pair(&self, root: &Dir) -> io::Result<AgentPair> {
         let agent = String::from_utf8(read(root, AGENT, MAX_FILE)?).map_err(|_| invalid())?;
         let tests = String::from_utf8(read(root, TESTS, MAX_FILE)?).map_err(|_| invalid())?;
         let source = SnapshotId::of(agent.as_bytes(), tests.as_bytes());
@@ -208,11 +220,12 @@ impl AgentFolder {
             agent,
             tests,
             source,
+            path: self.display_path(),
         })
     }
     pub fn open(&self) -> Result<AgentPair> {
         self.with(|root| {
-            let pair = Self::pair(root)?;
+            let pair = self.pair(root)?;
             git::commit(root, &pair)?; // Dirty reopen is committed, never silently reported Saved.
             Ok(pair)
         })
@@ -222,7 +235,7 @@ impl AgentFolder {
             return Err("The agent file is too large to save.");
         }
         self.with(|root| {
-            let mut pair = Self::pair(root)?;
+            let mut pair = self.pair(root)?;
             git::validate(root)?;
             if pair.agent != content {
                 // Preserve edits from another editor before replacing the disk version.
@@ -248,7 +261,7 @@ impl AgentFolder {
     }
     pub fn capture(&self) -> Result<Snapshot> {
         self.with(|root| {
-            let pair = Self::pair(root)?;
+            let pair = self.pair(root)?;
             git::commit(root, &pair)?;
             let snapshot = Snapshot::capture_dir(
                 root,
@@ -264,5 +277,18 @@ impl AgentFolder {
             }
             Ok(snapshot)
         })
+    }
+}
+
+#[cfg(all(test, unix))]
+mod display_path_tests {
+    use super::*;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn unrepresentable_display_path_is_omitted() {
+        // Test the projection itself: APFS cannot create a non-UTF-8 directory.
+        let home = std::ffi::OsStr::from_bytes(b"/creator-\xff");
+        assert!(AgentFolder::new(Some(home.into())).display_path().is_none());
     }
 }

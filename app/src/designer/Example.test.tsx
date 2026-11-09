@@ -18,7 +18,7 @@ function native(save?: (content: string) => unknown) {
 test('opens the owned pair without a VM and exposes a keyboard File switch', async () => {
   native(); const user = userEvent.setup(); render(<Example />);
   expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
-  expect(screen.getByText('Reads a page you name.')).toBeTruthy();
+  expect(screen.getByText('Reads a page you name.', { selector: 'p' })).toBeTruthy();
   expect(screen.getByText('Checks from disk')).toBeTruthy();
   const chat = screen.getByRole('button', { name: 'Chat' });
   expect(chat.hasAttribute('disabled')).toBe(true); expect(chat.title).toMatch(/coming/i);
