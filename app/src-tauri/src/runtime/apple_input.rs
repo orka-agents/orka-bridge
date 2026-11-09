@@ -27,6 +27,7 @@ pub(crate) fn helper_path(root: &Path) -> Result<PathBuf, RuntimeError> {
 #[serde(rename_all = "camelCase")]
 struct Configuration<'a> {
     version: u8,
+    memory_bytes: u64,
     installation_path: &'a Path,
     os_disk_path: PathBuf,
     state_disk_path: &'a Path,
@@ -50,6 +51,7 @@ pub(crate) fn configuration_file(
     fs::remove_file(&path)?;
     let bytes = serde_json::to_vec(&Configuration {
         version: 1,
+        memory_bytes: bridge_runtime_protocol::MEMORY_BYTES,
         installation_path: &spec.root,
         os_disk_path: spec.root.join(spec.image.disk_path()),
         state_disk_path: &spec.state_path,

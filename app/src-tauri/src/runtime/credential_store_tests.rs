@@ -73,6 +73,29 @@ fn errors_have_only_static_redacted_text() {
     }
 }
 
+#[test]
+fn native_failures_retain_only_the_call_name_and_numeric_code() {
+    let error = StoreError::Native {
+        call: NativeCall::CredWriteW,
+        code: 1312,
+    };
+    assert_eq!(
+        error.to_string(),
+        "credential store call CredWriteW failed with Windows error 1312"
+    );
+    assert_eq!(
+        format!("{error:?}"),
+        "Native { call: CredWriteW, code: 1312 }"
+    );
+    for (call, name) in [
+        (NativeCall::CredWriteW, "CredWriteW"),
+        (NativeCall::CredReadW, "CredReadW"),
+        (NativeCall::CredDeleteW, "CredDeleteW"),
+    ] {
+        assert_eq!(call.name(), name);
+    }
+}
+
 #[cfg(not(any(windows, target_os = "macos")))]
 #[test]
 fn unsupported_platform_has_no_storage_fallback() {
@@ -227,8 +250,13 @@ fn native_synthetic_roundtrip_uses_only_a_new_owned_slot() {
     );
     OsCredentialStore.delete(owned.0).unwrap();
     OsCredentialStore.delete(owned.0).unwrap();
-    assert_eq!(
-        OsCredentialStore.load(owned.0),
-        Err(StoreError::Unavailable)
-    );
+    // Windows now reports its exact native outcome: ERROR_NOT_FOUND from CredReadW.
+    #[cfg(windows)]
+    let missing = StoreError::Native {
+        call: NativeCall::CredReadW,
+        code: 1168,
+    };
+    #[cfg(not(windows))]
+    let missing = StoreError::Unavailable;
+    assert_eq!(OsCredentialStore.load(owned.0), Err(missing));
 }

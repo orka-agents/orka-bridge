@@ -38,7 +38,7 @@ private final class Fixture {
         }
     }
     var json: [String: Any] {
-        ["version": 1, "installationPath": root.path,
+        ["version": 1, "memoryBytes": 6 * 1024 * 1024 * 1024, "installationPath": root.path,
          "osDiskPath": root.appendingPathComponent("os.disk").path,
          "stateDiskPath": root.appendingPathComponent("state.disk").path,
          "machineId": Array(machineID), "mac": [2, 1, 2, 3, 4, 5], "createEFI": true]
@@ -111,7 +111,8 @@ private struct ConfigurationTests {
     private static func decoding(_ f: Fixture) throws {
         _ = try f.read(f.json)
         let mutations: [(String, Any)] = [
-            ("extra", true), ("version", 2), ("version", true), ("version", "1"),
+            ("extra", true), ("memoryBytes", 0), ("memoryBytes", 1 << 40),
+            ("memoryBytes", (6 << 30) + 1), ("memoryBytes", -1), ("version", 2), ("version", true), ("version", "1"),
             ("createEFI", 1), ("machineId", [] as [Int]), ("machineId", [1, 2, 3]),
             ("machineId", [Int](repeating: 0, count: 4097)), ("machineId", [-1]),
             ("machineId", [256]), ("mac", [2, 1]), ("mac", [3, 1, 2, 3, 4, 5]),
