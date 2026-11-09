@@ -13,6 +13,23 @@ pub enum SetupChoice {
     LocalVm,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspacePhase {
+    Verifying,
+    Materializing,
+    Starting,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceProgress {
+    pub phase: WorkspacePhase,
+    pub bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub elapsed_ms: u64,
+    pub remaining_ms: Option<u64>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetupSnapshot {
@@ -20,6 +37,8 @@ pub struct SetupSnapshot {
     local_vm: &'static str,
     local_vm_error: Option<String>,
     model: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_progress: Option<WorkspaceProgress>,
 }
 
 impl SetupSnapshot {
@@ -195,6 +214,18 @@ impl SetupStore {
             .await
             .map_err(|_| storage_error())?
     }
+    pub async fn clear_local_async(self: Arc<Self>) -> Result<SetupSnapshot, SetupError> {
+        tokio::task::spawn_blocking(move || {
+            let _access = self.access.lock().map_err(|_| storage_error())?;
+            let root = self.root.as_deref().ok_or_else(storage_error)?;
+            if selected(root)? {
+                fs::remove_file(root.join("local-vm")).map_err(|_| storage_error())?;
+            }
+            snapshot(root)
+        })
+        .await
+        .map_err(|_| storage_error())?
+    }
     pub fn status(&self) -> Result<SetupSnapshot, SetupError> {
         let _access = self.access.lock().map_err(|_| storage_error())?;
         snapshot(self.root.as_deref().ok_or_else(storage_error)?)
@@ -252,6 +283,7 @@ fn snapshot(root: &Path) -> Result<SetupSnapshot, SetupError> {
         local_vm: "notIntegrated",
         local_vm_error: None,
         model: "locked",
+        workspace_progress: None,
     })
 }
 
