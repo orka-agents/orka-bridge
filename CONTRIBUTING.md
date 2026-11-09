@@ -7,7 +7,8 @@ CLA and Code of Conduct.
 
 Install Node 26.5.0, npm 11.17.0, Rust 1.98.1 and the
 [Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/) for your
-operating system. Mac builds also need the Xcode Swift compiler.
+operating system. Install Rust through rustup so the `cargo +1.98.1` checks work.
+Mac builds also need the Xcode Swift compiler.
 Rust is pinned in `app/src-tauri/rust-toolchain.toml`.
 
 From the repository root:
@@ -35,9 +36,10 @@ Set `BRIDGE_DEV_IMAGE_DIR` to a folder containing all four matching files:
 
 The files must match the sizes and SHA-256 hashes in
 [`dev_image.rs`](app/src-tauri/src/dev_image.rs). Do not mix files from different
-builds or convert the disk format. See [the guest image build](images/guest/README.md)
-for image preparation. Bridge installs private copies; it does not modify this
-source folder. A previously installed compatible image can reopen without it.
+builds or convert the disk format. Ask a maintainer for a matching development
+image. [The guest image build guide](images/guest/README.md) describes image
+preparation, but does not reproduce these pinned files. Bridge installs private
+copies; it does not modify this source folder. A previously installed compatible image can reopen without it.
 
 ### Windows x64
 
