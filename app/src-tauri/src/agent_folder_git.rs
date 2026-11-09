@@ -1,5 +1,5 @@
-//! libgit2 creates objects in memory. Only capability-relative code touches disk.
-//! No repository discovery, ambient config, templates, alternates, hooks or remotes.
+//! libgit2 creates objects in memory and reads only private copies of pack pairs.
+//! No repository discovery, ambient config, templates, external alternates, hooks or remotes.
 use super::*;
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use git2::{ObjectType, Odb, Oid, Repository, Signature};
@@ -20,6 +20,56 @@ pub(super) fn validate(root: &Dir) -> io::Result<Dir> {
     Ok(git)
 }
 fn load(git: &Dir, odb: &Odb<'_>, id: Oid) -> io::Result<()> {
+    match load_loose(git, odb, id) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => load_packed(git, odb, id),
+        result => result,
+    }
+}
+fn load_packed(git: &Dir, odb: &Odb<'_>, id: Oid) -> io::Result<()> {
+    let packs = git
+        .open_dir_nofollow("objects")?
+        .open_dir_nofollow("pack")?;
+    // Never pass creator-controlled paths to libgit2: a check then reopen would
+    // follow replacements, and an ordinary ODB also discovers info/alternates.
+    let temp = tempfile::Builder::new().prefix("bridge-git-").tempdir()?;
+    let staged = Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority())?;
+    staged.create_dir("pack")?;
+    let destination = staged.open_dir_nofollow("pack")?;
+    for (index, entry) in packs.entries()?.enumerate() {
+        let name = entry?.file_name();
+        let Some(stem) = name.to_str().and_then(|name| name.strip_suffix(".idx")) else {
+            continue; // Git's bitmap, reverse-index, keep and temporary files are not needed.
+        };
+        for extension in ["idx", "pack"] {
+            let mut source = packs.open_with(format!("{stem}.{extension}"), &options())?;
+            regular(&source)?;
+            let mut opts = options();
+            opts.write(true).create_new(true);
+            let mut copy =
+                destination.open_with(format!("pack-{index:040x}.{extension}"), &opts)?;
+            io::copy(&mut source, &mut copy)?;
+        }
+    }
+    // Drop the ODB/object (including Windows pack mappings) before TempDir cleanup.
+    let packed = Odb::new().map_err(git_error)?;
+    packed
+        .add_disk_alternate(temp.path().to_str().ok_or_else(invalid)?)
+        .map_err(git_error)?;
+    let (size, kind) = packed.read_header(id).map_err(git_error)?;
+    if kind != ObjectType::Commit || size > MAX_FILE + 4096 {
+        return Err(invalid());
+    }
+    let object = packed.read(id).map_err(git_error)?;
+    if object.kind() != kind
+        || object.len() != size
+        || Oid::hash_object(kind, object.data()).map_err(git_error)? != id
+        || odb.write(kind, object.data()).map_err(git_error)? != id
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+fn load_loose(git: &Dir, odb: &Odb<'_>, id: Oid) -> io::Result<()> {
     let name = id.to_string();
     let objects = git
         .open_dir_nofollow("objects")?
