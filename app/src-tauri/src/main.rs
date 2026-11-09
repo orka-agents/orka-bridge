@@ -125,8 +125,8 @@ async fn cluster_use(
     target_id: String,
     sa_name: Option<String>,
     state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
-) -> bridge_engine::clusters::commands::AccessView {
-    state.use_target(&target_id, sa_name).await
+) -> Result<bridge_engine::clusters::commands::AccessView, &'static str> {
+    Ok(state.use_target(&target_id, sa_name).await)
 }
 
 fn main() {

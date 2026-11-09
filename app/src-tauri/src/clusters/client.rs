@@ -430,6 +430,8 @@ async fn capture_bearer(config: &Config) -> Result<Option<String>, AccessOutcome
     });
     let header = layer
         .layer(sink)
+        // Erase the auth layer's error lifetimes before awaiting on a Send desktop task.
+        .boxed()
         .oneshot(http::Request::new(Body::empty()))
         .await
         .map_err(|_| AccessOutcome::Unavailable)?

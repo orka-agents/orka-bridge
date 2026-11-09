@@ -146,6 +146,20 @@ async fn command_unsupported_discovery_remains_distinct() {
     assert!(api.calls.lock().unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn command_use_future_is_send_for_desktop_dispatch() {
+    use bridge_engine::clusters::commands::ClusterSession;
+    let api = Arc::new(ApiFixture::default());
+    let session = ClusterSession::new(client(
+        &api,
+        &Arc::new(OrkaFixture::default()),
+        json!({"token":"static-fixture"}),
+    ));
+    tokio::spawn(async move { session.use_target("unknown", None).await })
+        .await
+        .unwrap();
+}
+
 #[derive(Default)]
 struct ApiFixture {
     wire: forward::Wire,
