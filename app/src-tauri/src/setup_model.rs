@@ -1,0 +1,748 @@
+use super::*;
+use crate::runtime::{
+    client::VmClient, credential_store::CredentialStore, credentials::CapturedGithubToken,
+};
+use bridge_runtime_protocol::*;
+use serde::Deserialize;
+use std::io::{Read, Write};
+
+#[derive(Debug, Serialize)]
+pub struct ModelSetupState {
+    pub associated: bool,
+    /// Matching Connect acknowledgment on this lease, not inference or fresh gateway inspection.
+    pub ready: bool,
+    pub unknown: bool,
+    pub connection: Option<ModelConnection>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum Phase {
+    Storing,
+    Stored,
+    Pending,
+    Connected,
+    Cleared,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Binding {
+    slot: Uuid,
+    installation: Uuid,
+    phase: Phase,
+    nonce: Option<Uuid>,
+    connection: Option<ModelConnection>,
+}
+fn unavailable() -> SetupError {
+    SetupError {
+        kind: "modelUnavailable",
+        message: "The stored model connection is unavailable or its completion is unknown.",
+    }
+}
+fn read_binding(root: &Path) -> Result<Option<Binding>, SetupError> {
+    let path = root.join("model-v1");
+    match fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == ErrorKind::NotFound => return Ok(None),
+        Ok(m) if m.is_file() && m.len() <= 16384 => {}
+        _ => return Err(unavailable()),
+    }
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(|_| unavailable())?
+        .take(16385)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unavailable())?;
+    if bytes.len() > 16384 {
+        return Err(unavailable());
+    }
+    let b: Binding = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
+    if b.slot.is_nil()
+        || b.installation.is_nil()
+        || b.nonce.is_some_and(|id| id.is_nil())
+        || (matches!(b.phase, Phase::Storing | Phase::Stored)
+            && (b.nonce.is_some() || b.connection.is_some()))
+        || (matches!(b.phase, Phase::Connected | Phase::Cleared)
+            && (b.nonce.is_none() || b.connection.is_none()))
+    {
+        return Err(unavailable());
+    }
+    Ok(Some(b))
+}
+fn write_binding(root: &Path, b: &Binding) -> Result<(), SetupError> {
+    let path = root.join(format!("model-next-{}", Uuid::new_v4()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|_| unavailable())?;
+    let result = (|| {
+        file.write_all(&serde_json::to_vec(b).map_err(|_| unavailable())?)
+            .map_err(|_| unavailable())?;
+        file.sync_all().map_err(|_| unavailable())?;
+        drop(file);
+        crate::runtime::journal::replace(&path, &root.join("model-v1")).map_err(|_| unavailable())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&path);
+    }
+    result
+}
+// Independent descriptors coordinate native mutations across instances and processes.
+fn model_owner(root: &Path) -> Result<fs::File, SetupError> {
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(root.join("model-owner.lock"))
+        .map_err(|_| unavailable())?;
+    file.try_lock().map_err(|_| unavailable())?;
+    Ok(file)
+}
+fn state(b: Option<&Binding>, ready: bool) -> ModelSetupState {
+    ModelSetupState {
+        associated: b.is_some_and(|b| b.phase != Phase::Storing),
+        ready,
+        unknown: b.is_some_and(|b| matches!(b.phase, Phase::Storing | Phase::Pending)),
+        connection: b.and_then(|b| b.connection.clone()),
+    }
+}
+impl SetupStore {
+    /// Fixed explicit app intent. Capture is never automatic and never repeats an association.
+    pub fn connect_stored_model(
+        &self,
+        installation: Uuid,
+        client: &mut VmClient,
+        store: &impl CredentialStore,
+        capture: impl FnOnce() -> Result<CapturedGithubToken, crate::runtime::credentials::CaptureError>,
+    ) -> Result<ModelSetupState, SetupError> {
+        let binding = self.model_binding_status()?;
+        if !binding.associated && !binding.unknown {
+            // A serving VM can still have an older handler. Probe before host capture/save.
+            let before = client
+                .model_status()
+                .map_err(|_| SetupError::model("modelGuest"))?;
+            if before.phase != ModelPhase::Idle || before.credential.installed {
+                return Err(SetupError::model("modelGuest"));
+            }
+            use crate::runtime::credentials::CaptureError;
+            let token = capture().map_err(|error| {
+                SetupError::model(match error {
+                    CaptureError::Unavailable => "modelCaptureUnavailable",
+                    CaptureError::Failed => "modelCaptureFailed",
+                    CaptureError::InvalidOutput => "modelCaptureInvalid",
+                    CaptureError::TimedOut => "modelCaptureTimedOut",
+                })
+            })?;
+            self.associate_captured(installation, &token, store)?;
+        }
+        self.connect_model(
+            installation,
+            ModelSelection {
+                provider: "copilot".into(),
+                model: "gpt-5.6-terra".into(),
+            },
+            client,
+            store,
+        )
+    }
+    /// Explicit native intent only. Neither setup status nor reopen captures a sign-in.
+    pub fn associate_captured(
+        &self,
+        installation: Uuid,
+        capture: &CapturedGithubToken,
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, SetupError> {
+        self.associate_secret(installation, capture.as_bytes(), store)
+    }
+    fn associate_secret(
+        &self,
+        installation: Uuid,
+        secret: &[u8],
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, SetupError> {
+        let _access = self.access.lock().map_err(|_| unavailable())?;
+        let root = self.root.as_deref().ok_or_else(unavailable)?;
+        if installation.is_nil() || !selected(root)? {
+            return Err(unavailable());
+        }
+        let _owner = model_owner(root)?;
+        if read_binding(root)?.is_some() {
+            return Err(unavailable());
+        }
+        CredentialPayload::new(secret).map_err(|_| unavailable())?;
+        let mut b = Binding {
+            slot: Uuid::new_v4(),
+            installation,
+            phase: Phase::Storing,
+            nonce: None,
+            connection: None,
+        };
+        // Reserve the exact slot durably: save can apply and then report an error.
+        write_binding(root, &b)?;
+        store
+            .save(b.slot, secret)
+            .map_err(|_| SetupError::model("modelStore"))?;
+        b.phase = Phase::Stored;
+        // Publication can be visible even when the final directory flush fails.
+        write_binding(root, &b)?;
+        Ok(state(Some(&b), false))
+    }
+    /// Reports an association, not live model readiness; never reads the OS store.
+    pub fn model_binding_status(&self) -> Result<ModelSetupState, SetupError> {
+        let _access = self.access.lock().map_err(|_| unavailable())?;
+        let root = self.root.as_deref().ok_or_else(unavailable)?;
+        selected(root)?;
+        Ok(state(read_binding(root)?.as_ref(), false))
+    }
+    /// Blocking native worker call. Caller owns the established VM client/lease.
+    pub fn connect_model(
+        &self,
+        installation: Uuid,
+        selection: ModelSelection,
+        client: &mut VmClient,
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, SetupError> {
+        let _access = self.access.lock().map_err(|_| unavailable())?;
+        let root = self.root.as_deref().ok_or_else(unavailable)?;
+        if !selected(root)? || !selection.valid() {
+            return Err(unavailable());
+        }
+        let _owner = model_owner(root)?;
+        let mut b = read_binding(root)?.ok_or_else(unavailable)?;
+        if b.installation != installation
+            || matches!(b.phase, Phase::Storing | Phase::Pending | Phase::Cleared)
+        {
+            return Err(unavailable());
+        }
+        if b.phase == Phase::Connected {
+            // Health-only on the same lease: no capture, store load or delivery.
+            if b.nonce != Some(client.boot_nonce())
+                || b.connection
+                    .as_ref()
+                    .is_none_or(|c| c.selection != selection)
+            {
+                return Err(unavailable());
+            }
+            let healthy = client
+                .model_status()
+                .is_ok_and(|s| s.phase == ModelPhase::Ready && s.connection == b.connection);
+            if !healthy {
+                b.phase = Phase::Pending;
+                write_binding(root, &b)?;
+                return Err(unavailable());
+            }
+            return Ok(state(Some(&b), true));
+        }
+        // An older image must be rejected before retrieving any secret.
+        let before = client
+            .model_status()
+            .map_err(|_| SetupError::model("modelGuest"))?;
+        if before.phase != ModelPhase::Idle || before.credential.installed {
+            return Err(SetupError::model("modelGuest"));
+        }
+        let secret = store
+            .load(b.slot)
+            .map_err(|_| SetupError::model("modelStore"))?;
+        b.phase = Phase::Pending;
+        b.nonce = Some(client.boot_nonce());
+        write_binding(root, &b)?; // durable barrier before either guest mutation
+        let delivered = client
+            .deliver_credential(&secret, before.credential.generation)
+            .map_err(|_| SetupError::model("modelDelivery"))?;
+        let generation = delivered
+            .generation
+            .ok_or_else(|| SetupError::model("modelDelivery"))?;
+        let remote = client
+            .connect_model(generation, selection)
+            .map_err(|_| SetupError::model("modelConnect"))?;
+        b.connection = remote.connection;
+        if remote.phase != ModelPhase::Ready {
+            write_binding(root, &b)?;
+            return Err(SetupError::model("modelConnect"));
+        }
+        b.phase = Phase::Connected;
+        write_binding(root, &b)?;
+        Ok(state(Some(&b), true))
+    }
+    /// Explicit sign-out; unavailable/unknown VM cleanup never deletes the host slot.
+    pub fn sign_out_model(
+        &self,
+        installation: Uuid,
+        client: Option<&mut VmClient>,
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, SetupError> {
+        let _access = self.access.lock().map_err(|_| unavailable())?;
+        let root = self.root.as_deref().ok_or_else(unavailable)?;
+        let _owner = model_owner(root)?;
+        let mut b = read_binding(root)?.ok_or_else(unavailable)?;
+        if b.installation != installation {
+            return Err(unavailable());
+        }
+        if !matches!(b.phase, Phase::Storing | Phase::Stored | Phase::Cleared) {
+            let client = client.ok_or_else(unavailable)?;
+            if b.nonce != Some(client.boot_nonce()) {
+                return Err(unavailable());
+            }
+            let connection = b.connection.clone().ok_or_else(unavailable)?;
+            b.phase = Phase::Pending;
+            write_binding(root, &b)?;
+            let stopped = client
+                .disconnect_model(&connection)
+                .map_err(|_| unavailable())?;
+            if stopped.phase != ModelPhase::Idle {
+                return Err(unavailable());
+            }
+            client
+                .clear_credential_file(connection.generation)
+                .map_err(|_| unavailable())?;
+            // Retain acknowledged cleanup, so a locked OS store does not require RPC replay.
+            b.phase = Phase::Cleared;
+            write_binding(root, &b)?;
+        }
+        store.delete(b.slot).map_err(|_| unavailable())?;
+        fs::remove_file(root.join("model-v1")).map_err(|_| unavailable())?;
+        Ok(state(None, false))
+    }
+}
+
+#[cfg(test)]
+#[path = "setup_model_tests.rs"]
+mod scenarios;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::credential_store::StoreError;
+    #[test]
+    fn unsupported_guest_cannot_capture_or_save_first_sign_in() {
+        struct Closed;
+        impl Read for Closed {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Ok(0)
+            }
+        }
+        impl Write for Closed {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = SetupStore::new(Some(tmp.path().to_owned()));
+        setup.select_local().unwrap();
+        let mut client = VmClient::established(Box::new(Closed), Uuid::new_v4()).unwrap();
+        let mut captures = 0;
+        let error = setup
+            .connect_stored_model(Uuid::new_v4(), &mut client, &Store, || {
+                captures += 1;
+                Err(crate::runtime::credentials::CaptureError::Failed)
+            })
+            .unwrap_err();
+        assert_eq!(
+            captures, 0,
+            "unsupported guest must refuse before first capture"
+        );
+        assert_eq!(error.kind, "modelGuest");
+        assert!(!tmp.path().join("setup-v1/model-v1").exists());
+    }
+    #[test]
+    fn explicit_capture_failure_is_visible_without_reserving_or_saving_a_slot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = SetupStore::new(Some(tmp.path().to_owned()));
+        setup.select_local().unwrap();
+        struct Idle(std::io::Cursor<Vec<u8>>);
+        impl Read for Idle {
+            fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+                self.0.read(b)
+            }
+        }
+        impl Write for Idle {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let nonce = Uuid::new_v4();
+        let response = encode(&Frame::Result(WireResult {
+            version: VERSION,
+            boot_nonce: nonce,
+            request_id: 3,
+            body: ResultBody::ModelState(ModelState {
+                phase: ModelPhase::Idle,
+                connection: None,
+                credential: CredentialState {
+                    profile: CREDENTIAL_PROFILE,
+                    generation: None,
+                    installed: false,
+                },
+            }),
+        }))
+        .unwrap();
+        let mut client =
+            VmClient::established(Box::new(Idle(std::io::Cursor::new(response))), nonce).unwrap();
+        let error = setup
+            .connect_stored_model(Uuid::new_v4(), &mut client, &Store, || {
+                Err(crate::runtime::credentials::CaptureError::Failed)
+            })
+            .unwrap_err();
+        assert_eq!(error.kind, "modelCaptureFailed");
+        assert!(!setup.model_binding_status().unwrap().associated);
+        assert!(!tmp.path().join("setup-v1/model-v1").exists());
+        let encoded = serde_json::to_string(&error).unwrap();
+        assert!(!encoded.contains("synthetic-model-only"));
+    }
+    struct Store;
+    impl CredentialStore for Store {
+        fn save(&self, _: Uuid, secret: &[u8]) -> Result<(), StoreError> {
+            assert_eq!(secret, b"synthetic-model-only");
+            Ok(())
+        }
+        fn load(&self, _: Uuid) -> Result<CredentialPayload, StoreError> {
+            panic!("association/status must not load a secret")
+        }
+        fn delete(&self, _: Uuid) -> Result<(), StoreError> {
+            Ok(())
+        }
+    }
+    #[cfg(unix)]
+    #[test]
+    fn first_sign_in_probes_captures_stores_connects_then_reuses_without_capture() {
+        use std::{
+            io::{BufRead, BufReader},
+            os::unix::net::UnixStream,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = SetupStore::new(Some(tmp.path().to_owned()));
+        setup.select_local().unwrap();
+        let install = Uuid::new_v4();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        struct Vault(Arc<Mutex<Vec<&'static str>>>);
+        impl CredentialStore for Vault {
+            fn save(&self, _: Uuid, secret: &[u8]) -> Result<(), StoreError> {
+                assert_eq!(secret, b"synthetic-model-only");
+                self.0.lock().unwrap().push("save");
+                Ok(())
+            }
+            fn load(&self, _: Uuid) -> Result<CredentialPayload, StoreError> {
+                self.0.lock().unwrap().push("load");
+                Ok(CredentialPayload::new(b"synthetic-model-only").unwrap())
+            }
+            fn delete(&self, _: Uuid) -> Result<(), StoreError> {
+                panic!("Connect must not delete credentials")
+            }
+        }
+        let vault = Vault(events.clone());
+        let generation = Uuid::new_v4();
+        let connection = ModelConnection {
+            id: Uuid::new_v4(),
+            selection: ModelSelection {
+                provider: "copilot".into(),
+                model: "gpt-5.6-terra".into(),
+            },
+            generation,
+        };
+        let expected = connection.clone();
+        let seen = events.clone();
+        let root = tmp.path().join("setup-v1");
+        let (a, b) = UnixStream::pair().unwrap();
+        let peer = std::thread::spawn(move || {
+            let mut io = BufReader::new(b);
+            for step in 0..6 {
+                let mut raw = Vec::new();
+                io.read_until(b'\n', &mut raw).unwrap();
+                let Frame::Request(r) = serde_json::from_slice::<Frame>(&raw).unwrap() else {
+                    panic!("request")
+                };
+                let credential = CredentialState {
+                    profile: CREDENTIAL_PROFILE,
+                    generation: if step < 3 { None } else { Some(generation) },
+                    installed: step >= 3,
+                };
+                let body = match (step, &r.body) {
+                    (0 | 1, RequestBody::ModelStatus {}) => {
+                        seen.lock().unwrap().push("probe");
+                        ResultBody::ModelState(ModelState {
+                            phase: ModelPhase::Idle,
+                            connection: None,
+                            credential,
+                        })
+                    }
+                    (2, RequestBody::CredentialStatus {}) => {
+                        seen.lock().unwrap().push("credentialStatus");
+                        ResultBody::CredentialState(credential)
+                    }
+                    (3, RequestBody::CredentialPublish { token, .. }) => {
+                        assert_eq!(token.as_bytes(), b"synthetic-model-only");
+                        seen.lock().unwrap().push("deliver");
+                        ResultBody::CredentialState(credential)
+                    }
+                    (
+                        4,
+                        RequestBody::ModelConnect {
+                            generation: g,
+                            selection,
+                        },
+                    ) => {
+                        assert_eq!(*g, generation);
+                        assert_eq!(*selection, expected.selection);
+                        assert_eq!(read_binding(&root).unwrap().unwrap().phase, Phase::Pending);
+                        seen.lock().unwrap().push("connect");
+                        ResultBody::ModelState(ModelState {
+                            phase: ModelPhase::Ready,
+                            connection: Some(expected.clone()),
+                            credential,
+                        })
+                    }
+                    (5, RequestBody::ModelStatus {}) => {
+                        seen.lock().unwrap().push("health");
+                        ResultBody::ModelState(ModelState {
+                            phase: ModelPhase::Ready,
+                            connection: Some(expected.clone()),
+                            credential,
+                        })
+                    }
+                    _ => panic!("unexpected first-use or repeat request"),
+                };
+                io.get_mut()
+                    .write_all(
+                        &encode(&Frame::Result(WireResult {
+                            version: VERSION,
+                            boot_nonce: r.boot_nonce,
+                            request_id: r.request_id,
+                            body,
+                        }))
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+        });
+        let mut client = VmClient::established(Box::new(a), Uuid::new_v4()).unwrap();
+        assert!(
+            setup
+                .connect_stored_model(install, &mut client, &vault, || {
+                    events.lock().unwrap().push("capture");
+                    CapturedGithubToken::try_from(b"synthetic-model-only".as_slice())
+                })
+                .unwrap()
+                .ready
+        );
+        assert!(
+            setup
+                .connect_stored_model(install, &mut client, &vault, || {
+                    panic!("repeat must never capture")
+                })
+                .unwrap()
+                .ready
+        );
+        peer.join().unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            [
+                "probe",
+                "capture",
+                "save",
+                "probe",
+                "load",
+                "credentialStatus",
+                "deliver",
+                "connect",
+                "health"
+            ]
+        );
+        let binding = read_binding(&tmp.path().join("setup-v1")).unwrap().unwrap();
+        assert_eq!(binding.installation, install);
+        assert_eq!(binding.connection, Some(connection));
+        assert!(!fs::read_to_string(tmp.path().join("setup-v1/model-v1"))
+            .unwrap()
+            .contains("synthetic-model-only"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn connect_orders_delivery_and_kmx_and_reopen_is_health_only() {
+        use std::{
+            io::{BufRead, BufReader, Write},
+            os::unix::net::UnixStream,
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = SetupStore::new(Some(tmp.path().to_owned()));
+        setup.select_local().unwrap();
+        let install = Uuid::new_v4();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        struct Vault(Arc<Mutex<Vec<&'static str>>>);
+        impl CredentialStore for Vault {
+            fn save(&self, _: Uuid, _: &[u8]) -> Result<(), StoreError> {
+                self.0.lock().unwrap().push("save");
+                Ok(())
+            }
+            fn load(&self, _: Uuid) -> Result<CredentialPayload, StoreError> {
+                self.0.lock().unwrap().push("load");
+                Ok(CredentialPayload::new(b"synthetic-model-only").unwrap())
+            }
+            fn delete(&self, _: Uuid) -> Result<(), StoreError> {
+                self.0.lock().unwrap().push("delete");
+                Ok(())
+            }
+        }
+        let vault = Vault(events.clone());
+        setup
+            .associate_secret(install, b"synthetic-model-only", &vault)
+            .unwrap();
+        let (a, b) = UnixStream::pair().unwrap();
+        let generation = Uuid::new_v4();
+        let connection = ModelConnection {
+            id: Uuid::new_v4(),
+            selection: ModelSelection {
+                provider: "copilot".into(),
+                model: "gpt-5.6-terra".into(),
+            },
+            generation,
+        };
+        let expected = connection.clone();
+        let seen = events.clone();
+        let root = tmp.path().join("setup-v1");
+        let peer = std::thread::spawn(move || {
+            let mut io = BufReader::new(b);
+            for step in 0..8 {
+                let mut raw = Vec::new();
+                io.read_until(b'\n', &mut raw).unwrap();
+                let Frame::Request(r) = serde_json::from_slice::<Frame>(&raw).unwrap() else {
+                    panic!("request")
+                };
+                let credential = |installed| CredentialState {
+                    profile: CREDENTIAL_PROFILE,
+                    generation: if step < 2 { None } else { Some(generation) },
+                    installed,
+                };
+                let body = match (step, &r.body) {
+                    (0, RequestBody::ModelStatus {}) => {
+                        seen.lock().unwrap().push("status");
+                        ResultBody::ModelState(ModelState {
+                            phase: ModelPhase::Idle,
+                            connection: None,
+                            credential: credential(false),
+                        })
+                    }
+                    (1, RequestBody::CredentialStatus {}) => {
+                        ResultBody::CredentialState(credential(false))
+                    }
+                    (2, RequestBody::CredentialPublish { token, .. }) => {
+                        assert_eq!(token.as_bytes(), b"synthetic-model-only");
+                        seen.lock().unwrap().push("deliver");
+                        ResultBody::CredentialState(credential(true))
+                    }
+                    (
+                        3,
+                        RequestBody::ModelConnect {
+                            generation: g,
+                            selection,
+                        },
+                    ) => {
+                        assert_eq!(*g, generation);
+                        assert_eq!(*selection, expected.selection);
+                        assert_eq!(read_binding(&root).unwrap().unwrap().phase, Phase::Pending);
+                        seen.lock().unwrap().push("connect");
+                        ResultBody::ModelState(ModelState {
+                            phase: ModelPhase::Ready,
+                            connection: Some(expected.clone()),
+                            credential: credential(true),
+                        })
+                    }
+                    (4, RequestBody::ModelStatus {}) => ResultBody::ModelState(ModelState {
+                        phase: ModelPhase::Ready,
+                        connection: Some(expected.clone()),
+                        credential: credential(true),
+                    }),
+                    (5, RequestBody::ModelDisconnect { connection: id }) => {
+                        assert_eq!(*id, expected.id);
+                        seen.lock().unwrap().push("disconnect");
+                        ResultBody::ModelState(ModelState {
+                            phase: ModelPhase::Idle,
+                            connection: None,
+                            credential: credential(true),
+                        })
+                    }
+                    (6, RequestBody::CredentialStatus {}) => {
+                        ResultBody::CredentialState(credential(true))
+                    }
+                    (7, RequestBody::CredentialClear { .. }) => {
+                        seen.lock().unwrap().push("clear");
+                        ResultBody::CredentialState(CredentialState {
+                            profile: CREDENTIAL_PROFILE,
+                            generation: Some(Uuid::new_v4()),
+                            installed: false,
+                        })
+                    }
+                    _ => panic!("unexpected model request sequence"),
+                };
+                io.get_mut()
+                    .write_all(
+                        &encode(&Frame::Result(WireResult {
+                            version: VERSION,
+                            boot_nonce: r.boot_nonce,
+                            request_id: r.request_id,
+                            body,
+                        }))
+                        .unwrap(),
+                    )
+                    .unwrap();
+            }
+        });
+        let mut client = VmClient::established(Box::new(a), Uuid::new_v4()).unwrap();
+        assert!(
+            setup
+                .connect_stored_model(install, &mut client, &vault, || panic!(
+                    "stored binding must not recapture"
+                ))
+                .unwrap()
+                .ready
+        );
+        assert!(!setup.model_binding_status().unwrap().ready);
+        assert!(
+            setup
+                .connect_model(install, connection.selection.clone(), &mut client, &vault)
+                .unwrap()
+                .ready
+        );
+        setup
+            .sign_out_model(install, Some(&mut client), &vault)
+            .unwrap();
+        peer.join().unwrap();
+        assert_eq!(
+            *events.lock().unwrap(),
+            vec![
+                "save",
+                "status",
+                "load",
+                "deliver",
+                "connect",
+                "disconnect",
+                "clear",
+                "delete"
+            ]
+        );
+        assert!(!setup.model_binding_status().unwrap().associated);
+    }
+    #[test]
+    fn association_persists_only_opaque_metadata_after_store_success() {
+        let tmp = tempfile::tempdir().unwrap();
+        let setup = SetupStore::new(Some(tmp.path().to_owned()));
+        setup.select_local().unwrap();
+        let state = setup
+            .associate_secret(Uuid::new_v4(), b"synthetic-model-only", &Store)
+            .unwrap();
+        assert!(state.associated);
+        assert!(!state.ready);
+        assert!(setup.model_binding_status().unwrap().associated);
+        let mut persisted = Vec::new();
+        for entry in std::fs::read_dir(tmp.path().join("setup-v1")).unwrap() {
+            persisted.extend(std::fs::read(entry.unwrap().path()).unwrap());
+        }
+        assert!(!persisted
+            .windows(b"synthetic-model-only".len())
+            .any(|s| s == b"synthetic-model-only"));
+    }
+}

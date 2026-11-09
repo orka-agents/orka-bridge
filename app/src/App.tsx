@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import mark from './assets/orka-mark.svg';
 import EngineStatus from './components/EngineStatus';
 import Setup from './setup/Setup';
+import Example from './designer/Example';
 
 const pages = ['Overview', 'Designer', 'Clusters'] as const;
 type Page = (typeof pages)[number];
@@ -37,6 +38,9 @@ function PageIcon({ page }: { page: Page }) {
 
 export default function App() {
   const [page, setPage] = useState<Page>('Clusters');
+  const [exampleOpen, setExampleOpen] = useState(false);
+  const [engineReady, setEngineReady] = useState(false);
+  const ready = useCallback(() => setEngineReady(true), []);
   const copy = emptyCopy[page];
   return (
     <div className="app-shell">
@@ -55,7 +59,8 @@ export default function App() {
       </header>
       <main className="page-content" aria-labelledby="page-title">
         <h1 id="page-title">{page}</h1>
-        {page === 'Clusters' ? <Setup /> : <section className="card empty-state">
+        {page === 'Clusters' ? <Setup onReady={ready} onOpenExample={() => { setExampleOpen(true); setPage('Designer'); }} />
+          : page === 'Designer' && exampleOpen ? <Example /> : <section className="card empty-state">
           <span className="icon-tile empty-icon"><PageIcon page={page} /></span>
           <div>
             <h2>{copy.title}</h2>
@@ -63,7 +68,7 @@ export default function App() {
             <p className="muted">{copy.detail}</p>
           </div>
         </section>}
-        {page === 'Clusters' && <details className="engine-diagnostics"><summary>Engine diagnostics</summary><EngineStatus /></details>}
+        {page === 'Clusters' && <details className="engine-diagnostics"><summary>Engine diagnostics</summary><EngineStatus key={String(engineReady)} /></details>}
       </main>
     </div>
   );

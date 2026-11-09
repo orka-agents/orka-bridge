@@ -5,6 +5,12 @@ pub use uuid::Uuid;
 
 mod operations;
 pub use operations::*;
+mod credentials;
+pub use credentials::*;
+mod model;
+pub use model::*;
+mod orka;
+pub use orka::*;
 pub fn encode_chunk(bytes: &[u8]) -> String {
     STANDARD.encode(bytes)
 }
@@ -55,6 +61,7 @@ pub struct StageHello {
 pub enum EngineActionWire {
     Version {},
     ListAgents { context: String, namespace: String },
+    Orka { request: OrkaRequest },
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -65,6 +72,22 @@ pub enum EngineActionWire {
 )]
 pub enum RequestBody {
     Boot(BootDescriptor),
+    ModelStatus {},
+    ModelConnect {
+        generation: Uuid,
+        selection: ModelSelection,
+    },
+    ModelDisconnect {
+        connection: Uuid,
+    },
+    CredentialStatus {},
+    CredentialPublish {
+        expected_generation: Option<Uuid>,
+        token: CredentialPayload,
+    },
+    CredentialClear {
+        expected_generation: Uuid,
+    },
     Engine(EngineActionWire),
     Chunk {
         data: String,
@@ -113,6 +136,8 @@ pub struct WireRequest {
     deny_unknown_fields
 )]
 pub enum ResultBody {
+    ModelState(ModelState),
+    CredentialState(CredentialState),
     Ready {},
     Snapshot {
         snapshot: SnapshotId,
@@ -188,6 +213,9 @@ pub fn validate_hello(hello: &StageHello, stage: Stage, nonce: Uuid) -> Result<(
     Ok(())
 }
 pub fn validate_action(action: &EngineActionWire) -> Result<(), ProtocolError> {
+    if let EngineActionWire::Orka { request } = action {
+        request.validate()?;
+    }
     if let EngineActionWire::ListAgents { context, namespace } = action {
         if [context, namespace]
             .iter()
@@ -214,6 +242,24 @@ impl Frame {
             Self::Hello(h) => (h.version, h.guest_nonce, 1),
             Self::Request(r) => {
                 match &r.body {
+                    RequestBody::ModelConnect {
+                        generation,
+                        selection,
+                    } if generation.is_nil() || !selection.valid() => {
+                        return Err(ProtocolError::Invalid)
+                    }
+                    RequestBody::ModelDisconnect { connection } if connection.is_nil() => {
+                        return Err(ProtocolError::Invalid)
+                    }
+                    RequestBody::CredentialPublish {
+                        expected_generation,
+                        ..
+                    } if expected_generation.is_some_and(|id| id.is_nil()) => {
+                        return Err(ProtocolError::Invalid)
+                    }
+                    RequestBody::CredentialClear {
+                        expected_generation,
+                    } if expected_generation.is_nil() => return Err(ProtocolError::Invalid),
                     RequestBody::Boot(b)
                         if b.installation_id.is_nil()
                             || b.state_fs_uuid != b.installation_id
@@ -270,6 +316,16 @@ impl Frame {
                 (r.version, r.boot_nonce, r.request_id)
             }
             Self::Result(r) => {
+                if let ResultBody::ModelState(state) = &r.body {
+                    if !state.valid() {
+                        return Err(ProtocolError::Invalid);
+                    }
+                }
+                if let ResultBody::CredentialState(state) = &r.body {
+                    if !state.valid() {
+                        return Err(ProtocolError::Invalid);
+                    }
+                }
                 if let ResultBody::Chunk { data } = &r.body {
                     chunk(data)?;
                 }

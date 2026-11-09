@@ -26,11 +26,54 @@ pub enum DevImageDiskFormat {
     Qcow2,
 }
 
+impl DevImagePlatform {
+    pub const fn state_compatibility_id(self) -> &'static str {
+        match self {
+            Self::MacOsArm64 => "engineering-afc68ae1",
+            Self::WindowsAmd64 => "engineering-a41d68bb",
+        }
+    }
+    pub const fn source_commit(self) -> &'static str {
+        match self {
+            Self::MacOsArm64 => "afc68ae14e9702d148b01b243cc2a27d90fde5a6",
+            Self::WindowsAmd64 => "a41d68bbaccd0f7c1384e4c70e56bb9002b68e71",
+        }
+    }
+}
+pub const STATE_COMPATIBILITY_ID: &str = if cfg!(windows) {
+    DevImagePlatform::WindowsAmd64.state_compatibility_id()
+} else {
+    DevImagePlatform::MacOsArm64.state_compatibility_id()
+};
+
 pub struct VerifiedDevImage {
     platform: DevImagePlatform,
+    pins: [FilePin; 4],
     files: [File; 4],
 }
 impl VerifiedDevImage {
+    pub(crate) fn try_clone(&self) -> Result<Self, DevImageError> {
+        let copy = || {
+            Ok::<_, io::Error>(Self {
+                platform: self.platform,
+                pins: self.pins,
+                files: [
+                    self.files[0].try_clone()?,
+                    self.files[1].try_clone()?,
+                    self.files[2].try_clone()?,
+                    self.files[3].try_clone()?,
+                ],
+            })
+        };
+        copy().map_err(|_| DevImageError)
+    }
+    pub(crate) fn declared(&self, slot: usize) -> (u64, String) {
+        let pin = &self.pins[slot];
+        (
+            pin.bytes,
+            pin.sha256.iter().map(|b| format!("{b:02x}")).collect(),
+        )
+    }
     pub fn platform(&self) -> DevImagePlatform {
         self.platform
     }
@@ -66,6 +109,7 @@ impl fmt::Debug for DevImageError {
 }
 impl std::error::Error for DevImageError {}
 
+#[derive(Clone, Copy)]
 struct FilePin {
     name: &'static str,
     bytes: u64,
@@ -85,7 +129,7 @@ const MAC_PINS: Pins = Pins {
         FilePin {
             name: "boot-assets.json",
             bytes: 12546,
-            sha256: digest(b"77518696b514004b78fd3390dd6103565b54c2f5b0bb01fad6d035e19ef97a22"),
+            sha256: digest(b"a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27"),
         },
         FilePin {
             name: "os.kernel",
@@ -94,13 +138,13 @@ const MAC_PINS: Pins = Pins {
         },
         FilePin {
             name: "os.initrd",
-            bytes: 35046676,
-            sha256: digest(b"0b5b9f353e5acfa91a6e0ed2f0f28ee6d22ce48664d2a7b7b98d45f0439aa369"),
+            bytes: 35046667,
+            sha256: digest(b"606891f6e94ce5c4263bbc5360d7fdb6bb874b2109478e4e9e67322fd47d7f20"),
         },
         FilePin {
             name: "os.raw",
             bytes: 17179869184,
-            sha256: digest(b"b99c4e062151f1a8ad3fe68fdcc6d81ca4c550bbc5e3d4e64dfc7c405c81a075"),
+            sha256: digest(b"9eb75d4a9de5f2e922157dc597601d7f10d3b71f3c52fd6ffd3f18d59c6a799b"),
         },
     ],
 };
@@ -111,7 +155,7 @@ const WINDOWS_PINS: Pins = Pins {
         FilePin {
             name: "boot-assets.json",
             bytes: 12504,
-            sha256: digest(b"4c8007757f1814eab249c84fbdbc51cbd8736aa16938b006a063079adf2c583b"),
+            sha256: digest(b"aec2578beedf049f9824cbc1f8127621d977bcf1d35710d34f343b4f870c0cdd"),
         },
         FilePin {
             name: "os.kernel",
@@ -120,13 +164,13 @@ const WINDOWS_PINS: Pins = Pins {
         },
         FilePin {
             name: "os.initrd",
-            bytes: 16215285,
-            sha256: digest(b"dc96ba25f698e17d041d87046ddd33cde9a0c5757f4bf6c6356e44776fd8f2d2"),
+            bytes: 16948410,
+            sha256: digest(b"6bbbd88361bc958d7d431d3e4e9f7b4e0bf184f02f9f3da0b4ff1f5156ded331"),
         },
         FilePin {
             name: "os.qcow2",
-            bytes: 1732706304,
-            sha256: digest(b"56f75f268bc1739ae80edd12a5a5e5c11241286d71608b145a0087e1c8a2eed0"),
+            bytes: 3620864000,
+            sha256: digest(b"f766957de4970a0c0d8a3436892b9830f950665410599a7bf9852558e5cac09e"),
         },
     ],
 };
@@ -197,6 +241,7 @@ fn verify(root: &Dir, pins: &Pins) -> Result<VerifiedDevImage, DevImageError> {
     let result = (|| {
         Ok::<_, io::Error>(VerifiedDevImage {
             platform: pins.platform,
+            pins: pins.files,
             files: [
                 verified_file(root, &pins.files[0])?,
                 verified_file(root, &pins.files[1])?,
@@ -246,6 +291,10 @@ fn verified_file(root: &Dir, pin: &FilePin) -> io::Result<File> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(debug_assertions)]
+    mod installation {
+        include!("dev_image_install_tests.rs");
+    }
     use super::*;
     use cap_std::{ambient_authority, fs::Dir};
     use sha2::{Digest, Sha256};
@@ -337,6 +386,44 @@ mod tests {
             file.read_to_end(&mut actual).unwrap();
             assert_eq!(&actual, expected);
         }
+    }
+
+    #[test]
+    fn delivered_amd_model_image_and_arm_identity_stay_separate() {
+        assert_eq!(
+            WINDOWS_PINS.files[0].sha256,
+            digest(b"aec2578beedf049f9824cbc1f8127621d977bcf1d35710d34f343b4f870c0cdd")
+        );
+        assert_eq!(WINDOWS_PINS.files[2].bytes, 16948410);
+        assert_eq!(
+            WINDOWS_PINS.files[2].sha256,
+            digest(b"6bbbd88361bc958d7d431d3e4e9f7b4e0bf184f02f9f3da0b4ff1f5156ded331")
+        );
+        assert_eq!(WINDOWS_PINS.files[3].bytes, 3620864000);
+        assert_eq!(
+            WINDOWS_PINS.files[3].sha256,
+            digest(b"f766957de4970a0c0d8a3436892b9830f950665410599a7bf9852558e5cac09e")
+        );
+        assert_eq!(
+            DevImagePlatform::WindowsAmd64.source_commit(),
+            "a41d68bbaccd0f7c1384e4c70e56bb9002b68e71"
+        );
+        assert_eq!(
+            DevImagePlatform::WindowsAmd64.state_compatibility_id(),
+            "engineering-a41d68bb"
+        );
+        assert_eq!(
+            DevImagePlatform::MacOsArm64.source_commit(),
+            "afc68ae14e9702d148b01b243cc2a27d90fde5a6"
+        );
+        assert_eq!(
+            DevImagePlatform::MacOsArm64.state_compatibility_id(),
+            "engineering-afc68ae1"
+        );
+        assert_eq!(
+            MAC_PINS.files[0].sha256,
+            digest(b"a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27")
+        );
     }
 
     // Reject-all stubs, incorrect handle rewinding, or identity selection break this.

@@ -17,13 +17,52 @@ pub enum SetupChoice {
 pub struct SetupSnapshot {
     pub selected: Option<SetupChoice>,
     local_vm: &'static str,
+    local_vm_error: Option<String>,
     model: &'static str,
+}
+
+impl SetupSnapshot {
+    pub fn with_model(mut self, state: &'static str) -> Self {
+        self.model = state;
+        self
+    }
+    pub fn with_local_vm(mut self, state: &'static str, error: Option<String>) -> Self {
+        self.local_vm = state;
+        self.local_vm_error = error;
+        self
+    }
 }
 
 #[derive(Debug, Serialize)]
 pub struct SetupError {
     kind: &'static str,
     message: &'static str,
+}
+impl SetupError {
+    pub(crate) fn model(kind: &'static str) -> Self {
+        let message = match kind {
+            "modelCaptureUnavailable" => {
+                "Install GitHub CLI and sign in to github.com before connecting."
+            }
+            "modelCaptureFailed" => {
+                "The stored GitHub sign-in could not be read. Check your GitHub CLI sign-in."
+            }
+            "modelCaptureInvalid" => "The stored GitHub sign-in returned invalid credential data.",
+            "modelCaptureTimedOut" => "Reading the stored GitHub sign-in timed out.",
+            "modelStore" => "The native credential store could not save or load the sign-in.",
+            "modelGuest" => "The guest model handler is unavailable or is not idle.",
+            "modelDelivery" => {
+                "Private credential delivery was not acknowledged. Completion is unknown."
+            }
+            "modelConnect" => {
+                "Guest Connect did not acknowledge a ready model. Completion is unknown."
+            }
+            "modelBusy" => "Another operation is using the local VM. Wait for it to finish.",
+            "modelSession" => "The local VM is not available for model connection.",
+            _ => "The stored model connection is unavailable or its completion is unknown.",
+        };
+        Self { kind, message }
+    }
 }
 fn storage_error() -> SetupError {
     SetupError {
@@ -32,7 +71,11 @@ fn storage_error() -> SetupError {
     }
 }
 
-/// Owns only a preference. It cannot install a backend, connect a model or hold credentials.
+#[path = "setup_model.rs"]
+mod model;
+pub use model::ModelSetupState;
+
+/// Owns preferences and an opaque sign-in association, never stored secret bytes.
 pub struct SetupStore {
     root: Option<PathBuf>,
     access: Mutex<()>,
@@ -109,6 +152,7 @@ fn snapshot(root: &Path) -> Result<SetupSnapshot, SetupError> {
         selected: selected(root)?.then_some(SetupChoice::LocalVm),
         // Selection is not runtime readiness. These gates have no renderer override.
         local_vm: "notIntegrated",
+        local_vm_error: None,
         model: "locked",
     })
 }

@@ -72,6 +72,18 @@ jobs:
           key: app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock') }}
       - run: npm ci
       - run: npm run build
+      - name: Clean Intel Mac shell resource check
+        if: runner.os == 'macOS'
+        run: |
+          test ! -e src-tauri/gen/apple-helper/BridgeVM
+          rustup target add x86_64-apple-darwin --toolchain 1.98.1
+          cargo +1.98.1 check --manifest-path src-tauri/Cargo.toml --locked --target x86_64-apple-darwin --features custom-protocol
+      - name: Apple helper build and tests
+        if: runner.os == 'macOS'
+        run: |
+          bash ../scripts/build-vm-helper-macos.sh
+          bash ../scripts/test-vm-helper-macos.sh
+          cargo +1.98.1 test --manifest-path ../runtime/Cargo.toml --locked -p bridge-runtime-protocol --test runtime_core --test windows_backend
       - name: Rust checks
         run: |
           cargo +1.98.1 fmt --manifest-path src-tauri/Cargo.toml --all -- --check
@@ -88,17 +100,25 @@ jobs:
           cp src-tauri/target/release/orka-bridge.exe windows-artifact/
           cp public/licenses/*.txt windows-artifact/licenses/
           for notice in public/licenses/*.txt; do cmp "$notice" "windows-artifact/licenses/${notice##*/}"; done
+          # Embedded frontend, but debug-only local-image integration remains enabled.
+          npm run tauri -- build --debug --no-bundle -- --locked
+          mkdir -p windows-artifact/development/licenses
+          cp src-tauri/target/debug/orka-bridge.exe windows-artifact/development/
+          cp public/licenses/*.txt windows-artifact/development/licenses/
+          for notice in public/licenses/*.txt; do cmp "$notice" "windows-artifact/development/licenses/${notice##*/}"; done
       - name: Mac app bundle and native walk
         if: runner.os == 'macOS'
         run: |
           npm run tauri -- build --bundles app --no-sign --no-binary-patching -- --locked
           bundle=src-tauri/target/release/bundle/macos/Bridge.app
+          bash ../scripts/check-vm-helper-bundle-macos.sh "$bundle"
           test "$(lipo -archs "$bundle/Contents/MacOS/orka-bridge")" = arm64
           codesign --verify --ignore-resources "$bundle/Contents/MacOS/orka-bridge"
           tar -czf bridge-macos-arm64.tar.gz -C src-tauri/target/release/bundle/macos Bridge.app
           mkdir smoke-app
           tar -xzf bridge-macos-arm64.tar.gz -C smoke-app
           test -x smoke-app/Bridge.app/Contents/MacOS/orka-bridge
+          bash ../scripts/check-vm-helper-bundle-macos.sh smoke-app/Bridge.app
           cmp "$bundle/Contents/MacOS/orka-bridge" smoke-app/Bridge.app/Contents/MacOS/orka-bridge
           for notice in public/licenses/*.txt; do cmp "$notice" "smoke-app/Bridge.app/Contents/Resources/licenses/${notice##*/}"; done
           # Test both system themes and keyboard navigation; restore runner preferences.

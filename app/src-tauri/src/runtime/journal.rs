@@ -1,5 +1,11 @@
-use super::{identity::*, types::*};
+use super::{
+    identity::*,
+    image_install::{InstallationImageTarget, InstalledImageSet},
+    image_types::ImageTarget,
+    types::*,
+};
 use bridge_runtime_protocol::{StateCreation, Uuid, STATE_BYTES};
+use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 use std::{
     fs::{self, File, OpenOptions},
@@ -35,6 +41,7 @@ pub struct InstallationRecord {
 pub struct Journal {
     root: PathBuf,
     _lock: OwnerLock,
+    image_root: Dir,
     state: File,
     record: InstallationRecord,
     creation_live: bool,
@@ -50,18 +57,39 @@ impl Drop for OwnerLock {
         }
     }
 }
-fn lock(root: &Path) -> Result<OwnerLock, RuntimeError> {
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(root.join("owner.lock"))?;
+fn lock(root: &Path) -> Result<File, RuntimeError> {
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // Unlike a process-owned byte lock, this capability survives in the child.
+        options.share_mode(0);
+    }
+    let file = options.open(root.join("owner.lock")).map_err(|e| {
+        #[cfg(windows)]
+        {
+            super::windows::job::owner_lock_error(e)
+        }
+        #[cfg(not(windows))]
+        {
+            RuntimeError::from(e)
+        }
+    })?;
     file.try_lock().map_err(|e| match e {
         fs::TryLockError::WouldBlock => RuntimeError::Busy,
-        fs::TryLockError::Error(e) => e.into(),
+        fs::TryLockError::Error(e) => {
+            #[cfg(windows)]
+            {
+                super::windows::job::owner_lock_error(e)
+            }
+            #[cfg(not(windows))]
+            {
+                e.into()
+            }
+        }
     })?;
-    Ok(OwnerLock(Arc::new(file)))
+    Ok(file)
 }
 fn regular(path: &Path) -> Result<(), RuntimeError> {
     if !fs::symlink_metadata(path)?.file_type().is_file() {
@@ -85,11 +113,12 @@ impl Journal {
             fs::DirBuilder::new().mode(0o700).create(&root)?;
         }
         #[cfg(windows)]
-        fs::create_dir(&root)?;
+        drop(super::windows::security::create_af_directory(&root)?);
         #[cfg(unix)]
         File::open(root.parent().ok_or(RuntimeError::RetainedState)?)?.sync_all()?;
         let root = fs::canonicalize(&root)?;
-        let owner = lock(&root)?;
+        let owner = OwnerLock(Arc::new(lock(&root)?));
+        let image_root = Dir::open_ambient_dir(&root, cap_std::ambient_authority())?;
         let state = OpenOptions::new()
             .create_new(true)
             .read(true)
@@ -115,6 +144,7 @@ impl Journal {
         let journal = Self {
             root,
             _lock: owner,
+            image_root,
             state,
             record,
             creation_live: true,
@@ -128,7 +158,8 @@ impl Journal {
             return Err(RuntimeError::RetainedState);
         }
         let root = fs::canonicalize(root)?;
-        let owner = lock(&root)?;
+        let owner = OwnerLock(Arc::new(lock(&root)?));
+        let image_root = Dir::open_ambient_dir(&root, cap_std::ambient_authority())?;
         // An interrupted record write needs explicit recovery, not guessed replay.
         if root.join("record.next").exists() {
             return Err(RuntimeError::RetainedState);
@@ -162,6 +193,7 @@ impl Journal {
         let journal = Self {
             root,
             _lock: owner,
+            image_root,
             state,
             record,
             creation_live: false,
@@ -172,10 +204,45 @@ impl Journal {
         }
         Ok(journal)
     }
+    /// Prepare/cache the source before acquiring this Journal's ownership.
+    pub fn image_target<'a>(
+        &'a self,
+        compatibility: &'a str,
+    ) -> Result<InstallationImageTarget<'a>, RuntimeError> {
+        self.verify_root()?;
+        let target = match self.record.backend {
+            BackendKind::Apple => ImageTarget::MacosArm64,
+            BackendKind::Qemu => ImageTarget::WindowsAmd64,
+        };
+        Ok(InstallationImageTarget::from_owned_installation(
+            &self.image_root,
+            &self._lock.0,
+            self.record.installation_id,
+            target,
+            compatibility,
+            self.creation_live && self.record.phase == StatePhase::Empty,
+        ))
+    }
+    /// Installation/platform/binding preflight, not backend or infrastructure readiness.
+    pub fn validate_image(&self, image: &InstalledImageSet) -> Result<(), RuntimeError> {
+        image.revalidate(&self.image_target(&image.identity().state_compatibility_id)?)?;
+        Ok(())
+    }
     pub fn record(&self) -> &InstallationRecord {
         &self.record
     }
+    fn verify_root(&self) -> Result<(), RuntimeError> {
+        // State hardlinks do not prove that our pathname still names this directory.
+        let current = Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())?;
+        if file_identity(&current.into_std_file())?
+            != file_identity(&self.image_root.try_clone()?.into_std_file())?
+        {
+            return Err(RuntimeError::RetainedState);
+        }
+        Ok(())
+    }
     pub fn verify_state(&self) -> Result<(), RuntimeError> {
+        self.verify_root()?;
         if self.record.phase == StatePhase::Empty && self.state.metadata()?.len() != 0 {
             return Err(RuntimeError::RetainedState);
         }
@@ -188,12 +255,13 @@ impl Journal {
         }
         Ok(())
     }
-    pub(super) fn spec(&self, nonce: Uuid) -> LaunchSpec {
+    pub(super) fn spec(&self, nonce: Uuid, image: Arc<InstalledImageSet>) -> LaunchSpec {
         LaunchSpec {
             installation_id: self.record.installation_id,
             generation: self.record.generation,
             boot_nonce: nonce,
             ownership: self._lock.0.clone(),
+            image,
             root: self.root.clone(),
             state_path: self.root.join("state.disk"),
             state_bytes: STATE_BYTES,
@@ -224,7 +292,10 @@ impl Journal {
         next.phase = phase;
         self.commit(next)
     }
-    pub(super) fn begin_boot(&mut self) -> Result<LaunchSpec, RuntimeError> {
+    pub(super) fn begin_boot(
+        &mut self,
+        image: Arc<InstalledImageSet>,
+    ) -> Result<LaunchSpec, RuntimeError> {
         self.verify_state()?;
         if !matches!(
             self.record.phase,
@@ -238,7 +309,7 @@ impl Journal {
         let mut next = self.record.clone();
         next.boot_nonce = Some(Uuid::new_v4());
         self.commit(next)?;
-        Ok(self.spec(self.record.boot_nonce.unwrap()))
+        Ok(self.spec(self.record.boot_nonce.unwrap(), image))
     }
     pub(super) fn consume_creation(
         &mut self,
@@ -274,6 +345,7 @@ impl Journal {
         Ok(())
     }
     fn persist(&self, record: &InstallationRecord) -> Result<(), RuntimeError> {
+        self.verify_root()?;
         let bytes = serde_json::to_vec(record).map_err(|_| RuntimeError::RetainedState)?;
         if bytes.len() as u64 > MAX_RECORD {
             return Err(RuntimeError::RetainedState);
@@ -293,13 +365,13 @@ impl Journal {
     }
 }
 #[cfg(unix)]
-fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
+pub(crate) fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
     fs::rename(from, to)?;
     File::open(to.parent().unwrap())?.sync_all()?;
     Ok(())
 }
 #[cfg(windows)]
-fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
+pub(crate) fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
         MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
@@ -325,8 +397,37 @@ fn replace(from: &Path, to: &Path) -> Result<(), RuntimeError> {
 }
 
 #[cfg(test)]
+#[path = "image_wiring_tests.rs"]
+mod image_wiring_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn new_installation_lock_denies_open_even_after_original_handle_drops() {
+        let t = tempfile::tempdir().unwrap();
+        let owner = lock(t.path()).unwrap();
+        let duplicate = owner.try_clone().unwrap();
+        drop(owner);
+        let err = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(t.path().join("owner.lock"))
+            .unwrap_err();
+        assert_eq!(err.raw_os_error(), Some(32));
+        assert!(matches!(lock(t.path()), Err(RuntimeError::Busy)));
+        drop(duplicate);
+        assert!(lock(t.path()).is_ok());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn journal_open_contention_is_busy_before_try_lock() {
+        let t = tempfile::tempdir().unwrap();
+        let root = t.path().join("installation");
+        let _owner = Journal::create(&root, BackendKind::Qemu, b"pc-q35-11.0".to_vec()).unwrap();
+        assert!(matches!(Journal::open(&root), Err(RuntimeError::Busy)));
+    }
     #[test]
     fn failed_state_flush_cannot_commit_prepared() {
         let temp = tempfile::tempdir().unwrap();

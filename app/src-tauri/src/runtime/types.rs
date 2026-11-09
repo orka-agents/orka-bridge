@@ -1,3 +1,4 @@
+use super::{image_install::InstalledImageSet, image_types::ImageError};
 use bridge_runtime_protocol::{ProtocolError, Uuid};
 use serde::{Deserialize, Serialize};
 use std::{any::Any, fs::File, path::PathBuf, sync::Arc};
@@ -10,6 +11,7 @@ pub enum RuntimeError {
     Unavailable,
     Closed,
     Protocol(ProtocolError),
+    Image(ImageError),
 }
 impl std::fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -35,6 +37,11 @@ impl From<ProtocolError> for RuntimeError {
         Self::Protocol(e)
     }
 }
+impl From<ImageError> for RuntimeError {
+    fn from(error: ImageError) -> Self {
+        Self::Image(error)
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum BackendKind {
@@ -49,8 +56,10 @@ pub struct LaunchSpec {
     /// Backends retain this Arc for the complete VM lifetime, including while a
     /// helper that inherited its descriptor may run; inheritance covers parent
     /// death. Never reopen a pathname to reconstruct ownership. A journal dropped
-    /// with the only Arc unlocks it, which also releases inherited descriptors.
+    /// with the only Arc unlocks it, which on Unix also releases inherited copies.
     pub ownership: Arc<File>,
+    /// A committed private image, revalidated under the same installation owner.
+    pub image: Arc<InstalledImageSet>,
     pub root: PathBuf,
     pub state_path: PathBuf,
     pub state_bytes: u64,

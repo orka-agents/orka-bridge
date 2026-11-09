@@ -273,6 +273,15 @@ fn projection(action: &EngineActionWire, bytes: &[u8]) -> io::Result<Vec<u8>> {
             }
             Ok(format!("kmx {token}\n").into_bytes())
         }
+        // Exact status plus bounded JSON; the runner already refused bearer echoes.
+        EngineActionWire::Orka { .. } => {
+            let reply: OrkaReply = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+            let bytes = serde_json::to_vec(&reply).map_err(|_| invalid())?;
+            if bytes.len() > MAX_FILE {
+                return Err(invalid());
+            }
+            Ok(bytes)
+        }
         EngineActionWire::ListAgents { .. } => {
             let v: Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
             if !((v["kind"] == "List" && v["apiVersion"] == "v1")
@@ -308,6 +317,27 @@ fn projection(action: &EngineActionWire, bytes: &[u8]) -> io::Result<Vec<u8>> {
     }
 }
 pub struct Kmx;
+/// One per serving lease: Orka keeps its verified identity, bearer and forward across calls.
+pub struct GuestRunner {
+    pub kmx: Kmx,
+    pub orka: crate::orka::Orka,
+}
+impl GuestRunner {
+    pub fn new(installation: Uuid) -> Self {
+        Self {
+            kmx: Kmx,
+            orka: crate::orka::Orka::new(installation),
+        }
+    }
+}
+impl Runner for GuestRunner {
+    fn execute(&mut self, action: &EngineActionWire) -> io::Result<EngineResult> {
+        match action {
+            EngineActionWire::Orka { request } => self.orka.execute(request),
+            _ => self.kmx.execute(action),
+        }
+    }
+}
 pub fn argv(action: &EngineActionWire) -> io::Result<Vec<String>> {
     validate_action(action).map_err(|_| invalid())?;
     Ok(match action {
@@ -326,6 +356,7 @@ pub fn argv(action: &EngineActionWire) -> io::Result<Vec<String>> {
         .into_iter()
         .map(str::to_owned)
         .collect(),
+        EngineActionWire::Orka { .. } => return Err(invalid()),
     })
 }
 impl Runner for Kmx {
@@ -352,7 +383,7 @@ impl Runner for Kmx {
     }
 }
 // Caller supplies a newly-owned, unreaped child in its own process group.
-fn collect(
+pub(crate) fn collect(
     mut child: std::process::Child,
     timeout: std::time::Duration,
 ) -> io::Result<EngineResult> {

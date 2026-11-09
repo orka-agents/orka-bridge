@@ -78,6 +78,127 @@ impl VmClient {
         }
         result
     }
+    pub fn boot_nonce(&self) -> Uuid {
+        self.nonce
+    }
+
+    /// Probe before loading a stored secret; an old strict peer may close here.
+    pub fn model_status(&mut self) -> io::Result<ModelState> {
+        self.model_call(RequestBody::ModelStatus {})
+    }
+    pub fn connect_model(
+        &mut self,
+        generation: Uuid,
+        selection: ModelSelection,
+    ) -> io::Result<ModelState> {
+        if generation.is_nil() || !selection.valid() {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        let state = self.model_call(RequestBody::ModelConnect {
+            generation,
+            selection: selection.clone(),
+        })?;
+        if state
+            .connection
+            .as_ref()
+            .is_some_and(|c| c.generation != generation || c.selection != selection)
+        {
+            self.channel = None;
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        Ok(state)
+    }
+    pub fn disconnect_model(&mut self, connection: &ModelConnection) -> io::Result<ModelState> {
+        let state = self.model_call(RequestBody::ModelDisconnect {
+            connection: connection.id,
+        })?;
+        if state.credential.generation != Some(connection.generation)
+            || state.connection.as_ref().is_some_and(|c| c != connection)
+        {
+            self.channel = None;
+            return Err(io::ErrorKind::InvalidData.into());
+        }
+        Ok(state)
+    }
+    fn model_call(&mut self, request: RequestBody) -> io::Result<ModelState> {
+        match self.call(request)? {
+            ResultBody::ModelState(state) => Ok(state),
+            ResultBody::Error {
+                code: ErrorCode::Unavailable,
+            } => Err(io::ErrorKind::Unsupported.into()),
+            _ => {
+                self.channel = None;
+                Err(io::ErrorKind::InvalidData.into())
+            }
+        }
+    }
+    fn credential_call(&mut self, request: RequestBody) -> io::Result<CredentialState> {
+        match self.call(request)? {
+            ResultBody::CredentialState(state) => Ok(state),
+            ResultBody::Error { .. } => Err(io::ErrorKind::Unsupported.into()),
+            _ => {
+                self.channel = None;
+                Err(invalid())
+            }
+        }
+    }
+    pub fn readiness(&mut self) -> io::Result<()> {
+        self.ready_call(RequestBody::Readiness {})
+    }
+    // Lifecycle shutdown is routed by the native Windows session; other
+    // platform session adapters are not connected in this slice.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub(super) fn shutdown(&mut self) -> io::Result<()> {
+        self.ready_call(RequestBody::Shutdown {})
+    }
+    fn ready_call(&mut self, body: RequestBody) -> io::Result<()> {
+        match self.call(body)? {
+            ResultBody::Ready {} => Ok(()),
+            ResultBody::Error { .. } => Err(io::Error::other("guest runtime refused request")),
+            _ => {
+                self.channel = None;
+                Err(invalid())
+            }
+        }
+    }
+    /// Nonsecret negotiation. An old guest may close its strict protocol session.
+    pub fn credential_status(&mut self) -> io::Result<CredentialState> {
+        self.credential_call(RequestBody::CredentialStatus {})
+    }
+    /// One attempt only. A failed delivery may have committed; never replay it.
+    pub fn deliver_credential(
+        &mut self,
+        token: &CredentialPayload,
+        expected: Option<Uuid>,
+    ) -> io::Result<CredentialState> {
+        let before = self.credential_status()?;
+        if before.generation != expected || before.installed {
+            return Err(invalid());
+        }
+        let state = self.credential_call(RequestBody::CredentialPublish {
+            expected_generation: expected,
+            token: token.clone(),
+        })?;
+        if !state.installed || state.generation.is_none() || state.generation == expected {
+            self.channel = None;
+            return Err(invalid());
+        }
+        Ok(state)
+    }
+    /// File-only primitive; caller must observe gateway Disconnect before clearing.
+    pub fn clear_credential_file(&mut self, expected: Uuid) -> io::Result<CredentialState> {
+        if self.credential_status()?.generation != Some(expected) {
+            return Err(invalid());
+        }
+        let state = self.credential_call(RequestBody::CredentialClear {
+            expected_generation: expected,
+        })?;
+        if state.installed || state.generation.is_none() || state.generation == Some(expected) {
+            self.channel = None;
+            return Err(invalid());
+        }
+        Ok(state)
+    }
     pub fn stage_snapshot(&mut self, s: &Snapshot) -> io::Result<SnapshotId> {
         let upload = Uuid::new_v4();
         let snapshot = s.id();
@@ -143,6 +264,26 @@ impl VmClient {
             }
         }
         Ok(operation)
+    }
+    /// Trusted native Run only; uses the original request sequence and never retries a POST.
+    pub fn orka_request(&mut self, request: OrkaRequest) -> io::Result<OrkaReply> {
+        if request.validate().is_err() || self.channel.is_none() {
+            return Err(invalid());
+        }
+        let operation = Uuid::new_v4();
+        match self.call(RequestBody::Execute {
+            operation,
+            action: EngineActionWire::Orka { request },
+            snapshot: None,
+        })? {
+            ResultBody::Operation { operation: id, .. } if id == operation => {}
+            _ => return Err(invalid()),
+        }
+        let result = self.result(operation)?;
+        if result.exit != 0 {
+            return Err(invalid());
+        }
+        serde_json::from_slice(&result.stdout).map_err(|_| invalid())
     }
     pub fn status(&mut self, operation: Uuid) -> io::Result<OperationInfo> {
         let unknown = || OperationInfo {

@@ -1,0 +1,16 @@
+extern crate self as bridge_engine;
+#[cfg(debug_assertions)]
+#[path = "../../../app/src-tauri/src/dev_image.rs"]
+pub mod dev_image;
+#[path = "../../../app/src-tauri/src/engine/mod.rs"]
+pub mod engine;
+#[path = "../../../app/src-tauri/src/local_vm.rs"]
+pub mod local_vm;
+#[path = "../../../app/src-tauri/tests/local_model.rs"]
+mod model_tests;
+#[path = "../../../app/src-tauri/src/runtime/mod.rs"]
+pub mod runtime;
+#[path = "../../../app/src-tauri/src/setup.rs"]
+pub mod setup;
+#[path = "../../../app/src-tauri/tests/local_vm.rs"]
+mod tests;

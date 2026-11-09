@@ -151,6 +151,33 @@ pub fn handle(
         ),
     }
 }
+/// Credential authority is the owned physical channel, not the local kmx socket.
+pub fn credential_request(
+    host_channel: bool,
+    request: &RequestBody,
+    run: impl FnOnce() -> ResultBody,
+) -> Option<ResultBody> {
+    if matches!(
+        request,
+        RequestBody::CredentialStatus {}
+            | RequestBody::CredentialPublish { .. }
+            | RequestBody::CredentialClear { .. }
+            | RequestBody::ModelStatus {}
+            | RequestBody::ModelConnect { .. }
+            | RequestBody::ModelDisconnect { .. }
+    ) {
+        Some(if host_channel {
+            run()
+        } else {
+            ResultBody::Error {
+                code: ErrorCode::Unavailable,
+            }
+        })
+    } else {
+        None
+    }
+}
+
 pub fn result(r: &WireRequest, body: ResultBody) -> Frame {
     Frame::Result(WireResult {
         version: VERSION,
@@ -158,4 +185,72 @@ pub fn result(r: &WireRequest, body: ResultBody) -> Frame {
         request_id: r.request_id,
         body,
     })
+}
+
+#[cfg(test)]
+mod credential_tests {
+    use super::*;
+    #[test]
+    fn model_operations_are_physical_only_and_do_not_fall_through() {
+        let id = Uuid::new_v4();
+        for request in [
+            RequestBody::ModelStatus {},
+            RequestBody::ModelConnect {
+                generation: id,
+                selection: ModelSelection {
+                    provider: "copilot".into(),
+                    model: "gpt-4.1".into(),
+                },
+            },
+            RequestBody::ModelDisconnect { connection: id },
+        ] {
+            for host in [false, true] {
+                let called = std::cell::Cell::new(false);
+                let reply = credential_request(host, &request, || {
+                    called.set(true);
+                    ResultBody::ModelState(ModelState {
+                        phase: ModelPhase::Idle,
+                        connection: None,
+                        credential: CredentialState {
+                            profile: CREDENTIAL_PROFILE,
+                            generation: None,
+                            installed: false,
+                        },
+                    })
+                });
+                assert!(reply.is_some(), "model operations must not fall through");
+                assert_eq!(called.get(), host);
+                if !host {
+                    assert_eq!(
+                        reply,
+                        Some(ResultBody::Error {
+                            code: ErrorCode::Unavailable
+                        })
+                    );
+                }
+            }
+        }
+        assert!(
+            credential_request(true, &RequestBody::Readiness {}, || panic!(
+                "non-private operation"
+            ))
+            .is_none()
+        );
+    }
+    #[test]
+    fn local_peer_never_reaches_a_working_credential_handler() {
+        for host in [false, true] {
+            let called = std::cell::Cell::new(false);
+            let reply = credential_request(host, &RequestBody::CredentialStatus {}, || {
+                called.set(true);
+                ResultBody::Ready {}
+            });
+            assert_eq!(
+                called.get(),
+                host,
+                "local request must not execute credential code"
+            );
+            assert!(reply.is_some());
+        }
+    }
 }

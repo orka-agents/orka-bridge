@@ -1,5 +1,7 @@
 // Exercise the same desktop image reader and tests without native UI SDKs.
 extern crate self as bridge_engine;
+// The parser-only harness omits the cache-backed capability implementations.
+#[allow(dead_code)]
 #[path = "../../../app/src-tauri/src/runtime/image_types.rs"]
 pub mod image_types;
 #[path = "../../../app/src-tauri/src/runtime/manifest.rs"]

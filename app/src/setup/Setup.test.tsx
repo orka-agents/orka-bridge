@@ -19,6 +19,22 @@ function native() {
 }
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 
+test('running native session unlocks only its explicit model command', async () => {
+  vi.stubGlobal('isTauri', true);
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'engine_call') throw { kind: 'unavailable' };
+    if (command === 'setup_connect_model') return { ready: true };
+    throw new Error('Forbidden command');
+  });
+  mockIPC(ipc); render(<App />);
+  const connect = await screen.findByRole('button', { name: 'Use GitHub sign-in' });
+  expect(connect.hasAttribute('disabled')).toBe(false);
+  expect(ipc.mock.calls.some(([command]) => command === 'setup_connect_model')).toBe(false);
+  fireEvent.click(connect);
+  expect(await screen.findByText('Model connected: copilot / gpt-5.6-terra.')).toBeTruthy();
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toEqual([['setup_connect_model', {}]]);
+});
 test('first launch is a native-backed chooser with no runtime or credential effects', async () => {
   const ipc = native();
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
@@ -98,6 +114,46 @@ test('a failed initial read can be checked again without changing the saved choi
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   expect(await screen.findByText('Local VM selected.')).toBeTruthy();
   expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('selection shows real startup states and only a ready session can open the example', async () => {
+  native(); let selected: 'localVm' | null = null; let reads = 0;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_select_local') { selected = 'localVm'; return { ...status(selected), localVm: 'preparing' }; }
+    if (command === 'setup_status') return { ...status(selected), localVm: selected === null ? 'idle' : ++reads === 1 ? 'starting' : 'ready' };
+    if (command === 'setup_example') return { agent: 'exact agent source', tests: 'exact test source' };
+    if (command === 'setup_run_status') return { state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
+    throw { kind: 'unavailable' };
+  }); mockIPC(ipc);
+  const user = userEvent.setup(); render(<App />);
+  await screen.findByText('Native setup available');
+  expect(screen.queryByRole('button', { name: 'Open example' })).toBeNull();
+  await user.click(screen.getByRole('radio', { name: /Local VM/ }));
+  expect(screen.queryByText('Orka is running on this computer.')).toBeNull();
+  expect(await screen.findByText('Orka is running on this computer.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Connect model' }).matches(':disabled')).toBe(true);
+  expect(ipc.mock.calls.filter(([name]) => name === 'setup_select_local')).toHaveLength(1);
+  await user.click(screen.getByRole('button', { name: 'Open example' }));
+  expect(await screen.findByText('exact agent source')).toBeTruthy();
+  expect(screen.getByText('exact test source')).toBeTruthy();
+  expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_select_local', 'setup_example', 'setup_run_status', 'engine_call'].includes(name))).toBe(true);
+});
+
+test.each([
+  'Starting the local VM failed: Runtime operation failed: Io(<b data-vm-error>launch detail</b>)',
+  'Stopping the local VM failed: Runtime operation failed: Io(<b data-vm-error>stop detail</b>)',
+])('shows retained failure reason as plain text without new actions: %s', async localVmError => {
+  native();
+  mockIPC(command => command === 'setup_status'
+    ? { ...status('localVm'), localVm: 'failed', localVmError }
+    : Promise.reject({ kind: 'unavailable' }));
+  render(<App />);
+  expect((await screen.findByRole('alert')).textContent).toBe(localVmError);
+  expect(document.querySelector('[data-vm-error]')).toBeNull();
+  expect(screen.getByText('Local VM selected.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open example' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Connect model' }).matches(':disabled')).toBe(true);
 });
 
 test('keyboard selection does not enable the existing route or duplicate the save', async () => {

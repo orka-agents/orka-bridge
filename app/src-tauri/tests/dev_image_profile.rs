@@ -7,8 +7,14 @@ fn contains(binary: &[u8], needle: &[u8]) -> bool {
 #[test]
 fn actual_app_binary_contains_the_local_image_selector_only_in_debug() {
     let binary = fs::read(env!("CARGO_BIN_EXE_orka-bridge")).unwrap();
-    // Positive control: inspecting the wrong/empty file must not pass exclusion.
-    assert!(contains(&binary, b"error while running Bridge"));
+    // Cargo supplies the actual app target. Check its executable format, not
+    // an unrelated message whose wording can change without changing this gate.
+    #[cfg(windows)]
+    assert!(binary.starts_with(b"MZ"));
+    #[cfg(target_os = "macos")]
+    assert!(binary.starts_with(&[0xcf, 0xfa, 0xed, 0xfe]));
+    #[cfg(target_os = "linux")]
+    assert!(binary.starts_with(b"\x7fELF"));
     assert_eq!(
         contains(&binary, b"BRIDGE_DEV_IMAGE_DIR"),
         cfg!(debug_assertions),
@@ -16,14 +22,15 @@ fn actual_app_binary_contains_the_local_image_selector_only_in_debug() {
     );
     #[cfg(not(debug_assertions))]
     for hash in [
-        "77518696b514004b78fd3390dd6103565b54c2f5b0bb01fad6d035e19ef97a22",
-        "4c8007757f1814eab249c84fbdbc51cbd8736aa16938b006a063079adf2c583b",
-        "b99c4e062151f1a8ad3fe68fdcc6d81ca4c550bbc5e3d4e64dfc7c405c81a075",
-        "56f75f268bc1739ae80edd12a5a5e5c11241286d71608b145a0087e1c8a2eed0",
+        "a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27",
+        "aec2578beedf049f9824cbc1f8127621d977bcf1d35710d34f343b4f870c0cdd",
+        "9eb75d4a9de5f2e922157dc597601d7f10d3b71f3c52fd6ffd3f18d59c6a799b",
+        "f766957de4970a0c0d8a3436892b9830f950665410599a7bf9852558e5cac09e",
         "27f833e233753a0a601f3a6792dcd73e2f2c7c8bd30e00b837315c71c5996dcb",
         "4a44487bb3cfdc2be1d7697b8c71c97733d6ab2db62e6e6e8f1c6af9431ffd2e",
-        "0b5b9f353e5acfa91a6e0ed2f0f28ee6d22ce48664d2a7b7b98d45f0439aa369",
-        "dc96ba25f698e17d041d87046ddd33cde9a0c5757f4bf6c6356e44776fd8f2d2",
+        "606891f6e94ce5c4263bbc5360d7fdb6bb874b2109478e4e9e67322fd47d7f20",
+        "6bbbd88361bc958d7d431d3e4e9f7b4e0bf184f02f9f3da0b4ff1f5156ded331",
+        "a1dead19c0d1dcef558008e556cd9bd4a8c5082daf4ecea6f531d03173748385",
     ] {
         let raw: Vec<u8> = (0..64)
             .step_by(2)
