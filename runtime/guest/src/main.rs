@@ -673,6 +673,7 @@ mod tests {
             model::Outcome {
                 connection: Some(connection),
                 success: true,
+                diagnostic: None,
             }
         }
     }
@@ -795,6 +796,7 @@ mod tests {
                 model::Outcome {
                     connection: None,
                     success: false,
+                    diagnostic: None,
                 }
             }
         }

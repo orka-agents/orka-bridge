@@ -36,6 +36,25 @@ test('running native session unlocks only its explicit model command', async () 
   expect(await screen.findByText('Model connected: copilot / gpt-5.6-terra.')).toBeTruthy();
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toEqual([['setup_connect_model', {}]]);
 });
+test('failed Connect refreshes retained guest details without locking the running VM', async () => {
+  vi.stubGlobal('isTauri', true);
+  let failed = false;
+  const detail = 'Guest Connect: gateway, timeout, 60000 ms. Stderr withheld.';
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available', localVmError: failed ? detail : null };
+    if (command === 'engine_call') throw { kind: 'unavailable' };
+    if (command === 'setup_connect_model') { failed = true; throw { kind: 'modelConnect', message: 'SECRET_MARKER' }; }
+    throw new Error('Forbidden command');
+  });
+  const user = userEvent.setup(); mockIPC(ipc); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  expect(await screen.findByText(detail)).toBeTruthy();
+  expect(screen.getByText('Your workspace is running on this computer.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Use GitHub sign-in' }).matches(':disabled')).toBe(false);
+  expect(document.body.textContent).not.toContain('SECRET_MARKER');
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toHaveLength(1);
+});
+
 test('the chooser only reads setup and build information, without runtime or credential effects', async () => {
   const ipc = native(); const fetch = vi.fn(); vi.stubGlobal('fetch', fetch); render(<App />);
   expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();

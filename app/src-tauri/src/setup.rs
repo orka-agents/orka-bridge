@@ -105,8 +105,22 @@ pub struct SetupError {
     // Only the finite call and numeric code may cross to the sign-in error UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     native: Option<StoreDiagnostic>,
+    #[serde(skip)]
+    diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>,
 }
 impl SetupError {
+    pub(crate) fn connect(diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>) -> Self {
+        Self {
+            diagnostic,
+            ..Self::model("modelConnect")
+        }
+    }
+    pub(crate) fn model_detail(&self) -> Option<String> {
+        self.diagnostic
+            .as_ref()
+            .and_then(|d| serde_json::to_string(d).ok())
+            .map(|detail| format!("{} Guest Connect: {detail}", self.message))
+    }
     pub(crate) fn store(error: StoreError) -> Self {
         Self {
             native: match error {
@@ -141,6 +155,7 @@ impl SetupError {
         Self {
             kind,
             message,
+            diagnostic: None,
             native: None,
         }
     }
@@ -149,6 +164,7 @@ fn storage_error() -> SetupError {
     SetupError {
         kind: "storage",
         message: "The setup choice could not be read or saved.",
+        diagnostic: None,
         native: None,
     }
 }
