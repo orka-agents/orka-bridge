@@ -119,6 +119,10 @@ struct State {
     stopped: Option<bool>,
     startup: Option<tokio::task::JoinHandle<bool>>,
 }
+#[cfg(test)]
+#[path = "local_vm_model_tests.rs"]
+mod model_tests;
+
 struct Inner {
     state: Mutex<State>,
     session: Arc<AsyncMutex<Option<Box<dyn LocalSession>>>>,
@@ -126,6 +130,25 @@ struct Inner {
     finished: Notify,
 }
 impl Inner {
+    fn model_result(
+        &self,
+        result: &Result<crate::setup::ModelSetupState, crate::setup::SetupError>,
+    ) {
+        let mut state = self.state.lock().unwrap();
+        if state.phase != LocalVmStatus::Ready || state.closing {
+            return;
+        }
+        match result {
+            Ok(model) if model.ready => state.failure = None,
+            Err(error) => {
+                // A generic retry refusal must not erase the original guest diagnostic.
+                if let Some(detail) = error.model_detail() {
+                    state.failure = Some(detail);
+                }
+            }
+            _ => {}
+        }
+    }
     fn publish(&self, phase: LocalVmStatus) {
         let mut state = self.state.lock().unwrap();
         if !state.closing {
@@ -273,13 +296,17 @@ impl LocalVm {
             return Err(crate::setup::SetupError::model("modelGuest"));
         }
         let runtime = tokio::runtime::Handle::current();
+        let inner = self.inner.clone();
         self.with_client(move |id, client| {
-            setup.connect_stored_model(
+            let result = setup.connect_stored_model(
                 id,
                 client,
                 &crate::runtime::credential_store::OsCredentialStore,
                 || runtime.block_on(crate::runtime::credentials::capture_stored_github_token()),
-            )
+            );
+            // The owned worker retains details even if its IPC waiter is dropped.
+            inner.model_result(&result);
+            result
         })
         .await
         .map_err(|error| {

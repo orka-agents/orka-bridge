@@ -125,14 +125,14 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
       </>}
       {selected && <section className="card" aria-label="Workspace setup" aria-busy={busy}>
         <p role="status">{error ? 'Workspace status is unavailable.' : status && runtimeCopy[status.localVm]}</p>
-        {status?.localVm === 'failed' && status.localVmError && <p role="alert">{status.localVmError}</p>}
+        {status?.localVmError && <p role="alert">{status.localVmError}</p>}
         {status?.localVm === 'ready' && <button type="button" className="setup-button" disabled={!!error} onClick={onOpenExample}>Open example</button>}
       </section>}
       {error && <div role="alert"><p>{error}</p>
         <button type="button" className="setup-button" disabled={busy}
           onClick={() => { setBusy(true); setError(undefined); setCheck(value => value + 1); }}>Check again</button>
       </div>}
-      {selected && <Model enabled={status?.localVm === 'ready' && status.model === 'available'} paused={!!error} onState={onModelState} />}
+      {selected && <Model enabled={status?.localVm === 'ready' && status.model === 'available'} paused={!!error} onState={onModelState} onSettled={() => setCheck(value => value + 1)} />}
     </div>
   </>;
 }
