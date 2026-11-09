@@ -34,6 +34,26 @@ test('known native stage error is shown without raw message; unknown errors neve
   const result = await connectModel();
   expect(result).toEqual({ ok: false, message: 'The model connection could not be completed.' });
 });
+test('a full Windows credential store explains sign-in failure without exposing the native message', async () => {
+  invoke.mockRejectedValue({ kind: 'modelStore', message: 'synthetic-private-token /path/raw-stderr',
+    native: { call: 'CredWriteW', code: 8 } });
+  render(<Model enabled />); fireEvent.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  expect((await screen.findByRole('alert')).textContent).toBe(
+    "Windows couldn't save the sign-in. Windows Credential Manager is full (CredWriteW, error 8).");
+  expect(document.body.textContent).not.toContain('synthetic-private-token');
+});
+test('native store details accept only known calls and unsigned Windows error codes', async () => {
+  invoke.mockRejectedValue({ kind: 'modelStore', native: { call: 'CredReadW', code: 1168 } });
+  expect(await connectModel()).toEqual({ ok: false,
+    message: "Windows couldn't load the sign-in (CredReadW, error 1168)." });
+  for (const native of [null, { call: 'synthetic-private-token', code: 8 },
+    { call: 'CredWriteW', code: '8' }, { call: 'CredWriteW', code: -1 },
+    { call: 'CredWriteW', code: 1.5 }, { call: 'CredWriteW', code: 4294967296 }]) {
+    invoke.mockRejectedValue({ kind: 'modelStore', message: 'synthetic-private-token', native });
+    expect(await connectModel()).toEqual({ ok: false,
+      message: 'The native credential store could not save or load the sign-in.' });
+  }
+});
 test('late success after runtime closes does not display ready', async () => {
   let complete!: (value: unknown) => void;
   invoke.mockImplementation(() => new Promise(resolve => { complete = resolve; }));

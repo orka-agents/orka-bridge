@@ -9,19 +9,46 @@ pub trait CredentialStore: Send + Sync {
 
 pub struct OsCredentialStore;
 
+/// Finite set of native calls whose failure may be diagnosed. Never a target, account or secret.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+pub enum NativeCall {
+    CredWriteW,
+    CredReadW,
+    CredDeleteW,
+}
+impl NativeCall {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::CredWriteW => "CredWriteW",
+            Self::CredReadW => "CredReadW",
+            Self::CredDeleteW => "CredDeleteW",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StoreError {
     Unavailable,
     Invalid,
     TooLarge,
+    /// A native call failed; only its name and numeric Windows error code are retained.
+    Native {
+        call: NativeCall,
+        code: u32,
+    },
 }
 impl std::fmt::Display for StoreError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Unavailable => "credential store unavailable",
-            Self::Invalid => "invalid credential",
-            Self::TooLarge => "credential too large",
-        })
+        match self {
+            Self::Unavailable => f.write_str("credential store unavailable"),
+            Self::Invalid => f.write_str("invalid credential"),
+            Self::TooLarge => f.write_str("credential too large"),
+            Self::Native { call, code } => write!(
+                f,
+                "credential store call {} failed with Windows error {code}",
+                call.name()
+            ),
+        }
     }
 }
 impl std::error::Error for StoreError {}
@@ -190,11 +217,14 @@ mod native {
             ..Default::default()
         };
         // SAFETY: pointers remain live for the call; validated secret is within the native blob limit.
-        if unsafe { CredWriteW(&credential, 0) } == 0 {
-            Err(StoreError::Unavailable)
-        } else {
-            Ok(())
+        if unsafe { CredWriteW(&credential, 0) } != 0 {
+            return Ok(());
         }
+        Err(StoreError::Native {
+            call: NativeCall::CredWriteW,
+            // SAFETY: reads this thread's last error immediately after the failed call.
+            code: unsafe { GetLastError() },
+        })
     }
     struct OwnedCredential(*mut CREDENTIALW);
     impl Drop for OwnedCredential {
@@ -208,7 +238,11 @@ mod native {
         let mut ptr = std::ptr::null_mut();
         // SAFETY: name is NUL terminated; ptr is a writable output pointer.
         if unsafe { CredReadW(name.as_ptr(), CRED_TYPE_GENERIC, 0, &mut ptr) } == 0 {
-            return Err(StoreError::Unavailable);
+            return Err(StoreError::Native {
+                call: NativeCall::CredReadW,
+                // SAFETY: reads this thread's last error immediately after the failed call.
+                code: unsafe { GetLastError() },
+            });
         }
         if ptr.is_null() {
             return Err(StoreError::Invalid);
@@ -229,12 +263,16 @@ mod native {
     pub fn delete(slot: Uuid) -> Result<(), StoreError> {
         let name = target(slot);
         // SAFETY: name is a live NUL-terminated target, scoped to this exact slot.
-        if unsafe { CredDeleteW(name.as_ptr(), CRED_TYPE_GENERIC, 0) } != 0
-            || unsafe { GetLastError() } == ERROR_NOT_FOUND
-        {
-            Ok(())
-        } else {
-            Err(StoreError::Unavailable)
+        if unsafe { CredDeleteW(name.as_ptr(), CRED_TYPE_GENERIC, 0) } != 0 {
+            return Ok(());
+        }
+        // SAFETY: reads this thread's last error immediately after the failed call.
+        match unsafe { GetLastError() } {
+            ERROR_NOT_FOUND => Ok(()),
+            code => Err(StoreError::Native {
+                call: NativeCall::CredDeleteW,
+                code,
+            }),
         }
     }
 }

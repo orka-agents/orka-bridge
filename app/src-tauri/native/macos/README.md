@@ -77,7 +77,7 @@ ownership. This is not registry selection, setup readiness or credential deliver
 
 ## Devices and lifetime
 
-Configuration uses UEFI, four CPUs, 6 GiB RAM, writable virtio disks named
+Configuration uses UEFI, four CPUs, trusted-config RAM (6 GiB), writable virtio disks named
 `bridge-os` and `bridge-state`, entropy, NAT with the recorded MAC, the nonconsole
 port zero `ai.orka.bridge.control` and a separate diagnostic serial. No shared
 host folder or direct-Linux fallback exists. The only new installation file is

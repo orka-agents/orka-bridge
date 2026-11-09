@@ -26,6 +26,19 @@ export async function connectModel(): Promise<ModelResult> {
     // Only a native finite category selects text. Never render a supplied message.
     if (typeof error === 'object' && error !== null && 'kind' in error
       && typeof error.kind === 'string' && Object.hasOwn(errors, error.kind)) {
+      if (error.kind === 'modelStore' && 'native' in error) {
+        const detail = error.native;
+        if (typeof detail === 'object' && detail !== null && 'call' in detail && 'code' in detail
+          && (detail.call === 'CredWriteW' || detail.call === 'CredReadW' || detail.call === 'CredDeleteW')
+          && typeof detail.code === 'number' && Number.isInteger(detail.code)
+          && detail.code >= 0 && detail.code <= 0xffffffff) {
+          const operation = detail.call === 'CredWriteW' ? 'save' : detail.call === 'CredReadW' ? 'load' : 'remove';
+          const reason = detail.call === 'CredWriteW' && detail.code === 8
+            ? "Windows couldn't save the sign-in. Windows Credential Manager is full"
+            : `Windows couldn't ${operation} the sign-in`;
+          return { ok: false, message: `${reason} (${detail.call}, error ${detail.code}).` };
+        }
+      }
       return { ok: false, message: errors[error.kind] };
     }
   }

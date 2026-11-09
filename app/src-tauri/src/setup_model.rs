@@ -36,6 +36,7 @@ fn unavailable() -> SetupError {
     SetupError {
         kind: "modelUnavailable",
         message: "The stored model connection is unavailable or its completion is unknown.",
+        native: None,
     }
 }
 fn read_binding(root: &Path) -> Result<Option<Binding>, SetupError> {
@@ -98,6 +99,22 @@ fn model_owner(root: &Path) -> Result<fs::File, SetupError> {
     file.try_lock().map_err(|_| unavailable())?;
     Ok(file)
 }
+// Called under the model-owner lock for this installation's Storing reservation.
+// A failed read is not proof of absence unless CredReadW specifically reports NOT_FOUND.
+fn discard_absent_reservation(
+    root: &Path,
+    b: &Binding,
+    store: &impl CredentialStore,
+) -> Result<(), SetupError> {
+    match store.load(b.slot) {
+        Err(StoreError::Native {
+            call: NativeCall::CredReadW,
+            code: 1168,
+        }) => fs::remove_file(root.join("model-v1")).map_err(|_| unavailable()),
+        Err(error @ StoreError::Native { .. }) => Err(SetupError::store(error)),
+        _ => Ok(()),
+    }
+}
 fn state(b: Option<&Binding>, ready: bool) -> ModelSetupState {
     ModelSetupState {
         associated: b.is_some_and(|b| b.phase != Phase::Storing),
@@ -107,6 +124,24 @@ fn state(b: Option<&Binding>, ready: bool) -> ModelSetupState {
     }
 }
 impl SetupStore {
+    fn recover_empty_reservation(
+        &self,
+        installation: Uuid,
+        store: &impl CredentialStore,
+    ) -> Result<(), SetupError> {
+        let _access = self.access.lock().map_err(|_| unavailable())?;
+        let root = self.root.as_deref().ok_or_else(unavailable)?;
+        if !selected(root)? {
+            return Ok(());
+        }
+        let _owner = model_owner(root)?;
+        if let Some(b) = read_binding(root)? {
+            if b.installation == installation && b.phase == Phase::Storing {
+                discard_absent_reservation(root, &b, store)?;
+            }
+        }
+        Ok(())
+    }
     /// Fixed explicit app intent. Capture is never automatic and never repeats an association.
     pub fn connect_stored_model(
         &self,
@@ -115,6 +150,8 @@ impl SetupStore {
         store: &impl CredentialStore,
         capture: impl FnOnce() -> Result<CapturedGithubToken, crate::runtime::credentials::CaptureError>,
     ) -> Result<ModelSetupState, SetupError> {
+        // Explicit sign-in also recovers an empty reservation left by an older failed save.
+        self.recover_empty_reservation(installation, store)?;
         let binding = self.model_binding_status()?;
         if !binding.associated && !binding.unknown {
             // A serving VM can still have an older handler. Probe before host capture/save.
@@ -179,9 +216,11 @@ impl SetupStore {
         };
         // Reserve the exact slot durably: save can apply and then report an error.
         write_binding(root, &b)?;
-        store
-            .save(b.slot, secret)
-            .map_err(|_| SetupError::model("modelStore"))?;
+        if let Err(error) = store.save(b.slot, secret) {
+            // Preserve the save error, including its Windows code, even if cleanup fails.
+            discard_absent_reservation(root, &b, store).map_err(|_| SetupError::store(error))?;
+            return Err(SetupError::store(error));
+        }
         b.phase = Phase::Stored;
         // Publication can be visible even when the final directory flush fails.
         write_binding(root, &b)?;
@@ -240,9 +279,7 @@ impl SetupStore {
         if before.phase != ModelPhase::Idle || before.credential.installed {
             return Err(SetupError::model("modelGuest"));
         }
-        let secret = store
-            .load(b.slot)
-            .map_err(|_| SetupError::model("modelStore"))?;
+        let secret = store.load(b.slot).map_err(SetupError::store)?;
         b.phase = Phase::Pending;
         b.nonce = Some(client.boot_nonce());
         write_binding(root, &b)?; // durable barrier before either guest mutation
@@ -313,6 +350,96 @@ mod scenarios;
 mod tests {
     use super::*;
     use crate::runtime::credential_store::StoreError;
+
+    #[test]
+    fn failed_save_and_existing_storing_reservation_clear_only_after_confirmed_absence() {
+        struct FailedSave(Option<StoreError>);
+        impl CredentialStore for FailedSave {
+            fn save(&self, _: Uuid, _: &[u8]) -> Result<(), StoreError> {
+                Err(StoreError::Native {
+                    call: NativeCall::CredWriteW,
+                    code: 8,
+                })
+            }
+            fn load(&self, _: Uuid) -> Result<CredentialPayload, StoreError> {
+                match self.0 {
+                    Some(error) => Err(error),
+                    None => Ok(CredentialPayload::new(b"synthetic-model-only").unwrap()),
+                }
+            }
+            fn delete(&self, _: Uuid) -> Result<(), StoreError> {
+                panic!("a failed save must not delete a credential")
+            }
+        }
+        for (read_error, absent) in [
+            (
+                Some(StoreError::Native {
+                    call: NativeCall::CredReadW,
+                    code: 1168,
+                }),
+                true,
+            ),
+            (None, false),
+            (Some(StoreError::Unavailable), false),
+            (Some(StoreError::Invalid), false),
+            (
+                Some(StoreError::Native {
+                    call: NativeCall::CredReadW,
+                    code: 5,
+                }),
+                false,
+            ),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let setup = SetupStore::new(Some(tmp.path().to_owned()));
+            setup.select_local().unwrap();
+            let install = Uuid::new_v4();
+            let vault = FailedSave(read_error);
+            let error = setup
+                .associate_secret(install, b"synthetic-model-only", &vault)
+                .unwrap_err();
+            assert_eq!(
+                serde_json::to_value(error).unwrap()["native"],
+                serde_json::json!({"call": "CredWriteW", "code": 8})
+            );
+            let root = setup.root.as_deref().unwrap();
+            assert_eq!(read_binding(root).unwrap().is_none(), absent);
+            // Recreate an old failed-save reservation: an explicit sign-in must use the same proof.
+            write_binding(
+                root,
+                &Binding {
+                    slot: Uuid::new_v4(),
+                    installation: install,
+                    phase: Phase::Storing,
+                    nonce: None,
+                    connection: None,
+                },
+            )
+            .unwrap();
+            let mut client =
+                VmClient::established(Box::new(std::io::Cursor::new(Vec::new())), Uuid::new_v4())
+                    .unwrap();
+            let error = setup
+                .connect_stored_model(install, &mut client, &vault, || {
+                    panic!("the empty test peer must refuse before capture")
+                })
+                .unwrap_err();
+            let expected_kind = match read_error {
+                Some(StoreError::Native { code: 5, .. }) => "modelStore",
+                _ if absent => "modelGuest",
+                _ => "modelUnavailable",
+            };
+            assert_eq!(error.kind, expected_kind);
+            if expected_kind == "modelStore" {
+                assert_eq!(
+                    serde_json::to_value(error).unwrap()["native"],
+                    serde_json::json!({"call": "CredReadW", "code": 5})
+                );
+            }
+            assert_eq!(read_binding(root).unwrap().is_none(), absent);
+        }
+    }
+
     #[test]
     fn unsupported_guest_cannot_capture_or_save_first_sign_in() {
         struct Closed;

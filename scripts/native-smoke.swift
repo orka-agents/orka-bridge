@@ -64,15 +64,18 @@ Thread.sleep(forTimeInterval: 2)
 func mouse(_ type: CGEventType, _ point: CGPoint) {
     CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
 }
-func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) {
-    guard let label = observations.first(where: {
-        1 - $0.boundingBox.maxY < 0.10 && $0.topCandidates(1).first?.string == page
-    }) else { fatalError("Native tab label not visible: \(page)") }
+func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) {
+    guard let target = observations.first(where: { $0.topCandidates(1).first?.string == label }) else {
+        fatalError("Control not visible: \(label)")
+    }
     let rect = window()!.1
-    let point = CGPoint(x: rect.minX + label.boundingBox.midX * rect.width,
-                        y: rect.minY + (1 - label.boundingBox.midY) * rect.height)
+    let point = CGPoint(x: rect.minX + target.boundingBox.midX * rect.width,
+                        y: rect.minY + (1 - target.boundingBox.midY) * rect.height)
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.5)
+}
+func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) {
+    clickText(page, in: observations.filter { 1 - $0.boundingBox.maxY < 0.10 })
 }
 func key(_ code: CGKeyCode, shift: Bool = false) {
     for down in [true, false] {
@@ -113,14 +116,21 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
             "Native screenshot does not show the expected \(theme) theme")
     if page == "Clusters" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Native setup available") && text.contains("VM integration is not included"),
-                "Release setup IPC did not report its real integration state")
-        if name != "clusters-minimum" {
-            require(text.contains("Model connection locked"), "The model gate is not visible")
+        // Vision can read the capital I in AI as lowercase l. Match the rest of the heading.
+        let welcome = text.contains("Build an") && text.contains("does a real job")
+        let choice = text.contains("Where should your agents run")
+        let selected = text.contains("Get your workspace ready")
+        require(welcome || choice || selected, "Workspace heading not visible; observed: \(text)")
+        if !welcome {
+            require(text.contains("Workspace setup is not included"),
+                    "Release setup IPC did not report its real integration state")
         }
         if ["local-selected", "choice-retained"].contains(name) {
-            require(text.contains("Local VM selected"), "Native preference was not acknowledged or retained")
+            require(selected && !welcome && !choice, "Native preference was not acknowledged or retained")
+            require(text.contains("Model connection locked"), "The model gate is not visible")
         }
+        print("PASS \(name): native workspace screen observed")
+        return observations
     }
     let pages = ["Overview", "Designer", "Clusters"]
     let headings = Set(observations.compactMap { observation -> String? in
@@ -132,32 +142,26 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     })
     // Negative control: persistent nav labels must not qualify as page headings.
     for wrong in pages where wrong != page {
-        require(!headings.contains(wrong), "OCR confused the \(wrong) nav label with a heading")
+        require(!headings.contains(wrong), "Unexpected \(wrong) page heading; expected \(page)")
     }
     require(headings == Set([page]), "Native screenshot does not show the expected \(page) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
     return observations
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
-let chooser = try capture("chooser", "Clusters")
-func isLocalChoice(_ text: String) -> Bool {
-    let label = text.lowercased().filter { $0.isLetter || $0.isNumber }
-    // Vision may include the native radio ring as O or 0 in the label line.
-    return ["localvm", "olocalvm", "0localvm"].contains(label)
+var initial = try capture("initial", "Clusters")
+// CI's light pass owns a fresh profile; dark reuses the saved native choice.
+let initiallyWelcome = initial.contains { $0.topCandidates(1).first?.string == "Get started" }
+require(theme == "light" ? initiallyWelcome : !initiallyWelcome,
+        "Expected a first-run welcome in light and a retained choice in dark")
+if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" }) {
+    clickText("Get started", in: initial)
+    initial = try capture("chooser", "Clusters")
 }
-require(isLocalChoice("Local VM") && isLocalChoice("O Local VM") && isLocalChoice("○ Local VM"),
-        "Choice locator must accept native radio decoration")
-require(!isLocalChoice("Local VM selected.") && !isLocalChoice("Existing cluster"),
-        "Choice locator must not click a status line or another route")
-guard let local = chooser.first(where: { isLocalChoice($0.topCandidates(1).first?.string ?? "") }) else {
-    let text = chooser.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
-    fatalError("Local VM choice not visible; observed: \(text)")
+if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) {
+    // Selecting the default radio does not start anything; Continue is explicit.
+    clickText("Continue", in: initial)
 }
-let initialRect = window()!.1
-let point = CGPoint(x: initialRect.minX + local.boundingBox.midX * initialRect.width,
-                    y: initialRect.minY + (1 - local.boundingBox.midY) * initialRect.height)
-mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
-Thread.sleep(forTimeInterval: 0.5)
 try capture("local-selected", "Clusters")
 app.terminate()
 for _ in 0..<30 {

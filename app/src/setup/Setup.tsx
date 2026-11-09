@@ -1,30 +1,50 @@
 import { useEffect, useRef, useState } from 'react';
 import Model, { type ModelState } from './Model';
 import { type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
+import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
+import { formatSize, workspaceRequirements, type WorkspaceRequirements } from './requirements';
+import './welcome.css';
 
 const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting', 'closing'].includes(state);
 const runtimeCopy: Record<LocalVmState, string> = {
-  notIntegrated: 'VM integration is not included in this build.',
-  idle: 'Select Local VM to install and start the development image.',
-  preparing: 'Verifying the local image and runtime…',
-  installing: 'Installing private VM files…',
-  starting: 'Starting Orka and waiting for the guest connection…',
-  ready: 'Orka is running on this computer.',
-  closing: 'Stopping the local VM…',
-  closed: 'The local VM has stopped.',
-  failed: 'The local VM could not be started or its shutdown could not be confirmed. Existing files were retained.',
+  notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
+  idle: 'Continue to get your workspace ready.',
+  preparing: 'Checking your workspace files…',
+  installing: 'Getting your workspace ready…',
+  starting: 'Starting your workspace…',
+  ready: 'Your workspace is running on this computer.',
+  closing: 'Stopping your workspace…',
+  closed: 'Your workspace has stopped.',
+  failed: 'Your workspace could not start or its shutdown could not be confirmed. Existing files were kept.',
 };
-export default function Setup({ onOpenExample, onReady, onStatus, onModelState, active = true }: {
+export default function Setup({ onOpenExample, onReady, onStatus, onModelState, onWelcome, active = true }: {
   onOpenExample: () => void; onReady: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
   onModelState?: (state: ModelState) => void;
+  onWelcome?: (visible: boolean) => void;
 }) {
   const [status, setStatus] = useState<SetupStatus>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(true);
   const [check, setCheck] = useState(0);
+  const [seen, setSeen] = useState(hasSeenWelcome);
+  const [inside, setInside] = useState(false);
+  const [requirements, setRequirements] = useState<WorkspaceRequirements | null>();
   const epoch = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const heading = useRef<HTMLHeadingElement>(null);
+  const focusChoice = useRef(false);
+  const welcome = !seen && !!status && !error && status.selected !== 'localVm';
+  useEffect(() => { onWelcome?.(welcome); }, [welcome, onWelcome]);
+  useEffect(() => {
+    if (focusChoice.current && active) heading.current?.focus();
+    focusChoice.current = false;
+  }, [seen, status?.selected, active]);
+  useEffect(() => {
+    let active = true;
+    void workspaceRequirements().then(value => { if (active) setRequirements(value); });
+    return () => { active = false; };
+  }, []);
   useEffect(() => {
     const request = ++epoch.current;
     void setupStatus().then(result => {
@@ -43,6 +63,11 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   }, [check, onStatus]);
   useEffect(() => { if (status?.localVm === 'ready') onReady(); }, [status?.localVm, onReady]);
 
+  function start() {
+    try { localStorage.setItem(welcomePreference, '1'); } catch { /* A presentation preference must not block setup. */ }
+    focusChoice.current = true;
+    setSeen(true);
+  }
   async function chooseLocal() {
     if (busy || !status || status.selected === 'localVm') return;
     // Observation must not invalidate an explicit selection awaiting its reply.
@@ -51,46 +76,63 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     setBusy(true); setError(undefined);
     const result = await selectLocal();
     if (request !== epoch.current) return;
-    if (result.ok) setStatus(result.status);
+    if (result.ok) { focusChoice.current = true; setStatus(result.status); }
     else { setStatus(undefined); setError(result.message); }
     onStatus?.(result.ok ? result.status : undefined);
     const waiting = result.ok && pending(result.status.localVm);
     setBusy(waiting);
     if (result.ok) setCheck(value => value + 1);
   }
-  return (
-    <>
-    <h1 id={active ? 'page-title' : undefined}>Clusters</h1>
-    <div className="setup">
-      <section className="card setup-choice" aria-labelledby="setup-title" aria-busy={busy}>
-        <h2 id="setup-title">Choose where your agents run</h2>
-        <p className="muted">{status?.localVm === 'notIntegrated' ? 'This saves a choice only. Nothing is downloaded or started.'
-          : 'Local VM uses the verified development image and starts Orka on this computer.'}</p>
-        <fieldset disabled={busy || !status || !!error}>
-          <legend>Runtime</legend>
-          <label><input type="radio" name="runtime" checked={status?.selected === 'localVm'}
-            onChange={() => { void chooseLocal(); }} />
-            <span>Local VM<span className="muted choice-detail">Use a VM on this computer.</span></span>
-          </label>
-          <label><input type="radio" name="runtime" disabled checked={false} readOnly />
-            <span>Existing cluster<span className="muted choice-detail">Not available yet. No connection will be attempted.</span></span>
-          </label>
-        </fieldset>
-        <p role="status">{busy ? status ? runtimeCopy[status.localVm] : 'Checking the setup choice…' : !status ? 'Setup choice unavailable.'
-          : status.selected === 'localVm' ? 'Local VM selected.' : 'No runtime selected.'}</p>
-        {status && <div className="setup-availability">
-          <h3>Native setup available</h3>
-          <p className="muted">{runtimeCopy[status.localVm]}</p>
-          {status.localVm === 'failed' && status.localVmError && <p role="alert">{status.localVmError}</p>}
-          {status.localVm === 'ready' && <button type="button" className="setup-button" onClick={onOpenExample}>Open example</button>}
-        </div>}
-        {error && <div role="alert"><p>{error}</p>
-          <button type="button" className="setup-button" disabled={busy}
-            onClick={() => { setBusy(true); setError(undefined); setCheck(value => value + 1); }}>Check again</button>
-        </div>}
-      </section>
-      <Model enabled={status?.localVm === 'ready' && status.model === 'available'} paused={!!error} onState={onModelState} />
+
+  const titleId = active ? 'page-title' : undefined;
+  if (!status && !error) return <h1 id={titleId}>Checking your workspace…</h1>;
+  if (welcome && status) return <Welcome titleId={titleId} onStart={start} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
+  const selected = status?.selected === 'localVm';
+  return <>
+    <div className="workspace-heading">
+      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? 'Get your workspace ready' : 'Where should your agents run?'}</h1>
+      {!selected && <p className="muted">You can add more places later.</p>}
     </div>
-    </>
-  );
+    <div className={selected ? 'setup' : 'workspace-choice'}>
+      {!selected && <>
+        <fieldset className="workspace-options" disabled={busy || !status || !!error}>
+          <legend className="workspace-sr-only">Where agents run</legend>
+          <div className="workspace-option workspace-selected">
+            <input id="workspace-local" type="radio" name="workspace" aria-label="On this computer" aria-describedby="local-description" checked readOnly />
+            <label htmlFor="workspace-local">On this computer</label><span className="workspace-badge">recommended</span>
+            <div className="workspace-option-detail">
+              <p id="local-description">Bridge runs a ready-made workspace quietly in the background. It needs virtualization turned on{requirements ? `, ${formatSize(requirements.memoryBytes)} of memory and a ${formatSize(requirements.imageBytes)} workspace image.` : '.'}</p>
+              {requirements && <p>The data disk can grow to {formatSize(requirements.stateDiskBytes)}, in addition to the image.</p>}
+              {requirements === undefined && <p>Reading this build's workspace size…</p>}
+              {requirements === null && status?.localVm !== 'notIntegrated' && <p>Workspace size information is unavailable in this build.</p>}
+              <button className="workspace-disclosure" type="button" aria-expanded={inside} aria-controls="workspace-inside" onClick={() => setInside(value => !value)}>
+                <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d={inside ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6'} /></svg>What's inside
+              </button>
+              <p id="workspace-inside" hidden={!inside}>A small virtual machine with Orka, the open-source engine agents run on. Its files are checked against their published digests before it starts.</p>
+            </div>
+          </div>
+          <div className="workspace-coming workspace-option" title="Coming" tabIndex={0} role="group" aria-label="On a cluster you already have: Coming">
+            <input id="workspace-cluster" type="radio" name="workspace" aria-label="On a cluster you already have" disabled checked={false} readOnly />
+            <label htmlFor="workspace-cluster">On a cluster you already have</label><span className="muted workspace-expert">for Kubernetes users</span>
+            <p className="workspace-option-detail">Pick a kubectl context and Bridge uses the Orka on that cluster.</p>
+            <span className="workspace-tip" aria-hidden="true">Coming</span>
+          </div>
+        </fieldset>
+        <div className="workspace-choice-footer"><span className="muted">Step 1 of 4</span>
+          <button type="button" className="workspace-primary" disabled={busy || !status || !!error} onClick={() => { void chooseLocal(); }}>Continue</button>
+        </div>
+        {status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
+      </>}
+      {selected && <section className="card" aria-label="Workspace setup" aria-busy={busy}>
+        <p role="status">{error ? 'Workspace status is unavailable.' : status && runtimeCopy[status.localVm]}</p>
+        {status?.localVm === 'failed' && status.localVmError && <p role="alert">{status.localVmError}</p>}
+        {status?.localVm === 'ready' && <button type="button" className="setup-button" disabled={!!error} onClick={onOpenExample}>Open example</button>}
+      </section>}
+      {error && <div role="alert"><p>{error}</p>
+        <button type="button" className="setup-button" disabled={busy}
+          onClick={() => { setBusy(true); setError(undefined); setCheck(value => value + 1); }}>Check again</button>
+      </div>}
+      {selected && <Model enabled={status?.localVm === 'ready' && status.model === 'available'} paused={!!error} onState={onModelState} />}
+    </div>
+  </>;
 }
