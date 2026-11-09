@@ -2824,6 +2824,9 @@ dependencies = [
  "flate2",
  "git2",
  "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "k8s-openapi",
  "kube",
  "libc",
@@ -2844,6 +2847,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower",
+ "tungstenite",
  "windows-sys 0.61.2",
 ]
 

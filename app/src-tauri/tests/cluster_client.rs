@@ -11,8 +11,12 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+#[path = "support/cluster_forward.rs"]
+mod forward;
+
 #[derive(Default)]
 struct ApiFixture {
+    wire: forward::Wire,
     calls: Mutex<Vec<(String, String, String, Value)>>,
     deny: Mutex<bool>,
     replacement: Mutex<bool>,
@@ -56,6 +60,10 @@ impl ApiFixture {
                                 .then(|| value.trim().to_string())
                         })
                     };
+                    if path.contains("/portforward") {
+                        fixture.wire.serve(stream, &headers);
+                        return;
+                    }
                     let len = header("content-length")
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(0);
@@ -102,6 +110,15 @@ impl ApiFixture {
             return (
                 200,
                 json!({"apiVersion":"apiextensions.k8s.io/v1","kind":"CustomResourceDefinition","metadata":{"name":name},"spec":{"group":"core.orka.ai","scope":"Namespaced","names":{"kind":"Fixture","plural":plural},"versions":[{"name":"v1alpha1","served":true,"storage":true}]}}),
+            );
+        }
+        if path.ends_with("/pods") {
+            return (
+                200,
+                json!({"apiVersion":"v1","kind":"PodList","metadata":{},"items":[
+                    {"metadata":{"name":"not-ready","namespace":"control","uid":"bad","labels":{"app":"orka"}},"spec":{"containers":[]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"False"}]}},
+                    {"metadata":{"name":"ready","namespace":"control","uid":"pod-uid","labels":{"app":"orka"}},"spec":{"containers":[{"name":"controller","ports":[{"name":"api","containerPort":8080}]}]},"status":{"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}}
+                ]}),
             );
         }
         if path.ends_with("/services") {
@@ -164,6 +181,7 @@ impl Default for OrkaFixture {
 impl OrkaRead for OrkaFixture {
     fn get<'a>(
         &'a self,
+        _: &'a kube::Client,
         _: &'a TargetBinding,
         bearer: &'a str,
         resource: OrkaResource,

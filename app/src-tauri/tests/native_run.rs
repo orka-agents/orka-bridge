@@ -265,6 +265,12 @@ impl Fixture {
                 if b.fault == "redirect" {
                     status = 307;
                 }
+                if b.fault == "401" {
+                    status = 401;
+                }
+                if b.fault == "403" {
+                    status = 403;
+                }
                 let message = format!("HTTP/1.1 {status} fixture\r\nContent-Type: application/json\r\nLocation: /credential-leak\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}", payload.len());
                 let _ = socket.write_all(message.as_bytes()).await;
             }
@@ -290,6 +296,25 @@ impl Fixture {
 }
 fn pair() -> ParsedPair {
     ParsedPair::parse(AGENT.as_bytes(), TESTS.as_bytes()).unwrap()
+}
+
+#[tokio::test]
+async fn http_authentication_and_permission_are_finite_without_error_bodies() {
+    for (fault, kind) in [
+        ("401", ErrorKind::Authentication),
+        ("403", ErrorKind::Permission),
+    ] {
+        let fixture = Fixture::start(Behavior {
+            fault,
+            ..Behavior::default()
+        })
+        .await;
+        let error = fixture.runner().submit(pair()).await.unwrap_err();
+        assert_eq!(error.kind, kind);
+        assert!(error.pending.is_some());
+        assert!(!format!("{error:?}").contains("secret-server-body"));
+        assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+    }
 }
 
 // Fixture at the I/O boundary: real preparation, admission and receipt handling.
