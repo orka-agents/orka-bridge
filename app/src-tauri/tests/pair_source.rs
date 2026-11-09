@@ -74,6 +74,45 @@ fn malformed_pair_has_no_capture_and_relative_escape_is_refused() {
 
 #[cfg(unix)]
 #[test]
+fn bound_root_or_ancestor_replacement_cannot_redirect_capture() {
+    for replace_ancestor in [false, true] {
+        let home = tempfile::tempdir().unwrap();
+        let folder = AgentFolder::new(Some(home.path().into()));
+        let original = folder.open().unwrap().agent;
+        let (root, document) = folder.source().unwrap();
+        let catalog = PairCatalog::default();
+        let id = catalog.bind_owned_agent(root.clone(), document).unwrap();
+        let other_home = tempfile::tempdir().unwrap();
+        let other = AgentFolder::new(Some(other_home.path().into()));
+        other
+            .save(original.replace(
+                "Answer from the web page named in the request.",
+                "Different directory.",
+            ))
+            .unwrap();
+        let (other_root, _) = other.source().unwrap();
+        let target = if replace_ancestor {
+            root.parent().unwrap()
+        } else {
+            root.as_path()
+        };
+        let replacement = if replace_ancestor {
+            other_root.parent().unwrap()
+        } else {
+            other_root.as_path()
+        };
+        std::fs::rename(target, target.with_extension("retained")).unwrap();
+        std::os::unix::fs::symlink(replacement, target).unwrap();
+        let captured = catalog.capture(id).unwrap();
+        assert_eq!(
+            captured.snapshot().file(FileSlot::Agent),
+            original.as_bytes()
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn capture_does_not_follow_document_symlinks() {
     let home = tempfile::tempdir().unwrap();
     let folder = AgentFolder::new(Some(home.path().into()));

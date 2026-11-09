@@ -369,12 +369,16 @@ impl<'a> NativeRunner<'a> {
                 ("tasks", "Task")
             };
             let name = body["name"].as_str().unwrap();
-            *pending = Some(PendingMutation {
-                kind,
-                name: name.into(),
-            });
-            let value =
-                stoppable(stop, self.http.request(path, None, Some(body), deadline)).await?;
+            let request = self.http.request(path, None, Some(body), deadline);
+            let value = stoppable(stop, async {
+                // Do not label a request uncertain when Stop prevented its poll.
+                *pending = Some(PendingMutation {
+                    kind,
+                    name: name.into(),
+                });
+                request.await
+            })
+            .await?;
             let resource =
                 ResourceId::acknowledge(&value, &body["spec"], name, self.http.namespace(), kind)?;
             if index == 0 {

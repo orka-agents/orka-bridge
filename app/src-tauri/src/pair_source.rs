@@ -4,6 +4,8 @@ use crate::{
     runtime::snapshot::{AgentDocument, Snapshot},
 };
 use bridge_runtime_protocol::{FileSlot, Uuid};
+use cap_fs_ext::DirExt;
+use cap_std::fs::Dir;
 use std::{
     collections::HashMap,
     path::{Component, PathBuf},
@@ -44,7 +46,7 @@ impl CapturedPair {
     }
 }
 struct Binding {
-    root: PathBuf,
+    root: Dir,
     document: AgentDocument,
 }
 #[derive(Default)]
@@ -66,6 +68,15 @@ impl PairCatalog {
         {
             return Err(PairError::Binding);
         }
+        // Resolve the trusted native parent once, then retain the no-follow
+        // document root. Later root/ancestor replacement cannot redirect this ID.
+        let parent = root.parent().ok_or(PairError::Binding)?;
+        let name = root.file_name().ok_or(PairError::Binding)?;
+        let parent = Dir::open_ambient_dir(parent, cap_std::ambient_authority())
+            .map_err(|_| PairError::Binding)?;
+        let root = parent
+            .open_dir_nofollow(name)
+            .map_err(|_| PairError::Binding)?;
         let id = PairId(Uuid::new_v4());
         self.0
             .lock()
@@ -76,8 +87,8 @@ impl PairCatalog {
     pub fn capture(&self, id: PairId) -> Result<CapturedPair, PairError> {
         let bindings = self.0.lock().unwrap();
         let binding = bindings.get(&id).ok_or(PairError::Binding)?;
-        let snapshot =
-            Snapshot::capture(&binding.root, &binding.document).map_err(|_| PairError::Capture)?;
+        let snapshot = Snapshot::capture_dir(&binding.root, &binding.document)
+            .map_err(|_| PairError::Capture)?;
         CapturedPair::from_snapshot(snapshot)
     }
 }

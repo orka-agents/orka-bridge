@@ -299,6 +299,7 @@ struct StoppableTransport {
     stop_after: usize,
     pending_at: usize,
     cap: Option<usize>,
+    stop_before_poll: bool,
 }
 impl RunTransport for StoppableTransport {
     fn namespace(&self) -> &str {
@@ -320,6 +321,9 @@ impl RunTransport for StoppableTransport {
         body: Option<&'a Value>,
         _: tokio::time::Instant,
     ) -> RunFuture<'a> {
+        if self.stop_before_poll {
+            self.stop.send(true).unwrap();
+        }
         Box::pin(async move {
             let body = body.unwrap();
             let count = {
@@ -366,6 +370,7 @@ fn stopping_runner(
             stop_after,
             pending_at,
             cap,
+            stop_before_poll: false,
         }),
         receive,
         posts,
@@ -421,6 +426,28 @@ async fn stop_inflight_keeps_pending_name() {
         assert_eq!(posts.lock().unwrap().len(), pending_at);
     }
 }
+#[tokio::test]
+async fn stop_before_request_poll_has_no_pending_mutation() {
+    let (stop, receive) = tokio::sync::watch::channel(false);
+    let posts = Arc::new(Mutex::new(Vec::new()));
+    let runner = NativeRunner::with_transport(StoppableTransport {
+        posts: posts.clone(),
+        stop,
+        stop_after: 0,
+        pending_at: 0,
+        cap: None,
+        stop_before_poll: true,
+    });
+    let error = runner
+        .submit_prepared(runner.prepare(pair()).unwrap(), receive)
+        .await
+        .unwrap_err();
+    assert_eq!(error.kind, ErrorKind::Stopped);
+    assert!(posts.lock().unwrap().is_empty());
+    assert!(error.pending.is_none());
+    assert!(error.handle.agent().is_none());
+}
+
 #[tokio::test]
 async fn stopped_before_submit_has_no_possibly_created_name() {
     let (runner, receive, posts) = stopping_runner(0, 0, None);
