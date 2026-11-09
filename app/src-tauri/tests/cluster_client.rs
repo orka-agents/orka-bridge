@@ -124,6 +124,12 @@ impl ApiFixture {
             };
             let mut list = json!({"apiVersion":"apps/v1","kind":"DeploymentList","metadata":{},"items":[{"metadata":{"name":"controller","namespace":"control","uid":"deployment-uid"},"spec":{"selector":{"matchLabels":{"app":"orka"}},"template":{"metadata":{"labels":{"app":"orka"}},"spec":{"containers":[{"name":"controller","image":"ghcr.io/orka-agents/orka:v99","args":args,"ports":[{"name":"api","containerPort":8080}]}]}}}}]});
             if *self.unrelated_api.lock().unwrap() {
+                list["items"][0]["spec"]["template"]["metadata"]["labels"]
+                    ["app.kubernetes.io/name"] = json!("orka");
+                list["items"][0]["spec"]["template"]["spec"]["containers"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"name":"sidecar","image":"example/sidecar:v1"}));
                 list["items"].as_array_mut().unwrap().push(json!({"metadata":{"name":"other","namespace":"control","uid":"other-deployment"},"spec":{"selector":{"matchLabels":{"app":"other"}},"template":{"metadata":{"labels":{"app":"other"}},"spec":{"containers":[{"name":"server","image":"example/api:v1","args":["--api-port=9000"]}]}}}}));
             }
             return (200, list);

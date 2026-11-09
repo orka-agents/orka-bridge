@@ -476,9 +476,16 @@ async fn installations(
             for container in containers {
                 let args = container.args.as_deref().unwrap_or_default();
                 // A generic API port is not Orka evidence; unrelated controllers use it too.
-                let orka_label = labels
-                    .get("app.kubernetes.io/name")
-                    .is_some_and(|n| n == "orka");
+                let serves_api = args
+                    .iter()
+                    .any(|a| a.starts_with("--api-port=") || a == "--api-port")
+                    || container.ports.as_ref().is_some_and(|ports| {
+                        ports.iter().any(|p| p.name.as_deref() == Some("api"))
+                    });
+                let orka_label = serves_api
+                    && labels
+                        .get("app.kubernetes.io/name")
+                        .is_some_and(|n| n == "orka");
                 let orka_image = container.image.as_deref().is_some_and(|image| {
                     image
                         .split('@')
