@@ -6,7 +6,7 @@ export function hasSeenWelcome() {
   catch { return false; }
 }
 
-export default function Welcome({ titleId, onStart, unavailable }: { titleId?: string; onStart: () => void; unavailable?: string }) {
+export default function Welcome({ titleId, onStart, onCluster, unavailable }: { titleId?: string; onStart: () => void; onCluster: () => void; unavailable?: string }) {
   return <section className="welcome-screen">
     <img className="welcome-mark" src={mark} width="44" height="44" alt="" />
     <h1 id={titleId}>Build an AI agent that does a real job</h1>
@@ -20,9 +20,6 @@ export default function Welcome({ titleId, onStart, unavailable }: { titleId?: s
       <button className="workspace-primary" type="button" onClick={onStart}>Get started</button>
       {unavailable && <p className="muted">{unavailable}</p>}
     </div>
-    <span className="workspace-coming" title="Coming" tabIndex={0} role="group" aria-label="I already run Orka on a cluster: Coming">
-      <button className="workspace-link" type="button" disabled>I already run Orka on a cluster</button>
-      <span className="workspace-tip" aria-hidden="true">Coming</span>
-    </span>
+    <button className="workspace-link" type="button" onClick={onCluster}>I already run Orka on a cluster</button>
   </section>;
 }

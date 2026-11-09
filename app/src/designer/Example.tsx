@@ -4,8 +4,8 @@ import { agentCall, agentInfo, type AgentPair, type SaveState } from './agent-ap
 import Run from './Run';
 import type { RunSnapshot } from './run-api';
 
-export default function Example({ active = true, readOnly = false, actions, onPair, onRun, onSaveState, onStale }: {
-  active?: boolean; readOnly?: boolean; actions?: ReactNode;
+export default function Example({ active = true, readOnly = false, remote = false, actions, onPair, onRun, onSaveState, onStale }: {
+  active?: boolean; readOnly?: boolean; remote?: boolean; actions?: ReactNode;
   onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void;
   onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
 }) {
@@ -84,7 +84,7 @@ export default function Example({ active = true, readOnly = false, actions, onPa
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
-        {readOnly ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
+        {remote ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run checks: Remote checks are coming" title="Remote checks are coming"><button type="button" className="setup-button" disabled title="Remote checks are coming">Run checks</button><span className="control-tip" aria-hidden="true">Remote checks are coming</span></span><p className="muted">Sending and running checks on a cluster are coming. Choose This computer in Clusters to run locally.</p></div> : readOnly ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
           : <Run source={pair.source} onSnapshot={onRun} blocked={saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />}
         <details className="check-source"><summary>Check file: web-reader.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Check file, read-only">{pair.tests}</pre></details>
       </div>

@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
@@ -63,9 +63,7 @@ test('the chooser only reads setup and build information, without runtime or cre
   expect(screen.getByText(unavailable)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect model' })).toBeNull();
   const existing = screen.getByRole('radio', { name: 'On a cluster you already have' });
-  expect(existing.hasAttribute('disabled')).toBe(true);
-  const before = ipc.mock.calls.length; fireEvent.click(existing);
-  expect(ipc).toHaveBeenCalledTimes(before);
+  expect(existing.matches(':disabled')).toBe(false);
   expect(ipc.mock.calls.every(call => ['setup_status', 'setup_requirements', 'engine_call'].includes(call[0]))).toBe(true);
   expect(fetch).not.toHaveBeenCalled(); expect(screen.queryByRole('textbox')).toBeNull();
 });

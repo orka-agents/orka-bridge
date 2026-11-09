@@ -14,9 +14,9 @@ function PhaseIcon({ phase }: { phase: 'done' | 'current' | 'waiting' | 'failed'
       : <><circle cx="12" cy="12" r="9" /><path d={phase === 'current' ? 'M12 3v18' : 'M12 8v4l3 2'} /></>}
   </svg>;
 }
-export default function Steps({ status, busy, stopping, error, modelConnected, firstCheck, onCancel, onRestart, onChange, onOpenExample }: {
+export default function Steps({ status, busy, stopping, error, modelConnected, firstCheck, onCancel, onRestart, onCluster, onChange, onOpenExample }: {
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean; firstCheck?: CheckStepState;
-  onCancel: () => void; onRestart: () => void; onChange: (button: HTMLButtonElement) => void; onOpenExample: () => void;
+  onCancel: () => void; onRestart: () => void; onCluster?: () => void; onChange: (button: HTMLButtonElement) => void; onOpenExample: () => void;
 }) {
   const [details, setDetails] = useState(false);
   const ready = status.localVm === 'ready'; const failed = status.localVm === 'failed';
@@ -40,7 +40,7 @@ export default function Steps({ status, busy, stopping, error, modelConnected, f
       <li className={`step-${phase}`} aria-current={phase === 'current' ? 'step' : undefined}>
         <PhaseIcon phase={phase} /><b>Get your workspace ready</b><span className="step-result">{ready ? 'Ready' : paused ? 'Paused' : failed ? 'Needs attention' : eta}</span>
         <div className="step-more">
-          {failed ? <Recovery key={status.localVmError} detail={status.localVmError} disabled={busy || !!error} onRetry={onRestart} /> : <p role="status">{stateLine}</p>}
+          {failed ? <Recovery key={status.localVmError} detail={status.localVmError} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /> : <p role="status">{stateLine}</p>}
           {!stopping && status.localVm === 'starting' && <><div className="workspace-indeterminate" role="progressbar" aria-label="Workspace startup" /><p className="muted">{progress?.phase === 'starting' ? `${Math.floor(progress.elapsedMs / 1000)} seconds elapsed` : 'Getting the workspace ready…'}</p></>}
           {numbers && <><progress aria-label="Workspace installation" value={progress.bytes!} max={progress.totalBytes!} />
             <p className="muted">Installing, {formatSize(progress.bytes!)} of {formatSize(progress.totalBytes!)}</p></>}
@@ -59,6 +59,7 @@ export default function Steps({ status, busy, stopping, error, modelConnected, f
     </ol>
     <div className="workspace-step-actions">
       {['preparing', 'installing', 'starting'].includes(status.localVm) && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</button><span className="muted">Cancel keeps what has arrived.</span></>}
+      {status.localVm === 'notIntegrated' && onCluster && <button type="button" className="workspace-link" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</button>}
       {paused && <button type="button" className="workspace-primary" disabled={busy || !!error} onClick={onRestart}>Start again</button>}
       {ready && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={event => onChange(event.currentTarget)}>Change where agents run</button><button type="button" className="workspace-primary" disabled={!!error} onClick={onOpenExample}>Open example</button></>}
     </div>

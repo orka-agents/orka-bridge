@@ -23,6 +23,9 @@ fn main() {
             "setup_example",
             "agent_open",
             "agent_save",
+            "cluster_contexts",
+            "cluster_discover",
+            "cluster_use",
             "setup_requirements",
             "setup_open_help",
         ]));

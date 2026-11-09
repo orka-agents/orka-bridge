@@ -150,7 +150,12 @@ jobs:
             fi
             return "$status"
           }
-          trap restore_preferences EXIT
+          python3 ../scripts/cluster-card-fixture.py "$RUNNER_TEMP/cluster-card-kubeconfig.json" &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid"; restore_preferences' EXIT
+          for _ in {1..50}; do test -s "$RUNNER_TEMP/cluster-card-kubeconfig.json" && break; sleep 0.1; done
+          test -s "$RUNNER_TEMP/cluster-card-kubeconfig.json"
+          export BRIDGE_WALK_KUBECONFIG="$RUNNER_TEMP/cluster-card-kubeconfig.json"
           defaults write -g AppleKeyboardUIMode -int 3
           for theme in light dark; do
             if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
