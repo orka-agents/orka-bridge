@@ -157,8 +157,13 @@ impl ClusterClient {
             .get(&id)
             .ok_or(AccessOutcome::Unavailable)?
             .clone();
-        let config = self.config(binding.context_id, None).await?;
+        let mut config = self.config(binding.context_id, None).await?;
         let bearer = capture_bearer(&config).await?;
+        if let Some(bearer) = &bearer {
+            // Freeze creator requests too; token-file middleware must not rotate this attempt's identity.
+            config.auth_info.token = Some(bearer.clone().into());
+            config.auth_info.token_file = None;
+        }
         let creator = Client::try_from(config).map_err(|_| AccessOutcome::Unavailable)?;
         let mut access = RemoteAccess {
             creator,
@@ -494,10 +499,7 @@ async fn installations(
                         .and_then(|i| i.split(':').next())
                         == Some("orka")
                 });
-                let watches_namespace = args
-                    .iter()
-                    .any(|a| a.starts_with("--watch-namespace=") || a == "--watch-namespace");
-                if !orka_label && !orka_image && !watches_namespace {
+                if !orka_label && !orka_image {
                     continue;
                 }
                 let mut watched = args.iter().enumerate().filter_map(|(i, a)| {

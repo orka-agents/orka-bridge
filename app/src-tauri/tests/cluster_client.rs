@@ -130,7 +130,7 @@ impl ApiFixture {
                     .as_array_mut()
                     .unwrap()
                     .push(json!({"name":"sidecar","image":"example/sidecar:v1"}));
-                list["items"].as_array_mut().unwrap().push(json!({"metadata":{"name":"other","namespace":"control","uid":"other-deployment"},"spec":{"selector":{"matchLabels":{"app":"other"}},"template":{"metadata":{"labels":{"app":"other"}},"spec":{"containers":[{"name":"server","image":"example/api:v1","args":["--api-port=9000"]}]}}}}));
+                list["items"].as_array_mut().unwrap().push(json!({"metadata":{"name":"other","namespace":"control","uid":"other-deployment"},"spec":{"selector":{"matchLabels":{"app":"other"}},"template":{"metadata":{"labels":{"app":"other"}},"spec":{"containers":[{"name":"server","image":"example/api:v1","args":["--api-port=9000","--watch-namespace=agents"]}]}}}}));
             }
             return (200, list);
         }
@@ -596,6 +596,15 @@ async fn token_file_capture_is_frozen_and_unused_exec_never_runs() {
     let id = target(&mut client).await;
     let access = client.connect(id, None).await.unwrap();
     std::fs::write(file.path(), b"replacement-fixture").unwrap();
+    // kube5 refreshes token files after 50 seconds (60-second cache minus its 10-second margin).
+    tokio::time::sleep(std::time::Duration::from_secs(51)).await;
+    client.revalidate(&access).await.unwrap();
+    assert!(api
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|c| c.2 == "Bearer file-fixture"));
     access
         .require_builtins(&["web_fetch".into()])
         .await
