@@ -541,8 +541,9 @@ async fn prepared_run_cannot_be_submitted_by_another_runner() {
 #[tokio::test]
 async fn vm_cap_all_bodies_before_any_post() {
     // A large *later Task*, not just the Agent, must refuse the entire submission.
-    let big_tests = TESTS.replace("Fetch https://example.test/checksum", &"x".repeat(65536));
+    let big_tests = TESTS.replace("Fetch https://example.test/checksum", &"\"".repeat(33000));
     let large_task = ParsedPair::parse(AGENT.as_bytes(), big_tests.as_bytes()).unwrap();
+    assert!(large_task.cases()[0].input().len() < 65536);
     let large_agent = ParsedPair::parse(
         format!("{AGENT}{}", "x".repeat(65536)).as_bytes(),
         TESTS.as_bytes(),

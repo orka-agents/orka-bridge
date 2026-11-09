@@ -13,7 +13,7 @@ use bridge_runtime_protocol::{ModelPhase, OrkaRequest, SnapshotId, MAX_ORKA_BODY
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
-use tokio::time::Instant;
+use tokio::{sync::watch, time::Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,7 +152,16 @@ impl ExampleRun {
             provider: connection.selection.provider,
             vm,
         });
-        let handle = match runner.submit(pair).await {
+        let prepared = match runner.prepare(pair) {
+            Ok(prepared) => prepared,
+            Err(_) => {
+                // A refusal before writes must not discard an earlier attempt's receipts.
+                self.fail("submit");
+                return;
+            }
+        };
+        let (_sender, stop) = watch::channel(false);
+        let handle = match runner.submit_prepared(prepared, stop).await {
             Ok(handle) => handle,
             Err(error) => {
                 self.record(

@@ -366,6 +366,40 @@ async fn malformed_saved_source_refuses_before_any_remote_write() {
 }
 
 #[tokio::test]
+async fn preparation_refusal_keeps_previous_resource_receipts() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let agent = folder.open().unwrap().agent;
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder.clone());
+    run.start(vm.clone());
+    let completed = finished(&run, &vm).await;
+    assert_eq!(completed.state, RunState::Complete);
+    assert_eq!(completed.acknowledged.len(), 2);
+    folder
+        .save(format!("{agent}{}", "x".repeat(65536)))
+        .unwrap();
+    run.start(vm.clone());
+    let refused = finished(&run, &vm).await;
+    assert_eq!(refused.error, Some("submit"));
+    assert_eq!(
+        refused
+            .acknowledged
+            .iter()
+            .map(|r| (&r.kind, &r.name, &r.uid))
+            .collect::<Vec<_>>(),
+        completed
+            .acknowledged
+            .iter()
+            .map(|r| (&r.kind, &r.name, &r.uid))
+            .collect::<Vec<_>>()
+    );
+    assert!(refused.pending.is_none());
+    assert_eq!(posts.lock().unwrap().len(), 2);
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn vm_transport_refuses_large_mapped_body_before_any_post() {
     let (vm, posts, _) = fixture(false, false).await;
     let home = tempfile::tempdir().unwrap();
