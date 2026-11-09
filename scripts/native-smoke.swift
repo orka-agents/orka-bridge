@@ -66,17 +66,8 @@ func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) 
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.5)
 }
-func clickTab(_ label: String) throws {
-    let file = "\(output)/navigation.png"
-    let command = Process()
-    command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-    command.arguments = ["-x", "-o", "-l", String(window()!.0), file]
-    try command.run(); command.waitUntilExit()
-    require(command.terminationStatus == 0, "Cannot capture navigation")
-    let request = VNRecognizeTextRequest()
-    request.recognitionLevel = .accurate
-    try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
-    clickText(label, in: (request.results ?? []).filter { 1 - $0.boundingBox.maxY < 0.13 })
+func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) {
+    clickText(page, in: observations.filter { 1 - $0.boundingBox.maxY < 0.10 })
 }
 func key(_ code: CGKeyCode, shift: Bool = false) {
     for down in [true, false] {
@@ -168,12 +159,14 @@ for _ in 0..<30 {
 }
 require(window() != nil, "Relaunched Bridge window did not appear")
 Thread.sleep(forTimeInterval: 2)
-try capture("choice-retained", "Clusters")
-try clickTab("Overview")
-try capture("overview", "Overview")
-try clickTab("Designer"); try capture("designer-pointer", "Designer")
-try clickTab("Clusters"); try capture("clusters-pointer", "Clusters")
-// Native captures show two reverse tabs stop on Designer; one more reaches Overview.
+let retained = try capture("choice-retained", "Clusters")
+clickTab("Overview", retained)
+let overview = try capture("overview", "Overview")
+clickTab("Designer", overview)
+let designer = try capture("designer-pointer", "Designer")
+clickTab("Clusters", designer)
+try capture("clusters-pointer", "Clusters")
+// The keyboard-reachable Search explanation adds a stop after navigation.
 key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
 try capture("overview-keyboard", "Overview")
 key(48); key(49); try capture("designer-keyboard", "Designer")

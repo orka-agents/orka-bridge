@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { connectModel } from './modelState';
 
-export default function Model({ enabled }: { enabled: boolean }) {
+export type ModelState = 'idle' | 'connecting' | 'connected' | 'failed';
+export default function Model({ enabled, paused = false, onState }: { enabled: boolean; paused?: boolean; onState?: (state: ModelState) => void }) {
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string>();
@@ -13,8 +14,11 @@ export default function Model({ enabled }: { enabled: boolean }) {
     if (!enabled) { setBusy(false); setReady(false); setError(undefined); }
     return () => { epoch.current++; };
   }, [enabled]);
+  useEffect(() => {
+    onState?.(!enabled ? 'idle' : busy ? 'connecting' : ready ? 'connected' : error ? 'failed' : 'idle');
+  }, [enabled, busy, ready, error, onState]);
   async function connect() {
-    if (!enabled || active.current || ready) return;
+    if (!enabled || paused || active.current || ready) return;
     active.current = true;
     const request = ++epoch.current;
     setBusy(true); setError(undefined);
@@ -28,7 +32,7 @@ export default function Model({ enabled }: { enabled: boolean }) {
     <h2 id="model-title">{enabled ? 'Connect a model' : 'Model connection locked'}</h2>
     {!enabled ? <p className="muted">Start the local VM before connecting a model. No credentials are sent.</p>
       : <p className="muted">Use your existing GitHub CLI sign-in for Copilot in this VM. Bridge stores it in the native credential store and delivers it privately to the guest.</p>}
-    <button type="button" className="setup-button" disabled={!enabled || busy || ready} onClick={() => { void connect(); }}>
+    <button type="button" className="setup-button" disabled={!enabled || paused || busy || ready} onClick={() => { void connect(); }}>
       {!enabled ? 'Connect model' : busy ? 'Connecting model…' : ready ? 'Model connected' : 'Use GitHub sign-in'}
     </button>
     {busy && <p role="status">Reading the sign-in, storing it and connecting the guest model…</p>}

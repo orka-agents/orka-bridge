@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
@@ -40,6 +40,20 @@ test('Get started remembers the welcome without starting a workspace, including 
   expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
+});
+
+test('welcome chrome advances only after Get started, including with denied preference storage', async () => {
+  native(); vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new DOMException('Denied', 'SecurityError'); });
+  const user = userEvent.setup(); render(<App />);
+  expect(await within(screen.getByRole('navigation')).findByText('Start here')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Nothing is set up yet')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Get started' }));
+  expect(within(screen.getByRole('navigation')).getByText('Setting up, step 1 of 4')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  expect(document.querySelectorAll('#page-title')).toHaveLength(1);
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
 });
 
 test('a saved native choice skips welcome even without a renderer preference', async () => {

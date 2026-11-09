@@ -137,16 +137,19 @@ test.each([
 });
 
 test('a delayed Continue reply stays pending across repeat activation and navigation', async () => {
-  native(); let complete!: (value: unknown) => void;
-  const ipc = vi.fn(command => command === 'setup_status' ? status() : command === 'setup_select_local'
+  native(); let complete!: (value: unknown) => void; let selected: 'localVm' | null = null;
+  const ipc = vi.fn(command => command === 'setup_status' ? status(selected) : command === 'setup_select_local'
     ? new Promise(resolve => { complete = resolve; }) : Promise.reject({ kind: 'unavailable' }));
   mockIPC(ipc);
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  await user.click(screen.getByRole('button', { name: 'Designer' })); complete(status('localVm'));
-  await waitFor(() => expect(screen.getByRole('main', { name: 'Designer' })).toBeTruthy());
+  const designer = screen.getByRole('button', { name: 'Designer' });
+  await user.click(designer); selected = 'localVm'; complete(status(selected));
+  await waitFor(() => expect(document.querySelector('[aria-label="Workspace setup"]')?.closest('[hidden]')).toBeTruthy());
+  expect(screen.getByRole('main', { name: 'Designer' })).toBeTruthy();
+  expect(document.activeElement).toBe(designer);
   expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
   expect(ipc.mock.calls.some(([command]) => command === 'setup_connect_model')).toBe(false);
