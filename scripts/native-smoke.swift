@@ -181,13 +181,16 @@ let filePoint = CGPoint(x: fileRect.minX + fileButton.boundingBox.midX * fileRec
 mouse(.leftMouseDown, filePoint); mouse(.leftMouseUp, filePoint)
 Thread.sleep(forTimeInterval: 0.5)
 try capture("file-view", "Designer")
-// From File, the two disabled-action explanations precede the editor.
-key(48); key(48); key(48)
+// A pointer-activated button need not receive focus in the native webview.
+// Establish editor focus, then verify keyboard exit/re-entry before typing.
+let editorPoint = CGPoint(x: fileRect.midX, y: fileRect.minY + fileRect.height * 0.6)
+mouse(.leftMouseDown, editorPoint); mouse(.leftMouseUp, editorPoint)
+key(48, shift: true); key(48)
 for down in [true, false] {
     let event = CGEvent(keyboardEventSource: nil, virtualKey: 125, keyDown: down)!
     event.flags = .maskCommand; event.post(tap: .cghidEventTap)
 }
-let marker = "\n\nNative editor save check."
+let marker = "\n\nNative editor save check \(UUID().uuidString)."
 let characters = Array(marker.utf16)
 for down in [true, false] {
     let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
@@ -197,6 +200,7 @@ for down in [true, false] {
     event.post(tap: .cghidEventTap)
 }
 Thread.sleep(forTimeInterval: 1)
+try capture("file-edited", "Designer")
 let ownedFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
 require(try String(contentsOf: ownedFile, encoding: .utf8).hasSuffix(marker),
         "Native keyboard edit was not saved to the agent's own file")

@@ -214,6 +214,34 @@ fn hardlinked_source_and_head_cannot_modify_outside_files() {
 }
 
 #[test]
+fn valid_objects_with_another_zlib_encoding_can_be_reused() {
+    use std::io::{Read, Write};
+    let home = tempfile::tempdir().unwrap();
+    let folder = AgentFolder::new(Some(home.path().into()));
+    let pair = folder.open().unwrap();
+    let path = root(home.path());
+    let repo = git2::Repository::open(&path).unwrap();
+    let tree = repo
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .tree()
+        .unwrap();
+    let id = tree.get_name(TESTS).unwrap().id().to_string();
+    let object = path.join(".git/objects").join(&id[..2]).join(&id[2..]);
+    let mut raw = Vec::new();
+    flate2::read::ZlibDecoder::new(&fs::read(&object).unwrap()[..])
+        .read_to_end(&mut raw)
+        .unwrap();
+    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::none());
+    encoder.write_all(&raw).unwrap();
+    fs::write(&object, encoder.finish().unwrap()).unwrap();
+    folder.save("another agent draft".into()).unwrap();
+    assert_eq!(committed(&path, TESTS), pair.tests.as_bytes());
+    assert_eq!(committed(&path, AGENT), b"another agent draft");
+}
+#[test]
 fn ordinary_git_fsck_log_show_and_status_agree_with_saved_document() {
     let home = tempfile::tempdir().unwrap();
     let folder = AgentFolder::new(Some(home.path().into()));

@@ -91,11 +91,12 @@ export default function App() {
     : model === 'failed' ? 'AI connection needs attention' : detail;
   const hostDetail = workspaceReady ? modelDetail : detail;
   const cases = run?.report?.cases;
-  const checks = stale ? 'Checks not run since your change' : runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
+  const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
+  const checks = checksStale ? 'Checks not run since your change' : runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
     : run?.state === 'running' ? 'Running checks…' : cases
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} checks passing` : undefined;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
-  const agentStatus = stale ? 'checks need running' : runUnavailable ? 'check status unavailable' : run?.state === 'unknown' ? 'check result unknown'
+  const agentStatus = checksStale ? 'checks need running' : runUnavailable ? 'check status unavailable' : run?.state === 'unknown' ? 'check result unknown'
     : run?.state === 'running' ? 'running checks'
     : failedChecks ? `${failedChecks} ${failedChecks === 1 ? 'check' : 'checks'} failing`
     : cases?.some(check => check.verdict === 'unknown') ? 'check result unknown'

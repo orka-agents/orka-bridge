@@ -8,7 +8,7 @@ use crate::{
     local_vm::{LocalVm, LocalVmStatus},
     runtime::client::VmClient,
 };
-use bridge_runtime_protocol::{FileSlot, ModelPhase, OrkaRequest};
+use bridge_runtime_protocol::{FileSlot, ModelPhase, OrkaRequest, SnapshotId};
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -38,6 +38,7 @@ pub struct PendingRef {
 pub struct RunSnapshot {
     pub state: RunState,
     pub can_run: bool,
+    pub source_current: bool,
     pub report: Option<RunReport>,
     pub acknowledged: Vec<Receipt>,
     pub pending: Option<PendingRef>,
@@ -45,6 +46,7 @@ pub struct RunSnapshot {
 }
 struct State {
     snapshot: RunSnapshot,
+    source: Option<SnapshotId>,
     handle: Option<RunHandle>,
 }
 pub struct ExampleRun(Mutex<State>, tokio::runtime::Handle, bool, Arc<AgentFolder>);
@@ -60,11 +62,13 @@ impl ExampleRun {
                 snapshot: RunSnapshot {
                     state: RunState::Idle,
                     can_run: false,
+                    source_current: false,
                     report: None,
                     acknowledged: Vec::new(),
                     pending: None,
                     error: None,
                 },
+                source: None,
                 handle: None,
             }),
             runtime,
@@ -74,7 +78,10 @@ impl ExampleRun {
     }
     /// Observation only, including after a renderer remount; never submits or loads credentials.
     pub fn status(&self, vm: &LocalVm) -> RunSnapshot {
-        let mut snapshot = self.0.lock().unwrap().snapshot.clone();
+        let state = self.0.lock().unwrap();
+        let mut snapshot = state.snapshot.clone();
+        snapshot.source_current =
+            state.source.is_some() && state.source == self.3.current_snapshot();
         snapshot.can_run =
             self.2 && snapshot.state != RunState::Running && vm.status() == LocalVmStatus::Ready;
         snapshot
@@ -92,6 +99,7 @@ impl ExampleRun {
             state.snapshot.can_run = false;
             state.snapshot.error = None;
             state.snapshot.report = None;
+            state.source = None;
             // Keep remote identities through session/model preflight failures.
             // record() replaces them when submission returns a new handle.
         }
@@ -114,6 +122,7 @@ impl ExampleRun {
                 owner.fail("source");
                 return;
             };
+            owner.0.lock().unwrap().source = Some(pair.snapshot().clone());
             let runtime = tokio::runtime::Handle::current();
             let worker = owner.clone();
             let observing = target.clone();

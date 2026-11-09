@@ -25,17 +25,18 @@ export default function Run({ onSnapshot, blocked = false, stale = false, onStar
     setSending(false);
   };
   const running = sending || snapshot?.state === 'running';
+  const outdated = stale || (snapshot?.sourceCurrent === false && !!snapshot.report);
   return <div className="example-run" aria-labelledby="run-title">
     <h3 id="run-title">Test on the local VM</h3>
     <p className="muted">Run creates an Orka Agent and Task from these exact files. Connect the model in Clusters first.</p>
     <button type="button" className="setup-button" disabled={blocked || running || !snapshot?.canRun} title={blocked ? 'Save your changes before running the check' : !snapshot?.canRun ? 'Connect your workspace and AI in Clusters first' : undefined} onClick={() => { void start(); }}>Run test</button>
-    {stale && <p role="status">Not run since your change. Any result below is from the earlier file.</p>}
+    {outdated && <p role="status">Not run since your change. Any result below is from the earlier file.</p>}
     {running && <p role="status">Running on the local VM…</p>}
     {message && <p role="status">{message}</p>}
     {snapshot?.error && <p role="alert">{errors[snapshot.error]}</p>}
     {snapshot?.pending && <p>Possibly created {snapshot.pending.kind}: {snapshot.pending.name}</p>}
     {snapshot?.report && <>
-      <p role="status">{stale ? 'Earlier test verdict' : 'Test verdict'}: {snapshot.report.verdict}</p>
+      <p role="status">{outdated ? 'Earlier test verdict' : 'Test verdict'}: {snapshot.report.verdict}</p>
       {snapshot.report.cases.map(c => <div key={c.id}>
         <h4>{c.id}</h4>
         <p>Task: {c.phase}</p>

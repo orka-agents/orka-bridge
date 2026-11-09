@@ -100,6 +100,26 @@ test('a failed Run request does not make an earlier verdict current after editin
   await screen.findByText('Run information is not supported by this build.');
   expect(screen.getByText('Earlier test verdict: passed')).toBeTruthy();
 });
+test('an edit during a delayed Run reply keeps the earlier result stale', async () => {
+  let finish!: (value: unknown) => void;
+  vi.stubGlobal('isTauri', true);
+  mockIPC((command, args) => command === 'agent_open' ? pair : command === 'agent_save' ? { ...pair, agent: (args as { content: string }).content }
+    : command === 'setup_run_example' ? new Promise(resolve => { finish = resolve; }) : idle);
+  const user = userEvent.setup(); render(<Example />);
+  await user.click(await screen.findByRole('button', { name: 'File' }));
+  await user.click(screen.getByRole('button', { name: 'Run test' }));
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Edited while submitting' } }); fireEvent.blur(screen.getByRole('textbox'));
+  await screen.findByText('Saved');
+  await act(async () => finish(idle));
+  expect(screen.getByText(/Not run since your change/)).toBeTruthy();
+});
+test('remounting with an old native report keeps it visibly stale', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => command === 'agent_open' ? pair : { ...idle, state: 'complete', sourceCurrent: false, report: { verdict: 'passed', cases: [{ id: 'reads-page', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } });
+  render(<Example />);
+  expect(await screen.findByText('Earlier test verdict: passed')).toBeTruthy();
+  expect(screen.queryByText('Test verdict: passed')).toBeNull();
+});
 test('typing autosaves without leaving the field', async () => {
   native(); const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: 'File' }));

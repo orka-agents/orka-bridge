@@ -1,5 +1,5 @@
 //! libgit2 creates objects in memory. Only capability-relative code touches disk.
-//! No repository discovery, config, templates, alternates, index, hooks or remotes.
+//! No repository discovery, ambient config, templates, alternates, hooks or remotes.
 use super::*;
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};
 use git2::{ObjectType, Odb, Oid, Repository, Signature};
@@ -59,7 +59,7 @@ fn persist(git: &Dir, odb: &Odb<'_>, id: Oid) -> io::Result<()> {
     let objects = git.open_dir_nofollow("objects")?;
     let prefix = child(&objects, &name[..2])?;
     match read(&prefix, &name[2..], MAX_FILE + 4096) {
-        Ok(existing) if existing == bytes => (),
+        Ok(_) => load(git, odb, id)?,
         Err(e) if e.kind() == io::ErrorKind::NotFound => replace(&prefix, &name[2..], &bytes)?,
         _ => return Err(invalid()),
     }

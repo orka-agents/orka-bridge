@@ -1,6 +1,6 @@
 //! One native-owned, VM-independent document. No renderer paths or Git processes.
 use crate::runtime::snapshot::{AgentDocument, Snapshot};
-use bridge_runtime_protocol::{FileSlot, Uuid, MAX_FILE};
+use bridge_runtime_protocol::{FileSlot, SnapshotId, Uuid, MAX_FILE};
 use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::fs::{Dir, File, MetadataExt, OpenOptions};
 use std::{
@@ -23,6 +23,7 @@ pub struct AgentPair {
 pub struct AgentFolder {
     home: Option<PathBuf>,
     lock: Mutex<()>,
+    current: Mutex<Option<SnapshotId>>,
 }
 fn invalid() -> io::Error {
     io::ErrorKind::InvalidData.into()
@@ -55,8 +56,18 @@ fn regular(file: &File) -> io::Result<()> {
         return Err(invalid());
     }
     #[cfg(windows)]
-    if meta.number_of_links() != Some(1) || meta.file_attributes() & 0x400 != 0 {
-        return Err(invalid());
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if info.nNumberOfLinks != 1 || meta.file_attributes() & 0x400 != 0 {
+            return Err(invalid());
+        }
     }
     Ok(())
 }
@@ -117,7 +128,15 @@ impl AgentFolder {
         Self {
             home,
             lock: Mutex::new(()),
+            current: Mutex::new(None),
         }
+    }
+    pub fn current_snapshot(&self) -> Option<SnapshotId> {
+        self.current.lock().unwrap().clone()
+    }
+    fn remember(&self, pair: &AgentPair) {
+        *self.current.lock().unwrap() =
+            Some(SnapshotId::of(pair.agent.as_bytes(), pair.tests.as_bytes()));
     }
     fn with<T>(&self, work: impl FnOnce(&Dir) -> io::Result<T>) -> Result<T> {
         let _guard = self
@@ -194,6 +213,7 @@ impl AgentFolder {
         self.with(|root| {
             let pair = Self::pair(root)?;
             git::commit(root, &pair)?; // Dirty reopen is committed, never silently reported Saved.
+            self.remember(&pair);
             Ok(pair)
         })
     }
@@ -211,6 +231,7 @@ impl AgentFolder {
                 pair.agent = content;
             }
             git::commit(root, &pair)?; // Failure leaves draft bytes; retry reconciles disk with HEAD.
+            self.remember(&pair);
             Ok(pair)
         })
     }
@@ -241,6 +262,7 @@ impl AgentFolder {
             {
                 return Err(invalid());
             }
+            self.remember(&pair);
             Ok(snapshot)
         })
     }

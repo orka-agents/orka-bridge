@@ -330,13 +330,19 @@ async fn edited_disk_prompt_is_the_actual_posted_resource() {
         "Read the edited prompt on disk.",
     );
     folder.save(edited).unwrap();
-    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder.clone());
     run.start(vm.clone());
     let result = finished(&run, &vm).await;
     assert_eq!(result.state, RunState::Complete);
     assert!(posts.lock().unwrap()[0]["spec"]
         .to_string()
         .contains("Read the edited prompt on disk."));
+    assert!(result.source_current);
+    // Native reports survive a renderer reload, but reopening the edited pair
+    // must not make the older report current again.
+    folder.save("another draft after Run".into()).unwrap();
+    folder.open().unwrap();
+    assert!(!run.status(&vm).source_current);
     vm.shutdown().await.unwrap();
 }
 #[tokio::test]
@@ -410,9 +416,11 @@ async fn admitted_run_freezes_source_before_busy_vm_refusal() {
             "Later edit after admission.",
         ))
         .unwrap();
+    // Keep the client held until Run has observed busy; releasing first races
+    // admission and can legitimately let the captured pair run successfully.
+    let result = finished(&run, &vm).await;
     release.send(()).unwrap();
     blocked.await.unwrap();
-    let result = finished(&run, &vm).await;
     assert_eq!(result.state, RunState::Unknown);
     assert_eq!(result.error, Some("session"));
     assert!(posts.lock().unwrap().is_empty());

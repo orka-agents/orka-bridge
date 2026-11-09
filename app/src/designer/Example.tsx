@@ -80,7 +80,7 @@ export default function Example({ active = true, actions, onPair, onRun, onSaveS
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
-        <Run onSnapshot={onRun} blocked={saveState !== 'saved'} stale={stale} onStart={() => setStale(false)} />
+        <Run onSnapshot={onRun} blocked={saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />
         <details className="check-source"><summary>Check file: web-reader.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Check file, read-only">{pair.tests}</pre></details>
       </div>
     </>}
