@@ -46,7 +46,7 @@ const workspaceCopy = {
   installing: ['Setting up, step 2 of 4', 'Getting workspace ready', 'busy'],
   starting: ['Setting up, step 2 of 4', 'Starting workspace', 'busy'],
   ready: ['Setting up, step 3 of 4', 'Choose the AI', 'ready'],
-  failed: ['Setup paused', 'Workspace could not start', 'bad'],
+  failed: ['Setup paused', 'Workspace needs attention', 'bad'],
   closing: ['Stopping workspace', 'Stopping workspace', 'busy'],
   closed: ['Workspace stopped', 'Workspace stopped', 'wait'],
   cancelled: ['Setup paused', 'What has arrived is kept', 'wait'],
@@ -70,7 +70,7 @@ export default function App() {
   const [engineReady, setEngineReady] = useState(false);
   const ready = useCallback(() => setEngineReady(true), []);
   const [setup, setSetup] = useState<SetupStatus>();
-  const [setupReadOnly, setSetupReadOnly] = useState(false);
+  const [setupReadOnly, setSetupReadOnly] = useState(true);
   const workspaceAdmitted = useRef(false);
   const [editorOwned, setEditorOwned] = useState(false);
   const exampleReadOnly = setupReadOnly && !editorOwned;
@@ -110,6 +110,8 @@ export default function App() {
   const checks = checksStale ? 'Checks not run since your change' : runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
     : run?.state === 'running' ? 'Running checks…' : cases
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} checks passing` : undefined;
+  const firstCheck = checksStale ? 'stale' : runUnavailable || run?.state === 'unknown' ? 'unknown'
+    : run?.state === 'running' ? 'running' : run?.state === 'complete' ? run.report?.verdict : undefined;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
   const agentStatus = checksStale ? 'checks need running' : runUnavailable ? 'check status unavailable' : run?.state === 'unknown' ? 'check result unknown'
     : run?.state === 'running' ? 'running checks'
@@ -166,7 +168,7 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup active={page === 'Clusters'} onReady={ready} onStatus={observeSetup} onModelState={setModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
+          <Setup active={page === 'Clusters'} firstCheck={firstCheck} onReady={ready} onStatus={observeSetup} onModelState={setModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
             onOpenExample={() => {
               if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
               setExampleOpen(true); setPage('Designer');

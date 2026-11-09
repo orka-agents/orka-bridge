@@ -124,11 +124,40 @@ test('an established Designer stays editable when a running workspace later fail
 test('failure is one plain red step, native details stay behind disclosure', async () => {
   native('failed'); const user = userEvent.setup(); render(<App />);
   const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toBe('Your workspace could not start. What has arrived is kept.');
+  expect(alert.textContent).toBe('Your workspace could not start or its stop could not be confirmed. Your files are kept.');
   expect(alert.closest('li')?.classList.contains('step-failed')).toBe(true);
   expect(screen.queryByText('PRIVATE_NATIVE_DETAIL')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.getByText('PRIVATE_NATIVE_DETAIL')).toBeTruthy();
+});
+
+test('Designer stays read-only while the first native setup observation is pending', async () => {
+  const { ipc } = native(); let observe!: (value: unknown) => void;
+  mockIPC(command => command === 'setup_status' ? new Promise(resolve => { observe = resolve; }) : ipc(command));
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await screen.findByRole('heading', { name: 'web-reader', level: 1 });
+  expect(ipc.mock.calls.some(([command]) => command === 'agent_open')).toBe(false);
+  observe({ selected: 'localVm', localVm: 'installing', model: 'locked' });
+  await within(screen.getByRole('contentinfo')).findByText('Setting up, step 2 of 4');
+  expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
+});
+
+test('a failed example read is not presented as an endless load', async () => {
+  const { ipc } = native(); mockIPC(command => command === 'setup_example' ? Promise.reject('unavailable') : ipc(command)); render(<App />);
+  expect(await screen.findByText('The example could not be opened. Try opening Designer.')).toBeTruthy();
+  expect(screen.queryByText('Opening the example\'s introduction…')).toBeNull();
+});
+
+test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup step reflects actual %s run evidence', async result => {
+  const { ipc } = native('ready');
+  const snapshot = { state: result === 'running' ? 'running' : 'complete', canRun: result !== 'running', report: result === 'running' ? null : { verdict: result, cases: [{ id: 'checksum', phase: 'Succeeded', answer: 'checksum', completedTools: ['web_fetch'], verdict: result, assertions: [{ id: 'value', kind: 'contains', verdict: result }] }] }, acknowledged: [], pending: null, error: null };
+  mockIPC(command => command === 'setup_run_status' ? snapshot : ipc(command));
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await screen.findByRole('heading', { name: 'web-reader', level: 1 });
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[3].textContent).toContain({ running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown' }[result]));
 });
 
 test('changing workspace and starting again preserves an owned draft after a failed save', async () => {

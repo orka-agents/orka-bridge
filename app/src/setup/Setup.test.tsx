@@ -150,7 +150,7 @@ test.each([
   native(); mockIPC(command => command === 'setup_status'
     ? { ...status('localVm'), localVm: 'failed', localVmError } : Promise.reject({ kind: 'unavailable' }));
   const user = userEvent.setup(); render(<App />);
-  expect((await screen.findByRole('alert')).textContent).toBe('Your workspace could not start. What has arrived is kept.');
+  expect((await screen.findByRole('alert')).textContent).toBe('Your workspace could not start or its stop could not be confirmed. Your files are kept.');
   expect(screen.queryByText(localVmError)).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.getByText(localVmError)).toBeTruthy();

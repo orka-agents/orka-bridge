@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Model, { type ModelState } from './Model';
 import { type LocalVmState, type SetupStatus, cancelLocal, changeLocal, selectLocal, setupStatus } from './state';
-import Steps, { Meet } from './Steps';
+import Steps, { Meet, type CheckStepState } from './Steps';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
 import { formatSize, workspaceRequirements, type WorkspaceRequirements } from './requirements';
 import './welcome.css';
@@ -10,12 +10,13 @@ const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting',
 const runtimeCopy = {
   notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
 };
-export default function Setup({ onOpenExample, onReady, onStatus, onModelState, onWelcome, onExampleName, active = true }: {
+export default function Setup({ onOpenExample, onReady, onStatus, onModelState, onWelcome, onExampleName, firstCheck, active = true }: {
   onOpenExample: () => void; onReady: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
   onModelState?: (state: ModelState) => void;
   onWelcome?: (visible: boolean) => void;
   onExampleName?: (name: string | undefined) => void;
+  firstCheck?: CheckStepState;
 }) {
   const [status, setStatus] = useState<SetupStatus>();
   const [error, setError] = useState<string>();
@@ -132,7 +133,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
         {status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
       </>}
       {selected && status && <>
-        <div><Steps status={status} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onChange={() => setConfirmChange(true)} onOpenExample={onOpenExample} />
+        <div><Steps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onChange={() => setConfirmChange(true)} onOpenExample={onOpenExample} />
           {confirmChange && <section className="workspace-change" aria-label="Change where agents run">
             <h2>Stop this workspace?</h2><p>Changing where agents run stops the workspace on this computer. Your files are kept.</p>
             <div className="workspace-step-actions"><button type="button" className="workspace-secondary" disabled={sending} onClick={() => setConfirmChange(false)}>Keep workspace running</button><button type="button" className="workspace-primary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and change</button></div>

@@ -4,14 +4,16 @@ import { formatSize } from './requirements';
 import { type ExamplePair, loadExample, type SetupStatus } from './state';
 import './steps.css';
 
+export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
+
 function PhaseIcon({ phase }: { phase: 'done' | 'current' | 'waiting' | 'failed' }) {
   return <svg className={`icon step-icon step-${phase}`} viewBox="0 0 24 24" aria-hidden="true">
     {phase === 'done' ? <path d="m5 12 4 4L19 6" /> : phase === 'failed' ? <><circle cx="12" cy="12" r="9" /><path d="m9 9 6 6m0-6-6 6" /></>
       : <><circle cx="12" cy="12" r="9" /><path d={phase === 'current' ? 'M12 3v18' : 'M12 8v4l3 2'} /></>}
   </svg>;
 }
-export default function Steps({ status, busy, stopping, error, modelConnected, onCancel, onRestart, onChange, onOpenExample }: {
-  status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean;
+export default function Steps({ status, busy, stopping, error, modelConnected, firstCheck, onCancel, onRestart, onChange, onOpenExample }: {
+  status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean; firstCheck?: CheckStepState;
   onCancel: () => void; onRestart: () => void; onChange: () => void; onOpenExample: () => void;
 }) {
   const [details, setDetails] = useState(false);
@@ -22,9 +24,11 @@ export default function Steps({ status, busy, stopping, error, modelConnected, o
   const numbers = copying && progress.bytes !== null && progress.totalBytes !== null;
   const remaining = copying ? progress.remainingMs : null;
   const eta = remaining != null && remaining > 0 ? `${Math.ceil(remaining / 1000)} seconds left` : undefined;
+  const checkPhase = firstCheck === 'passed' ? 'done' : firstCheck === 'failed' ? 'failed' : firstCheck === 'running' || (modelConnected && !firstCheck) ? 'current' : 'waiting';
+  const checkLabel = firstCheck ? { running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown', stale: 'Needs running' }[firstCheck] : modelConnected ? 'Needs you' : 'Waiting';
   const phase = ready ? 'done' : failed ? 'failed' : paused || status.localVm === 'notIntegrated' ? 'waiting' : 'current';
   const stateLine = error ? 'Workspace status is unavailable.' : stopping ? 'Stopping your workspace…' : ready ? 'Your workspace is running on this computer.'
-    : failed ? 'Your workspace could not start. What has arrived is kept.'
+    : failed ? 'Your workspace could not start or its stop could not be confirmed. Your files are kept.'
     : paused ? 'What has arrived is kept.' : status.localVm === 'starting' ? 'Starting your workspace…'
     : status.localVm === 'closing' ? 'Stopping your workspace…'
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
@@ -33,7 +37,7 @@ export default function Steps({ status, busy, stopping, error, modelConnected, o
     <ol className="steps-four" aria-label="Setup steps">
       <li className="step-done"><PhaseIcon phase="done" /><b>Where agents run</b><span className="step-result">On this computer</span></li>
       <li className={`step-${phase}`} aria-current={phase === 'current' ? 'step' : undefined}>
-        <PhaseIcon phase={phase} /><b>Get your workspace ready</b><span className="step-result">{ready ? 'Ready' : paused ? 'Paused' : failed ? 'Stopped' : eta}</span>
+        <PhaseIcon phase={phase} /><b>Get your workspace ready</b><span className="step-result">{ready ? 'Ready' : paused ? 'Paused' : failed ? 'Needs attention' : eta}</span>
         <div className="step-more">
           <p role={failed ? 'alert' : 'status'}>{stateLine}</p>
           {!stopping && status.localVm === 'starting' && <><div className="workspace-indeterminate" role="progressbar" aria-label="Workspace startup" /><p className="muted">{progress?.phase === 'starting' ? `${Math.floor(progress.elapsedMs / 1000)} seconds elapsed` : 'Getting the workspace ready…'}</p></>}
@@ -50,7 +54,7 @@ export default function Steps({ status, busy, stopping, error, modelConnected, o
         </div>
       </li>
       <li className={modelConnected ? 'step-done' : ready ? 'step-current' : 'step-waiting'}><PhaseIcon phase={modelConnected ? 'done' : ready ? 'current' : 'waiting'} /><b>Choose the AI your agent uses</b><span className="step-result">{modelConnected ? 'Connected' : ready ? 'Needs you' : 'Waiting'}</span></li>
-      <li className="step-waiting"><PhaseIcon phase="waiting" /><b>Run your first test</b><span className="step-result">Waiting</span></li>
+      <li className={`step-${checkPhase}`}><PhaseIcon phase={checkPhase} /><b>Run your first test</b><span className="step-result">{checkLabel}</span></li>
     </ol>
     <div className="workspace-step-actions">
       {['preparing', 'installing', 'starting'].includes(status.localVm) && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</button><span className="muted">Cancel keeps what has arrived.</span></>}
@@ -62,7 +66,8 @@ export default function Steps({ status, busy, stopping, error, modelConnected, o
 
 export function Meet({ onRead, onName }: { onRead: () => void; onName?: (name: string | undefined) => void }) {
   const [pair, setPair] = useState<ExamplePair>();
-  useEffect(() => { let mounted = true; void loadExample().then(result => { if (mounted && result.ok) setPair(result.pair); }); return () => { mounted = false; }; }, []);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { let mounted = true; void loadExample().then(result => { if (!mounted) return; if (result.ok) setPair(result.pair); else setFailed(true); }); return () => { mounted = false; }; }, []);
   const info = agentInfo(pair?.agent);
   useEffect(() => { if (pair) onName?.(info.name); }, [pair, info.name, onName]);
   const webReader = info.name === 'web-reader' && /name: web_fetch(?:\r?\n|$)/.test(pair?.agent ?? '');
@@ -73,6 +78,6 @@ export function Meet({ onRead, onName }: { onRead: () => void; onName?: (name: s
         <div><dt>How we'll check it</dt><dd>We'll ask for a checksum published on a web page. The check looks for the exact value in the answer.</dd></div></>}
         <div><dt>Whose is it</dt><dd>Yours. After setup you can change its instructions, add checks, or start a new agent.</dd></div></dl>
       <button type="button" className="workspace-secondary" onClick={onRead}>Read its instructions</button></>
-      : <p className="muted">Opening the example's introduction…</p>}
+      : <p className="muted">{failed ? 'The example could not be opened. Try opening Designer.' : "Opening the example's introduction…"}</p>}
   </section>;
 }
