@@ -16,6 +16,8 @@ pub enum ErrorKind {
     Source,
     Configuration,
     Transport,
+    Authentication,
+    Permission,
     Deadline,
     Response,
     Identity,
@@ -54,7 +56,9 @@ pub struct RunReport {
 // an unavailable answer/event page and continue issuing requests.
 fn optional_evidence<T>(result: Result<T, ErrorKind>) -> Result<Option<T>, ErrorKind> {
     match result {
-        Err(ErrorKind::Stopped) => Err(ErrorKind::Stopped),
+        Err(kind @ (ErrorKind::Stopped | ErrorKind::Authentication | ErrorKind::Permission)) => {
+            Err(kind)
+        }
         other => Ok(other.ok()),
     }
 }
@@ -326,6 +330,9 @@ impl<'a> NativeRunner<'a> {
         let (_sender, stop) = watch::channel(false);
         self.submit_prepared(prepared, stop).await
     }
+    pub async fn close(&self) {
+        self.http.close().await;
+    }
     /// Stop bars new requests and drops asynchronous in-flight waits, not remote
     /// Tasks. An uncertain write retains its attempted identity; never replay it.
     pub async fn submit_prepared(
@@ -341,6 +348,9 @@ impl<'a> NativeRunner<'a> {
         let result = self
             .submit_inner(&mut handle, &creates, &mut pending, &mut stop)
             .await;
+        if result == Err(ErrorKind::Stopped) {
+            self.close().await;
+        }
         match result {
             Ok(()) => Ok(handle),
             Err(kind) => Err(RunError {
@@ -402,13 +412,15 @@ impl<'a> NativeRunner<'a> {
         handle: &RunHandle,
         mut stop: watch::Receiver<bool>,
     ) -> Result<RunReport, RunError> {
-        self.observe_inner(handle, &mut stop)
-            .await
-            .map_err(|kind| RunError {
-                kind,
-                handle: Box::new(handle.clone()),
-                pending: None,
-            })
+        let result = self.observe_inner(handle, &mut stop).await;
+        if matches!(result, Err(ErrorKind::Stopped)) {
+            self.close().await;
+        }
+        result.map_err(|kind| RunError {
+            kind,
+            handle: Box::new(handle.clone()),
+            pending: None,
+        })
     }
     async fn checked(
         &self,
