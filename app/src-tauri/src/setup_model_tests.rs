@@ -627,6 +627,36 @@ fn failed_connect_retains_only_typed_guest_diagnostics_in_setup_details() {
 }
 
 #[test]
+fn failed_connect_keeps_guest_diagnostics_when_binding_persistence_fails() {
+    let (tmp, setup, _install, _vault) = associated();
+    let mut binding = read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .unwrap();
+    let missing_root = tmp.path().join("missing");
+    let conn = connection();
+    let remote = ModelState {
+        phase: ModelPhase::Unknown,
+        credential: credential(Some(conn.generation), true),
+        connection: Some(conn),
+        diagnostic: Some(ModelDiagnostic {
+            classification: ModelDiagnosticClass::Exit,
+            elapsed_ms: 12,
+            exit_code: Some(1),
+            stage: Some(ModelStage::Model),
+            error_code: Some(ModelErrorCode::ExecutionUnknown),
+            stderr: Some(ModelStderr::ExecutionUnknown),
+        }),
+    };
+    let error = finish_connect(&missing_root, &mut binding, remote).unwrap_err();
+    let detail = error
+        .model_detail()
+        .expect("observed failure evidence survives host I/O failure");
+    assert!(detail.contains("execution_unknown"));
+    assert!(detail.contains("The execution outcome is unknown."));
+    assert!(!missing_root.exists());
+}
+
+#[test]
 fn pending_ready_ack_is_reconciled_without_republishing_or_loading_sign_in() {
     let (_tmp, setup, install, vault) = associated();
     let nonce = Uuid::new_v4();

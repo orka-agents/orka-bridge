@@ -131,7 +131,7 @@ fn finish_connect(
 ) -> Result<ModelSetupState, SetupError> {
     b.connection = remote.connection;
     if remote.phase != ModelPhase::Ready {
-        write_binding(root, b)?;
+        write_binding(root, b).map_err(|_| SetupError::connect(remote.diagnostic.clone()))?;
         return Err(SetupError::connect(remote.diagnostic));
     }
     b.phase = Phase::Connected;
