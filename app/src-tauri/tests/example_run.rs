@@ -1,4 +1,5 @@
 use bridge_engine::{
+    agent_folder::AgentFolder,
     example_run::{ExampleRun, RunState},
     local_vm::{LocalFactory, LocalSession, LocalVm, LocalVmStatus, StartFuture},
     runtime::{client::VmClient, types::RuntimeError},
@@ -215,7 +216,9 @@ async fn finished(run: &ExampleRun, vm: &LocalVm) -> bridge_engine::example_run:
 #[tokio::test]
 async fn example_uses_one_client_exact_pair_and_retains_receipts_after_waiter_is_gone() {
     let (vm, posts, stopped) = fixture(false, false).await;
-    let run = ExampleRun::new(tokio::runtime::Handle::current(), true);
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
     assert_eq!(run.start(vm.clone()).state, RunState::Running);
     run.start(vm.clone()); // duplicate renderer command cannot submit twice
     let result = finished(&run, &vm).await;
@@ -248,7 +251,9 @@ fn blocking_ipc_caller_does_not_need_an_entered_tokio_runtime() {
         .enable_all()
         .build()
         .unwrap();
-    let run = ExampleRun::new(runtime.handle().clone(), true);
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let run = ExampleRun::new(runtime.handle().clone(), true, folder);
     let vm = LocalVm::unavailable();
     assert_eq!(run.start(vm.clone()).state, RunState::Running);
     let result = runtime.block_on(finished(&run, &vm));
@@ -258,7 +263,9 @@ fn blocking_ipc_caller_does_not_need_an_entered_tokio_runtime() {
 #[tokio::test]
 async fn unsupported_image_never_probes_or_retires_the_shared_client() {
     let (vm, posts, _) = fixture(false, false).await;
-    let run = ExampleRun::new(tokio::runtime::Handle::current(), false);
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), false, folder);
     assert!(!run.status(&vm).can_run);
     assert_eq!(run.start(vm.clone()).state, RunState::Idle);
     assert!(posts.lock().unwrap().is_empty());
@@ -273,7 +280,9 @@ async fn unsupported_image_never_probes_or_retires_the_shared_client() {
 #[tokio::test]
 async fn absent_completed_tools_stays_unknown_with_contains_passed() {
     let (vm, _, _) = fixture(true, false).await;
-    let run = ExampleRun::new(tokio::runtime::Handle::current(), true);
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
     run.start(vm.clone());
     let result = finished(&run, &vm).await;
     let report = result.report.unwrap();
@@ -291,7 +300,9 @@ async fn absent_completed_tools_stays_unknown_with_contains_passed() {
 #[tokio::test]
 async fn uncertain_task_write_keeps_agent_and_pending_task_without_retry() {
     let (vm, posts, _) = fixture(false, true).await;
-    let run = ExampleRun::new(tokio::runtime::Handle::current(), true);
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
     run.start(vm.clone());
     let result = finished(&run, &vm).await;
     assert_eq!(result.state, RunState::Unknown);
@@ -306,5 +317,104 @@ async fn uncertain_task_write_keeps_agent_and_pending_task_without_retry() {
     assert_eq!(refused.acknowledged.len(), 1);
     assert_eq!(refused.pending.unwrap().name, pending.name);
     assert_eq!(posts.lock().unwrap().len(), 2);
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn edited_disk_prompt_is_the_actual_posted_resource() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let edited = folder.open().unwrap().agent.replace(
+        "Answer from the web page named in the request.",
+        "Read the edited prompt on disk.",
+    );
+    folder.save(edited).unwrap();
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
+    run.start(vm.clone());
+    let result = finished(&run, &vm).await;
+    assert_eq!(result.state, RunState::Complete);
+    assert!(posts.lock().unwrap()[0]["spec"]
+        .to_string()
+        .contains("Read the edited prompt on disk."));
+    vm.shutdown().await.unwrap();
+}
+#[tokio::test]
+async fn malformed_saved_source_refuses_before_any_remote_write() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    folder.save("unfinished raw draft".into()).unwrap();
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
+    run.start(vm.clone());
+    let result = finished(&run, &vm).await;
+    assert_eq!(result.error, Some("source"));
+    assert!(posts.lock().unwrap().is_empty());
+    assert!(vm
+        .with_client(|_, client| client.model_status())
+        .await
+        .unwrap()
+        .is_ok());
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn admitted_run_freezes_source_before_busy_vm_refusal() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let original = folder.open().unwrap().agent;
+    let (path, _) = folder.source().unwrap();
+    let before = original.replace(
+        "Answer from the web page named in the request.",
+        "Frozen before client queue.",
+    );
+    std::fs::write(path.join("web-reader.agent.md"), &before).unwrap();
+    let (entered, waiting) = tokio::sync::oneshot::channel();
+    let (release, held) = std::sync::mpsc::channel();
+    let target = vm.clone();
+    let blocked = tokio::spawn(async move {
+        target
+            .with_client(move |_, _| {
+                let _ = entered.send(());
+                held.recv().unwrap();
+            })
+            .await
+            .unwrap()
+    });
+    waiting.await.unwrap();
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder.clone());
+    run.start(vm.clone());
+    // capture reconciles dirty disk to HEAD, proving it ran while the VM client is held.
+    let mut frozen = false;
+    for _ in 0..500 {
+        let repo = git2::Repository::open(&path).unwrap();
+        let tree = repo
+            .head()
+            .unwrap()
+            .peel_to_commit()
+            .unwrap()
+            .tree()
+            .unwrap();
+        let id = tree.get_name("web-reader.agent.md").unwrap().id();
+        if repo.find_blob(id).unwrap().content() == before.as_bytes() {
+            frozen = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(frozen, "source capture waited for VM access");
+    folder
+        .save(original.replace(
+            "Answer from the web page named in the request.",
+            "Later edit after admission.",
+        ))
+        .unwrap();
+    release.send(()).unwrap();
+    blocked.await.unwrap();
+    let result = finished(&run, &vm).await;
+    assert_eq!(result.state, RunState::Unknown);
+    assert_eq!(result.error, Some("session"));
+    assert!(posts.lock().unwrap().is_empty());
     vm.shutdown().await.unwrap();
 }

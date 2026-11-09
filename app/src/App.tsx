@@ -6,6 +6,7 @@ import Example from './designer/Example';
 import type { SetupStatus, ExamplePair } from './setup/state';
 import type { ModelState } from './setup/Model';
 import type { RunSnapshot } from './designer/run-api';
+import { agentInfo, type SaveState } from './designer/agent-api';
 
 const pages = ['Overview', 'Designer', 'Clusters'] as const;
 type Page = (typeof pages)[number];
@@ -71,6 +72,8 @@ export default function App() {
   const [checking, setChecking] = useState(true);
   const [model, setModel] = useState<ModelState>('idle');
   const [agentName, setAgentName] = useState<string>();
+  const [saveState, setSaveState] = useState<SaveState>('saved');
+  const [stale, setStale] = useState(false);
   const [exampleState, setExampleState] = useState<'loading' | 'loaded' | 'failed'>('loading');
   const [run, setRun] = useState<RunSnapshot>();
   const [runUnavailable, setRunUnavailable] = useState(false);
@@ -78,8 +81,7 @@ export default function App() {
   const observeSetup = useCallback((status: SetupStatus | undefined) => { setSetup(status); setChecking(false); }, []);
   const observePair = useCallback((pair: ExamplePair | undefined) => {
     setExampleState(pair ? 'loaded' : 'failed');
-    const frontMatter = pair?.agent.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/)?.[1];
-    setAgentName(frontMatter?.match(/^name:\s*([a-z0-9][a-z0-9-]*)\s*$/m)?.[1]);
+    setAgentName(agentInfo(pair?.agent).name);
   }, []);
   const [setupLine, detail, tone] = setup ? workspaceCopy[setup.localVm]
     : checking ? ['Checking workspace…', 'Checking workspace…', 'wait'] : ['Workspace unavailable', 'Workspace unavailable', 'wait'];
@@ -89,19 +91,19 @@ export default function App() {
     : model === 'failed' ? 'AI connection needs attention' : detail;
   const hostDetail = workspaceReady ? modelDetail : detail;
   const cases = run?.report?.cases;
-  const checks = runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
+  const checks = stale ? 'Checks not run since your change' : runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
     : run?.state === 'running' ? 'Running checks…' : cases
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} checks passing` : undefined;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
-  const agentStatus = runUnavailable ? 'check status unavailable' : run?.state === 'unknown' ? 'check result unknown'
+  const agentStatus = stale ? 'checks need running' : runUnavailable ? 'check status unavailable' : run?.state === 'unknown' ? 'check result unknown'
     : run?.state === 'running' ? 'running checks'
     : failedChecks ? `${failedChecks} ${failedChecks === 1 ? 'check' : 'checks'} failing`
     : cases?.some(check => check.verdict === 'unknown') ? 'check result unknown'
-    : cases ? 'checks passing' : 'read-only';
+    : cases ? 'checks passing' : 'ready to edit';
   const tabStatus: Record<Page, string> = {
     Overview: checks ?? 'No agents yet',
     Designer: agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? 'No agent open'
-      : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Read-only example' : 'Opening example…',
+      : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
       : model === 'connected' ? run?.state === 'complete' ? 'This computer ready' : 'AI connected'
       : model === 'idle' ? setupLine : modelDetail,
@@ -116,7 +118,13 @@ export default function App() {
             <button key={name} className="page-tab" type="button"
               aria-label={name} aria-describedby={`tab-status-${name}`}
               aria-current={page === name ? 'page' : undefined}
-              onClick={() => setPage(name)}>
+              onClick={() => {
+                if (name === 'Designer') {
+                  if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
+                  setExampleOpen(true);
+                }
+                setPage(name);
+              }}>
               <span className="icon-tile"><PageIcon page={name} /></span>
               <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{tabStatus[name]}</small></span>
             </button>
@@ -134,7 +142,7 @@ export default function App() {
         </div>
       </header>
       <main ref={content} className="page-content" aria-labelledby="page-title">
-        {page !== 'Clusters' && <div className="page-heading">
+        {page !== 'Clusters' && !(page === 'Designer' && exampleOpen) && <div className="page-heading">
           <h1 id="page-title">{page}</h1>
           {page === 'Designer' && <div className="heading-actions">
             <ComingButton label="New agent" reason="Creating agents is coming" />
@@ -148,7 +156,10 @@ export default function App() {
               setExampleOpen(true); setPage('Designer');
             }} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} onPair={observePair} onRun={observeRun} /></div>}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
+          <ComingButton label="New agent" reason="Creating agents is coming" />
+          <ComingButton label="Send to a cluster" reason="Sending to a cluster is coming" />
+        </>} /></div>}
         {page !== 'Clusters' && !(page === 'Designer' && exampleOpen) && <section className="card empty-state">
           <span className="icon-tile empty-icon"><PageIcon page={page} /></span>
           <div>
@@ -163,7 +174,7 @@ export default function App() {
         <span className={`live-dot ${tone}`} aria-hidden="true" />
         <span>{workspaceReady ? 'This computer ready' : setupLine}</span>
         {detail !== setupLine || workspaceReady ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : detail}</span></> : null}
-        {agentName && <><span aria-hidden="true">·</span><span>Read-only example</span></>}
+        {exampleState === 'loaded' && <><span aria-hidden="true">·</span><span>{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
           page !== 'Clusters' ? (workspaceReady ? `This computer ready · ${modelDetail}` : `${setupLine} · ${detail}`) : undefined,

@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use bridge_engine::agent_folder::{AgentFolder, AgentPair};
 use bridge_engine::engine::{types::*, EngineState};
 use bridge_engine::local_vm::{self, ExamplePair, LocalVm, LocalVmStatus};
 use bridge_engine::setup::{SetupError, SetupSnapshot, SetupStore};
@@ -33,6 +34,24 @@ async fn setup_select_local(
 #[tauri::command]
 fn setup_example() -> ExamplePair {
     local_vm::example()
+}
+
+#[tauri::command]
+async fn agent_open(state: tauri::State<'_, Arc<AgentFolder>>) -> Result<AgentPair, &'static str> {
+    let folder = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || folder.open())
+        .await
+        .map_err(|_| "The local agent folder is unavailable.")?
+}
+#[tauri::command]
+async fn agent_save(
+    content: String,
+    state: tauri::State<'_, Arc<AgentFolder>>,
+) -> Result<AgentPair, &'static str> {
+    let folder = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || folder.save(content))
+        .await
+        .map_err(|_| "The local agent folder is unavailable.")?
 }
 
 #[derive(serde::Serialize)]
@@ -73,7 +92,9 @@ fn main() {
             app.manage(if vm.status() == LocalVmStatus::NotIntegrated { EngineState::configured() }
                 else { EngineState::with_transport(vm.clone()) });
             app.manage(store.clone()); app.manage(vm.clone());
-            app.manage(bridge_engine::example_run::ExampleRun::new(tauri::async_runtime::handle().inner().clone(), bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE));
+            let folder = Arc::new(AgentFolder::new(app.path().home_dir().ok()));
+            app.manage(folder.clone());
+            app.manage(bridge_engine::example_run::ExampleRun::new(tauri::async_runtime::handle().inner().clone(), bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE, folder));
             tauri::async_runtime::spawn(async move {
                 if local_vm::resume_selected(store, &vm).await.is_err() {
                     eprintln!("The saved setup choice could not be read.");
@@ -81,7 +102,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_example, setup_connect_model, setup_run_status, setup_run_example])
+        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_example, setup_connect_model, setup_run_status, setup_run_example, agent_open, agent_save])
         .build(tauri::generate_context!())
         .expect("error while building Bridge")
         .run(move |app, event| {

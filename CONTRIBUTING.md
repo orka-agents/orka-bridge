@@ -56,12 +56,23 @@ and error's acknowledged/possibly-created identities. No POST retry, overwrite,
 adoption, deletion or persisted history is provided.
 
 In a development app with a running local VM and an acknowledged model connection,
-Designer can run the unchanged web-reader pair. The same serialized VM client carries
+Designer can run its current on-disk web-reader pair. The same serialized VM client carries
 Run requests; no host Orka port or second VM client is opened. The result shows the
 answer, attributable completed tool names, `contains` and `toolCalled` verdicts.
 Opening the example or reading Run status does not submit work. Duplicate Run calls
 while it is active only observe it. A dropped page or IPC waiter does not lose the
 native receipts; uncertain submissions retain acknowledged and possibly-created names.
+
+Designer opens `~/Orka/agents/web-reader/` without needing a VM. Bridge creates
+its own Git repository there from the bundled example and never overwrites an
+unmanaged existing folder. File view autosaves the UTF-8 agent file after a short
+pause or when focus leaves the editor; each changed save is a commit containing
+the exact file bytes. A save is acknowledged only after the commit is written.
+Failed saves keep the draft available for retry. The check file remains read-only.
+Run captures the saved disk pair before waiting for the VM client. Unsaved drafts
+must finish saving before Run; quitting before an autosave is admitted can lose
+that uncommitted draft. No Git executable, hooks, user Git identity or network
+access is used for these local commits.
 
 The guest image must include the current Orka request handler. Older images cannot
 run this path and report an unconfirmed result rather than replaying writes. On first
@@ -215,7 +226,7 @@ The Mac bundle includes readable notices in its Resources directory; CI also
 places them beside the portable Windows executable. Both builds embed them in
 the frontend. Preserve these files when redistributing builds.
 
-The app opens Clusters with a runtime chooser and a locked model step. Existing cluster is unavailable on both platforms. Local VM selection retains an empty preference marker at `setup-v1/local-vm` under the app data directory and starts the configured development runtime. A saved choice resumes at native initialization, reusing its committed installed image, journal identity and state disk without needing the factory source. Interrupted installations without a committed image remain errors; no reset, recreation or guessed retry is performed. Closing or quitting bars work and waits for startup, active engine I/O and the session's shutdown attempt. Failed shutdown remains a failure with the existing backend retention behavior. Selection is never readiness. The fixed web-reader pair can be opened read-only in Designer; opening it does not submit Agent or Task resources. A running development VM unlocks Use GitHub sign-in. It captures the existing github.com account through the supported GitHub CLI, stores it natively and connects copilot/gpt-5.6-terra in the same guest session. It does not open browser login, install GitHub CLI or use ambient token overrides. The screen reports a Connect acknowledgment or the finite failing stage, never raw provider diagnostics. Other builds keep the model step locked. Trusted native Rust callers can associate a captured sign-in with an installation-bound OS-store slot, deliver it over the private guest channel and invoke the fixed kmx Connect operation. Setup stores only opaque association and acknowledged lifecycle metadata, never credential bytes. Uncertain completion is retained without automatic capture or replay; explicit sign-out acknowledges Disconnect and file clear before removing the host slot. These calls require a rebuilt guest handler and matching kmx bundle; a Connect acknowledgment does not prove model inference. Connected or uncertain bindings cannot yet be reused or removed after a new VM lease; confirmed-owned-stop recovery remains a follow-up. A previously acknowledged clear still permits host-only cleanup. Engine diagnostics remain available in Clusters;
+The app opens Clusters with a runtime chooser and a locked model step. Existing cluster is unavailable on both platforms. Local VM selection retains an empty preference marker at `setup-v1/local-vm` under the app data directory and starts the configured development runtime. A saved choice resumes at native initialization, reusing its committed installed image, journal identity and state disk without needing the factory source. Interrupted installations without a committed image remain errors; no reset, recreation or guessed retry is performed. Closing or quitting bars work and waits for startup, active engine I/O and the session's shutdown attempt. Failed shutdown remains a failure with the existing backend retention behavior. Selection is never readiness. The web-reader pair opens from Bridge's own folder in Designer; opening it does not submit Agent or Task resources. A running development VM unlocks Use GitHub sign-in. It captures the existing github.com account through the supported GitHub CLI, stores it natively and connects copilot/gpt-5.6-terra in the same guest session. It does not open browser login, install GitHub CLI or use ambient token overrides. The screen reports a Connect acknowledgment or the finite failing stage, never raw provider diagnostics. Other builds keep the model step locked. Trusted native Rust callers can associate a captured sign-in with an installation-bound OS-store slot, deliver it over the private guest channel and invoke the fixed kmx Connect operation. Setup stores only opaque association and acknowledged lifecycle metadata, never credential bytes. Uncertain completion is retained without automatic capture or replay; explicit sign-out acknowledges Disconnect and file clear before removing the host slot. These calls require a rebuilt guest handler and matching kmx bundle; a Connect acknowledgment does not prove model inference. Connected or uncertain bindings cannot yet be reused or removed after a new VM lease; confirmed-owned-stop recovery remains a follow-up. A previously acknowledged clear still permits host-only cleanup. Engine diagnostics remain available in Clusters;
 native webviews can still create their usual cache/profile directories under
 the app identifier `ai.orka.bridge`.
 
