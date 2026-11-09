@@ -43,6 +43,12 @@ The Git dependency includes libz-sys 1.1.32 under its MIT license option
 under its MIT license option (`licenses/sha1-MIT.txt`). These notices are
 copied from the published crates and included in app artifacts.
 
+## Temporary pack copies
+
+The app uses tempfile 3.27.0 and fastrand 2.5.0 under their MIT license options.
+Their upstream notices are shipped as `licenses/tempfile-MIT.txt` and
+`licenses/fastrand-MIT.txt`.
+
 ## Fonts
 
 Geist and Geist Mono are bundled under the SIL Open Font License 1.1.

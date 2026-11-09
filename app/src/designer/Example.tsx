@@ -41,6 +41,8 @@ export default function Example({ active = true, actions, onPair, onRun, onSaveS
         const value = await agentCall('agent_save', content);
         if (value.agent !== content) throw Error('Save did not confirm the current file.');
         saved.current = content; setPair(value); onPair?.(value);
+        // Fingerprinted replies let Run distinguish older results from unsaved edits.
+        if (value.source) setStale(latest.current !== content);
       } while (latest.current !== saved.current);
       needsCommit.current = false; setSaveState('saved');
     } catch { needsCommit.current = true; setSaveState('error'); setError('Your changes could not be saved. Your draft is still here.'); }
@@ -49,7 +51,7 @@ export default function Example({ active = true, actions, onPair, onRun, onSaveS
   useEffect(() => () => { clearTimeout(timer.current); }, []);
   const edit = (value: string) => {
     const content = value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current);
-    latest.current = content; setDraft(content); setStale(true); setError(undefined);
+    latest.current = content; setDraft(content); setStale(content !== saved.current); setError(undefined);
     setSaveState('dirty'); clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush(); }, 500);
   };
