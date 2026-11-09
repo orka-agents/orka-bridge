@@ -43,6 +43,19 @@ The Git dependency includes libz-sys 1.1.32 under its MIT license option
 under its MIT license option (`licenses/sha1-MIT.txt`). These notices are
 copied from the published crates and included in app artifacts.
 
+## Kubernetes access
+
+The app uses kube, kube-client and kube-core 5.0.0 and k8s-openapi 0.29.0
+under Apache-2.0. Complete upstream licenses are shipped as
+`licenses/kube-Apache-2.0.txt` and `licenses/k8s-openapi-Apache-2.0.txt`.
+The kube license is copied from its published source revision; the other
+licenses are copied from the published crates.
+
+HTTP/authentication support uses http 1.5.0 and tower 0.5.3 under their MIT
+license options (`licenses/http-MIT.txt`, `licenses/tower-MIT.txt`). Base64 encoding
+uses its MIT license option (`licenses/base64-MIT.txt`). These notices are
+included in the same app artifact license directories as existing notices.
+
 ## Temporary pack copies
 
 The app uses tempfile 3.27.0 and fastrand 2.5.0 under their MIT license options.
