@@ -34,7 +34,9 @@ fn child(parent: &Dir, name: &str) -> io::Result<Dir> {
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
         Err(e) => return Err(e),
     }
-    parent.open_dir_nofollow(name)
+    let directory = parent.open_dir_nofollow(name)?;
+    sync(parent)?; // Also retry a prior mkdir's failed parent flush.
+    Ok(directory)
 }
 fn options() -> OpenOptions {
     let mut options = OpenOptions::new();
@@ -180,7 +182,6 @@ impl AgentFolder {
                 )?;
                 replace(&git, "HEAD", b"")?;
                 sync(&root)?;
-                sync(&agents)?;
             } else {
                 marker.rewind()?;
                 let mut ownership = Vec::new();
@@ -191,6 +192,7 @@ impl AgentFolder {
                     return Err(invalid());
                 }
             }
+            sync(&agents)?;
             // Retry a prior working-file rename's failed namespace flush even
             // when the visible bytes already match the next save/open.
             sync(&root)?;
