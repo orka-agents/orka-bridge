@@ -106,16 +106,14 @@ fn discard_absent_reservation(
     b: &Binding,
     store: &impl CredentialStore,
 ) -> Result<(), SetupError> {
-    if matches!(
-        store.load(b.slot),
+    match store.load(b.slot) {
         Err(StoreError::Native {
             call: NativeCall::CredReadW,
-            code: 1168
-        })
-    ) {
-        fs::remove_file(root.join("model-v1")).map_err(|_| unavailable())?;
+            code: 1168,
+        }) => fs::remove_file(root.join("model-v1")).map_err(|_| unavailable()),
+        Err(error @ StoreError::Native { .. }) => Err(SetupError::store(error)),
+        _ => Ok(()),
     }
-    Ok(())
 }
 fn state(b: Option<&Binding>, ready: bool) -> ModelSetupState {
     ModelSetupState {
@@ -426,14 +424,18 @@ mod tests {
                     panic!("the empty test peer must refuse before capture")
                 })
                 .unwrap_err();
-            assert_eq!(
-                error.kind,
-                if absent {
-                    "modelGuest"
-                } else {
-                    "modelUnavailable"
-                }
-            );
+            let expected_kind = match read_error {
+                Some(StoreError::Native { code: 5, .. }) => "modelStore",
+                _ if absent => "modelGuest",
+                _ => "modelUnavailable",
+            };
+            assert_eq!(error.kind, expected_kind);
+            if expected_kind == "modelStore" {
+                assert_eq!(
+                    serde_json::to_value(error).unwrap()["native"],
+                    serde_json::json!({"call": "CredReadW", "code": 5})
+                );
+            }
             assert_eq!(read_binding(root).unwrap().is_none(), absent);
         }
     }
