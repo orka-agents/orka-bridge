@@ -493,11 +493,19 @@ impl<'a> NativeRunner<'a> {
             }
         }
         self.checked(agent, deadline, stop).await?;
-        let verdict = if handle.tasks.len() == handle.pair.cases().len() {
-            aggregate(cases.iter().map(|c| c.verdict))
-        } else {
-            Verdict::Unknown
-        };
+        // A missing receipt is not evidence that a Task was never created or
+        // that its assertions failed. Preserve known failures in other cases.
+        for case in &handle.pair.cases()[handle.tasks.len()..] {
+            cases.push(CaseReport {
+                id: case.id.clone(),
+                phase: "Unacknowledged".into(),
+                answer: None,
+                completed_tools: Vec::new(),
+                assertions: case.evaluate(None, &[]),
+                verdict: Verdict::Unknown,
+            });
+        }
+        let verdict = aggregate(cases.iter().map(|c| c.verdict));
         check_stop(stop)?;
         Ok(RunReport { cases, verdict })
     }

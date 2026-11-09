@@ -86,6 +86,99 @@ fn yaml<T: serde::de::DeserializeOwned>(s: &str) -> Result<T, ErrorKind> {
 fn present(s: &str) -> bool {
     !s.trim().is_empty() && !s.contains('\0')
 }
+// Name classification, not authorization or target availability. Keep aligned
+// with KnownBuiltInToolNames at the Orka revision documented in docs/native-run.md.
+fn supported_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        "web_search"
+            | "web_fetch"
+            | "code_exec"
+            | "file_read"
+            | "file_write"
+            | "request_approval"
+            | "reply_in_conversation"
+            | "create_ai_task"
+            | "create_pr_monitor"
+            | "create_container_task"
+            | "create_agent_task"
+            | "check_task_progress"
+            | "fetch_task_output"
+            | "wait_for_task"
+            | "cancel_task"
+            | "list_agents"
+            | "list_tools"
+            | "list_tasks"
+            | "list_connections"
+            | "create_agent"
+            | "update_agent"
+            | "delete_agent"
+            | "create_tool"
+            | "delete_tool"
+            | "delete_session"
+            | "delegate_task"
+            | "wait_for_tasks"
+            | "send_message"
+            | "check_messages"
+            | "create_pull_request"
+            | "check_pull_request_ci"
+            | "merge_pull_request"
+            | "auto_merge_pull_request"
+            | "review_pull_request"
+            | "post_review_comment"
+            | "check_pr_review_marker"
+            | "list_issues"
+            | "list_pull_requests"
+            | "get_issue"
+            | "comment_on_issue"
+            | "update_plan"
+            | "recall_memory"
+            | "remember"
+            | "propose_memory"
+            | "search_transcript"
+    )
+}
+
+/// Fence recognition is separate from case YAML decoding. Noncanonical test
+/// fences are refused, never silently dropped beside a valid case.
+fn test_blocks(body: &str) -> Result<Vec<RunCase>, ErrorKind> {
+    let mut cases = Vec::new();
+    let mut fence: Option<(u8, usize)> = None;
+    let mut block: Option<String> = None;
+    for line in body.split_inclusive('\n') {
+        let marker = line.trim_end_matches(['\r', '\n']);
+        let trimmed = marker.trim_start_matches([' ', '\t']);
+        let first = trimmed.as_bytes().first().copied();
+        let candidate = first.filter(|c| matches!(c, b'`' | b'~')).and_then(|c| {
+            let count = trimmed.bytes().take_while(|b| *b == c).count();
+            (count >= 3).then_some((c, count, &trimmed[count..]))
+        });
+        if let Some((character, length)) = fence {
+            if candidate
+                .is_some_and(|(c, n, rest)| c == character && n >= length && rest.trim().is_empty())
+            {
+                if let Some(text) = block.take() {
+                    cases.push(yaml(&text)?);
+                }
+                fence = None;
+            } else if let Some(text) = &mut block {
+                text.push_str(line);
+            }
+        } else if let Some((character, length, info)) = candidate {
+            if info.contains("agent-test") {
+                if marker != "```yaml agent-test" {
+                    return Err(ErrorKind::Source);
+                }
+                block = Some(String::new());
+            }
+            fence = Some((character, length));
+        }
+    }
+    if fence.is_some() || cases.is_empty() || cases.len() > 32 {
+        return Err(ErrorKind::Source);
+    }
+    Ok(cases)
+}
 impl ParsedPair {
     pub fn parse(agent: &[u8], tests: &[u8]) -> Result<Self, ErrorKind> {
         let snapshot = SnapshotId::of(agent, tests);
@@ -105,35 +198,15 @@ impl ParsedPair {
         let _ = (agent.name, agent.description);
         let mut tools = Vec::new();
         for tool in agent.kmx.tools {
-            if tool.kind != "builtin" || !present(&tool.name) || tools.contains(&tool.name) {
+            if tool.kind != "builtin"
+                || !supported_builtin(&tool.name)
+                || tools.contains(&tool.name)
+            {
                 return Err(ErrorKind::Source);
             }
             tools.push(tool.name);
         }
-        let mut cases: Vec<RunCase> = Vec::new();
-        let mut block = None;
-        let mut other_fence = false;
-        for line in body.split_inclusive('\n') {
-            let marker = line.trim_end_matches(['\r', '\n']);
-            if marker == "```yaml agent-test" && !other_fence {
-                if block.is_some() {
-                    return Err(ErrorKind::Source);
-                }
-                block = Some(String::new());
-            } else if marker == "```" && block.is_some() {
-                cases.push(yaml(&block.take().ok_or(ErrorKind::Source)?)?);
-            } else if let Some(text) = &mut block {
-                text.push_str(line);
-            } else if marker.starts_with("```") {
-                if marker.contains("agent-test") {
-                    return Err(ErrorKind::Source);
-                }
-                other_fence = !other_fence;
-            }
-        }
-        if block.is_some() || cases.is_empty() || cases.len() > 32 {
-            return Err(ErrorKind::Source);
-        }
+        let cases = test_blocks(body)?;
         let mut ids = HashSet::new();
         for case in &cases {
             if !present(&case.id)
