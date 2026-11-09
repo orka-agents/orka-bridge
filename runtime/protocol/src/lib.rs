@@ -23,6 +23,8 @@ pub const VERSION: u16 = 1;
 pub const MAX_FRAME: usize = 128 * 1024;
 pub const MAX_CHUNK: usize = 32 * 1024;
 pub const STATE_BYTES: u64 = 34_359_738_368;
+/// Guest RAM allocated by every native launcher (6 GiB).
+pub const MEMORY_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

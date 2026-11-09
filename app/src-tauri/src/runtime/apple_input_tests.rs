@@ -58,7 +58,8 @@ fn config_is_unlinked_private_rewound_and_uses_numeric_sdk_arrays() {
     );
     assert_eq!(json["stateDiskPath"], spec.state_path.to_str().unwrap());
     assert_eq!(json["createEFI"], true);
-    assert_eq!(json.as_object().unwrap().len(), 7);
+    assert_eq!(json["memoryBytes"], bridge_runtime_protocol::MEMORY_BYTES);
+    assert_eq!(json.as_object().unwrap().len(), 8);
     assert_eq!(
         fs::read_dir(temp.path().join("install")).unwrap().count(),
         before

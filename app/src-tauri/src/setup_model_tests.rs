@@ -2,7 +2,7 @@
 #![cfg(unix)]
 
 use super::*;
-use crate::runtime::credential_store::StoreError;
+use crate::runtime::credential_store::{NativeCall, StoreError};
 use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
@@ -136,7 +136,11 @@ fn os_save_apply_then_error_keeps_uuid_for_explicit_host_signout() {
     worker.join().unwrap().assert_empty();
     assert_eq!(
         *vault.calls.lock().unwrap(),
-        vec![("save", binding.slot), ("delete", binding.slot)]
+        vec![
+            ("save", binding.slot),
+            ("load", binding.slot),
+            ("delete", binding.slot)
+        ]
     );
     assert!(vault.slots.lock().unwrap().is_empty());
     assert!(read_binding(setup.root.as_deref().unwrap())
@@ -209,6 +213,8 @@ fn invalid_selection_refuses_before_actual_wire_or_os_load() {
 #[derive(Default)]
 struct FakeVault {
     deny_save: bool,
+    save_error: Option<StoreError>,
+    load_error: Option<StoreError>,
     deny_delete: Mutex<bool>,
     block_publish: Mutex<Option<(std::path::PathBuf, u32)>>,
     observe_save: Option<Box<dyn Fn(Uuid) + Send + Sync>>,
@@ -228,6 +234,9 @@ impl CredentialStore for FakeVault {
         assert!(!slot.is_nil());
         assert_eq!(secret, SECRET);
         self.calls.lock().unwrap().push(("save", slot));
+        if let Some(error) = self.save_error {
+            return Err(error);
+        }
         if self.deny_save {
             return Err(StoreError::Unavailable);
         }
@@ -245,9 +254,15 @@ impl CredentialStore for FakeVault {
     }
     fn load(&self, slot: Uuid) -> Result<CredentialPayload, StoreError> {
         self.calls.lock().unwrap().push(("load", slot));
+        if let Some(error) = self.load_error {
+            return Err(error);
+        }
         let slots = self.slots.lock().unwrap();
-        CredentialPayload::new(slots.get(&slot).ok_or(StoreError::Unavailable)?)
-            .map_err(|_| StoreError::Invalid)
+        CredentialPayload::new(slots.get(&slot).ok_or(StoreError::Native {
+            call: NativeCall::CredReadW,
+            code: 1168,
+        })?)
+        .map_err(|_| StoreError::Invalid)
     }
     fn delete(&self, slot: Uuid) -> Result<(), StoreError> {
         self.calls.lock().unwrap().push(("delete", slot));
@@ -378,7 +393,7 @@ fn remote(connection: &ModelConnection, phase: ModelPhase) -> ResultBody {
 }
 
 #[test]
-fn denied_save_leaves_no_association_plaintext_fallback_or_load() {
+fn denied_save_with_confirmed_absence_leaves_no_reservation_or_plaintext_fallback() {
     let (_tmp, setup, install) = selected_setup();
     let vault = FakeVault {
         deny_save: true,
@@ -387,8 +402,8 @@ fn denied_save_leaves_no_association_plaintext_fallback_or_load() {
     assert!(setup.associate_secret(install, SECRET, &vault).is_err());
     assert!(!setup.model_binding_status().unwrap().associated);
     let root = setup.root.as_deref().unwrap();
-    assert!(setup.model_binding_status().unwrap().unknown);
-    assert!(read_binding(root).unwrap().is_some());
+    assert!(!setup.model_binding_status().unwrap().unknown);
+    assert!(read_binding(root).unwrap().is_none());
     for entry in fs::read_dir(root).unwrap() {
         let bytes = fs::read(entry.unwrap().path()).unwrap();
         assert!(!bytes.windows(SECRET.len()).any(|part| part == SECRET));
@@ -399,8 +414,116 @@ fn denied_save_leaves_no_association_plaintext_fallback_or_load() {
         .is_err());
     drop(client);
     worker.join().unwrap().assert_empty();
-    assert_eq!(vault.counts(), (1, 0, 0));
+    assert_eq!(vault.counts(), (1, 1, 0));
     assert!(vault.slots.lock().unwrap().is_empty());
+}
+
+const WRITE_FAILURE: StoreError = StoreError::Native {
+    call: NativeCall::CredWriteW,
+    code: 8,
+};
+const READ_FAILURE: StoreError = StoreError::Native {
+    call: NativeCall::CredReadW,
+    code: 1168,
+};
+const STORE_MESSAGE: &str = "The native credential store could not save or load the sign-in.";
+
+// Diagnostics are built only from finite typed data, so no slot, target or secret can enter.
+fn assert_redacted(error: &SetupError, slot: Uuid, install: Uuid) {
+    let wire = serde_json::to_string(error).unwrap();
+    let text = format!("{wire} {error:?}");
+    for private in [
+        std::str::from_utf8(SECRET).unwrap().to_owned(),
+        slot.to_string(),
+        install.to_string(),
+        "ai.orka.bridge".to_owned(),
+    ] {
+        assert!(!text.contains(&private), "diagnostic leaked {private}");
+    }
+    let value: serde_json::Value = serde_json::from_str(&wire).unwrap();
+    assert_eq!(value["kind"], "modelStore");
+    assert_eq!(value["message"], STORE_MESSAGE);
+}
+
+#[test]
+fn failed_save_with_confirmed_absence_reports_error_8_and_allows_another_signin() {
+    let (_tmp, setup, install) = selected_setup();
+    let mut vault = FakeVault {
+        save_error: Some(WRITE_FAILURE),
+        ..FakeVault::default()
+    };
+    let error = setup.associate_secret(install, SECRET, &vault).unwrap_err();
+    assert_eq!(error.kind, "modelStore");
+    assert_eq!(
+        serde_json::to_value(&error).unwrap()["native"],
+        serde_json::json!({"call": "CredWriteW", "code": 8})
+    );
+    let slot = vault.calls.lock().unwrap()[0].1;
+    assert_redacted(&error, slot, install);
+    assert!(read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .is_none());
+    assert!(!setup.model_binding_status().unwrap().unknown);
+    assert_eq!(vault.counts(), (1, 1, 0));
+    vault.save_error = None;
+    assert!(
+        setup
+            .associate_secret(install, SECRET, &vault)
+            .unwrap()
+            .associated
+    );
+    let binding = read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.phase, Phase::Stored);
+    assert_ne!(binding.slot, slot);
+    assert_eq!(
+        vault.counts(),
+        (2, 1, 0),
+        "only the explicit retry saves again"
+    );
+}
+
+#[test]
+fn native_load_failure_is_diagnosed_before_any_guest_mutation() {
+    let (_tmp, setup, install) = selected_setup();
+    let vault = FakeVault {
+        load_error: Some(READ_FAILURE),
+        ..FakeVault::default()
+    };
+    setup.associate_secret(install, SECRET, &vault).unwrap();
+    let (mut client, worker) = peer(Uuid::new_v4(), |_| Some(idle()));
+    let error = setup
+        .connect_model(install, selection(), &mut client, &vault)
+        .unwrap_err();
+    assert_eq!(error.kind, "modelStore");
+    assert_eq!(
+        serde_json::to_value(&error).unwrap()["native"],
+        serde_json::json!({"call": "CredReadW", "code": 1168})
+    );
+    let binding = read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .unwrap();
+    assert_eq!(binding.phase, Phase::Stored);
+    assert_redacted(&error, binding.slot, install);
+    drop(client);
+    assert_eq!(worker.join().unwrap().publications(), 0);
+    assert_eq!(vault.counts(), (1, 1, 0));
+}
+
+#[test]
+fn non_native_store_failures_and_other_errors_have_only_their_fixed_message() {
+    let (_tmp, setup, install) = selected_setup();
+    let vault = FakeVault {
+        deny_save: true,
+        ..FakeVault::default()
+    };
+    let error = setup.associate_secret(install, SECRET, &vault).unwrap_err();
+    assert_eq!(error.kind, "modelStore");
+    assert_eq!(
+        serde_json::to_value(&error).unwrap(),
+        serde_json::json!({"kind": "modelStore", "message": STORE_MESSAGE})
+    );
 }
 
 #[test]

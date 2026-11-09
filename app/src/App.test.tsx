@@ -1,10 +1,11 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from './App';
 
-afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
+beforeEach(() => { localStorage.setItem('bridge.welcomeSeen.v1', '1'); });
+afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 test('navigation_order', () => {
   render(<App />);
@@ -18,11 +19,11 @@ test('navigation_order', () => {
 test('selected_heading', async () => {
   const user = userEvent.setup();
   render(<App />);
-  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Clusters');
+  expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
   for (const name of ['Designer', 'Clusters', 'Overview']) {
     await user.click(screen.getByRole('button', { name }));
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
-    expect(screen.getByRole('main', { name })).toBeTruthy();
+    expect(await screen.findByRole('main', { name: name === 'Clusters' ? 'Where should your agents run?' : name })).toBeTruthy();
     const selected = screen.getAllByRole('button').filter(button => button.getAttribute('aria-current') === 'page');
     expect(selected).toEqual([screen.getByRole('button', { name })]);
   }
@@ -38,7 +39,7 @@ test('keyboard_activation', async () => {
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Designer');
   await user.tab();
   await user.keyboard('{Enter}');
-  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Clusters');
+  expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
 });
 
 test('navigation starts at the page heading after scrolling another page', async () => {
@@ -163,9 +164,9 @@ test('the idle refresh does not erase a delayed selection failure', async () => 
   });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('radio', { name: /Local VM/ }));
+  await user.click(await screen.findByRole('button', { name: 'Continue' }));
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 1200)); });
-  expect(screen.getByRole('radio', { name: /Local VM/ }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
   await act(async () => { rejectSelection(new Error('selection write failed')); });
   expect(await screen.findByText('The setup choice could not be read or saved.')).toBeTruthy();
 });
@@ -259,11 +260,12 @@ test('Clusters reads setup and version without fetch or legacy IPC', async () =>
   vi.stubGlobal('isTauri', true);
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
   const user = userEvent.setup(); render(<App />);
-  expect(await screen.findByText('Native setup available')).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();
   await user.click(screen.getByText('Engine diagnostics'));
   expect(await screen.findByRole('heading', { name: 'Engine available' })).toBeTruthy();
   expect(screen.getByText('Version v0.4.2. Cluster readiness has not been checked.')).toBeTruthy();
-  expect(ipc.mock.calls.map(call => call[0])).toEqual(['setup_status', 'engine_call']);
+  expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status', 'engine_call'].includes(command))).toBe(true);
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_requirements')).toEqual([['setup_requirements', {}]]);
   expect(ipc).toHaveBeenCalledWith('engine_call', { request: { action: { type: 'version' } } });
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(screen.queryByRole('heading', { name: 'Engine available' })).toBeNull();

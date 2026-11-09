@@ -28,6 +28,7 @@ struct HelperArguments {
 // Ephemeral native-only input, not a second installation record or image verifier.
 struct HelperConfiguration: Decodable {
     private let version: Int
+    private let memoryBytes: UInt64
     private let installationPath: String
     private let osDiskPath: String
     private let stateDiskPath: String
@@ -54,12 +55,14 @@ struct HelperConfiguration: Decodable {
         }
         guard count == Int(info.st_size) else { throw HelperConfigurationError.invalidInput }
         let data = Data(bytes.prefix(count))
-        let keys: Set<String> = ["version", "installationPath", "osDiskPath", "stateDiskPath",
+        let keys: Set<String> = ["version", "memoryBytes", "installationPath", "osDiskPath", "stateDiskPath",
                                  "machineId", "mac", "createEFI"]
         guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               Set(object.keys) == keys else { throw HelperConfigurationError.invalidInput }
         let config = try JSONDecoder().decode(Self.self, from: data)
-        guard config.version == 1, (1...4096).contains(config.machineId.count),
+        guard config.version == 1,
+              (1...16).contains(config.memoryBytes >> 30), config.memoryBytes % (1 << 20) == 0,
+              (1...4096).contains(config.machineId.count),
               VZGenericMachineIdentifier(dataRepresentation: Data(config.machineId)) != nil,
               config.mac.count == 6, config.mac[0] & 3 == 2,
               [config.installationPath, config.osDiskPath, config.stateDiskPath].allSatisfy({
@@ -100,7 +103,7 @@ struct HelperConfiguration: Decodable {
         platform.machineIdentifier = machineID
         let configuration = VZVirtualMachineConfiguration()
         configuration.cpuCount = 4
-        configuration.memorySize = 6 * 1024 * 1024 * 1024
+        configuration.memorySize = memoryBytes
         configuration.bootLoader = loader
         configuration.platform = platform
         configuration.storageDevices = try [(osDiskPath, "bridge-os"), (stateDiskPath, "bridge-state")].map {

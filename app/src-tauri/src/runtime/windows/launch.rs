@@ -149,7 +149,6 @@ pub fn launch_argv(
         ("-accel", "whpx"),
         ("-cpu", "host"),
         ("-smp", "4"),
-        ("-m", "6144"),
         ("-rtc", "base=utc"),
         ("-display", "none"),
         ("-vga", "none"),
@@ -158,6 +157,12 @@ pub fn launch_argv(
     ] {
         pair(a, b.into());
     }
+    pair(
+        "-m",
+        (bridge_runtime_protocol::MEMORY_BYTES / (1024 * 1024))
+            .to_string()
+            .into(),
+    );
     pair("-uuid", spec.installation_id.to_string().into());
     pair(
         "-kernel",

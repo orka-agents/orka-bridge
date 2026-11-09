@@ -69,6 +69,7 @@ export default function App() {
   const ready = useCallback(() => setEngineReady(true), []);
   const [setup, setSetup] = useState<SetupStatus>();
   const [checking, setChecking] = useState(true);
+  const [welcome, setWelcome] = useState(false);
   const [model, setModel] = useState<ModelState>('idle');
   const [agentName, setAgentName] = useState<string>();
   const [exampleState, setExampleState] = useState<'loading' | 'loaded' | 'failed'>('loading');
@@ -102,7 +103,7 @@ export default function App() {
     Overview: checks ?? 'No agents yet',
     Designer: agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Read-only example' : 'Opening example…',
-    Clusters: !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
+    Clusters: welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
       : model === 'connected' ? run?.state === 'complete' ? 'This computer ready' : 'AI connected'
       : model === 'idle' ? setupLine : modelDetail,
   };
@@ -142,7 +143,7 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup active={page === 'Clusters'} onReady={ready} onStatus={observeSetup} onModelState={setModel}
+          <Setup active={page === 'Clusters'} onReady={ready} onStatus={observeSetup} onModelState={setModel} onWelcome={setWelcome}
             onOpenExample={() => {
               if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
               setExampleOpen(true); setPage('Designer');
@@ -161,8 +162,8 @@ export default function App() {
       </main>
       <footer className="status-bar">
         <span className={`live-dot ${tone}`} aria-hidden="true" />
-        <span>{workspaceReady ? 'This computer ready' : setupLine}</span>
-        {detail !== setupLine || workspaceReady ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : detail}</span></> : null}
+        <span>{welcome ? 'Nothing is set up yet' : workspaceReady ? 'This computer ready' : setupLine}</span>
+        {!welcome && (detail !== setupLine || workspaceReady) ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : detail}</span></> : null}
         {agentName && <><span aria-hidden="true">·</span><span>Read-only example</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[

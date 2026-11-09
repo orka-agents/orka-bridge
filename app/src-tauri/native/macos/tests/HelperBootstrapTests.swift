@@ -50,7 +50,7 @@ private final class Fixture {
         root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         owner = open(root.appendingPathComponent("owner").path, O_CREAT | O_RDWR, 0o600)
-        let object: [String: Any] = ["version": 1, "installationPath": root.path,
+        let object: [String: Any] = ["version": 1, "memoryBytes": 6 * 1024 * 1024 * 1024, "installationPath": root.path,
             "osDiskPath": root.appendingPathComponent("os.disk").path,
             "stateDiskPath": root.appendingPathComponent("state.disk").path,
             "machineId": Array(VZGenericMachineIdentifier().dataRepresentation),
