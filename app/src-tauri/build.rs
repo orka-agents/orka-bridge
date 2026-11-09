@@ -19,6 +19,7 @@ fn main() {
             "setup_status",
             "setup_select_local",
             "setup_example",
+            "setup_requirements",
         ]));
     tauri_build::try_build(attributes).expect("failed to build Bridge");
 }
