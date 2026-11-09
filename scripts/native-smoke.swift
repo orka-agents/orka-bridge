@@ -205,10 +205,8 @@ let bytesBeforeEdit = existedBeforeEdit ? try Data(contentsOf: ownedFile) : nil
 let editorPoint = CGPoint(x: fileRect.midX, y: fileRect.minY + fileRect.height * 0.6)
 mouse(.leftMouseDown, editorPoint); mouse(.leftMouseUp, editorPoint)
 key(48, shift: true); key(48)
-for down in [true, false] {
-    let event = CGEvent(keyboardEventSource: nil, virtualKey: 125, keyDown: down)!
-    event.flags = .maskCommand; event.post(tap: .cghidEventTap)
-}
+// Unlike the owned-editor append probe, a read-only edit attempt needs no
+// end-of-file navigation: Command-Down can scroll the page heading out of view.
 let marker = "\n\nNative read-only edit probe \(UUID().uuidString)."
 // Return is an editing command, not part of a multi-character Unicode event.
 for character in marker.utf16 {
