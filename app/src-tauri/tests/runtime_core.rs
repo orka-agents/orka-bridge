@@ -108,7 +108,10 @@ fn buffered_boot_handoff_preserves_ready2_read_ahead_for_the_client() {
             version: VERSION,
             boot_nonce: nonce,
             request_id: 3,
-            body: ResultBody::Ready {},
+            body: ResultBody::Infrastructure(InfrastructureState {
+                phase: Some(BootstrapPhase::ClusterReady),
+                service: InfrastructureService::Starting,
+            }),
         }))
         .unwrap(),
     );
@@ -122,7 +125,10 @@ fn buffered_boot_handoff_preserves_ready2_read_ahead_for_the_client() {
         123,
     )
     .unwrap();
-    client.readiness().unwrap();
+    assert_eq!(
+        serde_json::to_value(client.readiness().unwrap()).unwrap(),
+        serde_json::json!({"phase": "cluster-ready", "service": "starting"})
+    );
     let frames: Vec<Frame> = writes
         .lock()
         .unwrap()
@@ -406,7 +412,14 @@ fn readiness_refusal_keeps_the_sequenced_channel_open() {
                 code: ErrorCode::Unavailable,
             },
         ),
-        (4, ResultBody::Ready {}),
+        (
+            4,
+            ResultBody::Infrastructure(InfrastructureState {
+                phase: Some(BootstrapPhase::InfrastructureReady),
+                service: InfrastructureService::Ready,
+            }),
+        ),
+        (5, ResultBody::Ready {}),
     ] {
         bytes.extend(
             encode(&Frame::Result(WireResult {
@@ -424,7 +437,14 @@ fn readiness_refusal_keeps_the_sequenced_channel_open() {
     )
     .unwrap();
     assert!(client.readiness().is_err());
-    client.readiness().unwrap();
+    assert_eq!(
+        serde_json::to_value(client.readiness().unwrap()).unwrap(),
+        serde_json::json!({"phase": "infrastructure-ready", "service": "ready"})
+    );
+    assert!(
+        client.readiness().is_err(),
+        "legacy storage Ready cannot unlock Orka"
+    );
 }
 #[test]
 fn exclusive_directory_lock_and_persistent_random_identity() {
