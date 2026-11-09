@@ -188,6 +188,8 @@ fn storage_error() -> SetupError {
     }
 }
 
+#[path = "setup_help.rs"]
+pub mod help;
 #[path = "setup_model.rs"]
 mod model;
 pub use model::ModelSetupState;

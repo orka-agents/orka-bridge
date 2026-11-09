@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 import { agentInfo } from '../designer/agent-api';
 import { formatSize } from './requirements';
 import { type ExamplePair, loadExample, type SetupStatus } from './state';
+import Recovery from './Recovery';
+import { modelDetails } from './recovery';
 import './steps.css';
 
 export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
@@ -28,7 +30,6 @@ export default function Steps({ status, busy, stopping, error, modelConnected, f
   const checkLabel = firstCheck ? { running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown', stale: 'Needs running' }[firstCheck] : modelConnected ? 'Needs you' : 'Waiting';
   const phase = ready ? 'done' : failed ? 'failed' : paused || status.localVm === 'notIntegrated' ? 'waiting' : 'current';
   const stateLine = error ? 'Workspace status is unavailable.' : stopping ? 'Stopping your workspace…' : ready ? 'Your workspace is running on this computer.'
-    : failed ? 'Your workspace could not start or its stop could not be confirmed. Your files are kept.'
     : paused ? 'What has arrived is kept.' : status.localVm === 'starting' ? 'Starting your workspace…'
     : status.localVm === 'closing' ? 'Stopping your workspace…'
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
@@ -39,18 +40,18 @@ export default function Steps({ status, busy, stopping, error, modelConnected, f
       <li className={`step-${phase}`} aria-current={phase === 'current' ? 'step' : undefined}>
         <PhaseIcon phase={phase} /><b>Get your workspace ready</b><span className="step-result">{ready ? 'Ready' : paused ? 'Paused' : failed ? 'Needs attention' : eta}</span>
         <div className="step-more">
-          <p role={failed ? 'alert' : 'status'}>{stateLine}</p>
+          {failed ? <Recovery key={status.localVmError} detail={status.localVmError} disabled={busy || !!error} onRetry={onRestart} /> : <p role="status">{stateLine}</p>}
           {!stopping && status.localVm === 'starting' && <><div className="workspace-indeterminate" role="progressbar" aria-label="Workspace startup" /><p className="muted">{progress?.phase === 'starting' ? `${Math.floor(progress.elapsedMs / 1000)} seconds elapsed` : 'Getting the workspace ready…'}</p></>}
           {numbers && <><progress aria-label="Workspace installation" value={progress.bytes!} max={progress.totalBytes!} />
             <p className="muted">Installing, {formatSize(progress.bytes!)} of {formatSize(progress.totalBytes!)}</p></>}
-          <button type="button" className="workspace-disclosure" aria-expanded={details} aria-controls="workspace-progress-details" onClick={() => setDetails(value => !value)}>{details ? 'Hide details' : 'Show details'}</button>
+          {!failed && <><button type="button" className="workspace-disclosure" aria-expanded={details} aria-controls="workspace-progress-details" onClick={() => setDetails(value => !value)}>{details ? 'Hide details' : 'Show details'}</button>
           {details && <div id="workspace-progress-details" className="workspace-progress-details">
             <dl><div><dt>Checking workspace files</dt><dd>{status.localVm === 'preparing' || progress?.phase === 'verifying' ? 'In progress' : ready || copying || status.localVm === 'starting' ? 'Checked' : 'Waiting'}</dd></div>
               <div><dt>Installing workspace files</dt><dd>{ready || status.localVm === 'starting' ? 'Installed' : copying ? 'In progress' : 'Waiting'}</dd></div>
               <div><dt>Starting workspace</dt><dd>{ready ? 'Ready' : status.localVm === 'starting' ? 'In progress' : 'Waiting'}</dd></div></dl>
             {progress && <p className="muted">{Math.floor(progress.elapsedMs / 1000)} seconds in this file step.</p>}
-            {status.localVmError && <pre tabIndex={0}>{status.localVmError}</pre>}
-          </div>}
+            {status.localVmError && <pre tabIndex={0}>{ready ? modelDetails(status.localVmError) : status.localVmError}</pre>}
+          </div>}</>}
         </div>
       </li>
       <li className={modelConnected ? 'step-done' : ready ? 'step-current' : 'step-waiting'}><PhaseIcon phase={modelConnected ? 'done' : ready ? 'current' : 'waiting'} /><b>Choose the AI your agent uses</b><span className="step-result">{modelConnected ? 'Connected' : ready ? 'Needs you' : 'Waiting'}</span></li>

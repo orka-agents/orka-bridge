@@ -124,7 +124,8 @@ test('an established Designer stays editable when a running workspace later fail
 test('failure is one plain red step, native details stay behind disclosure', async () => {
   native('failed'); const user = userEvent.setup(); render(<App />);
   const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toBe('Your workspace could not start or its stop could not be confirmed. Your files are kept.');
+  expect(alert.textContent).toContain("The workspace couldn't start.");
+  expect(alert.textContent).toContain('What you downloaded is kept.');
   expect(alert.closest('li')?.classList.contains('step-failed')).toBe(true);
   expect(screen.queryByText('PRIVATE_NATIVE_DETAIL')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));

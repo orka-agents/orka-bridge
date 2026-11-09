@@ -113,6 +113,7 @@ impl LocalVmStatus {
 fn failure_reason(error: &RuntimeError) -> String {
     match error {
         RuntimeError::Io(error) => error.to_string(),
+        RuntimeError::StopUnconfirmed(detail) => format!("startupStopFailed: {detail}"),
         _ => error.to_string(),
     }
 }
@@ -378,13 +379,14 @@ impl Inner {
             }
         }
     }
-    fn fail(&self, reason: String) {
+    fn fail(&self, reason: String, stop_unconfirmed: bool) {
         let mut state = self.state.lock().unwrap();
         state.failure = Some(reason);
         state.progress = None;
         if !state.closing {
             state.phase = LocalVmStatus::Failed;
         }
+        state.closing |= stop_unconfirmed;
     }
     fn ready(&self) -> bool {
         let state = self.state.lock().unwrap();
@@ -461,7 +463,10 @@ impl LocalVm {
         let mut state = self.inner.state.lock().unwrap();
         if state.terminal
             || state.closing
-            || !matches!(state.phase, LocalVmStatus::Idle | LocalVmStatus::Cancelled)
+            || !matches!(
+                state.phase,
+                LocalVmStatus::Idle | LocalVmStatus::Cancelled | LocalVmStatus::Failed
+            )
         {
             return;
         }
@@ -503,10 +508,10 @@ impl LocalVm {
                     RuntimeError::Closed
                     | RuntimeError::Image(crate::runtime::image_types::ImageError::Cancelled),
                 ) if cancelled_error => {}
-                Err(error) => inner.fail(format!(
-                    "Starting the local VM failed: {}",
-                    failure_reason(&error)
-                )),
+                Err(error) => inner.fail(
+                    format!("Starting the local VM failed: {}", failure_reason(&error)),
+                    matches!(error, RuntimeError::StopUnconfirmed(_)),
+                ),
             }
             successful
         }));
@@ -625,10 +630,13 @@ impl LocalVm {
                             }
                             Err(error) => {
                                 // Never replace a late session whose native stop failed.
-                                stop_inner.fail(format!(
-                                    "Stopping the local VM failed: {}",
-                                    failure_reason(&error)
-                                ));
+                                stop_inner.fail(
+                                    format!(
+                                        "Stopping the local VM failed: {}",
+                                        failure_reason(&error)
+                                    ),
+                                    true,
+                                );
                                 false
                             }
                         }

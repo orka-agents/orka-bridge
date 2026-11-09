@@ -12,7 +12,7 @@ use crate::runtime::windows::inputs::{verify_windows_runtime, FilePin};
 ))]
 use crate::runtime::{
     image_install::{open_installed_image, InstalledImageSet},
-    journal::Journal,
+    journal::{Journal, JournalCustody},
 };
 #[cfg(any(all(debug_assertions, windows), test))]
 use std::io::Read;
@@ -98,12 +98,13 @@ fn wait_for_infrastructure(
         Ok(()) => Ok(session),
         Err(error) => {
             if let Err(cleanup) = session.stop() {
-                return Err(std::io::Error::other(format!(
+                // Keep the entire session, not just its error, until process exit.
+                std::mem::forget(session);
+                return Err(RuntimeError::StopUnconfirmed(format!(
                     "Orka infrastructure startup failed: {}; stopping the VM failed: {}",
                     failure_reason(&error),
                     failure_reason(&cleanup)
-                ))
-                .into());
+                )));
             }
             Err(error)
         }
@@ -118,6 +119,7 @@ fn retain_start_failure(
     stderr: std::io::Result<Vec<u8>>,
 ) -> RuntimeError {
     use std::io::Write;
+    let unconfirmed = matches!(error, RuntimeError::StopUnconfirmed(_));
     let reason = failure_reason(&error);
     let (stderr, capture_error) = match stderr {
         Ok(bytes) => (bytes, None),
@@ -171,7 +173,11 @@ fn retain_start_failure(
         Ok(()) => message.push_str(&format!(". Details: {}", directory.display())),
         Err(error) => message.push_str(&format!(". Could not save diagnostics: {error}")),
     }
-    std::io::Error::other(message).into()
+    if unconfirmed {
+        RuntimeError::StopUnconfirmed(message)
+    } else {
+        std::io::Error::other(message).into()
+    }
 }
 
 /// Release has no approved image catalog; native development uses the existing
@@ -287,14 +293,6 @@ struct NativeFactory {
         any(windows, all(target_os = "macos", target_arch = "aarch64"))
     )
 ))]
-struct JournalCustody(Option<Journal>);
-#[cfg(any(
-    test,
-    all(
-        debug_assertions,
-        any(windows, all(target_os = "macos", target_arch = "aarch64"))
-    )
-))]
 impl JournalCustody {
     fn take_for_launch(&mut self, closed: &watch::Receiver<bool>) -> Result<Journal, RuntimeError> {
         // Keep original creation authority through the very last cancellation checkpoint.
@@ -327,6 +325,8 @@ impl LocalFactory for NativeFactory {
             if *closed.borrow() {
                 return Err(RuntimeError::Closed);
             }
+            #[cfg(windows)]
+            runtime::windows::inputs::probe_startup_prerequisites()?;
             #[cfg(windows)]
             let inputs = {
                 runtime::windows::launch::control_path(
@@ -410,11 +410,13 @@ impl LocalFactory for NativeFactory {
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             let installation = installed.installation_id();
             let journal = custody.take_for_launch(&closed)?;
+            drop(custody); // A stopped worker returns the original owner through this slot.
             #[cfg(windows)]
-            let native = start_windows_session(inputs, journal, installed, &root, utc)?;
+            let native = start_windows_session(inputs, journal, installed, &root, utc, pending)?;
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            let session =
-                runtime::apple_session::AppleVmSession::launch(resources, journal, installed, utc)?;
+            let session = runtime::apple_session::AppleVmSession::launch_retaining(
+                resources, journal, installed, utc, pending,
+            )?;
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             let native = NativeSession(session, installation);
             wait_for_infrastructure(Box::new(native), closed, runtime)
@@ -428,6 +430,7 @@ fn start_windows_session(
     image: Arc<InstalledImageSet>,
     root: &Path,
     utc: u64,
+    custody: Arc<Mutex<JournalCustody>>,
 ) -> Result<NativeSession, RuntimeError> {
     // Keep the verified private root non-replaceable even if failed startup or
     // shutdown releases its worker before diagnostics are written.
@@ -435,8 +438,13 @@ fn start_windows_session(
     let installation = image.installation_id();
     let backend = crate::runtime::windows::backend::WindowsBackend::new(inputs);
     let failure = backend.failure_diagnostics();
-    let result = crate::runtime::RuntimeWorker::new(Box::new(backend), journal, image)
-        .and_then(|worker| crate::runtime::windows::session::WindowsSession::start(worker, utc));
+    let result =
+        crate::runtime::RuntimeWorker::new(Box::new(backend), journal, image).and_then(|worker| {
+            crate::runtime::windows::session::WindowsSession::start(
+                worker.retain_journal(custody),
+                utc,
+            )
+        });
     match result {
         Ok(session) => Ok(NativeSession {
             session,
