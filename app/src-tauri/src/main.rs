@@ -32,6 +32,20 @@ async fn setup_select_local(
     local_vm::select_local(Arc::clone(state.inner()), vm.inner()).await
 }
 #[tauri::command]
+async fn setup_cancel_local(
+    state: tauri::State<'_, Arc<SetupStore>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> Result<SetupSnapshot, SetupError> {
+    local_vm::cancel_local(Arc::clone(state.inner()), vm.inner()).await
+}
+#[tauri::command]
+async fn setup_change_local(
+    state: tauri::State<'_, Arc<SetupStore>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> Result<SetupSnapshot, SetupError> {
+    local_vm::change_local(Arc::clone(state.inner()), vm.inner()).await
+}
+#[tauri::command]
 fn setup_requirements() -> Option<bridge_engine::setup::SetupRequirements> {
     bridge_engine::setup::setup_requirements()
 }
@@ -106,7 +120,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_requirements, setup_example, setup_connect_model, setup_run_status, setup_run_example, agent_open, agent_save])
+        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_cancel_local, setup_change_local, setup_requirements, setup_example, setup_connect_model, setup_run_status, setup_run_example, agent_open, agent_save])
         .build(tauri::generate_context!())
         .expect("error while building Bridge")
         .run(move |app, event| {

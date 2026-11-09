@@ -199,6 +199,81 @@ fn reopen_never_creates_or_repairs_missing_or_incomplete_installations() {
     assert_eq!(fs::metadata(root.join("state.disk")).unwrap().len(), 0);
     assert!(!root.join("image-binding.json").exists());
 }
+use crate::runtime as fixture_runtime;
+#[path = "../tests/support/runtime_image_fixture.rs"]
+mod image_fixture;
+#[tokio::test]
+async fn original_creation_journal_survives_partial_and_post_materialization_cancel() {
+    use crate::runtime::{
+        image_install::materialize_image,
+        image_types::{ImageProgress, ImageTarget},
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let image = image_fixture::verified(temp.path(), ImageTarget::WindowsAmd64);
+    let compatibility = &image.image().identity().state_compatibility_id;
+    let root = temp.path().join("install");
+    let mut custody = JournalCustody(Some(
+        Journal::create(&root, BackendKind::Qemu, vec![1]).unwrap(),
+    ));
+    let (stop, closed) = watch::channel(false);
+    let target = custody
+        .0
+        .as_ref()
+        .unwrap()
+        .image_target(compatibility)
+        .unwrap();
+    assert!(materialize_image(&image, &target, closed.clone(), |event| {
+        if matches!(event, ImageProgress::Materializing { bytes, .. } if bytes > 0) {
+            stop.send_replace(true);
+        }
+    })
+    .await
+    .is_err());
+    assert!(matches!(
+        custody.take_for_launch(&closed),
+        Err(RuntimeError::Closed)
+    ));
+    stop.send_replace(false);
+    let target = custody
+        .0
+        .as_ref()
+        .unwrap()
+        .image_target(compatibility)
+        .unwrap();
+    materialize_image(&image, &target, closed.clone(), |_| {})
+        .await
+        .unwrap();
+    drop(target);
+    // Cancellation after the final image binding, before native session transfer.
+    stop.send_replace(true);
+    assert!(matches!(
+        custody.take_for_launch(&closed),
+        Err(RuntimeError::Closed)
+    ));
+    stop.send_replace(false);
+    let target = custody
+        .0
+        .as_ref()
+        .unwrap()
+        .image_target(compatibility)
+        .unwrap();
+    assert!(open_installed_image(&target).is_ok());
+    materialize_image(&image, &target, closed.clone(), |_| {})
+        .await
+        .unwrap();
+    drop(target);
+    drop(custody.take_for_launch(&closed).unwrap());
+    // Reopening must not gain the creation permission the held original had.
+    let reopened = Journal::open(&root).unwrap();
+    assert!(materialize_image(
+        &image,
+        &reopened.image_target(compatibility).unwrap(),
+        closed,
+        |_| {}
+    )
+    .await
+    .is_err());
+}
 #[test]
 fn factory_configuration_without_native_paths_cannot_activate_a_session() {
     assert_eq!(

@@ -1,31 +1,29 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Model, { type ModelState } from './Model';
-import { type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
+import { type LocalVmState, type SetupStatus, cancelLocal, changeLocal, selectLocal, setupStatus } from './state';
+import Steps, { Meet } from './Steps';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
 import { formatSize, workspaceRequirements, type WorkspaceRequirements } from './requirements';
 import './welcome.css';
 
 const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting', 'closing'].includes(state);
-const runtimeCopy: Record<LocalVmState, string> = {
+const runtimeCopy = {
   notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
-  idle: 'Continue to get your workspace ready.',
-  preparing: 'Checking your workspace files…',
-  installing: 'Getting your workspace ready…',
-  starting: 'Starting your workspace…',
-  ready: 'Your workspace is running on this computer.',
-  closing: 'Stopping your workspace…',
-  closed: 'Your workspace has stopped.',
-  failed: 'Your workspace could not start or its shutdown could not be confirmed. Existing files were kept.',
 };
-export default function Setup({ onOpenExample, onReady, onStatus, onModelState, onWelcome, active = true }: {
+export default function Setup({ onOpenExample, onReady, onStatus, onModelState, onWelcome, onExampleName, active = true }: {
   onOpenExample: () => void; onReady: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
   onModelState?: (state: ModelState) => void;
   onWelcome?: (visible: boolean) => void;
+  onExampleName?: (name: string | undefined) => void;
 }) {
   const [status, setStatus] = useState<SetupStatus>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [confirmChange, setConfirmChange] = useState(false);
+  const [modelState, setModelState] = useState<ModelState>('idle');
+  const observeModel = useCallback((value: ModelState) => { setModelState(value); onModelState?.(value); }, [onModelState]);
   const [check, setCheck] = useState(0);
   const [seen, setSeen] = useState(hasSeenWelcome);
   const [inside, setInside] = useState(false);
@@ -68,16 +66,18 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     focusChoice.current = true;
     setSeen(true);
   }
-  async function chooseLocal() {
-    if (busy || !status || status.selected === 'localVm') return;
+  async function chooseLocal(action: 'start' | 'cancel' | 'change' = 'start') {
+    if (sending || !status || (action !== 'cancel' && busy)) return;
+    if (action === 'start' && status.selected === 'localVm' && !['cancelled', 'closed'].includes(status.localVm)) return;
     // Observation must not invalidate an explicit selection awaiting its reply.
     clearTimeout(timer.current);
     const request = ++epoch.current;
-    setBusy(true); setError(undefined);
-    const result = await selectLocal();
+    setBusy(true); setSending(true); setError(undefined);
+    const result = await (action === 'cancel' ? cancelLocal() : action === 'change' ? changeLocal() : selectLocal());
     if (request !== epoch.current) return;
+    setSending(false); setConfirmChange(false);
     if (result.ok) { focusChoice.current = true; setStatus(result.status); }
-    else { setStatus(undefined); setError(result.message); }
+    else { setError(result.message); }
     onStatus?.(result.ok ? result.status : undefined);
     const waiting = result.ok && pending(result.status.localVm);
     setBusy(waiting);
@@ -90,10 +90,11 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   const selected = status?.selected === 'localVm';
   return <>
     <div className="workspace-heading">
-      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? 'Get your workspace ready' : 'Where should your agents run?'}</h1>
+      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? status?.localVm === 'ready' ? 'Choose the AI your agent uses' : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
+      {selected && !['ready', 'failed', 'notIntegrated'].includes(status?.localVm ?? '') && <p className="muted">Meanwhile, meet the agent you'll test first.</p>}
       {!selected && <p className="muted">You can add more places later.</p>}
     </div>
-    <div className={selected ? 'setup' : 'workspace-choice'}>
+    <div className={selected ? 'setup workspace-setup-grid' : 'workspace-choice'}>
       {!selected && <>
         <fieldset className="workspace-options" disabled={busy || !status || !!error}>
           <legend className="workspace-sr-only">Where agents run</legend>
@@ -123,16 +124,19 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
         </div>
         {status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
       </>}
-      {selected && <section className="card" aria-label="Workspace setup" aria-busy={busy}>
-        <p role="status">{error ? 'Workspace status is unavailable.' : status && runtimeCopy[status.localVm]}</p>
-        {status?.localVmError && <p role="alert">{status.localVmError}</p>}
-        {status?.localVm === 'ready' && <button type="button" className="setup-button" disabled={!!error} onClick={onOpenExample}>Open example</button>}
-      </section>}
+      {selected && status && <>
+        <div><Steps status={status} busy={sending} error={error} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onChange={() => setConfirmChange(true)} onOpenExample={onOpenExample} />
+          {confirmChange && <section className="workspace-change" aria-label="Change where agents run">
+            <h2>Stop this workspace?</h2><p>Changing where agents run stops the workspace on this computer. Your files are kept.</p>
+            <div className="workspace-step-actions"><button type="button" className="workspace-secondary" disabled={sending} onClick={() => setConfirmChange(false)}>Keep workspace running</button><button type="button" className="workspace-primary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and change</button></div>
+          </section>}
+        </div>
+        {status.localVm === 'ready' ? <Model enabled={status.model === 'available'} paused={!!error || sending} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /> : <Meet onRead={onOpenExample} onName={onExampleName} />}
+      </>}
       {error && <div role="alert"><p>{error}</p>
         <button type="button" className="setup-button" disabled={busy}
           onClick={() => { setBusy(true); setError(undefined); setCheck(value => value + 1); }}>Check again</button>
       </div>}
-      {selected && <Model enabled={status?.localVm === 'ready' && status.model === 'available'} paused={!!error} onState={onModelState} onSettled={() => setCheck(value => value + 1)} />}
     </div>
   </>;
 }

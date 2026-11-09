@@ -48,6 +48,8 @@ test('failed Connect refreshes retained guest details without locking the runnin
   });
   const user = userEvent.setup(); mockIPC(ipc); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  expect(screen.queryByText(detail)).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(await screen.findByText(detail)).toBeTruthy();
   expect(screen.getByText('Your workspace is running on this computer.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Use GitHub sign-in' }).matches(':disabled')).toBe(false);
@@ -75,7 +77,7 @@ test('remount observes the native choice without inventing workspace or model re
   first.unmount(); render(<App />);
   await screen.findByRole('region', { name: 'Workspace setup' });
   expect(screen.getByText(unavailable)).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Connect model' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.queryByRole('button', { name: 'Connect model' })).toBeNull();
   expect(ipc.mock.calls.filter(call => call[0] === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
 });
 
@@ -117,7 +119,7 @@ test('a failed initial read can be checked again without changing the saved choi
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
-test('Continue shows real startup states and only a ready session can open the example', async () => {
+test('Continue shows real startup states and a ready session can open the owned example', async () => {
   native(); let selected: 'localVm' | null = null; let reads = 0;
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_select_local') { selected = 'localVm'; return { ...status(selected), localVm: 'preparing' }; }
@@ -138,7 +140,7 @@ test('Continue shows real startup states and only a ready session can open the e
   await user.click(screen.getByRole('button', { name: 'Open example' }));
   expect(await screen.findByText('exact agent source')).toBeTruthy();
   expect(screen.getByText('exact test source')).toBeTruthy();
-  expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_requirements', 'setup_select_local', 'agent_open', 'setup_run_status', 'engine_call'].includes(name))).toBe(true);
+  expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_requirements', 'setup_select_local', 'setup_example', 'agent_open', 'setup_run_status', 'engine_call'].includes(name))).toBe(true);
 });
 
 test.each([
@@ -147,12 +149,15 @@ test.each([
 ])('shows retained failure reason as plain text without new actions: %s', async localVmError => {
   native(); mockIPC(command => command === 'setup_status'
     ? { ...status('localVm'), localVm: 'failed', localVmError } : Promise.reject({ kind: 'unavailable' }));
-  render(<App />);
-  expect((await screen.findByRole('alert')).textContent).toBe(localVmError);
+  const user = userEvent.setup(); render(<App />);
+  expect((await screen.findByRole('alert')).textContent).toBe('Your workspace could not start. What has arrived is kept.');
+  expect(screen.queryByText(localVmError)).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Show details' }));
+  expect(screen.getByText(localVmError)).toBeTruthy();
   expect(document.querySelector('[data-vm-error]')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Open example' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Connect model' }).matches(':disabled')).toBe(true);
+  expect(screen.queryByRole('button', { name: 'Connect model' })).toBeNull();
 });
 
 test('a delayed Continue reply stays pending across repeat activation and navigation', async () => {
