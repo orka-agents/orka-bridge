@@ -100,6 +100,49 @@ test('local results remain explicitly local after confirming cluster access', as
   expect(screen.getByText('This computer: 1 of 1 checks passing', { selector: '.checks-status' })).toBeTruthy();
 });
 
+test('local model acknowledgement survives a cluster round trip', async () => {
+  native();
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_requirements') return null;
+    if (command === 'setup_connect_model') return { ready: true };
+    if (command === 'cluster_contexts') return [context];
+    throw Error('Unsupported');
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await screen.findByRole('button', { name: 'Model connected' });
+  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
+  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  await screen.findByRole('combobox', { name: 'kubectl context' });
+  await user.click(screen.getByRole('radio', { name: 'On this computer' }));
+  expect(await screen.findByRole('button', { name: 'Model connected' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Use GitHub sign-in' })).toBeNull();
+});
+
+test('local-result observation continues while remote execution stays disabled', async () => {
+  native(); let complete = false;
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_requirements') return null;
+    if (command === 'agent_open') return { agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
+    if (command === 'setup_run_status') return { state: complete ? 'complete' : 'running', canRun: false, report: complete ? { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', verdict: 'passed' }] }] } : null, acknowledged: [], pending: null, error: null };
+    if (command === 'cluster_contexts') return [context];
+    throw Error('Unsupported');
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Designer' }));
+  await screen.findByText('Running checks…', { selector: '.checks-status' });
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
+  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  await screen.findByRole('combobox', { name: 'kubectl context' });
+  complete = true;
+  expect(await screen.findByText('This computer: 1 of 1 checks passing', { selector: '.checks-status' })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  expect(screen.getByRole('button', { name: 'Run checks' }).matches(':disabled')).toBe(true);
+});
+
 test('expert_skip_selects_cluster_without_vm', async () => {
   const ipc = native(); await open();
   expect(screen.getByRole('radio', { name: 'On a cluster you already have' }).matches(':checked')).toBe(true);

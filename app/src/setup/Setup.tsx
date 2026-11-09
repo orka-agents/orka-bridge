@@ -153,8 +153,9 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
             <div className="workspace-step-actions"><button type="button" className="workspace-secondary" disabled={sending} onClick={() => { setConfirmChange(false); changeInvoker.current?.focus(); }}>Keep workspace running</button><button type="button" className="workspace-primary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and change</button></div>
           </section>}
         </div>
-        {status.localVm === 'ready' ? <Model enabled={status.model === 'available'} paused={!!error || sending} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /> : status.localVm !== 'failed' && <Meet onRead={onOpenExample} onName={onExampleName} />}
+        {status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={onOpenExample} onName={onExampleName} />}
       </>}
+      {status?.selected === 'localVm' && status.localVm === 'ready' && <div hidden={cluster}><Model enabled={status.model === 'available'} paused={!!error || sending} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
       {!cluster && error && <div role="alert"><p>{error}</p>
         <button type="button" className="setup-button" disabled={busy}
           onClick={() => { setBusy(true); setError(undefined); setCheck(value => value + 1); }}>Check again</button>

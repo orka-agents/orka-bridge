@@ -13,10 +13,11 @@ require(NSRunningApplication.runningApplications(withBundleIdentifier: "ai.orka.
 func launch() throws -> NSRunningApplication {
 let opened = Process()
 opened.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-opened.arguments = [CommandLine.arguments[2]]
+var arguments = [CommandLine.arguments[2]]
 if let kubeconfig = ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] {
-    opened.arguments += ["--env", "KUBECONFIG=\(kubeconfig)"]
+    arguments += ["--env", "KUBECONFIG=\(kubeconfig)"]
 }
+opened.arguments = arguments
 try opened.run()
 opened.waitUntilExit()
 require(opened.terminationStatus == 0, "Cannot open Bridge")

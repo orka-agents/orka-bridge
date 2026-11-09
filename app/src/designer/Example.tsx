@@ -85,7 +85,8 @@ export default function Example({ active = true, readOnly = false, remote = fals
       </div>
       <div className="designer-checks card">
         {remote ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run checks: Remote checks are coming" title="Remote checks are coming"><button type="button" className="setup-button" disabled title="Remote checks are coming">Run checks</button><span className="control-tip" aria-hidden="true">Remote checks are coming</span></span><p className="muted">Sending and running checks on a cluster are coming. Choose This computer in Clusters to run locally.</p></div> : readOnly ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
-          : <Run source={pair.source} onSnapshot={onRun} blocked={saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />}
+          : null}
+        {!readOnly && <div hidden={remote}><Run source={pair.source} onSnapshot={onRun} blocked={remote || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} /></div>}
         <details className="check-source"><summary>Check file: web-reader.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Check file, read-only">{pair.tests}</pre></details>
       </div>
     </>}
