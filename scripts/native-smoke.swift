@@ -275,7 +275,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let request = VNRecognizeTextRequest()
     try VNImageRequestHandler(url: URL(fileURLWithPath: chooserFile)).perform([request])
     clickText("kubectl context", in: request.results ?? [])
-    key(125); key(36)
+    // Move past the placeholder whether the first Down opens the popup or advances it.
+    key(125); key(125); key(36)
     Thread.sleep(forTimeInterval: 2)
     // Tab focuses Use and brings the discovery summary into view at minimum size.
     key(48)
