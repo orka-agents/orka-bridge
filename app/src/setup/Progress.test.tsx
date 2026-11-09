@@ -143,6 +143,20 @@ test('Designer stays read-only while the first native setup observation is pendi
   expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
 });
 
+test('opening Designer while Continue awaits native admission cannot open an owned file', async () => {
+  const { ipc } = native(); let admit!: (value: unknown) => void; let started = false;
+  mockIPC(command => command === 'setup_status' ? { selected: started ? 'localVm' : null, localVm: started ? 'installing' : 'idle', model: 'locked' }
+    : command === 'setup_select_local' ? new Promise(resolve => { admit = resolve; }) : ipc(command));
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Continue' }));
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await screen.findByRole('heading', { name: 'web-reader', level: 1 });
+  expect(ipc.mock.calls.some(([command]) => command === 'agent_open')).toBe(false);
+  expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
+  started = true; admit({ selected: 'localVm', localVm: 'installing', model: 'locked' });
+  await within(screen.getByRole('contentinfo')).findByText('Setting up, step 2 of 4');
+});
+
 test('a failed example read is not presented as an endless load', async () => {
   const { ipc } = native(); mockIPC(command => command === 'setup_example' ? Promise.reject('unavailable') : ipc(command)); render(<App />);
   expect(await screen.findByText('The example could not be opened. Try opening Designer.')).toBeTruthy();
