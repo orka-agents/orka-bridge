@@ -154,7 +154,9 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" 
 if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) {
     // The owned form works before any workspace exists. Exercise its real writer,
     // not injected renderer data; the later setup preview must remain read-only.
-    clickTab("Designer", initial)
+    // Welcome focuses the choice heading. Search, Clusters, then Designer are
+    // the three preceding keyboard stops; don't depend on OCR splitting tab copy.
+    key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
     let form = try capture("agent-form", "Designer")
     guard let label = form.first(where: {
         let text = $0.topCandidates(1).first?.string ?? ""

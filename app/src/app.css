@@ -104,6 +104,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tool-picker { margin-top: 12px; display: grid; gap: 10px; border: 1px solid var(--color-border); border-radius: 6px; padding: 14px; }
 .tool-picker ul { margin: 0; padding: 0; list-style: none; max-height: 14rem; overflow: auto; }
 .tool-picker li button { width: 100%; display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; text-align: left; padding: 10px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--color-text); font: inherit; }
+.agent-parts .control-tip { top: auto; bottom: calc(100% + 8px); left: 0; right: auto; }
 .agent-settings summary { cursor: pointer; color: var(--color-text-secondary); }
 .agent-settings .agent-part { margin-top: 18px; }
 .agent-settings .coming-control { display: block; }
