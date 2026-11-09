@@ -14,7 +14,7 @@ function PhaseIcon({ phase }: { phase: 'done' | 'current' | 'waiting' | 'failed'
 }
 export default function Steps({ status, busy, stopping, error, modelConnected, firstCheck, onCancel, onRestart, onChange, onOpenExample }: {
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean; firstCheck?: CheckStepState;
-  onCancel: () => void; onRestart: () => void; onChange: () => void; onOpenExample: () => void;
+  onCancel: () => void; onRestart: () => void; onChange: (button: HTMLButtonElement) => void; onOpenExample: () => void;
 }) {
   const [details, setDetails] = useState(false);
   const ready = status.localVm === 'ready'; const failed = status.localVm === 'failed';
@@ -59,7 +59,7 @@ export default function Steps({ status, busy, stopping, error, modelConnected, f
     <div className="workspace-step-actions">
       {['preparing', 'installing', 'starting'].includes(status.localVm) && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</button><span className="muted">Cancel keeps what has arrived.</span></>}
       {paused && <button type="button" className="workspace-primary" disabled={busy || !!error} onClick={onRestart}>Start again</button>}
-      {ready && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={onChange}>Change where agents run</button><button type="button" className="workspace-primary" disabled={!!error} onClick={onOpenExample}>Open example</button></>}
+      {ready && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={event => onChange(event.currentTarget)}>Change where agents run</button><button type="button" className="workspace-primary" disabled={!!error} onClick={onOpenExample}>Open example</button></>}
     </div>
   </section>;
 }

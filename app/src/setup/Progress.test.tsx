@@ -215,6 +215,23 @@ test('model settling during Change cannot strand subsequent Continue actions', a
   expect(next.matches(':disabled')).toBe(false);
 });
 
+test('Cancel and Start again restore keyboard focus after replacing the action', async () => {
+  native(); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+  await screen.findByRole('button', { name: 'Start again' });
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Getting your workspace ready', level: 1 }));
+  await user.click(screen.getByRole('button', { name: 'Start again' }));
+  await screen.findByRole('button', { name: 'Cancel' });
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Getting your workspace ready', level: 1 }));
+});
+
+test('keeping the workspace running returns focus to the confirmation invoker', async () => {
+  native('ready'); const user = userEvent.setup(); render(<App />);
+  const invoker = await screen.findByRole('button', { name: 'Change where agents run' });
+  await user.click(invoker); await user.click(screen.getByRole('button', { name: 'Keep workspace running' }));
+  expect(document.activeElement).toBe(invoker);
+});
+
 test('Change where agents run does not stop until confirmed, and returns to chooser', async () => {
   const { ipc } = native('ready'); const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));

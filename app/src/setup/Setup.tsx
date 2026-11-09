@@ -37,12 +37,13 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const heading = useRef<HTMLHeadingElement>(null);
   const focusChoice = useRef(false);
+  const changeInvoker = useRef<HTMLButtonElement>(null);
   const welcome = !seen && !!status && !error && status.selected !== 'localVm';
   useEffect(() => { onWelcome?.(welcome); }, [welcome, onWelcome]);
   useEffect(() => {
     if (focusChoice.current && active) heading.current?.focus();
     focusChoice.current = false;
-  }, [seen, status?.selected, active]);
+  }, [seen, status?.selected, status?.localVm, active]);
   useEffect(() => {
     let active = true;
     void workspaceRequirements().then(value => { if (active) setRequirements(value); });
@@ -133,10 +134,10 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
         {status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
       </>}
       {selected && status && <>
-        <div><Steps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onChange={() => setConfirmChange(true)} onOpenExample={onOpenExample} />
+        <div><Steps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample} />
           {confirmChange && <section className="workspace-change" aria-label="Change where agents run">
             <h2>Stop this workspace?</h2><p>Changing where agents run stops the workspace on this computer. Your files are kept.</p>
-            <div className="workspace-step-actions"><button type="button" className="workspace-secondary" disabled={sending} onClick={() => setConfirmChange(false)}>Keep workspace running</button><button type="button" className="workspace-primary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and change</button></div>
+            <div className="workspace-step-actions"><button type="button" className="workspace-secondary" disabled={sending} onClick={() => { setConfirmChange(false); changeInvoker.current?.focus(); }}>Keep workspace running</button><button type="button" className="workspace-primary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and change</button></div>
           </section>}
         </div>
         {status.localVm === 'ready' ? <Model enabled={status.model === 'available'} paused={!!error || sending} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /> : <Meet onRead={onOpenExample} onName={onExampleName} />}
