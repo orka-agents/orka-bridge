@@ -25,6 +25,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+## YAML editing
+
+The form uses yaml 2.9.1 under its ISC license. Its upstream notice is shipped
+as `licenses/yaml-ISC.txt` in the same app artifact directories.
+
 ## JavaScript bridge
 
 The Tauri JavaScript API is distributed under its MIT license option.

@@ -39,6 +39,8 @@ fn initializes_without_vm_and_reopens_exact_drafts_with_committed_bytes() {
     let home = tempfile::tempdir().unwrap();
     let folder = AgentFolder::new(Some(home.path().into()));
     let pair = folder.open().unwrap();
+    assert_eq!(pair.path.as_deref(), root(home.path()).join(AGENT).to_str());
+    assert_eq!(folder.save(pair.agent.clone()).unwrap().path, pair.path);
     assert!(pair.agent.contains("web_fetch"));
     assert!(pair.tests.contains("toolCalled"));
     let (path, doc) = folder.source().unwrap();
@@ -56,6 +58,20 @@ fn initializes_without_vm_and_reopens_exact_drafts_with_committed_bytes() {
     );
     assert_eq!(reopened.save(String::new()).unwrap().agent, "");
     assert_eq!(committed(&path, AGENT), b"");
+}
+#[cfg(unix)]
+#[test]
+fn non_utf8_home_does_not_prevent_document_replies() {
+    use std::os::unix::ffi::OsStrExt;
+    let home = tempfile::tempdir().unwrap();
+    let path = home
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"creator-\xff"));
+    fs::create_dir(&path).unwrap();
+    let folder = AgentFolder::new(Some(path));
+    let pair = folder.open().unwrap();
+    assert!(pair.path.is_none());
+    assert!(folder.save(pair.agent).unwrap().path.is_none());
 }
 #[test]
 fn packed_history_reopens_saves_and_captures_exact_bytes() {

@@ -86,6 +86,28 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .file-toolbar h2 { overflow-wrap: anywhere; }
 .designer-file p { max-width: 70ch; }
 .agent-editor { display: block; width: 100%; min-height: 23rem; resize: vertical; padding: 16px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-page); color: var(--color-text); font: 400 0.8125rem/1.7 var(--font-mono); tab-size: 2; }
+.agent-parts { display: grid; gap: 24px; }
+.agent-part { display: grid; gap: 8px; min-width: 0; }
+.agent-part label, .agent-part h3 { font-size: 0.9375rem; font-weight: 600; margin: 0; }
+.agent-part p { margin: 0; }
+.instructions-editor, .description-editor, .tool-picker input { width: 100%; padding: 12px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-page); color: var(--color-text); font: inherit; line-height: 1.7; }
+.instructions-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.instructions-editor { min-height: 10rem; resize: vertical; }
+.description-editor { min-height: 5rem; resize: vertical; }
+.agent-tool-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.tool-pill { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-chrome); overflow-wrap: anywhere; min-width: 0; }
+.tool-pill code, .tool-picker code { color: var(--color-text-secondary); font: 0.75rem var(--font-mono); overflow-wrap: anywhere; }
+.part-button { border: 1px solid var(--color-border-strong); border-radius: 6px; padding: 7px 10px; background: var(--color-chrome); color: var(--color-text); font: inherit; max-width: 100%; }
+.part-button:not(:disabled):hover, .tool-picker li button:hover { background: var(--color-hover); }
+.part-button:disabled, .agent-parts textarea:disabled { color: var(--color-text-secondary); cursor: not-allowed; opacity: 1; }
+.tool-remove { border: 0; background: transparent; padding: 0 4px; color: var(--color-text-secondary); font: inherit; }
+.tool-picker { margin-top: 12px; display: grid; gap: 10px; border: 1px solid var(--color-border); border-radius: 6px; padding: 14px; }
+.tool-picker ul { margin: 0; padding: 0; list-style: none; max-height: 14rem; overflow: auto; }
+.tool-picker li button { width: 100%; display: flex; flex-wrap: wrap; gap: 6px 12px; justify-content: space-between; text-align: left; padding: 10px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--color-text); font: inherit; }
+.agent-settings summary { cursor: pointer; color: var(--color-text-secondary); }
+.agent-settings .agent-part { margin-top: 18px; }
+.agent-settings .coming-control { display: block; }
+.agent-path { overflow-wrap: anywhere; font: 0.8125rem/1.7 var(--font-mono); }
 .save-error { color: var(--color-status-failed); }
 .check-source { border-top: 1px solid var(--color-border); padding-top: 14px; }
 .check-source summary { cursor: pointer; color: var(--color-text-secondary); overflow-wrap: anywhere; }
