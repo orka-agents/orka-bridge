@@ -202,6 +202,16 @@ impl AgentFolder {
         };
         operation().map_err(|_| "The local agent folder could not be read or saved. Check that it is a Bridge-managed folder with regular files, then retry.")
     }
+    fn display_path(&self) -> Option<String> {
+        self.home.as_ref().and_then(|home| {
+            home.join("Orka")
+                .join("agents")
+                .join("web-reader")
+                .join(AGENT)
+                .to_str()
+                .map(str::to_owned)
+        })
+    }
     fn pair(&self, root: &Dir) -> io::Result<AgentPair> {
         let agent = String::from_utf8(read(root, AGENT, MAX_FILE)?).map_err(|_| invalid())?;
         let tests = String::from_utf8(read(root, TESTS, MAX_FILE)?).map_err(|_| invalid())?;
@@ -210,14 +220,7 @@ impl AgentFolder {
             agent,
             tests,
             source,
-            path: self.home.as_ref().and_then(|home| {
-                home.join("Orka")
-                    .join("agents")
-                    .join("web-reader")
-                    .join(AGENT)
-                    .to_str()
-                    .map(str::to_owned)
-            }),
+            path: self.display_path(),
         })
     }
     pub fn open(&self) -> Result<AgentPair> {
@@ -274,5 +277,18 @@ impl AgentFolder {
             }
             Ok(snapshot)
         })
+    }
+}
+
+#[cfg(all(test, unix))]
+mod display_path_tests {
+    use super::*;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn unrepresentable_display_path_is_omitted() {
+        // Test the projection itself: APFS cannot create a non-UTF-8 directory.
+        let home = std::ffi::OsStr::from_bytes(b"/creator-\xff");
+        assert!(AgentFolder::new(Some(home.into())).display_path().is_none());
     }
 }
