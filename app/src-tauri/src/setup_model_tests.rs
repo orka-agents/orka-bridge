@@ -654,6 +654,105 @@ fn pending_known_failure_disconnects_and_clears_before_a_fresh_connect() {
 }
 
 #[test]
+fn pending_after_acknowledged_clear_reconciles_before_reloading_sign_in() {
+    let (_tmp, setup, install, vault) = associated();
+    let nonce = Uuid::new_v4();
+    let old = connection();
+    let new = connection();
+    let cleared = Uuid::new_v4();
+    let root = setup.root.as_deref().unwrap();
+    // Disconnect/Clear succeeded, but publishing Stored failed: these are the
+    // exact durable bytes left by that interruption, not permission to reset.
+    let mut binding = read_binding(root).unwrap().unwrap();
+    binding.phase = Phase::Pending;
+    binding.nonce = Some(nonce);
+    binding.connection = Some(old);
+    write_binding(root, &binding).unwrap();
+    let expected = new.clone();
+    let mut step = 0;
+    let (mut client, worker) = peer(nonce, move |request| {
+        step += 1;
+        Some(match (step, &request.body) {
+            (1 | 2, RequestBody::ModelStatus {}) => ResultBody::ModelState(ModelState {
+                diagnostic: None,
+                phase: ModelPhase::Idle,
+                connection: None,
+                credential: credential(Some(cleared), false),
+            }),
+            (3, RequestBody::CredentialStatus {}) => {
+                ResultBody::CredentialState(credential(Some(cleared), false))
+            }
+            (
+                4,
+                RequestBody::CredentialPublish {
+                    expected_generation,
+                    token,
+                },
+            ) => {
+                assert_eq!(*expected_generation, Some(cleared));
+                assert_eq!(token.as_bytes(), SECRET);
+                ResultBody::CredentialState(credential(Some(expected.generation), true))
+            }
+            (
+                5,
+                RequestBody::ModelConnect {
+                    generation,
+                    selection,
+                },
+            ) => {
+                assert_eq!(*generation, expected.generation);
+                assert_eq!(*selection, expected.selection);
+                remote(&expected, ModelPhase::Ready)
+            }
+            _ => panic!("unexpected recovery step {step}"),
+        })
+    });
+    let result =
+        setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+    drop(client);
+    assert!(result.unwrap().ready);
+    assert_eq!(worker.join().unwrap().frames.len(), 5);
+    assert_eq!(vault.counts(), (1, 1, 0));
+    assert_eq!(read_binding(root).unwrap().unwrap().connection, Some(new));
+}
+
+#[test]
+fn pending_known_id_needs_an_advanced_cleared_generation_before_host_recovery() {
+    for (advanced, installed) in [(false, false), (true, true)] {
+        let (_tmp, setup, install, vault) = associated();
+        let nonce = Uuid::new_v4();
+        let known = connection();
+        let observed = if advanced {
+            Uuid::new_v4()
+        } else {
+            known.generation
+        };
+        let root = setup.root.as_deref().unwrap();
+        let mut binding = read_binding(root).unwrap().unwrap();
+        binding.phase = Phase::Pending;
+        binding.nonce = Some(nonce);
+        binding.connection = Some(known);
+        write_binding(root, &binding).unwrap();
+        let (mut client, worker) = peer(nonce, move |request| {
+            assert!(matches!(request.body, RequestBody::ModelStatus {}));
+            Some(ResultBody::ModelState(ModelState {
+                diagnostic: None,
+                phase: ModelPhase::Idle,
+                connection: None,
+                credential: credential(Some(observed), installed),
+            }))
+        });
+        assert!(setup
+            .connect_model(install, selection(), &mut client, &vault)
+            .is_err());
+        drop(client);
+        assert_eq!(worker.join().unwrap().frames.len(), 1);
+        assert_eq!(vault.counts(), (1, 0, 0));
+        assert_eq!(read_binding(root).unwrap().unwrap().phase, Phase::Pending);
+    }
+}
+
+#[test]
 fn pending_wrong_lease_never_probes_or_replays_connect() {
     let (_tmp, setup, install, vault) = associated();
     let root = setup.root.as_deref().unwrap();

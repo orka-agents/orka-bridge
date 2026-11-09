@@ -259,8 +259,19 @@ impl SetupStore {
                 client
                     .clear_credential_file(connection.generation)
                     .map_err(|_| SetupError::model("modelDelivery"))?;
-            } else if b.connection.is_some() {
-                return Err(unavailable());
+            } else if let Some(known) = &b.connection {
+                // Cleanup may have completed before the host's Stored write failed.
+                // Same-lease Idle plus a cleared, advanced generation proves completion.
+                if remote.phase != ModelPhase::Idle
+                    || remote.credential.installed
+                    || !remote
+                        .credential
+                        .generation
+                        .is_some_and(|g| g != known.generation)
+                    || known.selection != selection
+                {
+                    return Err(unavailable());
+                }
             } else if remote.credential.installed {
                 let generation = remote.credential.generation.ok_or_else(unavailable)?;
                 // Guest admits the original attempt only; kmx's retained record refuses
