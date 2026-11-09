@@ -30,6 +30,19 @@ SOFTWARE.
 The Tauri JavaScript API is distributed under its MIT license option.
 Its complete notice is shipped as `licenses/Tauri-API-MIT.txt`.
 
+## Embedded Git
+
+The app includes git2 0.21.0 and libgit2-sys 0.18.8+1.9.7 under their MIT
+license option (`licenses/git2-MIT.txt`). Vendored libgit2 1.9.7 is distributed
+under GPL-2.0 with its linking exception; its complete upstream license and
+bundled third-party notices are in `licenses/libgit2-COPYING.txt`.
+
+The Git dependency includes libz-sys 1.1.32 under its MIT license option
+(`licenses/libz-sys-MIT.txt`) and may bundle zlib under its zlib license
+(`licenses/zlib-LICENSE.txt`). The fixed Git index checksum uses sha1 0.10.6
+under its MIT license option (`licenses/sha1-MIT.txt`). These notices are
+copied from the published crates and included in app artifacts.
+
 ## Fonts
 
 Geist and Geist Mono are bundled under the SIL Open Font License 1.1.

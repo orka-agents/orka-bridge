@@ -12,6 +12,7 @@ name = "bridge_engine"
 tauri-build = "=2.7.4"
 
 [dependencies]
+git2 = { version = "=0.21.0", default-features = false, features = ["vendored-libgit2"] }
 cap-std = "=4.0.3"
 cap-fs-ext = "=4.0.3"
 libc = "=0.2.191"
@@ -20,6 +21,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.154"
 serde_yaml_ng = "=0.10.0"
 sha2 = "=0.10.9"
+sha1 = "=0.10.6"
 semver = "=1.0.28"
 flate2 = "=1.1.10"
 reqwest = { version = "=0.13.5", default-features = false, features = ["native-tls", "stream"] }

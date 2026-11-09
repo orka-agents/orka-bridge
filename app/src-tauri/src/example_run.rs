@@ -1,5 +1,6 @@
 //! Fixed example Run on the original VM client. Credentials remain in the guest.
 use crate::{
+    agent_folder::AgentFolder,
     engine::run::{
         ErrorKind, NativeRunner, ParsedPair, RunFuture, RunHandle, RunLimits, RunReport,
         RunTransport,
@@ -7,7 +8,7 @@ use crate::{
     local_vm::{LocalVm, LocalVmStatus},
     runtime::client::VmClient,
 };
-use bridge_runtime_protocol::{ModelPhase, OrkaRequest};
+use bridge_runtime_protocol::{FileSlot, ModelPhase, OrkaRequest, SnapshotId};
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -37,6 +38,7 @@ pub struct PendingRef {
 pub struct RunSnapshot {
     pub state: RunState,
     pub can_run: bool,
+    pub source: Option<SnapshotId>,
     pub report: Option<RunReport>,
     pub acknowledged: Vec<Receipt>,
     pub pending: Option<PendingRef>,
@@ -46,15 +48,20 @@ struct State {
     snapshot: RunSnapshot,
     handle: Option<RunHandle>,
 }
-pub struct ExampleRun(Mutex<State>, tokio::runtime::Handle, bool);
+pub struct ExampleRun(Mutex<State>, tokio::runtime::Handle, bool, Arc<AgentFolder>);
 impl ExampleRun {
     /// The native shell supplies its runtime; a blocking IPC thread need not enter it.
-    pub fn new(runtime: tokio::runtime::Handle, model_image_available: bool) -> Arc<Self> {
+    pub fn new(
+        runtime: tokio::runtime::Handle,
+        model_image_available: bool,
+        folder: Arc<AgentFolder>,
+    ) -> Arc<Self> {
         Arc::new(Self(
             Mutex::new(State {
                 snapshot: RunSnapshot {
                     state: RunState::Idle,
                     can_run: false,
+                    source: None,
                     report: None,
                     acknowledged: Vec::new(),
                     pending: None,
@@ -64,6 +71,7 @@ impl ExampleRun {
             }),
             runtime,
             model_image_available,
+            folder,
         ))
     }
     /// Observation only, including after a renderer remount; never submits or loads credentials.
@@ -86,6 +94,7 @@ impl ExampleRun {
             state.snapshot.can_run = false;
             state.snapshot.error = None;
             state.snapshot.report = None;
+            state.snapshot.source = None;
             // Keep remote identities through session/model preflight failures.
             // record() replaces them when submission returns a new handle.
         }
@@ -93,11 +102,29 @@ impl ExampleRun {
         let target = vm.clone();
         // The owned task and worker publish receipts without depending on an IPC waiter.
         self.1.spawn(async move {
+            let source = owner.3.clone();
+            // Freeze once per admission, before waiting for the serialized VM client.
+            let pair = tokio::task::spawn_blocking(move || {
+                let snapshot = source.capture().map_err(|_| ())?;
+                ParsedPair::parse(
+                    snapshot.file(FileSlot::Agent),
+                    snapshot.file(FileSlot::Tests),
+                )
+                .map_err(|_| ())
+            })
+            .await;
+            let Ok(Ok(pair)) = pair else {
+                owner.fail("source");
+                return;
+            };
+            owner.0.lock().unwrap().snapshot.source = Some(pair.snapshot().clone());
             let runtime = tokio::runtime::Handle::current();
             let worker = owner.clone();
             let observing = target.clone();
             let result = target
-                .with_client(move |_, client| runtime.block_on(worker.execute(client, observing)))
+                .with_client(move |_, client| {
+                    runtime.block_on(worker.execute(client, observing, pair))
+                })
                 .await;
             if result.is_err() {
                 owner.fail("session");
@@ -110,17 +137,7 @@ impl ExampleRun {
         state.snapshot.state = RunState::Unknown;
         state.snapshot.error = Some(message);
     }
-    async fn execute(&self, client: &mut VmClient, vm: Arc<LocalVm>) {
-        let pair = match ParsedPair::parse(
-            include_bytes!("../example-agent/web-reader.agent.md"),
-            include_bytes!("../example-agent/web-reader.agent.test.md"),
-        ) {
-            Ok(pair) => pair,
-            Err(_) => {
-                self.fail("source");
-                return;
-            }
-        };
+    async fn execute(&self, client: &mut VmClient, vm: Arc<LocalVm>, pair: ParsedPair) {
         let model = match client.model_status() {
             Ok(model) if model.phase == ModelPhase::Ready => model,
             _ => {

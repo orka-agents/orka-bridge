@@ -114,7 +114,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): native workspace screen observed")
         return observations
     }
-    let pages = ["Overview", "Designer", "Clusters"]
+    let pages = ["Overview", "Designer", "Clusters", "web-reader"]
     let headings = Set(observations.compactMap { observation -> String? in
         let top = 1 - observation.boundingBox.maxY
         guard top > 0.10 && top < 0.25,
@@ -123,10 +123,11 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         return text
     })
     // Negative control: persistent nav labels must not qualify as page headings.
-    for wrong in pages where wrong != page {
+    for wrong in pages where wrong != page && !(page == "Designer" && wrong == "web-reader") {
         require(!headings.contains(wrong), "Unexpected \(wrong) page heading; expected \(page)")
     }
-    require(headings == Set([page]), "Native screenshot does not show the expected \(page) page heading; observed \(headings)")
+    let expectedHeading = page == "Designer" ? "web-reader" : page
+    require(headings == Set([expectedHeading]), "Native screenshot does not show the expected \(expectedHeading) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
     return observations
 }
@@ -171,6 +172,48 @@ key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
 try capture("overview-keyboard", "Overview")
 key(48); key(49); try capture("designer-keyboard", "Designer")
 key(48); key(36); try capture("clusters-keyboard", "Clusters")
+// Exercise the real path-free storage IPC through the native editor, without a VM.
+let clusters = try capture("before-file", "Clusters")
+clickTab("Designer", clusters)
+let agent = try capture("agent-view", "Designer")
+guard let fileButton = agent.first(where: { $0.topCandidates(1).first?.string == "File" }) else {
+    fatalError("File view switch is not visible")
+}
+let fileRect = window()!.1
+let filePoint = CGPoint(x: fileRect.minX + fileButton.boundingBox.midX * fileRect.width,
+                        y: fileRect.minY + (1 - fileButton.boundingBox.midY) * fileRect.height)
+mouse(.leftMouseDown, filePoint); mouse(.leftMouseUp, filePoint)
+Thread.sleep(forTimeInterval: 0.5)
+try capture("file-view", "Designer")
+// A pointer-activated button need not receive focus in the native webview.
+// Establish editor focus, then verify keyboard exit/re-entry before typing.
+let editorPoint = CGPoint(x: fileRect.midX, y: fileRect.minY + fileRect.height * 0.6)
+mouse(.leftMouseDown, editorPoint); mouse(.leftMouseUp, editorPoint)
+key(48, shift: true); key(48)
+for down in [true, false] {
+    let event = CGEvent(keyboardEventSource: nil, virtualKey: 125, keyDown: down)!
+    event.flags = .maskCommand; event.post(tap: .cghidEventTap)
+}
+let marker = "\n\nNative editor save check \(UUID().uuidString)."
+// Return is an editing command, not part of a multi-character Unicode event.
+for character in marker.utf16 {
+    if character == 10 { key(36); continue }
+    var unit = character
+    for down in [true, false] {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
+        event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+        event.post(tap: .cghidEventTap)
+    }
+}
+Thread.sleep(forTimeInterval: 1)
+try capture("file-edited", "Designer")
+let ownedFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
+require(try String(contentsOf: ownedFile, encoding: .utf8).hasSuffix(marker),
+        "Native keyboard edit was not saved to the agent's own file")
+let savedFile = try capture("file-saved", "Designer")
+require(savedFile.contains(where: { $0.topCandidates(1).first?.string == "Saved" }),
+        "The native editor did not acknowledge the committed save")
+clickTab("Clusters", savedFile)
 // Resize this CI-owned window using its native bottom-right handle.
 let rect = window()!.1
 // The display may constrain the initial size. Derive the minimum frame from

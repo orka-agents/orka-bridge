@@ -123,7 +123,7 @@ test('Continue shows real startup states and only a ready session can open the e
     if (command === 'setup_select_local') { selected = 'localVm'; return { ...status(selected), localVm: 'preparing' }; }
     if (command === 'setup_status') return { ...status(selected), localVm: selected === null ? 'idle' : ++reads === 1 ? 'starting' : 'ready' };
     if (command === 'setup_requirements') return null;
-    if (command === 'setup_example') return { agent: 'exact agent source', tests: 'exact test source' };
+    if (command === 'agent_open') return { agent: 'exact agent source', tests: 'exact test source' };
     if (command === 'setup_run_status') return { state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
     throw { kind: 'unavailable' };
   }); mockIPC(ipc);
@@ -138,7 +138,7 @@ test('Continue shows real startup states and only a ready session can open the e
   await user.click(screen.getByRole('button', { name: 'Open example' }));
   expect(await screen.findByText('exact agent source')).toBeTruthy();
   expect(screen.getByText('exact test source')).toBeTruthy();
-  expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_requirements', 'setup_select_local', 'setup_example', 'setup_run_status', 'engine_call'].includes(name))).toBe(true);
+  expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_requirements', 'setup_select_local', 'agent_open', 'setup_run_status', 'engine_call'].includes(name))).toBe(true);
 });
 
 test.each([

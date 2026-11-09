@@ -1,3 +1,4 @@
+pub mod agent_folder;
 #[cfg(debug_assertions)]
 pub mod dev_image;
 pub mod engine;
