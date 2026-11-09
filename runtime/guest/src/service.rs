@@ -134,15 +134,9 @@ pub fn handle(
                 false,
             ),
         },
-        RequestBody::Shutdown {} => match system.shutdown() {
-            Ok(()) => (ResultBody::Ready {}, true),
-            Err(_) => (
-                ResultBody::Error {
-                    code: ErrorCode::Unavailable,
-                },
-                false,
-            ),
-        },
+        // Acceptance only: the caller acknowledges before requesting poweroff,
+        // because poweroff stops this endpoint and can drop a later reply.
+        RequestBody::Shutdown {} => (ResultBody::Ready {}, true),
         _ => (
             ResultBody::Error {
                 code: ErrorCode::Unavailable,

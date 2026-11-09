@@ -258,7 +258,8 @@ fn readiness_shutdown_and_no_execution_operations() {
     let (reply, stop) = bridge_guest::service::handle(&mut s, &b, &r);
     assert!(matches!(reply, ResultBody::Ready {}));
     assert!(stop);
-    assert_eq!(s.events, ["shutdown"]);
+    // Accepting selects poweroff; the serve loop requests it after replying.
+    assert!(s.events.is_empty());
     s.creds = false;
     r.body = RequestBody::Readiness {};
     let (reply, stop) = bridge_guest::service::handle(&mut s, &b, &r);
