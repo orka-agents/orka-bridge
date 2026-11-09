@@ -18,10 +18,10 @@ export default function Run({ onSnapshot, blocked = false, stale = false, onStar
   useEffect(() => { if (snapshot || message) onSnapshot?.(message ? undefined : snapshot); }, [snapshot, message, onSnapshot]);
   const start = async () => {
     if (sending || blocked || !snapshot?.canRun) return;
-    onStart?.(); setSending(true);
+    setSending(true);
     const result = await runCall('setup_run_example');
     if (!active.current) return;
-    if (result.ok) { setSnapshot(result.snapshot); setMessage(undefined); } else setMessage(result.message);
+    if (result.ok) { onStart?.(); setSnapshot(result.snapshot); setMessage(undefined); } else setMessage(result.message);
     setSending(false);
   };
   const running = sending || snapshot?.state === 'running';

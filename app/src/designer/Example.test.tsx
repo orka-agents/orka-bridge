@@ -84,6 +84,22 @@ test('returning to the saved bytes clears dirty state without another commit', a
   fireEvent.change(screen.getByRole('textbox'), { target: { value: pair.agent } }); fireEvent.blur(screen.getByRole('textbox'));
   await screen.findByText('Saved'); expect(writes).toEqual([]);
 });
+test('a failed Run request does not make an earlier verdict current after editing', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC((command, args) => {
+    if (command === 'agent_open') return pair;
+    if (command === 'agent_save') return { ...pair, agent: (args as { content: string }).content };
+    if (command === 'setup_run_example') return Promise.reject(new Error('IPC failure'));
+    return { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'reads-page', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } };
+  });
+  const user = userEvent.setup(); render(<Example />);
+  await user.click(await screen.findByRole('button', { name: 'File' }));
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'New draft' } }); fireEvent.blur(screen.getByRole('textbox'));
+  await screen.findByText('Saved');
+  await user.click(screen.getByRole('button', { name: 'Run test' }));
+  await screen.findByText('Run information is not supported by this build.');
+  expect(screen.getByText('Earlier test verdict: passed')).toBeTruthy();
+});
 test('typing autosaves without leaving the field', async () => {
   native(); const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: 'File' }));

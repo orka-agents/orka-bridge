@@ -5,7 +5,7 @@ type Case = { id: string; phase: string; answer: string | null; completedTools: 
 type Receipt = { kind: 'Agent' | 'Task'; name: string; uid: string };
 export const errors = {
   session: 'The running local VM is not available for Run.',
-  source: 'The fixed example could not be read.',
+  source: 'Check the format of your saved agent and check files.',
   model: 'Connect the local VM model in Clusters before running the example.',
   submit: 'Submission was not confirmed. A named resource may still exist; it was not retried.',
   observe: 'Observation did not finish. The acknowledged Task may still be running.',

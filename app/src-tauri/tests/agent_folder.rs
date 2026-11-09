@@ -108,11 +108,29 @@ fn dirty_reopen_commits_disk_not_bundled_or_head_and_failed_commit_retries() {
     fs::remove_file(path.join(".git/index")).unwrap();
     fs::create_dir(path.join(".git/index")).unwrap();
     assert!(folder.save("retry draft".into()).is_err());
-    assert_eq!(fs::read(path.join(AGENT)).unwrap(), b"retry draft");
+    // History failure refuses before overwriting the current disk version.
+    assert_eq!(fs::read(path.join(AGENT)).unwrap(), b"external draft");
     assert_eq!(fs::read(path.join(".git/HEAD")).unwrap(), head);
     fs::remove_dir(path.join(".git/index")).unwrap();
     folder.save("retry draft".into()).unwrap();
     assert_eq!(committed(&path, AGENT), b"retry draft");
+}
+#[test]
+fn save_preserves_an_external_edit_in_history_before_replacing_it() {
+    let home = tempfile::tempdir().unwrap();
+    let folder = AgentFolder::new(Some(home.path().into()));
+    folder.open().unwrap();
+    let path = root(home.path());
+    fs::write(path.join(AGENT), b"external editor work").unwrap();
+    folder.save("Bridge editor work".into()).unwrap();
+    let repo = git2::Repository::open(&path).unwrap();
+    let head = repo.head().unwrap().peel_to_commit().unwrap();
+    let previous = head.parent(0).unwrap().tree().unwrap();
+    let blob = repo
+        .find_blob(previous.get_name(AGENT).unwrap().id())
+        .unwrap();
+    assert_eq!(blob.content(), b"external editor work");
+    assert_eq!(committed(&path, AGENT), b"Bridge editor work");
 }
 #[test]
 fn concurrent_saves_are_serial_and_every_success_is_committed() {

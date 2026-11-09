@@ -63,6 +63,9 @@ fn persist(git: &Dir, odb: &Odb<'_>, id: Oid) -> io::Result<()> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => replace(&prefix, &name[2..], &bytes)?,
         _ => return Err(invalid()),
     }
+    // A previous attempt can leave the object visible after its directory flush
+    // failed. Retry that namespace flush even when the object bytes already match.
+    sync(&prefix)?;
     sync(&objects)
 }
 pub(super) fn commit(root: &Dir, pair: &AgentPair) -> io::Result<()> {

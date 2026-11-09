@@ -205,6 +205,8 @@ impl AgentFolder {
             let mut pair = Self::pair(root)?;
             git::validate(root)?;
             if pair.agent != content {
+                // Preserve edits from another editor before replacing the disk version.
+                git::commit(root, &pair)?;
                 replace(root, AGENT, content.as_bytes())?;
                 pair.agent = content;
             }
