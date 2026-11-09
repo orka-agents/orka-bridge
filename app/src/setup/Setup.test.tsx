@@ -27,11 +27,11 @@ test('running native session unlocks only its explicit model command', async () 
     if (command === 'setup_connect_model') return { ready: true };
     throw new Error('Forbidden command');
   });
-  mockIPC(ipc); render(<App />);
+  const user = userEvent.setup(); mockIPC(ipc); render(<App />);
   const connect = await screen.findByRole('button', { name: 'Use GitHub sign-in' });
   expect(connect.hasAttribute('disabled')).toBe(false);
   expect(ipc.mock.calls.some(([command]) => command === 'setup_connect_model')).toBe(false);
-  fireEvent.click(connect);
+  await user.click(connect);
   expect(await screen.findByText('Model connected: copilot / gpt-5.6-terra.')).toBeTruthy();
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toEqual([['setup_connect_model', {}]]);
 });

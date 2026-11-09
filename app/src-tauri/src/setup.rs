@@ -1,3 +1,4 @@
+use crate::runtime::credential_store::{NativeCall, StoreError};
 use serde::Serialize;
 use std::{
     fs::{self, OpenOptions},
@@ -34,11 +35,28 @@ impl SetupSnapshot {
 }
 
 #[derive(Debug, Serialize)]
+struct StoreDiagnostic {
+    call: NativeCall,
+    code: u32,
+}
+#[derive(Debug, Serialize)]
 pub struct SetupError {
     kind: &'static str,
     message: &'static str,
+    // Only the finite call and numeric code may cross to the sign-in error UI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native: Option<StoreDiagnostic>,
 }
 impl SetupError {
+    pub(crate) fn store(error: StoreError) -> Self {
+        Self {
+            native: match error {
+                StoreError::Native { call, code } => Some(StoreDiagnostic { call, code }),
+                _ => None,
+            },
+            ..Self::model("modelStore")
+        }
+    }
     pub(crate) fn model(kind: &'static str) -> Self {
         let message = match kind {
             "modelCaptureUnavailable" => {
@@ -61,13 +79,18 @@ impl SetupError {
             "modelSession" => "The local VM is not available for model connection.",
             _ => "The stored model connection is unavailable or its completion is unknown.",
         };
-        Self { kind, message }
+        Self {
+            kind,
+            message,
+            native: None,
+        }
     }
 }
 fn storage_error() -> SetupError {
     SetupError {
         kind: "storage",
         message: "The setup choice could not be read or saved.",
+        native: None,
     }
 }
 
