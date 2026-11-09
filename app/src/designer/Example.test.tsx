@@ -110,6 +110,23 @@ test.each([
   expect(screen.getByText(older ? 'Earlier test verdict: passed' : 'Test verdict: passed')).toBeTruthy();
   expect(!!screen.queryByText(/Not run since your change/)).toBe(older);
 });
+test('source-less replies keep an older verdict stale after undo to a newer saved file', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC((command, args) => command === 'agent_open' ? pair : command === 'agent_save'
+    ? { ...pair, agent: (args as { content: string }).content }
+    : { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'reads-page', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } });
+  const user = userEvent.setup(); render(<Example />);
+  await user.click(await screen.findByRole('button', { name: 'File' }));
+  await screen.findByText('Test verdict: passed');
+  const editor = screen.getByRole('textbox');
+  fireEvent.change(editor, { target: { value: 'Saved newer file' } }); fireEvent.blur(editor);
+  await screen.findByText('Saved');
+  fireEvent.change(editor, { target: { value: 'Temporary draft' } });
+  fireEvent.change(editor, { target: { value: 'Saved newer file' } }); fireEvent.blur(editor);
+  await screen.findByText('Saved');
+  expect(screen.getByText('Earlier test verdict: passed')).toBeTruthy();
+  expect(screen.queryByText('Test verdict: passed')).toBeNull();
+});
 test('a failed Run request does not make an earlier verdict current after editing', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC((command, args) => {

@@ -51,7 +51,7 @@ export default function Example({ active = true, actions, onPair, onRun, onSaveS
   useEffect(() => () => { clearTimeout(timer.current); }, []);
   const edit = (value: string) => {
     const content = value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current);
-    latest.current = content; setDraft(content); setStale(content !== saved.current); setError(undefined);
+    latest.current = content; setDraft(content); setStale(!pair?.source || content !== saved.current); setError(undefined);
     setSaveState('dirty'); clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush(); }, 500);
   };
