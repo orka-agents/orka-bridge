@@ -439,6 +439,10 @@ impl LocalVm {
         let state = self.inner.state.lock().unwrap();
         !state.closing && state.phase == LocalVmStatus::Ready && state.model_connected
     }
+    /// A successful guest observation can invalidate an earlier Connect acknowledgment.
+    pub fn clear_model_acknowledgment(&self) {
+        self.inner.state.lock().unwrap().model_connected = false;
+    }
     fn snapshot(&self, mut snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
         let state = self.inner.state.lock().unwrap();
         snapshot.workspace_progress = state.progress.as_ref().map(ProgressClock::snapshot);

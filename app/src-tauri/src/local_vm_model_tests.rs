@@ -67,14 +67,19 @@ fn model_failure_details_survive_generic_retry_without_failing_the_running_vm() 
         .model_result(&Err(SetupError::model("modelUnavailable")));
     let retried = serde_json::to_value(vm.snapshot(store.status().unwrap())).unwrap();
     assert_eq!(retried["localVmError"], first["localVmError"]);
-    vm.inner.model_result(&Ok(ModelSetupState {
+    let success = Ok(ModelSetupState {
         associated: true,
         ready: true,
         unknown: false,
         connection: None,
-    }));
+    });
+    vm.inner.model_result(&success);
     let ready = serde_json::to_value(vm.snapshot(store.status().unwrap())).unwrap();
     assert!(ready["localVmError"].is_null());
+    assert!(vm.model_connected());
+    vm.clear_model_acknowledgment();
+    assert!(!vm.model_connected());
+    vm.inner.model_result(&success);
     assert!(vm.model_connected());
     vm.request_close();
     assert!(!vm.model_connected());

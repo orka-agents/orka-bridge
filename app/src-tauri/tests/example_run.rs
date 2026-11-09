@@ -314,7 +314,7 @@ async fn uncertain_task_write_keeps_agent_and_pending_task_without_retry() {
     // A second attempt on the retired channel fails preflight without losing remote IDs.
     run.start(vm.clone());
     let refused = finished(&run, &vm).await;
-    assert_eq!(refused.error, Some("model"));
+    assert_eq!(refused.error, Some("session"));
     assert_eq!(refused.acknowledged.len(), 1);
     assert_eq!(refused.pending.unwrap().name, pending.name);
     assert_eq!(posts.lock().unwrap().len(), 2);

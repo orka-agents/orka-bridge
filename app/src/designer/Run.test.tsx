@@ -39,6 +39,7 @@ test.each([
   { error: 'model', modelConnected: false, alert: true },
   { error: 'model', modelConnected: true, alert: false },
   { error: 'submit', modelConnected: true, alert: true },
+  { error: 'session', modelConnected: true, alert: true },
 ])('retained $error advice follows native connection state without hiding other errors', async ({ error, modelConnected, alert }) => {
   vi.stubGlobal('isTauri', true);
   mockIPC(() => ({ ...idle, state: 'unknown', error, modelConnected }));

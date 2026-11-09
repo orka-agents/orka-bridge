@@ -142,8 +142,13 @@ impl ExampleRun {
     async fn execute(&self, client: &mut VmClient, vm: Arc<LocalVm>, pair: ParsedPair) {
         let model = match client.model_status() {
             Ok(model) if model.phase == ModelPhase::Ready => model,
-            _ => {
+            Ok(_) => {
+                vm.clear_model_acknowledgment();
                 self.fail("model");
+                return;
+            }
+            Err(_) => {
+                self.fail("session");
                 return;
             }
         };
