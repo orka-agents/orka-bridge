@@ -70,11 +70,14 @@ impl RuntimeWorker {
             any(windows, all(target_os = "macos", target_arch = "aarch64"))
         )
     ))]
+    // Protocol integration tests import this module without the native app owner.
+    #[cfg_attr(test, allow(dead_code))]
     pub(crate) fn retain_journal(mut self, custody: Arc<Mutex<journal::JournalCustody>>) -> Self {
         self.retry_custody = Some(custody);
         self
     }
     #[cfg(any(test, windows, target_os = "macos"))]
+    #[cfg_attr(test, allow(dead_code))]
     pub(crate) fn startup_failed(mut self, error: RuntimeError) -> RuntimeError {
         if matches!(error, RuntimeError::StopUnconfirmed(_)) {
             std::mem::forget(self);
