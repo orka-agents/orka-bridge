@@ -76,7 +76,7 @@ test.each([
   ['installing', 'localVm', 'Getting workspace ready', 'Setting up, step 2 of 4'],
   ['starting', 'localVm', 'Starting workspace', 'Setting up, step 2 of 4'],
   ['ready', 'localVm', 'AI connection unavailable', 'AI unavailable'],
-  ['failed', 'localVm', 'Workspace needs attention', 'Setup paused'],
+  ['failed', 'localVm', "The workspace couldn't start.", 'Setup paused'],
   ['closed', 'localVm', 'Workspace stopped', 'Workspace stopped'],
   ['notIntegrated', null, 'Workspace unavailable', 'Workspace unavailable'],
 ])('chrome reflects %s without invented readiness', async (localVm, selected, detail, tabLine) => {

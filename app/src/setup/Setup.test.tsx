@@ -146,11 +146,12 @@ test('Continue shows real startup states and a ready session can open the owned 
 test.each([
   'Starting the local VM failed: Runtime operation failed: Io(<b data-vm-error>launch detail</b>)',
   'Stopping the local VM failed: Runtime operation failed: Io(<b data-vm-error>stop detail</b>)',
-])('shows retained failure reason as plain text without new actions: %s', async localVmError => {
+])('keeps retained failure reason plain and behind disclosure: %s', async localVmError => {
   native(); mockIPC(command => command === 'setup_status'
     ? { ...status('localVm'), localVm: 'failed', localVmError } : Promise.reject({ kind: 'unavailable' }));
   const user = userEvent.setup(); render(<App />);
-  expect((await screen.findByRole('alert')).textContent).toBe('Your workspace could not start or its stop could not be confirmed. Your files are kept.');
+  expect((await screen.findByRole('alert')).textContent).toContain('What you downloaded is kept.');
+  expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
   expect(screen.queryByText(localVmError)).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.getByText(localVmError)).toBeTruthy();

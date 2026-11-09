@@ -5,6 +5,7 @@ import Setup from './setup/Setup';
 import Example from './designer/Example';
 import type { SetupStatus, ExamplePair } from './setup/state';
 import type { ModelState } from './setup/Model';
+import { workspaceRecovery } from './setup/recovery-info';
 import type { RunSnapshot } from './designer/run-api';
 import { agentInfo, type SaveState } from './designer/agent-api';
 
@@ -104,7 +105,8 @@ export default function App() {
   const modelDetail = setup?.model === 'locked' ? 'AI connection unavailable'
     : model === 'connecting' ? 'Connecting the AI…' : model === 'connected' ? 'AI connected'
     : model === 'failed' ? 'AI connection needs attention' : detail;
-  const hostDetail = workspaceReady ? modelDetail : detail;
+  const workspaceDetail = setup?.localVm === 'failed' ? workspaceRecovery(setup.localVmError).summary : detail;
+  const hostDetail = workspaceReady ? modelDetail : workspaceDetail;
   const cases = run?.report?.cases;
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
   const checks = checksStale ? 'Checks not run since your change' : runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
@@ -191,11 +193,11 @@ export default function App() {
       <footer className="status-bar">
         <span className={`live-dot ${tone}`} aria-hidden="true" />
         <span>{welcome ? 'Nothing is set up yet' : workspaceReady ? 'This computer ready' : setupLine}</span>
-        {!welcome && (detail !== setupLine || workspaceReady) ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : detail}</span></> : null}
+        {!welcome && (detail !== setupLine || workspaceReady) ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : workspaceDetail}</span></> : null}
         {exampleState === 'loaded' && !exampleReadOnly && <><span aria-hidden="true">·</span><span>{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
-          page !== 'Clusters' ? (workspaceReady ? `This computer ready · ${modelDetail}` : `${setupLine} · ${detail}`) : undefined,
+          page !== 'Clusters' ? (workspaceReady ? `This computer ready · ${modelDetail}` : `${setupLine} · ${workspaceDetail}`) : undefined,
           page !== 'Designer' ? checks : undefined,
         ].filter(Boolean).join(' · ')}</span>
       </footer>

@@ -76,7 +76,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   }
   async function chooseLocal(action: 'start' | 'cancel' | 'change' = 'start') {
     if (mutation.current || !status || (action !== 'cancel' && busy)) return;
-    if (action === 'start' && status.selected === 'localVm' && !['cancelled', 'closed'].includes(status.localVm)) return;
+    if (action === 'start' && status.selected === 'localVm' && !['cancelled', 'closed', 'failed'].includes(status.localVm)) return;
     // Observation must not invalidate an explicit selection awaiting its reply.
     clearTimeout(timer.current);
     ++epoch.current;
@@ -101,11 +101,11 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   const selected = status?.selected === 'localVm';
   return <>
     <div className="workspace-heading">
-      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? status?.localVm === 'ready' ? 'Choose the AI your agent uses' : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
+      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? status?.localVm === 'ready' ? 'Choose the AI your agent uses' : status?.localVm === 'failed' ? "Your workspace couldn't start" : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
       {selected && !['ready', 'failed', 'notIntegrated'].includes(status?.localVm ?? '') && <p className="muted">Meanwhile, meet the agent you'll test first.</p>}
       {!selected && <p className="muted">You can add more places later.</p>}
     </div>
-    <div className={selected ? 'setup workspace-setup-grid' : 'workspace-choice'}>
+    <div className={selected ? `setup workspace-setup-grid${status?.localVm === 'failed' ? ' workspace-setup-failed' : ''}` : 'workspace-choice'}>
       {!selected && <>
         <fieldset className="workspace-options" disabled={busy || !status || !!error}>
           <legend className="workspace-sr-only">Where agents run</legend>
@@ -142,7 +142,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
             <div className="workspace-step-actions"><button type="button" className="workspace-secondary" disabled={sending} onClick={() => { setConfirmChange(false); changeInvoker.current?.focus(); }}>Keep workspace running</button><button type="button" className="workspace-primary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and change</button></div>
           </section>}
         </div>
-        {status.localVm === 'ready' ? <Model enabled={status.model === 'available'} paused={!!error || sending} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /> : <Meet onRead={onOpenExample} onName={onExampleName} />}
+        {status.localVm === 'ready' ? <Model enabled={status.model === 'available'} paused={!!error || sending} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /> : status.localVm !== 'failed' && <Meet onRead={onOpenExample} onName={onExampleName} />}
       </>}
       {error && <div role="alert"><p>{error}</p>
         <button type="button" className="setup-button" disabled={busy}

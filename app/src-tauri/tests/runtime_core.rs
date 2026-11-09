@@ -507,6 +507,25 @@ fn single_component_relative_root_is_normalized_before_creation() {
     assert!(Journal::open(relative).is_ok());
 }
 
+#[test]
+fn handshake_stop_failure_is_typed_even_if_a_later_stop_succeeds() {
+    let (_temp, journal) = create();
+    let backend = Backend::default();
+    let fail = backend.fail_stop.clone();
+    let mut worker = make_worker(Box::new(backend), journal);
+    worker.start().unwrap();
+    *fail.lock().unwrap() = true;
+    let error = fixture_runtime::handshake::establish(
+        &mut worker,
+        Box::new(std::io::Cursor::new(Vec::<u8>::new())),
+        0,
+    )
+    .err()
+    .unwrap();
+    assert!(matches!(error, RuntimeError::StopUnconfirmed(_)));
+    *fail.lock().unwrap() = false;
+    worker.stop().unwrap();
+}
 #[derive(Clone, Default)]
 struct Backend {
     events: Arc<Mutex<Vec<&'static str>>>,

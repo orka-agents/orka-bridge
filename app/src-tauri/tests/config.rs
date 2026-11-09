@@ -77,6 +77,7 @@ fn agent_commands_are_granted_only_to_local_main_window() {
         "agent_save",
         "setup_cancel_local",
         "setup_change_local",
+        "setup_open_help",
     ] {
         assert!(authority
             .resolve_access(command, "main", "main", &Origin::Local)
