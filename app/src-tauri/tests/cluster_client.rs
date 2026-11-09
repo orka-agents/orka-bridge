@@ -17,6 +17,7 @@ struct ApiFixture {
     deny: Mutex<bool>,
     replacement: Mutex<bool>,
     no_watch: Mutex<bool>,
+    unrelated_api: Mutex<bool>,
     override_response: Mutex<Option<(String, u16, Value)>>,
 }
 impl ApiFixture {
@@ -109,10 +110,11 @@ impl ApiFixture {
             } else {
                 "service-uid"
             };
-            return (
-                200,
-                json!({"apiVersion":"v1","kind":"ServiceList","metadata":{},"items":[{"metadata":{"name":"orka","namespace":"control","uid":uid},"spec":{"selector":{"app":"orka"},"ports":[{"name":"api","port":80,"targetPort":"api"}]}}]}),
-            );
+            let mut list = json!({"apiVersion":"v1","kind":"ServiceList","metadata":{},"items":[{"metadata":{"name":"orka","namespace":"control","uid":uid},"spec":{"selector":{"app":"orka"},"ports":[{"name":"api","port":80,"targetPort":"api"}]}}]});
+            if *self.unrelated_api.lock().unwrap() {
+                list["items"].as_array_mut().unwrap().push(json!({"metadata":{"name":"other","namespace":"control","uid":"other-service"},"spec":{"selector":{"app":"other"},"ports":[{"name":"api","port":80,"targetPort":9000}]}}));
+            }
+            return (200, list);
         }
         if path.ends_with("/deployments") {
             let args = if *self.no_watch.lock().unwrap() {
@@ -120,10 +122,11 @@ impl ApiFixture {
             } else {
                 json!(["--api-port=8080", "--watch-namespace=agents"])
             };
-            return (
-                200,
-                json!({"apiVersion":"apps/v1","kind":"DeploymentList","metadata":{},"items":[{"metadata":{"name":"controller","namespace":"control","uid":"deployment-uid"},"spec":{"selector":{"matchLabels":{"app":"orka"}},"template":{"metadata":{"labels":{"app":"orka"}},"spec":{"containers":[{"name":"controller","image":"ghcr.io/orka-agents/orka:v99","args":args,"ports":[{"name":"api","containerPort":8080}]}]}}}}]}),
-            );
+            let mut list = json!({"apiVersion":"apps/v1","kind":"DeploymentList","metadata":{},"items":[{"metadata":{"name":"controller","namespace":"control","uid":"deployment-uid"},"spec":{"selector":{"matchLabels":{"app":"orka"}},"template":{"metadata":{"labels":{"app":"orka"}},"spec":{"containers":[{"name":"controller","image":"ghcr.io/orka-agents/orka:v99","args":args,"ports":[{"name":"api","containerPort":8080}]}]}}}}]});
+            if *self.unrelated_api.lock().unwrap() {
+                list["items"].as_array_mut().unwrap().push(json!({"metadata":{"name":"other","namespace":"control","uid":"other-deployment"},"spec":{"selector":{"matchLabels":{"app":"other"}},"template":{"metadata":{"labels":{"app":"other"}},"spec":{"containers":[{"name":"server","image":"example/api:v1","args":["--api-port=9000"]}]}}}}));
+            }
+            return (200, list);
         }
         panic!("unexpected Kubernetes path {path}");
     }
@@ -274,6 +277,28 @@ async fn contexts_are_offline_and_explicit_discovery_only_gets() {
     assert!(!serialized.contains("static-fixture"));
     assert!(!serialized.contains("http://"));
 }
+#[tokio::test]
+async fn unrelated_api_workload_does_not_hide_orka_or_break_revalidation() {
+    let api = Arc::new(ApiFixture::default());
+    *api.unrelated_api.lock().unwrap() = true;
+    let orka = Arc::new(OrkaFixture::default());
+    let mut client = client(&api, &orka, json!({"token":"static-fixture"}));
+    let views = client
+        .discover(client.contexts().unwrap()[0].id)
+        .await
+        .unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].service_name, "orka");
+    let access = client.connect(views[0].id, None).await.unwrap();
+    client.revalidate(&access).await.unwrap();
+    assert!(api
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|c| c.0 == "GET" || c.1.ends_with("/selfsubjectaccessreviews")));
+}
+
 #[tokio::test]
 async fn missing_watch_namespace_is_not_guessed() {
     let api = Arc::new(ApiFixture::default());

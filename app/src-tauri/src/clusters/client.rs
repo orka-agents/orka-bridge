@@ -475,12 +475,22 @@ async fn installations(
             };
             for container in containers {
                 let args = container.args.as_deref().unwrap_or_default();
-                if !args.iter().any(|a| {
-                    a.starts_with("--api-port=")
-                        || a == "--api-port"
-                        || a.starts_with("--watch-namespace=")
-                        || a == "--watch-namespace"
-                }) {
+                // A generic API port is not Orka evidence; unrelated controllers use it too.
+                let orka_label = labels
+                    .get("app.kubernetes.io/name")
+                    .is_some_and(|n| n == "orka");
+                let orka_image = container.image.as_deref().is_some_and(|image| {
+                    image
+                        .split('@')
+                        .next()
+                        .and_then(|i| i.rsplit('/').next())
+                        .and_then(|i| i.split(':').next())
+                        == Some("orka")
+                });
+                let watches_namespace = args
+                    .iter()
+                    .any(|a| a.starts_with("--watch-namespace=") || a == "--watch-namespace");
+                if !orka_label && !orka_image && !watches_namespace {
                     continue;
                 }
                 let mut watched = args.iter().enumerate().filter_map(|(i, a)| {
