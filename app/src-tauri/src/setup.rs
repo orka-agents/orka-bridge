@@ -1,4 +1,4 @@
-use crate::runtime::credential_store::StoreError;
+use crate::runtime::credential_store::{NativeCall, StoreError};
 use serde::Serialize;
 use std::{
     fs::{self, OpenOptions},
@@ -35,26 +35,25 @@ impl SetupSnapshot {
 }
 
 #[derive(Debug, Serialize)]
+struct StoreDiagnostic {
+    call: NativeCall,
+    code: u32,
+}
+#[derive(Debug, Serialize)]
 pub struct SetupError {
     kind: &'static str,
     message: &'static str,
-    // Not serialized in the command error; `diagnostic` supplies safe retained details.
-    #[serde(skip)]
-    native: Option<StoreError>,
+    // Only the finite call and numeric code may cross to the sign-in error UI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    native: Option<StoreDiagnostic>,
 }
 impl SetupError {
-    /// Fixed message plus, when a native credential call failed, only its name and Windows error code.
-    pub fn diagnostic(&self) -> String {
-        match self.native {
-            Some(StoreError::Native { call, code }) => {
-                format!("{} ({}, Windows error {code})", self.message, call.name())
-            }
-            _ => self.message.to_owned(),
-        }
-    }
     pub(crate) fn store(error: StoreError) -> Self {
         Self {
-            native: Some(error),
+            native: match error {
+                StoreError::Native { call, code } => Some(StoreDiagnostic { call, code }),
+                _ => None,
+            },
             ..Self::model("modelStore")
         }
     }

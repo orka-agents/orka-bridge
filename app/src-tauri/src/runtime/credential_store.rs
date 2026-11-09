@@ -10,7 +10,7 @@ pub trait CredentialStore: Send + Sync {
 pub struct OsCredentialStore;
 
 /// Finite set of native calls whose failure may be diagnosed. Never a target, account or secret.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum NativeCall {
     CredWriteW,
     CredReadW,

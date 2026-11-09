@@ -136,7 +136,11 @@ fn os_save_apply_then_error_keeps_uuid_for_explicit_host_signout() {
     worker.join().unwrap().assert_empty();
     assert_eq!(
         *vault.calls.lock().unwrap(),
-        vec![("save", binding.slot), ("delete", binding.slot)]
+        vec![
+            ("save", binding.slot),
+            ("load", binding.slot),
+            ("delete", binding.slot)
+        ]
     );
     assert!(vault.slots.lock().unwrap().is_empty());
     assert!(read_binding(setup.root.as_deref().unwrap())
@@ -254,8 +258,11 @@ impl CredentialStore for FakeVault {
             return Err(error);
         }
         let slots = self.slots.lock().unwrap();
-        CredentialPayload::new(slots.get(&slot).ok_or(StoreError::Unavailable)?)
-            .map_err(|_| StoreError::Invalid)
+        CredentialPayload::new(slots.get(&slot).ok_or(StoreError::Native {
+            call: NativeCall::CredReadW,
+            code: 1168,
+        })?)
+        .map_err(|_| StoreError::Invalid)
     }
     fn delete(&self, slot: Uuid) -> Result<(), StoreError> {
         self.calls.lock().unwrap().push(("delete", slot));
@@ -384,7 +391,7 @@ fn remote(connection: &ModelConnection, phase: ModelPhase) -> ResultBody {
 }
 
 #[test]
-fn denied_save_leaves_no_association_plaintext_fallback_or_load() {
+fn denied_save_with_confirmed_absence_leaves_no_reservation_or_plaintext_fallback() {
     let (_tmp, setup, install) = selected_setup();
     let vault = FakeVault {
         deny_save: true,
@@ -393,8 +400,8 @@ fn denied_save_leaves_no_association_plaintext_fallback_or_load() {
     assert!(setup.associate_secret(install, SECRET, &vault).is_err());
     assert!(!setup.model_binding_status().unwrap().associated);
     let root = setup.root.as_deref().unwrap();
-    assert!(setup.model_binding_status().unwrap().unknown);
-    assert!(read_binding(root).unwrap().is_some());
+    assert!(!setup.model_binding_status().unwrap().unknown);
+    assert!(read_binding(root).unwrap().is_none());
     for entry in fs::read_dir(root).unwrap() {
         let bytes = fs::read(entry.unwrap().path()).unwrap();
         assert!(!bytes.windows(SECRET.len()).any(|part| part == SECRET));
@@ -405,13 +412,13 @@ fn denied_save_leaves_no_association_plaintext_fallback_or_load() {
         .is_err());
     drop(client);
     worker.join().unwrap().assert_empty();
-    assert_eq!(vault.counts(), (1, 0, 0));
+    assert_eq!(vault.counts(), (1, 1, 0));
     assert!(vault.slots.lock().unwrap().is_empty());
 }
 
 const WRITE_FAILURE: StoreError = StoreError::Native {
     call: NativeCall::CredWriteW,
-    code: 1312,
+    code: 8,
 };
 const READ_FAILURE: StoreError = StoreError::Native {
     call: NativeCall::CredReadW,
@@ -422,7 +429,7 @@ const STORE_MESSAGE: &str = "The native credential store could not save or load 
 // Diagnostics are built only from finite typed data, so no slot, target or secret can enter.
 fn assert_redacted(error: &SetupError, slot: Uuid, install: Uuid) {
     let wire = serde_json::to_string(error).unwrap();
-    let text = format!("{wire} {} {error:?}", error.diagnostic());
+    let text = format!("{wire} {error:?}");
     for private in [
         std::str::from_utf8(SECRET).unwrap().to_owned(),
         slot.to_string(),
@@ -431,32 +438,48 @@ fn assert_redacted(error: &SetupError, slot: Uuid, install: Uuid) {
     ] {
         assert!(!text.contains(&private), "diagnostic leaked {private}");
     }
-    // The renderer-facing error stays the fixed kind and message with no native detail.
-    assert_eq!(
-        wire,
-        format!("{{\"kind\":\"modelStore\",\"message\":\"{STORE_MESSAGE}\"}}")
-    );
+    let value: serde_json::Value = serde_json::from_str(&wire).unwrap();
+    assert_eq!(value["kind"], "modelStore");
+    assert_eq!(value["message"], STORE_MESSAGE);
 }
 
 #[test]
-fn native_save_failure_is_diagnosed_without_cleaning_the_reservation() {
+fn failed_save_with_confirmed_absence_reports_error_8_and_allows_another_signin() {
     let (_tmp, setup, install) = selected_setup();
-    let vault = FakeVault {
+    let mut vault = FakeVault {
         save_error: Some(WRITE_FAILURE),
         ..FakeVault::default()
     };
     let error = setup.associate_secret(install, SECRET, &vault).unwrap_err();
     assert_eq!(error.kind, "modelStore");
     assert_eq!(
-        error.diagnostic(),
-        format!("{STORE_MESSAGE} (CredWriteW, Windows error 1312)")
+        serde_json::to_value(&error).unwrap()["native"],
+        serde_json::json!({"call": "CredWriteW", "code": 8})
+    );
+    let slot = vault.calls.lock().unwrap()[0].1;
+    assert_redacted(&error, slot, install);
+    assert!(read_binding(setup.root.as_deref().unwrap())
+        .unwrap()
+        .is_none());
+    assert!(!setup.model_binding_status().unwrap().unknown);
+    assert_eq!(vault.counts(), (1, 1, 0));
+    vault.save_error = None;
+    assert!(
+        setup
+            .associate_secret(install, SECRET, &vault)
+            .unwrap()
+            .associated
     );
     let binding = read_binding(setup.root.as_deref().unwrap())
         .unwrap()
-        .expect("failed save keeps the exact reservation");
-    assert_eq!(binding.phase, Phase::Storing);
-    assert_redacted(&error, binding.slot, install);
-    assert_eq!(vault.counts(), (1, 0, 0), "no retry or cleanup");
+        .unwrap();
+    assert_eq!(binding.phase, Phase::Stored);
+    assert_ne!(binding.slot, slot);
+    assert_eq!(
+        vault.counts(),
+        (2, 1, 0),
+        "only the explicit retry saves again"
+    );
 }
 
 #[test]
@@ -473,8 +496,8 @@ fn native_load_failure_is_diagnosed_before_any_guest_mutation() {
         .unwrap_err();
     assert_eq!(error.kind, "modelStore");
     assert_eq!(
-        error.diagnostic(),
-        format!("{STORE_MESSAGE} (CredReadW, Windows error 1168)")
+        serde_json::to_value(&error).unwrap()["native"],
+        serde_json::json!({"call": "CredReadW", "code": 1168})
     );
     let binding = read_binding(setup.root.as_deref().unwrap())
         .unwrap()
@@ -495,10 +518,9 @@ fn non_native_store_failures_and_other_errors_have_only_their_fixed_message() {
     };
     let error = setup.associate_secret(install, SECRET, &vault).unwrap_err();
     assert_eq!(error.kind, "modelStore");
-    assert_eq!(error.diagnostic(), STORE_MESSAGE);
     assert_eq!(
-        SetupError::model("modelGuest").diagnostic(),
-        "The guest model handler is unavailable or is not idle."
+        serde_json::to_value(&error).unwrap(),
+        serde_json::json!({"kind": "modelStore", "message": STORE_MESSAGE})
     );
 }
 
