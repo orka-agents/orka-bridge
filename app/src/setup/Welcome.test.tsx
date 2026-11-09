@@ -77,6 +77,7 @@ test('keyboard disclosure and radio selection are inert; only Continue starts on
   const next = screen.getByRole('button', { name: 'Continue' });
   next.focus(); await user.keyboard('{Enter}{Enter}');
   expect(await screen.findByText('Starting your workspace…')).toBeTruthy();
+  expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Get your workspace ready' }));
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
 });
 
@@ -87,6 +88,14 @@ test('requirements render the native build values rather than fixed image or mem
   expect(screen.getByText(/17 GiB workspace image/)).toBeTruthy();
   expect(screen.getByText(/64 GiB/)).toBeTruthy();
   expect(screen.queryByText(/6 GB|2 GB|6 GiB/)).toBeNull();
+});
+
+test('release welcome exposes unavailability before Get started without replacing the workflow copy', async () => {
+  const ipc = native({ ...unselected, localVm: 'notIntegrated' }, null); render(<App />);
+  expect(await screen.findByRole('button', { name: 'Get started' })).toBeTruthy();
+  expect(screen.getByText('Workspace setup is not included in this build. Nothing will be downloaded or started.')).toBeTruthy();
+  expect(screen.getByText('Share it')).toBeTruthy();
+  expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
 
 test('release-unavailable setup stays explicit and does not invent requirements', async () => {

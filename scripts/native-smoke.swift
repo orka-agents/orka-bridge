@@ -107,7 +107,8 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     let observations = request.results ?? []
     if page == "Clusters" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        let welcome = text.contains("Build an AI agent")
+        // Vision can read the capital I in AI as lowercase l. Match the rest of the heading.
+        let welcome = text.contains("Build an") && text.contains("does a real job")
         let choice = text.contains("Where should your agents run")
         let selected = text.contains("Get your workspace ready")
         require(welcome || choice || selected, "Workspace heading not visible; observed: \(text)")

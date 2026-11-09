@@ -30,7 +30,7 @@ export default function Setup({ onOpenExample, onReady }: { onOpenExample: () =>
   const focusChoice = useRef(false);
   useEffect(() => {
     if (focusChoice.current) { heading.current?.focus(); focusChoice.current = false; }
-  }, [seen]);
+  }, [seen, status?.selected]);
   useEffect(() => {
     let active = true;
     void workspaceRequirements().then(value => { if (active) setRequirements(value); });
@@ -62,7 +62,7 @@ export default function Setup({ onOpenExample, onReady }: { onOpenExample: () =>
     setBusy(true); setError(undefined);
     const result = await selectLocal();
     if (request !== epoch.current) return;
-    if (result.ok) setStatus(result.status);
+    if (result.ok) { focusChoice.current = true; setStatus(result.status); }
     else { setStatus(undefined); setError(result.message); }
     const waiting = result.ok && pending(result.status.localVm);
     setBusy(waiting);
@@ -70,7 +70,7 @@ export default function Setup({ onOpenExample, onReady }: { onOpenExample: () =>
   }
 
   if (!status && !error) return <h1 id="page-title">Checking your workspace…</h1>;
-  if (!seen && status && status.selected !== 'localVm') return <Welcome titleId="page-title" onStart={start} />;
+  if (!seen && status && status.selected !== 'localVm') return <Welcome titleId="page-title" onStart={start} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
   const selected = status?.selected === 'localVm';
   return <>
     <div className="workspace-heading">
