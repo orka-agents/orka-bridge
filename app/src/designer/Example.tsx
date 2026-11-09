@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { loadExample, type ExamplePair } from '../setup/state';
 import { agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
+import AgentParts from './AgentParts';
+import { readForm } from './agent-form';
 import type { RunSnapshot } from './run-api';
 
 export default function Example({ active = true, readOnly = false, remote = false, actions, onPair, onRun, onSaveState, onStale }: {
@@ -50,14 +52,15 @@ export default function Example({ active = true, readOnly = false, remote = fals
     finally { busy.current = false; }
   }, [onPair, readOnly]);
   useEffect(() => () => { clearTimeout(timer.current); }, []);
-  const edit = (value: string) => {
+  const edit = (value: string, rawFile = false) => {
     if (readOnly) return;
-    const content = value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current);
+    const content = rawFile ? value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current) : value;
+    if (content === latest.current) return;
     latest.current = content; setDraft(content); setStale(!pair?.source || content !== saved.current); setError(undefined);
     setSaveState('dirty'); clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush(); }, 500);
   };
-  const info = agentInfo(pair?.agent);
+  const info = { ...agentInfo(draft), description: readForm(draft).description };
   const saveLabel = { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
   return <section className="designer" aria-labelledby={active ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
@@ -77,10 +80,10 @@ export default function Example({ active = true, readOnly = false, remote = fals
         {view === 'File' ? <>
           <label className="sr-only" htmlFor="agent-file">Agent file</label>
           <p className="muted" id="file-hint">{readOnly ? 'You can read the example while your workspace gets ready. Editing opens after setup.' : 'Changes save automatically in your agent’s folder. Each save is kept in its Git history.'}</p>
-          <textarea readOnly={readOnly} id="agent-file" aria-describedby="file-hint" className="agent-editor" spellCheck={false} value={draft} onChange={event => edit(event.target.value)} onBlur={() => { void flush(); }} onKeyDown={event => {
+          <textarea readOnly={readOnly} id="agent-file" aria-describedby="file-hint" className="agent-editor" spellCheck={false} value={draft} onChange={event => edit(event.target.value, true)} onBlur={() => { void flush(); }} onKeyDown={event => {
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void flush(); }
           }} />
-        </> : <><p className="muted">{readOnly ? 'Read the instructions now. You can change them after setup.' : 'Edit the raw file in File view. Form editing is coming.'}</p><pre className="example-source" tabIndex={0} aria-label={readOnly ? 'Instructions, read-only' : 'Agent file, read-only'}>{readOnly ? draft.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, '') : draft}</pre></>}
+        </> : <AgentParts source={draft} path={pair.path} readOnly={readOnly} onChange={edit} />}
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
