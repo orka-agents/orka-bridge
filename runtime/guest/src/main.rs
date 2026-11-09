@@ -369,11 +369,20 @@ fn control(
             false,
         )
     };
-    write(
+    let reply = write(
         diagnostics::Context::new("serve", write_phase),
         io.get_mut(),
         service::result(&r, body),
-    )?;
+    );
+    // Poweroff stops this service, so an accepted Shutdown is acknowledged
+    // first. A failed acknowledgement does not cancel the requested poweroff.
+    if stop {
+        diagnostics::context(
+            diagnostics::Context::new("serve", "shutdown-request"),
+            system.shutdown(),
+        )?;
+    }
+    reply?;
     Ok(stop)
 }
 fn private_result<R: model::Runner>(
@@ -1390,6 +1399,123 @@ mod tests {
             0,
             "no operation record was created"
         );
+    }
+    /// Observes what the host end has received when poweroff is requested.
+    struct Poweroff {
+        host: Option<UnixStream>,
+        received: Option<Vec<u8>>,
+        fail: bool,
+    }
+    impl BootSystem for Poweroff {
+        fn probe(&mut self) -> io::Result<early::Disk> {
+            unreachable!()
+        }
+        fn format(&mut self, _: Uuid) -> io::Result<()> {
+            unreachable!()
+        }
+        fn mount_state(&mut self) -> io::Result<()> {
+            unreachable!()
+        }
+        fn identity(&mut self) -> io::Result<Option<early::Identity>> {
+            unreachable!()
+        }
+        fn initialize(&mut self, _: &early::Identity) -> io::Result<()> {
+            unreachable!()
+        }
+        fn bind_persistent(&mut self) -> io::Result<()> {
+            unreachable!()
+        }
+        fn credentials(&mut self) -> io::Result<()> {
+            unreachable!()
+        }
+        fn ready(&mut self, _: &BootDescriptor) -> io::Result<()> {
+            unreachable!()
+        }
+        fn save_boot(&mut self, _: &BootDescriptor) -> io::Result<()> {
+            unreachable!()
+        }
+        fn shutdown(&mut self) -> io::Result<()> {
+            assert!(self.received.is_none(), "poweroff requested twice");
+            let mut bytes = Vec::new();
+            if let Some(host) = &mut self.host {
+                host.set_nonblocking(true).unwrap();
+                // WouldBlock ends the read; bytes already received are kept.
+                let _ = host.read_to_end(&mut bytes);
+            }
+            self.received = Some(bytes);
+            if self.fail {
+                Err(io::Error::other("poweroff"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+    fn shutdown_control(
+        peer: &'static str,
+        host: Option<UnixStream>,
+        guest: UnixStream,
+        fail: bool,
+    ) -> (io::Result<bool>, Option<Vec<u8>>) {
+        let root = tempfile::tempdir().unwrap();
+        let b = boot();
+        let mut serving = serve_ready(root.path(), b.installation_id, || Ok(())).unwrap();
+        let mut system = Poweroff {
+            host,
+            received: None,
+            fail,
+        };
+        let result = control(
+            peer,
+            &mut BufReader::new(guest),
+            &mut Session::local(b.clone()).unwrap(),
+            &mut system,
+            &b,
+            &mut serving,
+        );
+        (result, system.received)
+    }
+    fn shutdown_request(host: &mut UnixStream) {
+        host.write_all(
+            &encode(&Frame::Request(WireRequest {
+                version: VERSION,
+                boot_nonce: boot().boot_nonce,
+                request_id: 3,
+                body: RequestBody::Shutdown {},
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    }
+    #[test]
+    fn shutdown_is_acknowledged_before_poweroff_is_requested() {
+        // Poweroff stops the endpoint; a reply written after it can be lost.
+        for peer in ["channel", "local"] {
+            for fail in [false, true] {
+                let (mut host, guest) = UnixStream::pair().unwrap();
+                shutdown_request(&mut host);
+                let (result, received) = shutdown_control(peer, Some(host), guest, fail);
+                let received = received.expect("poweroff was not requested");
+                let Ok(Frame::Result(reply)) = serde_json::from_slice::<Frame>(&received) else {
+                    panic!("no complete acknowledgement before poweroff");
+                };
+                assert_eq!((reply.request_id, reply.body), (3, ResultBody::Ready {}));
+                if fail {
+                    // A failed request is an error: serial serve ends, local is logged.
+                    assert!(result.is_err());
+                } else {
+                    assert!(result.unwrap());
+                }
+            }
+        }
+    }
+    #[test]
+    fn failed_acknowledgement_does_not_cancel_poweroff() {
+        let (mut host, guest) = UnixStream::pair().unwrap();
+        shutdown_request(&mut host);
+        drop(host);
+        let (result, received) = shutdown_control("channel", None, guest, false);
+        assert!(result.is_err());
+        assert!(received.is_some(), "accepted shutdown was not requested");
     }
     #[test]
     fn readiness_is_not_acknowledged_if_serving_store_initialization_fails() {

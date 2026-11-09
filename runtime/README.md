@@ -78,8 +78,12 @@ deleted to make startup work. The original socket is cleaned on normal exit.
 Serial loss ends this session; do not restart serve within the same host lease.
 A silent root local client can delay serial handling until its bounded frame
 read expires. The later adapter must not hold an idle connection.
-Graceful shutdown requests fixed systemd poweroff; its reply is not proof of
-hypervisor completion. The host must still observe its exact backend stopping.
+Graceful shutdown acknowledges the accepted request before requesting fixed
+systemd poweroff, which stops the endpoint. A failed acknowledgement still
+requests poweroff. If the request fails after a serial reply, serve ends; a
+local peer's failure is only logged. The reply is not proof that
+poweroff started or completed. The host must still observe its exact backend
+stopping.
 
 The image must supply fixed helpers `/sbin/blkid`, `/sbin/blockdev`,
 `/sbin/mkfs.ext4`, `/bin/mount`, `/usr/bin/findmnt` in initramfs with their
