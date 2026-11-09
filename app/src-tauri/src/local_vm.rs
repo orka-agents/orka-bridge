@@ -235,13 +235,15 @@ impl LocalVm {
                 Arc::new(move |phase| i.publish(phase))
             };
             let result = factory.launch(inner.closed.subscribe(), progress).await;
-            let successful = result.is_ok();
+            let cancelled = matches!(&result, Err(RuntimeError::Closed)) && *inner.closed.borrow();
+            let successful = result.is_ok() || cancelled;
             let mut session = inner.session.lock().await;
             match result {
                 Ok(live) => {
                     *session = Some(live);
                     inner.publish(LocalVmStatus::Ready);
                 }
+                Err(RuntimeError::Closed) if cancelled => {}
                 Err(error) => inner.fail(format!(
                     "Starting the local VM failed: {}",
                     failure_reason(&error)

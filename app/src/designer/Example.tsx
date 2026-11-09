@@ -4,8 +4,8 @@ import { agentCall, agentInfo, type AgentPair, type SaveState } from './agent-ap
 import Run from './Run';
 import type { RunSnapshot } from './run-api';
 
-export default function Example({ active = true, actions, onPair, onRun, onSaveState, onStale }: {
-  active?: boolean; actions?: ReactNode;
+export default function Example({ active = true, actions, onPair, onRun, onSaveState, onStale, modelConnected = false }: {
+  active?: boolean; actions?: ReactNode; modelConnected?: boolean;
   onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void;
   onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
 }) {
@@ -82,7 +82,7 @@ export default function Example({ active = true, actions, onPair, onRun, onSaveS
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
-        <Run source={pair.source} onSnapshot={onRun} blocked={saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />
+        <Run modelConnected={modelConnected} source={pair.source} onSnapshot={onRun} blocked={saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />
         <details className="check-source"><summary>Check file: web-reader.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Check file, read-only">{pair.tests}</pre></details>
       </div>
     </>}

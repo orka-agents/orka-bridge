@@ -21,6 +21,17 @@ test('Run is explicit, duplicate clicks and remounts only observe existing work'
   expect(screen.getByText('contains: passed')).toBeTruthy(); expect(screen.getByText('toolCalled: unknown')).toBeTruthy();
   expect(document.querySelector('script')).toBeNull(); expect(screen.getByText('No completed tool calls were observed. Missing evidence is unknown.')).toBeTruthy();
 });
+test('model connection advice follows the acknowledged model state, not Run availability', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => ({ ...idle, state: 'running', canRun: false }));
+  const view = render(<Run />);
+  expect(screen.getByText(/Connect the model in Clusters first\./)).toBeTruthy();
+  view.rerender(<Run modelConnected />);
+  expect(await screen.findByText('Running on the local VM…')).toBeTruthy();
+  expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
+  view.rerender(<Run modelConnected={false} />);
+  expect(screen.getByText(/Connect the model in Clusters first\./)).toBeTruthy();
+});
 test('uncertain submission names retained receipts and never retries automatically', async () => {
   vi.stubGlobal('isTauri', true); const ipc = vi.fn((command: string) => { expect(command).toBe('setup_run_status'); return { ...idle, state: 'unknown', error: 'submit', acknowledged: [{ kind: 'Agent', name: 'bridge-run-example', uid: 'uid-a' }], pending: { kind: 'Task', name: 'bridge-task-example' } }; }); mockIPC(ipc); render(<Run />);
   expect(await screen.findByText(/bridge-task-example/)).toBeTruthy(); expect(screen.getByText(/bridge-run-example/)).toBeTruthy();

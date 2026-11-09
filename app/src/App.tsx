@@ -158,7 +158,7 @@ export default function App() {
               setExampleOpen(true); setPage('Designer');
             }} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} modelConnected={model === 'connected'} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
           <ComingButton label="Send to a cluster" reason="Sending to a cluster is coming" />
         </>} /></div>}

@@ -2,6 +2,187 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::fs;
 
+mod infrastructure_tests {
+    use super::*;
+    use bridge_runtime_protocol::*;
+    use std::{
+        io::{self, Read, Write},
+        sync::atomic::{AtomicU8, AtomicUsize, Ordering},
+    };
+
+    #[derive(Default)]
+    struct Probe {
+        state: AtomicU8,
+        polls: AtomicUsize,
+        stops: AtomicUsize,
+        fail_stop: bool,
+    }
+    struct Channel {
+        probe: Arc<Probe>,
+        reply: io::Cursor<Vec<u8>>,
+    }
+    impl Read for Channel {
+        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            self.reply.read(out)
+        }
+    }
+    impl Write for Channel {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            let Frame::Request(request) = serde_json::from_slice(bytes).unwrap() else {
+                panic!("request")
+            };
+            assert!(
+                matches!(request.body, RequestBody::Readiness {}),
+                "startup may only observe readiness"
+            );
+            self.probe.polls.fetch_add(1, Ordering::SeqCst);
+            let state = self.probe.state.load(Ordering::SeqCst);
+            self.reply = io::Cursor::new(
+                encode(&Frame::Result(WireResult {
+                    version: VERSION,
+                    boot_nonce: request.boot_nonce,
+                    request_id: request.request_id,
+                    body: ResultBody::Infrastructure(InfrastructureState {
+                        phase: Some(if state == 0 {
+                            BootstrapPhase::ClusterReady
+                        } else {
+                            BootstrapPhase::InfrastructureReady
+                        }),
+                        service: match state {
+                            0 => InfrastructureService::Starting,
+                            1 => InfrastructureService::Ready,
+                            _ => InfrastructureService::Failed,
+                        },
+                    }),
+                }))
+                .unwrap(),
+            );
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    struct TestSession(Arc<Probe>, VmClient);
+    impl LocalSession for TestSession {
+        fn with_client(
+            &mut self,
+            work: &mut dyn FnMut(Uuid, &mut VmClient) -> Result<(), RuntimeError>,
+        ) -> Result<(), RuntimeError> {
+            work(Uuid::from_u128(42), &mut self.1)
+        }
+        fn execute(&mut self, _: EngineRequest) -> TransportFuture<'_> {
+            Box::pin(async { unreachable!() })
+        }
+        fn stop(&mut self) -> Result<(), RuntimeError> {
+            self.0.stops.fetch_add(1, Ordering::SeqCst);
+            if self.0.fail_stop {
+                Err(io::Error::other("stop detail").into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+    struct Factory(Arc<Probe>);
+    impl LocalFactory for Factory {
+        fn launch(
+            &self,
+            closed: watch::Receiver<bool>,
+            progress: Arc<dyn Fn(LocalVmStatus) + Send + Sync>,
+        ) -> StartFuture<'_> {
+            let probe = self.0.clone();
+            Box::pin(blocking_start(move |runtime| {
+                progress(LocalVmStatus::Starting);
+                let client = VmClient::established(
+                    Box::new(Channel {
+                        probe: probe.clone(),
+                        reply: io::Cursor::new(Vec::new()),
+                    }),
+                    Uuid::new_v4(),
+                )?;
+                wait_for_infrastructure(Box::new(TestSession(probe, client)), closed, runtime)
+            }))
+        }
+    }
+    async fn phase(vm: &LocalVm, expected: LocalVmStatus) {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while vm.status() != expected {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    async fn polled(probe: &Probe) {
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while probe.polls.load(Ordering::SeqCst) == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    #[tokio::test]
+    async fn starting_infrastructure_locks_credentials_and_connect_until_ready() {
+        let probe = Arc::new(Probe::default());
+        let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
+        let temp = tempfile::tempdir().unwrap();
+        let store = Arc::new(crate::setup::SetupStore::new(Some(temp.path().to_owned())));
+        vm.start();
+        phase(&vm, LocalVmStatus::Starting).await;
+        polled(&probe).await;
+        let snapshot =
+            serde_json::to_value(setup_status(store.clone(), &vm).await.unwrap()).unwrap();
+        assert_eq!(snapshot["localVm"], "starting");
+        assert_eq!(snapshot["model"], "locked");
+        assert!(vm
+            .with_client(|_, _| panic!("credential capture must not be admitted"))
+            .await
+            .is_err());
+        assert!(vm.connect_model(store).await.is_err());
+        assert_eq!(vm.status(), LocalVmStatus::Starting);
+        probe.state.store(1, Ordering::SeqCst);
+        phase(&vm, LocalVmStatus::Ready).await;
+        vm.shutdown().await.unwrap();
+        assert_eq!(probe.stops.load(Ordering::SeqCst), 1);
+        assert!(probe.polls.load(Ordering::SeqCst) >= 2);
+    }
+    #[tokio::test]
+    async fn failed_bootstrap_never_becomes_running_and_preserves_stop_error() {
+        for fail_stop in [false, true] {
+            let probe = Arc::new(Probe {
+                state: AtomicU8::new(2),
+                fail_stop,
+                ..Probe::default()
+            });
+            let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
+            vm.start();
+            phase(&vm, LocalVmStatus::Failed).await;
+            let temp = tempfile::tempdir().unwrap();
+            let store = Arc::new(crate::setup::SetupStore::new(Some(temp.path().to_owned())));
+            let snapshot = serde_json::to_value(setup_status(store, &vm).await.unwrap()).unwrap();
+            assert_eq!(snapshot["model"], "locked");
+            let error = snapshot["localVmError"].as_str().unwrap();
+            assert!(error.contains("infrastructure"), "{error}");
+            assert_eq!(error.contains("stop detail"), fail_stop, "{error}");
+            assert_eq!(probe.stops.load(Ordering::SeqCst), 1);
+        }
+    }
+    #[tokio::test]
+    async fn close_wakes_the_infrastructure_wait_and_stops_once() {
+        let probe = Arc::new(Probe::default());
+        let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
+        vm.start();
+        polled(&probe).await;
+        tokio::time::timeout(std::time::Duration::from_secs(1), vm.shutdown())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(vm.status(), LocalVmStatus::Closed);
+        assert_eq!(probe.stops.load(Ordering::SeqCst), 1);
+    }
+}
+
 // Native startup must acquire the real Windows inheritance gate after returning
 // from async image work, not while its blocking worker is inside block_on.
 #[tokio::test]

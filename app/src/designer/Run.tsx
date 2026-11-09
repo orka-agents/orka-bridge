@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { errors, runCall, type RunSnapshot } from './run-api';
 import { sameSource, type SourceId } from './agent-api';
-export default function Run({ onSnapshot, blocked = false, stale = false, onStart, source }: { onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId }) {
+export default function Run({ onSnapshot, blocked = false, stale = false, onStart, source, modelConnected = false }: { onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId; modelConnected?: boolean }) {
   const [snapshot, setSnapshot] = useState<RunSnapshot>();
   const [message, setMessage] = useState<string>();
   const [sending, setSending] = useState(false);
@@ -30,7 +30,7 @@ export default function Run({ onSnapshot, blocked = false, stale = false, onStar
   const outdated = stale || (sourceCurrent === false && !!snapshot?.report);
   return <div className="example-run" aria-labelledby="run-title">
     <h3 id="run-title">Test on the local VM</h3>
-    <p className="muted">Run creates an Orka Agent and Task from these exact files. Connect the model in Clusters first.</p>
+    <p className="muted">Run creates an Orka Agent and Task from these exact files.{!modelConnected && ' Connect the model in Clusters first.'}</p>
     <button type="button" className="setup-button" disabled={blocked || running || !snapshot?.canRun} title={blocked ? 'Save your changes before running the check' : !snapshot?.canRun ? 'Connect your workspace and AI in Clusters first' : undefined} onClick={() => { void start(); }}>Run test</button>
     {outdated && <p role="status">Not run since your change. Any result below is from the earlier file.</p>}
     {running && <p role="status">Running on the local VM…</p>}
