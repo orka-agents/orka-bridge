@@ -33,7 +33,7 @@ for _ in 0..<30 {
     if running != nil { break }
     Thread.sleep(forTimeInterval: 1)
 }
-guard let launched = running else { fatalError("Bridge process did not appear") }
+guard let launched = running else { fail("Bridge process did not appear") }
 return launched
 }
 var app = try launch()
