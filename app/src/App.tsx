@@ -5,7 +5,7 @@ import Setup from './setup/Setup';
 import Example from './designer/Example';
 import type { SetupStatus, ExamplePair } from './setup/state';
 import type { ModelState } from './setup/Model';
-import { workspaceRecovery } from './setup/recovery';
+import { workspaceRecovery } from './setup/recovery-info';
 import type { RunSnapshot } from './designer/run-api';
 import { agentInfo, type SaveState } from './designer/agent-api';
 

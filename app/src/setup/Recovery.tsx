@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { helpDetails, workspaceRecovery } from './recovery';
+import { helpDetails, workspaceRecovery } from './recovery-info';
 
 export default function Recovery({ detail, disabled, onRetry }: { detail?: string | null; disabled: boolean; onRetry: () => void }) {
   const [expanded, setExpanded] = useState(false);

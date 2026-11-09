@@ -3,7 +3,7 @@ import { agentInfo } from '../designer/agent-api';
 import { formatSize } from './requirements';
 import { type ExamplePair, loadExample, type SetupStatus } from './state';
 import Recovery from './Recovery';
-import { modelDetails } from './recovery';
+import { modelDetails } from './recovery-info';
 import './steps.css';
 
 export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
