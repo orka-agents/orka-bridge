@@ -56,6 +56,11 @@ license options (`licenses/http-MIT.txt`, `licenses/tower-MIT.txt`). Base64 enco
 uses its MIT license option (`licenses/base64-MIT.txt`). These notices are
 included in the same app artifact license directories as existing notices.
 
+Pod-stream HTTP uses hyper 1.12.0, hyper-util 0.1.21 and http-body-util 0.1.5
+under their MIT licenses. Upstream notices are shipped as
+`licenses/hyper-MIT.txt`, `licenses/hyper-util-MIT.txt` and
+`licenses/http-body-util-MIT.txt` in the same app artifact directories.
+
 ## Temporary pack copies
 
 The app uses tempfile 3.27.0 and fastrand 2.5.0 under their MIT license options.

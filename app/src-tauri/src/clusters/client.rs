@@ -31,6 +31,7 @@ enum Identity {
     TokenReview,
     Oidc,
 }
+#[derive(Clone)]
 pub struct ClusterClient {
     kubeconfig: Kubeconfig,
     contexts: Vec<ContextView>,
@@ -42,9 +43,9 @@ pub struct RemoteAccess {
     pub(crate) creator: Client,
     pub(crate) bearer: String,
     // Orka has seen this credential even after the confirmed ServiceAccount fallback.
-    creator_bearer: String,
+    pub(super) creator_bearer: String,
     pub expiry: Option<k8s_openapi::apimachinery::pkg::apis::meta::v1::Time>,
-    binding: TargetBinding,
+    pub(super) binding: TargetBinding,
     orka: Arc<dyn OrkaRead>,
     providers: Vec<ProviderView>,
 }
@@ -122,7 +123,14 @@ impl ClusterClient {
     }
     /// A newly read kubeconfig can validate an existing access without switching its frozen identity.
     pub async fn revalidate(&self, access: &RemoteAccess) -> Result<(), ClusterError> {
-        let binding = &access.binding;
+        self.revalidate_binding(&access.binding, &access.creator)
+            .await
+    }
+    pub(super) async fn revalidate_binding(
+        &self,
+        binding: &TargetBinding,
+        creator: &Client,
+    ) -> Result<(), ClusterError> {
         let config = selected_config(&self.kubeconfig, &binding.context_name, None)
             .await
             .map_err(cluster_error)?;
@@ -130,7 +138,7 @@ impl ClusterClient {
             return Err(ClusterError::Unavailable);
         }
         let bindings = installations(
-            access.creator.clone(),
+            creator.clone(),
             binding.context_id,
             &binding.context_name,
             &config.cluster_url.to_string(),
@@ -278,6 +286,7 @@ impl RemoteAccess {
         let value = tokio::time::timeout(
             REQUEST_TIMEOUT,
             self.orka.get(
+                &self.creator,
                 &self.binding,
                 &self.bearer,
                 resource,
@@ -638,7 +647,7 @@ fn continuation(page: &Value) -> Result<Option<String>, AccessOutcome> {
         _ => Err(AccessOutcome::Unavailable),
     }
 }
-fn echoed(value: &Value, bearer: &str) -> bool {
+pub(super) fn echoed(value: &Value, bearer: &str) -> bool {
     if bearer.is_empty() {
         return false;
     }

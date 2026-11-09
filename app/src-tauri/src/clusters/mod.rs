@@ -1,6 +1,8 @@
 mod client;
+mod forward;
 use bridge_runtime_protocol::Uuid;
 pub use client::{ClusterClient, RemoteAccess};
+pub use forward::{OrkaStreamTransport, PodOrkaRead};
 use serde::Serialize;
 use serde_json::Value;
 use std::{future::Future, pin::Pin};
@@ -79,6 +81,7 @@ pub enum OrkaResource {
 pub trait OrkaRead: Send + Sync {
     fn get<'a>(
         &'a self,
+        creator: &'a kube::Client,
         binding: &'a TargetBinding,
         bearer: &'a str,
         resource: OrkaResource,
