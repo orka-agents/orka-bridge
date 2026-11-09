@@ -124,6 +124,8 @@ test('model acknowledgment and observed check counts survive navigation', async 
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('AI connected')).toBeTruthy();
+  expect(screen.getByText('This computer').getAttribute('title')).toBe('AI connected');
+  expect(screen.getByText('This computer').textContent).toBe('This computer: AI connected');
   await user.click(screen.getByRole('button', { name: 'Open example' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 checks passing')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('page-reader, 1 check failing')).toBeTruthy();

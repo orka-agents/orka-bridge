@@ -87,6 +87,7 @@ export default function App() {
   const modelDetail = setup?.model === 'locked' ? 'AI connection unavailable'
     : model === 'connecting' ? 'Connecting the AI…' : model === 'connected' ? 'AI connected'
     : model === 'failed' ? 'AI connection needs attention' : detail;
+  const hostDetail = workspaceReady ? modelDetail : detail;
   const cases = run?.report?.cases;
   const checks = runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
     : run?.state === 'running' ? 'Running checks…' : cases
@@ -129,7 +130,7 @@ export default function App() {
             </button>
             <span className="control-tip" aria-hidden="true">Search is coming</span>
           </span>
-          <span className="host-chip" title={detail}><span className={`live-dot ${tone}`} aria-hidden="true" />This computer<span className="sr-only">: {detail}</span></span>
+          <span className="host-chip" title={hostDetail}><span className={`live-dot ${tone}`} aria-hidden="true" />This computer<span className="sr-only">: {hostDetail}</span></span>
         </div>
       </header>
       <main ref={content} className="page-content" aria-labelledby="page-title">
