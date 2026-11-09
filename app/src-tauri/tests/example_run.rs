@@ -215,7 +215,7 @@ async fn finished(run: &ExampleRun, vm: &LocalVm) -> bridge_engine::example_run:
     panic!("Run never finished")
 }
 #[tokio::test]
-async fn example_uses_one_client_exact_pair_and_retains_receipts_after_waiter_is_gone() {
+async fn ipc_waiter_loss_keeps_native_owner() {
     let (vm, posts, stopped) = fixture(false, false).await;
     let home = tempfile::tempdir().unwrap();
     let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
@@ -322,7 +322,7 @@ async fn uncertain_task_write_keeps_agent_and_pending_task_without_retry() {
 }
 
 #[tokio::test]
-async fn edited_disk_prompt_is_the_actual_posted_resource() {
+async fn local_test_uses_owned_pair_vm_transport() {
     let (vm, posts, _) = fixture(false, false).await;
     let home = tempfile::tempdir().unwrap();
     let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
@@ -356,6 +356,64 @@ async fn malformed_saved_source_refuses_before_any_remote_write() {
     run.start(vm.clone());
     let result = finished(&run, &vm).await;
     assert_eq!(result.error, Some("source"));
+    assert!(posts.lock().unwrap().is_empty());
+    assert!(vm
+        .with_client(|_, client| client.model_status())
+        .await
+        .unwrap()
+        .is_ok());
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn preparation_refusal_keeps_previous_resource_receipts() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let agent = folder.open().unwrap().agent;
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder.clone());
+    run.start(vm.clone());
+    let completed = finished(&run, &vm).await;
+    assert_eq!(completed.state, RunState::Complete);
+    assert_eq!(completed.acknowledged.len(), 2);
+    folder
+        .save(format!("{agent}{}", "x".repeat(65536)))
+        .unwrap();
+    run.start(vm.clone());
+    let refused = finished(&run, &vm).await;
+    assert_eq!(refused.error, Some("submit"));
+    assert_eq!(
+        refused
+            .acknowledged
+            .iter()
+            .map(|r| (&r.kind, &r.name, &r.uid))
+            .collect::<Vec<_>>(),
+        completed
+            .acknowledged
+            .iter()
+            .map(|r| (&r.kind, &r.name, &r.uid))
+            .collect::<Vec<_>>()
+    );
+    assert!(refused.pending.is_none());
+    assert_eq!(posts.lock().unwrap().len(), 2);
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn vm_transport_refuses_large_mapped_body_before_any_post() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let agent = folder.open().unwrap().agent;
+    folder
+        .save(format!("{agent}{}", "x".repeat(65536)))
+        .unwrap();
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
+    run.start(vm.clone());
+    let result = finished(&run, &vm).await;
+    assert_eq!(result.error, Some("submit"));
+    assert!(result.pending.is_none());
+    assert!(result.acknowledged.is_empty());
     assert!(posts.lock().unwrap().is_empty());
     assert!(vm
         .with_client(|_, client| client.model_status())

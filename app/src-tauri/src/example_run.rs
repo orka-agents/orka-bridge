@@ -6,13 +6,14 @@ use crate::{
         RunTransport,
     },
     local_vm::{LocalVm, LocalVmStatus},
+    pair_source::CapturedPair,
     runtime::client::VmClient,
 };
-use bridge_runtime_protocol::{FileSlot, ModelPhase, OrkaRequest, SnapshotId};
+use bridge_runtime_protocol::{ModelPhase, OrkaRequest, SnapshotId, MAX_ORKA_BODY};
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
-use tokio::time::Instant;
+use tokio::{sync::watch, time::Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -106,17 +107,14 @@ impl ExampleRun {
             // Freeze once per admission, before waiting for the serialized VM client.
             let pair = tokio::task::spawn_blocking(move || {
                 let snapshot = source.capture().map_err(|_| ())?;
-                ParsedPair::parse(
-                    snapshot.file(FileSlot::Agent),
-                    snapshot.file(FileSlot::Tests),
-                )
-                .map_err(|_| ())
+                CapturedPair::from_snapshot(snapshot).map_err(|_| ())
             })
             .await;
             let Ok(Ok(pair)) = pair else {
                 owner.fail("source");
                 return;
             };
+            let pair = pair.into_pair();
             owner.0.lock().unwrap().snapshot.source = Some(pair.snapshot().clone());
             let runtime = tokio::runtime::Handle::current();
             let worker = owner.clone();
@@ -154,7 +152,16 @@ impl ExampleRun {
             provider: connection.selection.provider,
             vm,
         });
-        let handle = match runner.submit(pair).await {
+        let prepared = match runner.prepare(pair) {
+            Ok(prepared) => prepared,
+            Err(_) => {
+                // A refusal before writes must not discard an earlier attempt's receipts.
+                self.fail("submit");
+                return;
+            }
+        };
+        let (_sender, stop) = watch::channel(false);
+        let handle = match runner.submit_prepared(prepared, stop).await {
             Ok(handle) => handle,
             Err(error) => {
                 self.record(
@@ -213,6 +220,9 @@ impl RunTransport for VmRunTransport<'_> {
     }
     fn limits(&self) -> RunLimits {
         RunLimits::default()
+    }
+    fn max_create_body_bytes(&self) -> Option<usize> {
+        Some(MAX_ORKA_BODY)
     }
     fn request<'a>(
         &'a self,
