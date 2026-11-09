@@ -334,6 +334,24 @@ fn startup_prerequisites(
     };
     Err(std::io::Error::other(label).into())
 }
+#[cfg(any(test, all(debug_assertions, windows)))]
+type GetCapability = unsafe extern "system" fn(u32, *mut std::ffi::c_void, u32, *mut u32) -> i32;
+#[cfg(any(test, all(debug_assertions, windows)))]
+fn observe_hypervisor(get: GetCapability) -> Observation {
+    // WHvGetCapability requires room for a 64-bit capability, even though
+    // HypervisorPresent (code 0) is a 32-bit Win32 BOOL at the start of it.
+    let (mut present, mut written) = (0u64, 0u32);
+    let result = unsafe { get(0, (&mut present as *mut u64).cast(), 8, &mut written) };
+    if result >= 0 && (4..=8).contains(&written) {
+        if present as u32 != 0 {
+            Observation::Yes
+        } else {
+            Observation::No
+        }
+    } else {
+        Observation::Unknown
+    }
+}
 /// Observe WHP itself; feature flags alone do not prove a running hypervisor.
 #[cfg(all(debug_assertions, windows))]
 pub(crate) fn probe_startup_prerequisites() -> Result<(), super::super::types::RuntimeError> {
@@ -350,7 +368,6 @@ pub(crate) fn probe_startup_prerequisites() -> Result<(), super::super::types::R
             name: *const u8,
         ) -> Option<unsafe extern "system" fn() -> isize>;
     }
-    type GetCapability = unsafe extern "system" fn(u32, *mut c_void, u32, *mut u32) -> i32;
     let name: Vec<_> = "WinHvPlatform.dll".encode_utf16().chain(Some(0)).collect();
     // LOAD_LIBRARY_SEARCH_SYSTEM32 prevents loading a renderer/workspace DLL.
     let module = unsafe { LoadLibraryExW(name.as_ptr(), std::ptr::null_mut(), 0x800) };
@@ -368,22 +385,8 @@ pub(crate) fn probe_startup_prerequisites() -> Result<(), super::super::types::R
         let observed = match address {
             None => (Observation::Unknown, Observation::No),
             Some(address) => {
-                // WHvCapabilityCodeHypervisorPresent = 0, output is a Win32 BOOL.
                 let get: GetCapability = unsafe { std::mem::transmute(address) };
-                let (mut present, mut written) = (0u32, 0u32);
-                let result = unsafe { get(0, (&mut present as *mut u32).cast(), 4, &mut written) };
-                (
-                    if result >= 0 && written == 4 {
-                        if present != 0 {
-                            Observation::Yes
-                        } else {
-                            Observation::No
-                        }
-                    } else {
-                        Observation::Unknown
-                    },
-                    Observation::Yes,
-                )
+                (observe_hypervisor(get), Observation::Yes)
             }
         };
         unsafe {
@@ -406,6 +409,25 @@ impl Prerequisites {
 #[cfg(test)]
 mod prerequisite_tests {
     use super::*;
+    #[test]
+    fn capability_query_uses_the_documented_64_bit_output_buffer() {
+        unsafe extern "system" fn capability(
+            code: u32,
+            output: *mut std::ffi::c_void,
+            bytes: u32,
+            written: *mut u32,
+        ) -> i32 {
+            if code != 0 || bytes != 8 {
+                return 0x8007007au32 as i32;
+            }
+            unsafe {
+                *output.cast::<u32>() = 1;
+                *written = 4;
+            }
+            0
+        }
+        assert_eq!(observe_hypervisor(capability), Observation::Yes);
+    }
     #[test]
     fn startup_diagnosis_never_calls_running_hypervisor_firmware_disabled() {
         use Observation::*;
