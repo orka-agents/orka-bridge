@@ -88,6 +88,10 @@ pub trait RunTransport: Send + Sync {
     fn namespace(&self) -> &str;
     fn provider(&self) -> &str;
     fn limits(&self) -> RunLimits;
+    /// Transport-specific whole-create-body limit, not a source-format limit.
+    fn max_create_body_bytes(&self) -> Option<usize> {
+        None
+    }
     fn request<'a>(
         &'a self,
         path: &'a str,

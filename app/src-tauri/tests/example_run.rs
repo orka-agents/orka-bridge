@@ -215,7 +215,7 @@ async fn finished(run: &ExampleRun, vm: &LocalVm) -> bridge_engine::example_run:
     panic!("Run never finished")
 }
 #[tokio::test]
-async fn example_uses_one_client_exact_pair_and_retains_receipts_after_waiter_is_gone() {
+async fn ipc_waiter_loss_keeps_native_owner() {
     let (vm, posts, stopped) = fixture(false, false).await;
     let home = tempfile::tempdir().unwrap();
     let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
@@ -322,7 +322,7 @@ async fn uncertain_task_write_keeps_agent_and_pending_task_without_retry() {
 }
 
 #[tokio::test]
-async fn edited_disk_prompt_is_the_actual_posted_resource() {
+async fn local_test_uses_owned_pair_vm_transport() {
     let (vm, posts, _) = fixture(false, false).await;
     let home = tempfile::tempdir().unwrap();
     let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
@@ -356,6 +356,30 @@ async fn malformed_saved_source_refuses_before_any_remote_write() {
     run.start(vm.clone());
     let result = finished(&run, &vm).await;
     assert_eq!(result.error, Some("source"));
+    assert!(posts.lock().unwrap().is_empty());
+    assert!(vm
+        .with_client(|_, client| client.model_status())
+        .await
+        .unwrap()
+        .is_ok());
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn vm_transport_refuses_large_mapped_body_before_any_post() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let agent = folder.open().unwrap().agent;
+    folder
+        .save(format!("{agent}{}", "x".repeat(65536)))
+        .unwrap();
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
+    run.start(vm.clone());
+    let result = finished(&run, &vm).await;
+    assert_eq!(result.error, Some("submit"));
+    assert!(result.pending.is_none());
+    assert!(result.acknowledged.is_empty());
     assert!(posts.lock().unwrap().is_empty());
     assert!(vm
         .with_client(|_, client| client.model_status())
