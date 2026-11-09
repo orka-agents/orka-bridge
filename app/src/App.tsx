@@ -72,6 +72,9 @@ export default function App() {
   const [setup, setSetup] = useState<SetupStatus>();
   const [setupReadOnly, setSetupReadOnly] = useState(false);
   const workspaceAdmitted = useRef(false);
+  const [editorOwned, setEditorOwned] = useState(false);
+  const exampleReadOnly = setupReadOnly && !editorOwned;
+  useEffect(() => { if (exampleOpen && !setupReadOnly) setEditorOwned(true); }, [exampleOpen, setupReadOnly]);
   const [checking, setChecking] = useState(true);
   const [welcome, setWelcome] = useState(false);
   const [model, setModel] = useState<ModelState>('idle');
@@ -115,7 +118,7 @@ export default function App() {
     : cases ? 'checks passing' : 'ready to edit';
   const tabStatus: Record<Page, string> = {
     Overview: checks ?? 'No agents yet',
-    Designer: agentName ? `${agentName}, ${setupReadOnly ? 'ready to read' : agentStatus}` : !exampleOpen ? 'No agent open'
+    Designer: agentName ? `${agentName}, ${exampleReadOnly ? 'ready to read' : agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
       : model === 'connected' ? run?.state === 'complete' ? 'This computer ready' : 'AI connected'
@@ -163,13 +166,13 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup active={page === 'Clusters'} onReady={ready} onStatus={observeSetup} onModelState={setModel} onWelcome={setWelcome} onExampleName={setupReadOnly ? setAgentName : undefined}
+          <Setup active={page === 'Clusters'} onReady={ready} onStatus={observeSetup} onModelState={setModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
             onOpenExample={() => {
               if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
               setExampleOpen(true); setPage('Designer');
             }} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${setupReadOnly}`} readOnly={setupReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
           <ComingButton label="Send to a cluster" reason="Sending to a cluster is coming" />
         </>} /></div>}
@@ -187,7 +190,7 @@ export default function App() {
         <span className={`live-dot ${tone}`} aria-hidden="true" />
         <span>{welcome ? 'Nothing is set up yet' : workspaceReady ? 'This computer ready' : setupLine}</span>
         {!welcome && (detail !== setupLine || workspaceReady) ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : detail}</span></> : null}
-        {exampleState === 'loaded' && !setupReadOnly && <><span aria-hidden="true">·</span><span>{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
+        {exampleState === 'loaded' && !exampleReadOnly && <><span aria-hidden="true">·</span><span>{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
           page !== 'Clusters' ? (workspaceReady ? `This computer ready · ${modelDetail}` : `${setupLine} · ${detail}`) : undefined,

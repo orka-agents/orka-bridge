@@ -117,21 +117,7 @@ fn failure_reason(error: &RuntimeError) -> String {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum WorkspacePhase {
-    Verifying,
-    Materializing,
-}
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceProgress {
-    pub phase: WorkspacePhase,
-    pub bytes: Option<u64>,
-    pub total_bytes: Option<u64>,
-    pub elapsed_ms: u64,
-    pub remaining_ms: Option<u64>,
-}
+pub use crate::setup::{WorkspacePhase, WorkspaceProgress};
 #[derive(Clone, Copy, Debug)]
 pub enum LocalProgress {
     Status(LocalVmStatus),
@@ -182,20 +168,23 @@ struct ProgressClock {
 }
 impl ProgressClock {
     fn observe(&mut self, bytes: u64, total: u64, retained: bool, now: std::time::Instant) {
+        let advanced = self.bytes != Some(bytes);
         self.bytes = Some(bytes);
         self.total = Some(total);
         self.remaining = None;
-        if !retained {
-            if let Some((time, previous)) = self.sample {
-                let ms = now.saturating_duration_since(time).as_millis();
-                if bytes > previous && ms > 0 && bytes < total {
-                    self.remaining =
-                        u64::try_from((total - bytes) as u128 * ms / (bytes - previous) as u128)
-                            .ok();
-                }
+        if retained || self.sample.is_none() {
+            self.sample = Some((now, bytes));
+        } else if let Some((time, previous)) = self.sample {
+            // Average fresh movement over the transfer, not a single 64 KiB chunk.
+            // A quarter-second sample avoids sub-millisecond events erasing the ETA.
+            let nanos = now.saturating_duration_since(time).as_nanos();
+            if advanced && bytes > previous && nanos >= 250_000_000 && bytes < total {
+                self.remaining = u64::try_from(
+                    (total - bytes) as u128 * nanos / (bytes - previous) as u128 / 1_000_000,
+                )
+                .ok();
             }
         }
-        self.sample = Some((now, bytes));
     }
     fn snapshot(&self) -> WorkspaceProgress {
         WorkspaceProgress {
@@ -210,6 +199,52 @@ impl ProgressClock {
 #[cfg(test)]
 mod progress_tests {
     use super::*;
+    #[test]
+    fn startup_snapshot_has_native_elapsed_without_fake_bytes_or_eta() {
+        let vm = LocalVm::unavailable();
+        vm.inner
+            .publish(LocalProgress::Status(LocalVmStatus::Starting));
+        let mut state = vm.inner.state.lock().unwrap();
+        let progress = state
+            .progress
+            .as_mut()
+            .expect("startup has a monotonic clock");
+        progress.started = std::time::Instant::now() - std::time::Duration::from_secs(42);
+        let snapshot = serde_json::to_value(progress.snapshot()).unwrap();
+        assert_eq!(snapshot["phase"], "starting");
+        assert!(snapshot["elapsedMs"].as_u64().unwrap() >= 42000);
+        assert!(
+            snapshot["bytes"].is_null()
+                && snapshot["totalBytes"].is_null()
+                && snapshot["remainingMs"].is_null()
+        );
+    }
+    #[test]
+    fn eta_stays_useful_for_sub_millisecond_copy_events() {
+        let now = std::time::Instant::now();
+        let total = 3 * 1024 * 1024 * 1024u64;
+        let mut clock = ProgressClock {
+            started: now,
+            phase: WorkspacePhase::Materializing,
+            bytes: None,
+            total: None,
+            sample: None,
+            remaining: None,
+        };
+        clock.observe(0, total, true, now);
+        for i in 1..=20_000u64 {
+            clock.observe(
+                i * 65536,
+                total,
+                false,
+                now + std::time::Duration::from_micros(i * 160 + 4000),
+            );
+        }
+        let remaining = clock
+            .remaining
+            .expect("a sustained fast copy has a measured ETA");
+        assert!((4600..=4800).contains(&remaining), "{remaining}");
+    }
     #[test]
     fn eta_uses_fresh_movement_not_retained_bytes_or_stalled_samples() {
         let now = std::time::Instant::now();
@@ -227,30 +262,35 @@ mod progress_tests {
             850,
             1000,
             false,
-            now + std::time::Duration::from_millis(100),
-        );
-        assert_eq!(clock.remaining, Some(300));
-        clock.observe(950, 1000, true, now + std::time::Duration::from_millis(200));
-        assert!(clock.remaining.is_none());
-        clock.observe(
-            975,
-            1000,
-            false,
-            now + std::time::Duration::from_millis(300),
-        );
-        assert_eq!(clock.remaining, Some(100));
-        clock.observe(
-            975,
-            1000,
-            false,
-            now + std::time::Duration::from_millis(400),
-        );
-        assert!(clock.remaining.is_none());
-        clock.observe(
-            1000,
-            1000,
-            false,
             now + std::time::Duration::from_millis(500),
+        );
+        assert_eq!(clock.remaining, Some(1500));
+        clock.observe(
+            950,
+            1000,
+            true,
+            now + std::time::Duration::from_millis(1000),
+        );
+        assert!(clock.remaining.is_none());
+        clock.observe(
+            975,
+            1000,
+            false,
+            now + std::time::Duration::from_millis(1500),
+        );
+        assert_eq!(clock.remaining, Some(500));
+        clock.observe(
+            975,
+            1000,
+            false,
+            now + std::time::Duration::from_millis(2000),
+        );
+        assert!(clock.remaining.is_none());
+        clock.observe(
+            1000,
+            1000,
+            false,
+            now + std::time::Duration::from_millis(2500),
         );
         assert!(clock.remaining.is_none());
     }
@@ -292,7 +332,16 @@ impl Inner {
         match progress {
             LocalProgress::Status(phase) => {
                 state.phase = phase;
-                if !matches!(phase, LocalVmStatus::Preparing | LocalVmStatus::Installing) {
+                if phase == LocalVmStatus::Starting {
+                    state.progress = Some(ProgressClock {
+                        started: std::time::Instant::now(),
+                        phase: WorkspacePhase::Starting,
+                        bytes: None,
+                        total: None,
+                        sample: None,
+                        remaining: None,
+                    });
+                } else if !matches!(phase, LocalVmStatus::Preparing | LocalVmStatus::Installing) {
                     state.progress = None;
                 }
             }

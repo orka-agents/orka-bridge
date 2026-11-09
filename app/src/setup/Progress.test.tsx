@@ -6,16 +6,17 @@ import App from '../App';
 
 const pair = { agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\nkmx:\n  tools:\n    - kind: builtin\n      name: web_fetch\n---\nFetch before answering.', tests: 'The checksum check.' };
 const progress = { phase: 'materializing', bytes: 1200000000, totalBytes: 3000000000, elapsedMs: 20000, remainingMs: 30000 };
-function native(initial = 'installing', numbers: typeof progress | null = progress) {
+function native(initial = 'installing', numbers: { phase: string; bytes: number | null; totalBytes: number | null; elapsedMs: number; remainingMs: number | null } | null = progress) {
   vi.stubGlobal('isTauri', true);
   let localVm = initial; let selected: 'localVm' | null = 'localVm'; let unavailable = false;
-  const status = () => ({ selected, localVm, model: localVm === 'ready' ? 'available' : 'locked', workspaceProgress: localVm === 'installing' ? numbers : null, localVmError: localVm === 'failed' ? 'PRIVATE_NATIVE_DETAIL' : null });
+  const status = () => ({ selected, localVm, model: localVm === 'ready' ? 'available' : 'locked', workspaceProgress: ['installing', 'starting'].includes(localVm) ? numbers : null, localVmError: localVm === 'failed' ? 'PRIVATE_NATIVE_DETAIL' : null });
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_status') { if (unavailable) throw Error('unreadable'); return status(); }
     if (command === 'setup_cancel_local') { localVm = 'cancelled'; return status(); }
-    if (command === 'setup_select_local') { localVm = 'installing'; return status(); }
+    if (command === 'setup_select_local') { selected = 'localVm'; localVm = 'installing'; return status(); }
     if (command === 'setup_change_local') { localVm = 'idle'; selected = null; return status(); }
     if (command === 'setup_example' || command === 'agent_open') return pair;
+    if (command === 'setup_connect_model') return { ready: true };
     if (command === 'setup_run_status') return { state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
     throw new Error('Unexpected command: ' + command);
   }); mockIPC(ipc);
@@ -39,6 +40,16 @@ test('four steps show only native transfer bytes and ETA, with expandable detail
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.getByText('Checking workspace files')).toBeTruthy();
   expect(screen.getAllByText('Starting workspace').length).toBeGreaterThan(0);
+});
+
+test('startup shows a moving indeterminate bar and native elapsed time near the top', async () => {
+  native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 42000, remainingMs: null }); render(<App />);
+  const bar = await screen.findByRole('progressbar', { name: 'Workspace startup' });
+  expect(bar.hasAttribute('value')).toBe(false);
+  expect(screen.getByText('42 seconds elapsed')).toBeTruthy();
+  expect(bar.closest('li')?.textContent).toContain('Get your workspace ready');
+  expect(bar.closest('main')).toBeTruthy();
+  expect(screen.queryByText(/seconds left/)).toBeNull();
 });
 
 test('unavailable progress never fabricates bytes or time left', async () => {
@@ -118,6 +129,61 @@ test('failure is one plain red step, native details stay behind disclosure', asy
   expect(screen.queryByText('PRIVATE_NATIVE_DETAIL')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.getByText('PRIVATE_NATIVE_DETAIL')).toBeTruthy();
+});
+
+test('changing workspace and starting again preserves an owned draft after a failed save', async () => {
+  const { ipc } = native('ready'); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await screen.findByRole('heading', { name: 'web-reader', level: 1 });
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  const editor = screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
+  await user.type(editor, 'Retained draft');
+  await screen.findByText('Your changes could not be saved. Your draft is still here.');
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
+  await user.click(screen.getByRole('button', { name: 'Stop workspace and change' }));
+  await user.click(await screen.findByRole('button', { name: 'Continue' }));
+  await screen.findByRole('button', { name: 'Cancel' });
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  expect(screen.getByRole('textbox', { name: 'Agent file' })).toBe(editor);
+  expect(editor.value).toContain('Retained draft');
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
+});
+
+test('the AI step resets after a connected workspace leaves ready', async () => {
+  const { fail } = native('ready'); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await screen.findByText('Model connected: copilot / gpt-5.6-terra.'); fail();
+  await within(screen.getByRole('contentinfo')).findByText('Setup paused', {}, { timeout: 2000 });
+  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[2].textContent).not.toContain('Connected'));
+});
+
+test('a delayed Cancel shows pending stop near the top instead of old byte progress', async () => {
+  const { ipc } = native(); let done!: (value: unknown) => void;
+  mockIPC(command => command === 'setup_cancel_local' ? new Promise(resolve => { done = resolve; }) : ipc(command));
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Cancel' }));
+  expect(screen.getByText('Stopping your workspace…')).toBeTruthy();
+  expect(screen.queryByRole('progressbar')).toBeNull();
+  done({ selected: 'localVm', localVm: 'cancelled', model: 'locked' });
+  await screen.findByRole('button', { name: 'Start again' });
+});
+
+test('model settling during Change cannot strand subsequent Continue actions', async () => {
+  native('ready'); let connect!: (value: unknown) => void; let change!: (value: unknown) => void; let selected: 'localVm' | null = 'localVm';
+  mockIPC(command => command === 'setup_status' ? { selected, localVm: selected ? 'ready' : 'cancelled', model: selected ? 'available' : 'locked' }
+    : command === 'setup_connect_model' ? new Promise(resolve => { connect = resolve; })
+    : command === 'setup_change_local' ? new Promise(resolve => { change = resolve; })
+    : command === 'setup_select_local' ? { selected: 'localVm', localVm: 'installing', model: 'locked' }
+    : Promise.reject('unavailable'));
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
+  await user.click(screen.getByRole('button', { name: 'Stop workspace and change' }));
+  connect({ ready: true }); await screen.findByText('Model connected: copilot / gpt-5.6-terra.');
+  selected = null; change({ selected: null, localVm: 'cancelled', model: 'locked' });
+  const next = await screen.findByRole('button', { name: 'Continue' });
+  expect(next.matches(':disabled')).toBe(false);
 });
 
 test('Change where agents run does not stop until confirmed, and returns to chooser', async () => {

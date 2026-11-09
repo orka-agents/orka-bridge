@@ -241,7 +241,14 @@ async fn retained_progress_is_optional_and_cleared_after_dropped_change_waiter()
     // Joining cancellation proves native stop, but the confirmed preference job also survives.
     vm.cancel().await.unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        while store.status_async().await.unwrap().selected.is_some() {
+        while store
+            .clone()
+            .status_async()
+            .await
+            .unwrap()
+            .selected
+            .is_some()
+        {
             tokio::task::yield_now().await;
         }
     })

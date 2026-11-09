@@ -200,8 +200,9 @@ fn reopen_never_creates_or_repairs_missing_or_incomplete_installations() {
     assert!(!root.join("image-binding.json").exists());
 }
 use crate::runtime as fixture_runtime;
-#[path = "../tests/support/runtime_image_fixture.rs"]
-mod image_fixture;
+mod image_fixture {
+    include!("../tests/support/runtime_image_fixture.rs");
+}
 #[tokio::test]
 async fn original_creation_journal_survives_partial_and_post_materialization_cancel() {
     use crate::runtime::{

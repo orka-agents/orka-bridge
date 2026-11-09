@@ -17,6 +17,10 @@
 .step-more progress::-webkit-progress-bar { background: var(--color-border); }
 .step-more progress::-webkit-progress-value { background: var(--color-action); border-radius: 4px; }
 .step-more progress::-moz-progress-bar { background: var(--color-action); }
+.step-more .workspace-indeterminate { position: relative; height: 5px; border-radius: 4px; overflow: hidden; margin: 12px 0; background: var(--color-border); }
+.workspace-indeterminate::after { content: ''; position: absolute; inset: 0 auto 0 0; width: 35%; background: var(--color-action); border-radius: 4px; animation: workspace-sweep 1.5s linear infinite; }
+@keyframes workspace-sweep { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) { .workspace-indeterminate::after { animation: none; transform: translateX(95%); } }
 .workspace-progress-details { padding-top: 12px; }
 .workspace-progress-details dl { font-size: 0.875rem; margin: 0; }
 .workspace-progress-details dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; }

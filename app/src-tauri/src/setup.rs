@@ -13,6 +13,23 @@ pub enum SetupChoice {
     LocalVm,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum WorkspacePhase {
+    Verifying,
+    Materializing,
+    Starting,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceProgress {
+    pub phase: WorkspacePhase,
+    pub bytes: Option<u64>,
+    pub total_bytes: Option<u64>,
+    pub elapsed_ms: u64,
+    pub remaining_ms: Option<u64>,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetupSnapshot {
@@ -21,7 +38,7 @@ pub struct SetupSnapshot {
     local_vm_error: Option<String>,
     model: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub workspace_progress: Option<crate::local_vm::WorkspaceProgress>,
+    pub workspace_progress: Option<WorkspaceProgress>,
 }
 
 impl SetupSnapshot {

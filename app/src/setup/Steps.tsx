@@ -10,20 +10,20 @@ function PhaseIcon({ phase }: { phase: 'done' | 'current' | 'waiting' | 'failed'
       : <><circle cx="12" cy="12" r="9" /><path d={phase === 'current' ? 'M12 3v18' : 'M12 8v4l3 2'} /></>}
   </svg>;
 }
-export default function Steps({ status, busy, error, modelConnected, onCancel, onRestart, onChange, onOpenExample }: {
-  status: SetupStatus; busy: boolean; error?: string; modelConnected: boolean;
+export default function Steps({ status, busy, stopping, error, modelConnected, onCancel, onRestart, onChange, onOpenExample }: {
+  status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean;
   onCancel: () => void; onRestart: () => void; onChange: () => void; onOpenExample: () => void;
 }) {
   const [details, setDetails] = useState(false);
   const ready = status.localVm === 'ready'; const failed = status.localVm === 'failed';
   const paused = status.localVm === 'cancelled' || status.localVm === 'closed';
   const progress = status.workspaceProgress;
-  const copying = status.localVm === 'installing' && progress?.phase === 'materializing';
+  const copying = !stopping && status.localVm === 'installing' && progress?.phase === 'materializing';
   const numbers = copying && progress.bytes !== null && progress.totalBytes !== null;
   const remaining = copying ? progress.remainingMs : null;
   const eta = remaining != null && remaining > 0 ? `${Math.ceil(remaining / 1000)} seconds left` : undefined;
   const phase = ready ? 'done' : failed ? 'failed' : paused || status.localVm === 'notIntegrated' ? 'waiting' : 'current';
-  const stateLine = error ? 'Workspace status is unavailable.' : ready ? 'Your workspace is running on this computer.'
+  const stateLine = error ? 'Workspace status is unavailable.' : stopping ? 'Stopping your workspace…' : ready ? 'Your workspace is running on this computer.'
     : failed ? 'Your workspace could not start. What has arrived is kept.'
     : paused ? 'What has arrived is kept.' : status.localVm === 'starting' ? 'Starting your workspace…'
     : status.localVm === 'closing' ? 'Stopping your workspace…'
@@ -36,6 +36,7 @@ export default function Steps({ status, busy, error, modelConnected, onCancel, o
         <PhaseIcon phase={phase} /><b>Get your workspace ready</b><span className="step-result">{ready ? 'Ready' : paused ? 'Paused' : failed ? 'Stopped' : eta}</span>
         <div className="step-more">
           <p role={failed ? 'alert' : 'status'}>{stateLine}</p>
+          {!stopping && status.localVm === 'starting' && <><div className="workspace-indeterminate" role="progressbar" aria-label="Workspace startup" /><p className="muted">{progress?.phase === 'starting' ? `${Math.floor(progress.elapsedMs / 1000)} seconds elapsed` : 'Getting the workspace ready…'}</p></>}
           {numbers && <><progress aria-label="Workspace installation" value={progress.bytes!} max={progress.totalBytes!} />
             <p className="muted">Installing, {formatSize(progress.bytes!)} of {formatSize(progress.totalBytes!)}</p></>}
           <button type="button" className="workspace-disclosure" aria-expanded={details} aria-controls="workspace-progress-details" onClick={() => setDetails(value => !value)}>{details ? 'Hide details' : 'Show details'}</button>

@@ -2,7 +2,7 @@ import { invoke, isTauri } from '@tauri-apps/api/core';
 
 const localStates = ['notIntegrated', 'idle', 'preparing', 'installing', 'starting', 'ready', 'closing', 'closed', 'cancelled', 'failed'] as const;
 export type LocalVmState = (typeof localStates)[number];
-export type WorkspaceProgress = { phase: 'verifying' | 'materializing'; bytes: number | null; totalBytes: number | null; elapsedMs: number; remainingMs: number | null };
+export type WorkspaceProgress = { phase: 'verifying' | 'materializing' | 'starting'; bytes: number | null; totalBytes: number | null; elapsedMs: number; remainingMs: number | null };
 export type SetupStatus = { selected: 'localVm' | null; localVm: LocalVmState; localVmError?: string | null; model: 'locked' | 'available'; workspaceProgress?: WorkspaceProgress | null };
 function isProgress(value: unknown): value is WorkspaceProgress | null {
   if (value === null) return true;
@@ -10,7 +10,7 @@ function isProgress(value: unknown): value is WorkspaceProgress | null {
     || Object.keys(value).sort().join(',') !== 'bytes,elapsedMs,phase,remainingMs,totalBytes') return false;
   const p = value as Record<string, unknown>;
   const integer = (n: unknown): n is number => typeof n === 'number' && Number.isSafeInteger(n) && n >= 0;
-  return (p.phase === 'verifying' || p.phase === 'materializing') && integer(p.elapsedMs)
+  return (p.phase === 'verifying' || p.phase === 'materializing' || p.phase === 'starting') && integer(p.elapsedMs)
     && (p.remainingMs === null || integer(p.remainingMs))
     && ((p.bytes === null && p.totalBytes === null) || (integer(p.bytes) && integer(p.totalBytes) && p.totalBytes > 0 && p.bytes <= p.totalBytes));
 }

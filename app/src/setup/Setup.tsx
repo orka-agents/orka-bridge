@@ -21,6 +21,10 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(true);
   const [sending, setSending] = useState(false);
+  const [pendingAction, setPendingAction] = useState<'start' | 'cancel' | 'change'>();
+  const mutation = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const [confirmChange, setConfirmChange] = useState(false);
   const [modelState, setModelState] = useState<ModelState>('idle');
   const observeModel = useCallback((value: ModelState) => { setModelState(value); onModelState?.(value); }, [onModelState]);
@@ -44,6 +48,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     return () => { active = false; };
   }, []);
   useEffect(() => {
+    if (mutation.current) return;
     const request = ++epoch.current;
     void setupStatus().then(result => {
       if (request !== epoch.current) return;
@@ -59,7 +64,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     });
     return () => { epoch.current++; clearTimeout(timer.current); };
   }, [check, onStatus]);
-  useEffect(() => { if (status?.localVm === 'ready') onReady(); }, [status?.localVm, onReady]);
+  useEffect(() => { if (status?.localVm === 'ready') onReady(); else observeModel('idle'); }, [status?.localVm, onReady, observeModel]);
 
   function start() {
     try { localStorage.setItem(welcomePreference, '1'); } catch { /* A presentation preference must not block setup. */ }
@@ -67,15 +72,17 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     setSeen(true);
   }
   async function chooseLocal(action: 'start' | 'cancel' | 'change' = 'start') {
-    if (sending || !status || (action !== 'cancel' && busy)) return;
+    if (mutation.current || !status || (action !== 'cancel' && busy)) return;
     if (action === 'start' && status.selected === 'localVm' && !['cancelled', 'closed'].includes(status.localVm)) return;
     // Observation must not invalidate an explicit selection awaiting its reply.
     clearTimeout(timer.current);
-    const request = ++epoch.current;
-    setBusy(true); setSending(true); setError(undefined);
+    ++epoch.current;
+    mutation.current = true;
+    setBusy(true); setSending(true); setPendingAction(action); setError(undefined);
     const result = await (action === 'cancel' ? cancelLocal() : action === 'change' ? changeLocal() : selectLocal());
-    if (request !== epoch.current) return;
-    setSending(false); setConfirmChange(false);
+    mutation.current = false;
+    if (!mounted.current) return;
+    setSending(false); setPendingAction(undefined); setConfirmChange(false);
     if (result.ok) { focusChoice.current = true; setStatus(result.status); }
     else { setError(result.message); }
     onStatus?.(result.ok ? result.status : undefined);
@@ -125,7 +132,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
         {status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
       </>}
       {selected && status && <>
-        <div><Steps status={status} busy={sending} error={error} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onChange={() => setConfirmChange(true)} onOpenExample={onOpenExample} />
+        <div><Steps status={status} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onChange={() => setConfirmChange(true)} onOpenExample={onOpenExample} />
           {confirmChange && <section className="workspace-change" aria-label="Change where agents run">
             <h2>Stop this workspace?</h2><p>Changing where agents run stops the workspace on this computer. Your files are kept.</p>
             <div className="workspace-step-actions"><button type="button" className="workspace-secondary" disabled={sending} onClick={() => setConfirmChange(false)}>Keep workspace running</button><button type="button" className="workspace-primary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and change</button></div>
