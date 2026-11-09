@@ -35,7 +35,7 @@ export default function Run({ onSnapshot, blocked = false, stale = false, onStar
     {outdated && <p role="status">Not run since your change. Any result below is from the earlier file.</p>}
     {running && <p role="status">Running on the local VM…</p>}
     {message && <p role="status">{message}</p>}
-    {snapshot?.error && <p role="alert">{errors[snapshot.error]}</p>}
+    {snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected) && <p role="alert">{errors[snapshot.error]}</p>}
     {snapshot?.pending && <p>Possibly created {snapshot.pending.kind}: {snapshot.pending.name}</p>}
     {snapshot?.report && <>
       <p role="status">{outdated ? 'Earlier test verdict' : 'Test verdict'}: {snapshot.report.verdict}</p>

@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Run from './Run';
@@ -34,6 +34,18 @@ test('model connection advice follows the acknowledged model state, not Run avai
   expect(await screen.findByText('Running on the local VM…')).toBeTruthy();
   expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
   expect(screen.getByRole('button', { name: 'Run test' }).title).toBe('Check is running');
+});
+test.each([
+  { error: 'model', modelConnected: false, alert: true },
+  { error: 'model', modelConnected: true, alert: false },
+  { error: 'submit', modelConnected: true, alert: true },
+])('retained $error advice follows native connection state without hiding other errors', async ({ error, modelConnected, alert }) => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => ({ ...idle, state: 'unknown', error, modelConnected }));
+  render(<Run />);
+  // Wait for the native response, not the initial disabled rendering.
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run test' }).hasAttribute('disabled')).toBe(false));
+  expect(!!screen.queryByRole('alert')).toBe(alert);
 });
 test('uncertain submission names retained receipts and never retries automatically', async () => {
   vi.stubGlobal('isTauri', true); const ipc = vi.fn((command: string) => { expect(command).toBe('setup_run_status'); return { ...idle, state: 'unknown', error: 'submit', acknowledged: [{ kind: 'Agent', name: 'bridge-run-example', uid: 'uid-a' }], pending: { kind: 'Task', name: 'bridge-task-example' } }; }); mockIPC(ipc); render(<Run />);
