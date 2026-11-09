@@ -9,7 +9,7 @@ use crate::{
     pair_source::CapturedPair,
     runtime::client::VmClient,
 };
-use bridge_runtime_protocol::{ModelPhase, OrkaRequest, SnapshotId};
+use bridge_runtime_protocol::{ModelPhase, OrkaRequest, SnapshotId, MAX_ORKA_BODY};
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -213,7 +213,7 @@ impl RunTransport for VmRunTransport<'_> {
         RunLimits::default()
     }
     fn max_create_body_bytes(&self) -> Option<usize> {
-        Some(65536)
+        Some(MAX_ORKA_BODY)
     }
     fn request<'a>(
         &'a self,
