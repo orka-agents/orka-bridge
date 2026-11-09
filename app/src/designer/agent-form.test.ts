@@ -91,6 +91,12 @@ test('removing an explicit-dash first item does not leave a null entry', () => {
   const s = '---\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools:\n    -\n      kind: builtin\n      name: web_fetch\n    - kind: builtin\n      name: file_read\n---\nBody';
   expect(readForm(removeTool(s, 0)).tools).toEqual([{ index: 0, name: 'file_read', builtin: true }]);
 });
+test('a scalar value equal to a merge-key spelling remains editable', () => {
+  const changed = changeDescription(source, '<<');
+  expect(readForm(changed).description).toBe('<<');
+  expect(readForm(changed).descriptionEditable).toBe(true);
+  expect(readForm(changeDescription(changed, '<< next')).description).toBe('<< next');
+});
 test('changing one metadata field leaves mixed newline bytes untouched', () => {
   const s = source.replace('description:', '\r\ndescription:');
   expect(changeDescription(s, 'Changed')).toBe(s.replace("'Read a page'", '"Changed"'));

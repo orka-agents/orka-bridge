@@ -1,9 +1,10 @@
-// Orka KnownBuiltInToolNames union at 6b9dce2881016d0ef78d75a3f0ec9b3145204b84.
+// Orka KnownBuiltInToolNames union at image pin 7916cd1c8c083ade6b10df6ba408f854d930190c.
 // This is a naming map, not a claim that a workspace has enabled each tool.
 export const builtInTools: Readonly<Record<string, string>> = {
   web_fetch: 'Read a web page', web_search: 'Search the web',
   file_read: 'Read a file', file_write: 'Write a file', code_exec: 'Run code',
-  request_approval: 'Ask for approval', delegate_task: 'Delegate a task',
+  request_approval: 'Ask for approval', reply_in_conversation: 'Reply in a conversation',
+  delegate_task: 'Delegate a task',
   wait_for_tasks: 'Wait for tasks', create_container_task: 'Run a task in a container',
   cancel_task: 'Cancel a task', send_message: 'Send a message', check_messages: 'Read messages',
   create_pull_request: 'Open a pull request', check_pull_request_ci: 'Check pull request checks',
@@ -18,5 +19,6 @@ export const builtInTools: Readonly<Record<string, string>> = {
   create_agent_task: 'Give an agent a task', check_task_progress: 'Check task progress',
   fetch_task_output: 'Read a task’s output', wait_for_task: 'Wait for a task',
   list_agents: 'List agents', list_tools: 'List tools', list_tasks: 'List tasks',
+  list_connections: 'List connected accounts',
   create_tool: 'Create a tool', delete_tool: 'Delete a tool', delete_session: 'Delete a conversation',
 };

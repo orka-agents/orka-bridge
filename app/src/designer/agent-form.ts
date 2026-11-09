@@ -14,9 +14,9 @@ function metadata(source: string) {
   const split = document(source);
   const doc = parseDocument(split.header, { keepSourceTokens: true });
   let safe = split.closed && split.offset > 0 && !doc.errors.length && isMap(doc.contents);
-  visit(doc, (_, node) => {
+  visit(doc, (key, node) => {
     if (isNode(node) && (node.tag || ('anchor' in node && node.anchor) || isAlias(node))) safe = false;
-    if (isScalar(node) && node.value === '<<') safe = false;
+    if (key === 'key' && isScalar(node) && node.value === '<<') safe = false;
   });
   return { ...split, root: safe ? doc.contents as YAMLMap : undefined };
 }
