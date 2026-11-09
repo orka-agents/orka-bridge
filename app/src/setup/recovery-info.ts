@@ -16,7 +16,7 @@ export function workspaceRecovery(detail?: string | null): RecoveryInfo {
   if (text.includes('hypervisorUnavailable')) return {
     summary: "Windows Hypervisor Platform (Hyper-V) isn't available.", action: 'Turn on Windows Hypervisor Platform in Windows features, restart this PC, then press Try again.', topic: 'hypervisor', stage: 'Windows Hypervisor Platform',
   };
-  if (/NoSpace|Storage\(StorageFull\)/.test(text)) return {
+  if (/NoSpace|StorageFull/.test(text)) return {
     summary: "There isn't enough free space for the workspace.", action: 'Free some space on this computer, then press Try again.', topic: 'workspace', stage: 'Installing workspace files',
   };
   if (/Integrity|RetainedImage|Pin installed boot files|Image\((?:Invalid|Incompatible|Unsupported|UnsafePath)/.test(text)) return {

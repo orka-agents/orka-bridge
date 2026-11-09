@@ -112,6 +112,9 @@ impl LocalVmStatus {
 }
 fn failure_reason(error: &RuntimeError) -> String {
     match error {
+        RuntimeError::Io(error) if error.kind() == std::io::ErrorKind::StorageFull => {
+            format!("NoSpace: {error}")
+        }
         RuntimeError::Io(error) => error.to_string(),
         RuntimeError::StopUnconfirmed(detail) => format!("startupStopFailed: {detail}"),
         _ => error.to_string(),
@@ -201,6 +204,11 @@ impl ProgressClock {
 #[cfg(test)]
 mod progress_tests {
     use super::*;
+    #[test]
+    fn full_disk_diagnostic_keeps_the_actionable_category() {
+        let error = RuntimeError::Io(std::io::ErrorKind::StorageFull.into());
+        assert!(failure_reason(&error).starts_with("NoSpace: "));
+    }
     #[test]
     fn startup_snapshot_has_native_elapsed_without_fake_bytes_or_eta() {
         let vm = LocalVm::unavailable();

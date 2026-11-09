@@ -28,6 +28,7 @@ test.each([
   ['virtualizationDisabled', 'Virtualization is turned off on this PC.', 'virtualization'],
   ['hypervisorUnavailable', "Windows Hypervisor Platform (Hyper-V) isn't available.", 'hypervisor'],
   ['Image(NoSpace)', "There isn't enough free space for the workspace.", 'workspace'],
+  ['Fill private state disk: Io(Os { code: 112, kind: StorageFull })', "There isn't enough free space for the workspace.", 'workspace'],
   ['Image(Integrity)', "The workspace files couldn't be verified.", 'workspace'],
   ['Pin installed boot files: Io(failure)', "The workspace files couldn't be verified.", 'workspace'],
   ['RetainedState', "The workspace files are still in use or need checking.", 'workspace'],
