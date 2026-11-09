@@ -133,7 +133,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     })
     // Negative control: persistent nav labels must not qualify as page headings.
     for wrong in pages where wrong != page {
-        require(!headings.contains(wrong), "OCR confused the \(wrong) nav label with a heading")
+        require(!headings.contains(wrong), "Unexpected \(wrong) page heading; expected \(page)")
     }
     require(headings == Set([page]), "Native screenshot does not show the expected \(page) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
@@ -173,7 +173,8 @@ try clickTab("Overview")
 try capture("overview", "Overview")
 try clickTab("Designer"); try capture("designer-pointer", "Designer")
 try clickTab("Clusters"); try capture("clusters-pointer", "Clusters")
-key(48, shift: true); key(48, shift: true); key(49)
+// Native captures show two reverse tabs stop on Designer; one more reaches Overview.
+key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
 try capture("overview-keyboard", "Overview")
 key(48); key(49); try capture("designer-keyboard", "Designer")
 key(48); key(36); try capture("clusters-keyboard", "Clusters")
