@@ -106,7 +106,7 @@ test.each([
   if (autosave) { fireEvent.blur(editor); await screen.findByText('Saved'); }
   fireEvent.change(editor, { target: { value: pair.agent } }); fireEvent.blur(editor);
   await screen.findByText('Saved');
-  expect(onStale).toHaveBeenLastCalledWith(false);
+  await waitFor(() => expect(onStale).toHaveBeenLastCalledWith(false));
   expect(screen.getByText(older ? 'Earlier test verdict: passed' : 'Test verdict: passed')).toBeTruthy();
   expect(!!screen.queryByText(/Not run since your change/)).toBe(older);
 });
