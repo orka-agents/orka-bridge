@@ -15,6 +15,11 @@ impl HelpTopic {
         }
     }
 }
+#[cfg(any(all(test, unix), target_os = "macos"))]
+fn help_command(command: &mut std::process::Command) -> std::io::Result<std::process::ExitStatus> {
+    let mut child = crate::runtime::spawn_guard::run_blocking(|| command.spawn())?;
+    child.wait()
+}
 pub fn open_help(topic: HelpTopic) -> Result<(), &'static str> {
     let url = topic.url();
     #[cfg(windows)]
@@ -36,9 +41,7 @@ pub fn open_help(topic: HelpTopic) -> Result<(), &'static str> {
         }
     }
     #[cfg(target_os = "macos")]
-    if std::process::Command::new("/usr/bin/open")
-        .arg(url)
-        .status()
+    if help_command(std::process::Command::new("/usr/bin/open").arg(url))
         .is_ok_and(|status| status.success())
     {
         return Ok(());
@@ -50,6 +53,35 @@ pub fn open_help(topic: HelpTopic) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[test]
+    fn help_spawn_cannot_enter_the_private_descriptor_window() {
+        let held = crate::runtime::spawn_guard::tests::hold();
+        let (entered, ready) = std::sync::mpsc::channel();
+        let (finished, result) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            entered.send(()).unwrap();
+            let outcome = help_command(&mut std::process::Command::new(
+                "/nonexistent/fixture-opener",
+            ));
+            finished.send(outcome).unwrap();
+        });
+        ready.recv().unwrap();
+        let during_setup = result.recv_timeout(std::time::Duration::from_millis(100));
+        drop(held);
+        thread.join().unwrap();
+        assert!(
+            matches!(
+                during_setup,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ),
+            "help attempted a spawn inside the descriptor window"
+        );
+        assert_eq!(
+            result.recv().unwrap().unwrap_err().kind(),
+            std::io::ErrorKind::NotFound
+        );
+    }
     #[test]
     fn help_accepts_only_fixed_topics_and_routes_to_owned_destinations() {
         for (topic, expected) in [
