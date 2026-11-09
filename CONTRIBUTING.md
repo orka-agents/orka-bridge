@@ -110,6 +110,10 @@ both system themes under `native-walk/` in the `bridge-macos-arm64` artifact.
 Review those captures for visible changes; they do not exercise a real VM or
 model connection.
 
+Each capture keeps the text OCR read beside it. A failed check prints its reason
+followed by the latest capture's text and adds the reason to that file, so an
+unrendered page can be told apart from a page showing a different state.
+
 ## Platform builds
 
 From `app/`, build a Windows x64 release executable:

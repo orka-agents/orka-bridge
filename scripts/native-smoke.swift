@@ -2,8 +2,18 @@ import AppKit
 import CoreGraphics
 import Vision
 
+// What OCR read from the latest capture, kept with the reason if a check fails.
+var evidence: (file: String, text: String)?
+func fail(_ message: String) -> Never {
+    var report = "\(message)\n"
+    if let evidence {
+        report += evidence.text
+        try? report.write(toFile: evidence.file, atomically: true, encoding: .utf8)
+    }
+    fputs(report, stderr); exit(1)
+}
 func require(_ condition: Bool, _ message: String) {
-    if !condition { fputs("\(message)\n", stderr); exit(1) }
+    if !condition { fail(message) }
 }
 let output = CommandLine.arguments[1]
 let theme = CommandLine.arguments[3]
@@ -23,7 +33,7 @@ for _ in 0..<30 {
     if running != nil { break }
     Thread.sleep(forTimeInterval: 1)
 }
-guard let launched = running else { fatalError("Bridge process did not appear") }
+guard let launched = running else { fail("Bridge process did not appear") }
 return launched
 }
 var app = try launch()
@@ -58,7 +68,7 @@ func mouse(_ type: CGEventType, _ point: CGPoint) {
 }
 func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) {
     guard let target = observations.first(where: { $0.topCandidates(1).first?.string == label }) else {
-        fatalError("Control not visible: \(label)")
+        fail("Control not visible: \(label)")
     }
     let rect = window()!.1
     let point = CGPoint(x: rect.minX + target.boundingBox.midX * rect.width,
@@ -86,16 +96,26 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     command.arguments = ["-x", "-o", "-l", String(window()!.0), file]
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture Bridge")
-    guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
-        let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(NSColorSpace.deviceRGB)
-        else { fatalError("Cannot sample native screenshot") }
-    let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
-    require(theme == "dark" ? brightness < 0.2 : brightness > 0.9,
-            "Native screenshot does not show the expected \(theme) theme")
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
+    // Record what OCR read before any check, so a failure shows whether the page had rendered.
+    let read = observations.map {
+        String(format: "%.2f ", 1 - $0.boundingBox.maxY) + ($0.topCandidates(1).first?.string ?? "")
+    }
+    let transcript = "\(name).png OCR (count \(read.count), top edge as a fraction of window height):\n"
+        + read.map { "\($0)\n" }.joined()
+    let record = "\(output)/\(name).txt"
+    try transcript.write(toFile: record, atomically: true, encoding: .utf8)
+    // Kept until the next capture, so later checks on these observations report it too.
+    evidence = (record, transcript)
+    guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
+        let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(NSColorSpace.deviceRGB)
+        else { fail("Cannot sample native screenshot") }
+    let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
+    require(theme == "dark" ? brightness < 0.2 : brightness > 0.9,
+            "Native screenshot does not show the expected \(theme) theme")
     if page == "Clusters" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can read the capital I in AI as lowercase l. Match the rest of the heading.
@@ -162,7 +182,7 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
         let text = $0.topCandidates(1).first?.string ?? ""
         return text == "Instructions" || (text.hasPrefix("Instructions ") && text.contains("What the agent"))
     }) else {
-        fatalError("Instructions field is not visible")
+        fail("Instructions field is not visible")
     }
     let owned = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
     let before = try String(contentsOf: owned, encoding: .utf8)
@@ -228,7 +248,7 @@ let clusters = try capture("before-file", "Clusters")
 clickTab("Designer", clusters)
 let agent = try capture("agent-view", "Designer")
 guard let fileButton = agent.first(where: { $0.topCandidates(1).first?.string == "File" }) else {
-    fatalError("File view switch is not visible")
+    fail("File view switch is not visible")
 }
 let fileRect = window()!.1
 let filePoint = CGPoint(x: fileRect.minX + fileButton.boundingBox.midX * fileRect.width,
