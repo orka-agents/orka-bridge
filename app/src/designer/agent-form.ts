@@ -42,8 +42,10 @@ export function readForm(source: string) {
 export function changeInstructions(source: string, value: string) {
   const split = document(source);
   if (!split.closed || source.slice(split.end).replaceAll('\r\n', '\n') === value.replaceAll('\r\n', '\n')) return source;
+  // A Markdown rule at the start of a plain prompt must not become settings.
+  const boundary = split.offset === 0 && /^---[ \t]*\r?\n/.test(value) ? `---${newline(source)}---${newline(source)}` : '';
   const separator = split.offset > 0 && !source.slice(0, split.end).endsWith('\n') ? newline(source) : '';
-  return source.slice(0, split.end) + separator + value.replaceAll('\r\n', '\n').replaceAll('\n', newline(source));
+  return source.slice(0, split.end) + boundary + separator + value.replaceAll('\r\n', '\n').replaceAll('\n', newline(source));
 }
 export function changeDescription(source: string, value: string) {
   const { root, offset } = metadata(source);

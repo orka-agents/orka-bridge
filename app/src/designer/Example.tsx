@@ -3,6 +3,7 @@ import { loadExample, type ExamplePair } from '../setup/state';
 import { agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
 import AgentParts from './AgentParts';
+import { readForm } from './agent-form';
 import type { RunSnapshot } from './run-api';
 
 export default function Example({ active = true, readOnly = false, actions, onPair, onRun, onSaveState, onStale }: {
@@ -59,7 +60,7 @@ export default function Example({ active = true, readOnly = false, actions, onPa
     setSaveState('dirty'); clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush(); }, 500);
   };
-  const info = agentInfo(draft);
+  const info = { ...agentInfo(draft), description: readForm(draft).description };
   const saveLabel = { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
   return <section className="designer" aria-labelledby={active ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">

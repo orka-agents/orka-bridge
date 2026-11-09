@@ -61,6 +61,12 @@ test('an EOF closing delimiter gets a newline before the first instruction', () 
   expect(readForm(changed).instructions).toBe('Hi');
   expect(readForm(changed).metadataEditable).toBe(true);
 });
+test('a headerless prompt can start with a Markdown rule without becoming settings', () => {
+  const value = '---\nWrite plainly.\n---\nMore instructions.';
+  const changed = changeInstructions('Old instructions', value);
+  expect(readForm(changed).instructions).toBe(value);
+  expect(readForm(changed).instructionsEditable).toBe(true);
+});
 test('unclosed front matter is not mistaken for Instructions', () => {
   const s = '---\nname: unfinished';
   expect(readForm(s).instructionsEditable).toBe(false);

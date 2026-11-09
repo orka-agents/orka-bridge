@@ -33,7 +33,7 @@ export default function AgentParts({ source, path, readOnly, onChange }: {
       <h3 id={`${id}-tools`}>It can use</h3>
       <div className="agent-tool-row">
         {form.tools.map(tool => {
-          const name = tool.name ?? 'Unrecognised tool entry'; const label = tool.builtin ? builtInTools[name] : undefined;
+          const name = tool.name ?? 'Unrecognised tool entry'; const label = tool.builtin && Object.hasOwn(builtInTools, name) ? builtInTools[name] : undefined;
           return <span className="tool-pill" key={tool.index}>
             <span>{label ?? name}</span>{label && <code>{name}</code>}
             {tool.builtin ? !readOnly && form.toolsEditable && <button type="button" className="tool-remove" aria-label={`Remove ${label ?? name}`} onClick={() => { change(removeTool(source, tool.index)); add.current?.focus(); }}>×</button>

@@ -65,6 +65,18 @@ test('model, soul and Tool resources are disabled with reasons and real file val
   await screen.findByRole('heading', { name: 'reader' });
   await waitFor(() => expect(screen.getByText('A new description', { selector: 'p' })).toBeTruthy());
 });
+test('unknown built-in names cannot resolve inherited map properties', async () => {
+  native(agent.replace('name: web_fetch', 'name: __proto__')); render(<Example />);
+  expect(await screen.findByText('__proto__')).toBeTruthy();
+  expect(screen.getByRole('textbox', { name: 'Instructions' })).toBeTruthy();
+});
+test('editing a commented description keeps it in the heading', async () => {
+  native(agent.replace('description: "Reads a page"', 'description: Original # keep')); const user = userEvent.setup(); render(<Example />);
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  await user.click(screen.getByText('More settings: description, personality (soul), file'));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Edited' } });
+  expect(screen.getByText('Edited', { selector: 'p' })).toBeTruthy();
+});
 test('setup preview exposes the form read-only with no owned path or writes', async () => {
   const writes = native(); const user = userEvent.setup(); render(<Example readOnly />);
   const instructions = await screen.findByRole('textbox', { name: 'Instructions' });
