@@ -9,6 +9,10 @@ fn model_failure_details_survive_generic_retry_without_failing_the_running_vm() 
     store.select_local().unwrap();
     let vm = LocalVm::unavailable();
     vm.inner.state.lock().unwrap().phase = LocalVmStatus::Ready;
+    assert!(
+        !vm.model_connected(),
+        "workspace readiness is not a model acknowledgment"
+    );
     let failure = Err(SetupError::connect(Some(ModelDiagnostic {
         classification: ModelDiagnosticClass::Timeout,
         elapsed_ms: 60_000,
@@ -34,4 +38,7 @@ fn model_failure_details_survive_generic_retry_without_failing_the_running_vm() 
     }));
     let ready = serde_json::to_value(vm.snapshot(store.status().unwrap())).unwrap();
     assert!(ready["localVmError"].is_null());
+    assert!(vm.model_connected());
+    vm.request_close();
+    assert!(!vm.model_connected());
 }

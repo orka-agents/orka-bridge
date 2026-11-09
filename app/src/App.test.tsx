@@ -121,11 +121,12 @@ test('model acknowledgment and observed check counts survive navigation', async 
     { id: 'a', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' },
     { id: 'b', phase: 'Succeeded', answer: 'no', completedTools: [], assertions: [{ id: 'b1', kind: 'contains', verdict: 'failed' }], verdict: 'failed' },
   ] }, acknowledged: [], pending: null, error: null };
+  let modelConnected = false;
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
-    if (command === 'setup_connect_model') return { ready: true };
+    if (command === 'setup_connect_model') { modelConnected = true; return { ready: true }; }
     if (command === 'agent_open') return pair;
-    if (command === 'setup_run_status') return snapshot;
+    if (command === 'setup_run_status') return { ...snapshot, modelConnected };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);

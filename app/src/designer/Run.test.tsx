@@ -23,21 +23,24 @@ test('Run is explicit, duplicate clicks and remounts only observe existing work'
 });
 test('model connection advice follows the acknowledged model state, not Run availability', async () => {
   vi.stubGlobal('isTauri', true);
-  mockIPC(() => ({ ...idle, state: 'running', canRun: false }));
+  let modelConnected = false;
+  mockIPC(() => ({ ...idle, state: 'running', canRun: false, modelConnected }));
   const view = render(<Run />);
-  expect(screen.getByText(/Connect the model in Clusters first\./)).toBeTruthy();
-  view.rerender(<Run modelConnected />);
+  expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
+  expect(await screen.findByText(/Connect the model in Clusters first\./)).toBeTruthy();
+  modelConnected = true;
+  view.unmount();
+  render(<Run />);
   expect(await screen.findByText('Running on the local VM…')).toBeTruthy();
   expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
-  view.rerender(<Run modelConnected={false} />);
-  expect(screen.getByText(/Connect the model in Clusters first\./)).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Run test' }).title).toBe('Check is running');
 });
 test('uncertain submission names retained receipts and never retries automatically', async () => {
   vi.stubGlobal('isTauri', true); const ipc = vi.fn((command: string) => { expect(command).toBe('setup_run_status'); return { ...idle, state: 'unknown', error: 'submit', acknowledged: [{ kind: 'Agent', name: 'bridge-run-example', uid: 'uid-a' }], pending: { kind: 'Task', name: 'bridge-task-example' } }; }); mockIPC(ipc); render(<Run />);
   expect(await screen.findByText(/bridge-task-example/)).toBeTruthy(); expect(screen.getByText(/bridge-run-example/)).toBeTruthy();
   expect(ipc.mock.calls.every(([cmd]) => cmd === 'setup_run_status')).toBe(true);
 });
-test.each([null, { ...idle, state: ['idle'] }, { ...idle, error: 'PRIVATE_DIAGNOSTIC' }, { ...complete, extra: 'PRIVATE_DIAGNOSTIC' }, { ...complete, report: { ...complete.report, verdict: 'passed', cases: [{ secret: 'PRIVATE_DIAGNOSTIC' }] } }])('malformed Run data never renders raw diagnostics', async value => {
+test.each([null, { ...idle, modelConnected: 'true' }, { ...idle, state: ['idle'] }, { ...idle, error: 'PRIVATE_DIAGNOSTIC' }, { ...complete, extra: 'PRIVATE_DIAGNOSTIC' }, { ...complete, report: { ...complete.report, verdict: 'passed', cases: [{ secret: 'PRIVATE_DIAGNOSTIC' }] } }])('malformed Run data never renders raw diagnostics', async value => {
   vi.stubGlobal('isTauri', true); mockIPC(() => value); render(<Run />); expect(await screen.findByText('Run information is not supported by this build.')).toBeTruthy(); expect(document.body.textContent).not.toContain('PRIVATE_DIAGNOSTIC');
 });
 test('preview never fabricates a native test or sends Run IPC', async () => {

@@ -39,6 +39,7 @@ pub struct PendingRef {
 pub struct RunSnapshot {
     pub state: RunState,
     pub can_run: bool,
+    pub model_connected: bool,
     pub source: Option<SnapshotId>,
     pub report: Option<RunReport>,
     pub acknowledged: Vec<Receipt>,
@@ -62,6 +63,7 @@ impl ExampleRun {
                 snapshot: RunSnapshot {
                     state: RunState::Idle,
                     can_run: false,
+                    model_connected: false,
                     source: None,
                     report: None,
                     acknowledged: Vec::new(),
@@ -78,6 +80,7 @@ impl ExampleRun {
     /// Observation only, including after a renderer remount; never submits or loads credentials.
     pub fn status(&self, vm: &LocalVm) -> RunSnapshot {
         let mut snapshot = self.0.lock().unwrap().snapshot.clone();
+        snapshot.model_connected = vm.model_connected();
         snapshot.can_run =
             self.2 && snapshot.state != RunState::Running && vm.status() == LocalVmStatus::Ready;
         snapshot
@@ -89,7 +92,8 @@ impl ExampleRun {
         {
             let mut state = self.0.lock().unwrap();
             if state.snapshot.state == RunState::Running {
-                return state.snapshot.clone();
+                drop(state);
+                return self.status(&vm);
             }
             state.snapshot.state = RunState::Running;
             state.snapshot.can_run = false;

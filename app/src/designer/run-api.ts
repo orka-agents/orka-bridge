@@ -11,14 +11,19 @@ export const errors = {
   submit: 'Submission was not confirmed. A named resource may still exist; it was not retried.',
   observe: 'Observation did not finish. The acknowledged Task may still be running.',
 } as const;
-export type RunSnapshot = { state: 'idle' | 'running' | 'complete' | 'unknown'; canRun: boolean; source?: SourceId | null; sourceCurrent?: boolean; report: { cases: Case[]; verdict: Verdict } | null; acknowledged: Receipt[]; pending: Omit<Receipt, 'uid'> | null; error: keyof typeof errors | null };
+export type RunSnapshot = { state: 'idle' | 'running' | 'complete' | 'unknown'; canRun: boolean; modelConnected?: boolean; source?: SourceId | null; sourceCurrent?: boolean; report: { cases: Case[]; verdict: Verdict } | null; acknowledged: Receipt[]; pending: Omit<Receipt, 'uid'> | null; error: keyof typeof errors | null };
 function record(value: unknown, keys: string[]): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).sort().join(',') === keys.sort().join(',');
 }
 const text = (value: unknown, max = 4096): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const verdict = (value: unknown): value is Verdict => value === 'passed' || value === 'failed' || value === 'unknown';
 function valid(value: unknown): value is RunSnapshot {
-  if (!record(value, typeof value === 'object' && value !== null && 'source' in value ? ['state', 'canRun', 'source', 'report', 'acknowledged', 'pending', 'error'] : ['state', 'canRun', 'report', 'acknowledged', 'pending', 'error']) || ('source' in value && value.source !== null && !isSourceId(value.source)) || typeof value.state !== 'string' || !['idle', 'running', 'complete', 'unknown'].includes(value.state) || typeof value.canRun !== 'boolean' || value.state === 'running' && value.canRun || value.error !== null && !(typeof value.error === 'string' && Object.hasOwn(errors, value.error))) return false;
+  const keys = ['state', 'canRun', 'report', 'acknowledged', 'pending', 'error'];
+  if (typeof value === 'object' && value !== null) {
+    if ('source' in value) keys.push('source');
+    if ('modelConnected' in value) keys.push('modelConnected');
+  }
+  if (!record(value, keys) || ('modelConnected' in value && typeof value.modelConnected !== 'boolean') || ('source' in value && value.source !== null && !isSourceId(value.source)) || typeof value.state !== 'string' || !['idle', 'running', 'complete', 'unknown'].includes(value.state) || typeof value.canRun !== 'boolean' || value.state === 'running' && value.canRun || value.error !== null && !(typeof value.error === 'string' && Object.hasOwn(errors, value.error))) return false;
   if (!Array.isArray(value.acknowledged) || value.acknowledged.length > 33 || !value.acknowledged.every(r => record(r, ['kind', 'name', 'uid']) && (r.kind === 'Agent' || r.kind === 'Task') && text(r.name) && text(r.uid))) return false;
   if (value.pending !== null && !(record(value.pending, ['kind', 'name']) && (value.pending.kind === 'Agent' || value.pending.kind === 'Task') && text(value.pending.name))) return false;
   if (value.report === null) return value.state !== 'complete';
