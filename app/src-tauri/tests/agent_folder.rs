@@ -5,7 +5,7 @@ use std::{fs, path::Path, sync::Arc};
 const AGENT: &str = "web-reader.agent.md";
 const TESTS: &str = "web-reader.agent.test.md";
 fn root(home: &Path) -> std::path::PathBuf {
-    home.join("Orka/agents/web-reader")
+    home.join("Orka").join("agents").join("web-reader")
 }
 fn git(root: &Path, args: &[&str]) -> Vec<u8> {
     let output = std::process::Command::new("git")
