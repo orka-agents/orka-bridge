@@ -46,6 +46,70 @@ async fn blocking_start(
         .map_err(|_| RuntimeError::Unavailable)?
 }
 
+#[cfg(any(
+    all(debug_assertions, windows),
+    all(debug_assertions, target_os = "macos", target_arch = "aarch64"),
+    test
+))]
+fn wait_for_infrastructure(
+    mut session: Box<dyn LocalSession>,
+    mut closed: watch::Receiver<bool>,
+    runtime: tokio::runtime::Handle,
+) -> Result<Box<dyn LocalSession>, RuntimeError> {
+    use bridge_runtime_protocol::{BootstrapPhase, InfrastructureService};
+    let result = (|| loop {
+        if *closed.borrow() {
+            return Err(RuntimeError::Closed);
+        }
+        let mut observed = None;
+        session.with_client(&mut |_, client| {
+            observed = Some(client.readiness()?);
+            Ok(())
+        })?;
+        // Never publish readiness after a close admitted during synchronous I/O.
+        if *closed.borrow() {
+            return Err(RuntimeError::Closed);
+        }
+        let state = observed.ok_or(RuntimeError::Unavailable)?;
+        match state.service {
+            InfrastructureService::Ready
+                if state.phase == Some(BootstrapPhase::InfrastructureReady) =>
+            {
+                return Ok(())
+            }
+            InfrastructureService::Starting => {}
+            _ => {
+                return Err(std::io::Error::other(format!(
+                    "Orka infrastructure failed (phase: {:?}, service: {:?})",
+                    state.phase, state.service
+                ))
+                .into())
+            }
+        }
+        // Time only schedules the next observation; it never grants readiness.
+        runtime.block_on(async {
+            tokio::select! {
+                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => Ok(()),
+                _ = closed.changed() => Err(RuntimeError::Closed),
+            }
+        })?;
+    })();
+    match result {
+        Ok(()) => Ok(session),
+        Err(error) => {
+            if let Err(cleanup) = session.stop() {
+                return Err(std::io::Error::other(format!(
+                    "Orka infrastructure startup failed: {}; stopping the VM failed: {}",
+                    failure_reason(&error),
+                    failure_reason(&cleanup)
+                ))
+                .into());
+            }
+            Err(error)
+        }
+    }
+}
+
 #[cfg(any(all(debug_assertions, windows), test))]
 fn retain_start_failure(
     root: &Path,
@@ -353,7 +417,7 @@ impl LocalFactory for NativeFactory {
                 runtime::apple_session::AppleVmSession::launch(resources, journal, installed, utc)?;
             #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             let native = NativeSession(session, installation);
-            Ok(Box::new(native) as Box<dyn LocalSession>)
+            wait_for_infrastructure(Box::new(native), closed, runtime)
         }))
     }
 }

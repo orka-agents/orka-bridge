@@ -148,6 +148,7 @@ pub trait LocalSession: Send {
 }
 struct State {
     phase: LocalVmStatus,
+    model_connected: bool,
     failure: Option<String>,
     closing: bool,
     close_started: bool,
@@ -312,6 +313,7 @@ impl Inner {
         if state.phase != LocalVmStatus::Ready || state.closing {
             return;
         }
+        state.model_connected = result.as_ref().is_ok_and(|model| model.ready);
         match result {
             Ok(model) if model.ready => state.failure = None,
             Err(error) => {
@@ -406,6 +408,7 @@ impl LocalVm {
                     } else {
                         LocalVmStatus::NotIntegrated
                     },
+                    model_connected: false,
                     failure: None,
                     closing: false,
                     close_started: false,
@@ -430,6 +433,15 @@ impl LocalVm {
     }
     pub fn status(&self) -> LocalVmStatus {
         self.inner.state.lock().unwrap().phase
+    }
+    /// Acknowledgment retained by the native session, independent of renderer reloads.
+    pub fn model_connected(&self) -> bool {
+        let state = self.inner.state.lock().unwrap();
+        !state.closing && state.phase == LocalVmStatus::Ready && state.model_connected
+    }
+    /// A successful guest observation can invalidate an earlier Connect acknowledgment.
+    pub fn clear_model_acknowledgment(&self) {
+        self.inner.state.lock().unwrap().model_connected = false;
     }
     fn snapshot(&self, mut snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
         let state = self.inner.state.lock().unwrap();
@@ -457,6 +469,7 @@ impl LocalVm {
             return;
         };
         state.phase = LocalVmStatus::Preparing;
+        state.model_connected = false;
         state.failure = None;
         state.close_started = false;
         state.stopped = None;
