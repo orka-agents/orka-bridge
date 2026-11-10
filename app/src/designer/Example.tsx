@@ -2,17 +2,29 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { loadExample, type ExamplePair } from '../setup/state';
 import { agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
+import { readWorkspaceCatalog, type WorkspaceCatalogReply } from '../catalog';
 import AgentParts from './AgentParts';
 import { readForm } from './agent-form';
 import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
 import Send, { SendEntry } from '../clusters/Send';
 
-export default function Example({ active = true, readOnly = false, remote = false, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
-  active?: boolean; readOnly?: boolean; remote?: boolean; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
+export default function Example({ active = true, readOnly = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
+  active?: boolean; readOnly?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void;
   onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
 }) {
+  const [catalog, setCatalog] = useState<{ key: number; reply?: WorkspaceCatalogReply; loading: boolean }>();
+  const catalogEnabled = catalogKey !== undefined && !readOnly && !remote;
+  useEffect(() => {
+    if (!catalogEnabled || catalogKey === undefined) return;
+    const controller = new AbortController();
+    void readWorkspaceCatalog(controller.signal).then(reply => {
+      if (!controller.signal.aborted) setCatalog({ key: catalogKey, reply, loading: false });
+    });
+    return () => controller.abort();
+  }, [catalogEnabled, catalogKey]);
+  const currentCatalog = catalogEnabled && catalog?.key === catalogKey ? catalog : undefined;
   const [pair, setPair] = useState<AgentPair>();
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string>();
@@ -97,7 +109,7 @@ export default function Example({ active = true, readOnly = false, remote = fals
           <textarea readOnly={readOnly} id="agent-file" aria-describedby="file-hint" className="agent-editor" spellCheck={false} value={draft} onChange={event => edit(event.target.value, true)} onBlur={() => { void flush(); }} onKeyDown={event => {
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void flush(); }
           }} />
-        </> : <AgentParts source={draft} path={pair.path} readOnly={readOnly} onChange={edit} />}
+        </> : <AgentParts source={draft} path={pair.path} readOnly={readOnly} catalog={currentCatalog?.reply} catalogLoading={catalogEnabled && (!currentCatalog || currentCatalog.loading)} onChange={edit} />}
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">

@@ -1,0 +1,128 @@
+import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, expect, test, vi } from 'vitest';
+import AgentParts from './AgentParts';
+import Example from './Example';
+import App from '../App';
+import { readForm } from './agent-form';
+import type { WorkspaceCatalogReply } from '../catalog';
+const source = '---\nname: reader\nmodel: unlisted\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools: []\n---\nRole only.\n';
+const catalog: WorkspaceCatalogReply = { defaultModel: 'workspace-default', models: { state: 'ready', items: [{ id: 'listed' }, { id: 'hidden', pickerEnabled: false }, { id: 'no-chat', chatSupported: false }] }, tools: { state: 'ready', items: [
+  { kind: 'builtin', name: 'web_fetch', description: 'Read an address.' },
+  { kind: 'tool', name: 'lookup', description: '<b>Workspace lookup</b>', available: false },
+  { kind: 'tool', name: 'web_fetch', description: 'Must not offer this target' },
+] } };
+afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+test('catalog model choices retain unlisted file model and never substitute the default', () => {
+  const changed = vi.fn(); render(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={changed} />);
+  const model = screen.getByRole('combobox', { name: 'It thinks with' });
+  expect((model as HTMLSelectElement).value).toBe('unlisted');
+  expect(screen.getByRole('option', { name: /unlisted.*unlisted/i })).toBeTruthy();
+  expect(screen.queryByRole('option', { name: 'hidden' })).toBeNull();
+  expect(screen.queryByRole('option', { name: 'no-chat' })).toBeNull();
+  expect(changed).not.toHaveBeenCalled();
+  fireEvent.change(model, { target: { value: 'listed' } });
+  expect(readForm(changed.mock.calls[0][0]).model).toBe('listed');
+});
+test('tool choices show descriptions as text, distinguish kinds and suppress effective-name collisions', async () => {
+  const changed = vi.fn(); const user = userEvent.setup(); const view = render(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={changed} />);
+  const add = screen.getByRole('button', { name: 'Add a tool' }); await user.click(add);
+  expect(screen.getByText('Read an address.')).toBeTruthy();
+  expect(screen.getByText('<b>Workspace lookup</b>')).toBeTruthy();
+  expect(document.querySelector('.tool-picker b')).toBeNull();
+  expect(screen.queryByText('Must not offer this target')).toBeNull();
+  expect(screen.getByText(/Observed unavailable/)).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: /lookup.*Tool resource/i }));
+  const edited = changed.mock.calls[0][0]; expect(readForm(edited).tools[0]).toMatchObject({ name: 'lookup', kind: 'tool' });
+  expect(document.activeElement).toBe(add);
+  view.rerender(<AgentParts source={edited} readOnly={false} catalog={catalog} onChange={changed} />);
+  await user.click(add); expect(screen.queryByRole('button', { name: /lookup.*Tool resource/i })).toBeNull();
+  await user.keyboard('{Escape}'); expect(document.activeElement).toBe(add);
+  await user.click(screen.getByRole('button', { name: 'Remove lookup' }));
+  expect(readForm(changed.mock.calls.at(-1)![0]).tools).toEqual([]);
+});
+test('independent catalog failures and empty lists do not fall back to static inventory', async () => {
+  const user = userEvent.setup(); const view = render(<AgentParts source={source} readOnly={false} onChange={() => {}} />);
+  expect(screen.getByRole('combobox').matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(true);
+  expect(screen.getAllByText(/catalog.*unavailable/i).length).toBeGreaterThan(0);
+  view.rerender(<AgentParts source={source} readOnly={false} catalog={{ ...catalog, models: { state: 'unavailable' }, tools: { state: 'ready', items: [] } }} onChange={() => {}} />);
+  await user.click(screen.getByRole('button', { name: 'Add a tool' }));
+  expect(screen.getByText('No tools listed by this workspace.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /Read a file/ })).toBeNull();
+  view.rerender(<AgentParts source={source} readOnly={false} catalog={{ ...catalog, models: { state: 'ready', items: [] }, tools: { state: 'unavailable' } }} onChange={() => {}} />);
+  expect(screen.getByText('No models listed by this workspace.')).toBeTruthy();
+});
+test('inline soul and digest publish together, and reference fields never switch source', async () => {
+  const changed = vi.fn(); const user = userEvent.setup();
+  const inline = source.replace('  tools:', '  soul: {inline: old, digest: "sha256:' + '0'.repeat(64) + '"}\n  tools:');
+  const view = render(<AgentParts source={inline} readOnly={false} onChange={changed} />);
+  await user.click(screen.getByText('More settings: description, personality (soul), file'));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Personality (soul)' }), { target: { value: 'Kind.' } });
+  await waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
+  expect(readForm(changed.mock.calls[0][0]).soul).toEqual({ inline: 'Kind.', digest: 'sha256:f9fcd6e31bd6311467d29894fae0db1c16acb84bfe9cfb30b666ea77eec43b69' });
+  const ref = source.replace('  tools:', '  soul: {configMapRef: {name: persona, key: SOUL.md}, digest: sha256:old}\n  tools:');
+  view.rerender(<AgentParts source={ref} readOnly={false} onChange={changed} />);
+  expect(screen.queryByRole('textbox', { name: 'Personality (soul)' })).toBeNull();
+  fireEvent.change(screen.getByRole('textbox', { name: 'ConfigMap name' }), { target: { value: 'persona.v2' } });
+  expect(readForm(changed.mock.calls.at(-1)![0]).soul?.configMapRef?.name).toBe('persona.v2');
+  expect(screen.getByRole('textbox', { name: 'Expected digest' })).toBeTruthy();
+});
+test('a pending digest cannot overwrite a newer File edit', async () => {
+  let finish!: (value: ArrayBuffer) => void;
+  vi.spyOn(crypto.subtle, 'digest').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const changed = vi.fn(); const user = userEvent.setup();
+  const inline = source.replace('  tools:', '  soul: {inline: old, digest: sha256:old}\n  tools:');
+  const view = render(<AgentParts source={inline} readOnly={false} onChange={changed} />);
+  await user.click(screen.getByText('More settings: description, personality (soul), file'));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Personality (soul)' }), { target: { value: 'Pending' } });
+  view.rerender(<AgentParts source={source} readOnly={false} onChange={changed} />);
+  await act(async () => finish(new ArrayBuffer(32)));
+  expect(changed).not.toHaveBeenCalled();
+});
+test('confirmed Change invalidates catalog before the stop reply, retaining the editor', async () => {
+  vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
+  let finish!: (value: unknown) => void;
+  const ready = { selected: 'localVm', localVm: 'ready', model: 'available', localVmError: null };
+  mockIPC(command => {
+    if (command === 'setup_status') return ready;
+    if (command === 'setup_connect_model') return { ready: true };
+    if (command === 'setup_change_local') return new Promise(resolve => { finish = resolve; });
+    if (command === 'workspace_catalog') return catalog;
+    if (command === 'agent_open' || command === 'setup_example') return { agent: source, tests: 'Checks' };
+    return { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await screen.findByText('Model connected: copilot / gpt-5.6-terra.');
+  await user.click(screen.getByRole('button', { name: 'Open example' }));
+  await screen.findByRole('option', { name: 'listed' });
+  await user.click(screen.getByRole('button', { name: /Clusters/ }));
+  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
+  await user.click(screen.getByRole('button', { name: 'Stop workspace and change' }));
+  // Designer stays mounted under the inactive page. It must not retain old choices.
+  expect(document.querySelector('option[value="listed"]')).toBeNull();
+  expect(document.querySelector('.instructions-editor')?.textContent).toBe('Role only.\n');
+  await act(async () => finish({ ...ready, selected: null, localVm: 'idle', model: 'locked' }));
+});
+test('workspace generation invalidates a late catalog without losing the owned draft', async () => {
+  const pending: ((value: unknown) => void)[] = []; vi.stubGlobal('isTauri', true);
+  mockIPC(command => {
+    if (command === 'agent_open') return { agent: source, tests: 'Checks' };
+    if (command === 'workspace_catalog') return new Promise(resolve => pending.push(resolve));
+    return { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+  });
+  const view = render(<Example catalogKey={1} />);
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  await waitFor(() => expect(pending.length).toBe(1));
+  view.rerender(<Example catalogKey={2} />);
+  await waitFor(() => expect(pending.length).toBe(2));
+  await act(async () => pending[0](catalog));
+  expect(screen.queryByRole('option', { name: 'listed' })).toBeNull();
+  await act(async () => pending[1](catalog));
+  expect(screen.getByRole('option', { name: 'listed' })).toBeTruthy();
+  view.rerender(<Example />);
+  expect(screen.queryByRole('option', { name: 'listed' })).toBeNull();
+  expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toBe('Role only.\n');
+});
