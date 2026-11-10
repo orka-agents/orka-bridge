@@ -453,6 +453,6 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickTab("Clusters", stopped); clickTab("Designer", stopped)
     let returned = try capture("agent-cluster-return", "Designer")
     clickText("Send to a cluster", in: returned)
-    let returnedResult = try capture("send-page-return", "Designer")
+    let returnedResult = try capturePreflight("send-page-return", "Stopped watching")
     require(returnedResult.contains { ($0.topCandidates(1).first?.string ?? "").contains("Stopped watching") }, "Page return lost the stopped Send result")
 }
