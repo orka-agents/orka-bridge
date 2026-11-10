@@ -185,13 +185,13 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
         event.flags = .maskCommand; event.post(tap: .cghidEventTap)
     }
     let suffix = " Native form probe \(UUID().uuidString)."
-    var inputFlags: [UInt64] = []
     for character in suffix.utf16 {
         var unit = character
         for down in [true, false] {
             let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
             event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
-            inputFlags.append(event.flags.rawValue)
+            // Do not inherit Command from the caret-navigation events still in flight.
+            event.flags = []
             event.post(tap: .cghidEventTap)
         }
     }
@@ -199,14 +199,6 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
     for _ in 0..<20 {
         if (try String(contentsOf: owned, encoding: .utf8)) == before + suffix { saved = true; break }
         Thread.sleep(forTimeInterval: 0.1)
-    }
-    if !saved {
-        try before.write(toFile: "\(output)/agent-form-before.txt", atomically: true, encoding: .utf8)
-        try (before + suffix).write(toFile: "\(output)/agent-form-expected.txt", atomically: true, encoding: .utf8)
-        try Data(contentsOf: owned).write(to: URL(fileURLWithPath: "\(output)/agent-form-actual.txt"))
-        print("Form probe input flags: \(Set(inputFlags).sorted())")
-        let observed = try capture("agent-form-failed", "Designer")
-        print("Form probe observed: \(observed.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | "))")
     }
     require(saved, "Native form did not preserve the file and append the exact instructions suffix")
     let savedForm = try capture("agent-form-saved", "Designer")
