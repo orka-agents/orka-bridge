@@ -321,10 +321,9 @@ mod tests {
             let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
             app.manage(vm.clone());
             app.manage(EngineState::with_transport(vm.clone()));
-            app.manage(SendOwner::new(
-                Arc::new(AgentFolder::new(None)),
-                ClusterSession::default(),
-            ));
+            let clusters = ClusterSession::default();
+            app.manage(clusters.clone());
+            app.manage(SendOwner::new(Arc::new(AgentFolder::new(None)), clusters));
             app.manage(shutdown.clone());
             // Observe the real event before the production handler; never call stop here.
             app.on_menu_event(move |_, event| {
@@ -389,7 +388,8 @@ mod tests {
         );
         let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
         let engine = EngineState::with_transport(vm.clone());
-        let send = SendOwner::new(Arc::new(AgentFolder::new(None)), ClusterSession::default());
+        let clusters = ClusterSession::default();
+        let send = SendOwner::new(Arc::new(AgentFolder::new(None)), clusters.clone());
         let (trigger, mut work) = watch::channel(false);
         let (ready, started) = std::sync::mpsc::channel();
         let worker_shutdown = shutdown.clone();
@@ -418,7 +418,7 @@ mod tests {
                     }
                     // Must progress on this separate runtime while SendMessage blocks the native thread.
                     tokio::time::sleep(Duration::from_millis(100)).await;
-                    worker_shutdown.finish(&send, &worker_vm).await;
+                    worker_shutdown.finish(&clusters, &send, &worker_vm).await;
                     worker_shutdown.exit_unless_native(|_| std::process::exit(93));
                 });
         });

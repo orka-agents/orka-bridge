@@ -1,4 +1,6 @@
 mod client;
+mod credentials;
+pub use credentials::{Credential, ResolvedCreator};
 pub mod commands;
 mod forward;
 use bridge_runtime_protocol::Uuid;

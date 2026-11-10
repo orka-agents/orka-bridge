@@ -65,8 +65,11 @@ fn id(value: &Value) -> String {
     value["id"].as_str().unwrap().to_string()
 }
 async fn setup_with(agent: &str) -> Setup {
+    setup_with_auth(agent, json!({"token":"creator-fixture"})).await
+}
+async fn setup_with_auth(agent: &str, auth: Value) -> Setup {
     let api = Arc::new(ApiFixture::default());
-    let cfg = config(&api.start(), json!({"token":"creator-fixture"}));
+    let cfg = config(&api.start(), auth);
     let fresh = Arc::new(Mutex::new(cfg.clone()));
     let on_read: Hook = Arc::default();
     let reader = {
@@ -108,6 +111,37 @@ async fn setup_with(agent: &str) -> Setup {
 }
 async fn setup() -> Setup {
     setup_with(AGENT).await
+}
+
+#[tokio::test]
+async fn exec_send_keeps_frozen_identity_between_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let count = dir.path().join("calls");
+    let version = "client.authentication.k8s.io/v1";
+    let mut response = crate::credential_fixture::response(version);
+    response["status"]["token"] = json!("creator-fixture");
+    let mut auth = crate::credential_fixture::exec(version, response);
+    auth["exec"]["env"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"RECORD_FILE","value":count}));
+    let s = setup_with_auth(AGENT, auth).await;
+    assert_eq!(
+        std::fs::read(&count).unwrap().len(),
+        2,
+        "one resolution per discovery and Use"
+    );
+    let started = s.start().await;
+    let done = s.finish(&id(&started)).await;
+    assert_eq!(done["state"], "complete");
+    assert_eq!(done["report"]["verdict"], "passed");
+    assert_eq!(s.agent_posts().len(), 1);
+    assert_eq!(
+        std::fs::read(&count).unwrap().len(),
+        2,
+        "admission and writes must not rerun the plugin"
+    );
+    s.idle_forwards().await;
 }
 
 #[tokio::test]

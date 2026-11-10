@@ -1,3 +1,5 @@
+#[path = "support/exec_credential_fixture.rs"]
+mod credential_fixture;
 #[path = "support/cluster_tls_fixture.rs"]
 mod tls_fixture;
 use bridge_engine::clusters::*;
@@ -160,10 +162,12 @@ async fn command_use_future_is_send_for_desktop_dispatch() {
         .unwrap();
 }
 
+type ImpersonatedRequest = (String, Vec<(String, String)>);
 #[derive(Default)]
 struct ApiFixture {
     wire: forward::Wire,
     calls: Mutex<Vec<(String, String, String, Value)>>,
+    impersonation: Mutex<Vec<ImpersonatedRequest>>,
     deny: Mutex<bool>,
     replacement: Mutex<bool>,
     no_watch: Mutex<bool>,
@@ -208,6 +212,18 @@ impl ApiFixture {
                                 .then(|| value.trim().to_string())
                         })
                     };
+                    fixture.impersonation.lock().unwrap().push((
+                        path.split('?').next().unwrap().to_owned(),
+                        headers
+                            .lines()
+                            .filter_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.to_ascii_lowercase()
+                                    .starts_with("impersonate-")
+                                    .then(|| (key.to_ascii_lowercase(), value.trim().to_owned()))
+                            })
+                            .collect(),
+                    ));
                     if path.contains("/portforward") {
                         fixture.wire.serve(stream, &headers);
                         return;
@@ -638,6 +654,137 @@ async fn effective_exec_visible_but_unavailable_and_credential_echo_not_exported
     let result = client.connect(id, None).await;
     assert_eq!(result.err(), Some(AccessOutcome::Unavailable));
 }
+#[tokio::test]
+async fn exec_creator_preserves_impersonation_but_ssar_is_token_only() {
+    let api = Arc::new(ApiFixture::default());
+    let version = "client.authentication.k8s.io/v1";
+    let mut auth = credential_fixture::exec(version, credential_fixture::response(version));
+    auth["as"] = json!("restricted-user");
+    auth["as-uid"] = json!("restricted-uid");
+    auth["as-groups"] = json!(["restricted-group"]);
+    auth["as-user-extra"] = json!({"purpose":["fixture"]});
+    let mut client = client(&api, &Arc::new(OrkaFixture::default()), auth);
+    let target = target(&mut client).await;
+    client.connect(target, None).await.unwrap();
+    let headers = api.impersonation.lock().unwrap();
+    assert!(headers
+        .iter()
+        .any(|(path, _)| path.ends_with("/selfsubjectaccessreviews")));
+    for (path, values) in headers.iter() {
+        if path.ends_with("/selfsubjectaccessreviews") {
+            assert!(
+                values.is_empty(),
+                "bearer-only SSAR carried creator impersonation"
+            );
+        } else {
+            let mut values = values.clone();
+            values.sort();
+            assert_eq!(
+                values,
+                vec![
+                    ("impersonate-extra-purpose".into(), "fixture".into()),
+                    ("impersonate-group".into(), "restricted-group".into()),
+                    ("impersonate-uid".into(), "restricted-uid".into()),
+                    ("impersonate-user".into(), "restricted-user".into())
+                ]
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn exec_certificate_creator_uses_existing_account_without_export_or_tls_relaxation() {
+    use base64::Engine;
+    let api = Arc::new(ApiFixture::default());
+    let tls = tls_fixture::TlsFixture::start(&api.start()).await;
+    let version = "client.authentication.k8s.io/v1";
+    let decode = |key: &str| {
+        String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(tls.auth[key].as_str().unwrap())
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let result = json!({"kind":"ExecCredential","apiVersion":version,"status":{"clientCertificateData":decode("client-certificate-data"),"clientKeyData":decode("client-key-data")}});
+    let mut cfg = config(&tls.server, credential_fixture::exec(version, result));
+    cfg.clusters[0]
+        .cluster
+        .as_mut()
+        .unwrap()
+        .certificate_authority_data = Some(tls.ca.clone());
+    cfg.clusters[0].cluster.as_mut().unwrap().tls_server_name = Some("fixture-server".into());
+    let mut client = ClusterClient::new(cfg, Arc::new(OrkaFixture::default()));
+    let target = target(&mut client).await;
+    assert_eq!(
+        client.connect(target, None).await.err(),
+        Some(AccessOutcome::NeedServiceAccount)
+    );
+    assert!(!api
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|c| c.1.ends_with("/token")));
+    let access = client
+        .connect(target, Some("existing".into()))
+        .await
+        .unwrap();
+    assert!(access.expiry.is_some());
+    let calls = api.calls.lock().unwrap();
+    let peers = tls.peers.lock().unwrap();
+    for (i, call) in calls.iter().enumerate() {
+        if call.1.ends_with("/selfsubjectaccessreviews") {
+            assert!(call.2 == "Bearer issued-fixture");
+            assert!(!peers[i], "SSAR inherited the plugin certificate");
+        }
+    }
+}
+
+#[tokio::test]
+async fn exec_mixed_credentials_preserve_creator_tls_but_ssar_uses_only_bearer() {
+    use base64::Engine;
+    for token in ["", "mixed-fixture"] {
+        let api = Arc::new(ApiFixture::default());
+        let tls = tls_fixture::TlsFixture::start(&api.start()).await;
+        let version = "client.authentication.k8s.io/v1";
+        let decode = |key: &str| {
+            String::from_utf8(
+                base64::engine::general_purpose::STANDARD
+                    .decode(tls.auth[key].as_str().unwrap())
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let output = json!({"kind":"ExecCredential","apiVersion":version,"status":{"token":token,"clientCertificateData":decode("client-certificate-data"),"clientKeyData":decode("client-key-data")}});
+        let mut cfg = config(&tls.server, credential_fixture::exec(version, output));
+        cfg.clusters[0]
+            .cluster
+            .as_mut()
+            .unwrap()
+            .certificate_authority_data = Some(tls.ca.clone());
+        cfg.clusters[0].cluster.as_mut().unwrap().tls_server_name = Some("fixture-server".into());
+        let mut client = ClusterClient::new(cfg, Arc::new(OrkaFixture::default()));
+        let target = target(&mut client).await;
+        assert!(tls.peers.lock().unwrap().iter().all(|peer| *peer));
+        if token.is_empty() {
+            assert_eq!(
+                client.connect(target, None).await.err(),
+                Some(AccessOutcome::NeedServiceAccount)
+            );
+        } else {
+            client.connect(target, None).await.unwrap();
+            let calls = api.calls.lock().unwrap();
+            assert!(!calls.iter().any(|c| c.1.ends_with("/token")));
+            let peers = tls.peers.lock().unwrap();
+            for (i, call) in calls.iter().enumerate() {
+                assert!(call.2 == "Bearer mixed-fixture");
+                assert_eq!(peers[i], !call.1.ends_with("/selfsubjectaccessreviews"));
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn certificate_creator_existing_sa_and_issued_ssar_has_no_creator_tls_certificate() {
     let api = Arc::new(ApiFixture::default());

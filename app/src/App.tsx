@@ -85,6 +85,15 @@ export default function App() {
   const [checking, setChecking] = useState(true);
   const [welcome, setWelcome] = useState(false);
   const [model, setModel] = useState<ModelState>('idle');
+  const [catalogEpoch, setCatalogEpoch] = useState(0);
+  const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const catalogContext = useRef('');
+  const observeModel = useCallback((value: ModelState) => { setModel(value); setCatalogEpoch(epoch => epoch + 1); }, []);
+  const observeWorkspaceAction = useCallback((pending: boolean) => {
+    setWorkspaceBusy(pending);
+    if (pending) setCatalogEpoch(epoch => epoch + 1);
+  }, []);
+  const choosePlace = useCallback((value: SelectedPlace) => { setPlace(value); setCatalogEpoch(epoch => epoch + 1); }, []);
   const [agentName, setAgentName] = useState<string>();
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [stale, setStale] = useState(false);
@@ -94,6 +103,8 @@ export default function App() {
   const observeRun = useCallback((snapshot: RunSnapshot | undefined) => { setRun(snapshot); setRunUnavailable(!snapshot); }, []);
   const observeSetup = useCallback((status: SetupStatus | undefined) => {
     setSetup(status); setChecking(false);
+    const context = `${status?.selected}/${status?.localVm}/${status?.model}`;
+    if (context !== catalogContext.current) { catalogContext.current = context; setCatalogEpoch(epoch => epoch + 1); }
     // An unavailable poll must not turn a setup preview into an editable agent.
     if (status) {
       if (!status.selected) workspaceAdmitted.current = false;
@@ -177,13 +188,13 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup onPlace={setPlace} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={setModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
+          <Setup onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
             onOpenExample={() => {
               if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
               setExampleOpen(true); setPage('Designer');
             }} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} remote={remote} place={place} onChooseCluster={() => setPage('Clusters')} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
         </>} /></div>}
         {page !== 'Clusters' && !(page === 'Designer' && exampleOpen) && <section className="card empty-state">

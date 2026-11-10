@@ -12,7 +12,7 @@ const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting',
 const runtimeCopy = {
   notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
 };
-export default function Setup({ onOpenExample, onReady, onStatus, onModelState, onWelcome, onExampleName, firstCheck, onStarting, onPlace, active = true }: {
+export default function Setup({ onOpenExample, onReady, onStatus, onModelState, onWelcome, onExampleName, firstCheck, onStarting, onWorkspaceAction, onPlace, active = true }: {
   onOpenExample: () => void; onReady: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
   onModelState?: (state: ModelState) => void;
@@ -20,6 +20,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   onExampleName?: (name: string | undefined) => void;
   firstCheck?: CheckStepState;
   onStarting?: () => void;
+  onWorkspaceAction?: (pending: boolean) => void;
   onPlace?: (place: SelectedPlace) => void;
 }) {
   const [status, setStatus] = useState<SetupStatus>();
@@ -102,11 +103,13 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     clearTimeout(timer.current);
     ++epoch.current;
     mutation.current = true;
+    onWorkspaceAction?.(true);
     if (action === 'start') onStarting?.();
     setBusy(true); setSending(true); setPendingAction(action); setError(undefined);
     const result = await (action === 'cancel' ? cancelLocal() : action === 'change' ? changeLocal() : selectLocal());
     mutation.current = false;
     if (!mounted.current) return;
+    onWorkspaceAction?.(false);
     setSending(false); setPendingAction(undefined); setConfirmChange(false);
     if (result.ok) { focusChoice.current = true; setStatus(result.status); }
     else { setError(result.message); }

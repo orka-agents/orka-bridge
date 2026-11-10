@@ -39,9 +39,13 @@ pub fn stop(app: &tauri::AppHandle) {
         return;
     }
     let send = app.state::<Arc<SendOwner>>().inner().clone();
+    let clusters = app
+        .state::<bridge_engine::clusters::commands::ClusterSession>()
+        .inner()
+        .clone();
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        shutdown.finish(&send, &vm).await;
+        shutdown.finish(&clusters, &send, &vm).await;
         shutdown.exit_unless_native(|clean| handle.exit(if clean { 0 } else { 1 }));
     });
 }

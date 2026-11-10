@@ -236,7 +236,8 @@ pub mod native_tests {
             LocalVm::unavailable()
         };
         let engine = EngineState::with_transport(vm.clone());
-        let send = SendOwner::new(Arc::new(AgentFolder::new(None)), ClusterSession::default());
+        let clusters = ClusterSession::default();
+        let send = SendOwner::new(Arc::new(AgentFolder::new(None)), clusters.clone());
         let workers = Arc::new(AtomicUsize::new(0));
         let joined = Arc::new(AtomicBool::new(false));
         let request: Arc<dyn Fn() + Send + Sync> = {
@@ -251,7 +252,8 @@ pub mod native_tests {
                         });
                         return;
                     }
-                    let (shutdown, vm, send) = (shutdown.clone(), vm.clone(), send.clone());
+                    let (shutdown, vm, send, clusters) =
+                        (shutdown.clone(), vm.clone(), send.clone(), clusters.clone());
                     let (joined, existing) = (joined.clone(), case == "existing");
                     std::thread::spawn(move || {
                         // Hold existing cleanup until the native request joins it,
@@ -264,7 +266,7 @@ pub mod native_tests {
                             .enable_all()
                             .build()
                             .unwrap();
-                        runtime.block_on(shutdown.finish(&send, &vm));
+                        runtime.block_on(shutdown.finish(&clusters, &send, &vm));
                         // Deliberately no AppHandle::exit or Tauri UI queue here.
                     });
                 } else {

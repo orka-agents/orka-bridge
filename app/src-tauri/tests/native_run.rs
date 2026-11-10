@@ -47,6 +47,86 @@ fn closed_parser_refuses_unsupported_or_empty_semantics() {
     }
 }
 
+// Removing soul admission or name-only mapping must fail these consumer tests.
+#[tokio::test]
+async fn soul_and_both_tool_kinds_survive_preparation_and_acknowledgment() {
+    for soul in [
+        json!({"inline":"Kind.\r\nExact."}),
+        json!({"inline":"Kind.","digest":"sha256:f9fcd6e31bd6311467d29894fae0db1c16acb84bfe9cfb30b666ea77eec43b69"}),
+        json!({"configMapRef":{"name":"persona.v1","key":"SOUL.md"},"digest":format!("sha256:{}", "a".repeat(64))}),
+    ] {
+        let source = AGENT
+            .replace("  tools:", &format!("  soul: {}\n  tools:", soul))
+            .replace(
+                "name: web_fetch",
+                "name: web_fetch\n    - kind: tool\n      name: workspace_lookup",
+            );
+        let parsed = ParsedPair::parse(source.as_bytes(), TESTS.as_bytes()).unwrap();
+        let (runner, receive, posts) = stopping_runner(usize::MAX, usize::MAX, None);
+        let prepared = runner.prepare(parsed).unwrap();
+        assert!(posts.lock().unwrap().is_empty());
+        let handle = runner.submit_prepared(prepared, receive).await.unwrap();
+        assert!(handle.agent().is_some());
+        let bodies = posts.lock().unwrap();
+        assert_eq!(bodies[0]["spec"]["soul"], soul);
+        assert_eq!(
+            bodies[0]["spec"]["systemPrompt"],
+            json!({"inline":"\nFetch only.\n"})
+        );
+        assert_eq!(
+            bodies[0]["spec"]["tools"],
+            json!([{"name":"web_fetch"},{"name":"workspace_lookup"}])
+        );
+    }
+}
+
+#[test]
+fn soul_parser_checks_decoded_bytes_sources_and_references() {
+    use sha2::{Digest, Sha256};
+    let source = |soul: Value| AGENT.replace("  tools:", &format!("  soul: {soul}\n  tools:"));
+    for text in [
+        "é".repeat(4096),
+        "Kind.\nExact.".into(),
+        "Kind.\r\nExact.".into(),
+    ] {
+        let digest = format!("sha256:{:x}", Sha256::digest(text.as_bytes()));
+        let agent = source(json!({"inline":text,"digest":digest}));
+        assert!(ParsedPair::parse(agent.as_bytes(), TESTS.as_bytes()).is_ok());
+    }
+    // Shared vector with the form test: YAML 1.1 folds raw NEL/LS/PS, so the
+    // renderer must write explicit escapes to preserve these decoded bytes.
+    let separators = AGENT.replace("  tools:", "  soul: {inline: \"a\\u0085b c\\u2028 d\\u2029e\", digest: sha256:226df73f14b454e1a1ee85887e4a410dab81d028eb849b524100a3382b72dac2}\n  tools:");
+    assert!(ParsedPair::parse(separators.as_bytes(), TESTS.as_bytes()).is_ok());
+    let ref_digest = format!("sha256:{}", "a".repeat(64));
+    for invalid in [
+        json!({}),
+        json!({"inline":""}),
+        json!({"inline":"  "}),
+        json!({"inline":"a\0b"}),
+        json!({"inline":"é".repeat(4097)}),
+        json!({"inline":"hi","digest":ref_digest}),
+        json!({"inline":"hi","digest":format!("SHA256:{}", "A".repeat(64))}),
+        json!({"inline":"hi","configMapRef":{"name":"persona","key":"SOUL.md"},"digest":ref_digest}),
+        json!({"configMapRef":{"name":"persona","key":"SOUL.md"}}),
+        json!({"configMapRef":{"name":"Bad/name","key":"SOUL.md"},"digest":ref_digest}),
+        json!({"configMapRef":{"name":"persona","key":"../key"},"digest":ref_digest}),
+        json!({"configMapRef":{"name":"persona","key":"."},"digest":ref_digest}),
+        json!({"configMapRef":{"name":"persona","key":"SOUL.md","namespace":"other"},"digest":ref_digest}),
+        json!({"inline":"hi","unknown":true}),
+        json!({"inline":null}),
+    ] {
+        assert!(
+            ParsedPair::parse(source(invalid.clone()).as_bytes(), TESTS.as_bytes()).is_err(),
+            "{invalid}"
+        );
+    }
+    let duplicate = AGENT.replace(
+        "name: web_fetch",
+        "name: web_fetch\n    - kind: tool\n      name: web_fetch",
+    );
+    assert!(ParsedPair::parse(duplicate.as_bytes(), TESTS.as_bytes()).is_err());
+}
+
 #[derive(Clone, Copy)]
 struct Behavior {
     phase: &'static str,

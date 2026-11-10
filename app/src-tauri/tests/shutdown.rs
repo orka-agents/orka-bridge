@@ -120,8 +120,9 @@ async fn native_waiters_join_the_one_failed_cleanup_without_a_runtime_on_the_wai
             std::thread::spawn(move || shutdown.wait_timeout(std::time::Duration::from_secs(2)))
         })
         .collect();
-    let send = SendOwner::new(Arc::new(AgentFolder::new(None)), ClusterSession::default());
-    assert!(!shutdown.finish(&send, &vm).await);
+    let clusters = ClusterSession::default();
+    let send = SendOwner::new(Arc::new(AgentFolder::new(None)), clusters.clone());
+    assert!(!shutdown.finish(&clusters, &send, &vm).await);
     for waiter in waiters {
         assert_eq!(waiter.join().unwrap(), Some(false));
     }
@@ -143,7 +144,8 @@ async fn result_publication_and_native_exit_ownership_do_not_allow_two_exit_disp
     let shutdown = bridge_engine::shutdown::TerminalShutdown::default();
     let vm = LocalVm::unavailable();
     let engine = EngineState::with_transport(vm.clone());
-    let send = SendOwner::new(Arc::new(AgentFolder::new(None)), ClusterSession::default());
+    let clusters = ClusterSession::default();
+    let send = SendOwner::new(Arc::new(AgentFolder::new(None)), clusters.clone());
     let mut results = Vec::new();
     shutdown.exit_unless_native(|clean| results.push(clean));
     assert!(
@@ -151,7 +153,7 @@ async fn result_publication_and_native_exit_ownership_do_not_allow_two_exit_disp
         "pending cleanup cannot dispatch an exit"
     );
     assert!(shutdown.request(&vm, &engine));
-    assert!(shutdown.finish(&send, &vm).await);
+    assert!(shutdown.finish(&clusters, &send, &vm).await);
     assert_eq!(shutdown.wait_timeout(std::time::Duration::ZERO), Some(true));
     shutdown.exit_unless_native(|clean| results.push(clean));
     assert_eq!(results, [true]);
@@ -187,11 +189,12 @@ async fn terminal_completion_waits_for_the_late_session() {
     let engine = EngineState::with_transport(Arc::new(ResponsiveTransport));
     assert!(engine.call(request()).await.is_ok());
     let shutdown = bridge_engine::shutdown::TerminalShutdown::default();
-    let send = SendOwner::new(Arc::new(AgentFolder::new(None)), ClusterSession::default());
+    let clusters = ClusterSession::default();
+    let send = SendOwner::new(Arc::new(AgentFolder::new(None)), clusters.clone());
     assert!(shutdown.request(&vm, &engine));
     assert!(engine.call(request()).await.is_err());
     assert!(!shutdown.request(&vm, &engine));
-    let cleanup = shutdown.finish(&send, &vm);
+    let cleanup = shutdown.finish(&clusters, &send, &vm);
     tokio::pin!(cleanup);
     // Poll cleanup before checking completion: merely spawning it would not prove it ran.
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -220,9 +223,10 @@ async fn terminal_failure_completes_without_claiming_a_clean_stop() {
     phase(&vm, LocalVmStatus::Ready).await;
     let engine = EngineState::with_transport(vm.clone());
     let shutdown = bridge_engine::shutdown::TerminalShutdown::default();
-    let send = SendOwner::new(Arc::new(AgentFolder::new(None)), ClusterSession::default());
+    let clusters = ClusterSession::default();
+    let send = SendOwner::new(Arc::new(AgentFolder::new(None)), clusters.clone());
     assert!(shutdown.request(&vm, &engine));
-    assert!(!shutdown.finish(&send, &vm).await);
+    assert!(!shutdown.finish(&clusters, &send, &vm).await);
     assert!(shutdown.completed());
     assert_eq!(vm.status(), LocalVmStatus::Failed);
     assert!(!shutdown.request(&vm, &engine));

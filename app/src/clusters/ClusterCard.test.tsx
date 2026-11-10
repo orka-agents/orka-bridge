@@ -175,7 +175,13 @@ test('native_need_account_only_then_name_field', async () => {
 test.each(['unsupportedCredential', 'denied', 'unavailable'])('unsupported_access_stays_visible: %s', async status => {
   native(undefined, { status, providers: [] }); const user = await open(); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
-  expect(await screen.findByRole('alert')).toBeTruthy(); expect(screen.getByText('Orka found')).toBeTruthy();
+  const alert = await screen.findByRole('alert');
+  expect(alert).toBeTruthy(); expect(screen.getByText('Orka found')).toBeTruthy();
+  if (status === 'unsupportedCredential') expect(alert.textContent).toMatch(/credential plugin outside Bridge/);
+  if (status === 'unavailable') {
+    expect(alert.textContent).toMatch(/existing sign-in/);
+    expect(alert.textContent).toMatch(/configured Providers/);
+  }
   expect(screen.queryByRole('textbox', { name: 'ServiceAccount name' })).toBeNull();
 });
 test('failure alternative does not stop or reset a local VM', async () => {
@@ -193,7 +199,7 @@ test('unsupported discovery names the access limitation and keeps the context', 
   native(); mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
     : command === 'cluster_contexts' ? [context] : Promise.reject('unsupportedCredential'));
   const user = await open(); await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
-  expect(await screen.findByText(/sign-in method Bridge cannot use yet/)).toBeTruthy();
+  expect(await screen.findByText(/credential plugin outside Bridge/)).toBeTruthy();
   expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe(context.id);
 });
 test('empty discovery is not an access error or a made-up version', async () => {
