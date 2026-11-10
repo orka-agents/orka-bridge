@@ -138,6 +138,8 @@ async fn execute(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
+    #[cfg(windows)]
+    cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
     for env in exec.env.as_deref().unwrap_or_default() {
         cmd.env(
             env.get("name").ok_or(AccessOutcome::Unavailable)?,
