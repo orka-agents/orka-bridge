@@ -119,7 +119,7 @@ impl RemoteAccess {
         let mut rows = vec![CheckRow::new(
             "Access",
             Allowed,
-            "The selected identity can read this Orka. Write access was checked when connected.",
+            "The selected identity can read this Orka. Send still needs permission to create an Agent and checks.",
         )];
         let selected = self.providers().iter().find(|p| p.id == provider);
         let (status, message) = match self.configured_providers(stream).await {

@@ -36,6 +36,12 @@ async fn preflight_zero_agent_task_posts_and_literal_model() {
     assert_eq!(c["providerId"], s.provider);
     assert_eq!(row(&c, "Model")["status"], "unverified");
     assert_eq!(row(&c, "web_fetch")["status"], "allowed");
+    // This fixture signs in through OIDC, which does not get a Kubernetes
+    // write-permission probe. Reading successfully must not claim otherwise.
+    assert!(!row(&c, "Access")["message"]
+        .as_str()
+        .unwrap()
+        .contains("Write access was checked"));
     assert!(s.owner.status(None).is_none());
     assert_eq!(s.api.wire.posts(), 0);
     // Not even TokenRequest or access-review POSTs are part of preflight.

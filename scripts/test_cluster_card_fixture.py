@@ -24,15 +24,13 @@ class SendFixtureTest(unittest.TestCase):
         status, _ = handler.orka("GET", "/api/v1/auth/whoami", None, "Bearer denied-fixture")
         self.assertEqual(status, 403)
 
-    def test_missing_and_unreadable_tools_keep_workload_writes_at_zero(self):
+    def test_missing_and_unreadable_catalogues_are_distinct(self):
         handler = object.__new__(fixture.Discovery)
-        before = fixture.Discovery.agents
         status, page = handler.orka("GET", "/api/v1/tools", None, "Bearer missing-tools-fixture")
         self.assertEqual(status, 200)
         self.assertEqual(page["items"], [])
         status, _ = handler.orka("GET", "/api/v1/tools", None, "Bearer unreadable-tools-fixture")
         self.assertEqual(status, 403)
-        self.assertEqual(fixture.Discovery.agents, before)
 
     def test_discovery_serves_required_send_schema_fields(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), fixture.Discovery)

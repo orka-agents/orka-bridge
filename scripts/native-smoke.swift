@@ -399,7 +399,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     // Read-only preflight states use distinct synthetic identities. No workload
     // is submitted for either blocked card.
-    for (index, name, expected) in [(4, "send-blocked", "Blocked"), (5, "send-cannot-check", "Can’t check")] {
+    for (index, name, expected) in [(4, "send-blocked", "Blocked"), (5, "send-cannot-check", "Bridge cannot check")] {
         let selected = try chooseFixture(index)
         clickText("Use this cluster", in: selected)
         Thread.sleep(forTimeInterval: 1)
@@ -425,8 +425,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let ownedAgent = try capture("agent-cluster-owned", "Designer")
     clickText("Send to a cluster", in: ownedAgent)
     Thread.sleep(forTimeInterval: 1)
-    let allowed = try capturePreflight("send-ready", "Before Send")
-    require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Before Send") }, "Read-only preflight rows are missing")
+    let allowed = try capturePreflight("send-ready", "Built in to this Orka")
+    require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Built in to this Orka") }, "Allowed preflight evidence is missing")
     try clickSendControl("Send and run checks", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
     let result = try capture("send-result", "Designer")
