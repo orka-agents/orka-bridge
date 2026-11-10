@@ -102,7 +102,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     let observations = request.results ?? []
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Send your agent") || text.contains("Checks on your cluster") || text.contains("Checks:") || text.contains("Running checks"), "Send panel not visible: \(text)")
+        require(text.contains("Send your agent") || text.contains("Checks on your cluster") || text.contains("Checks:") || text.contains("Running checks") || text.contains("Planned Agent"), "Send panel not visible: \(text)")
         print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
         return observations
     }
@@ -340,10 +340,11 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Send opens with its panel focused. Tab reaches the explicit Run action.
     key(48); key(36)
     Thread.sleep(forTimeInterval: 1)
-    key(48) // Show details brings the completed result into the minimum window.
+    key(48) // The answer brings the completed result into the minimum window.
     let result = try capture("send-result", "Designer")
     require(result.contains { $0.topCandidates(1).first?.string == "Checks: pass" }, "Fixture-backed Send did not pass its real assertions")
     key(48); key(36) // The answer is a keyboard stop before Show details.
+    key(121) // Page Down exposes the expanded identities at minimum size.
     let details = try capture("send-result-details", "Designer")
     require(details.contains { ($0.topCandidates(1).first?.string ?? "").contains("bridge-run-") }, "Agent identity is not visible in native Send details")
     key(36); key(48, shift: true)
