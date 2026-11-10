@@ -3,7 +3,7 @@ use std::{env, io::{self, Read, Write}, time::Duration};
 #[cfg(windows)]
 #[link(name = "kernel32")]
 unsafe extern "system" {
-    fn GetConsoleWindow() -> *mut std::ffi::c_void;
+    fn GetConsoleProcessList(processes: *mut u32, count: u32) -> u32;
 }
 fn main() {
     if let Ok(path) = env::var("RECORD_FILE") {
@@ -18,7 +18,8 @@ fn main() {
         _ => {
             #[cfg(windows)]
             if env::args().nth(1).as_deref() == Some("no-console") {
-                assert!(unsafe { GetConsoleWindow() }.is_null(), "plugin has a console");
+                let mut pid = 0;
+                assert_eq!(unsafe { GetConsoleProcessList(&mut pid, 1) }, 0, "plugin has a console");
             }
             let mut input = String::new();
             io::stdin().read_to_string(&mut input).unwrap();
