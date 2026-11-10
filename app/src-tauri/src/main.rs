@@ -5,10 +5,8 @@ use bridge_engine::engine::{types::*, EngineState};
 use bridge_engine::local_vm::{self, ExamplePair, LocalVm, LocalVmStatus};
 use bridge_engine::send::{SendOwner, SendView};
 use bridge_engine::setup::{SetupError, SetupSnapshot, SetupStore};
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
-};
+use bridge_engine::shutdown::TerminalShutdown;
+use std::sync::Arc;
 use tauri::Manager;
 
 #[tauri::command]
@@ -161,21 +159,31 @@ async fn send_stop(
 }
 
 fn main() {
-    let closing = AtomicBool::new(false);
-    let completed = Arc::new(AtomicBool::new(false));
+    let shutdown = Arc::new(TerminalShutdown::default());
     tauri::Builder::default()
         .setup(|app| {
             let store = Arc::new(SetupStore::new(app.path().app_data_dir().ok()));
-            let vm = local_vm::configured(app.path().resource_dir().ok(), app.path().app_local_data_dir().ok());
-            app.manage(if vm.status() == LocalVmStatus::NotIntegrated { EngineState::configured() }
-                else { EngineState::with_transport(vm.clone()) });
-            app.manage(store.clone()); app.manage(vm.clone());
+            let vm = local_vm::configured(
+                app.path().resource_dir().ok(),
+                app.path().app_local_data_dir().ok(),
+            );
+            app.manage(if vm.status() == LocalVmStatus::NotIntegrated {
+                EngineState::configured()
+            } else {
+                EngineState::with_transport(vm.clone())
+            });
+            app.manage(store.clone());
+            app.manage(vm.clone());
             let session = bridge_engine::clusters::commands::ClusterSession::default();
             app.manage(session.clone());
             let folder = Arc::new(AgentFolder::new(app.path().home_dir().ok()));
             app.manage(folder.clone());
             app.manage(SendOwner::new(folder.clone(), session));
-            app.manage(bridge_engine::example_run::ExampleRun::new(tauri::async_runtime::handle().inner().clone(), bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE, folder));
+            app.manage(bridge_engine::example_run::ExampleRun::new(
+                tauri::async_runtime::handle().inner().clone(),
+                bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE,
+                folder,
+            ));
             tauri::async_runtime::spawn(async move {
                 if local_vm::resume_selected(store, &vm).await.is_err() {
                     eprintln!("The saved setup choice could not be read.");
@@ -183,29 +191,65 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_cancel_local, setup_change_local, setup_requirements, setup_open_help, setup_example, setup_connect_model, setup_run_status, setup_run_example, agent_open, agent_save, workspace_catalog, cluster_contexts, cluster_discover, cluster_use, send_start, send_status, send_stop])
+        .invoke_handler(tauri::generate_handler![
+            engine_call,
+            setup_status,
+            setup_select_local,
+            setup_cancel_local,
+            setup_change_local,
+            setup_requirements,
+            setup_open_help,
+            setup_example,
+            setup_connect_model,
+            setup_run_status,
+            setup_run_example,
+            agent_open,
+            agent_save,
+            workspace_catalog,
+            cluster_contexts,
+            cluster_discover,
+            cluster_use,
+            send_start,
+            send_status,
+            send_stop
+        ])
         .build(tauri::generate_context!())
         .expect("error while building Bridge")
         .run(move |app, event| {
-            if completed.load(Ordering::SeqCst) { return; }
+            if shutdown.completed() {
+                return;
+            }
             let requested = match event {
-                tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::CloseRequested { api, .. }, .. } if label == "main" => { api.prevent_close(); true }
-                tauri::RunEvent::ExitRequested { api, .. } => { api.prevent_exit(); true }
+                tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::CloseRequested { api, .. },
+                    ..
+                } if label == "main" => {
+                    api.prevent_close();
+                    true
+                }
+                tauri::RunEvent::ExitRequested { api, .. } => {
+                    api.prevent_exit();
+                    true
+                }
                 _ => false,
             };
-            if !requested || closing.swap(true, Ordering::SeqCst) { return; }
+            if !requested {
+                return;
+            }
             let vm = app.state::<Arc<LocalVm>>().inner().clone();
+            if !shutdown.request(&vm, &app.state::<EngineState>()) {
+                return;
+            }
             let send = app.state::<Arc<SendOwner>>().inner().clone();
-            let clusters = app.state::<bridge_engine::clusters::commands::ClusterSession>().inner().clone();
-            vm.request_close(); // Native event thread: bar late Ready before scheduling async work.
-            app.state::<EngineState>().shutdown();
-            let handle = app.clone(); let completed = completed.clone();
+            let clusters = app
+                .state::<bridge_engine::clusters::commands::ClusterSession>()
+                .inner()
+                .clone();
+            let handle = app.clone();
+            let shutdown = shutdown.clone();
             tauri::async_runtime::spawn(async move {
-                clusters.shutdown().await; // Cancel and reap an active credential child without waiting for the session lock.
-                send.shutdown().await; // Stop observation and close the forward; remote Tasks continue.
-                let clean = vm.shutdown().await.is_ok();
-                if !clean { eprintln!("Local VM startup or shutdown did not finish successfully; cleanup was not reported as clean."); }
-                completed.store(true, Ordering::SeqCst);
+                let clean = shutdown.finish(&clusters, &send, &vm).await;
                 handle.exit(if clean { 0 } else { 1 });
             });
         });

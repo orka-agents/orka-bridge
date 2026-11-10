@@ -145,7 +145,7 @@ async fn child_deadline_output_and_exit_failures_are_finite() {
     }
 }
 #[tokio::test]
-async fn shutdown_reaps_inflight_child_and_refuses_new_resolution() {
+async fn terminal_shutdown_reaps_inflight_child_and_refuses_new_resolution() {
     let version = "client.authentication.k8s.io/v1";
     let mut auth = exec(version, response(version));
     auth["exec"]["args"] = json!(["hang"]);
@@ -170,10 +170,21 @@ async fn shutdown_reaps_inflight_child_and_refuses_new_resolution() {
     })
     .await
     .unwrap();
-    tokio::time::timeout(Duration::from_secs(2), session.shutdown())
-        .await
-        .unwrap();
-    assert!(job.await.unwrap());
+    let vm = bridge_engine::local_vm::LocalVm::unavailable();
+    let engine = bridge_engine::engine::EngineState::with_transport(vm.clone());
+    let send = bridge_engine::send::SendOwner::new(
+        Arc::new(bridge_engine::agent_folder::AgentFolder::new(None)),
+        session.clone(),
+    );
+    let shutdown = bridge_engine::shutdown::TerminalShutdown::default();
+    assert!(shutdown.request(&vm, &engine));
+    assert!(tokio::time::timeout(
+        Duration::from_secs(2),
+        shutdown.finish(&session, &send, &vm)
+    )
+    .await
+    .unwrap());
+    assert!(shutdown.completed());
     #[cfg(unix)]
     {
         let pid: i32 = std::fs::read_to_string(&pid_file).unwrap().parse().unwrap();
@@ -187,6 +198,7 @@ async fn shutdown_reaps_inflight_child_and_refuses_new_resolution() {
             Some(libc::ESRCH)
         );
     }
+    assert!(job.await.unwrap());
     assert_eq!(
         resolve(&client).await.err(),
         Some(ClusterError::Unavailable)
