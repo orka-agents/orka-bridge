@@ -291,6 +291,10 @@ mod tests {
         // Real Tao hidden target, but no webview, saved setup, VM or OS logout.
         let mut context = tauri::generate_context!();
         context.config_mut().app.windows.clear();
+        context
+            .config_mut()
+            .identifier
+            .push_str(".native-session-test");
         if case == "missing_icon" {
             context.set_default_window_icon(None);
         }

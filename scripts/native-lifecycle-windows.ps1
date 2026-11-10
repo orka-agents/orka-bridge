@@ -28,6 +28,7 @@ New-Item -ItemType Directory -Force $Output | Out-Null
 # dirs::data_dir uses SHGetKnownFolderPath(RoamingAppData), not an APPDATA override.
 $data = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'ai.orka.bridge'
 $selected = Join-Path $data 'setup-v1/local-vm'
+$vmData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ai.orka.bridge/local-vm-v1'
 if (Test-Path $data) { throw "Expected fresh hosted-CI application profile: $data (will not erase it)" }
 if (!(Test-Path $env:BRIDGE_DEV_IMAGE_DIR -PathType Container) -or @(Get-ChildItem -Force $env:BRIDGE_DEV_IMAGE_DIR).Count) { throw 'Expected empty image source directory' }
 if (Get-Process -Name orka-bridge -ErrorAction SilentlyContinue) { throw 'Bridge is already running' }
@@ -71,25 +72,33 @@ function Capture([string]$Name, [bool]$Menu = $false) {
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
 function Start-Bridge {
-    if ((Test-Path $selected) -or (Test-Path (Join-Path $data 'local-vm-v1'))) { throw 'Saved local selection or VM data appeared; refusing to resume a VM' }
-    $script:app = Start-Process $Executable -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log")
+    if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared; refusing to resume a VM' }
+    $script:app = Start-Process $Executable -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log")
     $script:hwnd = Wait-For 'Main native window did not appear' { $script:app.Refresh(); if ($script:app.MainWindowHandle -ne [IntPtr]::Zero) { $script:app.MainWindowHandle } }
     $script:window = [System.Windows.Automation.AutomationElement]::FromHandle($script:hwnd)
     [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
+}
+function Find-TrayIcon($Root, [string]$Label) {
+    $all = @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
+    $all | ForEach-Object { "Name=$($_.Current.Name); Type=$($_.Current.ControlType.ProgrammaticName); Offscreen=$($_.Current.IsOffscreen)" } | Set-Content (Join-Path $script:themeOutput "tray-$Label.txt")
+    # Explorer may expose tooltip text with extra notification copy and a non-Button role.
+    $matches = @($all | Where-Object { $_.Current.Name -like '*Bridge*' -and !$_.Current.IsOffscreen })
+    if ($matches.Count -eq 1) { return $matches[0] }
+    if ($matches.Count -gt 1) { throw 'More than one Bridge icon in native notification area' }
 }
 function Tray-Menu {
     $taskbar = [NativeWalk]::FindWindow('Shell_TrayWnd', $null)
     $notify = [NativeWalk]::FindWindowEx($taskbar, [IntPtr]::Zero, 'TrayNotifyWnd', $null)
     if ($notify -eq [IntPtr]::Zero) { throw 'Native notification area missing (interactive CI desktop required)' }
     $area = [System.Windows.Automation.AutomationElement]::FromHandle($notify)
-    $tray = Find-Control $area 'Bridge' $button
+    $tray = Find-TrayIcon $area 'visible'
     if (!$tray -or $tray.Current.IsOffscreen) {
         $chevron = Find-Control $area 'Show hidden icons' $button
         if (!$chevron) { $chevron = Find-Control $area 'Notification Chevron' $button }
         if (!$chevron) { $chevron = $area.FindFirst($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'NotificationChevron')) }
         if ($chevron) { Press $chevron }
         $overflow = Wait-For 'Native notification overflow missing' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
-        $tray = Wait-For 'Native Bridge notification icon missing' { Find-Control $overflow 'Bridge' $button }
+        $tray = Wait-For 'Native Bridge notification icon missing' { Find-TrayIcon $overflow 'overflow' }
     }
     # Right-click the actual Explorer notification icon; do not invoke a product test command.
     $point = $tray.GetClickablePoint()
@@ -159,13 +168,13 @@ try {
         Retained; Capture 'reopened-menu'
         [NativeWalk]::PostMessage($script:hwnd, 0x112, [IntPtr]0xf060, [IntPtr]::Zero) | Out-Null
         Wait-For 'Close before second launch did not hide' { ![NativeWalk]::IsWindowVisible($script:hwnd) } | Out-Null
-        $second = Start-Process $Executable -PassThru
+        $second = Start-Process $Executable -NoNewWindow -PassThru
         if (!$second.WaitForExit(15000) -or $second.ExitCode -ne 0) { throw 'Hidden-window second launch did not hand off and exit cleanly' }
         Wait-For 'Second launch did not show hidden original window' { [NativeWalk]::IsWindowVisible($script:hwnd) } | Out-Null
         Retained; Capture 'reopened-second-launch-hidden'
         [NativeWalk]::ShowWindow($script:hwnd, 6) | Out-Null
         Wait-For 'Window did not minimize' { [NativeWalk]::IsIconic($script:hwnd) } | Out-Null
-        $second = Start-Process $Executable -PassThru
+        $second = Start-Process $Executable -NoNewWindow -PassThru
         if (!$second.WaitForExit(15000) -or $second.ExitCode -ne 0) { throw 'Second executable launch did not hand off and exit cleanly' }
         Wait-For 'Second launch did not restore original window' { ![NativeWalk]::IsIconic($script:hwnd) } | Out-Null
         Retained; Capture 'reopened-second-launch-minimized'
@@ -177,7 +186,7 @@ try {
         Press (Wait-For 'Native File menu missing' { Find-Control $script:window 'File' $menuItem })
         Press (Wait-For 'Standard native Quit missing' { Find-Control $desktop 'Quit' $menuItem })
         Wait-Exit
-        if ((Test-Path $selected) -or (Test-Path (Join-Path $data 'local-vm-v1'))) { throw 'Saved local selection or VM data appeared' }
+        if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared' }
         "PASS $theme`: native Close/hide, tray menu/Open, same PID $script:originalPid/window $script:hwnd, File view/edited text retained, hidden/minimized second launches, menu stop, standard Quit. Integrated debug shell only; empty image source, no VM/Ready/provider/cluster/session logout proof. OS popup theme is captured as drawn, not forced by product hooks." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
     }
 } catch {

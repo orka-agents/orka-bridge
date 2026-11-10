@@ -1,4 +1,5 @@
-// Run from the repository root: swift scripts/native-termination-macos.swift
+// Run from the repository root with BRIDGE_TEST_CARGO and BRIDGE_TEST_RUSTC
+// set to the absolute tool paths returned by the shell's command -v.
 // Builds a real Tauri subprocess; never logs out the host or starts a VM.
 import Foundation
 import Darwin
@@ -21,8 +22,15 @@ func run(_ args: [String], _ name: String, timeout: Double = 900,
     defer { try? handle.close() }
     let process = Process()
     let inherited = environment ?? ProcessInfo.processInfo.environment
-    let cargoHome = inherited["CARGO_HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cargo").path
-    let executable = args[0].hasPrefix("/") ? args[0] : "\(cargoHome)/bin/\(args[0])"
+    let executable: String
+    if args[0].hasPrefix("/") { executable = args[0] }
+    else {
+        let key = "BRIDGE_TEST_\(args[0].uppercased())"
+        guard let resolved = inherited[key], FileManager.default.isExecutableFile(atPath: resolved) else {
+            fatalError("Supply \(key) from the CI shell's command -v \(args[0])")
+        }
+        executable = resolved
+    }
     process.executableURL = URL(fileURLWithPath: executable)
     process.arguments = Array(args.dropFirst())
     process.environment = inherited
