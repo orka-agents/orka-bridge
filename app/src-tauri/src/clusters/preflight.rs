@@ -140,7 +140,7 @@ impl RemoteAccess {
         rows.push(CheckRow::new(
             "Model",
             Unverified,
-            "The file's exact model will be tested here; runtime availability is not checked yet.",
+            "The file's exact model will be tested here; its availability is not checked yet.",
         ));
         let mut catalog = Catalogue::default();
         let readable = self.catalogue(stream, pair, &mut catalog).await.is_ok();
@@ -175,7 +175,7 @@ impl RemoteAccess {
                 ),
                 ToolKind::Resource => (
                     Allowed,
-                    "Tool exists in the watched namespace; its endpoint and policy will be tested."
+                    "Tool exists in the watched namespace; its endpoint and policy are not checked yet."
                         .into(),
                 ),
             };

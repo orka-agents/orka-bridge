@@ -35,6 +35,11 @@ async fn preflight_zero_agent_task_posts_and_literal_model() {
     assert_eq!(c["targetId"], s.target);
     assert_eq!(c["providerId"], s.provider);
     assert_eq!(row(&c, "Model")["status"], "unverified");
+    // The default card uses creator-facing words, not Bridge implementation terms.
+    assert!(!row(&c, "Model")["message"]
+        .as_str()
+        .unwrap()
+        .contains("runtime"));
     assert_eq!(row(&c, "web_fetch")["status"], "allowed");
     // This fixture signs in through OIDC, which does not get a Kubernetes
     // write-permission probe. Reading successfully must not claim otherwise.
