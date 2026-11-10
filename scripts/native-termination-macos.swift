@@ -20,9 +20,12 @@ func run(_ args: [String], _ name: String, timeout: Double = 900,
     let handle = try FileHandle(forWritingTo: output)
     defer { try? handle.close() }
     let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = args
-    process.environment = environment
+    let inherited = environment ?? ProcessInfo.processInfo.environment
+    let cargoHome = inherited["CARGO_HOME"] ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".cargo").path
+    let executable = args[0].hasPrefix("/") ? args[0] : "\(cargoHome)/bin/\(args[0])"
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = Array(args.dropFirst())
+    process.environment = inherited
     process.standardOutput = handle
     process.standardError = handle
     try process.run()

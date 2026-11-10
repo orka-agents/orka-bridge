@@ -328,10 +328,14 @@ mod tests {
                     probe.calls.fetch_add(1, Ordering::SeqCst);
                 }
             });
-            let window = tauri::window::WindowBuilder::new(&app, "menu-probe")
-                .visible(false)
-                .build()
-                .unwrap();
+            let window = tauri::WebviewWindowBuilder::new(
+                &app,
+                "menu-probe",
+                tauri::WebviewUrl::External("about:blank".parse().unwrap()),
+            )
+            .visible(false)
+            .build()
+            .unwrap();
             super::super::install(app.handle(), shutdown, true).unwrap();
             tauri::async_runtime::block_on(async {
                 vm.start();
