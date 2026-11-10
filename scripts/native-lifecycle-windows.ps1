@@ -2,8 +2,9 @@
 param([Parameter(Mandatory)][string]$Executable, [Parameter(Mandatory)][string]$Output)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Hosted CI walk only; never run against an existing user profile' }
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing
-Add-Type @'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Windows.Forms, System.Drawing, Accessibility
+# Accessibility's legacy System.Runtime metadata needs the same reference-unification allowance as the .NET SDK.
+Add-Type -ReferencedAssemblies 'System.Collections.dll', ([Accessibility.IAccessible].Assembly.Location) -CompilerOptions '/nowarn:1701' @'
 using System;
 using System.Runtime.InteropServices;
 public static class NativeWalk {
@@ -20,6 +21,52 @@ public static class NativeWalk {
   [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr h, uint msg, UIntPtr w, string l, uint flags, uint timeout, out UIntPtr result);
+  private delegate bool EnumWindow(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr h, EnumWindow callback, IntPtr l);
+  [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr h, System.Text.StringBuilder name, int size);
+  [DllImport("oleacc.dll")] private static extern int AccessibleObjectFromWindow(IntPtr h, uint id, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible);
+  [DllImport("oleacc.dll")] private static extern int AccessibleChildren(Accessibility.IAccessible accessible, int start, int count, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex=2)] object[] children, out int obtained);
+  // Legacy Explorer toolbars may have no UIA children. Use MSAA, never toolbar process memory.
+  // https://learn.microsoft.com/windows/win32/winauto/toolbar-control
+  // https://learn.microsoft.com/windows/win32/api/oleacc/nf-oleacc-accessiblechildren
+  public static int[] TrayPoint(IntPtr root, string[] names, string dump) {
+    var windows = new System.Collections.Generic.List<IntPtr> { root };
+    EnumChildWindows(root, (h, l) => { windows.Add(h); return true; }, IntPtr.Zero);
+    var log = new System.Text.StringBuilder(); int[] point = null; int matches = 0;
+    foreach (var h in windows) {
+      var cls = new System.Text.StringBuilder(256); GetClassName(h, cls, cls.Capacity);
+      bool visible = IsWindowVisible(h);
+      log.AppendLine("HWND=" + h + "; Class=" + cls + "; Visible=" + visible);
+      if (cls.ToString() != "ToolbarWindow32" && cls.ToString() != "Button") continue;
+      Accessibility.IAccessible acc = null; object[] items = null;
+      try {
+        var iid = typeof(Accessibility.IAccessible).GUID;
+        Marshal.ThrowExceptionForHR(AccessibleObjectFromWindow(h, 0xfffffffc, ref iid, out acc)); // OBJID_CLIENT
+        int count = acc.accChildCount, obtained = 0; items = new object[count];
+        log.AppendLine("MSAA children=" + count);
+        if (count > 0) Marshal.ThrowExceptionForHR(AccessibleChildren(acc, 0, count, items, out obtained));
+        for (int i = -1; i < obtained; i++) {
+          object child = i < 0 ? (object)0 : items[i];
+          var node = child as Accessibility.IAccessible ?? acc;
+          object id = child is int ? child : 0;
+          string label = node.get_accName(id); int state = Convert.ToInt32(node.get_accState(id));
+          int x, y, width, height; node.accLocation(out x, out y, out width, out height, id);
+          log.AppendLine("Child=" + i + "; Name=" + label + "; Role=" + node.get_accRole(id) + "; State=" + state + "; Rect=" + x + "," + y + "," + width + "," + height);
+          // Reject unavailable, invisible and offscreen controls; click only an exact accessible name.
+          if (Array.IndexOf(names, label) >= 0 && visible && (state & 0x18001) == 0 && width > 0 && height > 0) {
+            matches++; point = new int[] { x + width / 2, y + height / 2 };
+          }
+        }
+      } catch (COMException e) { log.AppendLine("MSAA error: " + e); }
+      finally {
+        if (items != null) foreach (var item in items) if (item != null && Marshal.IsComObject(item)) Marshal.ReleaseComObject(item);
+        if (acc != null) Marshal.ReleaseComObject(acc);
+      }
+    }
+    System.IO.File.WriteAllText(dump, log.ToString());
+    if (matches > 1) throw new InvalidOperationException("More than one native notification control named " + String.Join("/", names));
+    return point;
+  }
 }
 '@
 $Executable = (Resolve-Path $Executable).Path
@@ -51,8 +98,8 @@ $button = [System.Windows.Automation.ControlType]::Button
 $menuItem = [System.Windows.Automation.ControlType]::MenuItem
 function Press($Element) {
     $pattern = $null
-    if ($Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { $pattern.Invoke(); return }
-    $point = $Element.GetClickablePoint()
+    if ($Element -isnot [Drawing.Point] -and $Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) { $pattern.Invoke(); return }
+    $point = if ($Element -is [Drawing.Point]) { $Element } else { $Element.GetClickablePoint() }
     [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y) | Out-Null
     [NativeWalk]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
     [NativeWalk]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
@@ -78,30 +125,36 @@ function Start-Bridge {
     $script:window = [System.Windows.Automation.AutomationElement]::FromHandle($script:hwnd)
     [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
 }
-function Find-TrayIcon($Root, [string]$Label) {
+function Find-TrayPoint($Root, [string]$Label) {
     $all = @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
-    $all | ForEach-Object { "Name=$($_.Current.Name); Type=$($_.Current.ControlType.ProgrammaticName); Offscreen=$($_.Current.IsOffscreen)" } | Set-Content (Join-Path $script:themeOutput "tray-$Label.txt")
+    @("UIA descendants=$($all.Count)"; $all | ForEach-Object { "Name=$($_.Current.Name); Type=$($_.Current.ControlType.ProgrammaticName); Offscreen=$($_.Current.IsOffscreen)" }) | Set-Content (Join-Path $script:themeOutput "tray-$Label.txt")
     # Explorer may expose tooltip text with extra notification copy and a non-Button role.
     $matches = @($all | Where-Object { $_.Current.Name -like '*Bridge*' -and !$_.Current.IsOffscreen })
-    if ($matches.Count -eq 1) { return $matches[0] }
+    if ($matches.Count -eq 1) { return $matches[0].GetClickablePoint() }
     if ($matches.Count -gt 1) { throw 'More than one Bridge icon in native notification area' }
+    $p = [NativeWalk]::TrayPoint([IntPtr]$Root.Current.NativeWindowHandle, 'Bridge', (Join-Path $script:themeOutput "tray-$Label-msaa.txt"))
+    if ($p) { return [Drawing.Point]::new($p[0], $p[1]) }
 }
 function Tray-Menu {
     $taskbar = [NativeWalk]::FindWindow('Shell_TrayWnd', $null)
     $notify = [NativeWalk]::FindWindowEx($taskbar, [IntPtr]::Zero, 'TrayNotifyWnd', $null)
     if ($notify -eq [IntPtr]::Zero) { throw 'Native notification area missing (interactive CI desktop required)' }
     $area = [System.Windows.Automation.AutomationElement]::FromHandle($notify)
-    $tray = Find-TrayIcon $area 'visible'
-    if (!$tray -or $tray.Current.IsOffscreen) {
+    $point = Find-TrayPoint $area 'visible'
+    if (!$point) {
         $chevron = Find-Control $area 'Show hidden icons' $button
         if (!$chevron) { $chevron = Find-Control $area 'Notification Chevron' $button }
         if (!$chevron) { $chevron = $area.FindFirst($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'NotificationChevron')) }
-        if ($chevron) { Press $chevron }
-        $overflow = Wait-For 'Native notification overflow missing' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
-        $tray = Wait-For 'Native Bridge notification icon missing' { Find-TrayIcon $overflow 'overflow' }
+        if (!$chevron) {
+            $p = [NativeWalk]::TrayPoint($notify, @('Show hidden icons', 'Notification Chevron'), (Join-Path $script:themeOutput 'tray-chevron-msaa.txt'))
+            if ($p) { $chevron = [Drawing.Point]::new($p[0], $p[1]) }
+        }
+        if (!$chevron) { throw 'Native notification chevron missing in UIA and MSAA' }
+        Press $chevron
+        $overflow = Wait-For 'Native notification overflow not visible' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
+        $point = Wait-For 'Native Bridge notification icon missing' { Find-TrayPoint $overflow 'overflow' }
     }
     # Right-click the actual Explorer notification icon; do not invoke a product test command.
-    $point = $tray.GetClickablePoint()
     [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y) | Out-Null
     [NativeWalk]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)
     [NativeWalk]::mouse_event(16, 0, 0, 0, [UIntPtr]::Zero)
