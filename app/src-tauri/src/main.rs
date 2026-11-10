@@ -140,8 +140,8 @@ async fn send_preflight(
     target_id: String,
     provider_id: String,
     state: tauri::State<'_, Arc<SendOwner>>,
-) -> bridge_engine::send::SendCheck {
-    state.preflight(&target_id, &provider_id).await
+) -> Result<bridge_engine::send::SendCheck, &'static str> {
+    Ok(state.preflight(&target_id, &provider_id).await)
 }
 #[tauri::command]
 async fn send_start(
