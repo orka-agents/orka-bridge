@@ -4,6 +4,7 @@ use std::{env, io::{self, Read, Write}, time::Duration};
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetConsoleProcessList(processes: *mut u32, count: u32) -> u32;
+    fn GetConsoleWindow() -> *mut std::ffi::c_void;
 }
 fn main() {
     if let Ok(path) = env::var("RECORD_FILE") {
@@ -18,8 +19,19 @@ fn main() {
         _ => {
             #[cfg(windows)]
             if env::args().nth(1).as_deref() == Some("no-console") {
-                let mut pid = 0;
-                assert_eq!(unsafe { GetConsoleProcessList(&mut pid, 1) }, 0, "plugin has a console");
+                let parent: u32 = env::var("CONSOLE_PARENT_PID").unwrap().parse().unwrap();
+                let mut pids = vec![0; 16];
+                let mut count = unsafe { GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32) } as usize;
+                if count > pids.len() {
+                    pids.resize(count, 0);
+                    count = unsafe { GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32) } as usize;
+                }
+                assert!(count <= pids.len(), "console membership changed during fixture observation");
+                let state = if !unsafe { GetConsoleWindow() }.is_null() { "fixture-console-window" }
+                    else if pids[..count].contains(&parent) { "fixture-console-inherited" }
+                    else { "fixture-console-isolated" };
+                print!("{}", env::var("FIXTURE_RESPONSE").unwrap().replace("fixture-bearer", state));
+                return;
             }
             let mut input = String::new();
             io::stdin().read_to_string(&mut input).unwrap();

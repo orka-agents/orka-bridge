@@ -59,24 +59,26 @@ async fn configured_path_origin_and_drop_env_contract() {
 
 #[cfg(windows)]
 #[tokio::test]
-async fn plugin_launch_does_not_create_or_inherit_a_console() {
+async fn plugin_launch_has_no_window_or_inherited_console() {
     // CI may start detached. Isolate an explicitly attached parent so inheriting
     // its console fails even on a runner without an interactive desktop.
     const CHILD: &str = "BRIDGE_TEST_CONSOLE_PARENT";
     if std::env::var_os(CHILD).is_none() {
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "plugin_launch_does_not_create_or_inherit_a_console",
+                "plugin_launch_has_no_window_or_inherited_console",
                 "--nocapture",
             ])
             .env(CHILD, "1")
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
+            .output()
             .unwrap();
-        assert!(status.success(), "console fixture failed: {status}");
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         return;
     }
     #[link(name = "kernel32")]
@@ -96,11 +98,18 @@ async fn plugin_launch_does_not_create_or_inherit_a_console() {
     let version = "client.authentication.k8s.io/v1";
     let mut auth = exec(version, response(version));
     auth["exec"]["args"] = json!(["no-console"]);
+    auth["exec"]["env"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"CONSOLE_PARENT_PID","value":std::process::id().to_string()}));
     let result = resolve(&client(config(auth))).await;
     unsafe {
         FreeConsole();
     }
-    assert!(result.is_ok());
+    match result.unwrap().credential {
+        Credential::Bearer { value, .. } => assert_eq!(value, "fixture-console-isolated"),
+        _ => panic!("missing console fixture observation"),
+    }
 }
 
 #[tokio::test]
