@@ -1,25 +1,27 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 'react';
 import { addTool, changeDescription, changeInstructions, changeModel, changeSoulInline, changeSoulReference, readForm, removeTool } from './agent-form';
 import { builtInTools } from './built-in-tools';
 import type { WorkspaceCatalogReply } from '../catalog';
 
-function Unavailable({ label, reason, children }: { label: string; reason: string; children: ReactNode }) {
-  return <span className="coming-control" tabIndex={0} role="group" aria-label={`${label}: ${reason}`} title={reason}>
+function Unavailable({ label, reason, children, focusRef }: { label: string; reason: string; children: ReactNode; focusRef?: Ref<HTMLSpanElement> }) {
+  return <span ref={focusRef} className="coming-control" tabIndex={0} role="group" aria-label={`${label}: ${reason}`} title={reason}>
     {children}<span className="control-tip" aria-hidden="true">{reason}</span>
   </span>;
 }
-export default function AgentParts({ source, path, readOnly, catalog, catalogLoading = false, onChange }: {
-  source: string; path?: string; readOnly: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; onChange: (source: string) => void;
+export default function AgentParts({ source, path, readOnly, catalog, catalogLoading = false, onPendingEdit, onChange }: {
+  source: string; path?: string; readOnly: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; onPendingEdit?: (pending: boolean) => void; onChange: (source: string) => void;
 }) {
   const form = readForm(source); const id = useId();
   const [picker, setPicker] = useState(false); const [query, setQuery] = useState('');
   const [soulDraft, setSoulDraft] = useState<{ source: string; value: string }>();
   const [soulError, setSoulError] = useState(false);
   const editVersion = useRef(0);
-  useEffect(() => { return () => { editVersion.current++; }; }, [source, readOnly]);
+  useEffect(() => { return () => { editVersion.current++; onPendingEdit?.(false); }; }, [source, readOnly, onPendingEdit]);
   const add = useRef<HTMLButtonElement>(null);
+  const addPlaceholder = useRef<HTMLSpanElement>(null);
+  const focusAdd = () => (add.current ?? addPlaceholder.current)?.focus();
   const change = (value: string) => { if (!readOnly && value !== source) onChange(value); };
-  const close = () => { setPicker(false); setQuery(''); add.current?.focus(); };
+  const close = () => { setPicker(false); setQuery(''); focusAdd(); };
   const tools = catalog?.tools.state === 'ready' ? catalog.tools.items : undefined;
   const builtins = new Set(tools?.filter(tool => tool.kind === 'builtin').map(tool => tool.name));
   const choices = tools?.filter(tool => !form.tools.some(selected => selected.name === tool.name)
@@ -37,11 +39,12 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
   const editSoul = async (value: string) => {
     if (readOnly || !form.soulEditable) return;
     const version = ++editVersion.current;
-    setSoulDraft({ source, value }); setSoulError(false);
+    setSoulDraft({ source, value }); setSoulError(false); onPendingEdit?.(true);
     try {
       const edited = await changeSoulInline(source, value);
       if (version === editVersion.current) change(edited);
     } catch { if (version === editVersion.current) setSoulError(true); }
+    finally { if (version === editVersion.current) onPendingEdit?.(false); }
   };
   return <div className="agent-parts">
     {!form.metadataEditable && <p className="muted">This file’s settings can be edited in File view.</p>}
@@ -60,10 +63,10 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
           return <span className="tool-pill" key={tool.index} title={observation?.description}>
             <span>{label}</span>{label !== name && <code>{name}</code>}
             {tool.kind === 'tool' && <span className="muted">(Tool resource{builtins.has(name) ? ', built-in takes precedence' : ''})</span>}
-            {!readOnly && form.toolsEditable && ['builtin', 'tool'].includes(tool.kind ?? '') && <button type="button" className="tool-remove" aria-label={`Remove ${label}`} onClick={() => { change(removeTool(source, tool.index)); add.current?.focus(); }}>×</button>}
+            {!readOnly && form.toolsEditable && ['builtin', 'tool'].includes(tool.kind ?? '') && <button type="button" className="tool-remove" aria-label={`Remove ${label}`} onClick={() => { change(removeTool(source, tool.index)); focusAdd(); }}>×</button>}
           </span>;
         })}
-        {toolReason ? <Unavailable label="Add a tool" reason={toolReason}><button className="part-button" type="button" disabled title={toolReason}>Add a tool</button></Unavailable>
+        {toolReason ? <Unavailable label="Add a tool" reason={toolReason} focusRef={addPlaceholder}><button className="part-button" type="button" disabled title={toolReason}>Add a tool</button></Unavailable>
           : <button className="part-button" type="button" ref={add} aria-expanded={picker} aria-controls={`${id}-picker`} onClick={() => { if (picker) close(); else setPicker(true); }}><span aria-hidden="true">+ </span>Add a tool</button>}
       </div>
       {toolReason && <p className="muted">{toolReason}</p>}

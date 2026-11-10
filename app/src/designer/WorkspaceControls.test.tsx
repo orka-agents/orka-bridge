@@ -86,6 +86,49 @@ test('a pending digest cannot overwrite a newer File edit', async () => {
   await act(async () => finish(new ArrayBuffer(32)));
   expect(changed).not.toHaveBeenCalled();
 });
+test('pending soul edits survive File view and block running until the atomic update is saved', async () => {
+  let finish!: (value: ArrayBuffer) => void; const saves: string[] = [];
+  vi.spyOn(crypto.subtle, 'digest').mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  vi.stubGlobal('isTauri', true);
+  const inline = source.replace('  tools:', '  soul: {inline: old, digest: sha256:old}\n  tools:');
+  mockIPC((command, args) => {
+    if (command === 'agent_open') return { agent: inline, tests: 'Checks' };
+    if (command === 'agent_save') { saves.push((args as { content: string }).content); return { agent: saves.at(-1), tests: 'Checks' }; }
+    return { state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
+  });
+  const user = userEvent.setup(); render(<Example />);
+  const run = await screen.findByRole('button', { name: 'Run test' });
+  await waitFor(() => expect(run.matches(':disabled')).toBe(false));
+  await user.click(screen.getByText('More settings: description, personality (soul), file'));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Personality (soul)' }), { target: { value: 'New text' } });
+  expect(run.matches(':disabled')).toBe(true);
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  await act(async () => finish(new ArrayBuffer(32)));
+  await waitFor(() => expect(saves.length).toBe(1));
+  expect(readForm(saves[0]).soul?.inline).toBe('New text');
+  expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).value).toBe(saves[0]);
+  await waitFor(() => expect(run.matches(':disabled')).toBe(false));
+});
+test('removing the last tool without a catalog returns focus to the Add placeholder', async () => {
+  const selected = source.replace('tools: []', 'tools: [{kind: tool, name: lookup}]');
+  const changed = vi.fn(); const user = userEvent.setup();
+  const view = render(<AgentParts source={selected} readOnly={false} onChange={changed} />);
+  await user.click(screen.getByRole('button', { name: 'Remove lookup' }));
+  view.rerender(<AgentParts source={changed.mock.calls[0][0]} readOnly={false} onChange={changed} />);
+  expect(document.activeElement?.getAttribute('aria-label')).toMatch(/^Add a tool:/);
+});
+test('a failed catalog can be refreshed without changing the file', async () => {
+  vi.stubGlobal('isTauri', true); let calls = 0;
+  mockIPC(command => {
+    if (command === 'agent_open') return { agent: source, tests: 'Checks' };
+    if (command === 'workspace_catalog') { if (++calls === 1) throw Error('temporary'); return catalog; }
+    return { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+  });
+  const user = userEvent.setup(); render(<Example catalogKey={1} />);
+  await user.click(await screen.findByRole('button', { name: 'Refresh catalog' }));
+  await screen.findByRole('option', { name: 'listed' });
+  expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('unlisted');
+});
 test('confirmed Change invalidates catalog before the stop reply, retaining the editor', async () => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   let finish!: (value: unknown) => void;
