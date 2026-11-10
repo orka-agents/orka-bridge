@@ -100,7 +100,7 @@ class Discovery(BaseHTTPRequestHandler):
                 while b"\r\n\r\n" in pending:
                     head, body = pending.split(b"\r\n\r\n", 1)
                     lines = head.decode().split("\r\n")
-                    headers = dict(line.lower().split(":", 1) for line in lines[1:] if ":" in line)
+                    headers = {name.lower(): value for line in lines[1:] if ":" in line for name, value in [line.split(":", 1)]}
                     length = int(headers.get("content-length", "0"))
                     if len(body) < length:
                         break

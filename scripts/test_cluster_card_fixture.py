@@ -48,28 +48,31 @@ class SendFixtureTest(unittest.TestCase):
             self.assertEqual(frame(), b"\x00\x90\x1f")
             self.assertEqual(frame(), b"\x01\x90\x1f")
 
-            def request(path, body=None):
+            def request(path, body=None, authorization="Bearer ci-fixture-not-a-credential", expected_status=200):
                 data = json.dumps(body).encode() if body is not None else b""
                 method = "POST" if body is not None else "GET"
-                http = f"{method} /api/v1/{path}?namespace=agents HTTP/1.1\r\nHost: fixture\r\nAuthorization: Bearer ci-fixture-not-a-credential\r\nContent-Length: {len(data)}\r\n\r\n".encode() + data
+                http = f"{method} /api/v1/{path}?namespace=agents HTTP/1.1\r\nHost: fixture\r\nAuthorization: {authorization}\r\nContent-Length: {len(data)}\r\n\r\n".encode() + data
                 payload = b"\x00" + http
                 mask = b"1234"
                 size = bytes([len(payload)]) if len(payload) < 126 else b"\x7e" + struct.pack("!H", len(payload))
                 sock.sendall(b"\x82" + bytes([size[0] | 128]) + size[1:] + mask + bytes(v ^ mask[i % 4] for i, v in enumerate(payload)))
                 reply = frame()
+                self.assertIn(f"HTTP/1.1 {expected_status} ".encode(), reply.split(b"\r\n", 1)[0])
                 return json.loads(reply.split(b"\r\n\r\n", 1)[1])
 
             self.assertEqual(request("auth/whoami")["namespace"], "agents")
-            created = request("agents", {"name": "probe", "namespace": "agents", "spec": {"model": {"name": "exact"}}})
+            self.assertEqual(request("auth/whoami", authorization="Bearer conditional-fixture")["namespace"], "")
+            self.assertEqual(request("auth/whoami", authorization="Bearer denied-fixture", expected_status=403), {})
+            created = request("agents", {"name": "probe", "namespace": "agents", "spec": {"model": {"name": "exact"}}}, expected_status=201)
             self.assertEqual(created["metadata"]["name"], "probe")
             self.assertEqual(created["spec"]["model"]["name"], "exact")
-            task = request("tasks", {"name": "check", "namespace": "agents", "spec": {"agentRef": {"name": "probe"}, "timeout": "120s", "retryPolicy": {"maxRetries": 0}}})
+            task = request("tasks", {"name": "check", "namespace": "agents", "spec": {"agentRef": {"name": "probe"}, "timeout": "120s", "retryPolicy": {"maxRetries": 0}}}, expected_status=201)
             self.assertEqual(task["status"]["phase"], "Succeeded")
             self.assertEqual(request("tasks/check")["metadata"]["uid"], task["metadata"]["uid"])
             self.assertIn("cf699c", request("tasks/check/result")["result"])
             self.assertEqual(request("tasks/check/events")["events"][0]["toolName"], "web_fetch")
-            request("agents", {"name": "probe2", "namespace": "agents", "spec": {}})
-            second = request("tasks", {"name": "check2", "namespace": "agents", "spec": {"agentRef": {"name": "probe2"}}})
+            request("agents", {"name": "probe2", "namespace": "agents", "spec": {}}, expected_status=201)
+            second = request("tasks", {"name": "check2", "namespace": "agents", "spec": {"agentRef": {"name": "probe2"}}}, expected_status=201)
             self.assertEqual(second["status"]["phase"], "Running")
             wire.close()
 
