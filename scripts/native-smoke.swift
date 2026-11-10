@@ -106,6 +106,11 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
         return observations
     }
+    if name == "cluster-access" {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("Access confirmed") && text.contains("Open your agent"), "Fixture access not confirmed: \(text)")
+        return observations
+    }
     if name.hasPrefix("cluster-card") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Orka found") && text.contains("orka:fixture"), "Fixture Orka not visible: \(text)")
@@ -325,15 +330,17 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Move past the placeholder whether the first Down opens the popup or advances it.
     key(125); key(125); key(36)
     Thread.sleep(forTimeInterval: 2)
-    // Tab focuses Use and brings the discovery summary into view at minimum size.
-    key(48)
-    try capture("cluster-card-minimum", "Clusters")
-    // Use owns real native access to the loopback fixture. The Provider select
-    // receives focus, then Tab reaches Open your agent without pointer guessing.
-    key(36)
+    // Capture discovery before the explicit access confirmation.
+    let card = try capture("cluster-card-minimum", "Clusters")
+    // Closing a native select popup can return focus to navigation. Activate the
+    // observed Use control instead of assuming Tab left focus on it.
+    clickText("Use this cluster", in: card)
     Thread.sleep(forTimeInterval: 1)
-    key(48); key(36)
-    Thread.sleep(forTimeInterval: 1)
+    CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -400, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.5)
+    let connected = try capture("cluster-access", "Clusters")
+    clickText("Open your agent", in: connected)
+    Thread.sleep(forTimeInterval: 0.5)
     let ownedAgent = try capture("agent-cluster-owned", "Designer")
     clickText("Send to a cluster", in: ownedAgent)
     try capture("send-ready", "Designer")
