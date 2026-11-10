@@ -128,7 +128,8 @@ function Start-Bridge {
     # the real app frame by its configured title and this launch's process ID.
     $script:hwnd = Wait-For 'Main native window did not appear' {
         $h = [IntPtr]::Zero
-        while (($h = [NativeWalk]::FindWindowEx([IntPtr]::Zero, $h, $null, 'Bridge')) -ne [IntPtr]::Zero) {
+        # $null becomes an empty C# string; NullString passes a native null class.
+        while (($h = [NativeWalk]::FindWindowEx([IntPtr]::Zero, $h, [NullString]::Value, 'Bridge')) -ne [IntPtr]::Zero) {
             [uint32]$owner = 0
             [NativeWalk]::GetWindowThreadProcessId($h, [ref]$owner) | Out-Null
             if ($owner -eq $script:app.Id -and [NativeWalk]::IsWindowVisible($h)) { return $h }
