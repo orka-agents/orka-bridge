@@ -64,26 +64,25 @@ async fn plugin_launch_does_not_create_or_inherit_a_console() {
     // its console fails even on a runner without an interactive desktop.
     const CHILD: &str = "BRIDGE_TEST_CONSOLE_PARENT";
     if std::env::var_os(CHILD).is_none() {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "plugin_launch_does_not_create_or_inherit_a_console",
                 "--nocapture",
             ])
             .env(CHILD, "1")
-            .output()
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
             .unwrap();
-        assert!(
-            output.status.success(),
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        assert!(status.success(), "console fixture failed: {status}");
         return;
     }
     #[link(name = "kernel32")]
     unsafe extern "system" {
         fn AllocConsole() -> i32;
+        fn FreeConsole() -> i32;
         fn GetConsoleProcessList(processes: *mut u32, count: u32) -> u32;
     }
     unsafe {
@@ -97,7 +96,11 @@ async fn plugin_launch_does_not_create_or_inherit_a_console() {
     let version = "client.authentication.k8s.io/v1";
     let mut auth = exec(version, response(version));
     auth["exec"]["args"] = json!(["no-console"]);
-    assert!(resolve(&client(config(auth))).await.is_ok());
+    let result = resolve(&client(config(auth))).await;
+    unsafe {
+        FreeConsole();
+    }
+    assert!(result.is_ok());
 }
 
 #[tokio::test]
