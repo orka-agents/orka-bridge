@@ -189,6 +189,10 @@ pub mod native_tests {
         }
     }
 
+    extern "C" fn terminate(_: CFRunLoopTimerRef, _: *mut c_void) {
+        NSApplication::sharedApplication(MainThreadMarker::new().unwrap()).terminate(None);
+    }
+
     pub fn observed_poll(result: Option<bool>) {
         // A default-mode-only timer must fail the real terminate: test.
         assert_eq!(
@@ -303,7 +307,19 @@ pub mod native_tests {
             .unwrap();
         app.run(move |_, event| match event {
             tauri::RunEvent::Ready => {
-                NSApplication::sharedApplication(MainThreadMarker::new().unwrap()).terminate(None);
+                // Ready holds Tao's event-handler mutex. Real AppKit Quit arrives
+                // outside that callback; reentrant terminate would deadlock its
+                // inherited applicationWillTerminate -> LoopDestroyed dispatch.
+                let timer = CFRunLoopTimer::new(
+                    unsafe { CFAbsoluteTimeGetCurrent() },
+                    0.0,
+                    0,
+                    0,
+                    terminate,
+                    std::ptr::null_mut::<CFRunLoopTimerContext>(),
+                );
+                // CFRunLoop retains this one-shot timer until its next-turn firing.
+                CFRunLoop::get_main().add_timer(&timer, unsafe { kCFRunLoopDefaultMode });
             }
             // Wry maps Tao's LoopDestroyed directly to this event.
             tauri::RunEvent::Exit => eprintln!("native-test:Exit/LoopDestroyed"),

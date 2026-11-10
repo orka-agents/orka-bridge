@@ -117,7 +117,13 @@ func launch() throws -> AXUIElement {
     }
     app!.activate(options: [])
     wait("Main window did not appear") { windowInfo() != nil }
-    return AXUIElementCreateApplication(app!.processIdentifier)
+    let root = AXUIElementCreateApplication(app!.processIdentifier)
+    wait("Initial workspace observation did not finish") {
+        nodes(root).contains { element in
+            attribute(element, "AXRole") as? String == "AXButton" && attribute(element, "AXEnabled") as? Bool == true && ["AXTitle", "AXDescription"].contains { ["Get started", "Continue"].contains(attribute(element, $0) as? String ?? "") }
+        }
+    }
+    return root
 }
 func menu(_ root: AXUIElement) -> [AXUIElement] {
     guard let extras = attribute(root, "AXExtrasMenuBar") else { fatalError("Missing native status menu bar") }
@@ -139,8 +145,11 @@ let pid = app!.processIdentifier
 let originalID = windowInfo()!.0
 let main = find(root) { attribute($0, "AXRole") as? String == "AXWindow" }
 press(find(main) { element in attribute(element, "AXRole") as? String == "AXButton" && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Designer" }) })
-press(find(main) { element in attribute(element, "AXRole") as? String == "AXButton" && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "File" }) })
-let editor = find(main) { attribute($0, "AXRole") as? String == "AXTextArea" }
+press(find(main) { element in attribute(element, "AXRole") as? String == "AXButton" && attribute(element, "AXEnabled") as? Bool == true && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "File" }) })
+let editor = find(main) { element in
+    var writable = DarwinBoolean(false)
+    return attribute(element, "AXRole") as? String == "AXTextArea" && AXUIElementIsAttributeSettable(element, "AXValue" as CFString, &writable) == .success && writable.boolValue
+}
 check(AXUIElementSetAttributeValue(editor, "AXFocused" as CFString, kCFBooleanTrue) == .success, "Cannot focus real editor")
 key(125, flags: .maskCommand)
 let marker = " lifecycle-\(UUID().uuidString)"

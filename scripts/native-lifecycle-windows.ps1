@@ -29,6 +29,7 @@ public static class NativeWalk {
   // Legacy Explorer toolbars may have no UIA children. Use MSAA, never toolbar process memory.
   // https://learn.microsoft.com/windows/win32/winauto/toolbar-control
   // https://learn.microsoft.com/windows/win32/api/oleacc/nf-oleacc-accessiblechildren
+  // https://learn.microsoft.com/windows/win32/winauto/pop-up-menu
   public static int[] TrayPoint(IntPtr root, string[] names, string dump) {
     var windows = new System.Collections.Generic.List<IntPtr> { root };
     EnumChildWindows(root, (h, l) => { windows.Add(h); return true; }, IntPtr.Zero);
@@ -37,7 +38,7 @@ public static class NativeWalk {
       var cls = new System.Text.StringBuilder(256); GetClassName(h, cls, cls.Capacity);
       bool visible = IsWindowVisible(h);
       log.AppendLine("HWND=" + h + "; Class=" + cls + "; Visible=" + visible);
-      if (cls.ToString() != "ToolbarWindow32" && cls.ToString() != "Button") continue;
+      if (cls.ToString() != "ToolbarWindow32" && cls.ToString() != "Button" && cls.ToString() != "#32768") continue;
       Accessibility.IAccessible acc = null; object[] items = null;
       try {
         var iid = typeof(Accessibility.IAccessible).GUID;
@@ -124,6 +125,12 @@ function Start-Bridge {
     $script:hwnd = Wait-For 'Main native window did not appear' { $script:app.Refresh(); if ($script:app.MainWindowHandle -ne [IntPtr]::Zero) { $script:app.MainWindowHandle } }
     $script:window = [System.Windows.Automation.AutomationElement]::FromHandle($script:hwnd)
     [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
+    Wait-For 'Initial workspace observation did not finish' {
+        foreach ($label in @('Get started', 'Continue')) {
+            $control = Find-Control $script:window $label $button
+            if ($control -and $control.Current.IsEnabled) { return $true }
+        }
+    } | Out-Null
 }
 function Find-TrayPoint($Root, [string]$Label) {
     $all = @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
@@ -134,6 +141,18 @@ function Find-TrayPoint($Root, [string]$Label) {
     if ($matches.Count -gt 1) { throw 'More than one Bridge icon in native notification area' }
     $p = [NativeWalk]::TrayPoint([IntPtr]$Root.Current.NativeWindowHandle, 'Bridge', (Join-Path $script:themeOutput "tray-$Label-msaa.txt"))
     if ($p) { return [Drawing.Point]::new($p[0], $p[1]) }
+}
+function Find-PopupControl([string]$Name) {
+    $control = Find-Control $desktop $Name $menuItem
+    if ($control -and $control.Current.IsEnabled -and !$control.Current.IsOffscreen) { return $control }
+    $h = [IntPtr]::Zero
+    while (($h = [NativeWalk]::FindWindowEx([IntPtr]::Zero, $h, '#32768', $null)) -ne [IntPtr]::Zero) {
+        [uint32]$owner = 0
+        [NativeWalk]::GetWindowThreadProcessId($h, [ref]$owner) | Out-Null
+        if ($owner -ne $script:app.Id -or ![NativeWalk]::IsWindowVisible($h)) { continue }
+        $p = [NativeWalk]::TrayPoint($h, $Name, (Join-Path $script:themeOutput "menu-$($Name.Replace(' ', '-'))-msaa.txt"))
+        if ($p) { return [Drawing.Point]::new($p[0], $p[1]) }
+    }
 }
 function Tray-Menu {
     $taskbar = [NativeWalk]::FindWindow('Shell_TrayWnd', $null)
@@ -158,9 +177,9 @@ function Tray-Menu {
     [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y) | Out-Null
     [NativeWalk]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)
     [NativeWalk]::mouse_event(16, 0, 0, 0, [UIntPtr]::Zero)
-    $open = Wait-For 'Open Bridge menu item missing' { Find-Control $desktop 'Open Bridge' $menuItem }
-    $stop = Wait-For 'Stop workspace and quit menu item missing' { Find-Control $desktop 'Stop workspace and quit' $menuItem }
-    if (!$open.Current.IsEnabled -or !$stop.Current.IsEnabled -or $open.Current.IsOffscreen -or $stop.Current.IsOffscreen) { throw 'Native tray commands disabled or not drawn' }
+    # Both providers require enabled, on-screen native items; MSAA yields real click points.
+    $open = Wait-For 'Open Bridge menu item missing' { Find-PopupControl 'Open Bridge' }
+    $stop = Wait-For 'Stop workspace and quit menu item missing' { Find-PopupControl 'Stop workspace and quit' }
     return @($open, $stop)
 }
 function Retained {
@@ -202,8 +221,12 @@ try {
         Start-Bridge
         $script:originalPid = $script:app.Id
         Press (Wait-For 'Designer button missing' { Find-Control $script:window 'Designer' $button })
-        Press (Wait-For 'File button missing' { Find-Control $script:window 'File' $button })
-        $editor = Wait-For 'Real File editor missing' { Find-Control $script:window 'Agent file' ([System.Windows.Automation.ControlType]::Edit) }
+        Press (Wait-For 'Enabled File button missing' { $control = Find-Control $script:window 'File' $button; if ($control -and $control.Current.IsEnabled) { $control } })
+        $editor = Wait-For 'Editable loaded File view missing' {
+            $control = Find-Control $script:window 'Agent file' ([System.Windows.Automation.ControlType]::Edit)
+            $value = $null
+            if ($control -and $control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$value) -and !$value.Current.IsReadOnly) { $control }
+        }
         $editor.SetFocus()
         $script:marker = " lifecycle-$([Guid]::NewGuid().ToString('N'))"
         [System.Windows.Forms.SendKeys]::SendWait('^{END}')
@@ -235,12 +258,10 @@ try {
         $commands = Tray-Menu
         Capture 'menu-stop' $true
         Press $commands[1]; Wait-Exit
-        Start-Bridge
-        Press (Wait-For 'Native File menu missing' { Find-Control $script:window 'File' $menuItem })
-        Press (Wait-For 'Standard native Quit missing' { Find-Control $desktop 'Quit' $menuItem })
-        Wait-Exit
+        # File > Quit is exercised by the native menu/failed-stop subprocess test,
+        # not by a duplicate GUI lookup through this runner's incomplete UIA tree.
         if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared' }
-        "PASS $theme`: native Close/hide, tray menu/Open, same PID $script:originalPid/window $script:hwnd, File view/edited text retained, hidden/minimized second launches, menu stop, standard Quit. Integrated debug shell only; empty image source, no VM/Ready/provider/cluster/session logout proof. OS popup theme is captured as drawn, not forced by product hooks." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
+        "PASS $theme`: native Close/hide, tray menu/Open, same PID $script:originalPid/window $script:hwnd, File view/edited text retained, hidden/minimized second launches, menu stop. Standard Quit is covered by native subprocess tests. Integrated debug shell only; empty image source, no VM/Ready/provider/cluster/session logout proof. OS popup theme is captured as drawn, not forced by product hooks." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
     }
 } catch {
     if ($script:themeOutput) { try { Capture 'failure' $true } catch { Write-Warning $_ } }

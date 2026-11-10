@@ -80,7 +80,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             app/src-tauri/target
-          key: app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          key: app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock', 'app/src-tauri/Cargo.toml') }}
           restore-keys: app-${{ matrix.os }}-rust-1.98.1-
       - run: npm ci
       - run: npm run build
@@ -221,7 +221,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             app/src-tauri/target
-          key: app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          key: app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock', 'app/src-tauri/Cargo.toml') }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always() && runner.os == 'Windows'
         with:
