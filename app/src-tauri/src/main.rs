@@ -242,10 +242,14 @@ fn main() {
                 return;
             }
             let send = app.state::<Arc<SendOwner>>().inner().clone();
+            let clusters = app
+                .state::<bridge_engine::clusters::commands::ClusterSession>()
+                .inner()
+                .clone();
             let handle = app.clone();
             let shutdown = shutdown.clone();
             tauri::async_runtime::spawn(async move {
-                let clean = shutdown.finish(&send, &vm).await;
+                let clean = shutdown.finish(&clusters, &send, &vm).await;
                 handle.exit(if clean { 0 } else { 1 });
             });
         });

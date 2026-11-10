@@ -1,4 +1,5 @@
 //! ID-only desktop boundary. Credentials and confirmed access stay in this native owner.
+use super::credentials::ExecOwner;
 use super::*;
 use kube::config::Kubeconfig;
 use std::sync::Arc;
@@ -38,10 +39,11 @@ struct Session {
     access: Option<(TargetId, Arc<RemoteAccess>)>,
 }
 impl Session {
-    fn client(&mut self) -> Result<&mut ClusterClient, &'static str> {
+    fn client(&mut self, exec: &ExecOwner) -> Result<&mut ClusterClient, &'static str> {
         if self.client.is_none() {
             self.client = Some(
                 ClusterClient::read(Arc::new(PodOrkaRead))
+                    .map(|client| client.with_exec_owner(exec.clone()))
                     .map_err(|_| "kubectl contexts are unavailable.")?,
             );
         }
@@ -53,10 +55,14 @@ impl Session {
 /// Reads the current kubeconfig for each Send; tests inject fixtures here.
 pub type KubeconfigReader = Arc<dyn Fn() -> Result<Kubeconfig, ClusterError> + Send + Sync>;
 #[derive(Clone)]
-pub struct ClusterSession(Arc<Mutex<Session>>, KubeconfigReader);
+pub struct ClusterSession(Arc<Mutex<Session>>, KubeconfigReader, ExecOwner);
 impl Default for ClusterSession {
     fn default() -> Self {
-        Self(Arc::default(), Arc::new(read_kubeconfig))
+        Self(
+            Arc::default(),
+            Arc::new(read_kubeconfig),
+            ExecOwner::default(),
+        )
     }
 }
 fn read_kubeconfig() -> Result<Kubeconfig, ClusterError> {
@@ -67,13 +73,19 @@ impl ClusterSession {
         Self::with_reader(client, Arc::new(read_kubeconfig))
     }
     pub fn with_reader(client: ClusterClient, reader: KubeconfigReader) -> Self {
+        let exec = client.exec_owner();
         Self(
             Arc::new(Mutex::new(Session {
                 client: Some(client),
                 access: None,
             })),
             reader,
+            exec,
         )
+    }
+    /// Independent of the discovery/Use lock, so close can interrupt a running plugin.
+    pub async fn shutdown(&self) {
+        self.2.shutdown().await;
     }
     /// Memory-only lookup; the caller rechecks a fresh kubeconfig before writing.
     pub(crate) async fn send_access(
@@ -93,14 +105,16 @@ impl ClusterSession {
         self.0
             .lock()
             .await
-            .client()?
+            .client(&self.2)?
             .contexts()
             .map_err(|_| "kubectl contexts are unavailable.")
     }
     pub async fn discover(&self, context_id: &str) -> Result<Vec<TargetView>, AccessStatus> {
         let mut session = self.0.lock().await;
         session.access = None;
-        let client = session.client().map_err(|_| AccessStatus::Unavailable)?;
+        let client = session
+            .client(&self.2)
+            .map_err(|_| AccessStatus::Unavailable)?;
         let context = client
             .contexts()
             .map_err(|_| AccessStatus::Unavailable)?
@@ -121,7 +135,9 @@ impl ClusterSession {
         session.access = None;
         let id = Uuid::parse_str(target_id).ok().map(TargetId);
         let result = async {
-            let client = session.client().map_err(|_| AccessOutcome::Unavailable)?;
+            let client = session
+                .client(&self.2)
+                .map_err(|_| AccessOutcome::Unavailable)?;
             client
                 .connect(id.ok_or(AccessOutcome::Unavailable)?, sa_name)
                 .await

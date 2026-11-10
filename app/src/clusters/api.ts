@@ -19,7 +19,7 @@ const list = <T>(v: unknown, valid: (item: unknown) => item is T): v is T[] => A
 async function call<T>(command: string, args: Record<string, unknown>, valid: (v: unknown) => v is T): Promise<T> {
   if (!isTauri()) throw Error('Cluster access is available in the desktop app.');
   try { const v: unknown = await invoke(command, args); if (valid(v)) return v; } catch (error) {
-    if (command === 'cluster_discover' && error === 'unsupportedCredential') throw Error('This context uses a sign-in method Bridge cannot use yet. No sign-in was started.', { cause: error });
+    if (command === 'cluster_discover' && error === 'unsupportedCredential') throw Error('This context’s credentials could not be used. Check its sign-in method and credential plugin outside Bridge, then try again.', { cause: error });
     if (command === 'cluster_discover' && error === 'denied') throw Error('Orka discovery was denied. Ask your cluster administrator to check your access.', { cause: error });
   }
   throw Error('Cluster information could not be read. Check your kubeconfig and try again.');

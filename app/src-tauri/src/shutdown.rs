@@ -1,4 +1,6 @@
-use crate::{engine::EngineState, local_vm::LocalVm, send::SendOwner};
+use crate::{
+    clusters::commands::ClusterSession, engine::EngineState, local_vm::LocalVm, send::SendOwner,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// One terminal cleanup worker, shared by native exit requests and its completion.
@@ -24,7 +26,8 @@ impl TerminalShutdown {
     }
 
     /// Only the request winner runs cleanup. The caller retains the worker until exit.
-    pub async fn finish(&self, send: &SendOwner, vm: &LocalVm) -> bool {
+    pub async fn finish(&self, clusters: &ClusterSession, send: &SendOwner, vm: &LocalVm) -> bool {
+        clusters.shutdown().await; // Reap credential children without acquiring discovery's session lock.
         send.shutdown().await; // Stop observation and close the forward; remote Tasks continue.
         let clean = vm.shutdown().await.is_ok();
         if !clean {

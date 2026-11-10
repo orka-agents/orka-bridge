@@ -100,12 +100,12 @@ class Discovery(BaseHTTPRequestHandler):
                 while b"\r\n\r\n" in pending:
                     head, body = pending.split(b"\r\n\r\n", 1)
                     lines = head.decode().split("\r\n")
-                    headers = dict(line.lower().split(":", 1) for line in lines[1:] if ":" in line)
+                    headers = {name.lower(): value for line in lines[1:] if ":" in line for name, value in [line.split(":", 1)]}
                     length = int(headers.get("content-length", "0"))
                     if len(body) < length:
                         break
                     method, route, _ = lines[0].split(" ")
-                    status, value = self.orka(method, route.split("?")[0], json.loads(body[:length]) if length else None)
+                    status, value = self.orka(method, route.split("?")[0], json.loads(body[:length]) if length else None, headers.get("authorization", "").strip())
                     encoded = json.dumps(value).encode()
                     reply = f"HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {len(encoded)}\r\n\r\n".encode() + encoded
                     self.frame(b"\x00" + reply)
@@ -113,7 +113,11 @@ class Discovery(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
 
-    def orka(self, method, route, body):
+    def orka(self, method, route, body, authorization=""):
+        if authorization == "Bearer denied-fixture":
+            return 403, {}
+        if route.endswith("/auth/whoami") and authorization == "Bearer conditional-fixture":
+            return 200, {"authenticated": True, "authType": "tokenReview", "namespace": ""}
         with self.lock:
             if method == "POST":
                 kind = "Agent" if route.endswith("/agents") else "Task"
@@ -155,7 +159,7 @@ if __name__ == "__main__":
     Path(sys.argv[1]).write_text(json.dumps({
         "apiVersion": "v1", "kind": "Config", "current-context": "fixture-cluster",
         "clusters": [{"name": "fixture", "cluster": {"server": f"http://127.0.0.1:{server.server_port}"}}],
-        "contexts": [{"name": "fixture-cluster", "context": {"cluster": "fixture", "user": "fixture"}}],
-        "users": [{"name": "fixture", "user": {"token": "ci-fixture-not-a-credential"}}],
+        "contexts": [{"name": name, "context": {"cluster": "fixture", "user": user}} for name, user in [("fixture-cluster", "fixture"), ("conditional-fixture", "conditional"), ("denied-fixture", "denied")]],
+        "users": [{"name": name, "user": {"token": token}} for name, token in [("fixture", "ci-fixture-not-a-credential"), ("conditional", "conditional-fixture"), ("denied", "denied-fixture")]],
     }))
     server.serve_forever()

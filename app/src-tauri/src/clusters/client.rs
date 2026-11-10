@@ -1,3 +1,4 @@
+use super::credentials::{self, selected_config, ExecOwner};
 use super::*;
 use k8s_openapi::{
     api::{
@@ -13,16 +14,15 @@ use k8s_openapi::{
 };
 use kube::{
     api::{ListParams, PostParams},
-    client::{Body, ConfigExt},
-    config::{AuthInfo, KubeConfigOptions, Kubeconfig},
-    Api, Client, Config, ResourceExt,
+    config::Kubeconfig,
+    Api, Client, ResourceExt,
 };
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
     time::Duration,
 };
-use tower::{Layer, ServiceExt};
+use tokio::time::Instant;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(PartialEq)]
@@ -37,6 +37,7 @@ pub struct ClusterClient {
     contexts: Vec<ContextView>,
     targets: HashMap<TargetId, TargetBinding>,
     orka: Arc<dyn OrkaRead>,
+    exec: ExecOwner,
 }
 /// Native access only: no Serialize/Debug implementation can export credentials.
 pub struct RemoteAccess {
@@ -70,26 +71,42 @@ impl ClusterClient {
             contexts,
             targets: HashMap::new(),
             orka,
+            exec: ExecOwner::default(),
         }
+    }
+    pub async fn shutdown(&self) {
+        self.exec.shutdown().await;
+    }
+    pub(super) fn exec_owner(&self) -> ExecOwner {
+        self.exec.clone()
+    }
+    pub(super) fn with_exec_owner(mut self, exec: ExecOwner) -> Self {
+        self.exec = exec;
+        self
     }
     pub fn contexts(&self) -> Result<Vec<ContextView>, ClusterError> {
         Ok(self.contexts.clone())
     }
-    async fn config(
+    pub async fn resolve_creator(
         &self,
         context_id: ContextId,
-        token: Option<&str>,
-    ) -> Result<Config, AccessOutcome> {
+        deadline: Instant,
+    ) -> Result<ResolvedCreator, ClusterError> {
         let name = &self
             .contexts
             .iter()
             .find(|c| c.id == context_id)
-            .ok_or(AccessOutcome::Unavailable)?
+            .ok_or(ClusterError::Unavailable)?
             .name;
-        selected_config(&self.kubeconfig, name, token).await
+        credentials::resolve(&self.kubeconfig, name, deadline, &self.exec)
+            .await
+            .map_err(cluster_error)
     }
     pub async fn discover(&mut self, id: ContextId) -> Result<Vec<TargetView>, ClusterError> {
-        let config = self.config(id, None).await.map_err(cluster_error)?;
+        let config = self
+            .resolve_creator(id, Instant::now() + REQUEST_TIMEOUT)
+            .await?
+            .config;
         let client = Client::try_from(config.clone()).map_err(|_| ClusterError::Unavailable)?;
         let name = &self
             .contexts
@@ -131,7 +148,7 @@ impl ClusterClient {
         binding: &TargetBinding,
         creator: &Client,
     ) -> Result<(), ClusterError> {
-        let config = selected_config(&self.kubeconfig, &binding.context_name, None)
+        let config = selected_config(&self.kubeconfig, &binding.context_name, "binding-only")
             .await
             .map_err(cluster_error)?;
         if config.cluster_url.to_string() != binding.server_address {
@@ -165,19 +182,23 @@ impl ClusterClient {
             .get(&id)
             .ok_or(AccessOutcome::Unavailable)?
             .clone();
-        let mut config = self.config(binding.context_id, None).await?;
-        let bearer = capture_bearer(&config).await?;
-        if let Some(bearer) = &bearer {
-            // Freeze creator requests too; token-file middleware must not rotate this attempt's identity.
-            config.auth_info.token = Some(bearer.clone().into());
-            config.auth_info.token_file = None;
-        }
-        let creator = Client::try_from(config).map_err(|_| AccessOutcome::Unavailable)?;
+        let resolved = self
+            .resolve_creator(binding.context_id, Instant::now() + REQUEST_TIMEOUT)
+            .await
+            .map_err(access_error)?;
+        let (bearer, expiry) = match resolved.credential {
+            Credential::Bearer {
+                value,
+                known_expiry,
+            } => (value, known_expiry),
+            Credential::CertificateOnly => (String::new(), None),
+        };
+        let creator = Client::try_from(resolved.config).map_err(|_| AccessOutcome::Unavailable)?;
         let mut access = RemoteAccess {
             creator,
-            creator_bearer: bearer.clone().unwrap_or_default(),
-            bearer: bearer.unwrap_or_default(),
-            expiry: None,
+            creator_bearer: bearer.clone(),
+            bearer,
+            expiry,
             binding,
             orka: self.orka.clone(),
             providers: Vec::new(),
@@ -220,9 +241,12 @@ impl ClusterClient {
         }
         // Even a certificate creator must check permissions as the frozen Orka bearer alone.
         if identity == Identity::TokenReview {
-            let token_config = self
-                .config(access.binding.context_id, Some(&access.bearer))
-                .await?;
+            let token_config = selected_config(
+                &self.kubeconfig,
+                &access.binding.context_name,
+                &access.bearer,
+            )
+            .await?;
             let token_client =
                 Client::try_from(token_config).map_err(|_| AccessOutcome::Unavailable)?;
             permissions(token_client, &access.binding.watched_namespace).await?;
@@ -399,97 +423,6 @@ impl RemoteAccess {
         }
         Ok(())
     }
-}
-async fn selected_config(
-    kubeconfig: &Kubeconfig,
-    name: &str,
-    token: Option<&str>,
-) -> Result<Config, AccessOutcome> {
-    let context = kubeconfig
-        .contexts
-        .iter()
-        .find(|c| c.name == name)
-        .and_then(|c| c.context.as_ref())
-        .ok_or(AccessOutcome::Unavailable)?;
-    let cluster = kubeconfig
-        .clusters
-        .iter()
-        .find(|c| c.name == context.cluster)
-        .and_then(|c| c.cluster.as_ref())
-        .ok_or(AccessOutcome::Unavailable)?;
-    let mut copy = kubeconfig.clone();
-    let user = copy
-        .auth_infos
-        .iter_mut()
-        .find(|u| Some(&u.name) == context.user.as_ref())
-        .and_then(|u| u.auth_info.as_mut())
-        .ok_or(AccessOutcome::UnsupportedCredential)?;
-    if let Some(token) = token {
-        // Replace AuthInfo, not an existing Config: no creator certificate reaches the SSAR TLS stack.
-        *user = AuthInfo {
-            token: Some(token.to_owned().into()),
-            ..Default::default()
-        };
-    } else {
-        if user.auth_provider.is_some() || (user.username.is_some() && user.password.is_some()) {
-            return Err(AccessOutcome::UnsupportedCredential);
-        }
-        let bearer = user.token.is_some() || user.token_file.is_some();
-        let certificate = (user.client_certificate.is_some()
-            || user.client_certificate_data.is_some())
-            && (user.client_key.is_some() || user.client_key_data.is_some());
-        if !bearer && (user.exec.is_some() || !certificate) {
-            return Err(AccessOutcome::UnsupportedCredential);
-        }
-        user.exec = None;
-    }
-    let mut config = Config::from_custom_kubeconfig(
-        copy,
-        &KubeConfigOptions {
-            context: Some(name.into()),
-            ..Default::default()
-        },
-    )
-    .await
-    .map_err(|_| AccessOutcome::Unavailable)?;
-    if let Some(proxy) = &cluster.proxy_url {
-        config.proxy_url = Some(proxy.parse().map_err(|_| AccessOutcome::Unavailable)?);
-    }
-    config.default_retry = false;
-    config.connect_timeout = Some(REQUEST_TIMEOUT);
-    config.read_timeout = Some(REQUEST_TIMEOUT);
-    config.write_timeout = Some(REQUEST_TIMEOUT);
-    config.reset_reader_on_write = true;
-    Ok(config)
-}
-async fn capture_bearer(config: &Config) -> Result<Option<String>, AccessOutcome> {
-    let Some(layer) = config
-        .auth_layer()
-        .map_err(|_| AccessOutcome::Unavailable)?
-    else {
-        return Ok(None);
-    };
-    // Only the public authentication layer sees this non-network sink. No URI, TLS or extra headers.
-    let sink = tower::service_fn(|request: http::Request<Body>| async move {
-        Ok::<_, tower::BoxError>(http::Response::new(
-            request.headers().get(http::header::AUTHORIZATION).cloned(),
-        ))
-    });
-    let header = layer
-        .layer(sink)
-        // Erase the auth layer's error lifetimes before awaiting on a Send desktop task.
-        .boxed()
-        .oneshot(http::Request::new(Body::empty()))
-        .await
-        .map_err(|_| AccessOutcome::Unavailable)?
-        .into_body();
-    let value = header
-        .as_ref()
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
-        .filter(|s| !s.is_empty())
-        .ok_or(AccessOutcome::UnsupportedCredential)?;
-    Ok(Some(value.into()))
 }
 async fn installations(
     client: Client,
