@@ -162,11 +162,12 @@ async fn command_use_future_is_send_for_desktop_dispatch() {
         .unwrap();
 }
 
+type ImpersonatedRequest = (String, Vec<(String, String)>);
 #[derive(Default)]
 struct ApiFixture {
     wire: forward::Wire,
     calls: Mutex<Vec<(String, String, String, Value)>>,
-    impersonation: Mutex<Vec<(String, Vec<(String, String)>)>>,
+    impersonation: Mutex<Vec<ImpersonatedRequest>>,
     deny: Mutex<bool>,
     replacement: Mutex<bool>,
     no_watch: Mutex<bool>,
