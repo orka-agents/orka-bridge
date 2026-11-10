@@ -57,6 +57,15 @@ async fn configured_path_origin_and_drop_env_contract() {
     );
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn plugin_launch_does_not_create_or_inherit_a_console() {
+    let version = "client.authentication.k8s.io/v1";
+    let mut auth = exec(version, response(version));
+    auth["exec"]["args"] = json!(["no-console"]);
+    assert!(resolve(&client(config(auth))).await.is_ok());
+}
+
 #[tokio::test]
 async fn exec_v1_and_beta_capture_bearer_and_actual_expiry() {
     for version in [
