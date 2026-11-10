@@ -9,6 +9,23 @@ from pathlib import Path
 import sys
 
 
+def send_schema(plural):
+    def obj(**properties):
+        return {"type": "object", "properties": properties}
+
+    string = {"type": "string"}
+    schemas = {
+        "agents": obj(spec=obj(model=obj(name=string), providerRef=obj(name=string),
+                               systemPrompt=obj(inline=string), tools={"type": "array", "items": obj(name=string)})),
+        "tasks": obj(spec=obj(type={"type": "string", "enum": ["container", "ai", "agent"]},
+                              agentRef=obj(name=string), prompt=string, timeout=string,
+                              retryPolicy=obj(maxRetries={"type": "integer"}))),
+        "providers": obj(status=obj(ready={"type": "boolean"})),
+        "tools": obj(metadata={"type": "object"}),
+    }
+    return schemas[plural]
+
+
 class Discovery(BaseHTTPRequestHandler):
     objects = {}
     agents = 0
@@ -50,7 +67,8 @@ class Discovery(BaseHTTPRequestHandler):
                      "metadata": {"name": f"{plural}.core.orka.ai"},
                      "spec": {"group": "core.orka.ai", "scope": "Namespaced",
                               "names": {"kind": "Fixture", "plural": plural},
-                              "versions": [{"name": "v1alpha1", "served": True, "storage": True}]}}
+                              "versions": [{"name": "v1alpha1", "served": True, "storage": True,
+                                            "schema": {"openAPIV3Schema": send_schema(plural)}}]}}
         else:
             self.send_error(404)
             return
@@ -114,6 +132,10 @@ class Discovery(BaseHTTPRequestHandler):
             pass
 
     def orka(self, method, route, body, authorization=""):
+        if route.endswith("/tools") and authorization == "Bearer unreadable-tools-fixture":
+            return 403, {}
+        if route.endswith("/tools") and authorization == "Bearer missing-tools-fixture":
+            return 200, {"items": [], "metadata": {}}
         if authorization == "Bearer denied-fixture":
             return 403, {}
         if route.endswith("/auth/whoami") and authorization == "Bearer conditional-fixture":
@@ -159,7 +181,7 @@ if __name__ == "__main__":
     Path(sys.argv[1]).write_text(json.dumps({
         "apiVersion": "v1", "kind": "Config", "current-context": "fixture-cluster",
         "clusters": [{"name": "fixture", "cluster": {"server": f"http://127.0.0.1:{server.server_port}"}}],
-        "contexts": [{"name": name, "context": {"cluster": "fixture", "user": user}} for name, user in [("fixture-cluster", "fixture"), ("conditional-fixture", "conditional"), ("denied-fixture", "denied")]],
-        "users": [{"name": name, "user": {"token": token}} for name, token in [("fixture", "ci-fixture-not-a-credential"), ("conditional", "conditional-fixture"), ("denied", "denied-fixture")]],
+        "contexts": [{"name": name, "context": {"cluster": "fixture", "user": user}} for name, user in [("fixture-cluster", "fixture"), ("conditional-fixture", "conditional"), ("denied-fixture", "denied"), ("missing-tools-fixture", "missing-tools"), ("unreadable-tools-fixture", "unreadable-tools")]],
+        "users": [{"name": name, "user": {"token": token}} for name, token in [("fixture", "ci-fixture-not-a-credential"), ("conditional", "conditional-fixture"), ("denied", "denied-fixture"), ("missing-tools", "missing-tools-fixture"), ("unreadable-tools", "unreadable-tools-fixture")]],
     }))
     server.serve_forever()

@@ -30,12 +30,32 @@ fn real_yaml_preserves_prompt_input_model_and_exact_byte_provenance() {
     let changed = ParsedPair::parse(format!("{AGENT}\n").as_bytes(), TESTS.as_bytes()).unwrap();
     assert_ne!(pair.snapshot(), changed.snapshot());
 }
+#[tokio::test]
+async fn declared_tool_kind_keeps_the_same_name_only_mapping() {
+    for (syntax, kind) in [("builtin", ToolKind::Builtin), ("tool", ToolKind::Resource)] {
+        let source = AGENT.replace("kind: builtin", &format!("kind: {syntax}"));
+        let pair = ParsedPair::parse(source.as_bytes(), TESTS.as_bytes()).unwrap();
+        assert_eq!(pair.declared_tools()[0].kind, kind);
+        assert_eq!(pair.declared_tools()[0].name, "web_fetch");
+        let (runner, receive, posts) = stopping_runner(usize::MAX, usize::MAX, None);
+        runner
+            .submit_prepared(runner.prepare(pair).unwrap(), receive)
+            .await
+            .unwrap();
+        assert_eq!(
+            posts.lock().unwrap()[0]["spec"]["tools"],
+            json!([{"name":"web_fetch"}])
+        );
+    }
+}
+
 #[test]
 fn closed_parser_refuses_unsupported_or_empty_semantics() {
     // Removing any closed-schema check would accept one of these invalid sources.
     for agent in [
         AGENT.replace("runtime: orka", "runtime: other"),
         AGENT.replace("kind: builtin", "kind: mcp"),
+        AGENT.replace("kind: builtin", "kind: resource"),
         AGENT.replace("  tools:", "  repeats: 2\n  tools:"),
         AGENT.replace("model: 'model:exact'", "model: ''"),
         AGENT.replace("name: reader", "name: reader\nunknown: true"),

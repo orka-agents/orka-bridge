@@ -162,6 +162,33 @@ async fn command_use_future_is_send_for_desktop_dispatch() {
         .unwrap();
 }
 
+// Only the mandatory fields Bridge sends/reads; no equal-image/version requirement.
+fn send_schema(resource: &str) -> Value {
+    match resource {
+        "agents" => json!({"type":"object","properties":{
+            "spec":{"type":"object","properties":{
+                "model":{"type":"object","properties":{"name":{"type":"string"}}},
+                "providerRef":{"type":"object","properties":{"name":{"type":"string"}}},
+                "systemPrompt":{"type":"object","properties":{"inline":{"type":"string"}}},
+                "tools":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"}}}}
+            }}
+        }}),
+        "tasks" => json!({"type":"object","properties":{
+            "spec":{"type":"object","properties":{
+                "type":{"type":"string","enum":["container","ai","agent"]},
+                "agentRef":{"type":"object","properties":{"name":{"type":"string"}}},
+                "prompt":{"type":"string"},"timeout":{"type":"string"},
+                "retryPolicy":{"type":"object","properties":{"maxRetries":{"type":"integer"}}}
+            }}
+        }}),
+        "providers" => {
+            json!({"type":"object","properties":{"status":{"type":"object","properties":{"ready":{"type":"boolean"}}}}})
+        }
+        "tools" => json!({"type":"object","properties":{"metadata":{"type":"object"}}}),
+        _ => panic!("unexpected resource"),
+    }
+}
+
 type ImpersonatedRequest = (String, Vec<(String, String)>);
 #[derive(Default)]
 struct ApiFixture {
@@ -273,7 +300,7 @@ impl ApiFixture {
             let plural = name.split('.').next().unwrap();
             return (
                 200,
-                json!({"apiVersion":"apiextensions.k8s.io/v1","kind":"CustomResourceDefinition","metadata":{"name":name},"spec":{"group":"core.orka.ai","scope":"Namespaced","names":{"kind":"Fixture","plural":plural},"versions":[{"name":"v1alpha1","served":true,"storage":true}]}}),
+                json!({"apiVersion":"apiextensions.k8s.io/v1","kind":"CustomResourceDefinition","metadata":{"name":name},"spec":{"group":"core.orka.ai","scope":"Namespaced","names":{"kind":"Fixture","plural":plural},"versions":[{"name":"v1alpha1","served":true,"storage":true,"schema":{"openAPIV3Schema":send_schema(plural)}}]}}),
             );
         }
         if path.ends_with("/pods") {

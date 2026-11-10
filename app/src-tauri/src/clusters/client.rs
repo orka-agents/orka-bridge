@@ -279,7 +279,7 @@ impl RemoteAccess {
     ) -> Result<Value, AccessOutcome> {
         self.read_via(&*self.orka, resource, after).await
     }
-    async fn read_via(
+    pub(super) async fn read_via(
         &self,
         orka: &dyn OrkaRead,
         resource: OrkaResource,
@@ -310,7 +310,10 @@ impl RemoteAccess {
         Ok(value)
     }
     async fn identity(&self) -> Result<Identity, AccessOutcome> {
-        let identity = self.read(OrkaResource::WhoAmI, None).await?;
+        self.identity_via(&*self.orka).await
+    }
+    async fn identity_via(&self, orka: &dyn OrkaRead) -> Result<Identity, AccessOutcome> {
+        let identity = self.read_via(orka, OrkaResource::WhoAmI, None).await?;
         if identity["authenticated"] != true {
             return Err(AccessOutcome::Denied);
         }
@@ -326,7 +329,7 @@ impl RemoteAccess {
             _ => Err(AccessOutcome::Denied),
         }
     }
-    async fn configured_providers(
+    pub(super) async fn configured_providers(
         &self,
         orka: &dyn OrkaRead,
     ) -> Result<Vec<(String, bool)>, AccessOutcome> {
@@ -366,27 +369,19 @@ impl RemoteAccess {
         }
         Ok(providers)
     }
-    /// Send's built-in and Provider rechecks over the attempt's own stream, so a
-    /// Stop that drops a check leaves no forward for anyone but its owner to close.
-    /// The Provider is rechecked by name/namespace, never readiness: tests establish availability.
-    pub async fn recheck(
+    pub(super) async fn recheck_reads(
         &self,
         stream: &OrkaStreamTransport,
-        id: ProviderId,
-        tools: &[String],
     ) -> Result<(), ClusterError> {
-        let selected = self.providers.iter().find(|p| p.id == id);
-        let selected = selected.ok_or(ClusterError::Unavailable)?;
-        self.builtins(stream, tools).await?;
-        let current = self
-            .configured_providers(stream)
+        if self.identity_via(stream).await.map_err(cluster_error)? == Identity::NeedAccount {
+            return Err(ClusterError::Denied);
+        }
+        let agents = self
+            .read_via(stream, OrkaResource::Agents, None)
             .await
             .map_err(cluster_error)?;
-        if current.iter().any(|(name, _)| *name == selected.name) {
-            Ok(())
-        } else {
-            Err(ClusterError::Unavailable)
-        }
+        items(&agents).map_err(cluster_error)?;
+        Ok(())
     }
     /// A freshly read kubeconfig, using this access's Orka reader, for admission rechecks.
     pub fn fresh_client(&self, kubeconfig: Kubeconfig) -> ClusterClient {
@@ -552,11 +547,15 @@ async fn installations(
             if crd.spec.group != "core.orka.ai"
                 || crd.spec.scope != "Namespaced"
                 || crd.spec.names.plural != resource
-                || !crd
-                    .spec
-                    .versions
-                    .iter()
-                    .any(|v| v.name == "v1alpha1" && v.served)
+                || !crd.spec.versions.iter().any(|v| {
+                    v.name == "v1alpha1"
+                        && v.served
+                        && v.schema
+                            .as_ref()
+                            .and_then(|s| s.open_api_v3_schema.as_ref())
+                            .and_then(|s| serde_json::to_value(s).ok())
+                            .is_some_and(|s| super::preflight::supports_schema(resource, &s))
+                })
             {
                 return Err(AccessOutcome::Unavailable);
             }
@@ -615,10 +614,10 @@ fn dns_label(s: &str) -> bool {
 fn dns_subdomain(s: &str) -> bool {
     s.len() <= 253 && s.split('.').all(dns_label)
 }
-fn items(page: &Value) -> Result<&Vec<Value>, AccessOutcome> {
+pub(super) fn items(page: &Value) -> Result<&Vec<Value>, AccessOutcome> {
     page["items"].as_array().ok_or(AccessOutcome::Unavailable)
 }
-fn continuation(page: &Value) -> Result<Option<String>, AccessOutcome> {
+pub(super) fn continuation(page: &Value) -> Result<Option<String>, AccessOutcome> {
     let metadata = page
         .get("metadata")
         .and_then(Value::as_object)

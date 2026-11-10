@@ -1,7 +1,7 @@
 //! Native-only authoring API. Not a renderer command or guest protocol extension.
 #[path = "run_source.rs"]
 mod source;
-pub use source::{Assertion, ParsedPair, RunCase};
+pub use source::{Assertion, DeclaredTool, ParsedPair, RunCase, ToolKind};
 #[path = "run_http.rs"]
 mod http;
 use bridge_runtime_protocol::{SnapshotId, Uuid};

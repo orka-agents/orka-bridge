@@ -136,6 +136,14 @@ async fn cluster_use(
 }
 
 #[tauri::command]
+async fn send_preflight(
+    target_id: String,
+    provider_id: String,
+    state: tauri::State<'_, Arc<SendOwner>>,
+) -> bridge_engine::send::SendCheck {
+    state.preflight(&target_id, &provider_id).await
+}
+#[tauri::command]
 async fn send_start(
     target_id: String,
     provider_id: String,
@@ -209,6 +217,7 @@ fn main() {
             cluster_contexts,
             cluster_discover,
             cluster_use,
+            send_preflight,
             send_start,
             send_status,
             send_stop

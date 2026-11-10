@@ -11,6 +11,7 @@ pub struct ParsedPair {
     prompt: String,
     model: String,
     tools: Vec<String>,
+    declared_tools: Vec<DeclaredTool>,
     soul: Option<Soul>,
     cases: Vec<RunCase>,
 }
@@ -50,7 +51,7 @@ struct Kmx {
     schema_version: u32,
     runtime: String,
     #[serde(default)]
-    tools: Vec<Tool>,
+    tools: Vec<DeclaredTool>,
     #[serde(default, deserialize_with = "non_null")]
     soul: Option<Soul>,
 }
@@ -135,11 +136,18 @@ impl Soul {
                 .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
     }
 }
-#[derive(Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ToolKind {
+    Builtin,
+    #[serde(rename = "tool")]
+    Resource,
+}
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Tool {
-    kind: String,
-    name: String,
+pub struct DeclaredTool {
+    pub kind: ToolKind,
+    pub name: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -190,14 +198,11 @@ impl ParsedPair {
         // Metadata is deliberately inert; it never chooses a remote resource name.
         let _ = (agent.name, agent.description);
         let mut tools = Vec::new();
-        for tool in agent.kmx.tools {
-            if !matches!(tool.kind.as_str(), "builtin" | "tool")
-                || !present(&tool.name)
-                || tools.contains(&tool.name)
-            {
+        for tool in &agent.kmx.tools {
+            if !present(&tool.name) || tools.contains(&tool.name) {
                 return Err(ErrorKind::Source);
             }
-            tools.push(tool.name);
+            tools.push(tool.name.clone());
         }
         let mut cases: Vec<RunCase> = Vec::new();
         let mut block = None;
@@ -252,6 +257,7 @@ impl ParsedPair {
             prompt: prompt.into(),
             model: agent.model,
             tools,
+            declared_tools: agent.kmx.tools,
             soul: agent.kmx.soul,
             cases,
         })
@@ -267,6 +273,9 @@ impl ParsedPair {
     }
     pub fn tools(&self) -> &[String] {
         &self.tools
+    }
+    pub fn declared_tools(&self) -> &[DeclaredTool] {
+        &self.declared_tools
     }
     pub fn soul(&self) -> Option<&Soul> {
         self.soul.as_ref()

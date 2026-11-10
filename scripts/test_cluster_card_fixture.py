@@ -1,4 +1,5 @@
 """Exercise the CI-only native Send fixture over the real port-forward wire."""
+import http.client
 import importlib.util
 import json
 from pathlib import Path
@@ -22,6 +23,36 @@ class SendFixtureTest(unittest.TestCase):
         self.assertEqual(identity["namespace"], "")
         status, _ = handler.orka("GET", "/api/v1/auth/whoami", None, "Bearer denied-fixture")
         self.assertEqual(status, 403)
+
+    def test_missing_and_unreadable_tools_keep_workload_writes_at_zero(self):
+        handler = object.__new__(fixture.Discovery)
+        before = fixture.Discovery.agents
+        status, page = handler.orka("GET", "/api/v1/tools", None, "Bearer missing-tools-fixture")
+        self.assertEqual(status, 200)
+        self.assertEqual(page["items"], [])
+        status, _ = handler.orka("GET", "/api/v1/tools", None, "Bearer unreadable-tools-fixture")
+        self.assertEqual(status, 403)
+        self.assertEqual(fixture.Discovery.agents, before)
+
+    def test_discovery_serves_required_send_schema_fields(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), fixture.Discovery)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        connection = http.client.HTTPConnection(*server.server_address, timeout=2)
+        self.addCleanup(connection.close)
+        for plural, path, expected in [
+            ("agents", ["spec", "model", "name"], "string"),
+            ("tasks", ["spec", "retryPolicy", "maxRetries"], "integer"),
+            ("providers", ["status", "ready"], "boolean"),
+        ]:
+            connection.request("GET", f"/apis/apiextensions.k8s.io/v1/customresourcedefinitions/{plural}.core.orka.ai")
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            schema = json.loads(response.read())["spec"]["versions"][0]["schema"]["openAPIV3Schema"]
+            for field in path:
+                schema = schema["properties"][field]
+            self.assertEqual(schema["type"], expected)
 
     def test_native_forward_carries_create_receipts_and_check_evidence(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), fixture.Discovery)

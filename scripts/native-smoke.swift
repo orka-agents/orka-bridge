@@ -387,6 +387,32 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(-250)
         try capture(name, "Clusters")
     }
+    func capturePreflight(_ name: String, _ expected: String) throws -> [VNRecognizedTextObservation] {
+        for _ in 0..<8 {
+            let seen = try capture("send-probe", "Designer")
+            if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(expected) }) {
+                return try capture(name, "Designer")
+            }
+            scrollMain(-100)
+        }
+        fatalError("Preflight state missing: \(expected)")
+    }
+    // Read-only preflight states use distinct synthetic identities. No workload
+    // is submitted for either blocked card.
+    for (index, name, expected) in [(4, "send-blocked", "Blocked"), (5, "send-cannot-check", "Can’t check")] {
+        let selected = try chooseFixture(index)
+        clickText("Use this cluster", in: selected)
+        Thread.sleep(forTimeInterval: 1)
+        scrollMain(-400)
+        let connected = try capture("cluster-access", "Clusters")
+        clickText("Open your agent", in: connected)
+        Thread.sleep(forTimeInterval: 0.5)
+        let agent = try capture("agent-cluster-owned", "Designer")
+        clickText("Send to a cluster", in: agent)
+        Thread.sleep(forTimeInterval: 1)
+        let checked = try capturePreflight(name, expected)
+        clickTab("Clusters", checked)
+    }
     let normal = try chooseFixture(1)
     // Closing a native select popup can return focus to navigation. Activate the
     // observed Use control instead of assuming Tab left focus on it.
@@ -398,7 +424,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 0.5)
     let ownedAgent = try capture("agent-cluster-owned", "Designer")
     clickText("Send to a cluster", in: ownedAgent)
-    try capture("send-ready", "Designer")
+    Thread.sleep(forTimeInterval: 1)
+    let allowed = try capturePreflight("send-ready", "Before Send")
+    require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Before Send") }, "Read-only preflight rows are missing")
     try clickSendControl("Send and run checks", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
     let result = try capture("send-result", "Designer")

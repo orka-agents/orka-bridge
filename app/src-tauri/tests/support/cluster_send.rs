@@ -7,6 +7,9 @@ use bridge_engine::{
 };
 use bridge_runtime_protocol::SnapshotId;
 
+#[path = "cluster_preflight.rs"]
+mod preflight;
+
 const AGENT: &str = "---\nname: reader\ndescription: inert\nmodel: 'model:exact'\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools:\n    - kind: builtin\n      name: web_fetch\n---\nFetch only.\n";
 const TESTS: &str = "---\nschemaVersion: 1\n---\n```yaml agent-test\nid: fetch\ninput: go\nassertions:\n  - id: answer\n    type: contains\n    value: expected answer\n  - id: fetched\n    type: toolCalled\n    tool: web_fetch\n```\n";
 
@@ -367,17 +370,18 @@ async fn replaced_installation_or_kubeconfig_blocks_before_post() {
 }
 
 #[tokio::test]
-async fn provider_name_recheck_not_readiness_gate() {
+async fn provider_readiness_and_name_are_rechecked_before_writes() {
     let s = setup().await;
-    // Configured but not ready: readiness is display data, execution establishes availability.
+    // Current readiness, not cached Use readiness, decides admission.
     *s.api.wire.mode.lock().unwrap() = "unready";
     let view = s.finish(&id(&s.start().await)).await;
-    assert_eq!(view["state"], "complete", "{view}");
+    assert_eq!(view["error"], "preflight", "{view}");
+    assert_eq!(s.api.wire.posts(), 0);
     // The selected configured Provider was removed/renamed after Use.
     *s.api.wire.mode.lock().unwrap() = "paged";
     let view = s.finish(&id(&s.start().await)).await;
     assert_eq!(view["error"], "preflight");
-    assert_eq!(s.api.wire.posts(), 2);
+    assert_eq!(s.api.wire.posts(), 0);
 }
 
 #[tokio::test]

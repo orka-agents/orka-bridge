@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { type SourceId, sameSource } from '../designer/agent-api';
 import type { RunSnapshot } from '../designer/run-api';
 import type { SelectedPlace } from './api';
-import { type SendView, sendCall, sendErrors } from './send-api';
+import { type SendCheck, type SendView, sendCall, sendErrors, sendPreflight } from './send-api';
 import './clusters.css';
 
 export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failingCheck?: string; blocked?: string; onProceed: () => void; onFix: () => void }) {
@@ -39,11 +39,32 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const target = place.kind === 'cluster' ? place.target : undefined;
   const providerId = place.kind === 'cluster' ? place.providerId : undefined;
   const provider = place.kind === 'cluster' ? place.providers?.find(p => p.id === providerId) : undefined;
+  const [refresh, setRefresh] = useState(0);
+  const [check, setCheck] = useState<{ key: string; value?: SendCheck; error?: string }>();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const targetId = target?.id;
+  const agentHash = source?.agent; const testsHash = source?.tests;
+  const checkKey = JSON.stringify([targetId, providerId, agentHash, testsHash, refresh]);
+  const checkingEnabled = (visible || remote) && !blocked && !stale && !!targetId && !!providerId && !!agentHash && !!testsHash;
+  useEffect(() => {
+    if (!checkingEnabled || !targetId || !providerId) return;
+    let mounted = true;
+    void sendPreflight(targetId, providerId).then(value => {
+      if (mounted) setCheck({ key: checkKey, value });
+    }, (error: Error) => { if (mounted) setCheck({ key: checkKey, error: error.message }); });
+    return () => { mounted = false; };
+  }, [checkingEnabled, checkKey, targetId, providerId]);
+  const checked = checkingEnabled && check?.key === checkKey ? check : undefined;
+  const matched = checked?.value && sameSource(source, checked.value.source) === true;
+  const mismatched = checked?.value?.source != null && !matched;
+  const reason = blocked ?? (stale ? 'Save your changes first' : !target || !provider ? 'Choose a cluster and Provider in Clusters first'
+    : !checked ? 'Checking this destination…' : checked.error ?? (mismatched ? 'Your saved files changed. Check this destination again.'
+    : !checked.value?.canSend ? 'Resolve the destination checks before sending.' : undefined));
   async function mutate(command: 'send_start' | 'send_stop') {
     if (admitted.current) return;
     let args: Record<string, string>;
     if (command === 'send_start') {
-      if (blocked || !target || !providerId) return;
+      if (reason || !target || !providerId) return;
       args = { targetId: target.id, providerId };
     } else {
       if (!snapshot) return;
@@ -61,7 +82,6 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const current = !stale && sameSource(source, snapshot?.source) === true;
   const localCurrent = !stale && sameSource(source, local?.source) === true;
   const targetName = snapshot?.targetName ?? (snapshot?.targetId === target?.id ? target?.context_name : undefined);
-  const reason = blocked ?? ( !target || !provider ? 'Choose a cluster and Provider in Clusters first' : undefined);
   return <section tabIndex={-1} className="send-panel" aria-label="Send and cluster checks" hidden={!visible && !remote && !running}>
     <h3>{visible ? 'Send your agent' : 'Checks on your cluster'}</h3>
     <p>The saved agent and check files go together. Each Send creates a new Agent, kept on the cluster even if a check fails.</p>
@@ -71,6 +91,15 @@ export default function Send({ place, source, model, local, stale, blocked, visi
       {provider && <div><dt>Provider</dt><dd>{provider.name} · {provider.ready ? 'Ready' : 'Not ready'}</dd></div>}
     </dl>
     {(!target || !provider) && <button type="button" className="workspace-secondary" onClick={onChooseCluster} disabled={!onChooseCluster}>Choose a cluster</button>}
+    {checkingEnabled && <section className="send-preflight" aria-label="Before Send" aria-busy={!checked}>
+      <h4>Before Send</h4>
+      {!mismatched && checked?.value && <ul>{checked.value.rows.map(row => <li key={`${row.label}-${row.message}`} data-state={row.status}>
+        <span className="preflight-state">{{ allowed: 'Ready', blocked: 'Blocked', cannotCheck: 'Can’t check', unverified: 'Unverified' }[row.status]}</span>
+        <div><b>{row.label}</b><p>{row.message}</p></div>
+      </li>)}</ul>}
+      {reason && <p role={checked ? 'alert' : 'status'}>{reason}</p>}
+      {checked && <button type="button" className="workspace-secondary" disabled={busy || running} onClick={() => setRefresh(v => v + 1)}>Check again</button>}
+    </section>}
     <div className="workspace-step-actions"><button type="button" className="setup-button" disabled={!!reason || busy || running || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run checks' : 'Run all checks'}</button>
       {running && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void mutate('send_stop'); }}>Stop</button>}
     </div>
@@ -88,7 +117,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
         <ul>{check.assertions.map(a => <li key={a.id}>{a.id}: {words[a.verdict]}</li>)}</ul>
       </div>)}
     </>}
-    {snapshot && <details><summary>Show details</summary><dl className="cluster-details"><div><dt>Result destination</dt><dd>{targetName ?? 'Not confirmed'}</dd></div>
+    {snapshot && <details onToggle={event => setDetailsOpen(event.currentTarget.open)}><summary>{detailsOpen ? 'Hide details' : 'Show details'}</summary><dl className="cluster-details"><div><dt>Result destination</dt><dd>{targetName ?? 'Not confirmed'}</dd></div>
       <div><dt>Model sent</dt><dd>{snapshot.model ?? 'Not captured'}</dd></div><div><dt>Planned Agent</dt><dd>{snapshot.agentName ?? 'Not prepared'}</dd></div>
       <div><dt>Agent file hash</dt><dd>{snapshot.source?.agent ?? 'Not captured'}</dd></div><div><dt>Check file hash</dt><dd>{snapshot.source?.tests ?? 'Not captured'}</dd></div>
     </dl><ul>{snapshot.acknowledged.map(r => <li key={`${r.kind}-${r.uid}`}>{r.kind}: {r.name}</li>)}</ul>
