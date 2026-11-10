@@ -176,8 +176,9 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
     for _ in 0..<4 {
         let seen = try capture("send-probe", "Designer")
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
-        if seen.contains(where: { $0.topCandidates(1).first?.string == label }) {
-            clickText(label, in: seen)
+        // Vision includes the native disclosure triangle as a bullet in this label.
+        if let control = observed.first(where: { $0 == label || (label == "Show details" && $0 == "• \(label)") }) {
+            clickText(control, in: seen)
             return
         }
         scrollMain(pixels)
