@@ -27,15 +27,32 @@ function profile(root?: YAMLMap) {
   const kmx = root?.get('kmx', true);
   return isMap(kmx) && text(kmx.get('runtime', true)) === 'orka' && kmx.get('schemaVersion') === 1 ? kmx : undefined;
 }
+export type FormSoul = { inline?: string; configMapRef?: { name: string; key: string }; digest?: string };
+function soulForm(kmx?: YAMLMap): { soul?: FormSoul; soulEditable: boolean } {
+  const node = kmx?.get('soul', true);
+  if (node === undefined) return { soulEditable: !!kmx };
+  if (!isMap(node) || node.items.some(item => !['inline', 'configMapRef', 'digest'].includes(String(item.key)))) return { soulEditable: false };
+  const inline = text(node.get('inline', true)); const digest = text(node.get('digest', true));
+  const ref = node.get('configMapRef', true);
+  const validDigest = !node.has('digest') || digest !== undefined;
+  if (inline !== undefined && !node.has('configMapRef') && validDigest) return { soul: { inline, ...(digest === undefined ? {} : { digest }) }, soulEditable: true };
+  if (!node.has('inline') && isMap(ref) && ref.items.length === 2 && text(ref.get('name', true)) !== undefined && text(ref.get('key', true)) !== undefined && validDigest) {
+    return { soul: { configMapRef: { name: text(ref.get('name', true))!, key: text(ref.get('key', true))! }, ...(digest === undefined ? {} : { digest }) }, soulEditable: true };
+  }
+  return { soulEditable: false };
+}
 export function readForm(source: string) {
   const meta = metadata(source); const kmx = profile(meta.root); const tools = kmx?.get('tools', true);
   return {
     name: text(meta.root?.get('name', true)), description: text(meta.root?.get('description', true)),
-    model: text(meta.root?.get('model', true)), instructions: meta.closed ? source.slice(meta.end) : '',
+    model: text(meta.root?.get('model', true)),
+    modelEditable: !!meta.root && (!meta.root.has('model') || text(meta.root.get('model', true)) !== undefined),
+    ...soulForm(kmx), instructions: meta.closed ? source.slice(meta.end) : '',
     instructionsEditable: meta.closed, metadataEditable: !!meta.root,
     descriptionEditable: !!meta.root && (!meta.root.has('description') || text(meta.root.get('description', true)) !== undefined),
     toolsEditable: !!kmx && (tools === undefined || isSeq(tools)),
     tools: isSeq(tools) ? tools.items.map((item, index) => ({ index, name: isMap(item) ? text(item.get('name', true)) : undefined,
+      kind: isMap(item) ? text(item.get('kind', true)) : undefined,
       builtin: isMap(item) && text(item.get('kind', true)) === 'builtin' })) : [],
   };
 }
@@ -66,21 +83,58 @@ function insertField(source: string, map: YAMLMap, offset: number, entry: string
   const indent = absolute - source.lastIndexOf('\n', absolute - 1) - 1;
   return patch(source, absolute, absolute, entry + newline(source) + ' '.repeat(indent));
 }
-export function addTool(source: string, name: string) {
+// Replace one scalar only, retaining any trailing comment and block-scalar newline.
+function setText(source: string, map: YAMLMap, offset: number, key: string, value: string) {
+  const node = map.get(key, true);
+  if (node === undefined) return insertField(source, map, offset, `${key}: ${JSON.stringify(value)}`);
+  if (!isScalar(node) || !node.range || text(node) === undefined || text(node) === value) return source;
+  const block = node.type === 'BLOCK_LITERAL' || node.type === 'BLOCK_FOLDED';
+  const suffix = block ? (node.comment ? ` #${node.comment}` : '') + newline(source) : '';
+  return patch(source, offset + node.range[0], offset + node.range[1], JSON.stringify(value) + suffix);
+}
+export function changeModel(source: string, value: string) {
+  const meta = metadata(source);
+  return readForm(source).modelEditable ? setText(source, meta.root!, meta.offset, 'model', value) : source;
+}
+export async function changeSoulInline(source: string, value: string) {
   const form = readForm(source);
-  if (!form.toolsEditable || form.tools.some(tool => tool.builtin && tool.name === name)) return source;
+  if (!form.soulEditable || form.soul?.configMapRef) return source;
+  const { root, offset } = metadata(source); const kmx = profile(root)!;
+  const soul = kmx.get('soul', true);
+  const edited = isMap(soul) ? setText(source, soul, offset, 'inline', value)
+    : insertField(source, kmx, offset, `soul: {inline: ${JSON.stringify(value)}}`);
+  if (edited === source || form.soul?.digest === undefined) return edited;
+  // Hash the decoded replacement and publish the text and digest in one edit.
+  const decoded = readForm(edited).soul!.inline!;
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(decoded));
+  const digest = 'sha256:' + Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+  const meta = metadata(edited);
+  const replacement = profile(meta.root)?.get('soul', true);
+  return isMap(replacement) ? setText(edited, replacement, meta.offset, 'digest', digest) : source;
+}
+export function changeSoulReference(source: string, field: 'name' | 'key' | 'digest', value: string) {
+  const form = readForm(source);
+  if (!form.soulEditable || !form.soul?.configMapRef) return source;
+  const meta = metadata(source); const soul = profile(meta.root)?.get('soul', true);
+  if (!isMap(soul)) return source;
+  const map = field === 'digest' ? soul : soul.get('configMapRef', true);
+  return isMap(map) ? setText(source, map, meta.offset, field, value) : source;
+}
+export function addTool(source: string, name: string, kind: 'builtin' | 'tool' = 'builtin') {
+  const form = readForm(source);
+  if (!form.toolsEditable || form.tools.some(tool => tool.name === name)) return source;
   const { root, offset } = metadata(source); const kmx = profile(root)!; const tools = kmx.get('tools', true);
-  const item = `{kind: builtin, name: ${JSON.stringify(name)}}`;
+  const item = `{kind: ${kind}, name: ${JSON.stringify(name)}}`;
   if (tools === undefined) return insertField(source, kmx, offset, `tools: [${item}]`);
   if (!isSeq(tools) || !tools.range) return source;
   const start = offset + tools.range[0];
   if (tools.flow) return patch(source, start + 1, start + 1, item + (tools.items.length ? ',' : ''));
   const indent = start - source.lastIndexOf('\n', start - 1) - 1;
-  return patch(source, start, start, `- kind: builtin${newline(source)}${' '.repeat(indent + 2)}name: ${JSON.stringify(name)}${newline(source)}${' '.repeat(indent)}`);
+  return patch(source, start, start, `- kind: ${kind}${newline(source)}${' '.repeat(indent + 2)}name: ${JSON.stringify(name)}${newline(source)}${' '.repeat(indent)}`);
 }
 export function removeTool(source: string, index: number) {
   const form = readForm(source);
-  if (!form.toolsEditable || !form.tools[index]?.builtin) return source;
+  if (!form.toolsEditable || !['builtin', 'tool'].includes(form.tools[index]?.kind ?? '')) return source;
   const { root, offset } = metadata(source); const tools = profile(root)?.get('tools', true);
   if (!isSeq(tools) || !tools.range) return source;
   const item = tools.items[index] as Node;
