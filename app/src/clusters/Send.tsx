@@ -63,10 +63,10 @@ export default function Send({ place, source, model, local, stale, blocked, visi
     : !checked.value?.canSend ? 'Resolve the destination checks before sending.' : undefined));
   async function mutate(command: 'send_start' | 'send_stop') {
     if (admitted.current) return;
-    let args: Record<string, string>;
+    let args: Record<string, unknown>;
     if (command === 'send_start') {
-      if (reason || !target || !providerId) return;
-      args = { targetId: target.id, providerId };
+      if (reason || !target || !providerId || !checked?.value?.source) return;
+      args = { targetId: target.id, providerId, expectedSource: checked.value.source };
     } else {
       if (!snapshot) return;
       args = { sendId: snapshot.id };

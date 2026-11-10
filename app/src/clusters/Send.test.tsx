@@ -205,7 +205,7 @@ test('malformed send data is not rendered or retried', async () => {
 test('a confirmed cluster opens the owned editor after failed local setup and keeps Provider choice', async () => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   const other = { ...provider, id: '00000000-0000-4000-8000-000000000005', name: 'second-model', ready: true };
-  let starts = 0;
+  let starts = 0; let sentArgs: unknown;
   mockIPC((command, args) => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'failed', localVmError: 'boot', model: 'locked' };
     if (command === 'setup_requirements') return null;
@@ -216,7 +216,7 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
     if (command === 'setup_run_status') return idle;
     if (command === 'send_status') return null;
     if (command === 'send_preflight') return { ...allowed, providerId: other.id };
-    if (command === 'send_start') { starts++; expect(args).toEqual({ targetId: target.id, providerId: other.id }); return { ...running, providerId: other.id }; }
+    if (command === 'send_start') { starts++; sentArgs = args; return { ...running, providerId: other.id }; }
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />);
@@ -229,6 +229,7 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
   expect(screen.queryByText('Read-only during setup')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Run all checks' }));
   await waitFor(() => expect(starts).toBe(1));
+  expect(sentArgs).toEqual({ targetId: target.id, providerId: other.id, expectedSource: source });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('radio', { name: 'On this computer' }));
   await user.click(screen.getByRole('button', { name: 'Designer' }));

@@ -12,7 +12,7 @@ export type SendView = Pick<RunSnapshot, 'acknowledged' | 'pending' | 'report'> 
 const uuid = (v: unknown) => typeof v === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(v);
 const text = (v: unknown) => v === null || typeof v === 'string' && v.length > 0 && v.length <= 4096;
 export const sendErrors = {
-  capture: 'Your saved agent and check files could not be read. Check their format and try again.',
+  capture: 'Your saved agent or check files changed, or could not be read. Check this destination again before sending.',
   access: 'Cluster access could not be confirmed. Choose your cluster again in Clusters.',
   preflight: 'The installation, tools or Provider could not be confirmed. Check your cluster and try again.',
   submit: 'Sending was not confirmed. Named resources may still exist. Nothing was retried.',
@@ -57,7 +57,7 @@ export async function sendPreflight(targetId: string, providerId: string): Promi
   }
   throw Error('Destination checks could not be read. Check your cluster and try again.');
 }
-export async function sendCall(command: 'send_start' | 'send_status' | 'send_stop', args: Record<string, string> = {}): Promise<SendView | null> {
+export async function sendCall(command: 'send_start' | 'send_status' | 'send_stop', args: Record<string, unknown> = {}): Promise<SendView | null> {
   if (!isTauri()) throw Error('Send is available only in the desktop app.');
   try { const value: unknown = await invoke(command, args); if (valid(value) || command === 'send_status' && value === null) return value as SendView | null; } catch { /* No native diagnostics or credentials reach the screen. */ }
   throw Error('Send information could not be read. Nothing was retried. Reopen this view to check the result.');

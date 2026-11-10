@@ -33,8 +33,19 @@ impl Setup {
     fn view(&self, id: Option<&str>) -> Value {
         serde_json::to_value(self.owner.status(id)).unwrap()
     }
+    fn source(&self) -> SnapshotId {
+        SnapshotId::of(
+            &std::fs::read(self.agent_path()).unwrap(),
+            &std::fs::read(self.agent_path().with_file_name("web-reader.agent.test.md")).unwrap(),
+        )
+    }
     async fn start(&self) -> Value {
-        serde_json::to_value(self.owner.start(&self.target, &self.provider).await).unwrap()
+        serde_json::to_value(
+            self.owner
+                .start(&self.target, &self.provider, self.source())
+                .await,
+        )
+        .unwrap()
     }
     async fn finish(&self, id: &str) -> Value {
         until(|| self.view(Some(id))["state"] != "running").await;
@@ -396,12 +407,17 @@ async fn missing_builtin_blocks_before_post() {
 #[tokio::test]
 async fn unknown_ids_and_missing_access_never_write() {
     let s = setup().await;
-    let view = serde_json::to_value(s.owner.start(&s.target, "not-a-provider").await).unwrap();
+    let view =
+        serde_json::to_value(s.owner.start(&s.target, "not-a-provider", s.source()).await).unwrap();
     let view = s.finish(&id(&view)).await;
     assert_eq!(view["error"], "access");
     assert_eq!(view["providerId"], "");
-    let view =
-        serde_json::to_value(s.owner.start("https://example.com", &s.provider).await).unwrap();
+    let view = serde_json::to_value(
+        s.owner
+            .start("https://example.com", &s.provider, s.source())
+            .await,
+    )
+    .unwrap();
     let view = s.finish(&id(&view)).await;
     assert_eq!(view["error"], "access");
     assert_eq!(view["targetName"], Value::Null);
@@ -430,7 +446,8 @@ async fn send_start_future_is_send_for_desktop_dispatch() {
     let s = setup().await;
     let owner = s.owner.clone();
     let (target, provider) = (s.target.clone(), s.provider.clone());
-    let view = tokio::spawn(async move { owner.start(&target, &provider).await })
+    let source = s.source();
+    let view = tokio::spawn(async move { owner.start(&target, &provider, source).await })
         .await
         .unwrap();
     s.finish(&id(&serde_json::to_value(view).unwrap())).await;

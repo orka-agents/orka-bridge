@@ -147,9 +147,10 @@ async fn send_preflight(
 async fn send_start(
     target_id: String,
     provider_id: String,
+    expected_source: bridge_runtime_protocol::SnapshotId,
     state: tauri::State<'_, Arc<SendOwner>>,
 ) -> Result<SendView, &'static str> {
-    Ok(state.start(&target_id, &provider_id).await)
+    Ok(state.start(&target_id, &provider_id, expected_source).await)
 }
 #[tauri::command]
 fn send_status(

@@ -212,7 +212,12 @@ impl SendOwner {
     }
     /// Admits one job, or observes the running one, without waiting on the
     /// cluster session; capture, access and all rechecks happen inside the job.
-    pub async fn start(self: &Arc<Self>, target_id: &str, provider_id: &str) -> SendView {
+    pub async fn start(
+        self: &Arc<Self>,
+        target_id: &str,
+        provider_id: &str,
+        expected_source: SnapshotId,
+    ) -> SendView {
         let target = parse(target_id).map(|u| u.to_string()).unwrap_or_default();
         let provider = parse(provider_id).map(ProviderId);
         let mut inner = self.inner.lock().unwrap();
@@ -249,7 +254,9 @@ impl SendOwner {
         drop(inner);
         let owner = self.clone();
         tokio::spawn(async move {
-            let result = owner.drive(id, &target, provider, &mut stop_rx).await;
+            let result = owner
+                .drive(id, &target, provider, &expected_source, &mut stop_rx)
+                .await;
             let mut inner = owner.inner.lock().unwrap();
             let view = inner.views.get_mut(&id).unwrap();
             match result {
@@ -316,6 +323,7 @@ impl SendOwner {
         id: SendId,
         target: &str,
         provider: Option<ProviderId>,
+        expected_source: &SnapshotId,
         stop: &mut watch::Receiver<bool>,
     ) -> Result<RunReport, Stage> {
         // Freeze the pair once, before any network wait; later edits never reach this attempt.
@@ -326,6 +334,9 @@ impl SendOwner {
                 .map_err(drop)?
         })
         .await?;
+        if pair.snapshot() != expected_source {
+            return Err(Stage::Capture);
+        }
         self.update(id, |v| {
             v.source = Some(pair.snapshot().clone());
             v.model = Some(pair.model().into());

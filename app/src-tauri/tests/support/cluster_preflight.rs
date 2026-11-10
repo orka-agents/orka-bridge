@@ -241,6 +241,33 @@ async fn edited_pair_and_replaced_binding_recheck_after_allowed_preview() {
 }
 
 #[tokio::test]
+async fn start_refuses_files_changed_after_preview_even_when_destination_allows_them() {
+    let s = setup().await;
+    let preview = check(&s).await;
+    let source: SnapshotId = serde_json::from_value(preview["source"].clone()).unwrap();
+    assert_eq!(preview["canSend"], true);
+    for (path, content) in [
+        (
+            s.agent_path(),
+            AGENT.replace("Fetch only.", "A different prompt."),
+        ),
+        (
+            s.agent_path().with_file_name("web-reader.agent.test.md"),
+            TESTS.replace("input: go", "input: new input"),
+        ),
+    ] {
+        std::fs::write(&path, content).unwrap();
+        let started =
+            serde_json::to_value(s.owner.start(&s.target, &s.provider, source.clone()).await)
+                .unwrap();
+        let done = s.finish(&id(&started)).await;
+        assert_eq!(done["error"], "capture", "changed pair was sent: {done}");
+        assert_eq!(s.api.wire.posts(), 0);
+        std::fs::write(s.agent_path(), AGENT).unwrap();
+    }
+}
+
+#[tokio::test]
 async fn tool_metadata_is_implicit_in_a_valid_kubernetes_object_schema() {
     let s = setup().await;
     let path = "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/tools.core.orka.ai";
