@@ -5,15 +5,19 @@ import Vision
 
 let args = CommandLine.arguments
 var app: NSRunningApplication?
+var currentStage = "preflight"
+var diagnosticRoot: AXUIElement?
 defer {
     if let app, !app.isTerminated {
+        failureEvidence()
         fputs("Walk failed before native quit; forcing only the CI-owned process down.\n", stderr)
         app.forceTerminate()
     }
 }
 func check(_ value: Bool, _ message: String) {
     if !value {
-        fputs("FAIL: \(message)\n", stderr)
+        fputs("FAIL [STAGE: \(currentStage)]: \(message)\n", stderr)
+        failureEvidence()
         // Only this walk's process, after an assertion failure; never counted as a clean stop.
         app?.forceTerminate()
         exit(1)
@@ -73,7 +77,41 @@ func nodes(_ root: AXUIElement) -> [AXUIElement] {
 func text(_ element: AXUIElement) -> String {
     ["AXTitle", "AXDescription", "AXHelp"].compactMap { attribute(element, $0) as? String }.joined(separator: " | ")
 }
-func find(_ root: AXUIElement, _ predicate: (AXUIElement) -> Bool) -> AXUIElement {
+func actions(_ element: AXUIElement) -> [String] {
+    var names: CFArray?
+    return AXUIElementCopyActionNames(element, &names) == .success ? names as? [String] ?? [] : []
+}
+func pressable(_ element: AXUIElement, _ label: String) -> Bool {
+    // WebKit can expose aria-pressed buttons as AXCheckBox/AXToggle (Core-AAM).
+    ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == label }
+        && attribute(element, "AXEnabled") as? Bool == true && actions(element).contains("AXPress")
+}
+func writableTextArea(_ element: AXUIElement) -> Bool {
+    var writable = DarwinBoolean(false)
+    return attribute(element, "AXRole") as? String == "AXTextArea" && AXUIElementIsAttributeSettable(element, "AXValue" as CFString, &writable) == .success && writable.boolValue
+}
+func failureEvidence() {
+    guard let app, !app.isTerminated else { return }
+    let report = "STAGE: \(currentStage)\n" + nodes(diagnosticRoot ?? AXUIElementCreateApplication(app.processIdentifier)).prefix(100).map { element in
+        "role=\(attribute(element, "AXRole") as? String ?? "?") text=\(String(text(element).prefix(200)).debugDescription) enabled=\(String(describing: attribute(element, "AXEnabled") as? Bool)) actions=\(String(describing: actions(element).prefix(20)).prefix(200))"
+    }.joined(separator: "\n") + "\n"
+    fputs(report, stderr)
+    do { try report.write(toFile: "\(output)/failure-ax.txt", atomically: true, encoding: .utf8) }
+    catch { fputs("Cannot save AX diagnostics: \(error)\n", stderr) }
+    // Capture the real display (including menus or a missing window) before cleanup.
+    let p = Process(); p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture"); p.arguments = ["-x", "\(output)/failure.png"]
+    do {
+        try p.run()
+        for _ in 0..<100 {
+            if !p.isRunning { break }
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        }
+        if p.isRunning { p.terminate(); fputs("Failure screenshot timed out\n", stderr) }
+        else { fputs("Failure screencapture status: \(p.terminationStatus)\n", stderr) }
+    } catch { fputs("Cannot capture failure screenshot: \(error)\n", stderr) }
+}
+func find(_ root: AXUIElement, _ stage: String, _ predicate: (AXUIElement) -> Bool) -> AXUIElement {
+    currentStage = stage; diagnosticRoot = root; print("STAGE: \(stage)")
     var result: AXUIElement?
     wait("Native AX control missing") { result = nodes(root).first(where: predicate); return result != nil }
     return result!
@@ -117,20 +155,14 @@ func launch() throws -> AXUIElement {
     }
     app!.activate(options: [])
     wait("Main window did not appear") { windowInfo() != nil }
-    let root = AXUIElementCreateApplication(app!.processIdentifier)
-    wait("Initial workspace observation did not finish") {
-        nodes(root).contains { element in
-            attribute(element, "AXRole") as? String == "AXButton" && attribute(element, "AXEnabled") as? Bool == true && ["AXTitle", "AXDescription"].contains { ["Get started", "Continue"].contains(attribute(element, $0) as? String ?? "") }
-        }
-    }
-    return root
+    return AXUIElementCreateApplication(app!.processIdentifier)
 }
 func menu(_ root: AXUIElement) -> [AXUIElement] {
     guard let extras = attribute(root, "AXExtrasMenuBar") else { fatalError("Missing native status menu bar") }
-    let item = find(extras as! AXUIElement) { attribute($0, "AXRole") as? String == "AXMenuBarItem" && text($0).contains("Bridge") }
+    let item = find(extras as! AXUIElement, "status-item") { attribute($0, "AXRole") as? String == "AXMenuBarItem" && text($0).contains("Bridge") }
     press(item)
-    let open = find(root) { attribute($0, "AXTitle") as? String == "Open Bridge" }
-    let stop = find(root) { attribute($0, "AXTitle") as? String == "Stop workspace and quit" }
+    let open = find(root, "menu-open") { attribute($0, "AXTitle") as? String == "Open Bridge" }
+    let stop = find(root, "menu-stop") { attribute($0, "AXTitle") as? String == "Stop workspace and quit" }
     check(attribute(open, "AXEnabled") as? Bool == true && attribute(stop, "AXEnabled") as? Bool == true, "Native menu commands disabled")
     return [open, stop]
 }
@@ -143,13 +175,13 @@ func key(_ code: CGKeyCode, flags: CGEventFlags = []) {
 let root = try launch()
 let pid = app!.processIdentifier
 let originalID = windowInfo()!.0
-let main = find(root) { attribute($0, "AXRole") as? String == "AXWindow" }
-press(find(main) { element in attribute(element, "AXRole") as? String == "AXButton" && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Designer" }) })
-press(find(main) { element in attribute(element, "AXRole") as? String == "AXButton" && attribute(element, "AXEnabled") as? Bool == true && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "File" }) })
-let editor = find(main) { element in
-    var writable = DarwinBoolean(false)
-    return attribute(element, "AXRole") as? String == "AXTextArea" && AXUIElementIsAttributeSettable(element, "AXValue" as CFString, &writable) == .success && writable.boolValue
-}
+let main = find(root, "main-window") { attribute($0, "AXRole") as? String == "AXWindow" }
+press(find(main, "Designer") { pressable($0, "Designer") })
+// A writable Agent-view textarea proves the owned example loaded, not a
+// temporary read-only preview that will remount and reset its view toggle.
+_ = find(main, "editable-owned-example") { writableTextArea($0) }
+press(find(main, "File") { pressable($0, "File") })
+let editor = find(main, "writable-editor") { writableTextArea($0) }
 check(AXUIElementSetAttributeValue(editor, "AXFocused" as CFString, kCFBooleanTrue) == .success, "Cannot focus real editor")
 key(125, flags: .maskCommand)
 let marker = " lifecycle-\(UUID().uuidString)"
@@ -165,9 +197,9 @@ wait("Native editor change not saved") { (try? String(contentsOf: owned, encodin
 func retained() {
     check(app!.processIdentifier == pid && !app!.isTerminated, "Original process lost")
     check(windowInfo()?.0 == originalID, "Main native window replaced")
-    check(CFEqual(find(root) { attribute($0, "AXRole") as? String == "AXWindow" }, main), "Main AX window replaced")
+    check(CFEqual(find(root, "retained-window") { attribute($0, "AXRole") as? String == "AXWindow" }, main), "Main AX window replaced")
     check(attribute(editor, "AXValue") as? String != nil, "Editor AX element lost")
-    check((attribute(find(main) { attribute($0, "AXRole") as? String == "AXTextArea" }, "AXValue") as? String)?.contains(marker) == true, "File view/draft lost on reopen")
+    check((attribute(find(main, "retained-editor") { attribute($0, "AXRole") as? String == "AXTextArea" }, "AXValue") as? String)?.contains(marker) == true, "File view/draft lost on reopen")
     check(NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, "Reopen did not focus original process")
     check(!FileManager.default.fileExists(atPath: selected), "Walk accidentally selected a workspace")
 }
@@ -203,8 +235,8 @@ wait("Stop workspace and quit did not exit") { app!.isTerminated }
 // A separate launch proves standard AppKit Quit, not a synthetic terminate selector.
 let quitRoot = try launch()
 guard let appMenu = attribute(quitRoot, "AXMenuBar") else { fatalError("Missing native application menu bar") }
-press(find(appMenu as! AXUIElement) { attribute($0, "AXRole") as? String == "AXMenuBarItem" && attribute($0, "AXTitle") as? String == "Bridge" })
-press(find(quitRoot) { attribute($0, "AXTitle") as? String == "Quit Bridge" })
+press(find(appMenu as! AXUIElement, "application-menu") { attribute($0, "AXRole") as? String == "AXMenuBarItem" && attribute($0, "AXTitle") as? String == "Bridge" })
+press(find(quitRoot, "menu-quit") { attribute($0, "AXTitle") as? String == "Quit Bridge" })
 wait("Standard Quit did not exit") { app!.isTerminated }
 check(!FileManager.default.fileExists(atPath: selected) && !FileManager.default.fileExists(atPath: data.appendingPathComponent("local-vm-v1").path), "Saved local selection or VM data appeared")
 let evidence = "PASS \(theme): native Close/hide, tray menu/Open, same PID \(pid)/window \(originalID), File view and edited text retained, Dock activation, hidden/minimized second launches, menu stop, standard Quit. Integrated debug shell only; empty image source, no VM/Ready/provider/cluster/session logout proof.\n"

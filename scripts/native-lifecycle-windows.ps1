@@ -113,7 +113,9 @@ function Capture([string]$Name, [bool]$Menu = $false) {
         $graphics.CopyFromScreen([int]$r.X, [int]$r.Y, 0, 0, $bitmap.Size)
         $bitmap.Save((Join-Path $script:themeOutput "$Name.png"), [Drawing.Imaging.ImageFormat]::Png)
         if (!$Menu) {
-            $colour = $bitmap.GetPixel($bitmap.Width - 30, $bitmap.Height - 30)
+            # The maximized frame can extend below the display; sample the visible
+            # window interior, not the themed taskbar or off-screen padding.
+            $colour = $bitmap.GetPixel($bitmap.Width - 30, [int]($bitmap.Height / 2))
             $brightness = ($colour.R + $colour.G + $colour.B) / 765.0
             if (($script:theme -eq 'light' -and $brightness -lt 0.9) -or ($script:theme -eq 'dark' -and $brightness -gt 0.2)) { throw 'Window screenshot did not follow requested theme (or desktop capture unavailable)' }
         }
@@ -125,12 +127,6 @@ function Start-Bridge {
     $script:hwnd = Wait-For 'Main native window did not appear' { $script:app.Refresh(); if ($script:app.MainWindowHandle -ne [IntPtr]::Zero) { $script:app.MainWindowHandle } }
     $script:window = [System.Windows.Automation.AutomationElement]::FromHandle($script:hwnd)
     [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
-    Wait-For 'Initial workspace observation did not finish' {
-        foreach ($label in @('Get started', 'Continue')) {
-            $control = Find-Control $script:window $label $button
-            if ($control -and $control.Current.IsEnabled) { return $true }
-        }
-    } | Out-Null
 }
 function Find-TrayPoint($Root, [string]$Label) {
     $all = @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
@@ -221,6 +217,13 @@ try {
         Start-Bridge
         $script:originalPid = $script:app.Id
         Press (Wait-For 'Designer button missing' { Find-Control $script:window 'Designer' $button })
+        # Observe the actual editable owned example before toggling File, not a
+        # welcome-button proxy or a read-only preview that will be remounted.
+        Wait-For 'Editable owned example missing' {
+            $control = Find-Control $script:window 'Instructions' ([System.Windows.Automation.ControlType]::Edit)
+            $value = $null
+            if ($control -and !$control.Current.IsOffscreen -and $control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$value) -and !$value.Current.IsReadOnly) { $true }
+        } | Out-Null
         Press (Wait-For 'Enabled File button missing' { $control = Find-Control $script:window 'File' $button; if ($control -and $control.Current.IsEnabled) { $control } })
         $editor = Wait-For 'Editable loaded File view missing' {
             $control = Find-Control $script:window 'Agent file' ([System.Windows.Automation.ControlType]::Edit)
@@ -264,7 +267,12 @@ try {
         "PASS $theme`: native Close/hide, tray menu/Open, same PID $script:originalPid/window $script:hwnd, File view/edited text retained, hidden/minimized second launches, menu stop. Standard Quit is covered by native subprocess tests. Integrated debug shell only; empty image source, no VM/Ready/provider/cluster/session logout proof. OS popup theme is captured as drawn, not forced by product hooks." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
     }
 } catch {
-    if ($script:themeOutput) { try { Capture 'failure' $true } catch { Write-Warning $_ } }
+    if ($script:themeOutput) {
+        try {
+            @($script:window.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition) | Select-Object -First 100) | ForEach-Object { "Name=$($_.Current.Name); Type=$($_.Current.ControlType.ProgrammaticName); Enabled=$($_.Current.IsEnabled); Offscreen=$($_.Current.IsOffscreen)" } | Set-Content (Join-Path $script:themeOutput 'failure-ui.txt')
+        } catch { Write-Warning $_ }
+        try { Capture 'failure' $true } catch { Write-Warning $_ }
+    }
     throw
 } finally {
     # Force cleanup only on test failure; it is not evidence that the stop route worked.
