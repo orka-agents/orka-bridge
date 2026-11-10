@@ -23,6 +23,10 @@ use tokio::{
 };
 use tower::{Layer, ServiceExt};
 
+#[cfg(all(test, unix))]
+#[path = "credential_spawn_tests.rs"]
+mod spawn_tests;
+
 const LIMIT: Duration = Duration::from_secs(10);
 /// Deliberately neither Debug nor Serialize: these values never cross desktop IPC.
 pub enum Credential {
@@ -110,6 +114,7 @@ async fn execute(
     deadline: Instant,
     mut stop: watch::Receiver<bool>,
 ) -> Result<Output, AccessOutcome> {
+    let deadline = deadline.min(Instant::now() + LIMIT);
     let version = exec
         .api_version
         .as_deref()
@@ -154,13 +159,19 @@ async fn execute(
     if *stop.borrow() || deadline <= Instant::now() {
         return Err(AccessOutcome::Unavailable);
     }
-    let mut child = cmd.spawn().map_err(|_| AccessOutcome::Unavailable)?;
+    let spawn = crate::runtime::spawn_guard::run(|| cmd.spawn());
+    let mut child = tokio::select! {
+        biased;
+        _ = stop.changed() => return Err(AccessOutcome::Unavailable),
+        _ = tokio::time::sleep_until(deadline) => return Err(AccessOutcome::Unavailable),
+        result = spawn => result.map_err(|_| AccessOutcome::Unavailable)?,
+    };
     let stdout = child.stdout.take().ok_or(AccessOutcome::Unavailable)?;
     let stderr = child.stderr.take().ok_or(AccessOutcome::Unavailable)?;
     let result = tokio::select! {
         biased;
         _ = stop.changed() => Err(AccessOutcome::Unavailable),
-        _ = tokio::time::sleep_until(deadline.min(Instant::now()+LIMIT)) => Err(AccessOutcome::Unavailable),
+        _ = tokio::time::sleep_until(deadline) => Err(AccessOutcome::Unavailable),
         result = async {
             let (stdout, _, status) = tokio::try_join!(bounded(stdout, 1024*1024), bounded(stderr, 64*1024), async { child.wait().await.map_err(|_| AccessOutcome::Unavailable) })?;
             if !status.success() { return Err(AccessOutcome::Unavailable); }
