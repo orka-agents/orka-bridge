@@ -143,7 +143,7 @@ async fn send_click_runs_captured_file() {
     assert_eq!(s.view(None), view);
     let text = view.to_string();
     for secret in ["creator-fixture", "http://", "Bearer"] {
-        assert!(!text.contains(secret), "{secret}");
+        assert!(!text.contains(secret), "credential marker reached the view");
     }
     s.idle_forwards().await;
 }

@@ -93,6 +93,15 @@ test('an unknown submission names its uncertain resources, not a pass, and waits
   await screen.findByText('Running checks on team-dev…');
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'send_start')).toHaveLength(1);
 });
+test('changing Provider or destination does not validate the new selection with an older pass', async () => {
+  native(idle, { ...running, state: 'complete', stage: 'done', report: { ...report, verdict: 'passed' } });
+  const view = render(<Example remote place={place} />);
+  await screen.findByText('Checks: pass');
+  view.rerender(<Example remote place={{ ...place, providerId: '00000000-0000-4000-8000-000000000005' }} />);
+  expect(await screen.findByText(/not validation of your current selection/)).toBeTruthy();
+  view.rerender(<Example remote place={{ ...place, target: { ...target, id: '00000000-0000-4000-8000-000000000006', context_name: 'other-cluster' } }} />);
+  expect(screen.getByText(/not validation of your current selection/)).toBeTruthy();
+});
 test('malformed send data is not rendered or retried', async () => {
   const ipc = native(idle, { ...running, privateCredential: 'PRIVATE_DIAGNOSTIC' }); render(<Example remote place={place} />);
   expect(await screen.findByText(/Send information could not be read/)).toBeTruthy();

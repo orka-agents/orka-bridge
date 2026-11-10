@@ -5,12 +5,12 @@ import type { SelectedPlace } from './api';
 import { type SendView, sendCall, sendErrors } from './send-api';
 import './clusters.css';
 
-export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failingCheck?: string; blocked: boolean; onProceed: () => void; onFix: () => void }) {
+export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failingCheck?: string; blocked?: string; onProceed: () => void; onFix: () => void }) {
   const [warning, setWarning] = useState(false);
   return <div className="send-entry">
-    <button type="button" className="shell-button" disabled={blocked} title={blocked ? 'Save your agent before sending' : undefined} onClick={() => { if (failingCheck) setWarning(true); else onProceed(); }}>Send to a cluster</button>
+    <button type="button" className="shell-button" disabled={!!blocked} title={blocked} onClick={() => { if (failingCheck) setWarning(true); else onProceed(); }}>Send to a cluster</button>
     {warning && failingCheck && <div className="send-warning" role="note"><p>Check {failingCheck} failed. You can still send this agent.</p>
-      <button type="button" className="workspace-secondary" disabled={blocked} onClick={() => { setWarning(false); onProceed(); }}>Send anyway</button>
+      <button type="button" className="workspace-secondary" disabled={!!blocked} onClick={() => { setWarning(false); onProceed(); }}>Send anyway</button>
       <button type="button" className="workspace-disclosure" onClick={() => { setWarning(false); onFix(); }}>Fix it first</button>
     </div>}
   </div>;
@@ -18,7 +18,7 @@ export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failing
 const words = { passed: 'pass', failed: 'fail', unknown: 'unknown' } as const;
 export default function Send({ place, source, model, local, stale, blocked, visible, remote, onChooseCluster }: {
   place: SelectedPlace; source?: SourceId; model?: string; local?: RunSnapshot; stale: boolean;
-  blocked: boolean; visible: boolean; remote: boolean; onChooseCluster?: () => void;
+  blocked?: string; visible: boolean; remote: boolean; onChooseCluster?: () => void;
 }) {
   const [snapshot, setSnapshot] = useState<SendView | null>(null);
   const [message, setMessage] = useState<string>();
@@ -57,10 +57,11 @@ export default function Send({ place, source, model, local, stale, blocked, visi
     finally { admitted.current = false; if (request === epoch.current) setBusy(false); }
   }
   const running = snapshot?.state === 'running';
+  const samePlace = snapshot?.targetId === target?.id && snapshot?.providerId === providerId;
   const current = !stale && sameSource(source, snapshot?.source) === true;
   const localCurrent = !stale && sameSource(source, local?.source) === true;
   const targetName = snapshot?.targetName ?? (snapshot?.targetId === target?.id ? target?.context_name : undefined);
-  const reason = blocked ? 'Save your agent before running checks' : !target || !provider ? 'Choose a cluster and Provider in Clusters first' : undefined;
+  const reason = blocked ?? ( !target || !provider ? 'Choose a cluster and Provider in Clusters first' : undefined);
   return <section tabIndex={-1} className="send-panel" aria-label="Send and cluster checks" hidden={!visible && !remote && !running}>
     <h3>{visible ? 'Send your agent' : 'Checks on your cluster'}</h3>
     <p>The saved agent and check files go together. Each Send creates a new Agent, kept on the cluster even if a check fails.</p>
@@ -77,6 +78,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
     {running && <p role="status">Running checks on {targetName ?? 'the cluster'}…</p>}
     {snapshot?.stage === 'stopped' && <p role="status">Stopped watching. The cluster may still be running checks.</p>}
     {snapshot?.error && snapshot.stage !== 'stopped' && <p role="alert">{sendErrors[snapshot.error as keyof typeof sendErrors]}</p>}
+    {snapshot && !samePlace && <p role="status">This result belongs to another cluster or Provider. It is not validation of your current selection.</p>}
     {snapshot && !current && <p className="muted">This result is for the captured file, not confirmed as your current revision.</p>}
     {snapshot?.state === 'unknown' && !snapshot.report && <p role="status">Checks: unknown</p>}
     {snapshot?.report && <><p role="status">Checks: {words[snapshot.report.verdict]}</p>

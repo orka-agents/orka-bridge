@@ -6,7 +6,7 @@ use crate::{
     clusters::{commands::ClusterSession, ProviderId},
     engine::run::{ErrorKind, NativeRunner, ParsedPair, RunReport},
     example_run::{receipts, PendingRef, Receipt},
-    pair_source::PairCatalog,
+    pair_source::CapturedPair,
 };
 use bridge_runtime_protocol::{SnapshotId, Uuid};
 use serde::Serialize;
@@ -111,11 +111,12 @@ fn failed(kind: ErrorKind, stage: Stage) -> Stage {
     }
 }
 fn capture(folder: &AgentFolder) -> Result<ParsedPair, ()> {
-    let (root, document) = folder.source().map_err(drop)?;
-    // A per-attempt catalog releases its held directory after this one capture.
-    let catalog = PairCatalog::default();
-    let id = catalog.bind_owned_agent(root, document).map_err(drop)?;
-    Ok(catalog.capture(id).map_err(drop)?.into_pair())
+    // Keep the validated directory handles and ownership lock through capture;
+    // reopening source()'s pathname would allow an ancestor swap in between.
+    let snapshot = folder.capture().map_err(drop)?;
+    Ok(CapturedPair::from_snapshot(snapshot)
+        .map_err(drop)?
+        .into_pair())
 }
 impl SendOwner {
     pub fn new(folder: Arc<AgentFolder>, session: ClusterSession) -> Arc<Self> {

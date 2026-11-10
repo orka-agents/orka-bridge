@@ -71,6 +71,9 @@ export default function Example({ active = true, readOnly = false, remote = fals
   };
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const saveLabel = { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
+  const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
+    : readOnly ? 'Sending is unavailable while this example is read-only during setup'
+    : saveState !== 'saved' ? 'Save your changes first' : undefined;
   return <section className="designer" aria-labelledby={active ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
       <div className="agent-heading-copy"><h1 id={active ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{info.description && <p className="muted">{info.description}</p>}</div>
@@ -81,7 +84,7 @@ export default function Example({ active = true, readOnly = false, remote = fals
           <button type="button" aria-pressed={view === 'File'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('File')}>File</button>
         </div>
         {actions}
-        <SendEntry blocked={readOnly || !pair || saveState !== 'saved'} failingCheck={!stale && localRun?.sourceCurrent !== false ? localRun?.report?.cases.find(c => c.verdict === 'failed')?.id : undefined}
+        <SendEntry blocked={sendBlocked} failingCheck={!stale && localRun?.sourceCurrent !== false ? localRun?.report?.cases.find(c => c.verdict === 'failed')?.id : undefined}
           onProceed={openSend} onFix={() => { setView('Agent'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.instructions-editor')?.focus()); }} />
       </div>
     </div>
@@ -98,7 +101,7 @@ export default function Example({ active = true, readOnly = false, remote = fals
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
-        <Send place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={readOnly || saveState !== 'saved'} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} />
+        <Send place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} />
         {!remote && readOnly ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
           : null}
         {!readOnly && <div hidden={remote}><Run source={pair.source} onSnapshot={observeRun} blocked={remote || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} /></div>}

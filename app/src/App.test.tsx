@@ -100,7 +100,7 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
     expect(button.hasAttribute('disabled')).toBe(true);
     expect(button.getAttribute('title')).toMatch(/coming/i);
   }
-  expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/Save your agent/);
+  expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/agent folder|Reopen your agent/);
   expect(screen.getByText('This computer')).toBeTruthy();
 });
 
