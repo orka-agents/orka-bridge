@@ -66,9 +66,16 @@ pub fn install(
     if integrated {
         #[cfg(windows)]
         {
-            let quit = tauri::menu::PredefinedMenuItem::quit(app, None)?;
+            // Muda's predefined Windows Quit posts WM_QUIT without ExitRequested.
+            // A custom item must bar admission and join cleanup before leaving Tao.
+            let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let file = tauri::menu::Submenu::with_items(app, "File", true, &[&quit])?;
             app.set_menu(Menu::with_items(app, &[&file])?)?;
+            app.on_menu_event(|app, event| {
+                if event.id().as_ref() == "quit" {
+                    stop(app);
+                }
+            });
         }
         let open = MenuItem::with_id(app, "open", "Open Bridge", true, None::<&str>)?;
         let quit = MenuItem::with_id(

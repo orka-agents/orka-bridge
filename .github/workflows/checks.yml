@@ -80,6 +80,7 @@ jobs:
             ~/.cargo/git
             app/src-tauri/target
           key: app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock') }}
+          restore-keys: app-${{ matrix.os }}-rust-1.98.1-
       - run: npm ci
       - run: npm run build
       - name: Clean Intel Mac shell resource check

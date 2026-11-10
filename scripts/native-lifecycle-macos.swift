@@ -172,6 +172,11 @@ press(commands[0])
 wait("Open Bridge did not reopen/focus") { windowInfo() != nil && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
 retained(); try capture("reopened-menu")
 press(close as! AXUIElement)
+wait("Close before Dock activation did not hide") { windowInfo() == nil }
+try command("/usr/bin/open", [bundle]) // LaunchServices delivers Dock-style Reopen.
+wait("Dock activation did not reopen/focus") { windowInfo() != nil && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
+retained(); try capture("reopened-dock")
+press(close as! AXUIElement)
 wait("Close before second launch did not hide") { windowInfo() == nil }
 try command("\(bundle)/Contents/MacOS/orka-bridge", [])
 wait("Second launch did not show/focus hidden window") { windowInfo() != nil && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
@@ -193,6 +198,6 @@ press(find(appMenu as! AXUIElement) { attribute($0, "AXRole") as? String == "AXM
 press(find(quitRoot) { attribute($0, "AXTitle") as? String == "Quit Bridge" })
 wait("Standard Quit did not exit") { app!.isTerminated }
 check(!FileManager.default.fileExists(atPath: selected) && !FileManager.default.fileExists(atPath: data.appendingPathComponent("local-vm-v1").path), "Saved local selection or VM data appeared")
-let evidence = "PASS \(theme): native Close/hide, tray menu/Open, same PID \(pid)/window \(originalID), File view and edited text retained, hidden/minimized second launches, menu stop, standard Quit. Integrated debug shell only; empty image source, no VM/Ready/provider/cluster/session logout proof.\n"
+let evidence = "PASS \(theme): native Close/hide, tray menu/Open, same PID \(pid)/window \(originalID), File view and edited text retained, Dock activation, hidden/minimized second launches, menu stop, standard Quit. Integrated debug shell only; empty image source, no VM/Ready/provider/cluster/session logout proof.\n"
 try evidence.write(toFile: "\(output)/evidence.txt", atomically: true, encoding: .utf8)
 print(evidence)

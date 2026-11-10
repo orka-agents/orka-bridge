@@ -153,6 +153,7 @@ mod tests {
         sync::atomic::{AtomicUsize, Ordering},
         time::Instant,
     };
+    use tauri::Manager;
     use tokio::sync::watch;
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -227,6 +228,8 @@ mod tests {
         );
         for (case, code, diagnostic, stopped) in [
             ("missing", 0, "", false),
+            ("missing_icon", 0, "", false),
+            ("menu_quit", 1, "cleanup was not reported as clean", true),
             ("query_cancel", 0, "", false),
             ("clean", 0, "", true),
             ("existing", 0, "", true),
@@ -288,10 +291,73 @@ mod tests {
         // Real Tao hidden target, but no webview, saved setup, VM or OS logout.
         let mut context = tauri::generate_context!();
         context.config_mut().app.windows.clear();
-        let _app = tauri::Builder::default()
+        if case == "missing_icon" {
+            context.set_default_window_icon(None);
+        }
+        let app = tauri::Builder::default()
             .any_thread()
             .build(context)
             .unwrap();
+        if case == "missing_icon" {
+            let error = super::super::install(app.handle(), shutdown, true).unwrap_err();
+            assert!(error.to_string().contains("tray icon is missing"));
+            assert!(app.try_state::<super::super::HideOnClose>().is_none());
+            return;
+        }
+        let probe = Arc::new(Probe {
+            marker: std::env::var_os("BRIDGE_WINDOWS_SESSION_MARKER")
+                .unwrap()
+                .into(),
+            native_thread: unsafe { GetCurrentThreadId() },
+            calls: AtomicUsize::new(0),
+            stops: AtomicUsize::new(0),
+            clean: !matches!(case.as_str(), "failed" | "menu_quit"),
+        });
+        if case == "menu_quit" {
+            let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
+            app.manage(vm.clone());
+            app.manage(EngineState::with_transport(vm.clone()));
+            app.manage(SendOwner::new(
+                Arc::new(AgentFolder::new(None)),
+                ClusterSession::default(),
+            ));
+            app.manage(shutdown.clone());
+            // Observe the real event before the production handler; never call stop here.
+            app.on_menu_event(move |_, event| {
+                if event.id().as_ref() == "quit" {
+                    probe.calls.fetch_add(1, Ordering::SeqCst);
+                }
+            });
+            let window = tauri::window::WindowBuilder::new(&app, "menu-probe")
+                .visible(false)
+                .build()
+                .unwrap();
+            super::super::install(app.handle(), shutdown, true).unwrap();
+            tauri::async_runtime::block_on(async {
+                vm.start();
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while vm.status() != LocalVmStatus::Ready {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+            });
+            let hwnd = window.hwnd().unwrap().0 as HWND;
+            unsafe {
+                let menu = GetMenu(hwnd);
+                assert!(!menu.is_null());
+                let file = GetSubMenu(menu, 0);
+                assert!(!file.is_null());
+                assert_eq!(GetMenuItemCount(file), 1);
+                let quit = GetMenuItemID(file, 0);
+                assert_ne!(quit, u32::MAX);
+                assert_ne!(PostMessageW(hwnd, WM_COMMAND, quit as WPARAM, 0), 0);
+            }
+            // Predefined Quit posts WM_QUIT directly: it exits 0 without this VM's marker.
+            app.run(|_, _| {});
+            panic!("native File > Quit must exit through terminal cleanup");
+        }
         let mut hwnd = std::ptr::null_mut();
         loop {
             hwnd = unsafe {
@@ -313,15 +379,6 @@ mod tests {
             unsafe { SetWindowSubclass(hwnd, Some(downstream), 41, 0) },
             0
         );
-        let probe = Arc::new(Probe {
-            marker: std::env::var_os("BRIDGE_WINDOWS_SESSION_MARKER")
-                .unwrap()
-                .into(),
-            native_thread: unsafe { GetCurrentThreadId() },
-            calls: AtomicUsize::new(0),
-            stops: AtomicUsize::new(0),
-            clean: case != "failed",
-        });
         let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
         let engine = EngineState::with_transport(vm.clone());
         let send = SendOwner::new(Arc::new(AgentFolder::new(None)), ClusterSession::default());

@@ -33,7 +33,8 @@ func run(_ args: [String], _ name: String, timeout: Double = 900,
         Thread.sleep(forTimeInterval: 0.2)
         if process.isRunning { kill(process.processIdentifier, SIGKILL) }
         process.waitUntilExit()
-        fatalError("\(name) timed out: \(try String(contentsOf: output, encoding: .utf8))")
+        let log = try String(contentsOf: output, encoding: .utf8)
+        fatalError("\(name) timed out: \(log)")
     }
     process.waitUntilExit()
     return (process.terminationStatus, try String(contentsOf: output, encoding: .utf8))
