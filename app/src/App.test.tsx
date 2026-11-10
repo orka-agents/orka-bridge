@@ -95,11 +95,12 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
   expect(search.hasAttribute('disabled')).toBe(true);
   expect(search.getAttribute('title')).toMatch(/Search.*coming/i);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
-  for (const name of ['New agent', 'Send to a cluster']) {
+  for (const name of ['New agent']) {
     const button = screen.getByRole('button', { name });
     expect(button.hasAttribute('disabled')).toBe(true);
     expect(button.getAttribute('title')).toMatch(/coming/i);
   }
+  expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/agent folder|Reopen your agent/);
   expect(screen.getByText('This computer')).toBeTruthy();
 });
 

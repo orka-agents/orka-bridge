@@ -7,6 +7,9 @@ use std::{
 };
 use tungstenite::{protocol::Role, Message, WebSocket};
 
+#[path = "cluster_send.rs"]
+mod send;
+
 #[derive(Default)]
 pub(super) struct Wire {
     calls: Mutex<Vec<(String, Value)>>,
@@ -105,7 +108,9 @@ impl Wire {
                 if mode == "broken" && method == "POST" {
                     return;
                 }
-                if mode == "hang" && method == "POST" {
+                if (mode == "hang" && method == "POST")
+                    || (mode == "hang-tools" && path.starts_with("/api/v1/tools?"))
+                {
                     // Wait for the owner's close to tear down the actual websocket.
                     while ws.read().is_ok() {}
                     return;
@@ -117,7 +122,7 @@ impl Wire {
                     } else {
                         "Task"
                     };
-                    let mut object = json!({"apiVersion":"core.orka.ai/v1alpha1","kind":kind,"metadata":{"name":body["name"],"namespace":"agents","uid":format!("uid-{}",body["name"].as_str().unwrap()),"generation":1},"spec":body["spec"],"status":{"phase":if mode == "failed" {"Failed"} else {"Succeeded"}}});
+                    let mut object = json!({"apiVersion":"core.orka.ai/v1alpha1","kind":kind,"metadata":{"name":body["name"],"namespace":"agents","uid":format!("uid-{}",body["name"].as_str().unwrap()),"generation":1},"spec":body["spec"],"status":{"phase":match mode { "failed" => "Failed", "running" => "Running", _ => "Succeeded" }}});
                     if kind == "Task" {
                         object["spec"]["timeout"] = json!("2m0s");
                         object["spec"]["retryPolicy"]
@@ -154,7 +159,7 @@ impl Wire {
                 } else if route.ends_with("/providers") {
                     (
                         200,
-                        json!({"items":[{"metadata":{"name":"model","namespace":"agents"},"status":{"ready":true}}],"metadata":{}}),
+                        json!({"items":[{"metadata":{"name":"model","namespace":"agents"},"status":{"ready":mode != "unready"}}],"metadata":{}}),
                     )
                 } else if route.ends_with("/tools") {
                     (

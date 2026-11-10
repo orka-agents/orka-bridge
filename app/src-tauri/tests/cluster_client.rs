@@ -169,6 +169,8 @@ struct ApiFixture {
     no_watch: Mutex<bool>,
     unrelated_api: Mutex<bool>,
     override_response: Mutex<Option<(String, u16, Value)>>,
+    // Holds one Service list open, so a test can keep discovery's session lock.
+    gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
 }
 impl ApiFixture {
     fn start(self: &Arc<Self>) -> String {
@@ -268,6 +270,9 @@ impl ApiFixture {
             );
         }
         if path.ends_with("/services") {
+            if let Some(gate) = self.gate.lock().unwrap().take() {
+                let _ = gate.recv();
+            }
             let uid = if *self.replacement.lock().unwrap() {
                 "replacement"
             } else {

@@ -8,12 +8,13 @@ const messages = {
   unavailable: 'Access could not be confirmed. Check the Orka connection and its configured Providers, then try again.',
   unsupportedCredential: 'This context uses a sign-in method Bridge cannot use yet. Your context is still listed; no sign-in was started.',
 };
-export default function ClusterCard({ onPlace }: { onPlace: (place: SelectedPlace) => void }) {
+export default function ClusterCard({ onPlace, onOpenAgent }: { onPlace: (place: SelectedPlace) => void; onOpenAgent: () => void }) {
   const [choices, setChoices] = useState<ContextView[]>([]);
   const [contextId, setContextId] = useState('');
   const [targets, setTargets] = useState<TargetView[]>();
   const [targetId, setTargetId] = useState('');
   const [access, setAccess] = useState<AccessView>();
+  const [providerId, setProviderId] = useState('');
   const [account, setAccount] = useState('');
   const [needsAccount, setNeedsAccount] = useState(false);
   const [busy, setBusy] = useState(true);
@@ -22,6 +23,7 @@ export default function ClusterCard({ onPlace }: { onPlace: (place: SelectedPlac
   const [details, setDetails] = useState(false);
   const epoch = useRef(0); const admitted = useRef(false);
   const accountField = useRef<HTMLInputElement>(null);
+  const providerField = useRef<HTMLSelectElement>(null);
   useEffect(() => {
     let mounted = true;
     void contexts().then(v => { if (mounted) { setChoices(v); setBusy(false); } }, () => {
@@ -29,7 +31,10 @@ export default function ClusterCard({ onPlace }: { onPlace: (place: SelectedPlac
     });
     return () => { mounted = false; epoch.current++; };
   }, [retry]);
-  useEffect(() => { if (access?.status === 'needServiceAccount') accountField.current?.focus(); }, [access]);
+  useEffect(() => {
+    if (access?.status === 'needServiceAccount') accountField.current?.focus();
+    if (access?.status === 'connected') providerField.current?.focus();
+  }, [access]);
   const target = targets?.find(t => t.id === targetId);
   async function check(id: string) {
     const request = ++epoch.current;
@@ -52,7 +57,9 @@ export default function ClusterCard({ onPlace }: { onPlace: (place: SelectedPlac
       if (request !== epoch.current) return;
       setAccess(value);
       if (value.status === 'needServiceAccount') setNeedsAccount(true);
-      onPlace(value.status === 'connected' ? { kind: 'cluster', target } : { kind: 'cluster' });
+      const selectedProvider = value.providers.length === 1 ? value.providers[0].id : '';
+      setProviderId(selectedProvider);
+      onPlace(value.status === 'connected' ? { kind: 'cluster', target, providers: value.providers, providerId: selectedProvider } : { kind: 'cluster' });
     } catch { if (request === epoch.current) setError('Access could not be confirmed. Try again.'); }
     finally { admitted.current = false; if (request === epoch.current) setBusy(false); }
   }
@@ -79,7 +86,11 @@ export default function ClusterCard({ onPlace }: { onPlace: (place: SelectedPlac
       <button type="button" className="workspace-disclosure" aria-expanded={details} aria-controls="cluster-details" onClick={() => setDetails(v => !v)}>{details ? 'Hide details' : 'Show details'}</button>
       {details && <dl id="cluster-details" className="cluster-details"><div><dt>Context</dt><dd>{target.context_name}</dd></div><div><dt>Service</dt><dd>{target.service_namespace} / {target.service_name}</dd></div><div><dt>Watched namespace</dt><dd>{target.watched_namespace}</dd></div><div><dt>Orka image</dt><dd>{target.image}</dd></div>
         {access?.providers.map(p => <div key={p.id}><dt>Provider</dt><dd>{p.name} <span className="muted">{p.ready ? 'Ready' : 'Not ready'}</span></dd></div>)}</dl>}
-      {access?.status === 'connected' && <span className="coming-control" tabIndex={0} role="group" aria-label="Send to this cluster: Sending and remote checks are coming" title="Sending and remote checks are coming"><button type="button" className="workspace-primary" disabled title="Sending and remote checks are coming">Send to this cluster</button><span className="control-tip" aria-hidden="true">Sending and remote checks are coming</span></span>}
+      {access?.status === 'connected' && <><label htmlFor="send-provider">Provider</label>
+        <select ref={providerField} id="send-provider" value={providerId} onChange={event => { setProviderId(event.target.value); onPlace({ kind: 'cluster', target, providers: access.providers, providerId: event.target.value }); }}>
+          <option value="">Choose a Provider</option>{access.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.ready ? 'Ready' : 'Not ready'}</option>)}
+        </select><p className="muted">The agent keeps the model named in its file. The checks test whether this Provider can serve it.</p>
+        <button type="button" className="workspace-primary" disabled={!providerId} title={!providerId ? 'Choose a Provider first' : undefined} onClick={onOpenAgent}>Open your agent</button></>}
     </>}
     {error && <p role="alert">{error}</p>}
     {(error || access?.status === 'unsupportedCredential') && <p className="muted">After changing kubeconfig, quit and reopen Bridge to read it again.</p>}
