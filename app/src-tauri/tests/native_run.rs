@@ -93,6 +93,10 @@ fn soul_parser_checks_decoded_bytes_sources_and_references() {
         let agent = source(json!({"inline":text,"digest":digest}));
         assert!(ParsedPair::parse(agent.as_bytes(), TESTS.as_bytes()).is_ok());
     }
+    // Shared vector with the form test: YAML 1.1 folds raw NEL/LS/PS, so the
+    // renderer must write explicit escapes to preserve these decoded bytes.
+    let separators = AGENT.replace("  tools:", "  soul: {inline: \"a\\u0085b c\\u2028 d\\u2029e\", digest: sha256:226df73f14b454e1a1ee85887e4a410dab81d028eb849b524100a3382b72dac2}\n  tools:");
+    assert!(ParsedPair::parse(separators.as_bytes(), TESTS.as_bytes()).is_ok());
     let ref_digest = format!("sha256:{}", "a".repeat(64));
     for invalid in [
         json!({}),

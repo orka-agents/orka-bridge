@@ -25,6 +25,11 @@ test('catalog model choices retain unlisted file model and never substitute the 
   fireEvent.change(model, { target: { value: 'listed' } });
   expect(readForm(changed.mock.calls[0][0]).model).toBe('listed');
 });
+test('an existing incompatible model stays visible without calling it unlisted', () => {
+  const changed = vi.fn(); render(<AgentParts source={source.replace('model: unlisted', 'model: hidden')} readOnly={false} catalog={catalog} onChange={changed} />);
+  expect(screen.getByRole('option', { name: 'hidden (not offered for chat)' })).toBeTruthy();
+  expect(changed).not.toHaveBeenCalled();
+});
 test('tool choices show descriptions as text, distinguish kinds and suppress effective-name collisions', async () => {
   const changed = vi.fn(); const user = userEvent.setup(); const view = render(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={changed} />);
   const add = screen.getByRole('button', { name: 'Add a tool' }); await user.click(add);

@@ -83,14 +83,19 @@ function insertField(source: string, map: YAMLMap, offset: number, entry: string
   const indent = absolute - source.lastIndexOf('\n', absolute - 1) - 1;
   return patch(source, absolute, absolute, entry + newline(source) + ' '.repeat(indent));
 }
+// Both the renderer's YAML 1.2 and native libyaml's YAML 1.1 must decode the
+// same bytes. JSON alone leaves these YAML 1.1 line separators unescaped.
+function quotedText(value: string) {
+  return JSON.stringify(value).replace(/[\u0085\u2028\u2029]/g, character => '\\u' + character.charCodeAt(0).toString(16).padStart(4, '0'));
+}
 // Replace one scalar only, retaining any trailing comment and block-scalar newline.
 function setText(source: string, map: YAMLMap, offset: number, key: string, value: string) {
   const node = map.get(key, true);
-  if (node === undefined) return insertField(source, map, offset, `${key}: ${JSON.stringify(value)}`);
+  if (node === undefined) return insertField(source, map, offset, `${key}: ${quotedText(value)}`);
   if (!isScalar(node) || !node.range || text(node) === undefined || text(node) === value) return source;
   const block = node.type === 'BLOCK_LITERAL' || node.type === 'BLOCK_FOLDED';
   const suffix = block ? (node.comment ? ` #${node.comment}` : '') + newline(source) : '';
-  return patch(source, offset + node.range[0], offset + node.range[1], JSON.stringify(value) + suffix);
+  return patch(source, offset + node.range[0], offset + node.range[1], quotedText(value) + suffix);
 }
 export function changeModel(source: string, value: string) {
   const meta = metadata(source);
@@ -102,7 +107,7 @@ export async function changeSoulInline(source: string, value: string) {
   const { root, offset } = metadata(source); const kmx = profile(root)!;
   const soul = kmx.get('soul', true);
   const edited = isMap(soul) ? setText(source, soul, offset, 'inline', value)
-    : insertField(source, kmx, offset, `soul: {inline: ${JSON.stringify(value)}}`);
+    : insertField(source, kmx, offset, `soul: {inline: ${quotedText(value)}}`);
   if (edited === source || form.soul?.digest === undefined) return edited;
   // Hash the decoded replacement and publish the text and digest in one edit.
   const decoded = readForm(edited).soul!.inline!;

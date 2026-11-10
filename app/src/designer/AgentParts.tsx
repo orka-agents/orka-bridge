@@ -27,6 +27,8 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
     && `${tool.name} ${tool.description} ${tool.kind === 'builtin' ? builtInTools[tool.name] ?? '' : ''}`.toLowerCase().includes(query.toLowerCase()));
   const models = catalog?.models.state === 'ready' ? catalog.models.items.filter(model => model.pickerEnabled !== false && model.chatSupported !== false) : undefined;
   const listed = models?.some(model => model.id === form.model);
+  const knownModel = catalog?.models.state === 'ready' && catalog.models.items.some(model => model.id === form.model);
+  const unlistedLabel = models ? knownModel ? ' (not offered for chat)' : ' (unlisted)' : '';
   const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit tools in File view for this file’s format.'
     : catalogLoading ? 'Reading the workspace catalog…' : tools === undefined ? 'Tool catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
   const modelReason = readOnly ? 'You can change the model after setup.' : !form.modelEditable ? 'Edit the model in File view for this file’s format.'
@@ -83,7 +85,7 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
       <label htmlFor={`${id}-model`}>It thinks with</label>
       <div className="agent-tool-row">
         <select id={`${id}-model`} className="part-button model-select" disabled={!!modelReason} title={modelReason} value={form.model ?? ''} onChange={event => change(changeModel(source, event.target.value))}>
-          {!listed && <option value={form.model ?? ''}>{form.model ? `${form.model}${models ? ' (unlisted)' : ''}` : 'No model in this file'}</option>}
+          {!listed && <option value={form.model ?? ''}>{form.model ? `${form.model}${unlistedLabel}` : 'No model in this file'}</option>}
           {models?.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}
         </select>
         <span className="muted">{modelReason ?? (models?.length ? `Workspace default: ${catalog?.defaultModel}` : 'No models listed by this workspace.')}</span>

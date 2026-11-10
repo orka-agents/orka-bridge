@@ -31,6 +31,12 @@ test.each(['\n', '\r\n'])('block scalar and absent soul round-trip without addin
   expect(changed).toContain('future: {keep: "exact"} # untouched' + nl);
   expect(readForm(await changeSoulInline(source, 'New')).soul).toEqual({ inline: 'New' });
 });
+test('soul edits escape YAML 1.1 line separators so native Run decodes the same bytes', async () => {
+  const s = source.replace('  tools:', '  soul: {inline: old, digest: sha256:old}\n  tools:');
+  const changed = await changeSoulInline(s, 'a\u0085b c\u2028 d\u2029e');
+  expect(changed).toContain('"a\\u0085b c\\u2028 d\\u2029e"');
+  expect(readForm(changed).soul?.inline).toBe('a\u0085b c\u2028 d\u2029e');
+});
 test('reference edits remain references and unsupported soul shapes are left alone', async () => {
   const s = source.replace('  tools:', '  soul: {configMapRef: {name: persona, key: SOUL.md}, digest: sha256:old} # keep\n  tools:');
   const changed = changeSoulReference(s, 'name', 'persona.v2');
