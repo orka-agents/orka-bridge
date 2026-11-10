@@ -17,7 +17,7 @@ function record(value: unknown, keys: string[]): value is Record<string, unknown
 }
 const text = (value: unknown, max = 4096): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const verdict = (value: unknown): value is Verdict => value === 'passed' || value === 'failed' || value === 'unknown';
-function valid(value: unknown): value is RunSnapshot {
+export function isRunSnapshot(value: unknown): value is RunSnapshot {
   const keys = ['state', 'canRun', 'report', 'acknowledged', 'pending', 'error'];
   if (typeof value === 'object' && value !== null) {
     if ('source' in value) keys.push('source');
@@ -35,6 +35,6 @@ function valid(value: unknown): value is RunSnapshot {
 }
 export async function runCall(command: 'setup_run_status' | 'setup_run_example'): Promise<{ ok: true; snapshot: RunSnapshot } | { ok: false; message: string }> {
   if (!isTauri()) return { ok: false, message: 'Run is available only in the native app.' };
-  try { const value = await invoke<unknown>(command); if (valid(value)) return { ok: true, snapshot: value }; } catch { /* Never expose native errors or diagnostics. */ }
+  try { const value = await invoke<unknown>(command); if (isRunSnapshot(value)) return { ok: true, snapshot: value }; } catch { /* Never expose native errors or diagnostics. */ }
   return { ok: false, message: 'Run information is not supported by this build.' };
 }

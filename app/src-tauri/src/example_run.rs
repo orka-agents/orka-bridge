@@ -197,23 +197,27 @@ impl ExampleRun {
     fn record(&self, handle: &RunHandle, pending: Option<PendingRef>, report: Option<RunReport>) {
         let mut state = self.0.lock().unwrap();
         state.handle = Some(handle.clone());
-        state.snapshot.acknowledged = handle
-            .agent()
-            .map(|r| Receipt {
-                kind: "Agent",
-                name: r.name.clone(),
-                uid: r.uid.clone(),
-            })
-            .into_iter()
-            .chain(handle.tasks().iter().map(|r| Receipt {
-                kind: "Task",
-                name: r.name.clone(),
-                uid: r.uid.clone(),
-            }))
-            .collect();
+        state.snapshot.acknowledged = receipts(handle);
         state.snapshot.pending = pending;
         state.snapshot.report = report;
     }
+}
+/// Acknowledged identities only, shared by local Run and remote Send.
+pub fn receipts(handle: &RunHandle) -> Vec<Receipt> {
+    handle
+        .agent()
+        .map(|r| Receipt {
+            kind: "Agent",
+            name: r.name.clone(),
+            uid: r.uid.clone(),
+        })
+        .into_iter()
+        .chain(handle.tasks().iter().map(|r| Receipt {
+            kind: "Task",
+            name: r.name.clone(),
+            uid: r.uid.clone(),
+        }))
+        .collect()
 }
 struct VmRunTransport<'a> {
     client: Mutex<&'a mut VmClient>,

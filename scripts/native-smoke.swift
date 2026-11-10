@@ -100,6 +100,18 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
+    if name == "send-probe" { return observations }
+    if name.hasPrefix("send-") {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("Send your agent") || text.contains("Checks on your cluster") || text.contains("Checks:") || text.contains("Running checks") || text.contains("Planned Agent"), "Send panel not visible: \(text)")
+        print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
+        return observations
+    }
+    if name == "cluster-access" {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("Access confirmed") && text.contains("Open your agent"), "Fixture access not confirmed: \(text)")
+        return observations
+    }
     if name.hasPrefix("cluster-card") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Orka found") && text.contains("orka:fixture"), "Fixture Orka not visible: \(text)")
@@ -150,6 +162,28 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     require(headings == Set([expectedHeading]), "Native screenshot does not show the expected \(expectedHeading) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
     return observations
+}
+func scrollMain(_ pixels: Int32) {
+    let rect = window()!.1
+    mouse(.mouseMoved, CGPoint(x: rect.maxX - 20, y: rect.midY))
+    CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.3)
+}
+func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
+    // Disabling Start during IPC can reset WebKit's keyboard focus. Locate the
+    // real control after each state transition instead of counting Tab stops.
+    var observed: [String] = []
+    for _ in 0..<4 {
+        let seen = try capture("send-probe", "Designer")
+        observed = seen.compactMap { $0.topCandidates(1).first?.string }
+        // Vision includes the native disclosure triangle as a bullet in this label.
+        if let control = observed.first(where: { $0 == label || (label == "Show details" && $0 == "• \(label)") }) {
+            clickText(control, in: seen)
+            return
+        }
+        scrollMain(pixels)
+    }
+    fatalError("Send control not visible: \(label); observed: \(observed)")
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 var initial = try capture("initial", "Clusters")
@@ -321,7 +355,39 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Move past the placeholder whether the first Down opens the popup or advances it.
     key(125); key(125); key(36)
     Thread.sleep(forTimeInterval: 2)
-    // Tab focuses Use and brings the discovery summary into view at minimum size.
-    key(48)
-    try capture("cluster-card-minimum", "Clusters")
+    // Capture discovery before the explicit access confirmation.
+    let card = try capture("cluster-card-minimum", "Clusters")
+    // Closing a native select popup can return focus to navigation. Activate the
+    // observed Use control instead of assuming Tab left focus on it.
+    clickText("Use this cluster", in: card)
+    Thread.sleep(forTimeInterval: 1)
+    scrollMain(-400)
+    let connected = try capture("cluster-access", "Clusters")
+    clickText("Open your agent", in: connected)
+    Thread.sleep(forTimeInterval: 0.5)
+    let ownedAgent = try capture("agent-cluster-owned", "Designer")
+    clickText("Send to a cluster", in: ownedAgent)
+    try capture("send-ready", "Designer")
+    try clickSendControl("Send and run checks", scrolling: -350)
+    Thread.sleep(forTimeInterval: 1)
+    let result = try capture("send-result", "Designer")
+    require(result.contains { $0.topCandidates(1).first?.string == "Checks: pass" }, "Fixture-backed Send did not pass its real assertions")
+    try clickSendControl("Show details", scrolling: -350)
+    scrollMain(-350)
+    let details = try capture("send-result-details", "Designer")
+    require(details.contains { ($0.topCandidates(1).first?.string ?? "").contains("bridge-run-") }, "Agent identity is not visible in native Send details")
+    // The fixture's second Agent stays Running so this is a real Stop, not an
+    // injected renderer state. Previously created resources remain on the fixture.
+    try clickSendControl("Send and run checks", scrolling: 350)
+    Thread.sleep(forTimeInterval: 0.5)
+    try capture("send-running", "Designer")
+    try clickSendControl("Stop", scrolling: -350)
+    Thread.sleep(forTimeInterval: 0.5)
+    let stopped = try capture("send-stopped", "Designer")
+    require(stopped.contains { ($0.topCandidates(1).first?.string ?? "").contains("Stopped watching") }, "Native Stop did not return its result")
+    clickTab("Clusters", stopped); clickTab("Designer", stopped)
+    let returned = try capture("agent-cluster-return", "Designer")
+    clickText("Send to a cluster", in: returned)
+    let returnedResult = try capture("send-page-return", "Designer")
+    require(returnedResult.contains { ($0.topCandidates(1).first?.string ?? "").contains("Stopped watching") }, "Page return lost the stopped Send result")
 }

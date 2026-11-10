@@ -1,5 +1,6 @@
 //! ID-only desktop boundary. Credentials and confirmed access stay in this native owner.
 use super::*;
+use kube::config::Kubeconfig;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -33,8 +34,8 @@ impl From<AccessOutcome> for AccessView {
 #[derive(Default)]
 struct Session {
     client: Option<ClusterClient>,
-    // Task 4 consumes this access, rather than asking the renderer for a credential.
-    access: Option<RemoteAccess>,
+    // Send shares this frozen access; a later Use replaces it without switching a running attempt.
+    access: Option<(TargetId, Arc<RemoteAccess>)>,
 }
 impl Session {
     fn client(&mut self) -> Result<&mut ClusterClient, &'static str> {
@@ -49,14 +50,44 @@ impl Session {
             .ok_or("kubectl contexts are unavailable.")
     }
 }
-#[derive(Default)]
-pub struct ClusterSession(Mutex<Session>);
+/// Reads the current kubeconfig for each Send; tests inject fixtures here.
+pub type KubeconfigReader = Arc<dyn Fn() -> Result<Kubeconfig, ClusterError> + Send + Sync>;
+#[derive(Clone)]
+pub struct ClusterSession(Arc<Mutex<Session>>, KubeconfigReader);
+impl Default for ClusterSession {
+    fn default() -> Self {
+        Self(Arc::default(), Arc::new(read_kubeconfig))
+    }
+}
+fn read_kubeconfig() -> Result<Kubeconfig, ClusterError> {
+    Kubeconfig::read().map_err(|_| ClusterError::Unavailable)
+}
 impl ClusterSession {
     pub fn new(client: ClusterClient) -> Self {
-        Self(Mutex::new(Session {
-            client: Some(client),
-            access: None,
-        }))
+        Self::with_reader(client, Arc::new(read_kubeconfig))
+    }
+    pub fn with_reader(client: ClusterClient, reader: KubeconfigReader) -> Self {
+        Self(
+            Arc::new(Mutex::new(Session {
+                client: Some(client),
+                access: None,
+            })),
+            reader,
+        )
+    }
+    /// Memory-only lookup; the caller rechecks a fresh kubeconfig before writing.
+    pub(crate) async fn send_access(
+        &self,
+        target: &str,
+    ) -> (Option<Arc<RemoteAccess>>, KubeconfigReader) {
+        let access = self
+            .0
+            .lock()
+            .await
+            .access
+            .as_ref()
+            .and_then(|(id, access)| (id.0.to_string() == target).then(|| access.clone()));
+        (access, self.1.clone())
     }
     pub async fn contexts(&self) -> Result<Vec<ContextView>, &'static str> {
         self.0
@@ -88,10 +119,12 @@ impl ClusterSession {
     pub async fn use_target(&self, target_id: &str, sa_name: Option<String>) -> AccessView {
         let mut session = self.0.lock().await;
         session.access = None;
+        let id = Uuid::parse_str(target_id).ok().map(TargetId);
         let result = async {
             let client = session.client().map_err(|_| AccessOutcome::Unavailable)?;
-            let id = Uuid::parse_str(target_id).map_err(|_| AccessOutcome::Unavailable)?;
-            client.connect(TargetId(id), sa_name).await
+            client
+                .connect(id.ok_or(AccessOutcome::Unavailable)?, sa_name)
+                .await
         }
         .await;
         match result {
@@ -100,7 +133,7 @@ impl ClusterSession {
                     status: AccessStatus::Connected,
                     providers: access.providers().to_vec(),
                 };
-                session.access = Some(access);
+                session.access = id.map(|id| (id, Arc::new(access)));
                 view
             }
             Err(outcome) => outcome.into(),

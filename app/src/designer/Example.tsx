@@ -5,9 +5,11 @@ import Run from './Run';
 import AgentParts from './AgentParts';
 import { readForm } from './agent-form';
 import type { RunSnapshot } from './run-api';
+import type { SelectedPlace } from '../clusters/api';
+import Send, { SendEntry } from '../clusters/Send';
 
-export default function Example({ active = true, readOnly = false, remote = false, actions, onPair, onRun, onSaveState, onStale }: {
-  active?: boolean; readOnly?: boolean; remote?: boolean; actions?: ReactNode;
+export default function Example({ active = true, readOnly = false, remote = false, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
+  active?: boolean; readOnly?: boolean; remote?: boolean; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void;
   onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
 }) {
@@ -17,6 +19,13 @@ export default function Example({ active = true, readOnly = false, remote = fals
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [view, setView] = useState<'Agent' | 'File'>('Agent');
   const [stale, setStale] = useState(false);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [localRun, setLocalRun] = useState<RunSnapshot>();
+  const observeRun = useCallback((value: RunSnapshot | undefined) => { setLocalRun(value); onRun?.(value); }, [onRun]);
+  const openSend = () => {
+    setSendOpen(true);
+    requestAnimationFrame(() => { const panel = document.querySelector<HTMLElement>('.send-panel'); panel?.focus(); panel?.scrollIntoView?.({ block: 'start' }); });
+  };
   const latest = useRef(''); const saved = useRef(''); const busy = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lineEnding = useRef('\n'); const needsCommit = useRef(false);
@@ -62,6 +71,9 @@ export default function Example({ active = true, readOnly = false, remote = fals
   };
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const saveLabel = { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
+  const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
+    : readOnly ? 'Sending is unavailable while this example is read-only during setup'
+    : saveState !== 'saved' ? 'Save your changes first' : undefined;
   return <section className="designer" aria-labelledby={active ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
       <div className="agent-heading-copy"><h1 id={active ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{info.description && <p className="muted">{info.description}</p>}</div>
@@ -72,6 +84,8 @@ export default function Example({ active = true, readOnly = false, remote = fals
           <button type="button" aria-pressed={view === 'File'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('File')}>File</button>
         </div>
         {actions}
+        <SendEntry blocked={sendBlocked} failingCheck={!stale && localRun?.sourceCurrent !== false ? localRun?.report?.cases.find(c => c.verdict === 'failed')?.id : undefined}
+          onProceed={openSend} onFix={() => { setView('Agent'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.instructions-editor')?.focus()); }} />
       </div>
     </div>
     {!pair ? error ? <p role="alert">{error}</p> : <p role="status">Opening your agent…</p> : <>
@@ -87,9 +101,10 @@ export default function Example({ active = true, readOnly = false, remote = fals
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
-        {remote ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run checks: Remote checks are coming" title="Remote checks are coming"><button type="button" className="setup-button" disabled title="Remote checks are coming">Run checks</button><span className="control-tip" aria-hidden="true">Remote checks are coming</span></span><p className="muted">Sending and running checks on a cluster are coming. Choose This computer in Clusters to run locally.</p></div> : readOnly ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
+        <Send place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} />
+        {!remote && readOnly ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
           : null}
-        {!readOnly && <div hidden={remote}><Run source={pair.source} onSnapshot={onRun} blocked={remote || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} /></div>}
+        {!readOnly && <div hidden={remote}><Run source={pair.source} onSnapshot={observeRun} blocked={remote || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} /></div>}
         <details className="check-source"><summary>Check file: web-reader.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Check file, read-only">{pair.tests}</pre></details>
       </div>
     </>}
