@@ -13,7 +13,11 @@ require(NSRunningApplication.runningApplications(withBundleIdentifier: "ai.orka.
 func launch() throws -> NSRunningApplication {
 let opened = Process()
 opened.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-opened.arguments = [CommandLine.arguments[2]]
+var arguments = [CommandLine.arguments[2]]
+if let kubeconfig = ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] {
+    arguments += ["--env", "KUBECONFIG=\(kubeconfig)"]
+}
+opened.arguments = arguments
 try opened.run()
 opened.waitUntilExit()
 require(opened.terminationStatus == 0, "Cannot open Bridge")
@@ -96,6 +100,12 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
+    if name.hasPrefix("cluster-card") {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("Orka found") && text.contains("orka:fixture"), "Fixture Orka not visible: \(text)")
+        print("PASS \(name): native discovery card, fixture image observed; no Use or Send")
+        return observations
+    }
     if page == "Clusters" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can read the capital I in AI as lowercase l. Match the rest of the heading.
@@ -293,3 +303,23 @@ let minimum = window()!.1
 require(abs(minimum.width - minimumFrame.width) < 3 && abs(minimum.height - minimumFrame.height) < 3, "Native minimum-size resize not verified: \(minimum), expected \(minimumFrame.size)")
 try capture("clusters-minimum", "Clusters")
 print("PASS native walk: pointer, Shift-Tab/Tab, Space, Enter and minimum window")
+if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
+    let local = try capture("before-cluster", "Clusters")
+    clickText("Use a cluster you already have instead", in: local)
+    Thread.sleep(forTimeInterval: 1)
+    // The label focuses its native select. Choose the only synthetic context.
+    let chooserFile = "\(output)/cluster-chooser.png"
+    let command = Process()
+    command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+    command.arguments = ["-x", "-o", "-l", String(window()!.0), chooserFile]
+    try command.run(); command.waitUntilExit()
+    let request = VNRecognizeTextRequest()
+    try VNImageRequestHandler(url: URL(fileURLWithPath: chooserFile)).perform([request])
+    clickText("kubectl context", in: request.results ?? [])
+    // Move past the placeholder whether the first Down opens the popup or advances it.
+    key(125); key(125); key(36)
+    Thread.sleep(forTimeInterval: 2)
+    // Tab focuses Use and brings the discovery summary into view at minimum size.
+    key(48)
+    try capture("cluster-card-minimum", "Clusters")
+}

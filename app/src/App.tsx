@@ -4,6 +4,7 @@ import EngineStatus from './components/EngineStatus';
 import Setup from './setup/Setup';
 import Example from './designer/Example';
 import type { SetupStatus, ExamplePair } from './setup/state';
+import type { SelectedPlace } from './clusters/api';
 import type { ModelState } from './setup/Model';
 import { workspaceRecovery } from './setup/recovery-info';
 import type { RunSnapshot } from './designer/run-api';
@@ -64,6 +65,9 @@ function ComingButton({ label, reason }: { label: string; reason: string }) {
 
 export default function App() {
   const [page, setPage] = useState<Page>('Clusters');
+  const [place, setPlace] = useState<SelectedPlace>({ kind: 'thisComputer' });
+  const remote = place.kind === 'cluster';
+  const placeName = remote ? place.target?.context_name ?? 'Choose a cluster' : 'This computer';
   const content = useRef<HTMLElement>(null);
   useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);
@@ -109,9 +113,10 @@ export default function App() {
   const hostDetail = workspaceReady ? modelDetail : workspaceDetail;
   const cases = run?.report?.cases;
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
-  const checks = checksStale ? 'Checks not run since your change' : runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
+  const localChecks = checksStale ? 'Checks not run since your change' : runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
     : run?.state === 'running' ? 'Running checks…' : cases
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} checks passing` : undefined;
+  const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
   const firstCheck = checksStale ? 'stale' : runUnavailable || run?.state === 'unknown' ? 'unknown'
     : run?.state === 'running' ? 'running' : run?.state === 'complete' ? run.report?.verdict : undefined;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
@@ -122,9 +127,9 @@ export default function App() {
     : cases ? 'checks passing' : 'ready to edit';
   const tabStatus: Record<Page, string> = {
     Overview: checks ?? 'No agents yet',
-    Designer: agentName ? `${agentName}, ${exampleReadOnly ? 'ready to read' : agentStatus}` : !exampleOpen ? 'No agent open'
+    Designer: agentName ? `${agentName}, ${exampleReadOnly ? 'ready to read' : remote ? 'remote checks coming' : agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
-    Clusters: welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
+    Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
       : model === 'connected' ? run?.state === 'complete' ? 'This computer ready' : 'AI connected'
       : model === 'idle' ? setupLine : modelDetail,
   };
@@ -158,7 +163,7 @@ export default function App() {
             </button>
             <span className="control-tip" aria-hidden="true">Search is coming</span>
           </span>
-          <span className="host-chip" title={hostDetail}><span className={`live-dot ${tone}`} aria-hidden="true" />This computer<span className="sr-only">: {hostDetail}</span></span>
+          <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : tone}`} aria-hidden="true" />{placeName}<span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
         </div>
       </header>
       <main ref={content} className="page-content" aria-labelledby="page-title">
@@ -170,13 +175,13 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={setModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
+          <Setup onPlace={setPlace} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={setModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
             onOpenExample={() => {
               if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
               setExampleOpen(true); setPage('Designer');
             }} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} remote={remote} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
           <ComingButton label="Send to a cluster" reason="Sending to a cluster is coming" />
         </>} /></div>}
@@ -191,13 +196,13 @@ export default function App() {
         {page === 'Clusters' && <details className="engine-diagnostics"><summary>Engine diagnostics</summary><EngineStatus key={String(engineReady)} /></details>}
       </main>
       <footer className="status-bar">
-        <span className={`live-dot ${tone}`} aria-hidden="true" />
-        <span>{welcome ? 'Nothing is set up yet' : workspaceReady ? 'This computer ready' : setupLine}</span>
-        {!welcome && (detail !== setupLine || workspaceReady) ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : workspaceDetail}</span></> : null}
+        <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : tone}`} aria-hidden="true" />
+        <span>{remote ? place.target ? `${placeName} · Access confirmed` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : workspaceReady ? 'This computer ready' : setupLine}</span>
+        {!remote && !welcome && (detail !== setupLine || workspaceReady) ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : workspaceDetail}</span></> : null}
         {exampleState === 'loaded' && !exampleReadOnly && <><span aria-hidden="true">·</span><span>{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
-          page !== 'Clusters' ? (workspaceReady ? `This computer ready · ${modelDetail}` : `${setupLine} · ${workspaceDetail}`) : undefined,
+          page !== 'Clusters' ? (remote ? placeName : workspaceReady ? `This computer ready · ${modelDetail}` : `${setupLine} · ${workspaceDetail}`) : undefined,
           page !== 'Designer' ? checks : undefined,
         ].filter(Boolean).join(' · ')}</span>
       </footer>

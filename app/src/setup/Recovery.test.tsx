@@ -45,8 +45,7 @@ test.each([
   expect(screen.getByRole('contentinfo').textContent).toContain(summary);
   expect(within(alert).getByText('What you downloaded is kept.')).toBeTruthy();
   const fallback = screen.getByRole('button', { name: 'Use a cluster you already have instead' });
-  expect(fallback.matches(':disabled')).toBe(true);
-  expect(fallback.title).toBe('Connecting an existing cluster is coming');
+  expect(fallback.matches(':disabled')).toBe(false);
 });
 
 test.each([

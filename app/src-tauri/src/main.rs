@@ -106,6 +106,29 @@ fn setup_run_example(
     state.inner().start(vm.inner().clone())
 }
 
+#[tauri::command]
+async fn cluster_contexts(
+    state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+) -> Result<Vec<bridge_engine::clusters::ContextView>, &'static str> {
+    state.contexts().await
+}
+#[tauri::command]
+async fn cluster_discover(
+    context_id: String,
+    state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+) -> Result<Vec<bridge_engine::clusters::TargetView>, bridge_engine::clusters::commands::AccessStatus>
+{
+    state.discover(&context_id).await
+}
+#[tauri::command]
+async fn cluster_use(
+    target_id: String,
+    sa_name: Option<String>,
+    state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+) -> Result<bridge_engine::clusters::commands::AccessView, &'static str> {
+    Ok(state.use_target(&target_id, sa_name).await)
+}
+
 fn main() {
     let closing = AtomicBool::new(false);
     let completed = Arc::new(AtomicBool::new(false));
@@ -116,6 +139,7 @@ fn main() {
             app.manage(if vm.status() == LocalVmStatus::NotIntegrated { EngineState::configured() }
                 else { EngineState::with_transport(vm.clone()) });
             app.manage(store.clone()); app.manage(vm.clone());
+            app.manage(bridge_engine::clusters::commands::ClusterSession::default());
             let folder = Arc::new(AgentFolder::new(app.path().home_dir().ok()));
             app.manage(folder.clone());
             app.manage(bridge_engine::example_run::ExampleRun::new(tauri::async_runtime::handle().inner().clone(), bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE, folder));
@@ -126,7 +150,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_cancel_local, setup_change_local, setup_requirements, setup_open_help, setup_example, setup_connect_model, setup_run_status, setup_run_example, agent_open, agent_save])
+        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_cancel_local, setup_change_local, setup_requirements, setup_open_help, setup_example, setup_connect_model, setup_run_status, setup_run_example, agent_open, agent_save, cluster_contexts, cluster_discover, cluster_use])
         .build(tauri::generate_context!())
         .expect("error while building Bridge")
         .run(move |app, event| {

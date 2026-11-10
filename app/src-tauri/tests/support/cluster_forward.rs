@@ -222,7 +222,7 @@ impl Wire {
             }
         }
     }
-    fn posts(&self) -> usize {
+    pub(super) fn posts(&self) -> usize {
         self.calls
             .lock()
             .unwrap()

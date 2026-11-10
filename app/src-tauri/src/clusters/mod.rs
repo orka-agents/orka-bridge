@@ -1,4 +1,5 @@
 mod client;
+pub mod commands;
 mod forward;
 use bridge_runtime_protocol::Uuid;
 pub use client::{ClusterClient, RemoteAccess};

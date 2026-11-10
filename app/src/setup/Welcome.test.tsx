@@ -63,23 +63,19 @@ test('a saved native choice skips welcome even without a renderer preference', a
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
 
-test('disabled expert routes explain Coming and cannot select a workspace', async () => {
+test('expert route is available without starting a local workspace', async () => {
   const ipc = native(); const user = userEvent.setup(); render(<App />);
   const expert = await screen.findByRole('button', { name: 'I already run Orka on a cluster' });
-  expect(expert.matches(':disabled')).toBe(true);
-  expect(expert.closest('[title]')?.getAttribute('title')).toBe('Coming');
+  expect(expert.matches(':disabled')).toBe(false);
   await user.click(expert);
-  await user.click(screen.getByRole('button', { name: 'Get started' }));
-  const cluster = screen.getByRole('radio', { name: 'On a cluster you already have' });
-  expect(cluster.matches(':disabled')).toBe(true);
-  expect(cluster.closest('[title]')?.getAttribute('title')).toBe('Coming');
+  expect(screen.getByRole('radio', { name: 'On a cluster you already have' }).matches(':checked')).toBe(true);
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
 
-test('keyboard disclosure and radio selection are inert; only Continue starts once', async () => {
+test('keyboard disclosure and local radio selection are inert; only Continue starts once', async () => {
   localStorage.setItem(preference, '1'); const ipc = native(); const user = userEvent.setup(); render(<App />);
   const local = await screen.findByRole('radio', { name: 'On this computer' });
-  local.focus(); await user.keyboard(' {ArrowRight}');
+  local.focus(); await user.keyboard(' ');
   const disclosure = screen.getByRole('button', { name: "What's inside" });
   const details = document.getElementById(disclosure.getAttribute('aria-controls')!);
   expect(details).not.toBeNull();

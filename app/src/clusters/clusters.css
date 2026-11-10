@@ -1,0 +1,13 @@
+.cluster-card { display: grid; gap: 12px; min-width: 0; padding: 18px 0 2px; grid-column: 2 / 4; border-top: 1px solid var(--color-border); margin-top: 10px; }
+.cluster-card > label { font-weight: 500; }
+.cluster-card select, .cluster-card input { width: 100%; min-width: 0; min-height: 38px; padding: 6px 10px; border: 1px solid var(--color-border-strong); border-radius: 6px; background: var(--color-page); color: var(--color-text); font: inherit; }
+.cluster-card select:disabled, .cluster-card input:disabled { color: var(--color-text-secondary); }
+.cluster-card > button, .cluster-card > .coming-control { justify-self: start; }
+.cluster-card p { max-width: 65ch; }
+.cluster-found { display: grid; gap: 4px; }
+.cluster-found span, .cluster-details dd { overflow-wrap: anywhere; }
+.cluster-details { margin: 0; display: grid; gap: 10px; }
+.cluster-details > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: 12px; }
+.cluster-details dt { color: var(--color-text-secondary); }
+.cluster-details dd { margin: 0; }
+@media (max-width: 700px) { .cluster-card { grid-column: 2; } }

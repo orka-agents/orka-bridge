@@ -14,6 +14,152 @@ use std::{
 #[path = "support/cluster_forward.rs"]
 mod forward;
 
+#[tokio::test]
+async fn command_use_cluster_no_agent_task_post() {
+    use bridge_engine::clusters::commands::ClusterSession;
+    let api = Arc::new(ApiFixture::default());
+    let client = ClusterClient::new(
+        config(&api.start(), json!({"token":"creator-fixture"})),
+        Arc::new(PodOrkaRead),
+    );
+    let session = ClusterSession::new(client);
+    let contexts = session.contexts().await.unwrap();
+    assert!(api.calls.lock().unwrap().is_empty());
+    let id = serde_json::to_value(&contexts[0]).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let found = session.discover(&id).await.unwrap();
+    assert!(api.calls.lock().unwrap().iter().all(|c| c.0 == "GET"));
+    let target = serde_json::to_value(&found[0]).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let reply = session.use_target(&target, None).await;
+    let value = serde_json::to_value(reply).unwrap();
+    assert_eq!(value["status"], "connected");
+    assert_eq!(value["providers"][0]["name"], "model");
+    assert!(!value.to_string().contains("creator-fixture"));
+    assert!(!value.to_string().contains("http://"));
+    assert!(!api
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|c| c.1.ends_with("/token")));
+    assert_eq!(api.wire.posts(), 0);
+}
+
+#[tokio::test]
+async fn command_no_tokenrequest_before_use_and_conditional_account() {
+    use bridge_engine::clusters::commands::ClusterSession;
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    *orka.identity.lock().unwrap() =
+        json!({"authenticated":true,"authType":"tokenReview","namespace":""});
+    let session = ClusterSession::new(client(&api, &orka, json!({"token":"static-fixture"})));
+    let contexts = session.contexts().await.unwrap();
+    let id = serde_json::to_value(&contexts[0]).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let found = session.discover(&id).await.unwrap();
+    assert!(!api
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|c| c.1.ends_with("/token")));
+    let target = serde_json::to_value(&found[0]).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(
+        serde_json::to_value(session.use_target(&target, None).await).unwrap()["status"],
+        "needServiceAccount"
+    );
+    assert!(!api
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|c| c.1.ends_with("/token")));
+    assert_eq!(
+        serde_json::to_value(session.use_target(&target, Some("existing".into())).await).unwrap()
+            ["status"],
+        "connected"
+    );
+    assert_eq!(
+        api.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.1.ends_with("/token"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn command_unknown_ids_never_reach_cluster() {
+    use bridge_engine::clusters::commands::ClusterSession;
+    let api = Arc::new(ApiFixture::default());
+    let session = ClusterSession::new(client(
+        &api,
+        &Arc::new(OrkaFixture::default()),
+        json!({"token":"static-fixture"}),
+    ));
+    for id in [
+        "https://example.com",
+        "../kubeconfig",
+        "00000000-0000-4000-8000-000000000001",
+    ] {
+        assert!(session.discover(id).await.is_err());
+        assert_eq!(
+            serde_json::to_value(session.use_target(id, Some("existing".into())).await).unwrap()
+                ["status"],
+            "unavailable"
+        );
+    }
+    assert!(api.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn command_unsupported_discovery_remains_distinct() {
+    use bridge_engine::clusters::commands::ClusterSession;
+    let api = Arc::new(ApiFixture::default());
+    let session = ClusterSession::new(client(
+        &api,
+        &Arc::new(OrkaFixture::default()),
+        json!({"token":"static-fixture"}),
+    ));
+    let contexts = session.contexts().await.unwrap();
+    let id = serde_json::to_value(&contexts[1]).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let error = session.discover(&id).await.unwrap_err();
+    assert_eq!(
+        serde_json::to_value(error).unwrap(),
+        "unsupportedCredential"
+    );
+    assert!(api.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn command_use_future_is_send_for_desktop_dispatch() {
+    use bridge_engine::clusters::commands::ClusterSession;
+    let api = Arc::new(ApiFixture::default());
+    let session = ClusterSession::new(client(
+        &api,
+        &Arc::new(OrkaFixture::default()),
+        json!({"token":"static-fixture"}),
+    ));
+    tokio::spawn(async move { session.use_target("unknown", None).await })
+        .await
+        .unwrap();
+}
+
 #[derive(Default)]
 struct ApiFixture {
     wire: forward::Wire,
