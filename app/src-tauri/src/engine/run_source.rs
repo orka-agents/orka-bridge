@@ -1,6 +1,7 @@
 use super::{AssertionReport, ErrorKind, Verdict};
 use bridge_runtime_protocol::{SnapshotId, MAX_FILE};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 /// Validated immutable source. Assertion values never form part of either prompt.
@@ -10,6 +11,7 @@ pub struct ParsedPair {
     prompt: String,
     model: String,
     tools: Vec<String>,
+    soul: Option<Soul>,
     cases: Vec<RunCase>,
 }
 #[derive(Clone, Deserialize)]
@@ -49,6 +51,89 @@ struct Kmx {
     runtime: String,
     #[serde(default)]
     tools: Vec<Tool>,
+    #[serde(default, deserialize_with = "non_null")]
+    soul: Option<Soul>,
+}
+// Missing optional fields stay absent; explicit null is not a supported source.
+fn non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)?
+        .map(Some)
+        .ok_or_else(|| serde::de::Error::custom("null is not a supported soul field"))
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Soul {
+    #[serde(
+        default,
+        deserialize_with = "non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    inline: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    config_map_ref: Option<SoulReference>,
+    #[serde(
+        default,
+        deserialize_with = "non_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    digest: Option<String>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SoulReference {
+    name: String,
+    key: String,
+}
+impl Soul {
+    fn valid(&self) -> bool {
+        if self.inline.is_some() == self.config_map_ref.is_some() {
+            return false;
+        }
+        if let Some(digest) = &self.digest {
+            if digest.len() != 71
+                || !digest.starts_with("sha256:")
+                || !digest.as_bytes()[7..]
+                    .iter()
+                    .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(c))
+            {
+                return false;
+            }
+        }
+        if let Some(text) = &self.inline {
+            return present(text)
+                && text.len() <= 8192
+                && self.digest.as_ref().is_none_or(|digest| {
+                    *digest == format!("sha256:{:x}", Sha256::digest(text.as_bytes()))
+                });
+        }
+        let reference = self.config_map_ref.as_ref().unwrap();
+        let alnum = |c: u8| c.is_ascii_lowercase() || c.is_ascii_digit();
+        // Match kmx's object-name and reference-key grammar, not a path or namespace.
+        self.digest.is_some()
+            && reference.name.len() <= 253
+            && reference.name.split('.').all(|label| {
+                !label.is_empty()
+                    && alnum(label.as_bytes()[0])
+                    && alnum(*label.as_bytes().last().unwrap())
+                    && label.bytes().all(|c| alnum(c) || c == b'-')
+            })
+            && !reference.key.is_empty()
+            && reference.key.len() <= 253
+            && reference.key != "."
+            && !reference.key.starts_with("..")
+            && reference
+                .key
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"-_.".contains(&c))
+    }
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -98,6 +183,7 @@ impl ParsedPair {
             || agent.kmx.runtime != "orka"
             || !present(&agent.model)
             || !present(prompt)
+            || agent.kmx.soul.as_ref().is_some_and(|soul| !soul.valid())
         {
             return Err(ErrorKind::Source);
         }
@@ -105,7 +191,10 @@ impl ParsedPair {
         let _ = (agent.name, agent.description);
         let mut tools = Vec::new();
         for tool in agent.kmx.tools {
-            if tool.kind != "builtin" || !present(&tool.name) || tools.contains(&tool.name) {
+            if !matches!(tool.kind.as_str(), "builtin" | "tool")
+                || !present(&tool.name)
+                || tools.contains(&tool.name)
+            {
                 return Err(ErrorKind::Source);
             }
             tools.push(tool.name);
@@ -163,6 +252,7 @@ impl ParsedPair {
             prompt: prompt.into(),
             model: agent.model,
             tools,
+            soul: agent.kmx.soul,
             cases,
         })
     }
@@ -177,6 +267,9 @@ impl ParsedPair {
     }
     pub fn tools(&self) -> &[String] {
         &self.tools
+    }
+    pub fn soul(&self) -> Option<&Soul> {
+        self.soul.as_ref()
     }
     pub fn cases(&self) -> &[RunCase] {
         &self.cases
