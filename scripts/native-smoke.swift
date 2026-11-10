@@ -103,10 +103,12 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     if name == "send-probe" || name == "cluster-probe" { return observations }
     if name == "cluster-conditional" || name == "cluster-denied" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        // Vision can split the camel-case label even though the native field is present.
+        let accountName = text.contains("ServiceAccount name") || text.contains("Service Account name")
         if name == "cluster-conditional" {
-            require(text.contains("ServiceAccount name") && text.contains("existing account in agents"), "Conditional name-only access prompt missing: \(text)")
+            require(accountName && text.contains("existing account in agents"), "Conditional name-only access prompt missing: \(text)")
         } else {
-            require(text.contains("Access was denied") && !text.contains("ServiceAccount name"), "Denial incorrectly offered identity substitution: \(text)")
+            require(text.contains("Access was denied") && !accountName, "Denial incorrectly offered identity substitution: \(text)")
         }
         print("PASS \(name): native fixture access state, no real credentials")
         return observations
