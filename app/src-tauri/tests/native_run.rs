@@ -47,6 +47,99 @@ fn closed_parser_refuses_unsupported_or_empty_semantics() {
     }
 }
 
+#[test]
+fn unsupported_test_fences_cannot_hide_beside_a_valid_case() {
+    for opening in [
+        " ```yaml agent-test",
+        "   ```yaml agent-test",
+        "\t```yaml agent-test",
+        "~~~yaml agent-test",
+        "  ~~~yaml agent-test",
+        "````yaml agent-test",
+        "```yml agent-test",
+        "```yaml agent-test extra",
+    ] {
+        let hidden = TESTS
+            .replace("```yaml agent-test", opening)
+            .replace("id: checksum", "id: hidden");
+        for source in [hidden.clone(), format!("{TESTS}\n{hidden}")] {
+            assert!(
+                matches!(
+                    ParsedPair::parse(AGENT.as_bytes(), source.as_bytes()),
+                    Err(ErrorKind::Source)
+                ),
+                "{opening}"
+            );
+        }
+    }
+}
+
+#[test]
+fn markdown_examples_use_matching_fence_character_and_length() {
+    assert!(matches!(
+        ParsedPair::parse(
+            AGENT.as_bytes(),
+            format!("{TESTS}\n~~~~markdown\n{TESTS}").as_bytes()
+        ),
+        Err(ErrorKind::Source)
+    ));
+    for (open, close) in [
+        ("~~~~markdown", "~~~~"),
+        ("````markdown", "````"),
+        ("  ~~~~markdown", "   ~~~~"),
+    ] {
+        // The apparent test and shorter/mixed fences belong to the example.
+        let source =
+            format!("---\nschemaVersion: 1\n---\n{open}\n{TESTS}\n```\n~~~\n{close}\n{TESTS}");
+        let parsed = ParsedPair::parse(AGENT.as_bytes(), source.as_bytes()).unwrap();
+        assert_eq!(parsed.cases().len(), 1);
+        assert_eq!(parsed.cases()[0].id, "checksum");
+    }
+    // Whitespace and a longer closing fence are legal; they do not swallow the next case.
+    let source = TESTS.replace("```\n", " ````  \n");
+    assert_eq!(
+        ParsedPair::parse(AGENT.as_bytes(), source.as_bytes())
+            .unwrap()
+            .cases()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn builtin_names_are_exact_and_unknown_custom_names_are_source_errors() {
+    for name in [
+        "custom_authorized_tool",
+        "web_fetc",
+        "WEB_FETCH",
+        " web_fetch",
+        "web_fetch ",
+    ] {
+        let agent = AGENT.replace("name: web_fetch", &format!("name: '{name}'"));
+        assert!(
+            matches!(
+                ParsedPair::parse(agent.as_bytes(), TESTS.as_bytes()),
+                Err(ErrorKind::Source)
+            ),
+            "{name}"
+        );
+    }
+    // Known names are classification only; runtime/permission checks remain separate.
+    for name in [
+        "web_fetch",
+        "file_read",
+        "request_approval",
+        "delegate_task",
+        "list_connections",
+    ] {
+        let agent = AGENT.replace("name: web_fetch", &format!("name: {name}"));
+        assert!(
+            ParsedPair::parse(agent.as_bytes(), TESTS.as_bytes()).is_ok(),
+            "{name}"
+        );
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Behavior {
     phase: &'static str,
@@ -83,6 +176,7 @@ impl Fixture {
         let worker = tokio::spawn(async move {
             let mut objects: HashMap<String, Value> = HashMap::new();
             let mut event_reads = 0;
+            let mut task_posts = 0;
             loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut bytes = Vec::new();
@@ -130,8 +224,12 @@ impl Fixture {
                 let mut response;
                 if method == "POST" {
                     let path = path.split('?').next().unwrap();
+                    if path.ends_with("tasks") {
+                        task_posts += 1;
+                    }
                     if b.fault == "lost-agent"
                         || (b.fault == "lost-task" && path.ends_with("tasks"))
+                        || (b.fault == "lost-second-task" && task_posts == 2)
                     {
                         continue;
                     }
@@ -404,6 +502,51 @@ fn stopping_runner(
 fn two_cases() -> ParsedPair {
     let tests = format!("{TESTS}\n```yaml agent-test\nid: second\ninput: next\nassertions:\n - id: next-answer\n   type: contains\n   value: next\n```\n");
     ParsedPair::parse(AGENT.as_bytes(), tests.as_bytes()).unwrap()
+}
+
+#[tokio::test]
+async fn partial_submission_preserves_known_failures_and_missing_cases_stay_unknown() {
+    for (phase, answer, expected) in [
+        ("Failed", Some("secret-expected"), Verdict::Failed),
+        ("Cancelled", Some("secret-expected"), Verdict::Failed),
+        ("Succeeded", Some("wrong answer"), Verdict::Failed),
+        ("Succeeded", Some("secret-expected"), Verdict::Unknown),
+        ("Succeeded", None, Verdict::Unknown),
+    ] {
+        let fixture = Fixture::start(Behavior {
+            phase,
+            answer,
+            fault: "lost-second-task",
+            ..Behavior::default()
+        })
+        .await;
+        let runner = fixture.runner();
+        let error = runner.submit(two_cases()).await.unwrap_err();
+        assert_eq!(error.handle.tasks().len(), 1);
+        let pending = error.pending.unwrap();
+        assert_eq!(pending.kind, "Task");
+        let before = fixture.requests.lock().unwrap().len();
+        let report = runner.observe(&error.handle).await.unwrap();
+        assert_eq!(report.verdict, expected, "{phase} {answer:?}");
+        assert_eq!(report.cases.len(), 2);
+        let missing = &report.cases[1];
+        assert_eq!(missing.id, "second");
+        assert_eq!(missing.phase, "Unacknowledged");
+        assert_eq!(missing.verdict, Verdict::Unknown);
+        assert!(missing.answer.is_none() && missing.completed_tools.is_empty());
+        assert!(missing
+            .assertions
+            .iter()
+            .all(|a| a.verdict == Verdict::Unknown));
+        if expected == Verdict::Failed {
+            assert_eq!(report.cases[0].verdict, Verdict::Failed);
+        }
+        let requests = fixture.requests.lock().unwrap();
+        assert_eq!(before, 3); // Agent, acknowledged Task, uncertain Task; no retry.
+        assert!(requests[before..]
+            .iter()
+            .all(|(path, _)| path.starts_with("GET ") && !path.contains(&pending.name)));
+    }
 }
 #[tokio::test]
 async fn planned_agent_before_post() {
