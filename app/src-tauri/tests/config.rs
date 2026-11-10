@@ -73,6 +73,7 @@ fn agent_commands_are_granted_only_to_local_main_window() {
     let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
     let authority = context.runtime_authority_mut();
     for command in [
+        "workspace_catalog",
         "cluster_contexts",
         "cluster_discover",
         "cluster_use",

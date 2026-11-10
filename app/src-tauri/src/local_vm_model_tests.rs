@@ -39,6 +39,35 @@ async fn restart_cannot_reuse_the_previous_sessions_model_acknowledgment() {
     vm.shutdown().await.unwrap();
 }
 
+#[tokio::test]
+async fn catalog_does_not_probe_old_image_or_clear_its_connect_acknowledgement() {
+    struct NoProbe;
+    impl LocalSession for NoProbe {
+        fn with_client(
+            &mut self,
+            _: &mut dyn FnMut(Uuid, &mut VmClient) -> Result<(), RuntimeError>,
+        ) -> Result<(), RuntimeError> {
+            panic!("old guest must not see an unknown catalog operation")
+        }
+        fn execute(&mut self, _: EngineRequest) -> TransportFuture<'_> {
+            panic!("no generic engine request")
+        }
+        fn stop(&mut self) -> Result<(), RuntimeError> {
+            Ok(())
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let setup = Arc::new(SetupStore::new(Some(dir.path().into())));
+    let vm = LocalVm::unavailable();
+    vm.inner.state.lock().unwrap().phase = LocalVmStatus::Ready;
+    vm.inner.state.lock().unwrap().model_connected = true;
+    *vm.inner.session.lock().await = Some(Box::new(NoProbe));
+    assert_eq!(
+        vm.workspace_catalog(setup).await.unwrap_err(),
+        "The workspace catalog is unavailable for this image."
+    );
+    assert!(vm.model_connected());
+}
 #[test]
 fn model_failure_details_survive_generic_retry_without_failing_the_running_vm() {
     let tmp = tempfile::tempdir().unwrap();

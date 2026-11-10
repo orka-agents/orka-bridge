@@ -1,4 +1,5 @@
 pub mod agent_folder;
+pub mod catalog;
 pub mod clusters;
 #[cfg(debug_assertions)]
 pub mod dev_image;

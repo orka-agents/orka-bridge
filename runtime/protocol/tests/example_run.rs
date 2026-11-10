@@ -1,6 +1,8 @@
 extern crate self as bridge_engine;
 #[path = "../../../app/src-tauri/src/agent_folder.rs"]
 pub mod agent_folder;
+#[path = "../../../app/src-tauri/src/catalog.rs"]
+pub mod catalog;
 #[cfg(debug_assertions)]
 #[path = "../../../app/src-tauri/src/dev_image.rs"]
 pub mod dev_image;

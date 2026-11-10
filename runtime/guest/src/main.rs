@@ -338,18 +338,26 @@ fn control(
             _ => unreachable!("credential dispatcher selects only its closed operations"),
         })
     });
-    // Orka authoring is physical-channel authority, never the root-local socket.
-    let local_orka = peer != "channel"
-        && matches!(
-            &r.body,
-            RequestBody::Execute {
-                action: EngineActionWire::Orka { .. },
-                ..
-            } | RequestBody::Engine(EngineActionWire::Orka { .. })
-        );
+    let catalog = matches!(
+        &r.body,
+        RequestBody::Execute {
+            action: EngineActionWire::WorkspaceCatalog {},
+            ..
+        } | RequestBody::Engine(EngineActionWire::WorkspaceCatalog {})
+    );
+    let provider = serving
+        .3
+        .ready_connection()
+        .map(|c| c.selection.provider.clone());
+    serving.0.runner_mut().catalog_provider = if peer == "channel" && catalog {
+        provider.clone()
+    } else {
+        None
+    };
+    let local_orka = !service::authoring_allowed(peer == "channel", &r.body);
     let (body, stop) = if let Some(reply) = credentials {
         (reply, false)
-    } else if local_orka {
+    } else if local_orka || (catalog && provider.is_none()) {
         (
             ResultBody::Error {
                 code: ErrorCode::Unavailable,
@@ -369,6 +377,7 @@ fn control(
             false,
         )
     };
+    serving.0.runner_mut().catalog_provider = None;
     write(
         diagnostics::Context::new("serve", write_phase),
         io.get_mut(),

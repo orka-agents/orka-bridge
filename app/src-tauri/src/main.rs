@@ -79,6 +79,13 @@ async fn agent_save(
         .map_err(|_| "The local agent folder is unavailable.")?
 }
 
+#[tauri::command]
+async fn workspace_catalog(
+    state: tauri::State<'_, Arc<SetupStore>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> Result<bridge_engine::catalog::CatalogReply, &'static str> {
+    vm.workspace_catalog(Arc::clone(state.inner())).await
+}
 #[derive(serde::Serialize)]
 struct ModelReply {
     ready: bool,
@@ -176,7 +183,7 @@ fn main() {
             });
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_cancel_local, setup_change_local, setup_requirements, setup_open_help, setup_example, setup_connect_model, setup_run_status, setup_run_example, agent_open, agent_save, cluster_contexts, cluster_discover, cluster_use, send_start, send_status, send_stop])
+        .invoke_handler(tauri::generate_handler![engine_call, setup_status, setup_select_local, setup_cancel_local, setup_change_local, setup_requirements, setup_open_help, setup_example, setup_connect_model, setup_run_status, setup_run_example, agent_open, agent_save, workspace_catalog, cluster_contexts, cluster_discover, cluster_use, send_start, send_status, send_stop])
         .build(tauri::generate_context!())
         .expect("error while building Bridge")
         .run(move |app, event| {
