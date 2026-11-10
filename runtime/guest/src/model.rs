@@ -168,6 +168,11 @@ impl<R: Runner> ModelLifecycle<R> {
             diagnostic: None,
         }
     }
+    pub fn ready_connection(&self) -> Option<&ModelConnection> {
+        self.connection
+            .as_ref()
+            .filter(|_| self.phase == ModelPhase::Ready)
+    }
     pub fn allows_credential_mutation(&self) -> bool {
         self.phase == ModelPhase::Idle
     }

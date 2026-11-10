@@ -11,6 +11,8 @@ mod model;
 pub use model::*;
 mod orka;
 pub use orka::*;
+mod catalog;
+pub use catalog::*;
 pub fn encode_chunk(bytes: &[u8]) -> String {
     STANDARD.encode(bytes)
 }
@@ -64,6 +66,7 @@ pub enum EngineActionWire {
     Version {},
     ListAgents { context: String, namespace: String },
     Orka { request: OrkaRequest },
+    WorkspaceCatalog {},
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(

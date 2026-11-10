@@ -292,6 +292,29 @@ impl VmClient {
         }
         serde_json::from_slice(&result.stdout).map_err(|_| invalid())
     }
+    /// Trusted native catalog only; no renderer-owned request or target.
+    pub fn workspace_catalog(&mut self) -> io::Result<WorkspaceCatalog> {
+        let operation = Uuid::new_v4();
+        match self.call(RequestBody::Execute {
+            operation,
+            action: EngineActionWire::WorkspaceCatalog {},
+            snapshot: None,
+        })? {
+            ResultBody::Operation { operation: id, .. } if id == operation => {}
+            ResultBody::Error { .. } => return Err(io::ErrorKind::Unsupported.into()),
+            _ => return Err(invalid()),
+        }
+        let result = self.result(operation)?;
+        if result.exit != 0 {
+            return Err(invalid());
+        }
+        let catalog: WorkspaceCatalog =
+            serde_json::from_slice(&result.stdout).map_err(|_| invalid())?;
+        if !catalog.valid() {
+            return Err(invalid());
+        }
+        Ok(catalog)
+    }
     pub fn status(&mut self, operation: Uuid) -> io::Result<OperationInfo> {
         let unknown = || OperationInfo {
             state: OperationState::Unknown,

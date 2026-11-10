@@ -153,6 +153,19 @@ pub fn handle(
         ),
     }
 }
+/// Authoring and catalogs share physical-channel authority, not the root-local socket.
+pub fn authoring_allowed(host_channel: bool, request: &RequestBody) -> bool {
+    host_channel
+        || !matches!(
+            request,
+            RequestBody::Execute {
+                action: EngineActionWire::Orka { .. } | EngineActionWire::WorkspaceCatalog {},
+                ..
+            } | RequestBody::Engine(
+                EngineActionWire::Orka { .. } | EngineActionWire::WorkspaceCatalog {}
+            )
+        )
+}
 /// Credential authority is the owned physical channel, not the local kmx socket.
 pub fn credential_request(
     host_channel: bool,
