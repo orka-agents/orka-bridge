@@ -139,11 +139,19 @@ async fn engineering_binding_does_not_restore_release_compatibility_or_creation(
     );
     open_installed_image(&no_creation).unwrap();
     let old = InstallationImageTarget::from_owned_installation(
-        &root, &owner, id, ImageTarget::WindowsAmd64, "engineering-398a6aad", false,
+        &root, &owner, id, ImageTarget::WindowsAmd64, "engineering-d471f5eb", false,
     );
     let binding = fs::read(path.join("image-binding.json")).unwrap();
     assert!(matches!(open_installed_image(&old), Err(ImageError::RetainedImage)));
     assert_eq!(fs::read(path.join("image-binding.json")).unwrap(), binding);
+    // A previous installation keeps its old exact-owned Role and is not upgraded.
+    let mut previous: serde_json::Value = serde_json::from_slice(&binding).unwrap();
+    previous["identity"]["stateCompatibilityId"] = "engineering-d471f5eb".into();
+    let previous = serde_json::to_vec(&previous).unwrap();
+    fs::write(path.join("image-binding.json"), &previous).unwrap();
+    assert!(matches!(open_installed_image(&target), Err(ImageError::RetainedImage)));
+    assert_eq!(fs::read(path.join("image-binding.json")).unwrap(), previous);
+    fs::write(path.join("image-binding.json"), binding).unwrap();
     let prepared = prepare_development_image(&source, closed.clone()).await.unwrap();
     assert!(matches!(prepared.materialize(&no_creation, closed.clone(), |_| {}).await, Err(ImageError::RetainedImage)));
     let (_sender, cancelled) = watch::channel(true);
@@ -179,7 +187,7 @@ async fn frozen_windows_source_materializes_actual_pinned_bytes() {
     );
     let installed = prepared.materialize(&target, closed, |_| {}).await.unwrap();
     installed.revalidate(&target).unwrap();
-    assert_eq!(installed.initial_os_bytes(), 3617521664);
-    assert_eq!(installed.initial_os_sha256(), "fc08e4ca4baaea87bf02659e0ee939370776a6c4ec57579c957d717b7d16de1c");
+    assert_eq!(installed.initial_os_bytes(), 3781165056);
+    assert_eq!(installed.initial_os_sha256(), "c94e431cb5ee37eb54d3fd981c158584175d2abfb6d5be141c0844ef8e8b45dc");
     assert_eq!(installed.kernel_release(), "6.1.0-54-cloud-amd64");
 }

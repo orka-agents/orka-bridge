@@ -40,14 +40,14 @@ async fn restart_cannot_reuse_the_previous_sessions_model_acknowledgment() {
 }
 
 #[tokio::test]
-async fn catalog_does_not_probe_old_image_or_clear_its_connect_acknowledgement() {
+async fn catalog_does_not_probe_unsupported_or_disconnected_workspaces() {
     struct NoProbe;
     impl LocalSession for NoProbe {
         fn with_client(
             &mut self,
             _: &mut dyn FnMut(Uuid, &mut VmClient) -> Result<(), RuntimeError>,
         ) -> Result<(), RuntimeError> {
-            panic!("old guest must not see an unknown catalog operation")
+            panic!("unavailable catalog must not reach a guest")
         }
         fn execute(&mut self, _: EngineRequest) -> TransportFuture<'_> {
             panic!("no generic engine request")
@@ -60,13 +60,23 @@ async fn catalog_does_not_probe_old_image_or_clear_its_connect_acknowledgement()
     let setup = Arc::new(SetupStore::new(Some(dir.path().into())));
     let vm = LocalVm::unavailable();
     vm.inner.state.lock().unwrap().phase = LocalVmStatus::Ready;
-    vm.inner.state.lock().unwrap().model_connected = true;
+    let supported = cfg!(all(
+        debug_assertions,
+        target_os = "windows",
+        target_arch = "x86_64"
+    ));
+    let connected = !supported;
+    vm.inner.state.lock().unwrap().model_connected = connected;
     *vm.inner.session.lock().await = Some(Box::new(NoProbe));
     assert_eq!(
         vm.workspace_catalog(setup).await.unwrap_err(),
-        "The workspace catalog is unavailable for this image."
+        if supported {
+            "The connected workspace catalog is unavailable."
+        } else {
+            "The workspace catalog is unavailable for this image."
+        }
     );
-    assert!(vm.model_connected());
+    assert_eq!(vm.model_connected(), connected);
 }
 #[test]
 fn model_failure_details_survive_generic_retry_without_failing_the_running_vm() {
