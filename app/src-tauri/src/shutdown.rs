@@ -1,16 +1,64 @@
 use crate::{engine::EngineState, local_vm::LocalVm, send::SendOwner};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Condvar, Mutex,
+};
+use std::time::Duration;
+
+#[derive(Default)]
+struct Completion {
+    result: Option<bool>,
+    native_exit: bool,
+}
 
 /// One terminal cleanup worker, shared by native exit requests and its completion.
 #[derive(Default)]
 pub struct TerminalShutdown {
     closing: AtomicBool,
-    completed: AtomicBool,
+    completion: Mutex<Completion>,
+    finished: Condvar,
 }
 
 impl TerminalShutdown {
     pub fn completed(&self) -> bool {
-        self.completed.load(Ordering::SeqCst)
+        self.result().is_some()
+    }
+
+    pub fn closing(&self) -> bool {
+        self.closing.load(Ordering::SeqCst)
+    }
+
+    pub fn result(&self) -> Option<bool> {
+        self.completion.lock().unwrap().result
+    }
+
+    /// Claim final exit before requesting cleanup. A completed Mac request returns Now.
+    pub fn native_termination(&self) -> Option<bool> {
+        let mut completion = self.completion.lock().unwrap();
+        completion.native_exit = true;
+        completion.result
+    }
+
+    /// Queue ordinary exit under the same lock as native ownership/result publication.
+    /// A native callback racing an already queued exit sees completed, never defers.
+    pub fn exit_unless_native(&self, exit: impl FnOnce(bool)) {
+        let completion = self.completion.lock().unwrap();
+        if !completion.native_exit {
+            if let Some(clean) = completion.result {
+                exit(clean);
+            }
+        }
+    }
+
+    /// The OS thread may block, but cleanup must not depend on that thread's event loop.
+    pub fn wait_timeout(&self, timeout: Duration) -> Option<bool> {
+        self.finished
+            .wait_timeout_while(self.completion.lock().unwrap(), timeout, |c| {
+                c.result.is_none()
+            })
+            .unwrap()
+            .0
+            .result
     }
 
     /// Run on the native event thread before scheduling the winning caller's worker.
@@ -30,7 +78,8 @@ impl TerminalShutdown {
         if !clean {
             eprintln!("Local VM startup or shutdown did not finish successfully; cleanup was not reported as clean.");
         }
-        self.completed.store(true, Ordering::SeqCst);
+        self.completion.lock().unwrap().result = Some(clean);
+        self.finished.notify_all();
         clean
     }
 }

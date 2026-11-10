@@ -55,6 +55,17 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     return () => { active = false; };
   }, []);
   useEffect(() => {
+    const observe = () => {
+      if (!mutation.current && document.visibilityState !== 'hidden') setCheck(value => value + 1);
+    };
+    window.addEventListener('focus', observe);
+    document.addEventListener('visibilitychange', observe);
+    return () => {
+      window.removeEventListener('focus', observe);
+      document.removeEventListener('visibilitychange', observe);
+    };
+  }, []);
+  useEffect(() => {
     if (mutation.current) return;
     const request = ++epoch.current;
     void setupStatus().then(result => {
