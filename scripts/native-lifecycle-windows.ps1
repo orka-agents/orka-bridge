@@ -124,7 +124,16 @@ function Capture([string]$Name, [bool]$Menu = $false) {
 function Start-Bridge {
     if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared; refusing to resume a VM' }
     $script:app = Start-Process $Executable -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log")
-    $script:hwnd = Wait-For 'Main native window did not appear' { $script:app.Refresh(); if ($script:app.MainWindowHandle -ne [IntPtr]::Zero) { $script:app.MainWindowHandle } }
+    # Process.MainWindowHandle can select Tao's hidden event target. Identify
+    # the real app frame by its configured title and this launch's process ID.
+    $script:hwnd = Wait-For 'Main native window did not appear' {
+        $h = [IntPtr]::Zero
+        while (($h = [NativeWalk]::FindWindowEx([IntPtr]::Zero, $h, $null, 'Bridge')) -ne [IntPtr]::Zero) {
+            [uint32]$owner = 0
+            [NativeWalk]::GetWindowThreadProcessId($h, [ref]$owner) | Out-Null
+            if ($owner -eq $script:app.Id -and [NativeWalk]::IsWindowVisible($h)) { return $h }
+        }
+    }
     $script:window = [System.Windows.Automation.AutomationElement]::FromHandle($script:hwnd)
     [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
 }
@@ -206,12 +215,7 @@ function Broadcast-Theme {
     $result = [UIntPtr]::Zero
     [NativeWalk]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'ImmersiveColorSet', 2, 1000, [ref]$result) | Out-Null
 }
-# WebView2 otherwise enables renderer accessibility on screen-reader detection,
-# which is nondeterministic on hosted CI. This exposes real controls, not app state.
-# https://learn.microsoft.com/microsoft-edge/webview2/concepts/webview-features-flags
-$browserArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 try {
-    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "$browserArgs --force-renderer-accessibility".Trim()
     if (!$existed) { New-Item $personalize -Force | Out-Null }
     foreach ($theme in @('light', 'dark')) {
         $script:theme = $theme
@@ -281,7 +285,6 @@ try {
     }
     throw
 } finally {
-    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $browserArgs
     # Force cleanup only on test failure; it is not evidence that the stop route worked.
     if ($script:app -and !$script:app.HasExited) { Stop-Process -Id $script:app.Id -Force -ErrorAction SilentlyContinue }
     foreach ($name in $prior.Keys) {

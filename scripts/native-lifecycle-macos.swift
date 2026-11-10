@@ -189,7 +189,7 @@ func key(_ code: CGKeyCode, flags: CGEventFlags = []) {
 let root = try launch()
 let pid = app!.processIdentifier
 let originalID = windowInfo()!.0
-let main = find(root, "main-window") { attribute($0, "AXRole") as? String == "AXWindow" }
+var main = find(root, "main-window") { attribute($0, "AXRole") as? String == "AXWindow" }
 press(find(main, "Designer") { pressable($0, "Designer") })
 // A writable Agent-view textarea proves the owned example loaded, not a
 // temporary read-only preview that will remount and reset its view toggle.
@@ -211,14 +211,19 @@ wait("Native editor change not saved") { (try? String(contentsOf: owned, encodin
 func retained() {
     check(app!.processIdentifier == pid && !app!.isTerminated, "Original process lost")
     check(windowInfo()?.0 == originalID, "Main native window replaced")
-    check(CFEqual(find(root, "retained-window") { attribute($0, "AXRole") as? String == "AXWindow" }, main), "Main AX window replaced")
-    check(attribute(editor, "AXValue") as? String != nil, "Editor AX element lost")
+    // AX proxies can be regenerated on hide/show; they are not native-window
+    // identity. The original CGWindowID above plus the non-persisted File view
+    // and edited text below test the real window/webview retention contract.
+    main = find(root, "retained-window") { attribute($0, "AXRole") as? String == "AXWindow" }
     check((attribute(find(main, "retained-editor") { attribute($0, "AXRole") as? String == "AXTextArea" }, "AXValue") as? String)?.contains(marker) == true, "File view/draft lost on reopen")
     check(NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, "Reopen did not focus original process")
     check(!FileManager.default.fileExists(atPath: selected), "Walk accidentally selected a workspace")
 }
-guard let close = attribute(main, "AXCloseButton") else { fatalError("Missing native Close button") }
-press(close as! AXUIElement)
+func closeMain() {
+    guard let close = attribute(main, "AXCloseButton") else { fatalError("Missing native Close button") }
+    press(close as! AXUIElement)
+}
+closeMain()
 wait("Native Close did not hide") { windowInfo() == nil }
 check(!app!.isTerminated, "Close quit instead of hiding")
 let commands = menu(root)
@@ -226,12 +231,12 @@ try capture("menu-hidden", menu: true)
 press(commands[0])
 wait("Open Bridge did not reopen/focus") { windowInfo() != nil && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
 retained(); try capture("reopened-menu")
-press(close as! AXUIElement)
+closeMain()
 wait("Close before Dock activation did not hide") { windowInfo() == nil }
 try command("/usr/bin/open", [bundle]) // LaunchServices delivers Dock-style Reopen.
 wait("Dock activation did not reopen/focus") { windowInfo() != nil && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
 retained(); try capture("reopened-dock")
-press(close as! AXUIElement)
+closeMain()
 wait("Close before second launch did not hide") { windowInfo() == nil }
 try command("\(bundle)/Contents/MacOS/orka-bridge", [])
 wait("Second launch did not show/focus hidden window") { windowInfo() != nil && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
