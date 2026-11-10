@@ -172,15 +172,17 @@ func scrollMain(_ pixels: Int32) {
 func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
     // Disabling Start during IPC can reset WebKit's keyboard focus. Locate the
     // real control after each state transition instead of counting Tab stops.
+    var observed: [String] = []
     for _ in 0..<4 {
         let seen = try capture("send-probe", "Designer")
+        observed = seen.compactMap { $0.topCandidates(1).first?.string }
         if seen.contains(where: { $0.topCandidates(1).first?.string == label }) {
             clickText(label, in: seen)
             return
         }
         scrollMain(pixels)
     }
-    fatalError("Send control not visible: \(label)")
+    fatalError("Send control not visible: \(label); observed: \(observed)")
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 var initial = try capture("initial", "Clusters")
