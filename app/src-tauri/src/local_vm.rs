@@ -562,6 +562,26 @@ impl LocalVm {
         .await
         .map_err(|_| RuntimeError::Unavailable)?
     }
+    pub async fn workspace_catalog(
+        &self,
+        setup: Arc<crate::setup::SetupStore>,
+    ) -> Result<crate::catalog::CatalogReply, &'static str> {
+        if !crate::catalog::IMAGE_AVAILABLE {
+            return Err("The workspace catalog is unavailable for this image.");
+        }
+        let failure = "The connected workspace catalog is unavailable.";
+        if !self.model_connected() {
+            return Err(failure);
+        }
+        let result = self
+            .with_client(move |id, client| setup.workspace_catalog(id, client))
+            .await
+            .map_err(|_| failure)??;
+        if !self.model_connected() {
+            return Err(failure);
+        }
+        Ok(result)
+    }
     pub async fn connect_model(
         &self,
         setup: Arc<crate::setup::SetupStore>,

@@ -31,6 +31,9 @@ impl<R: Runner> Operations<R> {
     pub fn runner(&self) -> &R {
         &self.runner
     }
+    pub fn runner_mut(&mut self) -> &mut R {
+        &mut self.runner
+    }
     fn path(&self, id: Uuid) -> io::Result<PathBuf> {
         if id.is_nil() {
             return Err(invalid());
@@ -282,6 +285,13 @@ fn projection(action: &EngineActionWire, bytes: &[u8]) -> io::Result<Vec<u8>> {
             }
             Ok(bytes)
         }
+        EngineActionWire::WorkspaceCatalog {} => {
+            let catalog: WorkspaceCatalog = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+            if !catalog.valid() {
+                return Err(invalid());
+            }
+            serde_json::to_vec(&catalog).map_err(|_| invalid())
+        }
         EngineActionWire::ListAgents { .. } => {
             let v: Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
             if !((v["kind"] == "List" && v["apiVersion"] == "v1")
@@ -321,12 +331,14 @@ pub struct Kmx;
 pub struct GuestRunner {
     pub kmx: Kmx,
     pub orka: crate::orka::Orka,
+    pub catalog_provider: Option<String>,
 }
 impl GuestRunner {
     pub fn new(installation: Uuid) -> Self {
         Self {
             kmx: Kmx,
             orka: crate::orka::Orka::new(installation),
+            catalog_provider: None,
         }
     }
 }
@@ -334,6 +346,14 @@ impl Runner for GuestRunner {
     fn execute(&mut self, action: &EngineActionWire) -> io::Result<EngineResult> {
         match action {
             EngineActionWire::Orka { request } => self.orka.execute(request),
+            EngineActionWire::WorkspaceCatalog {} => {
+                let provider = self.catalog_provider.take().ok_or_else(invalid)?;
+                Ok(EngineResult {
+                    exit: 0,
+                    stdout: serde_json::to_vec(&self.orka.catalog(&provider))?,
+                    has_diagnostics: false,
+                })
+            }
             _ => self.kmx.execute(action),
         }
     }
@@ -356,7 +376,9 @@ pub fn argv(action: &EngineActionWire) -> io::Result<Vec<String>> {
         .into_iter()
         .map(str::to_owned)
         .collect(),
-        EngineActionWire::Orka { .. } => return Err(invalid()),
+        EngineActionWire::Orka { .. } | EngineActionWire::WorkspaceCatalog {} => {
+            return Err(invalid())
+        }
     })
 }
 impl Runner for Kmx {

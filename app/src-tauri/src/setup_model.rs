@@ -242,6 +242,36 @@ impl SetupStore {
         Ok(state(Some(&b), false))
     }
     /// Reports an association, not live model readiness; never reads the OS store.
+    /// Read under the same ownership as Connect/Disconnect, never loading a secret.
+    pub fn workspace_catalog(
+        &self,
+        installation: Uuid,
+        client: &mut VmClient,
+    ) -> Result<crate::catalog::CatalogReply, &'static str> {
+        let failure = "The connected workspace catalog is unavailable.";
+        let _access = self.access.lock().map_err(|_| failure)?;
+        let root = self.root.as_deref().ok_or(failure)?;
+        if !selected(root).map_err(|_| failure)? {
+            return Err(failure);
+        }
+        let _owner = model_owner(root).map_err(|_| failure)?;
+        let binding = read_binding(root).map_err(|_| failure)?.ok_or(failure)?;
+        let connection = binding.connection.ok_or(failure)?;
+        if binding.installation != installation
+            || binding.nonce != Some(client.boot_nonce())
+            || binding.phase != Phase::Connected
+            || !connection.selection.valid()
+            || connection.id.is_nil()
+            || connection.generation.is_nil()
+        {
+            return Err(failure);
+        }
+        let catalog = client.workspace_catalog().map_err(|_| failure)?;
+        Ok(crate::catalog::CatalogReply {
+            default_model: connection.selection.model,
+            catalog,
+        })
+    }
     pub fn model_binding_status(&self) -> Result<ModelSetupState, SetupError> {
         let _access = self.access.lock().map_err(|_| unavailable())?;
         let root = self.root.as_deref().ok_or_else(unavailable)?;
@@ -412,6 +442,66 @@ impl SetupStore {
 #[cfg(test)]
 #[path = "setup_model_tests.rs"]
 mod scenarios;
+
+#[cfg(test)]
+mod catalog_binding_tests {
+    use super::*;
+    struct NoIo;
+    impl Read for NoIo {
+        fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+            panic!("invalid binding read guest")
+        }
+    }
+    impl Write for NoIo {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            panic!("invalid binding wrote guest")
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    #[test]
+    fn catalog_rejects_wrong_installation_nonce_and_phase_before_wire_io() {
+        for case in 0..4 {
+            let dir = tempfile::tempdir().unwrap();
+            let setup = SetupStore::new(Some(dir.path().into()));
+            setup.select_local().unwrap();
+            let nonce = Uuid::from_u128(1);
+            let install = Uuid::from_u128(2);
+            let connection = ModelConnection {
+                id: Uuid::from_u128(3),
+                generation: Uuid::from_u128(4),
+                selection: ModelSelection {
+                    provider: "copilot".into(),
+                    model: "m".into(),
+                },
+            };
+            write_binding(
+                setup.root.as_deref().unwrap(),
+                &Binding {
+                    slot: Uuid::from_u128(5),
+                    installation: if case == 0 {
+                        Uuid::from_u128(6)
+                    } else {
+                        install
+                    },
+                    nonce: Some(if case == 1 { Uuid::from_u128(7) } else { nonce }),
+                    phase: if case == 2 {
+                        Phase::Pending
+                    } else if case == 3 {
+                        Phase::Cleared
+                    } else {
+                        Phase::Connected
+                    },
+                    connection: Some(connection),
+                },
+            )
+            .unwrap();
+            let mut client = VmClient::established(Box::new(NoIo), nonce).unwrap();
+            assert!(setup.workspace_catalog(install, &mut client).is_err());
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
