@@ -16,9 +16,9 @@ export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failing
   </div>;
 }
 const words = { passed: 'pass', failed: 'fail', unknown: 'unknown' } as const;
-export default function Send({ place, source, model, local, stale, blocked, visible, remote, onChooseCluster }: {
+export default function Send({ place, source, model, local, stale, blocked, visible, remote, onChooseCluster, onReloadSource }: {
   place: SelectedPlace; source?: SourceId; model?: string; local?: RunSnapshot; stale: boolean;
-  blocked?: string; visible: boolean; remote: boolean; onChooseCluster?: () => void;
+  blocked?: string; visible: boolean; remote: boolean; onChooseCluster?: () => void; onReloadSource?: () => Promise<void>;
 }) {
   const [snapshot, setSnapshot] = useState<SendView | null>(null);
   const [message, setMessage] = useState<string>();
@@ -42,6 +42,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const [refresh, setRefresh] = useState(0);
   const [check, setCheck] = useState<{ key: string; value?: SendCheck; error?: string }>();
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [reloadError, setReloadError] = useState<string>();
   const targetId = target?.id;
   const agentHash = source?.agent; const testsHash = source?.tests;
   const checkKey = JSON.stringify([targetId, providerId, agentHash, testsHash, refresh]);
@@ -58,7 +59,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const matched = checked?.value && sameSource(source, checked.value.source) === true;
   const mismatched = checked?.value?.source != null && !matched;
   const reason = blocked ?? (stale ? 'Save your changes first' : !target || !provider ? 'Choose a cluster and Provider in Clusters first'
-    : !checked ? 'Checking this destination…' : checked.error ?? (mismatched ? 'Your saved files changed. Check this destination again.'
+    : !checked ? 'Checking this destination…' : checked.error ?? (mismatched ? 'Your saved files changed. Reload them to check this destination.'
     : !checked.value?.canSend ? 'Resolve the destination checks before sending.' : undefined));
   async function mutate(command: 'send_start' | 'send_stop') {
     if (admitted.current) return;
@@ -98,7 +99,11 @@ export default function Send({ place, source, model, local, stale, blocked, visi
         <div><b>{row.label}</b><p>{row.message}</p></div>
       </li>)}</ul>}
       {reason && <p role={checked ? 'alert' : 'status'}>{reason}</p>}
-      {checked && <button type="button" className="workspace-secondary" disabled={busy || running} onClick={() => setRefresh(v => v + 1)}>Check again</button>}
+      {checked && (mismatched ? <button type="button" className="workspace-secondary" disabled={busy || running || !onReloadSource} onClick={() => {
+        setReloadError(undefined);
+        void onReloadSource?.().catch(() => setReloadError('Your saved files could not be reloaded. Your draft is still here.'));
+      }}>Reload saved files</button> : <button type="button" className="workspace-secondary" disabled={busy || running} onClick={() => setRefresh(v => v + 1)}>Check again</button>)}
+      {reloadError && <p role="alert">{reloadError}</p>}
     </section>}
     <div className="workspace-step-actions"><button type="button" className="setup-button" disabled={!!reason || busy || running || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run checks' : 'Run all checks'}</button>
       {running && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void mutate('send_stop'); }}>Stop</button>}

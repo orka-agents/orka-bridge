@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Example from '../designer/Example';
@@ -52,6 +52,41 @@ test('preflight pending blocks Send and only matching source enables it', async 
   finish({ ...allowed, source: { ...source, tests: 'c'.repeat(64) } });
   await screen.findByText(/saved files changed/);
   expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(true);
+});
+test('changed disk files can be explicitly reloaded before preflight is retried', async () => {
+  vi.stubGlobal('isTauri', true); let opened = false;
+  const changed = { ...pair, agent: pair.agent.replace('literal-model', 'file-model').replace('Read the page.', 'Changed on disk.'), source: { ...source, tests: 'c'.repeat(64) } };
+  mockIPC(command => {
+    if (command === 'agent_open') { const value = opened ? changed : pair; opened = true; return value; }
+    if (command === 'setup_run_status') return idle;
+    if (command === 'send_status') return null;
+    if (command === 'send_preflight') return { ...allowed, source: changed.source, model: 'file-model' };
+    throw Error('Unsupported');
+  });
+  const user = userEvent.setup(); render(<Example remote place={place} />);
+  await user.click(await screen.findByRole('button', { name: 'Reload saved files' }));
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Run all checks' }) as HTMLButtonElement).disabled).toBe(false));
+  expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toBe('Changed on disk.\n');
+  expect(screen.getByText('Your saved agent file · file-model')).toBeTruthy();
+});
+test('a delayed reload never overwrites edits made while files are being read', async () => {
+  vi.stubGlobal('isTauri', true); let opened = false; let finish!: (value: unknown) => void;
+  const changed = { ...pair, agent: pair.agent.replace('Read the page.', 'Disk replacement.'), source: { ...source, tests: 'c'.repeat(64) } };
+  mockIPC((command, args) => {
+    if (command === 'agent_open') { if (opened) return new Promise(resolve => { finish = resolve; }); opened = true; return pair; }
+    if (command === 'setup_run_status') return idle;
+    if (command === 'send_status') return null;
+    if (command === 'send_preflight') return { ...allowed, source: changed.source };
+    if (command === 'agent_save') return { ...pair, agent: (args as Record<string, string>).content };
+    throw Error('Unsupported');
+  });
+  const user = userEvent.setup(); render(<Example remote place={place} />);
+  await user.click(await screen.findByRole('button', { name: 'Reload saved files' }));
+  const instructions = screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement;
+  await user.clear(instructions); await user.type(instructions, 'My draft');
+  await act(async () => { finish(changed); });
+  expect(instructions.value).toBe('My draft');
+  expect(instructions.value).not.toContain('Disk replacement');
 });
 test('collision is unverified, not refused; details disclosure names its state', async () => {
   native(idle, { ...running, state: 'complete', stage: 'done', report },  { ...allowed, rows: [{ label: 'page-reader', status: 'unverified', message: 'Implementation unverified: a built-in has this name.' }] });
