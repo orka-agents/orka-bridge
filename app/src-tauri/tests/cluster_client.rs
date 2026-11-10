@@ -1,3 +1,5 @@
+#[path = "support/exec_credential_fixture.rs"]
+mod credential_fixture;
 #[path = "support/cluster_tls_fixture.rs"]
 mod tls_fixture;
 use bridge_engine::clusters::*;
@@ -638,6 +640,55 @@ async fn effective_exec_visible_but_unavailable_and_credential_echo_not_exported
     let result = client.connect(id, None).await;
     assert_eq!(result.err(), Some(AccessOutcome::Unavailable));
 }
+#[tokio::test]
+async fn exec_certificate_creator_uses_existing_account_without_export_or_tls_relaxation() {
+    use base64::Engine;
+    let api = Arc::new(ApiFixture::default());
+    let tls = tls_fixture::TlsFixture::start(&api.start()).await;
+    let version = "client.authentication.k8s.io/v1";
+    let decode = |key: &str| {
+        String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(tls.auth[key].as_str().unwrap())
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    let result = json!({"kind":"ExecCredential","apiVersion":version,"status":{"clientCertificateData":decode("client-certificate-data"),"clientKeyData":decode("client-key-data")}});
+    let mut cfg = config(&tls.server, credential_fixture::exec(version, result));
+    cfg.clusters[0]
+        .cluster
+        .as_mut()
+        .unwrap()
+        .certificate_authority_data = Some(tls.ca.clone());
+    cfg.clusters[0].cluster.as_mut().unwrap().tls_server_name = Some("fixture-server".into());
+    let mut client = ClusterClient::new(cfg, Arc::new(OrkaFixture::default()));
+    let target = target(&mut client).await;
+    assert_eq!(
+        client.connect(target, None).await.err(),
+        Some(AccessOutcome::NeedServiceAccount)
+    );
+    assert!(!api
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|c| c.1.ends_with("/token")));
+    let access = client
+        .connect(target, Some("existing".into()))
+        .await
+        .unwrap();
+    assert!(access.expiry.is_some());
+    let calls = api.calls.lock().unwrap();
+    let peers = tls.peers.lock().unwrap();
+    for (i, call) in calls.iter().enumerate() {
+        if call.1.ends_with("/selfsubjectaccessreviews") {
+            assert!(call.2 == "Bearer issued-fixture");
+            assert!(!peers[i], "SSAR inherited the plugin certificate");
+        }
+    }
+}
+
 #[tokio::test]
 async fn certificate_creator_existing_sa_and_issued_ssar_has_no_creator_tls_certificate() {
     let api = Arc::new(ApiFixture::default());

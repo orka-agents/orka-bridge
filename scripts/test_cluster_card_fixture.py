@@ -14,6 +14,15 @@ spec.loader.exec_module(fixture)
 
 
 class SendFixtureTest(unittest.TestCase):
+    def test_conditional_and_denied_access_are_distinct(self):
+        handler = object.__new__(fixture.Discovery)
+        status, identity = handler.orka("GET", "/api/v1/auth/whoami", None, "Bearer conditional-fixture")
+        self.assertEqual(status, 200)
+        self.assertEqual(identity["authType"], "tokenReview")
+        self.assertEqual(identity["namespace"], "")
+        status, _ = handler.orka("GET", "/api/v1/auth/whoami", None, "Bearer denied-fixture")
+        self.assertEqual(status, 403)
+
     def test_native_forward_carries_create_receipts_and_check_evidence(self):
         server = ThreadingHTTPServer(("127.0.0.1", 0), fixture.Discovery)
         worker = threading.Thread(target=server.serve_forever, daemon=True)

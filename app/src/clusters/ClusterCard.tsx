@@ -5,8 +5,8 @@ import './clusters.css';
 const messages = {
   needServiceAccount: 'This Orka needs an existing ServiceAccount. Ask your cluster administrator for its name.',
   denied: 'Access was denied. Ask your cluster administrator to check your permissions.',
-  unavailable: 'Access could not be confirmed. Check the Orka connection and its configured Providers, then try again.',
-  unsupportedCredential: 'This context uses a sign-in method Bridge cannot use yet. Your context is still listed; no sign-in was started.',
+  unavailable: 'Access could not be confirmed. Check your existing sign-in, credential plugin and Orka connection, then try again.',
+  unsupportedCredential: 'This context’s credentials could not be used. Check its sign-in method and credential plugin outside Bridge, then try again.',
 };
 export default function ClusterCard({ onPlace, onOpenAgent }: { onPlace: (place: SelectedPlace) => void; onOpenAgent: () => void }) {
   const [choices, setChoices] = useState<ContextView[]>([]);

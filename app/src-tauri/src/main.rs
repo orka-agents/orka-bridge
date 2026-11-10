@@ -196,10 +196,12 @@ fn main() {
             if !requested || closing.swap(true, Ordering::SeqCst) { return; }
             let vm = app.state::<Arc<LocalVm>>().inner().clone();
             let send = app.state::<Arc<SendOwner>>().inner().clone();
+            let clusters = app.state::<bridge_engine::clusters::commands::ClusterSession>().inner().clone();
             vm.request_close(); // Native event thread: bar late Ready before scheduling async work.
             app.state::<EngineState>().shutdown();
             let handle = app.clone(); let completed = completed.clone();
             tauri::async_runtime::spawn(async move {
+                clusters.shutdown().await; // Cancel and reap an active credential child without waiting for the session lock.
                 send.shutdown().await; // Stop observation and close the forward; remote Tasks continue.
                 let clean = vm.shutdown().await.is_ok();
                 if !clean { eprintln!("Local VM startup or shutdown did not finish successfully; cleanup was not reported as clean."); }

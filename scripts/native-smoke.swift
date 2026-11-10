@@ -100,7 +100,17 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
-    if name == "send-probe" { return observations }
+    if name == "send-probe" || name == "cluster-probe" { return observations }
+    if name == "cluster-conditional" || name == "cluster-denied" {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        if name == "cluster-conditional" {
+            require(text.contains("ServiceAccount name") && text.contains("existing account in agents"), "Conditional name-only access prompt missing: \(text)")
+        } else {
+            require(text.contains("Access was denied") && !text.contains("ServiceAccount name"), "Denial incorrectly offered identity substitution: \(text)")
+        }
+        print("PASS \(name): native fixture access state, no real credentials")
+        return observations
+    }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Send your agent") || text.contains("Checks on your cluster") || text.contains("Checks:") || text.contains("Running checks") || text.contains("Planned Agent"), "Send panel not visible: \(text)")
@@ -343,7 +353,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let local = try capture("before-cluster", "Clusters")
     clickText("Use a cluster you already have instead", in: local)
     Thread.sleep(forTimeInterval: 1)
-    // The label focuses its native select. Choose the only synthetic context.
+    // The label focuses its native select. Choose the first synthetic context.
     let chooserFile = "\(output)/cluster-chooser.png"
     let command = Process()
     command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
@@ -356,10 +366,29 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     key(125); key(125); key(36)
     Thread.sleep(forTimeInterval: 2)
     // Capture discovery before the explicit access confirmation.
-    let card = try capture("cluster-card-minimum", "Clusters")
+    try capture("cluster-card-minimum", "Clusters")
+    // Exercise the existing conditional field and a denial, without issuing a token.
+    func chooseFixture(_ index: Int) throws -> [VNRecognizedTextObservation] {
+        scrollMain(1000)
+        let chooser = try capture("cluster-probe", "Clusters")
+        clickText("kubectl context", in: chooser)
+        key(49); key(115) // Open the native select; Home selects its placeholder.
+        for _ in 0..<index { key(125) }
+        key(36)
+        Thread.sleep(forTimeInterval: 1)
+        return try capture("cluster-card-selected", "Clusters")
+    }
+    for (index, name) in [(2, "cluster-conditional"), (3, "cluster-denied")] {
+        let selected = try chooseFixture(index)
+        clickText("Use this cluster", in: selected)
+        Thread.sleep(forTimeInterval: 1)
+        scrollMain(-250)
+        try capture(name, "Clusters")
+    }
+    let normal = try chooseFixture(1)
     // Closing a native select popup can return focus to navigation. Activate the
     // observed Use control instead of assuming Tab left focus on it.
-    clickText("Use this cluster", in: card)
+    clickText("Use this cluster", in: normal)
     Thread.sleep(forTimeInterval: 1)
     scrollMain(-400)
     let connected = try capture("cluster-access", "Clusters")
