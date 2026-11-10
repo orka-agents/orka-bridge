@@ -206,7 +206,12 @@ function Broadcast-Theme {
     $result = [UIntPtr]::Zero
     [NativeWalk]::SendMessageTimeout([IntPtr]0xffff, 0x1a, [UIntPtr]::Zero, 'ImmersiveColorSet', 2, 1000, [ref]$result) | Out-Null
 }
+# WebView2 otherwise enables renderer accessibility on screen-reader detection,
+# which is nondeterministic on hosted CI. This exposes real controls, not app state.
+# https://learn.microsoft.com/microsoft-edge/webview2/concepts/webview-features-flags
+$browserArgs = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 try {
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "$browserArgs --force-renderer-accessibility".Trim()
     if (!$existed) { New-Item $personalize -Force | Out-Null }
     foreach ($theme in @('light', 'dark')) {
         $script:theme = $theme
@@ -269,12 +274,14 @@ try {
 } catch {
     if ($script:themeOutput) {
         try {
-            @($script:window.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition) | Select-Object -First 100) | ForEach-Object { "Name=$($_.Current.Name); Type=$($_.Current.ControlType.ProgrammaticName); Enabled=$($_.Current.IsEnabled); Offscreen=$($_.Current.IsOffscreen)" } | Set-Content (Join-Path $script:themeOutput 'failure-ui.txt')
+            $all = @($script:window.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
+            @("Root Name=$($script:window.Current.Name); PID=$($script:window.Current.ProcessId); HWND=$($script:window.Current.NativeWindowHandle); Class=$($script:window.Current.ClassName); Descendants=$($all.Count)"; $all | Select-Object -First 100 | ForEach-Object { "Name=$($_.Current.Name); Type=$($_.Current.ControlType.ProgrammaticName); Enabled=$($_.Current.IsEnabled); Offscreen=$($_.Current.IsOffscreen)" }) | Set-Content (Join-Path $script:themeOutput 'failure-ui.txt')
         } catch { Write-Warning $_ }
         try { Capture 'failure' $true } catch { Write-Warning $_ }
     }
     throw
 } finally {
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $browserArgs
     # Force cleanup only on test failure; it is not evidence that the stop route worked.
     if ($script:app -and !$script:app.HasExited) { Stop-Process -Id $script:app.Id -Force -ErrorAction SilentlyContinue }
     foreach ($name in $prior.Keys) {

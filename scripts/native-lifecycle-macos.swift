@@ -119,6 +119,18 @@ func find(_ root: AXUIElement, _ stage: String, _ predicate: (AXUIElement) -> Bo
 func press(_ element: AXUIElement) {
     check(AXUIElementPerformAction(element, "AXPress" as CFString) == .success, "Cannot activate native AX control: \(text(element))")
 }
+func click(_ element: AXUIElement) {
+    guard let position = attribute(element, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
+        let size = attribute(element, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else {
+        check(false, "Native click target has no accessible bounds"); return
+    }
+    var point = CGPoint.zero; var extent = CGSize.zero
+    check(AXValueGetValue(position as! AXValue, .cgPoint, &point) && AXValueGetValue(size as! AXValue, .cgSize, &extent) && extent.width > 0 && extent.height > 0, "Invalid native click bounds")
+    point.x += extent.width / 2; point.y += extent.height / 2
+    for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+        CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+}
 func windowInfo() -> (CGWindowID, CGRect)? {
     let list = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
     guard let w = list.first(where: { ($0[kCGWindowOwnerPID as String] as? Int32) == app?.processIdentifier && ($0[kCGWindowLayer as String] as? Int) == 0 }),
@@ -160,7 +172,9 @@ func launch() throws -> AXUIElement {
 func menu(_ root: AXUIElement) -> [AXUIElement] {
     guard let extras = attribute(root, "AXExtrasMenuBar") else { fatalError("Missing native status menu bar") }
     let item = find(extras as! AXUIElement, "status-item") { attribute($0, "AXRole") as? String == "AXMenuBarItem" && text($0).contains("Bridge") }
-    press(item)
+    // AXPress reports success without opening tray-icon's mouse-driven menu.
+    // Click the real item at its native bounds, as in the existing OCR walk.
+    click(item)
     let open = find(root, "menu-open") { attribute($0, "AXTitle") as? String == "Open Bridge" }
     let stop = find(root, "menu-stop") { attribute($0, "AXTitle") as? String == "Stop workspace and quit" }
     check(attribute(open, "AXEnabled") as? Bool == true && attribute(stop, "AXEnabled") as? Bool == true, "Native menu commands disabled")
