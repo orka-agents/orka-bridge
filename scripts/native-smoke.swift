@@ -100,6 +100,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
+    if name == "send-probe" { return observations }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Send your agent") || text.contains("Checks on your cluster") || text.contains("Checks:") || text.contains("Running checks") || text.contains("Planned Agent"), "Send panel not visible: \(text)")
@@ -161,6 +162,25 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     require(headings == Set([expectedHeading]), "Native screenshot does not show the expected \(expectedHeading) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
     return observations
+}
+func scrollMain(_ pixels: Int32) {
+    let rect = window()!.1
+    mouse(.mouseMoved, CGPoint(x: rect.maxX - 20, y: rect.midY))
+    CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.3)
+}
+func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
+    // Disabling Start during IPC can reset WebKit's keyboard focus. Locate the
+    // real control after each state transition instead of counting Tab stops.
+    for _ in 0..<4 {
+        let seen = try capture("send-probe", "Designer")
+        if seen.contains(where: { $0.topCandidates(1).first?.string == label }) {
+            clickText(label, in: seen)
+            return
+        }
+        scrollMain(pixels)
+    }
+    fatalError("Send control not visible: \(label)")
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 var initial = try capture("initial", "Clusters")
@@ -336,31 +356,27 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // observed Use control instead of assuming Tab left focus on it.
     clickText("Use this cluster", in: card)
     Thread.sleep(forTimeInterval: 1)
-    CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: -400, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
-    Thread.sleep(forTimeInterval: 0.5)
+    scrollMain(-400)
     let connected = try capture("cluster-access", "Clusters")
     clickText("Open your agent", in: connected)
     Thread.sleep(forTimeInterval: 0.5)
     let ownedAgent = try capture("agent-cluster-owned", "Designer")
     clickText("Send to a cluster", in: ownedAgent)
     try capture("send-ready", "Designer")
-    // Send opens with its panel focused. Tab reaches the explicit Run action.
-    key(48); key(36)
+    try clickSendControl("Send and run checks", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
-    key(48) // The answer brings the completed result into the minimum window.
     let result = try capture("send-result", "Designer")
     require(result.contains { $0.topCandidates(1).first?.string == "Checks: pass" }, "Fixture-backed Send did not pass its real assertions")
-    key(48); key(36) // The answer is a keyboard stop before Show details.
-    key(121) // Page Down exposes the expanded identities at minimum size.
+    try clickSendControl("Show details", scrolling: -350)
+    scrollMain(-350)
     let details = try capture("send-result-details", "Designer")
     require(details.contains { ($0.topCandidates(1).first?.string ?? "").contains("bridge-run-") }, "Agent identity is not visible in native Send details")
-    key(36); key(48, shift: true)
     // The fixture's second Agent stays Running so this is a real Stop, not an
     // injected renderer state. Previously created resources remain on the fixture.
-    key(48, shift: true); key(36)
+    try clickSendControl("Send and run checks", scrolling: 350)
     Thread.sleep(forTimeInterval: 0.5)
     try capture("send-running", "Designer")
-    key(48); key(36) // Stop is next; it returns receipts after stream cleanup.
+    try clickSendControl("Stop", scrolling: -350)
     Thread.sleep(forTimeInterval: 0.5)
     let stopped = try capture("send-stopped", "Designer")
     require(stopped.contains { ($0.topCandidates(1).first?.string ?? "").contains("Stopped watching") }, "Native Stop did not return its result")
