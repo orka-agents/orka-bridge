@@ -287,7 +287,10 @@ impl<'a> NativeRunner<'a> {
     pub fn prepare(&self, pair: ParsedPair) -> Result<PreparedRun, ErrorKind> {
         let namespace = self.http.namespace();
         let name = format!("bridge-run-{}", Uuid::new_v4().simple());
-        let spec = json!({"providerRef":{"name":self.http.provider()},"model":{"name":pair.model()},"systemPrompt":{"inline":pair.prompt()},"tools":pair.tools().iter().map(|name| json!({"name":name})).collect::<Vec<_>>()});
+        let mut spec = json!({"providerRef":{"name":self.http.provider()},"model":{"name":pair.model()},"systemPrompt":{"inline":pair.prompt()},"tools":pair.tools().iter().map(|name| json!({"name":name})).collect::<Vec<_>>()});
+        if let Some(soul) = pair.soul() {
+            spec["soul"] = serde_json::to_value(soul).map_err(|_| ErrorKind::Source)?;
+        }
         let mut creates = vec![json!({"name":name,"namespace":namespace,"spec":spec})];
         for case in pair.cases() {
             let task = format!("bridge-task-{}", Uuid::new_v4().simple());

@@ -11,6 +11,7 @@ afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 function native(source = agent) {
   const writes: string[] = []; vi.stubGlobal('isTauri', true);
   mockIPC((command, args) => {
+    if (command === 'workspace_catalog') return { defaultModel: 'file-model', models: { state: 'ready', items: [{ id: 'file-model' }] }, tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Read a page' }, { kind: 'builtin', name: 'file_read', description: 'Read a file' }] } };
     if (command === 'agent_open') return { agent: source, tests: 'Checks', path };
     if (command === 'setup_example') return { agent: source, tests: 'Checks' };
     if (command === 'agent_save') { writes.push((args as { content: string }).content); return { agent: writes.at(-1), tests: 'Checks', path }; }
@@ -36,12 +37,13 @@ test('a no-op visit, disclosure and switches never write the file', async () => 
   expect(writes).toEqual([]);
 });
 test('keyboard picker adds and removes built-ins, keeping original bytes and focus', async () => {
-  const writes = native(); const user = userEvent.setup(); render(<Example />);
+  const writes = native(); const user = userEvent.setup(); render(<Example catalogKey={1} />);
   await screen.findByRole('textbox', { name: 'Instructions' });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(false));
   expect(screen.getByText('Read a web page')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /Read a file/ })).toBeNull();
   const add = screen.getByRole('button', { name: 'Add a tool' }); add.focus(); await user.keyboard('{Enter}');
-  await user.type(screen.getByRole('searchbox', { name: 'Find a built-in tool' }), 'file_read');
+  await user.type(screen.getByRole('searchbox', { name: 'Find a tool' }), 'file_read');
   await user.tab(); await user.keyboard('{Enter}');
   await waitFor(() => expect(writes.length).toBe(1));
   expect(writes[0]).toContain('future: {keep: yes}');
@@ -51,15 +53,15 @@ test('keyboard picker adds and removes built-ins, keeping original bytes and foc
   await waitFor(() => expect(writes.at(-1)).toBe(agent));
   await user.click(add); await user.keyboard('{Escape}'); expect(document.activeElement).toBe(add);
 });
-test('model, soul and Tool resources are disabled with reasons and real file values', async () => {
+test('catalog unavailable preserves model while soul remains editable without catalog', async () => {
   native(); const user = userEvent.setup(); render(<Example />);
   await screen.findByRole('textbox', { name: 'Instructions' });
   expect(screen.getByRole('combobox', { name: 'It thinks with' }).matches(':disabled')).toBe(true);
-  expect(screen.getByText('file-model')).toBeTruthy(); expect(screen.getByText('Not checked against your workspace')).toBeTruthy();
+  expect(screen.getByText('file-model')).toBeTruthy(); expect(screen.getByText(/Model catalog unavailable/)).toBeTruthy();
   expect(screen.queryByText('through GitHub Copilot')).toBeNull();
-  expect(screen.getByRole('button', { name: 'Tool resources' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByText('More settings: description, personality (soul), file'));
-  expect(screen.getByRole('textbox', { name: 'Personality (soul)' }).matches(':disabled')).toBe(true);
+  expect((screen.getByRole('textbox', { name: 'Personality (soul)' }) as HTMLTextAreaElement).readOnly).toBe(false);
   expect(screen.getByText(path)).toBeTruthy();
   fireEvent.change(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'A new description' } });
   await screen.findByRole('heading', { name: 'reader' });

@@ -2,23 +2,38 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { loadExample, type ExamplePair } from '../setup/state';
 import { agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
+import { readWorkspaceCatalog, type WorkspaceCatalogReply } from '../catalog';
 import AgentParts from './AgentParts';
 import { readForm } from './agent-form';
 import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
 import Send, { SendEntry } from '../clusters/Send';
 
-export default function Example({ active = true, readOnly = false, remote = false, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
-  active?: boolean; readOnly?: boolean; remote?: boolean; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
+export default function Example({ active = true, readOnly = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
+  active?: boolean; readOnly?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void;
   onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
 }) {
+  const [catalogAttempt, setCatalogAttempt] = useState(0);
+  const [catalog, setCatalog] = useState<{ key: number; attempt: number; reply?: WorkspaceCatalogReply }>();
+  const catalogEnabled = catalogKey !== undefined && !readOnly && !remote;
+  useEffect(() => {
+    if (!catalogEnabled || catalogKey === undefined) return;
+    const controller = new AbortController();
+    void readWorkspaceCatalog(controller.signal).then(reply => {
+      if (!controller.signal.aborted) setCatalog({ key: catalogKey, attempt: catalogAttempt, reply });
+    });
+    return () => controller.abort();
+  }, [catalogEnabled, catalogKey, catalogAttempt]);
+  const currentCatalog = catalogEnabled && catalog?.key === catalogKey && catalog.attempt === catalogAttempt ? catalog : undefined;
   const [pair, setPair] = useState<AgentPair>();
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string>();
   const [saveState, setSaveState] = useState<SaveState>('saved');
+  const [pendingSoul, setPendingSoul] = useState(false);
   const [view, setView] = useState<'Agent' | 'File'>('Agent');
   const [stale, setStale] = useState(false);
+  const observePendingSoul = useCallback((pending: boolean) => { setPendingSoul(pending); if (pending) setStale(true); }, []);
   const [sendOpen, setSendOpen] = useState(false);
   const [localRun, setLocalRun] = useState<RunSnapshot>();
   const observeRun = useCallback((value: RunSnapshot | undefined) => { setLocalRun(value); onRun?.(value); }, [onRun]);
@@ -39,7 +54,7 @@ export default function Example({ active = true, readOnly = false, remote = fals
     }, () => { if (mounted) { setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined); } });
     return () => { mounted = false; };
   }, [onPair, readOnly]);
-  useEffect(() => { onSaveState?.(saveState); }, [saveState, onSaveState]);
+  useEffect(() => { onSaveState?.(pendingSoul ? 'dirty' : saveState); }, [saveState, pendingSoul, onSaveState]);
   useEffect(() => { onStale?.(stale); }, [stale, onStale]);
 
   const flush = useCallback(async (retry = false) => {
@@ -70,10 +85,10 @@ export default function Example({ active = true, readOnly = false, remote = fals
     timer.current = setTimeout(() => { void flush(); }, 500);
   };
   const info = { ...agentInfo(draft), description: readForm(draft).description };
-  const saveLabel = { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
+  const saveLabel = pendingSoul ? 'Unsaved changes' : { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
   const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
     : readOnly ? 'Sending is unavailable while this example is read-only during setup'
-    : saveState !== 'saved' ? 'Save your changes first' : undefined;
+    : saveState !== 'saved' || pendingSoul ? 'Save your changes first' : undefined;
   return <section className="designer" aria-labelledby={active ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
       <div className="agent-heading-copy"><h1 id={active ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{info.description && <p className="muted">{info.description}</p>}</div>
@@ -97,14 +112,18 @@ export default function Example({ active = true, readOnly = false, remote = fals
           <textarea readOnly={readOnly} id="agent-file" aria-describedby="file-hint" className="agent-editor" spellCheck={false} value={draft} onChange={event => edit(event.target.value, true)} onBlur={() => { void flush(); }} onKeyDown={event => {
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void flush(); }
           }} />
-        </> : <AgentParts source={draft} path={pair.path} readOnly={readOnly} onChange={edit} />}
+        </> : null}
+        <div hidden={view !== 'Agent'}>
+          <AgentParts source={draft} path={pair.path} readOnly={readOnly} catalog={currentCatalog?.reply} catalogLoading={catalogEnabled && !currentCatalog} onPendingEdit={observePendingSoul} onChange={edit} />
+          {currentCatalog && (!currentCatalog.reply || currentCatalog.reply.models.state === 'unavailable' || currentCatalog.reply.tools.state === 'unavailable') && <button type="button" className="part-button" onClick={() => setCatalogAttempt(attempt => attempt + 1)}>Refresh catalog</button>}
+        </div>
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
         <Send place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} />
         {!remote && readOnly ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
           : null}
-        {!readOnly && <div hidden={remote}><Run source={pair.source} onSnapshot={observeRun} blocked={remote || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} /></div>}
+        {!readOnly && <div hidden={remote}><Run source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} /></div>}
         <details className="check-source"><summary>Check file: web-reader.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Check file, read-only">{pair.tests}</pre></details>
       </div>
     </>}

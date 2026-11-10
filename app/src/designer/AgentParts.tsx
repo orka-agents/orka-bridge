@@ -1,26 +1,58 @@
-import { useId, useRef, useState, type ReactNode } from 'react';
-import { addTool, changeDescription, changeInstructions, readForm, removeTool } from './agent-form';
+import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 'react';
+import { addTool, changeDescription, changeInstructions, changeModel, changeSoulInline, changeSoulReference, readForm, removeTool } from './agent-form';
 import { builtInTools } from './built-in-tools';
+import type { WorkspaceCatalogReply } from '../catalog';
 
-function Unavailable({ label, reason, children }: { label: string; reason: string; children: ReactNode }) {
-  return <span className="coming-control" tabIndex={0} role="group" aria-label={`${label}: ${reason}`} title={reason}>
+function Unavailable({ label, reason, children, focusRef }: { label: string; reason: string; children: ReactNode; focusRef?: Ref<HTMLSpanElement> }) {
+  return <span ref={focusRef} className="coming-control" tabIndex={0} role="group" aria-label={`${label}: ${reason}`} title={reason}>
     {children}<span className="control-tip" aria-hidden="true">{reason}</span>
   </span>;
 }
-export default function AgentParts({ source, path, readOnly, onChange }: {
-  source: string; path?: string; readOnly: boolean; onChange: (source: string) => void;
+export default function AgentParts({ source, path, readOnly, catalog, catalogLoading = false, onPendingEdit, onChange }: {
+  source: string; path?: string; readOnly: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; onPendingEdit?: (pending: boolean) => void; onChange: (source: string) => void;
 }) {
   const form = readForm(source); const id = useId();
   const [picker, setPicker] = useState(false); const [query, setQuery] = useState('');
+  const [soulDraft, setSoulDraft] = useState<{ source: string; value: string }>();
+  const [soulError, setSoulError] = useState<string>();
+  const editVersion = useRef(0); const pendingSoul = useRef(false);
+  useEffect(() => {
+    setSoulDraft(undefined);
+    return () => {
+      editVersion.current++;
+      if (pendingSoul.current) setSoulError('A newer edit replaced the pending personality change. Re-enter it if needed.');
+      pendingSoul.current = false; onPendingEdit?.(false);
+    };
+  }, [source, readOnly, onPendingEdit]);
   const add = useRef<HTMLButtonElement>(null);
+  const addPlaceholder = useRef<HTMLSpanElement>(null);
+  const focusAdd = () => (add.current ?? addPlaceholder.current)?.focus();
   const change = (value: string) => { if (!readOnly && value !== source) onChange(value); };
-  const close = () => { setPicker(false); setQuery(''); add.current?.focus(); };
-  const choices = Object.entries(builtInTools).filter(([name, label]) =>
-    !form.tools.some(tool => tool.builtin && tool.name === name) && `${label} ${name}`.toLowerCase().includes(query.toLowerCase()));
-  const toolReason = readOnly ? 'You can change tools after setup.' : 'Edit tools in File view for this file’s format.';
-  const modelReason = 'Model selection is coming when a workspace catalog is available.';
-  const soulReason = 'Personality editing is coming. Running personality settings is not supported yet.';
-  const resourceReason = 'Tool resources are coming. Only built-in tools can be added here.';
+  const close = () => { setPicker(false); setQuery(''); focusAdd(); };
+  const tools = catalog?.tools.state === 'ready' ? catalog.tools.items : undefined;
+  const builtins = new Set(tools?.filter(tool => tool.kind === 'builtin').map(tool => tool.name));
+  const choices = tools?.filter(tool => !form.tools.some(selected => selected.name === tool.name)
+    && !(tool.kind === 'tool' && builtins.has(tool.name))
+    && `${tool.name} ${tool.description} ${tool.kind === 'builtin' ? builtInTools[tool.name] ?? '' : ''}`.toLowerCase().includes(query.toLowerCase()));
+  const models = catalog?.models.state === 'ready' ? catalog.models.items.filter(model => model.pickerEnabled !== false && model.chatSupported !== false) : undefined;
+  const listed = models?.some(model => model.id === form.model);
+  const knownModel = catalog?.models.state === 'ready' && catalog.models.items.some(model => model.id === form.model);
+  const unlistedLabel = models ? knownModel ? ' (not offered for chat)' : ' (unlisted)' : '';
+  const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit tools in File view for this file’s format.'
+    : catalogLoading ? 'Reading the workspace catalog…' : tools === undefined ? 'Tool catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
+  const modelReason = readOnly ? 'You can change the model after setup.' : !form.modelEditable ? 'Edit the model in File view for this file’s format.'
+    : catalogLoading ? 'Reading the workspace catalog…' : models === undefined ? 'Model catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
+  const labelFor = (name: string) => Object.hasOwn(builtInTools, name) ? builtInTools[name] : name;
+  const editSoul = async (value: string) => {
+    if (readOnly || !form.soulEditable) return;
+    const version = ++editVersion.current;
+    setSoulDraft({ source, value }); setSoulError(undefined); pendingSoul.current = true; onPendingEdit?.(true);
+    try {
+      const edited = await changeSoulInline(source, value);
+      if (version === editVersion.current) { pendingSoul.current = false; change(edited); }
+    } catch { if (version === editVersion.current) setSoulError('Personality could not be updated. The file is unchanged; try editing in File view.'); }
+    finally { if (version === editVersion.current) { pendingSoul.current = false; onPendingEdit?.(false); } }
+  };
   return <div className="agent-parts">
     {!form.metadataEditable && <p className="muted">This file’s settings can be edited in File view.</p>}
     <div className="agent-part">
@@ -33,31 +65,40 @@ export default function AgentParts({ source, path, readOnly, onChange }: {
       <h3 id={`${id}-tools`}>It can use</h3>
       <div className="agent-tool-row">
         {form.tools.map(tool => {
-          const name = tool.name ?? 'Unrecognised tool entry'; const label = tool.builtin && Object.hasOwn(builtInTools, name) ? builtInTools[name] : undefined;
-          return <span className="tool-pill" key={tool.index}>
-            <span>{label ?? name}</span>{label && <code>{name}</code>}
-            {tool.builtin ? !readOnly && form.toolsEditable && <button type="button" className="tool-remove" aria-label={`Remove ${label ?? name}`} onClick={() => { change(removeTool(source, tool.index)); add.current?.focus(); }}>×</button>
-              : <span className="muted">(Tool resource, editing coming)</span>}
+          const name = tool.name ?? 'Unrecognised tool entry'; const label = tool.builtin ? labelFor(name) : name;
+          const observation = tools?.find(item => item.kind === tool.kind && item.name === name);
+          return <span className="tool-pill" key={tool.index} title={observation?.description}>
+            <span>{label}</span>{label !== name && <code>{name}</code>}
+            {tool.kind === 'tool' && <span className="muted">(Tool resource{builtins.has(name) ? ', built-in takes precedence' : ''})</span>}
+            {!readOnly && form.toolsEditable && ['builtin', 'tool'].includes(tool.kind ?? '') && <button type="button" className="tool-remove" aria-label={`Remove ${label}`} onClick={() => { change(removeTool(source, tool.index)); focusAdd(); }}>×</button>}
           </span>;
         })}
-        {readOnly || !form.toolsEditable ? <Unavailable label="Add a tool" reason={toolReason}><button className="part-button" type="button" disabled title={toolReason}>Add a tool</button></Unavailable>
+        {toolReason ? <Unavailable label="Add a tool" reason={toolReason} focusRef={addPlaceholder}><button className="part-button" type="button" disabled title={toolReason}>Add a tool</button></Unavailable>
           : <button className="part-button" type="button" ref={add} aria-expanded={picker} aria-controls={`${id}-picker`} onClick={() => { if (picker) close(); else setPicker(true); }}><span aria-hidden="true">+ </span>Add a tool</button>}
-        <Unavailable label="Tool resources" reason={resourceReason}><button className="part-button" type="button" disabled title={resourceReason}>Tool resources</button></Unavailable>
       </div>
-      {picker && !readOnly && form.toolsEditable && <div id={`${id}-picker`} className="tool-picker" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
-        <label htmlFor={`${id}-search`}>Find a built-in tool</label>
+      {toolReason && <p className="muted">{toolReason}</p>}
+      {picker && !toolReason && <div id={`${id}-picker`} className="tool-picker" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
+        <label htmlFor={`${id}-search`}>Find a tool</label>
         <input id={`${id}-search`} type="search" autoFocus value={query} onChange={event => setQuery(event.target.value)} />
-        <p className="muted">Built-in tools known to Orka. Availability depends on your workspace.</p>
-        <ul aria-label="Built-in tools">{choices.map(([name, label]) => <li key={name}><button type="button" onClick={() => { change(addTool(source, name)); close(); }}><span>{label}</span><code>{name}</code></button></li>)}</ul>
-        {!choices.length && <p className="muted">No matching tools to add.</p>}
+        <p className="muted">Listed by this workspace. Tool availability does not guarantee a call is allowed.</p>
+        <ul aria-label="Workspace tools">{choices?.map(tool => <li key={`${tool.kind}:${tool.name}`}><button type="button" onClick={() => { change(addTool(source, tool.name, tool.kind)); close(); }}>
+          <span>{tool.kind === 'builtin' ? labelFor(tool.name) : tool.name}</span><code>{tool.name}</code>
+          <span className="muted">{tool.kind === 'builtin' ? 'Built-in' : 'Tool resource'}</span>
+          <span className="tool-description">{tool.description}</span>
+          {tool.available === false && <span className="muted">Observed unavailable</span>}
+        </button></li>)}</ul>
+        {!choices?.length && <p className="muted">{tools?.length ? 'No matching tools to add.' : 'No tools listed by this workspace.'}</p>}
         <button className="part-button" type="button" onClick={close}>Close picker</button>
       </div>}
     </section>
     <div className="agent-part">
       <label htmlFor={`${id}-model`}>It thinks with</label>
       <div className="agent-tool-row">
-        <Unavailable label="It thinks with" reason={modelReason}><select id={`${id}-model`} className="part-button" disabled title={modelReason} value={form.model ?? ''}><option value={form.model ?? ''}>{form.model ?? 'No model in this file'}</option></select></Unavailable>
-        <span className="muted">Not checked against your workspace</span>
+        <select id={`${id}-model`} className="part-button model-select" disabled={!!modelReason} title={modelReason} value={form.model ?? ''} onChange={event => change(changeModel(source, event.target.value))}>
+          {!listed && <option value={form.model ?? ''}>{form.model ? `${form.model}${unlistedLabel}` : 'No model in this file'}</option>}
+          {models?.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}
+        </select>
+        <span className="muted">{modelReason ?? (models?.length ? `Workspace default: ${catalog?.defaultModel}` : 'No models listed by this workspace.')}</span>
       </div>
     </div>
     <details className="agent-settings">
@@ -69,8 +110,22 @@ export default function AgentParts({ source, path, readOnly, onChange }: {
         {!form.descriptionEditable && <p className="muted">Edit the description in File view for this file’s format.</p>}
       </div>
       <div className="agent-part">
-        <label htmlFor={`${id}-soul`}>Personality (soul)</label>
-        <Unavailable label="Personality (soul)" reason={soulReason}><textarea id={`${id}-soul`} className="description-editor" disabled title={soulReason} placeholder="Personality editing is coming" /></Unavailable>
+        {form.soul?.configMapRef ? <>
+          <h3>Personality (soul): ConfigMap reference</h3>
+          <p className="muted">Orka reads this key in the agent’s namespace and checks its digest when it runs. The text is not loaded here.</p>
+          {(['name', 'key', 'digest'] as const).map(field => <label className="soul-reference-field" key={field}>
+            {field === 'name' ? 'ConfigMap name' : field === 'key' ? 'ConfigMap key' : 'Expected digest'}
+            <input className="part-button" readOnly={readOnly || !form.soulEditable} value={field === 'digest' ? form.soul?.digest ?? '' : form.soul!.configMapRef![field]}
+              onChange={event => change(changeSoulReference(source, field, event.target.value))} />
+          </label>)}
+        </> : <>
+          <label htmlFor={`${id}-soul`}>Personality (soul)</label>
+          <textarea id={`${id}-soul`} className="description-editor" readOnly={readOnly || !form.soulEditable} value={soulDraft?.source === source ? soulDraft.value : form.soul?.inline ?? ''}
+            onChange={event => { void editSoul(event.target.value); }} />
+          {form.soul?.digest && <p className="muted">The existing digest is updated with each personality edit.</p>}
+          {!form.soulEditable && <p className="muted">Edit personality in File view for this file’s format.</p>}
+          {soulError && <p role="alert">{soulError}</p>}
+        </>}
       </div>
       <div className="agent-part"><h3>File</h3><p className="agent-path">{path ?? (readOnly ? 'The example gets its own folder after setup.' : 'The file path is unavailable.')}</p></div>
     </details>
