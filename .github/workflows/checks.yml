@@ -19,8 +19,8 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - name: Test shared-cluster RBAC validator
-        run: python3 -m unittest scripts/test_validate_shared_cluster_rbac.py -v
+      - name: Test shared-cluster fixtures and RBAC validator
+        run: python3 -m unittest scripts/test_validate_shared_cluster_rbac.py scripts/test_cluster_card_fixture.py -v
 
   frontend:
     runs-on: ubuntu-latest

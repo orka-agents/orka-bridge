@@ -5,7 +5,7 @@ export type TargetView = { id: string; context_id: string; context_name: string;
 export type ProviderView = { id: string; name: string; ready: boolean };
 export type AccessStatus = 'connected' | 'needServiceAccount' | 'denied' | 'unavailable' | 'unsupportedCredential';
 export type AccessView = { status: AccessStatus; providers: ProviderView[] };
-export type SelectedPlace = { kind: 'thisComputer' } | { kind: 'cluster'; target?: TargetView };
+export type SelectedPlace = { kind: 'thisComputer' } | { kind: 'cluster'; target?: TargetView; providers?: ProviderView[]; providerId?: string };
 const statuses: AccessStatus[] = ['connected', 'needServiceAccount', 'denied', 'unavailable', 'unsupportedCredential'];
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const keys = (v: Record<string, unknown>, names: string[]) => Object.keys(v).sort().join(',') === names.sort().join(',');

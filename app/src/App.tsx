@@ -78,8 +78,10 @@ export default function App() {
   const [setupReadOnly, setSetupReadOnly] = useState(true);
   const workspaceAdmitted = useRef(false);
   const [editorOwned, setEditorOwned] = useState(false);
-  const exampleReadOnly = setupReadOnly && !editorOwned;
-  useEffect(() => { if (exampleOpen && !setupReadOnly) setEditorOwned(true); }, [exampleOpen, setupReadOnly]);
+  const exampleReadOnly = setupReadOnly && !editorOwned && !(place.kind === 'cluster' && place.target);
+  useEffect(() => {
+    if (exampleOpen && (!setupReadOnly || place.kind === 'cluster' && place.target)) setEditorOwned(true);
+  }, [exampleOpen, setupReadOnly, place]);
   const [checking, setChecking] = useState(true);
   const [welcome, setWelcome] = useState(false);
   const [model, setModel] = useState<ModelState>('idle');
@@ -127,7 +129,7 @@ export default function App() {
     : cases ? 'checks passing' : 'ready to edit';
   const tabStatus: Record<Page, string> = {
     Overview: checks ?? 'No agents yet',
-    Designer: agentName ? `${agentName}, ${exampleReadOnly ? 'ready to read' : remote ? 'remote checks coming' : agentStatus}` : !exampleOpen ? 'No agent open'
+    Designer: agentName ? `${agentName}, ${exampleReadOnly ? 'ready to read' : remote ? 'checks on your cluster' : agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
       : model === 'connected' ? run?.state === 'complete' ? 'This computer ready' : 'AI connected'
@@ -171,7 +173,7 @@ export default function App() {
           <h1 id="page-title">{page}</h1>
           {page === 'Designer' && <div className="heading-actions">
             <ComingButton label="New agent" reason="Creating agents is coming" />
-            <ComingButton label="Send to a cluster" reason="Sending to a cluster is coming" />
+            <ComingButton label="Send to a cluster" reason="Open your agent before sending" />
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
@@ -181,9 +183,8 @@ export default function App() {
               setExampleOpen(true); setPage('Designer');
             }} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} remote={remote} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} remote={remote} place={place} onChooseCluster={() => setPage('Clusters')} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
-          <ComingButton label="Send to a cluster" reason="Sending to a cluster is coming" />
         </>} /></div>}
         {page !== 'Clusters' && !(page === 'Designer' && exampleOpen) && <section className="card empty-state">
           <span className="icon-tile empty-icon"><PageIcon page={page} /></span>

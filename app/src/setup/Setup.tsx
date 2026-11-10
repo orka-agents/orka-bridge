@@ -137,7 +137,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
             <input id="workspace-cluster" type="radio" name="workspace" aria-label="On a cluster you already have" checked={cluster} onChange={chooseCluster} />
             <label htmlFor="workspace-cluster">On a cluster you already have</label><span className="muted workspace-expert">for Kubernetes users</span>
             <p className="workspace-option-detail">Pick a kubectl context and Bridge uses the Orka on that cluster.</p>
-            {cluster && <ClusterCard onPlace={place => onPlace?.(place)} />}
+            {cluster && <ClusterCard onPlace={place => onPlace?.(place)} onOpenAgent={onOpenExample} />}
           </div>
         </fieldset>
         {!cluster && <div className="workspace-choice-footer"><span className="muted">Step 1 of 4</span>

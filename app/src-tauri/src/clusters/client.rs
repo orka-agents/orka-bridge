@@ -228,42 +228,12 @@ impl ClusterClient {
             permissions(token_client, &access.binding.watched_namespace).await?;
         }
         access.read(OrkaResource::Agents, None).await?;
-        let mut after = None;
-        let mut seen = HashSet::new();
-        loop {
-            let page = access
-                .read(OrkaResource::Providers, after.as_deref())
-                .await?;
-            for item in items(&page)? {
-                let name = item["metadata"]["name"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .ok_or(AccessOutcome::Unavailable)?;
-                if item["metadata"]["namespace"] != access.binding.watched_namespace {
-                    return Err(AccessOutcome::Unavailable);
-                }
-                let ready = match item.get("status") {
-                    None => false,
-                    Some(Value::Object(status)) => match status.get("ready") {
-                        None => false,
-                        Some(Value::Bool(ready)) => *ready,
-                        _ => return Err(AccessOutcome::Unavailable),
-                    },
-                    _ => return Err(AccessOutcome::Unavailable),
-                };
-                access.providers.push(ProviderView {
-                    id: ProviderId(Uuid::new_v4()),
-                    name: name.into(),
-                    ready,
-                });
-            }
-            after = continuation(&page)?;
-            if after.is_none() {
-                break;
-            }
-            if !seen.insert(after.clone()) {
-                return Err(AccessOutcome::Unavailable);
-            }
+        for (name, ready) in access.configured_providers(&*access.orka).await? {
+            access.providers.push(ProviderView {
+                id: ProviderId(Uuid::new_v4()),
+                name,
+                ready,
+            });
         }
         if access.providers.is_empty() {
             return Err(AccessOutcome::Unavailable);
@@ -283,9 +253,17 @@ impl RemoteAccess {
         resource: OrkaResource,
         after: Option<&str>,
     ) -> Result<Value, AccessOutcome> {
+        self.read_via(&*self.orka, resource, after).await
+    }
+    async fn read_via(
+        &self,
+        orka: &dyn OrkaRead,
+        resource: OrkaResource,
+        after: Option<&str>,
+    ) -> Result<Value, AccessOutcome> {
         let value = tokio::time::timeout(
             REQUEST_TIMEOUT,
-            self.orka.get(
+            orka.get(
                 &self.creator,
                 &self.binding,
                 &self.bearer,
@@ -324,13 +302,82 @@ impl RemoteAccess {
             _ => Err(AccessOutcome::Denied),
         }
     }
+    async fn configured_providers(
+        &self,
+        orka: &dyn OrkaRead,
+    ) -> Result<Vec<(String, bool)>, AccessOutcome> {
+        let mut providers = Vec::new();
+        let mut after = None;
+        let mut seen = HashSet::new();
+        loop {
+            let page = self
+                .read_via(orka, OrkaResource::Providers, after.as_deref())
+                .await?;
+            for item in items(&page)? {
+                let name = item["metadata"]["name"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .ok_or(AccessOutcome::Unavailable)?;
+                if item["metadata"]["namespace"] != self.binding.watched_namespace {
+                    return Err(AccessOutcome::Unavailable);
+                }
+                let ready = match item.get("status") {
+                    None => false,
+                    Some(Value::Object(status)) => match status.get("ready") {
+                        None => false,
+                        Some(Value::Bool(ready)) => *ready,
+                        _ => return Err(AccessOutcome::Unavailable),
+                    },
+                    _ => return Err(AccessOutcome::Unavailable),
+                };
+                providers.push((name.to_owned(), ready));
+            }
+            after = continuation(&page)?;
+            if after.is_none() {
+                break;
+            }
+            if !seen.insert(after.clone()) {
+                return Err(AccessOutcome::Unavailable);
+            }
+        }
+        Ok(providers)
+    }
+    /// Send's built-in and Provider rechecks over the attempt's own stream, so a
+    /// Stop that drops a check leaves no forward for anyone but its owner to close.
+    /// The Provider is rechecked by name/namespace, never readiness: tests establish availability.
+    pub async fn recheck(
+        &self,
+        stream: &OrkaStreamTransport,
+        id: ProviderId,
+        tools: &[String],
+    ) -> Result<(), ClusterError> {
+        let selected = self.providers.iter().find(|p| p.id == id);
+        let selected = selected.ok_or(ClusterError::Unavailable)?;
+        self.builtins(stream, tools).await?;
+        let current = self
+            .configured_providers(stream)
+            .await
+            .map_err(cluster_error)?;
+        if current.iter().any(|(name, _)| *name == selected.name) {
+            Ok(())
+        } else {
+            Err(ClusterError::Unavailable)
+        }
+    }
+    /// A freshly read kubeconfig, using this access's Orka reader, for admission rechecks.
+    pub fn fresh_client(&self, kubeconfig: Kubeconfig) -> ClusterClient {
+        ClusterClient::new(kubeconfig, self.orka.clone())
+    }
     pub async fn require_builtins(&self, required: &[String]) -> Result<(), ClusterError> {
+        self.builtins(&*self.orka, required).await
+    }
+    async fn builtins(&self, orka: &dyn OrkaRead, required: &[String]) -> Result<(), ClusterError> {
         let mut missing: HashSet<&str> = required.iter().map(String::as_str).collect();
         let mut after = None;
         let mut seen = HashSet::new();
         while !missing.is_empty() {
             let page = self
-                .read(OrkaResource::Tools, after.as_deref())
+                .read_via(orka, OrkaResource::Tools, after.as_deref())
                 .await
                 .map_err(cluster_error)?;
             for item in items(&page).map_err(cluster_error)? {

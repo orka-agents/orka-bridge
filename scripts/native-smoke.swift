@@ -100,6 +100,12 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
+    if name.hasPrefix("send-") {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("Send your agent") || text.contains("Checks on your cluster") || text.contains("Checks:") || text.contains("Running checks"), "Send panel not visible: \(text)")
+        print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
+        return observations
+    }
     if name.hasPrefix("cluster-card") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Orka found") && text.contains("orka:fixture"), "Fixture Orka not visible: \(text)")
@@ -322,4 +328,37 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Tab focuses Use and brings the discovery summary into view at minimum size.
     key(48)
     try capture("cluster-card-minimum", "Clusters")
+    // Use owns real native access to the loopback fixture. The Provider select
+    // receives focus, then Tab reaches Open your agent without pointer guessing.
+    key(36)
+    Thread.sleep(forTimeInterval: 1)
+    key(48); key(36)
+    Thread.sleep(forTimeInterval: 1)
+    let ownedAgent = try capture("agent-cluster-owned", "Designer")
+    clickText("Send to a cluster", in: ownedAgent)
+    try capture("send-ready", "Designer")
+    // Send opens with its panel focused. Tab reaches the explicit Run action.
+    key(48); key(36)
+    Thread.sleep(forTimeInterval: 1)
+    key(48) // Show details brings the completed result into the minimum window.
+    let result = try capture("send-result", "Designer")
+    require(result.contains { $0.topCandidates(1).first?.string == "Checks: pass" }, "Fixture-backed Send did not pass its real assertions")
+    key(48); key(36) // The answer is a keyboard stop before Show details.
+    let details = try capture("send-result-details", "Designer")
+    require(details.contains { ($0.topCandidates(1).first?.string ?? "").contains("bridge-run-") }, "Agent identity is not visible in native Send details")
+    key(36); key(48, shift: true)
+    // The fixture's second Agent stays Running so this is a real Stop, not an
+    // injected renderer state. Previously created resources remain on the fixture.
+    key(48, shift: true); key(36)
+    Thread.sleep(forTimeInterval: 0.5)
+    try capture("send-running", "Designer")
+    key(48); key(36) // Stop is next; it returns receipts after stream cleanup.
+    Thread.sleep(forTimeInterval: 0.5)
+    let stopped = try capture("send-stopped", "Designer")
+    require(stopped.contains { ($0.topCandidates(1).first?.string ?? "").contains("Stopped watching") }, "Native Stop did not return its result")
+    clickTab("Clusters", stopped); clickTab("Designer", stopped)
+    let returned = try capture("agent-cluster-return", "Designer")
+    clickText("Send to a cluster", in: returned)
+    let returnedResult = try capture("send-page-return", "Designer")
+    require(returnedResult.contains { ($0.topCandidates(1).first?.string ?? "").contains("Stopped watching") }, "Page return lost the stopped Send result")
 }

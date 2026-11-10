@@ -33,7 +33,7 @@ async function discover(user: ReturnType<typeof userEvent.setup>) {
 beforeEach(() => localStorage.clear());
 afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-test('local readiness never enables remote checks, and changing places keeps the VM', async () => {
+test('local readiness never enables unconfirmed remote checks, and changing places keeps the VM', async () => {
   const ipc = native({ selected: 'localVm', localVm: 'ready', model: 'available' });
   ipc.mockImplementation(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
@@ -48,7 +48,7 @@ test('local readiness never enables remote checks, and changing places keeps the
   await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
   await user.click(screen.getByRole('button', { name: 'Designer' }));
-  const run = await screen.findByRole('button', { name: 'Run checks' });
+  const run = await screen.findByRole('button', { name: 'Run all checks' });
   expect(run.matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.getByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
@@ -120,7 +120,7 @@ test('local model acknowledgement survives a cluster round trip', async () => {
   expect(screen.queryByRole('button', { name: 'Use GitHub sign-in' })).toBeNull();
 });
 
-test('local-result observation continues while remote execution stays disabled', async () => {
+test('local-result observation continues while remote access is unconfirmed', async () => {
   native(); let complete = false;
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
@@ -140,7 +140,7 @@ test('local-result observation continues while remote execution stays disabled',
   complete = true;
   expect(await screen.findByText('This computer: 1 of 1 checks passing', { selector: '.checks-status' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
-  expect(screen.getByRole('button', { name: 'Run checks' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run all checks' }).matches(':disabled')).toBe(true);
 });
 
 test('expert_skip_selects_cluster_without_vm', async () => {
@@ -161,7 +161,7 @@ test('v6_cluster_card_keyboard and Use confirms access only after discovery', as
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.getByText('control / orka')).toBeTruthy(); expect(screen.getByText('agents')).toBeTruthy();
   expect(screen.getByText('team-model')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Send to this cluster' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Open your agent' }).matches(':disabled')).toBe(false);
 });
 test('native_need_account_only_then_name_field', async () => {
   const ipc = native(undefined, { status: 'needServiceAccount', providers: [] }); const user = await open(); await discover(user);

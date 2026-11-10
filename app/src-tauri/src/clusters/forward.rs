@@ -45,17 +45,55 @@ impl OrkaRead for PodOrkaRead {
             let connection = Connection::open(creator, binding, deadline)
                 .await
                 .map_err(access_error)?;
-            let path = match resource {
-                OrkaResource::WhoAmI => "auth/whoami",
-                OrkaResource::Agents => "agents",
-                OrkaResource::Providers => "providers",
-                OrkaResource::Tools => "tools",
-            };
             let result = connection
-                .request(path, namespace, bearer, &[bearer], after, None, deadline)
+                .request(
+                    path(resource),
+                    namespace,
+                    bearer,
+                    &[bearer],
+                    after,
+                    None,
+                    deadline,
+                )
                 .await;
             connection.close().await;
             result.map_err(access_error)
+        })
+    }
+}
+fn path(resource: OrkaResource) -> &'static str {
+    match resource {
+        OrkaResource::WhoAmI => "auth/whoami",
+        OrkaResource::Agents => "agents",
+        OrkaResource::Providers => "providers",
+        OrkaResource::Tools => "tools",
+    }
+}
+/// Send's rechecks reuse the attempt's opened stream (same binding); its owner closes it.
+impl OrkaRead for OrkaStreamTransport {
+    fn get<'a>(
+        &'a self,
+        _: &'a Client,
+        _: &'a TargetBinding,
+        bearer: &'a str,
+        resource: OrkaResource,
+        namespace: &'a str,
+        after: Option<&'a str>,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>> {
+        Box::pin(async move {
+            let deadline = Instant::now() + REQUEST_TIMEOUT;
+            self.connection
+                .request(
+                    path(resource),
+                    namespace,
+                    bearer,
+                    &[bearer],
+                    after,
+                    None,
+                    deadline,
+                )
+                .await
+                .map_err(access_error)
         })
     }
 }
