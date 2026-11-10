@@ -742,6 +742,50 @@ async fn exec_certificate_creator_uses_existing_account_without_export_or_tls_re
 }
 
 #[tokio::test]
+async fn exec_mixed_credentials_preserve_creator_tls_but_ssar_uses_only_bearer() {
+    use base64::Engine;
+    for token in ["", "mixed-fixture"] {
+        let api = Arc::new(ApiFixture::default());
+        let tls = tls_fixture::TlsFixture::start(&api.start()).await;
+        let version = "client.authentication.k8s.io/v1";
+        let decode = |key: &str| {
+            String::from_utf8(
+                base64::engine::general_purpose::STANDARD
+                    .decode(tls.auth[key].as_str().unwrap())
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let output = json!({"kind":"ExecCredential","apiVersion":version,"status":{"token":token,"clientCertificateData":decode("client-certificate-data"),"clientKeyData":decode("client-key-data")}});
+        let mut cfg = config(&tls.server, credential_fixture::exec(version, output));
+        cfg.clusters[0]
+            .cluster
+            .as_mut()
+            .unwrap()
+            .certificate_authority_data = Some(tls.ca.clone());
+        cfg.clusters[0].cluster.as_mut().unwrap().tls_server_name = Some("fixture-server".into());
+        let mut client = ClusterClient::new(cfg, Arc::new(OrkaFixture::default()));
+        let target = target(&mut client).await;
+        assert!(tls.peers.lock().unwrap().iter().all(|peer| *peer));
+        if token.is_empty() {
+            assert_eq!(
+                client.connect(target, None).await.err(),
+                Some(AccessOutcome::NeedServiceAccount)
+            );
+        } else {
+            client.connect(target, None).await.unwrap();
+            let calls = api.calls.lock().unwrap();
+            assert!(!calls.iter().any(|c| c.1.ends_with("/token")));
+            let peers = tls.peers.lock().unwrap();
+            for (i, call) in calls.iter().enumerate() {
+                assert!(call.2 == "Bearer mixed-fixture");
+                assert_eq!(peers[i], !call.1.ends_with("/selfsubjectaccessreviews"));
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn certificate_creator_existing_sa_and_issued_ssar_has_no_creator_tls_certificate() {
     let api = Arc::new(ApiFixture::default());
     let tls = tls_fixture::TlsFixture::start(&api.start()).await;

@@ -99,6 +99,21 @@ async fn malformed_expired_and_mismatched_results_never_construct_access() {
     }
 }
 #[tokio::test]
+async fn unused_empty_certificate_fields_do_not_hide_a_valid_token() {
+    let version = "client.authentication.k8s.io/v1";
+    let mut value = response(version);
+    value["status"]["clientCertificateData"] = json!("");
+    value["status"]["clientKeyData"] = json!("");
+    assert!(matches!(
+        resolve(&client(config(exec(version, value))))
+            .await
+            .unwrap()
+            .credential,
+        Credential::Bearer { .. }
+    ));
+}
+
+#[tokio::test]
 async fn always_and_invalid_contract_do_not_start_plugin() {
     for auth in [
         json!({"exec":{"apiVersion":"client.authentication.k8s.io/v1","command":"must-not-start","interactiveMode":"Always"}}),

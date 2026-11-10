@@ -294,17 +294,20 @@ pub(super) async fn resolve(
                 impersonate_user_extra: user.impersonate_user_extra.take(),
                 ..Default::default()
             };
-            match (
-                status.token,
-                status.client_certificate_data,
-                status.client_key_data,
-            ) {
-                (Some(token), None, None) if !token.is_empty() => {
-                    http::HeaderValue::from_str(&format!("Bearer {token}"))
-                        .map_err(|_| AccessOutcome::Unavailable)?;
-                    user.token = Some(token.into());
-                }
-                (None, Some(cert), Some(key)) if !cert.is_empty() && !key.is_empty() => {
+            let token = status.token.filter(|s| !s.is_empty());
+            let cert = status.client_certificate_data.filter(|s| !s.is_empty());
+            let key = status.client_key_data.filter(|s| !s.is_empty());
+            if token.is_none() && cert.is_none() && key.is_none() {
+                return Err(AccessOutcome::Unavailable);
+            }
+            if let Some(token) = token {
+                http::HeaderValue::from_str(&format!("Bearer {token}"))
+                    .map_err(|_| AccessOutcome::Unavailable)?;
+                user.token = Some(token.into());
+            }
+            match (cert, key) {
+                (None, None) => {}
+                (Some(cert), Some(key)) => {
                     use base64::Engine;
                     user.client_certificate_data =
                         Some(base64::engine::general_purpose::STANDARD.encode(cert));
