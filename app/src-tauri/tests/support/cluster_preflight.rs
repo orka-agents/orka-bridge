@@ -241,10 +241,26 @@ async fn edited_pair_and_replaced_binding_recheck_after_allowed_preview() {
 }
 
 #[tokio::test]
+async fn tool_metadata_is_implicit_in_a_valid_kubernetes_object_schema() {
+    let s = setup().await;
+    let path = "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/tools.core.orka.ai";
+    let mut crd = s.api.response(path).1;
+    crd["spec"]["versions"][0]["schema"] = json!({"openAPIV3Schema":{"type":"object"}});
+    *s.api.override_response.lock().unwrap() = Some(("tools.core.orka.ai".into(), 200, crd));
+    let c = check(&s).await;
+    assert_eq!(
+        c["canSend"], true,
+        "implicit Kubernetes metadata was refused: {c}"
+    );
+    assert_eq!(s.api.wire.posts(), 0);
+    assert_eq!(s.finish(&id(&s.start().await)).await["state"], "complete");
+}
+
+#[tokio::test]
 async fn required_send_schemas_are_rechecked_without_image_equality() {
     let s = setup().await; // Fixture image v99 deliberately differs from the local pin.
     assert_eq!(check(&s).await["canSend"], true);
-    for resource in ["agents", "tasks", "providers", "tools"] {
+    for resource in ["agents", "tasks", "providers"] {
         let suffix = format!("{resource}.core.orka.ai");
         let path = format!("/apis/apiextensions.k8s.io/v1/customresourcedefinitions/{suffix}");
         let mut crd = s.api.response(&path).1;

@@ -36,6 +36,10 @@ test.each(['blocked', 'cannotCheck'])('preflight %s explains the problem and pre
   expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(true);
   expect(ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
 });
+test('stale local results do not gate checking or sending a saved pair', async () => {
+  native(); render(<Send place={place} source={source} stale visible remote />);
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(false));
+});
 test('capture failure shows the native check explanation, not a stale-file claim', async () => {
   native(idle, null, { ...allowed, source: null, model: null, rows: [{ label: 'Saved files', status: 'cannotCheck', message: 'Your saved files could not be read.' }], canSend: false });
   render(<Send place={place} source={source} stale={false} visible remote />);

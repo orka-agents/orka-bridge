@@ -56,6 +56,9 @@ impl SendCheck {
 // Check the fields this native profile actually sends or reads, not an image pin
 // or a full-schema equality. Optional source features are not made universal gates.
 pub(super) fn supports_schema(resource: &str, schema: &Value) -> bool {
+    if schema["type"] != "object" {
+        return false;
+    }
     let required: &[(&str, &str)] = match resource {
         "agents" => &[
             ("spec.model.name", "string"),
@@ -71,7 +74,8 @@ pub(super) fn supports_schema(resource: &str, schema: &Value) -> bool {
             ("spec.retryPolicy.maxRetries", "integer"),
         ],
         "providers" => &[("status.ready", "boolean")],
-        "tools" => &[("metadata", "object")],
+        // Kubernetes validates ObjectMeta implicitly, even when omitted here.
+        "tools" => &[],
         _ => return false,
     };
     required.iter().all(|(path, kind)| {

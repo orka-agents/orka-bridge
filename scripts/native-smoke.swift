@@ -113,6 +113,12 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): native fixture access state, no real credentials")
         return observations
     }
+    if let expected = ["send-ready": "Built in to this Orka", "send-blocked": "Blocked", "send-cannot-check": "Bridge cannot check"][name] {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains(expected), "Native preflight evidence missing: \(expected); observed: \(text)")
+        print("PASS \(name): observed native preflight evidence; no workload submitted")
+        return observations
+    }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Send your agent") || text.contains("Checks on your cluster") || text.contains("Checks:") || text.contains("Running checks") || text.contains("Planned Agent"), "Send panel not visible: \(text)")

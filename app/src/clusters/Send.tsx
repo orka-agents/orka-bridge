@@ -46,7 +46,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const targetId = target?.id;
   const agentHash = source?.agent; const testsHash = source?.tests;
   const checkKey = JSON.stringify([targetId, providerId, agentHash, testsHash, refresh]);
-  const checkingEnabled = (visible || remote) && !blocked && !stale && !!targetId && !!providerId && !!agentHash && !!testsHash;
+  const checkingEnabled = (visible || remote) && !blocked && !!targetId && !!providerId && !!agentHash && !!testsHash;
   useEffect(() => {
     if (!checkingEnabled || !targetId || !providerId) return;
     let mounted = true;
@@ -58,7 +58,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const checked = checkingEnabled && check?.key === checkKey ? check : undefined;
   const matched = checked?.value && sameSource(source, checked.value.source) === true;
   const mismatched = checked?.value?.source != null && !matched;
-  const reason = blocked ?? (stale ? 'Save your changes first' : !target || !provider ? 'Choose a cluster and Provider in Clusters first'
+  const reason = blocked ?? (!target || !provider ? 'Choose a cluster and Provider in Clusters first'
     : !checked ? 'Checking this destination…' : checked.error ?? (mismatched ? 'Your saved files changed. Reload them to check this destination.'
     : !checked.value?.canSend ? 'Resolve the destination checks before sending.' : undefined));
   async function mutate(command: 'send_start' | 'send_stop') {
