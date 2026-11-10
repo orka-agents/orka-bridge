@@ -178,7 +178,10 @@ test.each(['unsupportedCredential', 'denied', 'unavailable'])('unsupported_acces
   const alert = await screen.findByRole('alert');
   expect(alert).toBeTruthy(); expect(screen.getByText('Orka found')).toBeTruthy();
   if (status === 'unsupportedCredential') expect(alert.textContent).toMatch(/credential plugin outside Bridge/);
-  if (status === 'unavailable') expect(alert.textContent).toMatch(/existing sign-in/);
+  if (status === 'unavailable') {
+    expect(alert.textContent).toMatch(/existing sign-in/);
+    expect(alert.textContent).toMatch(/configured Providers/);
+  }
   expect(screen.queryByRole('textbox', { name: 'ServiceAccount name' })).toBeNull();
 });
 test('failure alternative does not stop or reset a local VM', async () => {

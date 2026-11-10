@@ -286,7 +286,14 @@ pub(super) async fn resolve(
             {
                 return Err(AccessOutcome::Unavailable);
             }
-            *user = AuthInfo::default();
+            // Impersonation constrains creator Kubernetes requests; it is not a competing credential.
+            *user = AuthInfo {
+                impersonate: user.impersonate.take(),
+                impersonate_uid: user.impersonate_uid.take(),
+                impersonate_groups: user.impersonate_groups.take(),
+                impersonate_user_extra: user.impersonate_user_extra.take(),
+                ..Default::default()
+            };
             match (
                 status.token,
                 status.client_certificate_data,

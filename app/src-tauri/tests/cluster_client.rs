@@ -166,6 +166,7 @@ async fn command_use_future_is_send_for_desktop_dispatch() {
 struct ApiFixture {
     wire: forward::Wire,
     calls: Mutex<Vec<(String, String, String, Value)>>,
+    impersonation: Mutex<Vec<(String, Vec<(String, String)>)>>,
     deny: Mutex<bool>,
     replacement: Mutex<bool>,
     no_watch: Mutex<bool>,
@@ -210,6 +211,18 @@ impl ApiFixture {
                                 .then(|| value.trim().to_string())
                         })
                     };
+                    fixture.impersonation.lock().unwrap().push((
+                        path.split('?').next().unwrap().to_owned(),
+                        headers
+                            .lines()
+                            .filter_map(|line| {
+                                let (key, value) = line.split_once(':')?;
+                                key.to_ascii_lowercase()
+                                    .starts_with("impersonate-")
+                                    .then(|| (key.to_ascii_lowercase(), value.trim().to_owned()))
+                            })
+                            .collect(),
+                    ));
                     if path.contains("/portforward") {
                         fixture.wire.serve(stream, &headers);
                         return;
@@ -640,6 +653,44 @@ async fn effective_exec_visible_but_unavailable_and_credential_echo_not_exported
     let result = client.connect(id, None).await;
     assert_eq!(result.err(), Some(AccessOutcome::Unavailable));
 }
+#[tokio::test]
+async fn exec_creator_preserves_impersonation_but_ssar_is_token_only() {
+    let api = Arc::new(ApiFixture::default());
+    let version = "client.authentication.k8s.io/v1";
+    let mut auth = credential_fixture::exec(version, credential_fixture::response(version));
+    auth["as"] = json!("restricted-user");
+    auth["as-uid"] = json!("restricted-uid");
+    auth["as-groups"] = json!(["restricted-group"]);
+    auth["as-user-extra"] = json!({"purpose":["fixture"]});
+    let mut client = client(&api, &Arc::new(OrkaFixture::default()), auth);
+    let target = target(&mut client).await;
+    client.connect(target, None).await.unwrap();
+    let headers = api.impersonation.lock().unwrap();
+    assert!(headers
+        .iter()
+        .any(|(path, _)| path.ends_with("/selfsubjectaccessreviews")));
+    for (path, values) in headers.iter() {
+        if path.ends_with("/selfsubjectaccessreviews") {
+            assert!(
+                values.is_empty(),
+                "bearer-only SSAR carried creator impersonation"
+            );
+        } else {
+            let mut values = values.clone();
+            values.sort();
+            assert_eq!(
+                values,
+                vec![
+                    ("impersonate-extra-purpose".into(), "fixture".into()),
+                    ("impersonate-group".into(), "restricted-group".into()),
+                    ("impersonate-uid".into(), "restricted-uid".into()),
+                    ("impersonate-user".into(), "restricted-user".into())
+                ]
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn exec_certificate_creator_uses_existing_account_without_export_or_tls_relaxation() {
     use base64::Engine;
