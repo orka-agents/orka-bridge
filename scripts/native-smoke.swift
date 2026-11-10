@@ -221,6 +221,8 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
         for down in [true, false] {
             let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
             event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+            // Do not inherit Command from the caret-navigation events still in flight.
+            event.flags = []
             event.post(tap: .cghidEventTap)
         }
     }
