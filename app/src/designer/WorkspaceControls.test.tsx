@@ -83,6 +83,9 @@ test('a pending digest cannot overwrite a newer File edit', async () => {
   await user.click(screen.getByText('More settings: description, personality (soul), file'));
   fireEvent.change(screen.getByRole('textbox', { name: 'Personality (soul)' }), { target: { value: 'Pending' } });
   view.rerender(<AgentParts source={source} readOnly={false} onChange={changed} />);
+  expect(screen.getByRole('alert').textContent).toMatch(/newer edit/i);
+  view.rerender(<AgentParts source={inline} readOnly={false} onChange={changed} />);
+  expect((screen.getByRole('textbox', { name: 'Personality (soul)' }) as HTMLTextAreaElement).value).toBe('old');
   await act(async () => finish(new ArrayBuffer(32)));
   expect(changed).not.toHaveBeenCalled();
 });

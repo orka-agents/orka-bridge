@@ -14,9 +14,16 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
   const form = readForm(source); const id = useId();
   const [picker, setPicker] = useState(false); const [query, setQuery] = useState('');
   const [soulDraft, setSoulDraft] = useState<{ source: string; value: string }>();
-  const [soulError, setSoulError] = useState(false);
-  const editVersion = useRef(0);
-  useEffect(() => { return () => { editVersion.current++; onPendingEdit?.(false); }; }, [source, readOnly, onPendingEdit]);
+  const [soulError, setSoulError] = useState<string>();
+  const editVersion = useRef(0); const pendingSoul = useRef(false);
+  useEffect(() => {
+    setSoulDraft(undefined);
+    return () => {
+      editVersion.current++;
+      if (pendingSoul.current) setSoulError('A newer edit replaced the pending personality change. Re-enter it if needed.');
+      pendingSoul.current = false; onPendingEdit?.(false);
+    };
+  }, [source, readOnly, onPendingEdit]);
   const add = useRef<HTMLButtonElement>(null);
   const addPlaceholder = useRef<HTMLSpanElement>(null);
   const focusAdd = () => (add.current ?? addPlaceholder.current)?.focus();
@@ -39,12 +46,12 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
   const editSoul = async (value: string) => {
     if (readOnly || !form.soulEditable) return;
     const version = ++editVersion.current;
-    setSoulDraft({ source, value }); setSoulError(false); onPendingEdit?.(true);
+    setSoulDraft({ source, value }); setSoulError(undefined); pendingSoul.current = true; onPendingEdit?.(true);
     try {
       const edited = await changeSoulInline(source, value);
-      if (version === editVersion.current) change(edited);
-    } catch { if (version === editVersion.current) setSoulError(true); }
-    finally { if (version === editVersion.current) onPendingEdit?.(false); }
+      if (version === editVersion.current) { pendingSoul.current = false; change(edited); }
+    } catch { if (version === editVersion.current) setSoulError('Personality could not be updated. The file is unchanged; try editing in File view.'); }
+    finally { if (version === editVersion.current) { pendingSoul.current = false; onPendingEdit?.(false); } }
   };
   return <div className="agent-parts">
     {!form.metadataEditable && <p className="muted">This file’s settings can be edited in File view.</p>}
@@ -117,7 +124,7 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
             onChange={event => { void editSoul(event.target.value); }} />
           {form.soul?.digest && <p className="muted">The existing digest is updated with each personality edit.</p>}
           {!form.soulEditable && <p className="muted">Edit personality in File view for this file’s format.</p>}
-          {soulError && <p role="alert">Personality could not be updated. The file is unchanged; try editing in File view.</p>}
+          {soulError && <p role="alert">{soulError}</p>}
         </>}
       </div>
       <div className="agent-part"><h3>File</h3><p className="agent-path">{path ?? (readOnly ? 'The example gets its own folder after setup.' : 'The file path is unavailable.')}</p></div>
