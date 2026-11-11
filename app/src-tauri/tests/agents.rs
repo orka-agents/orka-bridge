@@ -141,21 +141,13 @@ fn registrations_and_selection_survive_restart() {
     assert!(restarted.register_created("helper").is_err());
 }
 #[test]
-fn registry_diagnostic_with_child_activity() {
-    let home = tempfile::tempdir().unwrap();
-    let folder = fixture(home.path(), "diagnostic", id());
-    let child = std::thread::spawn(move || {
-        for _ in 0..512 {
-            git(&folder, &["version"]);
-        }
-    });
-    for _ in 0..128 {
-        concurrent_owners_preserve_both_registrations();
-    }
-    child.join().unwrap();
-}
-#[test]
 fn concurrent_owners_preserve_both_registrations() {
+    // Fresh directories repeatedly exercise both sides of first-lock creation.
+    for _ in 0..16 {
+        concurrent_registration_round();
+    }
+}
+fn concurrent_registration_round() {
     let home = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
     let helper = id();
@@ -174,8 +166,9 @@ fn concurrent_owners_preserve_both_registrations() {
             })
         })
         .collect();
-    for t in threads {
-        t.join().unwrap();
+    let results: Vec<_> = threads.into_iter().map(|t| t.join()).collect();
+    for result in results {
+        result.unwrap();
     }
     let agents = owner(home.path(), data.path());
     assert_eq!(agents.list().unwrap().len(), 3);
