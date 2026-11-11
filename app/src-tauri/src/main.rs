@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use bridge_engine::agent_folder::{AgentFolder, AgentPair};
+use bridge_engine::agents::Agents;
 use bridge_engine::engine::{types::*, EngineState};
 use bridge_engine::local_vm::{self, ExamplePair, LocalVm, LocalVmStatus};
 use bridge_engine::send::{SendOwner, SendView};
@@ -191,7 +192,9 @@ fn main() {
             app.manage(vm.clone());
             let session = bridge_engine::clusters::commands::ClusterSession::default();
             app.manage(session.clone());
-            let folder = Arc::new(AgentFolder::new(app.path().home_dir().ok()));
+            let agents = Agents::new(app.path().home_dir().ok(), app.path().app_data_dir().ok());
+            let folder = agents.sample();
+            app.manage(agents);
             app.manage(folder.clone());
             app.manage(SendOwner::new(folder.clone(), session));
             app.manage(bridge_engine::example_run::ExampleRun::new(
