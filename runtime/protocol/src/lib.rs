@@ -11,6 +11,8 @@ mod model;
 pub use model::*;
 mod orka;
 pub use orka::*;
+mod chat;
+pub use chat::*;
 mod catalog;
 pub use catalog::*;
 pub fn encode_chunk(bytes: &[u8]) -> String {
@@ -66,6 +68,7 @@ pub enum EngineActionWire {
     Version {},
     ListAgents { context: String, namespace: String },
     Orka { request: OrkaRequest },
+    OrkaChat { request: ChatRequest },
     WorkspaceCatalog {},
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -243,6 +246,9 @@ pub fn validate_hello(hello: &StageHello, stage: Stage, nonce: Uuid) -> Result<(
 }
 pub fn validate_action(action: &EngineActionWire) -> Result<(), ProtocolError> {
     if let EngineActionWire::Orka { request } = action {
+        request.validate()?;
+    }
+    if let EngineActionWire::OrkaChat { request } = action {
         request.validate()?;
     }
     if let EngineActionWire::ListAgents { context, namespace } = action {

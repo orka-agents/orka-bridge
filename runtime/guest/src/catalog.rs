@@ -158,7 +158,14 @@ impl Orka {
         })();
         let tools = tools(
             |cursor| {
-                let reply = self.http("tools", None, None, Some(cursor), deadline)?;
+                let reply = self.http(
+                    reqwest::Method::GET,
+                    "tools",
+                    None,
+                    None,
+                    Some(cursor),
+                    deadline,
+                )?;
                 if reply.status != 200 {
                     return Err(failed());
                 }
