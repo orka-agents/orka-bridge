@@ -45,6 +45,21 @@ fn fixture(home: &Path, name: &str, id: DocumentId) -> PathBuf {
     .unwrap();
     root
 }
+// This integration-test binary has no runtime descriptor-window fixtures.
+fn git(root: &Path, args: &[&str]) -> Vec<u8> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output.stdout
+}
 fn owner(home: &Path, data: &Path) -> Agents {
     Agents::new(Some(home.into()), Some(data.into()))
 }
@@ -76,6 +91,17 @@ fn registrations_and_selection_survive_restart() {
         .unwrap()
         .save("saved helper".into())
         .unwrap();
+    let helper_root = root(home.path(), "helper");
+    assert_eq!(
+        git(&helper_root, &["show", "HEAD:helper.agent.md"]),
+        b"saved helper"
+    );
+    assert_eq!(
+        git(&helper_root, &["show", "HEAD:helper.agent.test.md"]),
+        b"identical check"
+    );
+    git(&helper_root, &["fsck", "--full"]);
+    assert!(git(&helper_root, &["status", "--porcelain"]).is_empty());
     agents.select(helper).unwrap();
     let restarted = owner(home.path(), data.path());
     assert_eq!(restarted.selected().unwrap(), helper);

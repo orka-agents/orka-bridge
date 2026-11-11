@@ -25,19 +25,18 @@ fn fixture(home: &Path, name: &str, id: DocumentId) -> PathBuf {
 fn id() -> DocumentId {
     DocumentId(Uuid::new_v4())
 }
-fn git(root: &Path, args: &[&str]) -> Vec<u8> {
-    let output = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
+fn committed(root: &Path, name: &str) -> Vec<u8> {
+    let repository = git2::Repository::open(root).unwrap();
+    let tree = repository
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .tree()
         .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    output.stdout
+    let entry = tree.get_name(name).unwrap();
+    let blob = repository.find_blob(entry.id()).unwrap();
+    blob.content().to_vec()
 }
 #[test]
 fn marker_observation_shares_the_document_lock() {
@@ -70,16 +69,21 @@ fn created_document_uses_its_own_git_names() {
     let owner = AgentFolder::created(Some(home.path().into()), "helper", id).unwrap();
     assert!(owner.available());
     owner.save("new helper draft".into()).unwrap();
+    assert_eq!(committed(&root, "helper.agent.md"), b"new helper draft");
+    assert_eq!(committed(&root, "helper.agent.test.md"), b"helper check");
+    let repository = git2::Repository::open(&root).unwrap();
     assert_eq!(
-        git(&root, &["show", "HEAD:helper.agent.md"]),
-        b"new helper draft"
+        repository
+            .index()
+            .unwrap()
+            .iter()
+            .map(|entry| entry.path)
+            .collect::<Vec<_>>(),
+        [
+            b"helper.agent.md".to_vec(),
+            b"helper.agent.test.md".to_vec()
+        ]
     );
-    assert_eq!(
-        git(&root, &["show", "HEAD:helper.agent.test.md"]),
-        b"helper check"
-    );
-    git(&root, &["fsck", "--full"]);
-    assert!(git(&root, &["status", "--porcelain"]).is_empty());
     let (path, document) = owner.source().unwrap();
     assert_eq!(path, root);
     assert_eq!(document.agent, Path::new("helper.agent.md"));
