@@ -100,6 +100,17 @@ test('collision is unverified, not refused; details disclosure names its state',
   await user.click(screen.getByText('Details'));
   expect(document.querySelector('.card-details')?.hasAttribute('open')).toBe(true);
 });
+test.each([
+  { state: 'running', stage: 'capture', error: null, label: 'Running' },
+  { state: 'unknown', stage: 'capture', error: 'capture', label: 'Result unknown' },
+  { state: 'unknown', stage: 'stopped', error: 'stopped', label: 'Stopped watching' },
+])('a source not yet captured keeps its $label status', async ({ state, stage, error, label }) => {
+  native(idle, { ...running, source: null, state, stage, error });
+  const { container } = render(<Send place={place} source={source} stale={false} visible remote />);
+  if (state === 'running') await screen.findByText('Running checks on team-dev…');
+  await screen.findByText(label, { exact: true });
+  expect(container.querySelector('.pill.status-stale')).toBeNull();
+});
 test('pending destination checks are blue running, not waiting on the creator', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => command === 'send_preflight' ? new Promise(() => {}) : null);

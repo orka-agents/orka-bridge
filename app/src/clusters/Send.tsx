@@ -83,7 +83,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const current = !stale && sameSource(source, snapshot?.source) === true;
   const localCurrent = !stale && sameSource(source, local?.source) === true;
   const targetName = snapshot?.targetName ?? (snapshot?.targetId === target?.id ? target?.context_name : undefined);
-  const outdated = !!snapshot && (!current || !samePlace);
+  const outdated = !!snapshot && (!samePlace || (!!snapshot.source && !current));
   const uncertain = snapshot?.state === 'unknown' || snapshot?.report?.verdict === 'unknown';
   const resultState: Status = outdated ? 'stale' : running || busy || (checkingEnabled && !checked) ? 'running' : uncertain ? 'not-started' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' || snapshot?.error ? 'failed' : reason ? 'needs-you' : 'not-started';
   return <section tabIndex={-1} className="send-panel" aria-label="Send and cluster checks" hidden={!visible && !remote && !running}>
@@ -119,7 +119,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
     {snapshot?.stage === 'stopped' && <p role="status">Stopped watching. The cluster may still be running checks.</p>}
     {snapshot?.error && snapshot.stage !== 'stopped' && <p role="alert">{sendErrors[snapshot.error as keyof typeof sendErrors]}</p>}
     {snapshot && !samePlace && <p role="status">This result belongs to another cluster or Provider. It is not validation of your current selection.</p>}
-    {snapshot && !current && <p className="muted">This result is for the captured file, not confirmed as your current revision.</p>}
+    {snapshot?.source && !current && <p className="muted">This result is for the captured file, not confirmed as your current revision.</p>}
     {snapshot?.state === 'unknown' && !snapshot.report && <p role="status">Checks: unknown</p>}
     {snapshot?.report && <div className={outdated ? 'result-stale' : undefined}><p role="status">Checks: {words[snapshot.report.verdict]}</p>
       {snapshot.report.cases.map(check => <div className="result-row" key={check.id}><StatusIcon state={outdated ? 'stale' : check.verdict === 'unknown' ? 'not-started' : check.verdict} /><h4><code>{check.id}</code>: {words[check.verdict]}</h4>

@@ -10,6 +10,7 @@
   --color-border: rgb(40 36 28 / .10);
   --color-border-strong: rgb(40 36 28 / .17);
   --color-action: #0f6f73;
+  --color-action-hover: #0b5a5d;
   --color-action-text: #ffffff;
   --color-action-tint: #dff2f1;
   --color-icon-tile: #e3eefa;
@@ -62,6 +63,7 @@
     --color-border: rgb(255 255 255 / .10);
     --color-border-strong: rgb(255 255 255 / .18);
     --color-action: #5fc3c6;
+    --color-action-hover: #7fd3d6;
     --color-action-text: #0d1f20;
     --color-action-tint: #1d3637;
     --color-icon-tile: #1f2d3d;
