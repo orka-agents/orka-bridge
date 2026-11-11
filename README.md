@@ -1,6 +1,6 @@
 # Computer requirements screenshots
 
-Bridge source: `8d1e18cf465184cb9f873e0a1d1f080bb95cd22f`.
+Bridge source: `bc8c982e0fd1c09fcee9785f18c6dbdaaa472a59`.
 
 ## Renderer fixtures
 
@@ -12,4 +12,10 @@ The images in `fixtures/` render the real app with mocked native command respons
 - `unknown`: both observations unreadable; actual launch remains authoritative.
 - `mac`: platform virtualization unsupported, with Mac-specific guidance opened.
 
-No local workspace was selected during these captures. Native runner screenshots, when available, are stored separately under `native/` with their source revision.
+No local workspace was selected during these captures. The fixtures do not substitute for native qualification.
+
+## Native observations
+
+`native/` contains actual branch-head Windows x64 and Apple-silicon Mac captures from App CI run [43079357500](https://github.com/orka-agents/orka-bridge/actions/runs/43079357500), at the source head above; both platform jobs passed. The native scripts first locate the Computer requirements region and its settled recheck button, then capture without selecting a workspace.
+
+Windows reports Available and 16 GiB installed; this hosted Mac reports Couldn't check and 7 GiB installed. No values are forced to Ready. The narrow Mac window scrolls; Continue is partly below the fold. These are empty-source development-shell walks, not a VM launch or real credential/cluster qualification. The isolated Mac debug capture was followed by a successful separate release first-run walk.
