@@ -484,6 +484,24 @@ fn verify(r: &Receipt, i: usize, object: &DynamicObject) -> Result<(), Error> {
         }
     }
     if i == 2 {
+        let pod = &actual["spec"]["template"]["spec"];
+        let container = &pod["containers"][0];
+        for security in [&pod["securityContext"], &container["securityContext"]] {
+            let profile = &security["appArmorProfile"];
+            let selinux = &security["seLinuxOptions"];
+            if !(profile.is_null() || *profile == json!({"type":"RuntimeDefault"}))
+                || !(selinux.is_null()
+                    || selinux.as_object().is_some_and(serde_json::Map::is_empty))
+            {
+                return Err(Error::Conflict);
+            }
+        }
+        // The pinned image owns startup defaults; extra environment entries can replace them.
+        for key in ["env", "envFrom"] {
+            if !(container[key].is_null() || container[key].as_array().is_some_and(Vec::is_empty)) {
+                return Err(Error::Conflict);
+            }
+        }
         let added = &actual["spec"]["template"]["spec"]["containers"][0]["securityContext"]
             ["capabilities"]["add"];
         if !(added.is_null() || added.as_array().is_some_and(Vec::is_empty)) {

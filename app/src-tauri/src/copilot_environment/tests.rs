@@ -672,6 +672,68 @@ async fn unrelated_pods_sharing_an_owner_do_not_exhaust_the_stop_deadline() {
         .any(|(m, _, _)| m == "DELETE"));
 }
 
+#[tokio::test]
+async fn start_rejects_unexpected_profiles_and_environment_injection() {
+    for variant in [
+        "pod-apparmor",
+        "container-apparmor",
+        "selinux",
+        "env",
+        "env-from",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Owner::new(dir.path().into());
+        let (c, cluster) = fixture::connection();
+        let input = receipt();
+        let r = owner
+            .create(&c, input.workspace_id, &input.namespace, &input.image)
+            .await
+            .unwrap();
+        {
+            let mut s = cluster.lock().unwrap();
+            let deployment = s
+                .objects
+                .values_mut()
+                .find(|v| v["kind"] == "Deployment")
+                .unwrap();
+            let pod = &mut deployment["spec"]["template"]["spec"];
+            match variant {
+                "pod-apparmor" => {
+                    pod["securityContext"]["appArmorProfile"] =
+                        serde_json::json!({"type":"Unconfined"})
+                }
+                "container-apparmor" => {
+                    pod["containers"][0]["securityContext"]["appArmorProfile"] =
+                        serde_json::json!({"type":"Unconfined"})
+                }
+                "selinux" => {
+                    pod["securityContext"]["seLinuxOptions"] = serde_json::json!({"type":"spc_t"})
+                }
+                "env" => {
+                    pod["containers"][0]["env"] =
+                        serde_json::json!([{"name":"LD_PRELOAD","value":"/tmp/unexpected.so"}])
+                }
+                _ => {
+                    pod["containers"][0]["envFrom"] =
+                        serde_json::json!([{"secretRef":{"name":"unexpected-secret"}}])
+                }
+            }
+            s.requests.clear();
+        }
+        assert_eq!(
+            owner.start(&c, r.environment_id).await,
+            Err(Error::Conflict),
+            "{variant}"
+        );
+        assert!(!cluster
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .any(|(m, _, _)| m == "PATCH"));
+    }
+}
+
 #[test]
 fn corrupt_or_oversized_receipt_is_not_an_environment() {
     let dir = tempfile::tempdir().unwrap();
