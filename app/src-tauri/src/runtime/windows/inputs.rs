@@ -324,8 +324,8 @@ fn startup_prerequisites(
     hypervisor: Observation,
     firmware: Observation,
     feature: Observation,
-) -> crate::setup::preflight::Virtualization {
-    use crate::setup::preflight::Virtualization;
+) -> super::super::types::HostVirtualization {
+    use super::super::types::HostVirtualization as Virtualization;
     use Observation::*;
     match (hypervisor, firmware, feature) {
         (Yes, _, _) => Virtualization::Ready, // A running hypervisor may hide the firmware bit.
@@ -354,7 +354,7 @@ fn observe_hypervisor(get: GetCapability) -> Observation {
 }
 /// Observe WHP itself; feature flags alone do not prove a running hypervisor.
 #[cfg(all(debug_assertions, windows))]
-pub(crate) fn observe_startup_prerequisites() -> crate::setup::preflight::Virtualization {
+pub(crate) fn observe_startup_prerequisites() -> super::super::types::HostVirtualization {
     use std::ffi::c_void;
     use windows_sys::Win32::{
         Foundation::{FreeLibrary, GetLastError},
@@ -430,7 +430,7 @@ mod prerequisite_tests {
     }
     #[test]
     fn startup_diagnosis_never_calls_running_hypervisor_firmware_disabled() {
-        use crate::setup::preflight::Virtualization as V;
+        use super::super::super::types::HostVirtualization as V;
         use Observation::*;
         for (hypervisor, firmware, feature, expected) in [
             (Yes, No, Yes, V::Ready),

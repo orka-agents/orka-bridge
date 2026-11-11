@@ -9,21 +9,14 @@ pub enum Platform {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub enum Virtualization {
-    Ready,
-    Disabled,
-    HypervisorUnavailable,
-    Unsupported,
-    Unknown,
-}
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub enum Memory {
     Ready,
     Insufficient,
     Unknown,
 }
-pub use crate::runtime::types::PreflightFailure as Failure;
+pub use crate::runtime::types::{
+    HostVirtualization as Virtualization, PreflightFailure as Failure,
+};
 impl Failure {
     pub fn summary(self) -> &'static str {
         match self {

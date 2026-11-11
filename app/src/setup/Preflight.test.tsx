@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Setup from './Setup';
+import App from '../App';
 
 const requirements = { memoryBytes: 6442450944, imageBytes: 3651994962, stateDiskBytes: 34359738368 };
 const ready = { platform: 'windows', virtualization: 'ready', memory: 'ready', installedMemoryBytes: 8589934592, requiredMemoryBytes: 6442450944 };
@@ -53,6 +54,9 @@ test('virtualization failure offers native fixed-topic help, sanitized copy, and
   await user.click(within(virtualization).getByRole('button', { name: 'Show me how' }));
   expect(ipc.mock.calls.find(([c]) => c === 'setup_open_help')).toEqual(['setup_open_help', { topic: 'virtualization' }]);
   expect(await screen.findByText(/Couldn't open help/)).toBeTruthy();
+  await user.click(within(virtualization).getByRole('button', { name: 'Show me how' }));
+  expect(ipc.mock.calls.filter(([c]) => c === 'setup_open_help')).toHaveLength(1);
+  expect(within(virtualization).getByRole('button', { name: 'Show me how' }).getAttribute('aria-expanded')).toBe('false');
   const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
   await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
   expect(copy.mock.calls[0][0]).toContain('disabled');
@@ -97,6 +101,15 @@ test('a pending refresh disables Continue and an old request cannot survive leav
   await screen.findByLabelText('kubectl context');
   expect(screen.queryByRole('region', { name: 'Computer requirements' })).toBeNull();
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
+});
+
+test('preflight cause stays specific in the app status and host pill', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => command === 'setup_status' ? { selected: 'localVm', localVm: 'failed', model: 'locked', preflightFailure: 'insufficientMemory', localVmError: 'SECRET_MARKER' } : command === 'setup_requirements' ? requirements : Promise.reject({ kind: 'unavailable' }));
+  render(<App />);
+  await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('less installed memory'));
+  expect(document.querySelector('.host-chip')?.getAttribute('title')).toContain('less installed memory');
+  expect(document.body.textContent).not.toContain('SECRET_MARKER');
 });
 
 test('a direct native preflight failure is decoded and explained without raw diagnostic text', async () => {

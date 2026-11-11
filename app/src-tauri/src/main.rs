@@ -54,16 +54,15 @@ fn setup_requirements() -> Option<bridge_engine::setup::SetupRequirements> {
 #[tauri::command]
 async fn setup_preflight(
     vm: tauri::State<'_, Arc<LocalVm>>,
-) -> Option<bridge_engine::setup::preflight::Preflight> {
+) -> Result<Option<bridge_engine::setup::preflight::Preflight>, &'static str> {
     if vm.status() == LocalVmStatus::NotIntegrated
         || bridge_engine::setup::setup_requirements().is_none()
     {
-        return None;
+        return Ok(None);
     }
     tauri::async_runtime::spawn_blocking(bridge_engine::setup::preflight::observe)
         .await
-        .ok()
-        .flatten()
+        .map_err(|_| "Computer requirements could not be read.")
 }
 #[tauri::command]
 async fn setup_open_help(topic: bridge_engine::setup::help::HelpTopic) -> Result<(), &'static str> {

@@ -24,7 +24,8 @@ export default function Preflight({ requiredMemoryBytes, onBlocked }: { required
     return () => { active = false; onBlocked(false); };
   }, [attempt, requiredMemoryBytes, onBlocked]);
   async function help() {
-    setVirtualHelp(value => !value);
+    if (virtualHelp) { setVirtualHelp(false); return; }
+    setVirtualHelp(true);
     const topic = virtualization === 'hypervisorUnavailable' ? 'hypervisor' : virtualization === 'disabled' ? 'virtualization' : null;
     if (result?.platform !== 'windows' || !topic) return;
     try { await invoke('setup_open_help', { topic }); setNotice('Help opened in your browser.'); }

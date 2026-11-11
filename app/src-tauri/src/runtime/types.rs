@@ -5,6 +5,16 @@ use std::{any::Any, fs::File, path::PathBuf, sync::Arc};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub enum HostVirtualization {
+    Ready,
+    Disabled,
+    HypervisorUnavailable,
+    Unsupported,
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub enum PreflightFailure {
     VirtualizationDisabled,
     HypervisorUnavailable,
