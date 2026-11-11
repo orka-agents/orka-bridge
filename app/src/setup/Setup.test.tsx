@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
@@ -20,6 +20,26 @@ function native() {
 }
 beforeEach(() => { localStorage.setItem('bridge.welcomeSeen.v1', '1'); });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+
+test('reopen observes a lost workspace immediately without replaying setup, Connect or Test', async () => {
+  vi.stubGlobal('isTauri', true);
+  let lost = false;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: lost ? 'failed' : 'ready', model: lost ? 'locked' : 'available' };
+    if (command === 'setup_requirements') return null;
+    if (command === 'setup_connect_model') return { ready: true };
+    throw { kind: 'unavailable' };
+  });
+  mockIPC(ipc); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  expect(await screen.findByText('Model connected: copilot / gpt-5.6-terra.')).toBeTruthy();
+  lost = true;
+  await act(async () => { window.dispatchEvent(new Event('focus')); });
+  expect(screen.getByText("Your workspace couldn't start")).toBeTruthy();
+  expect(screen.queryByText('Your workspace is running on this computer.')).toBeNull();
+  expect(ipc.mock.calls.filter(([name]) => name === 'setup_connect_model')).toHaveLength(1);
+  expect(ipc.mock.calls.some(([name]) => ['setup_select_local', 'setup_run_example'].includes(name))).toBe(false);
+});
 
 test('running native session unlocks only its explicit model command', async () => {
   vi.stubGlobal('isTauri', true);
