@@ -319,7 +319,7 @@ async fn stop_waits_for_pod_owner_chain_not_just_labels_and_never_force_deletes(
     assert!(s
         .requests
         .iter()
-        .any(|(_, p, _)| p.ends_with("replicasets/owned-rs")));
+        .any(|(_, p, _)| p.ends_with("replicasets")));
 }
 
 #[tokio::test(start_paused = true)]
@@ -634,6 +634,42 @@ async fn start_rejects_container_security_overrides() {
             .iter()
             .any(|(m, _, _)| m == "PATCH"));
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn unrelated_pods_sharing_an_owner_do_not_exhaust_the_stop_deadline() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Owner::new(dir.path().into());
+    let (c, cluster) = fixture::connection();
+    let input = receipt();
+    let r = owner
+        .create(&c, input.workspace_id, &input.namespace, &input.image)
+        .await
+        .unwrap();
+    {
+        let mut s = cluster.lock().unwrap();
+        s.objects.insert(
+            format!(
+                "/apis/apps/v1/namespaces/{}/replicasets/unrelated-rs",
+                r.namespace
+            ),
+            serde_json::json!({"apiVersion":"apps/v1","kind":"ReplicaSet","metadata":{
+            "name":"unrelated-rs","namespace":r.namespace,"uid":"unrelated-uid"}}),
+        );
+        for i in 0..25 {
+            s.objects.insert(format!("/api/v1/namespaces/{}/pods/unrelated-{i}",r.namespace),serde_json::json!({"apiVersion":"v1","kind":"Pod","metadata":{
+                "name":format!("unrelated-{i}"),"namespace":r.namespace,"uid":format!("pod-{i}"),"ownerReferences":[{
+                    "apiVersion":"apps/v1","kind":"ReplicaSet","name":"unrelated-rs","uid":"unrelated-uid","controller":true}]}}));
+        }
+        s.slow_replica_gets = true;
+    }
+    owner.stop(&c, r.environment_id).await.unwrap();
+    assert!(!cluster
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .any(|(m, _, _)| m == "DELETE"));
 }
 
 #[test]

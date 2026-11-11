@@ -15,6 +15,7 @@ pub(super) struct Cluster {
     pub terminating: Option<String>,
     pub replace_before_patch: bool,
     pub restart_after_stop: bool,
+    pub slow_replica_gets: bool,
 }
 pub(super) fn connection() -> (Connection, Arc<Mutex<Cluster>>) {
     let state = Arc::new(Mutex::new(Cluster::default()));
@@ -26,6 +27,11 @@ pub(super) fn connection() -> (Connection, Arc<Mutex<Cluster>>) {
             let path = request.uri().path().to_owned();
             let bytes = request.into_body().collect_bytes().await?;
             let body = serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null);
+            let delayed =
+                shared.lock().unwrap().slow_replica_gets && path.contains("/replicasets/");
+            if delayed {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
             let mut s = shared.lock().unwrap();
             s.requests
                 .push((method.clone(), path.clone(), body.clone()));

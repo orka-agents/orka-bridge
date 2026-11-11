@@ -277,6 +277,7 @@ async fn stop(c: &Connection, r: &Receipt) -> Result<(), Error> {
             let mut active = deployment.as_ref().is_some_and(|d| !observed_zero(d));
             // An empty Pod list can precede a controller's pending create. Keep policy/storage
             // until scale-down is observed, and after parent deletion until children are gone.
+            let mut sets = BTreeMap::new();
             for rs in request(api(c, &r.namespace, 4).list(&ListParams::default())).await? {
                 let owned = rs.metadata.owner_references.as_ref().is_some_and(|refs| {
                     refs.iter().any(|reference| {
@@ -289,6 +290,10 @@ async fn stop(c: &Connection, r: &Receipt) -> Result<(), Error> {
                 });
                 if owned || may_use_environment(&rs, r) {
                     active |= deployment.is_none() || !observed_zero(&rs);
+                }
+                if let (Some(name), Some(uid)) = (rs.metadata.name.clone(), rs.metadata.uid.clone())
+                {
+                    sets.insert((name, uid), Some(rs));
                 }
             }
             let pods = request(api(c, &r.namespace, 3).list(&ListParams::default())).await?;
@@ -311,14 +316,11 @@ async fn stop(c: &Connection, r: &Receipt) -> Result<(), Error> {
                 }) else {
                     continue;
                 };
-                let rs = request(api(c, &r.namespace, 4).get_opt(&reference.name)).await?;
-                let Some(rs) = rs else {
-                    // A matching label without a live owner chain is not proof of disappearance.
-                    if pod.metadata.labels.as_ref().is_some_and(|l| {
-                        l.get(resources::ENVIRONMENT) == Some(&r.environment_id.to_string())
-                    }) {
-                        return Err(Error::Conflict);
-                    }
+                let key = (reference.name.clone(), reference.uid.clone());
+                if let std::collections::btree_map::Entry::Vacant(entry) = sets.entry(key.clone()) {
+                    entry.insert(request(api(c, &r.namespace, 4).get_opt(&reference.name)).await?);
+                }
+                let Some(rs) = sets.get(&key).and_then(Option::as_ref) else {
                     continue;
                 };
                 if rs.metadata.uid.as_deref() != Some(&reference.uid) {
