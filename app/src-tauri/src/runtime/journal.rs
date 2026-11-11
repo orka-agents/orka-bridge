@@ -41,11 +41,22 @@ pub struct InstallationRecord {
 pub(crate) struct JournalCustody(pub Option<Journal>);
 pub struct Journal {
     root: PathBuf,
-    _lock: Arc<File>,
+    _lock: OwnerLock,
     image_root: Dir,
     state: File,
     record: InstallationRecord,
     creation_live: bool,
+}
+struct OwnerLock(Arc<File>);
+impl Drop for OwnerLock {
+    fn drop(&mut self) {
+        // The lock belongs to the open file description, which any concurrent
+        // spawn shares from fork until exec. Release it now unless a backend
+        // still retains the ownership capability.
+        if let Some(file) = Arc::get_mut(&mut self.0) {
+            let _ = file.unlock();
+        }
+    }
 }
 fn lock(root: &Path) -> Result<File, RuntimeError> {
     let mut options = OpenOptions::new();
@@ -107,7 +118,7 @@ impl Journal {
         #[cfg(unix)]
         File::open(root.parent().ok_or(RuntimeError::RetainedState)?)?.sync_all()?;
         let root = fs::canonicalize(&root)?;
-        let owner = lock(&root)?;
+        let owner = OwnerLock(Arc::new(lock(&root)?));
         let image_root = Dir::open_ambient_dir(&root, cap_std::ambient_authority())?;
         let state = OpenOptions::new()
             .create_new(true)
@@ -133,7 +144,7 @@ impl Journal {
         };
         let journal = Self {
             root,
-            _lock: Arc::new(owner),
+            _lock: owner,
             image_root,
             state,
             record,
@@ -148,7 +159,7 @@ impl Journal {
             return Err(RuntimeError::RetainedState);
         }
         let root = fs::canonicalize(root)?;
-        let owner = lock(&root)?;
+        let owner = OwnerLock(Arc::new(lock(&root)?));
         let image_root = Dir::open_ambient_dir(&root, cap_std::ambient_authority())?;
         // An interrupted record write needs explicit recovery, not guessed replay.
         if root.join("record.next").exists() {
@@ -182,7 +193,7 @@ impl Journal {
             .open(root.join("state.disk"))?;
         let journal = Self {
             root,
-            _lock: Arc::new(owner),
+            _lock: owner,
             image_root,
             state,
             record,
@@ -206,7 +217,7 @@ impl Journal {
         };
         Ok(InstallationImageTarget::from_owned_installation(
             &self.image_root,
-            &self._lock,
+            &self._lock.0,
             self.record.installation_id,
             target,
             compatibility,
@@ -250,7 +261,7 @@ impl Journal {
             installation_id: self.record.installation_id,
             generation: self.record.generation,
             boot_nonce: nonce,
-            ownership: self._lock.clone(),
+            ownership: self._lock.0.clone(),
             image,
             root: self.root.clone(),
             state_path: self.root.join("state.disk"),

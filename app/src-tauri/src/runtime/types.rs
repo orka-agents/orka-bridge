@@ -69,8 +69,10 @@ pub struct LaunchSpec {
     pub installation_id: Uuid,
     pub generation: u64,
     pub boot_nonce: Uuid,
-    /// Backends retain/inherit this lock capability for the complete VM lifetime,
-    /// including parent death; never reopen a pathname to reconstruct ownership.
+    /// Backends retain this Arc for the complete VM lifetime, including while a
+    /// helper that inherited its descriptor may run; inheritance covers parent
+    /// death. Never reopen a pathname to reconstruct ownership. A journal dropped
+    /// with the only Arc unlocks it, which on Unix also releases inherited copies.
     pub ownership: Arc<File>,
     /// A committed private image, revalidated under the same installation owner.
     pub image: Arc<InstalledImageSet>,
