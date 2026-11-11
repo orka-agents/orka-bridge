@@ -3,7 +3,7 @@
 //! and observation, never remote Task cancellation.
 pub use crate::clusters::preflight::SendCheck;
 use crate::{
-    agent_folder::AgentFolder,
+    agent_folder::{AgentFolder, DocumentId, DocumentRef},
     clusters::{
         commands::ClusterSession,
         preflight::{CheckRow, CheckStatus},
@@ -47,6 +47,7 @@ pub enum Stage {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendView {
+    pub document_id: DocumentId,
     pub id: SendId,
     pub target_id: String,
     pub target_name: Option<String>,
@@ -61,7 +62,15 @@ pub struct SendView {
     pub report: Option<RunReport>,
     pub error: Option<Stage>,
 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SendStatus {
+    pub document_id: DocumentId,
+    pub view: Option<SendView>,
+    pub busy: Option<DocumentRef>,
+}
 struct Active {
+    document: DocumentRef,
     id: SendId,
     stop: watch::Sender<bool>,
     done: watch::Receiver<bool>,
@@ -75,7 +84,7 @@ impl Active {
 #[derive(Default)]
 struct Inner {
     views: HashMap<SendId, SendView>,
-    current: Option<SendId>,
+    current: HashMap<DocumentId, SendId>,
     active: Option<Active>,
     closed: bool,
 }
@@ -133,10 +142,20 @@ impl SendOwner {
     }
     /// Fresh, GET-only preview. Failures are finite display rows, never raw IPC errors.
     pub async fn preflight(&self, target: &str, provider: &str) -> SendCheck {
+        self.preflight_document(self.folder.clone(), target, provider)
+            .await
+    }
+    pub async fn preflight_document(
+        &self,
+        folder: Arc<AgentFolder>,
+        target: &str,
+        provider: &str,
+    ) -> SendCheck {
         use CheckStatus::*;
         let target = parse(target).map(|id| id.to_string()).unwrap_or_default();
         let provider = parse(provider).map(ProviderId);
         let mut check = SendCheck {
+            document_id: folder.document_id(),
             source: None,
             target_id: target.clone(),
             provider_id: provider.map(|p| p.0.to_string()).unwrap_or_default(),
@@ -144,7 +163,6 @@ impl SendOwner {
             rows: Vec::new(),
             can_send: false,
         };
-        let folder = self.folder.clone();
         let pair = tokio::task::spawn_blocking(move || capture(&folder)).await;
         let Ok(Ok(pair)) = pair else {
             check.rows.push(CheckRow::new("Source", Blocked, "Bridge cannot read a supported agent and companion tests. Check the files in Designer."));
@@ -218,6 +236,27 @@ impl SendOwner {
         provider_id: &str,
         expected_source: SnapshotId,
     ) -> SendView {
+        self.start_folder(self.folder.clone(), target_id, provider_id, expected_source)
+            .await
+    }
+    pub async fn start_document(
+        self: &Arc<Self>,
+        folder: Arc<AgentFolder>,
+        target: &str,
+        provider: &str,
+        expected: SnapshotId,
+    ) -> SendStatus {
+        let id = folder.document_id();
+        self.start_folder(folder, target, provider, expected).await;
+        self.status_document(id)
+    }
+    async fn start_folder(
+        self: &Arc<Self>,
+        folder: Arc<AgentFolder>,
+        target_id: &str,
+        provider_id: &str,
+        expected_source: SnapshotId,
+    ) -> SendView {
         let target = parse(target_id).map(|u| u.to_string()).unwrap_or_default();
         let provider = parse(provider_id).map(ProviderId);
         let mut inner = self.inner.lock().unwrap();
@@ -226,6 +265,7 @@ impl SendOwner {
         }
         let id = SendId(Uuid::new_v4());
         let mut view = SendView {
+            document_id: folder.document_id(),
             id,
             target_id: target.clone(),
             target_name: None,
@@ -240,7 +280,7 @@ impl SendOwner {
             report: None,
             error: None,
         };
-        inner.current = Some(id);
+        inner.current.insert(folder.document_id(), id);
         if inner.closed {
             (view.state, view.stage, view.error) =
                 (SendState::Unknown, Stage::Stopped, Some(Stage::Stopped));
@@ -250,12 +290,24 @@ impl SendOwner {
         let (stop, mut stop_rx) = watch::channel(false);
         let (done_tx, done) = watch::channel(false);
         inner.views.insert(id, view.clone());
-        inner.active = Some(Active { id, stop, done });
+        inner.active = Some(Active {
+            document: folder.document(),
+            id,
+            stop,
+            done,
+        });
         drop(inner);
         let owner = self.clone();
         tokio::spawn(async move {
             let result = owner
-                .drive(id, &target, provider, &expected_source, &mut stop_rx)
+                .drive(
+                    id,
+                    folder,
+                    &target,
+                    provider,
+                    &expected_source,
+                    &mut stop_rx,
+                )
                 .await;
             let mut inner = owner.inner.lock().unwrap();
             let view = inner.views.get_mut(&id).unwrap();
@@ -279,11 +331,37 @@ impl SendOwner {
         });
         view
     }
+    pub fn status_document(&self, id: DocumentId) -> SendStatus {
+        let inner = self.inner.lock().unwrap();
+        SendStatus {
+            document_id: id,
+            view: inner
+                .current
+                .get(&id)
+                .and_then(|job| inner.views.get(job))
+                .cloned(),
+            busy: inner.active.as_ref().map(|job| job.document.clone()),
+        }
+    }
+    pub async fn stop_document(
+        &self,
+        document: DocumentId,
+        id: &str,
+    ) -> Result<SendStatus, &'static str> {
+        if !self
+            .status(Some(id))
+            .is_some_and(|view| view.document_id == document)
+        {
+            return Err("The Send does not belong to this agent.");
+        }
+        self.stop(id).await;
+        Ok(self.status_document(document))
+    }
     pub fn status(&self, id: Option<&str>) -> Option<SendView> {
         let inner = self.inner.lock().unwrap();
         let id = match id {
             Some(id) => SendId(parse(id)?),
-            None => inner.current?,
+            None => *inner.current.get(&DocumentId::SAMPLE)?,
         };
         inner.views.get(&id).cloned()
     }
@@ -321,13 +399,13 @@ impl SendOwner {
     async fn drive(
         &self,
         id: SendId,
+        folder: Arc<AgentFolder>,
         target: &str,
         provider: Option<ProviderId>,
         expected_source: &SnapshotId,
         stop: &mut watch::Receiver<bool>,
     ) -> Result<RunReport, Stage> {
         // Freeze the pair once, before any network wait; later edits never reach this attempt.
-        let folder = self.folder.clone();
         let pair = until_stop(stop, Stage::Capture, async move {
             tokio::task::spawn_blocking(move || capture(&folder))
                 .await

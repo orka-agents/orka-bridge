@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { type SourceId, sameSource } from '../designer/agent-api';
+import { SAMPLE_DOCUMENT_ID, type SourceId, sameSource } from '../designer/agent-api';
 import type { RunSnapshot } from '../designer/run-api';
 import type { SelectedPlace } from './api';
-import { type SendCheck, type SendView, sendCall, sendErrors, sendPreflight } from './send-api';
+import { type SendCheck, type SendStatus, sendCall, sendErrors, sendPreflight } from './send-api';
 import './clusters.css';
 
 export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failingCheck?: string; blocked?: string; onProceed: () => void; onFix: () => void }) {
@@ -16,26 +16,29 @@ export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failing
   </div>;
 }
 const words = { passed: 'pass', failed: 'fail', unknown: 'unknown' } as const;
-export default function Send({ place, source, model, local, stale, blocked, visible, remote, onChooseCluster, onReloadSource }: {
-  place: SelectedPlace; source?: SourceId; model?: string; local?: RunSnapshot; stale: boolean;
+export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, model, local, stale, blocked, visible, remote, onChooseCluster, onReloadSource }: {
+  documentId?: string; place: SelectedPlace; source?: SourceId; model?: string; local?: RunSnapshot; stale: boolean;
   blocked?: string; visible: boolean; remote: boolean; onChooseCluster?: () => void; onReloadSource?: () => Promise<void>;
 }) {
-  const [snapshot, setSnapshot] = useState<SendView | null>(null);
+  const [status, setSnapshot] = useState<SendStatus>();
+  const snapshot = status?.documentId === documentId ? status.view : null;
+  const foreignBusy = status?.documentId === documentId && status.busy?.documentId !== documentId ? status.busy : null;
   const [message, setMessage] = useState<string>();
   const [busy, setBusy] = useState(false);
   const admitted = useRef(false); const epoch = useRef(0);
   useEffect(() => {
     let mounted = true; let polling = false;
+    admitted.current = false; setBusy(false); setMessage(undefined); setReloadError(undefined);
     async function observe() {
       if (polling || admitted.current) return;
       polling = true; const request = epoch.current;
-      try { const result = await sendCall('send_status'); if (mounted && request === epoch.current) { setSnapshot(result); setMessage(undefined); } }
+      try { const result = await sendCall('send_status', { documentId }); if (mounted && request === epoch.current) { setSnapshot(result); setMessage(undefined); } }
       catch (error) { if (mounted && request === epoch.current) setMessage((error as Error).message); }
       finally { polling = false; }
     }
     void observe(); const timer = window.setInterval(() => { void observe(); }, 500);
     return () => { mounted = false; epoch.current++; window.clearInterval(timer); };
-  }, []);
+  }, [documentId]);
   const target = place.kind === 'cluster' ? place.target : undefined;
   const providerId = place.kind === 'cluster' ? place.providerId : undefined;
   const provider = place.kind === 'cluster' ? place.providers?.find(p => p.id === providerId) : undefined;
@@ -45,20 +48,20 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const [reloadError, setReloadError] = useState<string>();
   const targetId = target?.id;
   const agentHash = source?.agent; const testsHash = source?.tests;
-  const checkKey = JSON.stringify([targetId, providerId, agentHash, testsHash, refresh]);
+  const checkKey = JSON.stringify([documentId, targetId, providerId, agentHash, testsHash, refresh]);
   const checkingEnabled = (visible || remote) && !blocked && !!targetId && !!providerId && !!agentHash && !!testsHash;
   useEffect(() => {
     if (!checkingEnabled || !targetId || !providerId) return;
     let mounted = true;
-    void sendPreflight(targetId, providerId).then(value => {
+    void sendPreflight(targetId, providerId, documentId).then(value => {
       if (mounted) setCheck({ key: checkKey, value });
     }, (error: Error) => { if (mounted) setCheck({ key: checkKey, error: error.message }); });
     return () => { mounted = false; };
-  }, [checkingEnabled, checkKey, targetId, providerId]);
+  }, [checkingEnabled, checkKey, targetId, providerId, documentId]);
   const checked = checkingEnabled && check?.key === checkKey ? check : undefined;
   const matched = checked?.value && sameSource(source, checked.value.source) === true;
   const mismatched = checked?.value?.source != null && !matched;
-  const reason = blocked ?? (!target || !provider ? 'Choose a cluster and Provider in Clusters first'
+  const reason = blocked ?? (foreignBusy ? `${foreignBusy.name} is sending checks.` : undefined) ?? (!target || !provider ? 'Choose a cluster and Provider in Clusters first'
     : !checked ? 'Checking this destination…' : checked.error ?? (mismatched ? 'Your saved files changed. Reload them to check this destination.'
     : !checked.value?.canSend ? 'Resolve the destination checks before sending.' : undefined));
   async function mutate(command: 'send_start' | 'send_stop') {
@@ -73,10 +76,10 @@ export default function Send({ place, source, model, local, stale, blocked, visi
     }
     admitted.current = true; setBusy(true); const request = ++epoch.current;
     try {
-      const result = await sendCall(command, args);
+      const result = await sendCall(command, { ...args, documentId });
       if (request === epoch.current) { setSnapshot(result); setMessage(undefined); }
     } catch (error) { if (request === epoch.current) setMessage((error as Error).message); }
-    finally { admitted.current = false; if (request === epoch.current) setBusy(false); }
+    finally { if (request === epoch.current) { admitted.current = false; setBusy(false); } }
   }
   const running = snapshot?.state === 'running';
   const samePlace = snapshot?.targetId === target?.id && snapshot?.providerId === providerId;
@@ -108,6 +111,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
     <div className="workspace-step-actions"><button type="button" className="setup-button" disabled={!!reason || busy || running || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run checks' : 'Run all checks'}</button>
       {running && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void mutate('send_stop'); }}>Stop</button>}
     </div>
+    {foreignBusy && <p role="status">{foreignBusy.name} is sending checks.</p>}
     {message && <p role="alert">{message}</p>}
     {running && <p role="status">Running checks on {targetName ?? 'the cluster'}…</p>}
     {snapshot?.stage === 'stopped' && <p role="status">Stopped watching. The cluster may still be running checks.</p>}
