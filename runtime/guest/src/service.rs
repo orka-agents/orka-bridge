@@ -159,10 +159,14 @@ pub fn authoring_allowed(host_channel: bool, request: &RequestBody) -> bool {
         || !matches!(
             request,
             RequestBody::Execute {
-                action: EngineActionWire::Orka { .. } | EngineActionWire::WorkspaceCatalog {},
+                action: EngineActionWire::Orka { .. }
+                    | EngineActionWire::OrkaChat { .. }
+                    | EngineActionWire::WorkspaceCatalog {},
                 ..
             } | RequestBody::Engine(
-                EngineActionWire::Orka { .. } | EngineActionWire::WorkspaceCatalog {}
+                EngineActionWire::Orka { .. }
+                    | EngineActionWire::OrkaChat { .. }
+                    | EngineActionWire::WorkspaceCatalog {}
             )
         )
 }
