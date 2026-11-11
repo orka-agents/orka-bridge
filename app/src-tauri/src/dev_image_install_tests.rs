@@ -144,13 +144,15 @@ async fn engineering_binding_does_not_restore_release_compatibility_or_creation(
     let binding = fs::read(path.join("image-binding.json")).unwrap();
     assert!(matches!(open_installed_image(&old), Err(ImageError::RetainedImage)));
     assert_eq!(fs::read(path.join("image-binding.json")).unwrap(), binding);
-    // A previous installation keeps its old exact-owned Role and is not upgraded.
-    let mut previous: serde_json::Value = serde_json::from_slice(&binding).unwrap();
-    previous["identity"]["stateCompatibilityId"] = "engineering-d471f5eb".into();
-    let previous = serde_json::to_vec(&previous).unwrap();
-    fs::write(path.join("image-binding.json"), &previous).unwrap();
-    assert!(matches!(open_installed_image(&target), Err(ImageError::RetainedImage)));
-    assert_eq!(fs::read(path.join("image-binding.json")).unwrap(), previous);
+    // Refused old bindings retain their bytes, including their compatibility id.
+    for compatibility in ["engineering-d471f5eb", "engineering-10d23420"] {
+        let mut previous: serde_json::Value = serde_json::from_slice(&binding).unwrap();
+        previous["identity"]["stateCompatibilityId"] = compatibility.into();
+        let previous = serde_json::to_vec(&previous).unwrap();
+        fs::write(path.join("image-binding.json"), &previous).unwrap();
+        assert!(matches!(open_installed_image(&target), Err(ImageError::RetainedImage)));
+        assert_eq!(fs::read(path.join("image-binding.json")).unwrap(), previous);
+    }
     fs::write(path.join("image-binding.json"), binding).unwrap();
     let prepared = prepare_development_image(&source, closed.clone()).await.unwrap();
     assert!(matches!(prepared.materialize(&no_creation, closed.clone(), |_| {}).await, Err(ImageError::RetainedImage)));
@@ -187,7 +189,7 @@ async fn frozen_windows_source_materializes_actual_pinned_bytes() {
     );
     let installed = prepared.materialize(&target, closed, |_| {}).await.unwrap();
     installed.revalidate(&target).unwrap();
-    assert_eq!(installed.initial_os_bytes(), 3781165056);
-    assert_eq!(installed.initial_os_sha256(), "c94e431cb5ee37eb54d3fd981c158584175d2abfb6d5be141c0844ef8e8b45dc");
+    assert_eq!(installed.initial_os_bytes(), 3606118400);
+    assert_eq!(installed.initial_os_sha256(), "a2787ff53247377e0d16b94dbc7ee43033c00aea8379de0cfe68ce58f843426e");
     assert_eq!(installed.kernel_release(), "6.1.0-54-cloud-amd64");
 }
