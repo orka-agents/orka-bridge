@@ -588,6 +588,52 @@ async fn an_unrelated_pod_with_a_reused_replica_set_name_does_not_block_stop() {
     owner.stop(&c, r.environment_id).await.unwrap();
 }
 
+#[tokio::test]
+async fn start_rejects_container_security_overrides() {
+    for variant in ["root", "seccomp", "capability", "privileged", "proc-mount"] {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Owner::new(dir.path().into());
+        let (c, cluster) = fixture::connection();
+        let input = receipt();
+        let r = owner
+            .create(&c, input.workspace_id, &input.namespace, &input.image)
+            .await
+            .unwrap();
+        {
+            let mut s = cluster.lock().unwrap();
+            let deployment = s
+                .objects
+                .values_mut()
+                .find(|v| v["kind"] == "Deployment")
+                .unwrap();
+            let security =
+                &mut deployment["spec"]["template"]["spec"]["containers"][0]["securityContext"];
+            match variant {
+                "root" => {
+                    security["runAsUser"] = serde_json::json!(0);
+                    security["runAsNonRoot"] = serde_json::json!(false);
+                }
+                "seccomp" => security["seccompProfile"] = serde_json::json!({"type":"Unconfined"}),
+                "capability" => security["capabilities"]["add"] = serde_json::json!(["SYS_ADMIN"]),
+                "privileged" => security["privileged"] = serde_json::json!(true),
+                _ => security["procMount"] = serde_json::json!("Unmasked"),
+            }
+            s.requests.clear();
+        }
+        assert_eq!(
+            owner.start(&c, r.environment_id).await,
+            Err(Error::Conflict),
+            "{variant}"
+        );
+        assert!(!cluster
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .any(|(m, _, _)| m == "PATCH"));
+    }
+}
+
 #[test]
 fn corrupt_or_oversized_receipt_is_not_an_environment() {
     let dir = tempfile::tempdir().unwrap();

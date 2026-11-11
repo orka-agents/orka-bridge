@@ -475,6 +475,11 @@ fn verify(r: &Receipt, i: usize, object: &DynamicObject) -> Result<(), Error> {
         }
     }
     if i == 2 {
+        let added = &actual["spec"]["template"]["spec"]["containers"][0]["securityContext"]
+            ["capabilities"]["add"];
+        if !(added.is_null() || added.as_array().is_some_and(Vec::is_empty)) {
+            return Err(Error::Conflict);
+        }
         expected["spec"]
             .as_object_mut()
             .ok_or(Error::Invalid)?

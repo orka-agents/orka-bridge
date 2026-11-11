@@ -31,6 +31,8 @@ pub(super) fn manifests(r: &Receipt) -> Result<[Value; 3], Error> {
                 "containers":[{"name":"environment","image":r.image,
                     "command":["/usr/local/bin/bridge-copilot-environment"],"args":["serve"],
                     "securityContext":{"allowPrivilegeEscalation":false,"readOnlyRootFilesystem":true,
+                        "runAsNonRoot":true,"runAsUser":1000,"runAsGroup":1000,"privileged":false,
+                        "procMount":"Default","seccompProfile":{"type":"RuntimeDefault"},
                         "capabilities":{"drop":["ALL"]}},
                     "resources":{"requests":{"cpu":"250m","memory":"512Mi"},"limits":{"cpu":"2","memory":"2Gi"}},
                     "volumeMounts":[{"name":"home","mountPath":"/home/creator"},{"name":"scratch","mountPath":"/tmp"}],
