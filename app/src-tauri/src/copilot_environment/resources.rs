@@ -18,7 +18,7 @@ pub(super) fn manifests(r: &Receipt) -> Result<[Value; 3], Error> {
             "spec":{"podSelector":{"matchLabels":selector},"policyTypes":["Ingress","Egress"],"ingress":[],
                 "egress":[{"ports":[{"protocol":"UDP","port":53},{"protocol":"TCP","port":53}]},
                     {"to":[{"ipBlock":{"cidr":"0.0.0.0/0","except":["0.0.0.0/8","10.0.0.0/8","100.64.0.0/10","127.0.0.0/8","169.254.0.0/16","172.16.0.0/12","192.168.0.0/16","224.0.0.0/4","240.0.0.0/4"]}},
-                        {"ipBlock":{"cidr":"::/0","except":["::/128","::1/128","::ffff:0:0/96","fc00::/7","fe80::/10","ff00::/8"]}}],
+                        {"ipBlock":{"cidr":"::/0","except":["::/128","::1/128","fc00::/7","fe80::/10","ff00::/8"]}}],
                         "ports":[{"protocol":"TCP","port":443}]}]}}),
         json!({"apiVersion":"apps/v1","kind":"Deployment","metadata":metadata,"spec":{
             // Record the Deployment UID before Start can create a credential-bearing pod.

@@ -44,6 +44,45 @@ fn hardened_templates_keep_a_stopped_deployment_and_private_volume() {
 }
 
 #[test]
+fn policy_exceptions_are_strict_subnets_in_kubernetes_address_family() {
+    use std::net::IpAddr;
+    fn cidr(text: &str) -> (IpAddr, u32) {
+        let (ip, prefix) = text.split_once('/').unwrap();
+        (
+            ip.parse::<IpAddr>().unwrap().to_canonical(),
+            prefix.parse().unwrap(),
+        )
+    }
+    let policy = resources::manifests(&receipt()).unwrap()[1].clone();
+    for peer in policy["spec"]["egress"][1]["to"].as_array().unwrap() {
+        let block = &peer["ipBlock"];
+        let (base, prefix) = cidr(block["cidr"].as_str().unwrap());
+        for except in block["except"].as_array().unwrap() {
+            let (ip, mask) = cidr(except.as_str().unwrap());
+            // Kubernetes ValidateIPBlock uses Go net.IPNet.Contains, which canonicalizes mapped IPv4.
+            assert_eq!(
+                base.is_ipv4(),
+                ip.is_ipv4(),
+                "{except} is not in {}",
+                block["cidr"]
+            );
+            let width = if base.is_ipv4() { 32 } else { 128 };
+            assert!(mask > prefix && mask <= width);
+            let bits = |ip| match ip {
+                IpAddr::V4(v) => u32::from(v) as u128,
+                IpAddr::V6(v) => u128::from(v),
+            };
+            let netmask = if prefix == 0 {
+                0
+            } else {
+                u128::MAX << (width - prefix)
+            };
+            assert_eq!(bits(base) & netmask, bits(ip) & netmask);
+        }
+    }
+}
+
+#[test]
 fn receipt_survives_reload_without_credentials() {
     let dir = tempfile::tempdir().unwrap();
     let r = receipt();
