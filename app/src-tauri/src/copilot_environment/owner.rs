@@ -464,13 +464,20 @@ fn verify(r: &Receipt, i: usize, object: &DynamicObject) -> Result<(), Error> {
     }
     let mut expected = resources::manifests(r)?[i].clone();
     if i == 1 {
-        let selector = &actual["spec"]["podSelector"];
-        if selector["matchLabels"] != expected["spec"]["podSelector"]["matchLabels"]
-            || !(selector["matchExpressions"].is_null()
-                || selector["matchExpressions"]
-                    .as_array()
-                    .is_some_and(Vec::is_empty))
+        let selector = &mut actual["spec"]["podSelector"];
+        if !(selector["matchExpressions"].is_null()
+            || selector["matchExpressions"]
+                .as_array()
+                .is_some_and(Vec::is_empty))
         {
+            return Err(Error::Conflict);
+        }
+        selector
+            .as_object_mut()
+            .ok_or(Error::Conflict)?
+            .remove("matchExpressions");
+        // Added selector constraints can select no Pods; added port end-ranges can broaden egress.
+        if actual["spec"] != expected["spec"] {
             return Err(Error::Conflict);
         }
     }

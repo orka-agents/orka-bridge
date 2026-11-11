@@ -453,7 +453,7 @@ async fn remove_rechecks_stopped_replicas_before_deleting_the_deployment() {
 
 #[tokio::test]
 async fn start_rejects_policy_selectors_that_exclude_the_environment() {
-    for variant in ["label", "expression"] {
+    for variant in ["label", "expression", "port-range"] {
         let dir = tempfile::tempdir().unwrap();
         let owner = Owner::new(dir.path().into());
         let (c, cluster) = fixture::connection();
@@ -472,9 +472,11 @@ async fn start_rejects_policy_selectors_that_exclude_the_environment() {
             if variant == "label" {
                 policy["spec"]["podSelector"]["matchLabels"]["unmatched"] =
                     serde_json::json!("extra");
-            } else {
+            } else if variant == "expression" {
                 policy["spec"]["podSelector"]["matchExpressions"] =
                     serde_json::json!([{"key":"unmatched","operator":"Exists"}]);
+            } else {
+                policy["spec"]["egress"][1]["ports"][0]["endPort"] = serde_json::json!(65535);
             }
             s.requests.clear();
         }
