@@ -32,6 +32,7 @@ fn main() {
             "send_status",
             "send_stop",
             "setup_requirements",
+            "setup_preflight",
             "setup_open_help",
         ]));
     tauri_build::try_build(attributes).expect("failed to build Bridge");

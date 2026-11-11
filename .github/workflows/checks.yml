@@ -148,13 +148,13 @@ jobs:
         if: runner.os == 'macOS'
         timeout-minutes: 6
         run: |
-          npm run tauri -- build --debug --features custom-protocol --bundles app --no-sign --no-binary-patching -- --locked
+          npm run tauri -- build --debug --features custom-protocol --bundles app --no-sign --no-binary-patching --config '{"identifier":"ai.orka.bridge.lifecycle"}' -- --locked
           bundle="$PWD/src-tauri/target/debug/bundle/macos/Bridge.app"
           test "$(lipo -archs "$bundle/Contents/MacOS/orka-bridge")" = arm64
           export BRIDGE_DEV_IMAGE_DIR
           BRIDGE_DEV_IMAGE_DIR="$(mktemp -d "$RUNNER_TEMP/lifecycle-empty.XXXXXX")"
-          # Run before release smoke writes setup-v1/local-vm. Never erase a user profile.
-          test ! -e "$HOME/Library/Application Support/ai.orka.bridge"
+          # Isolate native and WebKit preferences from the later release first-run walk.
+          test ! -e "$HOME/Library/Application Support/ai.orka.bridge.lifecycle"
           prior_dark="$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')"
           prior_style="$(defaults read -g AppleInterfaceStyle 2>/dev/null || true)"
           prior_auto="$(defaults read -g AppleInterfaceStyleSwitchesAutomatically 2>/dev/null || true)"

@@ -226,6 +226,14 @@ try {
         Broadcast-Theme
         Start-Bridge
         $script:originalPid = $script:app.Id
+        Press (Wait-For 'Clusters button missing' { Find-Control $script:window 'Clusters' $button })
+        Wait-For 'Requirements choice did not appear' { (Find-Control $script:window 'Get started' $button) -or (Find-Control $script:window 'Check again' $button) } | Out-Null
+        $start = Find-Control $script:window 'Get started' $button
+        if ($start) { Press $start }
+        Wait-For 'Computer requirements did not settle' { $check = Find-Control $script:window 'Check again' $button; if ($check -and $check.Current.IsEnabled) { $true } } | Out-Null
+        # Observe the real runner; never inject Ready or select a local workspace.
+        Capture 'computer-requirements'
+        if (Test-Path $selected) { throw 'Preflight selected a workspace' }
         Press (Wait-For 'Designer button missing' { Find-Control $script:window 'Designer' $button })
         # Observe the actual editable owned example before toggling File, not a
         # welcome-button proxy or a read-only preview that will be remounted.

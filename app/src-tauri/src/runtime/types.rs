@@ -9,6 +9,7 @@ pub enum RuntimeError {
     Busy,
     RetainedState,
     Unavailable,
+    Preflight(crate::setup::preflight::Failure),
     Closed,
     /// A native writer may still be alive; never admit another startup.
     StopUnconfirmed(String),
@@ -37,6 +38,11 @@ impl std::fmt::Display for UnconfirmedStop {
     }
 }
 impl std::error::Error for UnconfirmedStop {}
+impl From<crate::setup::preflight::Failure> for RuntimeError {
+    fn from(failure: crate::setup::preflight::Failure) -> Self {
+        Self::Preflight(failure)
+    }
+}
 impl From<std::io::Error> for RuntimeError {
     fn from(e: std::io::Error) -> Self {
         if e.get_ref()
