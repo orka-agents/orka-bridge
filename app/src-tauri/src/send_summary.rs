@@ -1,10 +1,15 @@
 //! Small local Send records, never execution handles or recovery instructions.
-use crate::agent_folder::{invalid, read, replace};
+use crate::agent_folder::{invalid, read, replace, sync};
 use bridge_runtime_protocol::{SnapshotId, Uuid};
 use cap_fs_ext::DirExt;
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, fs, io, path::PathBuf, sync::Mutex};
+use std::{
+    collections::HashSet,
+    fs, io,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 const VERSION: u32 = 1;
 const MAX_ATTEMPTS: usize = 256;
@@ -12,6 +17,7 @@ const MAX_BYTES: u64 = 256 * 1024;
 const MAX_TEXT: usize = 4096;
 const MAX_TIME: u64 = 253_402_300_799;
 const FILE_NAME: &str = "history.json";
+const PENDING: &str = "saving";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -113,10 +119,27 @@ impl SummaryStore {
         }
     }
     pub fn begin(&self, summary: AttemptSummary) -> io::Result<()> {
+        self.save(summary, |root, bytes| replace(root, FILE_NAME, bytes))
+    }
+    fn save(
+        &self,
+        summary: AttemptSummary,
+        commit: impl FnOnce(&Dir, &[u8]) -> io::Result<()>,
+    ) -> io::Result<()> {
         let _lock = self.lock.lock().map_err(|_| invalid())?;
         summary.validate().map_err(Self::as_io)?;
         let root = self.root(true)?.ok_or_else(invalid)?;
         let mut ledger = Self::read_ledger(Some(&root)).map_err(Self::as_io)?;
+        // A prior failed save may already have published its terminal bytes.
+        // Retain that attempt as unknown before replacing its durable intent.
+        if root.symlink_metadata(PENDING).is_ok() {
+            replace(
+                &root,
+                FILE_NAME,
+                &serde_json::to_vec(&ledger).map_err(|_| invalid())?,
+            )?;
+        }
+        let id = summary.id.clone();
         upsert(&mut ledger.attempts, summary);
         let bytes = loop {
             let bytes = serde_json::to_vec(&ledger).map_err(|_| invalid())?;
@@ -130,8 +153,14 @@ impl SummaryStore {
             }
             ledger.attempts.remove(0);
         };
-        // Retained no-follow directory; fresh inode, atomic rename and directory flush.
-        replace(&root, FILE_NAME, &bytes)
+        // The intent is durable before terminal bytes can become visible. A
+        // rename followed by a failed flush must not expose a saved pass.
+        replace(&root, PENDING, id.as_bytes())?;
+        commit(&root, &bytes)?;
+        root.remove_file(PENDING)?;
+        // Removal is cleanup, not the commit point: the ledger is already
+        // flushed. A crash may restore the intent, conservatively showing unknown.
+        Ok(())
     }
     pub fn finish(&self, summary: AttemptSummary) -> io::Result<()> {
         self.begin(summary)
@@ -149,7 +178,7 @@ impl SummaryStore {
                     return Ok(None);
                 }
                 // The native app-local-data root is trusted, not renderer-supplied.
-                fs::create_dir_all(parent)?;
+                create_app_root(parent)?;
             }
             Err(e) => return Err(e),
             Ok(meta) if !meta.file_type().is_dir() => return Err(invalid()),
@@ -177,8 +206,17 @@ impl SummaryStore {
         }
         #[cfg(windows)]
         let _private = crate::runtime::windows::security::private_af_directory(&path)?;
-        let parent = Dir::open_ambient_dir(parent, cap_std::ambient_authority())?;
-        let root = parent.open_dir_nofollow("send-history-v1")?;
+        let app_root = Dir::open_ambient_dir(parent, cap_std::ambient_authority())?;
+        if create {
+            // Retry even if mkdir already succeeded before an earlier flush failed.
+            let ancestor = parent.parent().ok_or_else(invalid)?;
+            sync(&Dir::open_ambient_dir(
+                ancestor,
+                cap_std::ambient_authority(),
+            )?)?;
+            sync(&app_root)?;
+        }
+        let root = app_root.open_dir_nofollow("send-history-v1")?;
         #[cfg(unix)]
         {
             use cap_std::fs::PermissionsExt;
@@ -198,7 +236,8 @@ impl SummaryStore {
             Ok(_) => (),
         }
         let bytes = read(root, FILE_NAME, MAX_BYTES as usize).map_err(|_| SummaryError::Corrupt)?;
-        let ledger: Ledger = serde_json::from_slice(&bytes).map_err(|_| SummaryError::Corrupt)?;
+        let mut ledger: Ledger =
+            serde_json::from_slice(&bytes).map_err(|_| SummaryError::Corrupt)?;
         if ledger.version != VERSION || ledger.attempts.len() > MAX_ATTEMPTS {
             return Err(SummaryError::Corrupt);
         }
@@ -207,6 +246,20 @@ impl SummaryStore {
             attempt.validate()?;
             if !ids.insert(&attempt.id) {
                 return Err(SummaryError::Corrupt);
+            }
+        }
+        match root.symlink_metadata(PENDING) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(_) => return Err(SummaryError::Unavailable),
+            Ok(_) => {
+                let bytes = read(root, PENDING, 36).map_err(|_| SummaryError::Corrupt)?;
+                let id = std::str::from_utf8(&bytes).map_err(|_| SummaryError::Corrupt)?;
+                Uuid::parse_str(id).map_err(|_| SummaryError::Corrupt)?;
+                for attempt in &mut ledger.attempts {
+                    if attempt.id == id {
+                        attempt.verdict = AttemptVerdict::Unknown;
+                    }
+                }
             }
         }
         Ok(ledger)
@@ -219,10 +272,67 @@ impl SummaryStore {
     }
 }
 
+// Publish newly created native app-data ancestors one at a time. If a parent
+// flush fails, no deeper directory exists yet; a retry flushes that parent again.
+fn create_app_root(path: &Path) -> io::Result<()> {
+    match fs::metadata(path) {
+        Ok(meta) if meta.is_dir() => (),
+        Ok(_) => return Err(invalid()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            create_app_root(path.parent().ok_or_else(invalid)?)?;
+            fs::create_dir(path)?;
+        }
+        Err(e) => return Err(e),
+    }
+    let parent = path.parent().ok_or_else(invalid)?;
+    sync(&Dir::open_ambient_dir(
+        parent,
+        cap_std::ambient_authority(),
+    )?)
+}
+
 fn upsert(attempts: &mut Vec<AttemptSummary>, summary: AttemptSummary) {
     attempts.retain(|attempt| attempt.id != summary.id);
     attempts.push(summary);
     if attempts.len() > MAX_ATTEMPTS {
         attempts.drain(..attempts.len() - MAX_ATTEMPTS);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn post_rename_flush_error_remains_unknown_after_restart_and_next_send() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = SummaryStore::new(Some(dir.path().into()));
+        let mut attempt: AttemptSummary = serde_json::from_value(serde_json::json!({
+            "id":Uuid::new_v4().to_string(), "source":SnapshotId::of(b"agent", b"tests"),
+            "targetDisplay":"team-dev", "targetUids":{"serviceNamespace":"control", "serviceUid":"service", "deploymentNamespace":"control", "deploymentUid":"deployment", "watchedNamespace":"agents"},
+            "provider":"model", "plannedAgentName":"bridge-run-first", "agentUid":null,
+            "verdict":"running", "time":1
+        })).unwrap();
+        store.begin(attempt.clone()).unwrap();
+        attempt.agent_uid = Some("uid-first".into());
+        attempt.verdict = AttemptVerdict::Passed;
+        let failed = store.save(attempt.clone(), |root, bytes| {
+            // Publish the real bytes, then inject failure at the final flush boundary.
+            replace(root, FILE_NAME, bytes)?;
+            Err(io::Error::other("injected directory flush failure"))
+        });
+        assert!(failed.is_err());
+        assert_eq!(store.list().unwrap()[0].verdict, AttemptVerdict::Unknown);
+        let reopened = SummaryStore::new(Some(dir.path().into()));
+        assert_eq!(reopened.list().unwrap()[0].verdict, AttemptVerdict::Unknown);
+        let mut next = attempt.clone();
+        next.id = Uuid::new_v4().to_string();
+        next.planned_agent_name = "bridge-run-next".into();
+        next.agent_uid = None;
+        next.verdict = AttemptVerdict::Running;
+        reopened.begin(next).unwrap();
+        let saved = reopened.list().unwrap();
+        assert_eq!(saved.len(), 2);
+        assert_eq!(saved[0].id, attempt.id);
+        assert_eq!(saved[0].verdict, AttemptVerdict::Unknown);
     }
 }
