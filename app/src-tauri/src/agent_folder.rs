@@ -36,8 +36,17 @@ pub(crate) fn valid_name(name: &str) -> bool {
             && (name.starts_with("com") || name.starts_with("lpt"))
             && matches!(bytes[3], b'1'..=b'9'))
 }
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DocumentRef {
+    pub document_id: DocumentId,
+    pub name: String,
+}
 #[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentPair {
+    pub document_id: DocumentId,
+    pub name: String,
     pub agent: String,
     pub tests: String,
     pub source: SnapshotId,
@@ -51,6 +60,7 @@ pub struct AgentFolder {
     tests: String,
     owner: Vec<u8>,
     sample: bool,
+    id: DocumentId,
     lock: Mutex<()>,
 }
 pub(crate) fn invalid() -> io::Error {
@@ -77,12 +87,16 @@ pub(crate) fn options() -> OpenOptions {
     options
 }
 pub(crate) fn regular(file: &File) -> io::Result<()> {
+    regular_links(file, false)
+}
+// Only immutable registry observations may retain an atomically unlinked inode.
+pub(crate) fn regular_links(file: &File, unlinked: bool) -> io::Result<()> {
     let meta = file.metadata()?;
     if !meta.is_file() {
         return Err(invalid());
     }
     #[cfg(unix)]
-    if meta.nlink() != 1 {
+    if meta.nlink() > 1 || (!unlinked && meta.nlink() == 0) {
         return Err(invalid());
     }
     #[cfg(windows)]
@@ -95,7 +109,10 @@ pub(crate) fn regular(file: &File) -> io::Result<()> {
         if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
             return Err(io::Error::last_os_error());
         }
-        if info.nNumberOfLinks != 1 || meta.file_attributes() & 0x400 != 0 {
+        if info.nNumberOfLinks > 1
+            || (!unlinked && info.nNumberOfLinks == 0)
+            || meta.file_attributes() & 0x400 != 0
+        {
             return Err(invalid());
         }
     }
@@ -163,6 +180,18 @@ pub(crate) fn replace(dir: &Dir, name: &str, bytes: &[u8]) -> io::Result<()> {
     result
 }
 impl AgentFolder {
+    pub fn document_id(&self) -> DocumentId {
+        self.id
+    }
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+    pub fn document(&self) -> DocumentRef {
+        DocumentRef {
+            document_id: self.id,
+            name: self.name.clone(),
+        }
+    }
     pub fn new(home: Option<PathBuf>) -> Self {
         Self {
             home,
@@ -171,6 +200,7 @@ impl AgentFolder {
             tests: TESTS.into(),
             owner: OWNER.into(),
             sample: true,
+            id: DocumentId::SAMPLE,
             lock: Mutex::new(()),
         }
     }
@@ -185,6 +215,7 @@ impl AgentFolder {
             tests: format!("{name}.agent.test.md"),
             owner: format!("Bridge agent folder v1\n{}\n", id.0).into_bytes(),
             sample: false,
+            id,
             lock: Mutex::new(()),
         })
     }
@@ -347,6 +378,8 @@ impl AgentFolder {
         let tests = String::from_utf8(read(root, &self.tests, MAX_FILE)?).map_err(|_| invalid())?;
         let source = SnapshotId::of(agent.as_bytes(), tests.as_bytes());
         Ok(AgentPair {
+            document_id: self.id,
+            name: self.name.clone(),
             agent,
             tests,
             source,

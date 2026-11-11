@@ -15,9 +15,10 @@ function native(initial = 'installing', numbers: { phase: string; bytes: number 
     if (command === 'setup_cancel_local') { localVm = 'cancelled'; return status(); }
     if (command === 'setup_select_local') { selected = 'localVm'; localVm = 'installing'; return status(); }
     if (command === 'setup_change_local') { localVm = 'idle'; selected = null; return status(); }
-    if (command === 'setup_example' || command === 'agent_open') return pair;
+    if (command === 'setup_example') return pair;
+    if (command === 'agent_open') return { ...pair, documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader' };
     if (command === 'setup_connect_model') return { ready: true };
-    if (command === 'setup_run_status') return { state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
     throw new Error('Unexpected command: ' + command);
   }); mockIPC(ipc);
   return { ipc, ready: () => { localVm = 'ready'; }, fail: () => { localVm = 'failed'; }, unreadable: () => { unavailable = true; } };
@@ -85,7 +86,7 @@ test('Meet opens the actual example read-only without owned-file or Run commands
   await user.click(within(main).getByRole('button', { name: 'File' }));
   const editor = screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
   expect(editor.readOnly).toBe(true); editor.focus(); await user.keyboard('{Control>}s{/Control}');
-  expect(ipc.mock.calls.some(([c]) => ['agent_open', 'agent_save', 'setup_run_example', 'setup_run_status'].includes(c))).toBe(false);
+  expect(ipc.mock.calls.some(([c]) => ['agent_open', 'agent_save', 'agent_run', 'agent_run_status'].includes(c))).toBe(false);
   expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'web-reader, ready to read')).toBeTruthy();
 });
 
@@ -96,7 +97,7 @@ test('unreadable status never upgrades the setup preview into an editable file',
   await waitFor(() => expect(within(screen.getByRole('contentinfo')).getByText('Workspace unavailable')).toBeTruthy());
   await user.click(screen.getByRole('button', { name: 'File' }));
   expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).readOnly).toBe(true);
-  expect(ipc.mock.calls.some(([c]) => ['agent_open', 'agent_save', 'setup_run_status'].includes(c))).toBe(false);
+  expect(ipc.mock.calls.some(([c]) => ['agent_open', 'agent_save', 'agent_run_status'].includes(c))).toBe(false);
 });
 
 test('read-only view is freshly opened as editable only once setup is ready', async () => {
@@ -166,8 +167,8 @@ test('a failed example read is not presented as an endless load', async () => {
 
 test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup step reflects actual %s run evidence', async result => {
   const { ipc } = native('ready');
-  const snapshot = { state: result === 'running' ? 'running' : 'complete', canRun: result !== 'running', report: result === 'running' ? null : { verdict: result, cases: [{ id: 'checksum', phase: 'Succeeded', answer: 'checksum', completedTools: ['web_fetch'], verdict: result, assertions: [{ id: 'value', kind: 'contains', verdict: result }] }] }, acknowledged: [], pending: null, error: null };
-  mockIPC(command => command === 'setup_run_status' ? snapshot : ipc(command));
+  const snapshot = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: result === 'running' ? 'running' : 'complete', canRun: result !== 'running', report: result === 'running' ? null : { verdict: result, cases: [{ id: 'checksum', phase: 'Succeeded', answer: 'checksum', completedTools: ['web_fetch'], verdict: result, assertions: [{ id: 'value', kind: 'contains', verdict: result }] }] }, acknowledged: [], pending: null, error: null };
+  mockIPC(command => command === 'agent_run_status' ? snapshot : ipc(command));
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Open example' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });

@@ -7,7 +7,7 @@ import type { SetupStatus, ExamplePair } from './setup/state';
 import type { SelectedPlace } from './clusters/api';
 import type { ModelState } from './setup/Model';
 import { workspaceRecovery } from './setup/recovery-info';
-import type { RunSnapshot } from './designer/run-api';
+import { sampleRun, type RunSnapshot } from './designer/run-api';
 import { agentInfo, type SaveState } from './designer/agent-api';
 
 const pages = ['Overview', 'Designer', 'Clusters'] as const;
@@ -130,7 +130,8 @@ export default function App() {
     : run?.state === 'running' ? 'Running checks…' : cases
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} checks passing` : undefined;
   const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
-  const firstCheck = checksStale ? 'stale' : runUnavailable || run?.state === 'unknown' ? 'unknown'
+  const sample = sampleRun(run);
+  const firstCheck = run && !sample ? undefined : checksStale ? 'stale' : runUnavailable || run?.state === 'unknown' ? 'unknown'
     : run?.state === 'running' ? 'running' : run?.state === 'complete' ? run.report?.verdict : undefined;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
   const agentStatus = checksStale ? 'checks need running' : runUnavailable ? 'check status unavailable' : run?.state === 'unknown' ? 'check result unknown'
@@ -143,7 +144,7 @@ export default function App() {
     Designer: agentName ? `${agentName}, ${exampleReadOnly ? 'ready to read' : remote ? 'checks on your cluster' : agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
-      : model === 'connected' ? run?.state === 'complete' ? 'This computer ready' : 'AI connected'
+      : model === 'connected' ? sample?.state === 'complete' ? 'This computer ready' : 'AI connected'
       : model === 'idle' ? setupLine : modelDetail,
   };
   const tabTone = remote || exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';

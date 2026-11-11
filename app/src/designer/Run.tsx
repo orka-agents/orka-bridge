@@ -1,29 +1,32 @@
 import { useEffect, useRef, useState } from 'react';
 import { CardSection, Details, Elapsed, GeneratedValue, LongCard, StatusIcon, StatusPill, type Status } from '../components/DesignSystem';
 import { errors, runCall, type RunSnapshot } from './run-api';
-import { sameSource, type SourceId } from './agent-api';
-export default function Run({ onSnapshot, blocked = false, stale = false, onStart, source }: { onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId }) {
-  const [snapshot, setSnapshot] = useState<RunSnapshot>();
+import { SAMPLE_DOCUMENT_ID, sameSource, type SourceId } from './agent-api';
+export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, blocked = false, stale = false, onStart, source }: { documentId?: string; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId }) {
+  const [received, setSnapshot] = useState<RunSnapshot>();
+  const snapshot = received?.documentId === documentId ? received : undefined;
   const [message, setMessage] = useState<string>();
   const [sending, setSending] = useState(false);
-  const active = useRef(false);
+  const epoch = useRef(0);
   const sourceCurrent = sameSource(source, snapshot?.source);
   useEffect(() => {
-    active.current = true;
+    const request = ++epoch.current;
+    setMessage(undefined); setSending(false);
     const observe = async () => {
-      const result = await runCall('setup_run_status');
-      if (!active.current) return;
+      const result = await runCall('agent_run_status', documentId);
+      if (request !== epoch.current) return;
       if (result.ok) { setSnapshot(result.snapshot); setMessage(undefined); } else setMessage(result.message);
     };
     void observe(); const timer = window.setInterval(() => { void observe(); }, 500);
-    return () => { active.current = false; window.clearInterval(timer); };
-  }, []);
+    return () => { epoch.current++; window.clearInterval(timer); };
+  }, [documentId]);
   useEffect(() => { if (snapshot || message) onSnapshot?.(message ? undefined : snapshot ? { ...snapshot, sourceCurrent } : undefined); }, [snapshot, message, onSnapshot, sourceCurrent]);
   const start = async () => {
     if (sending || blocked || !snapshot?.canRun) return;
     setSending(true);
-    const result = await runCall('setup_run_example');
-    if (!active.current) return;
+    const request = epoch.current;
+    const result = await runCall('agent_run', documentId);
+    if (request !== epoch.current) return;
     if (result.ok) { onStart?.(); setSnapshot(result.snapshot); setMessage(undefined); } else setMessage(result.message);
     setSending(false);
   };
@@ -36,6 +39,7 @@ export default function Run({ onSnapshot, blocked = false, stale = false, onStar
     <LongCard title="Test on the local VM" status={<StatusPill state={state}>{state === 'not-started' && uncertain ? 'Result unknown' : undefined}</StatusPill>} summary={<>Run creates an Orka Agent and Task from these exact files.{snapshot?.modelConnected === false && ' Connect the model in Clusters first.'}</>}
       action={<button type="button" className="setup-button" disabled={blocked || running || !snapshot?.canRun} title={blocked ? 'Save your changes before running the check' : running ? 'Check is running' : !snapshot?.canRun ? 'Connect your workspace and AI in Clusters first' : undefined} onClick={() => { void start(); }}>Run test</button>}>
       <CardSection title="What happened">
+        {snapshot?.busy && snapshot.busy.documentId !== documentId && <p role="status">{snapshot.busy.name} is running a test.</p>}
         {outdated && <p role="status">Not run since your change. Any result below is from the earlier file.</p>}
         {running && <><p role="status">Running on the local VM…</p><Elapsed /></>}
         {message && <p role="status">{message}</p>}

@@ -9,15 +9,15 @@ function Example(props: ComponentProps<typeof ExampleView>) {
   const [state, setState] = useState('');
   return <><ExampleView {...props} onSaveState={value => { setState(value); props.onSaveState?.(value); }} /><output aria-label="Save-state observer">{state === 'saved' ? 'Saved' : ''}</output></>;
 }
-const pair = { agent: '---\nname: web-reader\ndescription: Reads a page you name.\n---\nRead the page.\n', tests: 'Checks from disk' };
-const idle = { state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
+const pair = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: web-reader\ndescription: Reads a page you name.\n---\nRead the page.\n', tests: 'Checks from disk' };
+const idle = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 function native(save?: (content: string) => unknown) {
   vi.stubGlobal('isTauri', true);
   mockIPC((command, args) => {
     if (command === 'agent_open') return pair;
     if (command === 'agent_save') return save ? save((args as { content: string }).content) : { ...pair, agent: (args as { content: string }).content };
-    if (command === 'setup_run_status' || command === 'setup_run_example') return idle;
+    if (command === 'agent_run_status' || command === 'agent_run') return idle;
     throw Error(`Unexpected command ${command}`);
   });
 }
@@ -138,7 +138,7 @@ test('a failed Run request does not make an earlier verdict current after editin
   mockIPC((command, args) => {
     if (command === 'agent_open') return pair;
     if (command === 'agent_save') return { ...pair, agent: (args as { content: string }).content };
-    if (command === 'setup_run_example') return Promise.reject(new Error('IPC failure'));
+    if (command === 'agent_run') return Promise.reject(new Error('IPC failure'));
     return { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'reads-page', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } };
   });
   const user = userEvent.setup(); render(<Example />);
@@ -153,7 +153,7 @@ test('an edit during a delayed Run reply keeps the earlier result stale', async 
   let finish!: (value: unknown) => void;
   vi.stubGlobal('isTauri', true);
   mockIPC((command, args) => command === 'agent_open' ? pair : command === 'agent_save' ? { ...pair, agent: (args as { content: string }).content }
-    : command === 'setup_run_example' ? new Promise(resolve => { finish = resolve; }) : idle);
+    : command === 'agent_run' ? new Promise(resolve => { finish = resolve; }) : idle);
   const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: 'File' }));
   await user.click(screen.getByRole('button', { name: 'Run test' }));
