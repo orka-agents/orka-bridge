@@ -1,6 +1,7 @@
 pub mod agent_folder;
 pub mod catalog;
 pub mod clusters;
+pub mod copilot_environment;
 #[cfg(debug_assertions)]
 pub mod dev_image;
 pub mod engine;
