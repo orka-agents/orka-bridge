@@ -1,6 +1,6 @@
 //! Fixed example Run on the original VM client. Credentials remain in the guest.
 use crate::{
-    agent_folder::AgentFolder,
+    agent_folder::{AgentFolder, DocumentId, DocumentRef},
     engine::run::{
         ErrorKind, NativeRunner, ParsedPair, RunFuture, RunHandle, RunLimits, RunReport,
         RunTransport,
@@ -12,7 +12,10 @@ use crate::{
 use bridge_runtime_protocol::{ModelPhase, OrkaRequest, SnapshotId, MAX_ORKA_BODY};
 use serde::Serialize;
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 use tokio::{sync::watch, time::Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -37,6 +40,8 @@ pub struct PendingRef {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RunSnapshot {
+    pub document_id: DocumentId,
+    pub busy: Option<DocumentRef>,
     pub state: RunState,
     pub can_run: bool,
     pub model_connected: bool,
@@ -46,9 +51,26 @@ pub struct RunSnapshot {
     pub pending: Option<PendingRef>,
     pub error: Option<&'static str>,
 }
+impl RunSnapshot {
+    fn idle(document_id: DocumentId) -> Self {
+        Self {
+            document_id,
+            busy: None,
+            state: RunState::Idle,
+            can_run: false,
+            model_connected: false,
+            source: None,
+            report: None,
+            acknowledged: Vec::new(),
+            pending: None,
+            error: None,
+        }
+    }
+}
+#[derive(Default)]
 struct State {
-    snapshot: RunSnapshot,
-    handle: Option<RunHandle>,
+    snapshots: HashMap<DocumentId, RunSnapshot>,
+    active: Option<DocumentRef>,
 }
 pub struct ExampleRun(Mutex<State>, tokio::runtime::Handle, bool, Arc<AgentFolder>);
 impl ExampleRun {
@@ -59,101 +81,131 @@ impl ExampleRun {
         folder: Arc<AgentFolder>,
     ) -> Arc<Self> {
         Arc::new(Self(
-            Mutex::new(State {
-                snapshot: RunSnapshot {
-                    state: RunState::Idle,
-                    can_run: false,
-                    model_connected: false,
-                    source: None,
-                    report: None,
-                    acknowledged: Vec::new(),
-                    pending: None,
-                    error: None,
-                },
-                handle: None,
-            }),
+            Mutex::default(),
             runtime,
             model_image_available,
             folder,
         ))
     }
-    /// Observation only, including after a renderer remount; never submits or loads credentials.
+    /// Sample-only compatibility for native setup callers.
     pub fn status(&self, vm: &LocalVm) -> RunSnapshot {
-        let mut snapshot = self.0.lock().unwrap().snapshot.clone();
+        self.status_document(vm, DocumentId::SAMPLE)
+    }
+    pub fn status_document(&self, vm: &LocalVm, id: DocumentId) -> RunSnapshot {
+        let state = self.0.lock().unwrap();
+        let mut snapshot = state
+            .snapshots
+            .get(&id)
+            .cloned()
+            .unwrap_or_else(|| RunSnapshot::idle(id));
+        snapshot.busy = state.active.clone();
+        // Terminal means admission is released, not merely that the report arrived.
+        if state
+            .active
+            .as_ref()
+            .is_some_and(|job| job.document_id == id)
+        {
+            snapshot.state = RunState::Running;
+        }
         snapshot.model_connected = vm.model_connected();
-        snapshot.can_run =
-            self.2 && snapshot.state != RunState::Running && vm.status() == LocalVmStatus::Ready;
+        snapshot.can_run = self.2 && state.active.is_none() && vm.status() == LocalVmStatus::Ready;
         snapshot
     }
     pub fn start(self: &Arc<Self>, vm: Arc<LocalVm>) -> RunSnapshot {
+        self.start_document(vm, self.3.clone())
+    }
+    pub fn start_document(
+        self: &Arc<Self>,
+        vm: Arc<LocalVm>,
+        folder: Arc<AgentFolder>,
+    ) -> RunSnapshot {
+        let id = folder.document_id();
         if !self.2 {
-            return self.status(&vm);
+            return self.status_document(&vm, id);
         }
         {
             let mut state = self.0.lock().unwrap();
-            if state.snapshot.state == RunState::Running {
+            if state.active.is_some() {
                 drop(state);
-                return self.status(&vm);
+                return self.status_document(&vm, id);
             }
-            state.snapshot.state = RunState::Running;
-            state.snapshot.can_run = false;
-            state.snapshot.error = None;
-            state.snapshot.report = None;
-            state.snapshot.source = None;
-            // Keep remote identities through session/model preflight failures.
-            // record() replaces them when submission returns a new handle.
+            state.active = Some(folder.document());
+            let snapshot = state
+                .snapshots
+                .entry(id)
+                .or_insert_with(|| RunSnapshot::idle(id));
+            snapshot.state = RunState::Running;
+            snapshot.can_run = false;
+            snapshot.error = None;
+            snapshot.report = None;
+            snapshot.source = None;
+            // Keep this document's receipts through preflight failures.
         }
         let owner = self.clone();
         let target = vm.clone();
-        // The owned task and worker publish receipts without depending on an IPC waiter.
         self.1.spawn(async move {
-            let source = owner.3.clone();
-            // Freeze once per admission, before waiting for the serialized VM client.
             let pair = tokio::task::spawn_blocking(move || {
-                let snapshot = source.capture().map_err(|_| ())?;
+                let snapshot = folder.capture().map_err(|_| ())?;
                 CapturedPair::from_snapshot(snapshot).map_err(|_| ())
             })
             .await;
-            let Ok(Ok(pair)) = pair else {
-                owner.fail("source");
-                return;
-            };
-            let pair = pair.into_pair();
-            owner.0.lock().unwrap().snapshot.source = Some(pair.snapshot().clone());
-            let runtime = tokio::runtime::Handle::current();
-            let worker = owner.clone();
-            let observing = target.clone();
-            let result = target
-                .with_client(move |_, client| {
-                    runtime.block_on(worker.execute(client, observing, pair))
-                })
-                .await;
-            if result.is_err() {
-                owner.fail("session");
+            if let Ok(Ok(pair)) = pair {
+                let pair = pair.into_pair();
+                owner
+                    .0
+                    .lock()
+                    .unwrap()
+                    .snapshots
+                    .get_mut(&id)
+                    .unwrap()
+                    .source = Some(pair.snapshot().clone());
+                let runtime = tokio::runtime::Handle::current();
+                let worker = owner.clone();
+                let observing = target.clone();
+                if target
+                    .with_client(move |_, client| {
+                        runtime.block_on(worker.execute(id, client, observing, pair))
+                    })
+                    .await
+                    .is_err()
+                {
+                    owner.fail(id, "session");
+                }
+            } else {
+                owner.fail(id, "source");
             }
+            // One global admission, released only after the client work returns.
+            owner.0.lock().unwrap().active = None;
         });
-        self.status(&vm)
+        self.status_document(&vm, id)
     }
-    fn fail(&self, message: &'static str) {
+    fn fail(&self, id: DocumentId, message: &'static str) {
         let mut state = self.0.lock().unwrap();
-        state.snapshot.state = RunState::Unknown;
-        state.snapshot.error = Some(message);
+        let snapshot = state.snapshots.get_mut(&id).unwrap();
+        snapshot.state = RunState::Unknown;
+        snapshot.error = Some(message);
     }
-    async fn execute(&self, client: &mut VmClient, vm: Arc<LocalVm>, pair: ParsedPair) {
+    async fn execute(
+        &self,
+        id: DocumentId,
+        client: &mut VmClient,
+        vm: Arc<LocalVm>,
+        pair: ParsedPair,
+    ) {
         let model = match client.model_status() {
             Ok(model) if model.phase == ModelPhase::Ready => model,
             Ok(_) => {
                 vm.clear_model_acknowledgment();
-                self.fail("model");
+                self.fail(id, "model");
                 return;
             }
             Err(_) => {
-                self.fail("session");
+                self.fail(id, "session");
                 return;
             }
         };
         let Some(connection) = model.connection else {
-            self.fail("model");
+            self.fail(id, "model");
             return;
         };
         let runner = NativeRunner::with_transport(VmRunTransport {
@@ -164,8 +216,7 @@ impl ExampleRun {
         let prepared = match runner.prepare(pair) {
             Ok(prepared) => prepared,
             Err(_) => {
-                // A refusal before writes must not discard an earlier attempt's receipts.
-                self.fail("submit");
+                self.fail(id, "submit");
                 return;
             }
         };
@@ -174,6 +225,7 @@ impl ExampleRun {
             Ok(handle) => handle,
             Err(error) => {
                 self.record(
+                    id,
                     &error.handle,
                     error.pending.map(|p| PendingRef {
                         kind: p.kind,
@@ -181,25 +233,31 @@ impl ExampleRun {
                     }),
                     None,
                 );
-                self.fail("submit");
+                self.fail(id, "submit");
                 return;
             }
         };
-        self.record(&handle, None, None);
+        self.record(id, &handle, None, None);
         match runner.observe(&handle).await {
             Ok(report) => {
-                self.record(&handle, None, Some(report));
-                self.0.lock().unwrap().snapshot.state = RunState::Complete;
+                self.record(id, &handle, None, Some(report));
+                self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().state = RunState::Complete;
             }
-            Err(_) => self.fail("observe"),
+            Err(_) => self.fail(id, "observe"),
         }
     }
-    fn record(&self, handle: &RunHandle, pending: Option<PendingRef>, report: Option<RunReport>) {
+    fn record(
+        &self,
+        id: DocumentId,
+        handle: &RunHandle,
+        pending: Option<PendingRef>,
+        report: Option<RunReport>,
+    ) {
         let mut state = self.0.lock().unwrap();
-        state.handle = Some(handle.clone());
-        state.snapshot.acknowledged = receipts(handle);
-        state.snapshot.pending = pending;
-        state.snapshot.report = report;
+        let snapshot = state.snapshots.get_mut(&id).unwrap();
+        snapshot.acknowledged = receipts(handle);
+        snapshot.pending = pending;
+        snapshot.report = report;
     }
 }
 /// Acknowledged identities only, shared by local Run and remote Send.

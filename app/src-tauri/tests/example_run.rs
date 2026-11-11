@@ -15,6 +15,54 @@ use std::{
     },
 };
 use tokio::sync::watch;
+#[path = "support/created_agent.rs"]
+mod created_agent;
+
+#[tokio::test]
+async fn documents_keep_results_and_share_admission_not_hash_ownership() {
+    use bridge_engine::agent_folder::DocumentId;
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let sample = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let pair = sample.open().unwrap();
+    let agent = format!("{}\nAlpha-bound instructions.\n", pair.agent);
+    let a = created_agent::created(home.path(), "alpha", &agent, &pair.tests);
+    let b = created_agent::created(home.path(), "beta", &agent, &pair.tests);
+    let aid = a.document_id();
+    let bid = b.document_id();
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, sample.clone());
+    assert_eq!(run.start_document(vm.clone(), a).state, RunState::Running);
+    let foreign = run.start_document(vm.clone(), b);
+    assert_eq!(foreign.document_id, bid);
+    assert!(!foreign.can_run);
+    assert_eq!(foreign.busy.unwrap().document_id, aid);
+    assert!(foreign.report.is_none());
+    assert!(foreign.acknowledged.is_empty());
+    for _ in 0..500 {
+        if run.status_document(&vm, aid).state != RunState::Running {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let done = run.status_document(&vm, aid);
+    assert_eq!(
+        done.report.unwrap().verdict,
+        bridge_engine::engine::run::Verdict::Passed
+    );
+    assert_eq!(done.acknowledged.len(), 2);
+    assert_eq!(posts.lock().unwrap().len(), 2);
+    assert!(posts.lock().unwrap()[0]["spec"]["systemPrompt"]["inline"]
+        .as_str()
+        .unwrap()
+        .contains("Alpha-bound instructions."));
+    assert!(run.status_document(&vm, bid).report.is_none());
+    assert!(run.status(&vm).report.is_none());
+    assert_eq!(run.status(&vm).document_id, DocumentId::SAMPLE);
+    let fresh = ExampleRun::new(tokio::runtime::Handle::current(), true, sample);
+    assert!(fresh.status_document(&vm, aid).report.is_none());
+    vm.shutdown().await.unwrap();
+}
+
 const ANSWER: &str = "cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918";
 struct Channel {
     input: std::io::Cursor<Vec<u8>>,

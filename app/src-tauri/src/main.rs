@@ -1,10 +1,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use bridge_engine::agent_folder::{AgentFolder, AgentPair};
+use bridge_engine::agent_folder::{AgentFolder, AgentPair, DocumentId};
 use bridge_engine::agents::Agents;
 use bridge_engine::engine::{types::*, EngineState};
 use bridge_engine::local_vm::{self, ExamplePair, LocalVm, LocalVmStatus};
-use bridge_engine::send::{SendOwner, SendView};
+use bridge_engine::send::{SendOwner, SendStatus};
 use bridge_engine::setup::{SetupError, SetupSnapshot, SetupStore};
 use bridge_engine::shutdown::TerminalShutdown;
 use std::sync::Arc;
@@ -75,20 +75,48 @@ fn setup_example() -> ExamplePair {
     local_vm::example()
 }
 
+async fn document_folder(
+    agents: Arc<Agents>,
+    id: DocumentId,
+) -> Result<Arc<AgentFolder>, &'static str> {
+    tauri::async_runtime::spawn_blocking(move || agents.get(id))
+        .await
+        .map_err(|_| "The agent is unavailable.")?
+}
 #[tauri::command]
-async fn agent_open(state: tauri::State<'_, Arc<AgentFolder>>) -> Result<AgentPair, &'static str> {
-    let folder = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || folder.open())
+async fn agents_list(
+    state: tauri::State<'_, Arc<Agents>>,
+) -> Result<Vec<bridge_engine::agents::AgentEntry>, &'static str> {
+    let agents = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || agents.list())
+        .await
+        .map_err(|_| "The agents are unavailable.")?
+}
+#[tauri::command]
+async fn agent_selected(state: tauri::State<'_, Arc<Agents>>) -> Result<DocumentId, &'static str> {
+    let agents = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || agents.selected())
+        .await
+        .map_err(|_| "The agents are unavailable.")?
+}
+#[tauri::command]
+async fn agent_open(
+    document_id: DocumentId,
+    state: tauri::State<'_, Arc<Agents>>,
+) -> Result<AgentPair, &'static str> {
+    let agents = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || agents.get(document_id)?.open())
         .await
         .map_err(|_| "The local agent folder is unavailable.")?
 }
 #[tauri::command]
 async fn agent_save(
+    document_id: DocumentId,
     content: String,
-    state: tauri::State<'_, Arc<AgentFolder>>,
+    state: tauri::State<'_, Arc<Agents>>,
 ) -> Result<AgentPair, &'static str> {
-    let folder = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || folder.save(content))
+    let agents = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || agents.get(document_id)?.save(content))
         .await
         .map_err(|_| "The local agent folder is unavailable.")?
 }
@@ -114,18 +142,22 @@ async fn setup_connect_model(
 }
 
 #[tauri::command]
-fn setup_run_status(
+fn agent_run_status(
+    document_id: DocumentId,
     state: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
 ) -> bridge_engine::example_run::RunSnapshot {
-    state.status(vm.inner())
+    state.status_document(vm.inner(), document_id)
 }
 #[tauri::command]
-fn setup_run_example(
+async fn agent_run(
+    document_id: DocumentId,
+    agents: tauri::State<'_, Arc<Agents>>,
     state: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
-) -> bridge_engine::example_run::RunSnapshot {
-    state.inner().start(vm.inner().clone())
+) -> Result<bridge_engine::example_run::RunSnapshot, &'static str> {
+    let folder = document_folder(agents.inner().clone(), document_id).await?;
+    Ok(state.start_document(vm.inner().clone(), folder))
 }
 
 #[tauri::command]
@@ -153,34 +185,42 @@ async fn cluster_use(
 
 #[tauri::command]
 async fn send_preflight(
+    document_id: DocumentId,
     target_id: String,
     provider_id: String,
+    agents: tauri::State<'_, Arc<Agents>>,
     state: tauri::State<'_, Arc<SendOwner>>,
 ) -> Result<bridge_engine::send::SendCheck, &'static str> {
-    Ok(state.preflight(&target_id, &provider_id).await)
+    let folder = document_folder(agents.inner().clone(), document_id).await?;
+    Ok(state
+        .preflight_document(folder, &target_id, &provider_id)
+        .await)
 }
 #[tauri::command]
 async fn send_start(
+    document_id: DocumentId,
     target_id: String,
     provider_id: String,
     expected_source: bridge_runtime_protocol::SnapshotId,
+    agents: tauri::State<'_, Arc<Agents>>,
     state: tauri::State<'_, Arc<SendOwner>>,
-) -> Result<SendView, &'static str> {
-    Ok(state.start(&target_id, &provider_id, expected_source).await)
+) -> Result<SendStatus, &'static str> {
+    let folder = document_folder(agents.inner().clone(), document_id).await?;
+    Ok(state
+        .start_document(folder, &target_id, &provider_id, expected_source)
+        .await)
 }
 #[tauri::command]
-fn send_status(
-    send_id: Option<String>,
-    state: tauri::State<'_, Arc<SendOwner>>,
-) -> Option<SendView> {
-    state.status(send_id.as_deref())
+fn send_status(document_id: DocumentId, state: tauri::State<'_, Arc<SendOwner>>) -> SendStatus {
+    state.status_document(document_id)
 }
 #[tauri::command]
 async fn send_stop(
+    document_id: DocumentId,
     send_id: String,
     state: tauri::State<'_, Arc<SendOwner>>,
-) -> Result<Option<SendView>, &'static str> {
-    Ok(state.stop(&send_id).await)
+) -> Result<SendStatus, &'static str> {
+    state.stop_document(document_id, &send_id).await
 }
 
 fn main() {
@@ -207,8 +247,7 @@ fn main() {
             app.manage(session.clone());
             let agents = Agents::new(app.path().home_dir().ok(), app.path().app_data_dir().ok());
             let folder = agents.sample();
-            app.manage(agents);
-            app.manage(folder.clone());
+            app.manage(Arc::new(agents));
             app.manage(SendOwner::new(folder.clone(), session));
             app.manage(bridge_engine::example_run::ExampleRun::new(
                 tauri::async_runtime::handle().inner().clone(),
@@ -238,8 +277,10 @@ fn main() {
             setup_open_help,
             setup_example,
             setup_connect_model,
-            setup_run_status,
-            setup_run_example,
+            agent_run_status,
+            agent_run,
+            agents_list,
+            agent_selected,
             agent_open,
             agent_save,
             workspace_catalog,

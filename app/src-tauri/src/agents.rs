@@ -1,7 +1,7 @@
 //! Native document identity and registration. Paths are derived, never imported.
 pub use crate::agent_folder::DocumentId;
 use crate::agent_folder::{
-    child, invalid, options, read, regular, replace, valid_name, AgentFolder,
+    child, invalid, options, regular, regular_links, replace, valid_name, AgentFolder,
 };
 use bridge_runtime_protocol::MAX_FILE;
 use cap_fs_ext::DirExt;
@@ -9,10 +9,34 @@ use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
-    io,
+    io::{self, Read},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
+
+#[cfg(test)]
+mod reader_tests {
+    use super::*;
+    #[test]
+    fn published_reader_keeps_an_unlinked_regular_snapshot() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = Dir::open_ambient_dir(temp.path(), cap_std::ambient_authority()).unwrap();
+        replace(&root, "registry.json", b"old valid snapshot").unwrap();
+        let file = root.open_with("registry.json", &options()).unwrap();
+        replace(&root, "registry.json", b"new valid snapshot").unwrap();
+        assert_eq!(registry_bytes(file).unwrap(), b"old valid snapshot");
+    }
+}
+
+fn registry_bytes(file: cap_std::fs::File) -> io::Result<Vec<u8>> {
+    regular_links(&file, true)?;
+    let mut bytes = Vec::new();
+    file.take(MAX_FILE as u64 + 1).read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_FILE {
+        return Err(invalid());
+    }
+    Ok(bytes)
+}
 
 type Result<T> = std::result::Result<T, &'static str>;
 const ERROR: &str = "The agent registrations could not be read or saved.";
@@ -60,7 +84,7 @@ impl Registry {
         let bytes = match root.symlink_metadata("registry.json") {
             Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Self::default()),
             Err(e) => return Err(e),
-            Ok(_) => read(root, "registry.json", MAX_FILE)?,
+            Ok(_) => registry_bytes(root.open_with("registry.json", &options())?)?,
         };
         let value: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
         let mut ids = HashSet::new();

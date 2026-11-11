@@ -141,6 +141,57 @@ fn registrations_and_selection_survive_restart() {
     assert!(restarted.register_created("helper").is_err());
 }
 #[test]
+fn reply_identity_is_not_the_pair_hash() {
+    let home = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let agents = owner(home.path(), data.path());
+    let a = id();
+    let b = id();
+    fixture(home.path(), "alpha", a);
+    fixture(home.path(), "beta", b);
+    agents.register_created("alpha").unwrap();
+    agents.register_created("beta").unwrap();
+    let left = serde_json::to_value(agents.get(a).unwrap().open().unwrap()).unwrap();
+    let right = serde_json::to_value(agents.get(b).unwrap().open().unwrap()).unwrap();
+    assert_eq!(left["documentId"], json!(a));
+    assert_eq!(right["documentId"], json!(b));
+    assert_eq!(left["name"], "alpha");
+    assert_eq!(left["source"], right["source"]);
+    agents.get(a).unwrap().save("only alpha".into()).unwrap();
+    assert_eq!(
+        fs::read(root(home.path(), "beta").join("beta.agent.md")).unwrap(),
+        b"identical native draft"
+    );
+    assert_eq!(
+        serde_json::to_value(agents.sample().open().unwrap()).unwrap()["documentId"],
+        json!(DocumentId::SAMPLE)
+    );
+}
+#[test]
+fn reads_remain_available_during_other_owner_publication() {
+    let home = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let helper = id();
+    fixture(home.path(), "helper", helper);
+    let writer = owner(home.path(), data.path());
+    writer.register_created("helper").unwrap();
+    let reader = owner(home.path(), data.path());
+    let thread = std::thread::spawn(move || {
+        for _ in 0..200 {
+            writer.select(helper).unwrap();
+        }
+    });
+    for _ in 0..600 {
+        assert_eq!(reader.list().unwrap().len(), 2);
+        assert!(
+            matches!(reader.selected().unwrap(), DocumentId::SAMPLE)
+                || reader.selected().unwrap() == helper
+        );
+        assert!(reader.get(helper).is_ok());
+    }
+    thread.join().unwrap();
+}
+#[test]
 fn concurrent_owners_preserve_both_registrations() {
     // Fresh directories repeatedly exercise both sides of first-lock creation.
     for _ in 0..16 {
