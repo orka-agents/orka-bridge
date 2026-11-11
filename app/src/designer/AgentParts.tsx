@@ -13,7 +13,8 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
 }) {
   const form = readForm(source); const id = useId();
   // Markdown's separating blank lines stay in the file, not above the prompt.
-  const leading = form.instructions.match(/^(?:[ \t]*\r?\n)+/)?.[0] ?? '';
+  const [separator] = useState(() => form.instructions.match(/^(?:[ \t]*\r?\n)+/)?.[0] ?? '');
+  const leading = form.instructions.startsWith(separator) ? separator : '';
   const instructions = form.instructions.slice(leading.length);
   const input = useRef<HTMLTextAreaElement>(null);
   const popover = useRef<HTMLDivElement>(null);
@@ -57,7 +58,8 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
   const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit tools in File view for this file’s format.'
     : catalogLoading ? 'Reading the workspace catalog…' : tools === undefined ? 'Tool catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
   useEffect(() => {
-    if (picker && !toolReason) { popover.current?.showPopover?.(); popover.current?.querySelector('input')?.focus(); }
+    if (toolReason) { setPicker(false); setQuery(''); return; }
+    if (picker) { popover.current?.showPopover?.(); popover.current?.querySelector('input')?.focus(); }
   }, [picker, toolReason]);
   const modelReason = readOnly ? 'You can change the model after setup.' : !form.modelEditable ? 'Edit the model in File view for this file’s format.'
     : catalogLoading ? 'Reading the workspace catalog…' : models === undefined ? 'Model catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;

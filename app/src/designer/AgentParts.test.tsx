@@ -33,6 +33,16 @@ test('Instructions autosave through the existing writer without changing metadat
   expect(screen.queryByText('Saved')).toBeNull();
   expect(writes[0]).toContain('---\n\nNew instructions\n');
 });
+test('new leading blank lines remain visible and removable without changing the original separator', async () => {
+  const writes = native(); render(<Example />);
+  const field = await screen.findByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement;
+  fireEvent.change(field, { target: { value: '\nRead a page.\n' } });
+  expect(field.value).toBe('\nRead a page.\n');
+  await waitFor(() => expect(writes.at(-1)).toBe(agent.replace('Read a page.', '\nRead a page.')));
+  fireEvent.change(field, { target: { value: 'Read a page.\n' } });
+  expect(field.value).toBe('Read a page.\n');
+  await waitFor(() => expect(writes.at(-1)).toBe(agent));
+});
 test('a no-op visit, disclosure and switches never write the file', async () => {
   const writes = native(agent.replaceAll('\n', '\r\n')); const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('textbox', { name: 'Instructions' }));

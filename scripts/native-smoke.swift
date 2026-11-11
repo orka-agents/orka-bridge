@@ -394,7 +394,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     key(125); key(125); key(36)
     Thread.sleep(forTimeInterval: 2)
     // Capture discovery before the explicit access confirmation.
-    try capture("cluster-card-minimum", "Clusters")
+    try capture("cluster-card-compact", "Clusters")
     // Exercise the existing conditional field and a denial, without issuing a token.
     func chooseFixture(_ index: Int) throws -> [VNRecognizedTextObservation] {
         scrollMain(1000)

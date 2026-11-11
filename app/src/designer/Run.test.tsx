@@ -18,6 +18,7 @@ test('Run is explicit, duplicate clicks and remounts only observe existing work'
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run')).toHaveLength(1);
   value = complete;
   expect(await screen.findByText('<script>not executable</script>')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'published-checksum: unknown' })).toBeTruthy();
   expect(screen.getByText('contains: passed')).toBeTruthy(); expect(screen.getByText('toolCalled: unknown')).toBeTruthy();
   expect(document.querySelector('script')).toBeNull(); expect(screen.getByText('No completed tool calls were observed. Missing evidence is unknown.')).toBeTruthy();
 });

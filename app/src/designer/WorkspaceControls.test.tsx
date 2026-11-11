@@ -48,6 +48,18 @@ test('tool choices show descriptions as text, distinguish kinds and suppress eff
   await user.click(screen.getByRole('button', { name: 'Remove lookup' }));
   expect(readForm(changed.mock.calls.at(-1)![0]).tools).toEqual([]);
 });
+test('a restored catalog never reopens a picker dismissed by unavailability', async () => {
+  const user = userEvent.setup();
+  const view = render(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={() => {}} />);
+  await user.click(screen.getByRole('button', { name: 'Add a tool' }));
+  await user.type(screen.getByRole('searchbox'), 'lookup');
+  view.rerender(<AgentParts source={source} readOnly={false} catalogLoading onChange={() => {}} />);
+  expect(screen.queryByRole('searchbox')).toBeNull();
+  view.rerender(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={() => {}} />);
+  expect(screen.queryByRole('searchbox')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Add a tool' }));
+  expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('');
+});
 test('independent catalog failures and empty lists do not fall back to static inventory', async () => {
   const user = userEvent.setup(); const view = render(<AgentParts source={source} readOnly={false} onChange={() => {}} />);
   expect(screen.getByRole('combobox').matches(':disabled')).toBe(true);

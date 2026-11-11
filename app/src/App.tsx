@@ -206,7 +206,7 @@ export default function App() {
         <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : tone}`} aria-hidden="true" />
         <span>{remote ? place.target ? `${placeName} · Access confirmed` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : workspaceReady ? 'This computer ready' : setupLine}</span>
         {!remote && !welcome && (detail !== setupLine || workspaceReady) ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : workspaceDetail}</span></> : null}
-        {exampleState === 'loaded' && !exampleReadOnly && <><span aria-hidden="true">·</span><span>{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
+        {exampleState === 'loaded' && !exampleReadOnly && <><span aria-hidden="true">·</span><span aria-live="polite" aria-atomic="true">{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
           page !== 'Clusters' ? (remote ? placeName : workspaceReady ? `This computer ready · ${modelDetail}` : `${setupLine} · ${workspaceDetail}`) : undefined,

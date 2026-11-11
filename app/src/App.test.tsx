@@ -67,7 +67,7 @@ test('Designer opens the owned agent without workspace setup and shares its save
   expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
   expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   expect(screen.getByRole('main', { name: 'web-reader' })).toBeTruthy();
-  expect(within(screen.getByRole('contentinfo')).getByText('Saved')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Saved').getAttribute('aria-live')).toBe('polite');
 });
 
 test.each([

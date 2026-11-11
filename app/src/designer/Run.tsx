@@ -47,7 +47,7 @@ export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, block
         {snapshot?.report && <div className={outdated ? 'result-stale' : undefined}>
           <p role="status">{outdated ? 'Earlier test verdict' : 'Test verdict'}: {snapshot.report.verdict}</p>
           {snapshot.report.cases.map(c => <div className="result-row" key={c.id}>
-            <StatusIcon state={outdated ? 'stale' : c.verdict === 'unknown' ? 'not-started' : c.verdict} /><h4><code>{c.id}</code></h4>
+            <StatusIcon state={outdated ? 'stale' : c.verdict === 'unknown' ? 'not-started' : c.verdict} /><h4><code>{c.id}</code>: {c.verdict}</h4>
             <p>Task: {c.phase}</p>
             <h4>Answer</h4>
             {c.answer !== null ? <p className="reading">{c.answer}</p> : <p>No answer was observed.</p>}
