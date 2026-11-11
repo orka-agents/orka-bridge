@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Send from './Send';
+import Example from '../designer/Example';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
 const idle = { documentId: SAMPLE_DOCUMENT_ID, view: null, busy: null };
 
@@ -94,6 +95,23 @@ test('global history refreshes when another document’s Send releases admission
   await screen.findByText('No saved Sends yet.');
   history = [summary]; busy = null;
   expect(await screen.findByText('bridge-run-before-restart')).toBeTruthy();
+});
+
+test.each(['pending', 'failed'])('saved Sends are readable while the document open is %s', async state => {
+  vi.stubGlobal('isTauri', true);
+  const ipc = vi.fn((command: string) => {
+    if (command === 'agent_open') {
+      if (state === 'failed') throw Error('PRIVATE_SOURCE_FAILURE');
+      return new Promise(() => {});
+    }
+    if (command === 'send_history') return [summary];
+    throw Error('Unexpected operation');
+  });
+  mockIPC(ipc); render(<Example />);
+  expect(await screen.findByText('bridge-run-before-restart')).toBeTruthy();
+  if (state === 'failed') expect(screen.getByText('Your agent folder could not be opened. Open it again from Designer.')).toBeTruthy();
+  expect(document.body.textContent).not.toContain('PRIVATE_SOURCE_FAILURE');
+  expect(ipc.mock.calls.every(([command]) => ['agent_open', 'send_history'].includes(command))).toBe(true);
 });
 
 test('empty history says no saved Sends, not that no remote Agents exist', async () => {

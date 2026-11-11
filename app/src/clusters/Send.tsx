@@ -16,7 +16,7 @@ export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failing
   </div>;
 }
 const words = { passed: 'pass', failed: 'fail', unknown: 'unknown' } as const;
-function SendHistory({ revision }: { revision: string }) {
+export function SendHistory({ revision }: { revision: string }) {
   const [history, setHistory] = useState<AttemptSummary[]>();
   const [error, setError] = useState<string>();
   const [retry, setRetry] = useState(0);
