@@ -676,6 +676,7 @@ async fn unrelated_pods_sharing_an_owner_do_not_exhaust_the_stop_deadline() {
 async fn start_rejects_unexpected_profiles_and_environment_injection() {
     for variant in [
         "pod-apparmor",
+        "legacy-apparmor",
         "container-apparmor",
         "selinux",
         "env",
@@ -701,6 +702,7 @@ async fn start_rejects_unexpected_profiles_and_environment_injection() {
                 .unwrap();
             let pod = &mut deployment["spec"]["template"]["spec"];
             match variant {
+                "legacy-apparmor" => {}
                 "pod-apparmor" => {
                     pod["securityContext"]["appArmorProfile"] =
                         serde_json::json!({"type":"Unconfined"})
@@ -731,6 +733,9 @@ async fn start_rejects_unexpected_profiles_and_environment_injection() {
                     pod["containers"][0]["livenessProbe"] =
                         serde_json::json!({"exec":{"command":["touch","/home/creator/unexpected"]}})
                 }
+            }
+            if variant == "legacy-apparmor" {
+                deployment["spec"]["template"]["metadata"]["annotations"] = serde_json::json!({"container.apparmor.security.beta.kubernetes.io/environment":"unconfined"});
             }
             s.requests.clear();
         }

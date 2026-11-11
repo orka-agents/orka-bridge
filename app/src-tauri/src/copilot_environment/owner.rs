@@ -487,6 +487,17 @@ fn verify(r: &Receipt, i: usize, object: &DynamicObject) -> Result<(), Error> {
         }
     }
     if i == 2 {
+        if actual["spec"]["template"]["metadata"]["annotations"]
+            .as_object()
+            .is_some_and(|annotations| {
+                annotations.iter().any(|(key, value)| {
+                    key.starts_with("container.apparmor.security.beta.kubernetes.io/")
+                        && value != "runtime/default"
+                })
+            })
+        {
+            return Err(Error::Conflict);
+        }
         let pod = &actual["spec"]["template"]["spec"];
         let container = &pod["containers"][0];
         for security in [&pod["securityContext"], &container["securityContext"]] {
