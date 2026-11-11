@@ -85,7 +85,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const targetName = snapshot?.targetName ?? (snapshot?.targetId === target?.id ? target?.context_name : undefined);
   const outdated = !!snapshot && (!current || !samePlace);
   const uncertain = snapshot?.state === 'unknown' || snapshot?.report?.verdict === 'unknown';
-  const resultState: Status = outdated ? 'stale' : running || busy ? 'running' : uncertain ? 'not-started' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' || snapshot?.error ? 'failed' : reason ? 'needs-you' : 'not-started';
+  const resultState: Status = outdated ? 'stale' : running || busy || (checkingEnabled && !checked) ? 'running' : uncertain ? 'not-started' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' || snapshot?.error ? 'failed' : reason ? 'needs-you' : 'not-started';
   return <section tabIndex={-1} className="send-panel" aria-label="Send and cluster checks" hidden={!visible && !remote && !running}>
     <LongCard title={visible ? 'Send your agent' : 'Checks on your cluster'} status={<StatusPill state={resultState}>{resultState === 'not-started' && uncertain ? snapshot?.stage === 'stopped' ? 'Stopped watching' : 'Result unknown' : undefined}</StatusPill>} summary="The saved agent and check files go together. Each Send creates a new Agent, kept on the cluster even if a check fails."
       action={<div className="workspace-step-actions"><button type="button" className="setup-button" disabled={!!reason || busy || running || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run checks' : 'Run all checks'}</button>
@@ -105,6 +105,7 @@ export default function Send({ place, source, model, local, stale, blocked, visi
         <div><b>{row.label}</b><p>{row.message}</p></div>
       </li>)}</ul>}
       {reason && <p role={checked ? 'alert' : 'status'}>{reason}</p>}
+      {!checked && <Elapsed />}
       {checked && (mismatched ? <button type="button" className="workspace-secondary" disabled={busy || running || !onReloadSource} onClick={() => {
         setReloadError(undefined);
         void onReloadSource?.().catch(() => setReloadError('Your saved files could not be reloaded. Your draft is still here.'));

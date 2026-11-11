@@ -100,6 +100,14 @@ test('collision is unverified, not refused; details disclosure names its state',
   await user.click(screen.getByText('Details'));
   expect(document.querySelector('.card-details')?.hasAttribute('open')).toBe(true);
 });
+test('pending destination checks are blue running, not waiting on the creator', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => command === 'send_preflight' ? new Promise(() => {}) : null);
+  const { container } = render(<Send place={place} source={source} stale={false} visible remote />);
+  await screen.findByText('Checking this destination…');
+  expect(container.querySelector('.pill.status-running')).toBeTruthy();
+  expect(container.querySelector('.pill.status-needs-you')).toBeNull();
+});
 test('a late preflight for an old Provider cannot enable the current selection', async () => {
   let finish!: (value: unknown) => void;
   vi.stubGlobal('isTauri', true);
