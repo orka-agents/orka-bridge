@@ -62,6 +62,11 @@ fn created_document_uses_its_own_git_names() {
     let home = tempfile::tempdir().unwrap();
     let id = id();
     let root = fixture(home.path(), "helper", id);
+    assert_eq!(
+        AgentFolder::created_id(Some(home.path().into()), "helper").unwrap(),
+        id
+    );
+    assert_eq!(fs::read(root.join(".git/HEAD")).unwrap(), b"");
     let owner = AgentFolder::created(Some(home.path().into()), "helper", id).unwrap();
     assert!(owner.available());
     owner.save("new helper draft".into()).unwrap();
