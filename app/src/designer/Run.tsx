@@ -29,9 +29,11 @@ export default function Run({ onSnapshot, blocked = false, stale = false, onStar
   };
   const running = sending || snapshot?.state === 'running';
   const outdated = stale || (sourceCurrent === false && !!snapshot?.report);
-  const state: Status = outdated ? 'stale' : running ? 'running' : snapshot?.error ? 'failed' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' ? 'failed' : 'not-started';
+  const uncertain = snapshot?.state === 'unknown' || snapshot?.report?.verdict === 'unknown';
+  const failed = snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected);
+  const state: Status = outdated ? 'stale' : running ? 'running' : uncertain ? 'not-started' : failed ? 'failed' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' ? 'failed' : 'not-started';
   return <div className="example-run" aria-label="Test on the local VM">
-    <LongCard title="Test on the local VM" status={<StatusPill state={state} />} summary={<>Run creates an Orka Agent and Task from these exact files.{snapshot?.modelConnected === false && ' Connect the model in Clusters first.'}</>}
+    <LongCard title="Test on the local VM" status={<StatusPill state={state}>{state === 'not-started' && uncertain ? 'Result unknown' : undefined}</StatusPill>} summary={<>Run creates an Orka Agent and Task from these exact files.{snapshot?.modelConnected === false && ' Connect the model in Clusters first.'}</>}
       action={<button type="button" className="setup-button" disabled={blocked || running || !snapshot?.canRun} title={blocked ? 'Save your changes before running the check' : running ? 'Check is running' : !snapshot?.canRun ? 'Connect your workspace and AI in Clusters first' : undefined} onClick={() => { void start(); }}>Run test</button>}>
       <CardSection title="What happened">
         {outdated && <p role="status">Not run since your change. Any result below is from the earlier file.</p>}

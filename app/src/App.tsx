@@ -146,7 +146,7 @@ export default function App() {
       : model === 'connected' ? run?.state === 'complete' ? 'This computer ready' : 'AI connected'
       : model === 'idle' ? setupLine : modelDetail,
   };
-  const tabTone = stale || run?.sourceCurrent === false ? 'stale' : run?.state === 'running' ? 'running' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
+  const tabTone = remote || exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const copy = emptyCopy[page];
   return (
     <div className="app-shell">
@@ -170,7 +170,7 @@ export default function App() {
           ))}
         </nav>
         <div className="chrome-tools">
-          <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : tone}`} aria-hidden="true" />{placeName}<span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
+          <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : tone}`} aria-hidden="true" /><span className="host-label">{placeName}</span><span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
         </div>
       </header>
       <main ref={content} className="page-content" aria-labelledby="page-title">

@@ -9,7 +9,7 @@ const path = '/home/creator/Orka/agents/web-reader/web-reader.agent.md';
 const idle = { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
 beforeEach(() => {
   // jsdom has popover hiding but no top-layer show/focus implementation.
-  Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; this.querySelector('input')?.focus(); } });
+  Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; } });
 });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
 function native(source = agent) {
@@ -63,7 +63,7 @@ test('catalog unavailable preserves model while soul remains editable without ca
   native(); const user = userEvent.setup(); render(<Example />);
   await screen.findByRole('textbox', { name: 'Instructions' });
   expect(screen.getByRole('combobox', { name: 'It thinks with' }).matches(':disabled')).toBe(true);
-  expect(screen.getByText('file-model')).toBeTruthy(); expect(screen.getByText(/Model catalog unavailable/)).toBeTruthy();
+  expect(screen.getByRole('option', { name: 'file-model' })).toBeTruthy(); expect(screen.getByText(/Model catalog unavailable/)).toBeTruthy();
   expect(screen.queryByText('through GitHub Copilot')).toBeNull();
   expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByText('More settings: description, personality (soul), file'));

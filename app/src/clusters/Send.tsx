@@ -83,23 +83,25 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const current = !stale && sameSource(source, snapshot?.source) === true;
   const localCurrent = !stale && sameSource(source, local?.source) === true;
   const targetName = snapshot?.targetName ?? (snapshot?.targetId === target?.id ? target?.context_name : undefined);
-  const resultState: Status = snapshot && !current ? 'stale' : running || busy ? 'running' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' || snapshot?.error ? 'failed' : reason ? 'needs-you' : 'not-started';
+  const outdated = !!snapshot && (!current || !samePlace);
+  const uncertain = snapshot?.state === 'unknown' || snapshot?.report?.verdict === 'unknown';
+  const resultState: Status = outdated ? 'stale' : running || busy ? 'running' : uncertain ? 'not-started' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' || snapshot?.error ? 'failed' : reason ? 'needs-you' : 'not-started';
   return <section tabIndex={-1} className="send-panel" aria-label="Send and cluster checks" hidden={!visible && !remote && !running}>
-    <LongCard title={visible ? 'Send your agent' : 'Checks on your cluster'} status={<StatusPill state={resultState} />} summary="The saved agent and check files go together. Each Send creates a new Agent, kept on the cluster even if a check fails."
+    <LongCard title={visible ? 'Send your agent' : 'Checks on your cluster'} status={<StatusPill state={resultState}>{resultState === 'not-started' && uncertain ? snapshot?.stage === 'stopped' ? 'Stopped watching' : 'Result unknown' : undefined}</StatusPill>} summary="The saved agent and check files go together. Each Send creates a new Agent, kept on the cluster even if a check fails."
       action={<div className="workspace-step-actions"><button type="button" className="setup-button" disabled={!!reason || busy || running || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run checks' : 'Run all checks'}</button>
       {running && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void mutate('send_stop'); }}>Stop</button>}
     </div>}>
     <CardSection title="What you send">
-    <dl className="cluster-details"><div><dt>Source</dt><dd>Your saved agent file{model ? ` · ${model}` : ''}</dd></div>
+    <dl className="cluster-details"><div><dt>Source</dt><dd>Your saved agent file{model && <> · <code>{model}</code></>}</dd></div>
       <div><dt>This computer</dt><dd>{local?.report ? localCurrent ? `Checks: ${words[local.report.verdict]}` : 'Changed since local checks, or revision not confirmed' : 'No local check result'}</dd></div>
-      <div><dt>Destination</dt><dd>{target ? `${target.context_name} · ${target.watched_namespace}` : 'Choose a cluster'}</dd></div>
-      {provider && <div><dt>Provider</dt><dd>{provider.name} · {provider.ready ? 'Ready' : 'Not ready'}</dd></div>}
+      <div><dt>Destination</dt><dd>{target ? <><code>{target.context_name}</code> · <code>{target.watched_namespace}</code></> : 'Choose a cluster'}</dd></div>
+      {provider && <div><dt>Provider</dt><dd><code>{provider.name}</code> · {provider.ready ? 'Ready' : 'Not ready'}</dd></div>}
     </dl>
     {(!target || !provider) && <button type="button" className="workspace-secondary" onClick={onChooseCluster} disabled={!onChooseCluster}>Choose a cluster</button>}
     {checkingEnabled && <section className="send-preflight" aria-label="Before Send" aria-busy={!checked}>
       <h4>Before Send</h4>
       {!mismatched && checked?.value && <ul>{checked.value.rows.map(row => <li key={`${row.label}-${row.message}`} data-state={row.status}>
-        <span className="preflight-state">{{ allowed: 'Ready', blocked: 'Blocked', cannotCheck: 'Can’t check', unverified: 'Unverified' }[row.status]}</span>
+        <span className="preflight-state"><StatusIcon state={row.status === 'allowed' ? 'passed' : row.status === 'blocked' ? 'needs-you' : row.status === 'cannotCheck' ? 'stale' : 'not-started'} />{{ allowed: 'Ready', blocked: 'Blocked', cannotCheck: 'Can’t check', unverified: 'Unverified' }[row.status]}</span>
         <div><b>{row.label}</b><p>{row.message}</p></div>
       </li>)}</ul>}
       {reason && <p role={checked ? 'alert' : 'status'}>{reason}</p>}
@@ -118,8 +120,8 @@ export default function Send({ place, source, model, local, stale, blocked, visi
     {snapshot && !samePlace && <p role="status">This result belongs to another cluster or Provider. It is not validation of your current selection.</p>}
     {snapshot && !current && <p className="muted">This result is for the captured file, not confirmed as your current revision.</p>}
     {snapshot?.state === 'unknown' && !snapshot.report && <p role="status">Checks: unknown</p>}
-    {snapshot?.report && <div className={!current ? 'result-stale' : undefined}><p role="status">Checks: {words[snapshot.report.verdict]}</p>
-      {snapshot.report.cases.map(check => <div className="result-row" key={check.id}><StatusIcon state={!current ? 'stale' : check.verdict === 'unknown' ? 'not-started' : check.verdict} /><h4><code>{check.id}</code>: {words[check.verdict]}</h4>
+    {snapshot?.report && <div className={outdated ? 'result-stale' : undefined}><p role="status">Checks: {words[snapshot.report.verdict]}</p>
+      {snapshot.report.cases.map(check => <div className="result-row" key={check.id}><StatusIcon state={outdated ? 'stale' : check.verdict === 'unknown' ? 'not-started' : check.verdict} /><h4><code>{check.id}</code>: {words[check.verdict]}</h4>
         {check.answer !== null ? <p className="reading">{check.answer}</p> : <p>No answer was observed.</p>}
         {!!check.completedTools.length && <p>Completed tool calls: {check.completedTools.join(', ')}</p>}
         <ul>{check.assertions.map(a => <li key={a.id}>{a.id}: {words[a.verdict]}</li>)}</ul>

@@ -35,7 +35,7 @@ export function GeneratedValue({ label, value }: { label: string; value: string 
     try { await navigator.clipboard.writeText(value); setFeedback({ value, text: 'Copied' }); }
     catch { setFeedback({ value, text: 'Could not copy' }); }
   }
-  return <div className="generated-value"><span>{label}</span><code>{short}</code><button type="button" className="part-button" aria-label={`Copy ${label}`} onClick={() => { void copy(); }}>Copy</button><span role="status">{feedback?.value === value ? feedback.text : ''}</span></div>;
+  return <div className="generated-value"><span>{label}</span><code title={value} aria-label={value}>{short}</code><button type="button" className="part-button" aria-label={`Copy ${label}`} onClick={() => { void copy(); }}>Copy</button><span role="status">{feedback?.value === value ? feedback.text : ''}</span></div>;
 }
 export function Details({ children, hint }: { children: ReactNode; hint?: string }) {
   return <details className="card-details"><summary><span className="section-label">Details</span>{hint && <span className="muted">{hint}</span>}</summary><div>{children}</div></details>;

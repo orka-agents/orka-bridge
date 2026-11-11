@@ -460,7 +460,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try clickSendControl("Details", scrolling: -350)
     scrollMain(-350)
     let details = try capture("send-result-details", "Designer")
-    require(details.contains { ($0.topCandidates(1).first?.string ?? "").contains("bridge-run-") }, "Agent identity is not visible in native Send details")
+    let detailsText = details.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    require(detailsText.contains("Planned Agent") && detailsText.contains("Copy"), "Short Agent identity and Copy are not visible in native Send details")
     // The fixture's second Agent stays Running so this is a real Stop, not an
     // injected renderer state. Previously created resources remain on the fixture.
     try clickSendControl("Send and run checks", scrolling: 350)

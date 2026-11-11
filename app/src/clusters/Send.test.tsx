@@ -71,7 +71,7 @@ test('changed disk files can be explicitly reloaded before preflight is retried'
   await user.click(await screen.findByRole('button', { name: 'Reload saved files' }));
   await waitFor(() => expect((screen.getByRole('button', { name: 'Run all checks' }) as HTMLButtonElement).disabled).toBe(false));
   expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toBe('Changed on disk.\n');
-  expect(screen.getByText('Your saved agent file · file-model')).toBeTruthy();
+  expect(screen.getByText((_, node) => node?.tagName === 'DD' && node.textContent === 'Your saved agent file · file-model')).toBeTruthy();
 });
 test('a delayed reload never overwrites edits made while files are being read', async () => {
   vi.stubGlobal('isTauri', true); let opened = false; let finish!: (value: unknown) => void;
@@ -165,7 +165,7 @@ test('Stop shows retained receipts and remount observes without replay', async (
   expect(screen.getByRole('button', { name: 'Copy Agent' })).toBeTruthy();
   expect(screen.getAllByText('brid…ozen').length).toBeGreaterThan(0);
   view.unmount(); render(<Example remote place={place} />);
-  await screen.findByText(/Stopped watching/);
+  await screen.findByText('Stopped watching. The cluster may still be running checks.');
   expect(ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
 });
 test('no_only_you_pre_live_or_internal_jargon and honest unknown evidence', async () => {
@@ -189,12 +189,20 @@ test('an unknown submission names its uncertain resources, not a pass, and waits
   await screen.findByText('Running checks on team-dev…');
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'send_start')).toHaveLength(1);
 });
+test.each(['stopped', 'observe', 'submit'])('uncertain %s never claims a failed verdict', async error => {
+  native(idle, { ...running, state: 'unknown', stage: error === 'stopped' ? 'stopped' : 'observe', error });
+  const { container } = render(<Send place={place} source={source} stale={false} visible remote />);
+  expect(await screen.findByText(error === 'stopped' ? 'Stopped watching' : 'Result unknown', { exact: true })).toBeTruthy();
+  expect(container.querySelector('.pill.status-failed')).toBeNull();
+});
 test('changing Provider or destination does not validate the new selection with an older pass', async () => {
   native(idle, { ...running, state: 'complete', stage: 'done', report: { ...report, verdict: 'passed' } });
   const view = render(<Example remote place={place} />);
   await screen.findByText('Checks: pass');
   view.rerender(<Example remote place={{ ...place, providerId: '00000000-0000-4000-8000-000000000005' }} />);
   expect(await screen.findByText(/not validation of your current selection/)).toBeTruthy();
+  expect(document.querySelector('.send-panel .pill.status-passed')).toBeNull();
+  expect(document.querySelector('.send-panel .pill.status-stale')).toBeTruthy();
   view.rerender(<Example remote place={{ ...place, target: { ...target, id: '00000000-0000-4000-8000-000000000006', context_name: 'other-cluster' } }} />);
   expect(screen.getByText(/not validation of your current selection/)).toBeTruthy();
 });

@@ -13,7 +13,7 @@ const catalog: WorkspaceCatalogReply = { defaultModel: 'workspace-default', mode
   { kind: 'tool', name: 'lookup', description: '<b>Workspace lookup</b>', available: false },
   { kind: 'tool', name: 'web_fetch', description: 'Must not offer this target' },
 ] } };
-beforeEach(() => { Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; this.querySelector('input')?.focus(); } }); });
+beforeEach(() => { Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; } }); });
 afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
 test('catalog model choices retain unlisted file model and never substitute the default', () => {
   const changed = vi.fn(); render(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={changed} />);

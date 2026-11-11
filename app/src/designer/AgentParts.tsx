@@ -22,9 +22,11 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
     if (!field) return;
     const resize = () => { field.style.height = 'auto'; field.style.height = `${field.scrollHeight}px`; };
     resize();
+    let mounted = true;
+    void document.fonts?.ready.then(() => { if (mounted) resize(); });
     const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(resize);
     observer?.observe(field);
-    return () => observer?.disconnect();
+    return () => { mounted = false; observer?.disconnect(); };
   }, [instructions]);
   const [picker, setPicker] = useState(false); const [query, setQuery] = useState('');
   const [soulDraft, setSoulDraft] = useState<{ source: string; value: string }>();
@@ -54,7 +56,9 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
   const unlistedLabel = models ? knownModel ? ' (not offered for chat)' : ' (unlisted)' : '';
   const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit tools in File view for this file’s format.'
     : catalogLoading ? 'Reading the workspace catalog…' : tools === undefined ? 'Tool catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
-  useEffect(() => { if (picker && !toolReason) popover.current?.showPopover?.(); }, [picker, toolReason]);
+  useEffect(() => {
+    if (picker && !toolReason) { popover.current?.showPopover?.(); popover.current?.querySelector('input')?.focus(); }
+  }, [picker, toolReason]);
   const modelReason = readOnly ? 'You can change the model after setup.' : !form.modelEditable ? 'Edit the model in File view for this file’s format.'
     : catalogLoading ? 'Reading the workspace catalog…' : models === undefined ? 'Model catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
   const labelFor = (name: string) => Object.hasOwn(builtInTools, name) ? builtInTools[name] : name;
@@ -92,7 +96,7 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
           : <button className="part-button" type="button" ref={add} aria-expanded={picker} aria-controls={`${id}-picker`} onClick={() => { if (picker) close(); else setPicker(true); }}><span aria-hidden="true">+ </span>Add a tool</button>}
       </div>
       {toolReason && <p className="muted">{toolReason}</p>}
-      {picker && !toolReason && <div ref={popover} popover="auto" id={`${id}-picker`} className="tool-picker" onToggle={event => { if (event.newState === 'closed') close(); }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
+      {picker && !toolReason && <div ref={popover} popover="auto" id={`${id}-picker`} className="tool-picker" onToggle={event => { if (event.newState === 'closed') { setPicker(false); setQuery(''); } }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
         <button className="part-button picker-close" type="button" onClick={close}>Close picker</button>
         <label htmlFor={`${id}-search`}>Find a tool</label>
         <input id={`${id}-search`} type="search" autoFocus value={query} onChange={event => setQuery(event.target.value)} />

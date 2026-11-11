@@ -58,6 +58,13 @@ test('uncertain submission names retained receipts and never retries automatical
 test.each([null, { ...idle, modelConnected: 'true' }, { ...idle, state: ['idle'] }, { ...idle, error: 'PRIVATE_DIAGNOSTIC' }, { ...complete, extra: 'PRIVATE_DIAGNOSTIC' }, { ...complete, report: { ...complete.report, verdict: 'passed', cases: [{ secret: 'PRIVATE_DIAGNOSTIC' }] } }])('malformed Run data never renders raw diagnostics', async value => {
   vi.stubGlobal('isTauri', true); mockIPC(() => value); render(<Run />); expect(await screen.findByText('Run information is not supported by this build.')).toBeTruthy(); expect(document.body.textContent).not.toContain('PRIVATE_DIAGNOSTIC');
 });
+test.each(['submit', 'observe', null])('uncertain %s is not labelled failed or not started', async error => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => ({ ...idle, state: 'unknown', error }));
+  const { container } = render(<Run />);
+  expect(await screen.findByText('Result unknown')).toBeTruthy();
+  expect(container.querySelector('.pill.status-failed')).toBeNull();
+});
 test('an older pass is a stale pill and never a green result', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC(() => ({ ...complete, report: { ...complete.report, verdict: 'passed' } }));

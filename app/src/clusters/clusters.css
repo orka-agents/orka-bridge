@@ -21,10 +21,7 @@
 .send-preflight ul { list-style: none; padding: 0; margin: 0 0 12px; }
 .send-preflight li { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; padding: 12px 0; border-top: 1px solid var(--color-border); }
 .send-preflight li p { margin: 4px 0 0; max-width: 65ch; color: var(--color-text-secondary); overflow-wrap: anywhere; }
-.preflight-state { font-size: var(--size-body); font-weight: 500; }
-.send-preflight [data-state="blocked"] .preflight-state { color: var(--color-status-failed); }
-.send-preflight [data-state="allowed"] .preflight-state { color: var(--color-status-succeeded); }
-.send-preflight [data-state="cannotCheck"] .preflight-state, .send-preflight [data-state="unverified"] .preflight-state { color: var(--color-status-pending); }
+.preflight-state { display: inline-flex; align-items: baseline; gap: var(--space-1); font-size: var(--size-body); font-weight: 500; }
 .send-panel details { margin-top: 16px; }
 .send-panel details .cluster-details { margin-top: 12px; }
 @media (max-width: 700px) { .cluster-card { grid-column: 2; } }
