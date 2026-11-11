@@ -151,7 +151,7 @@ func capture(_ name: String, menu: Bool = false) throws {
     } else {
         check(seen.contains("web-reader.agent.md"), "Reopened window lost File editor view: \(seen)")
         guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
-            let colour = bitmap.colorAt(x: bitmap.pixelsWide - 8, y: bitmap.pixelsHigh - 8)?.usingColorSpace(.deviceRGB) else { fatalError("Cannot sample screenshot") }
+            let colour = bitmap.colorAt(x: bitmap.pixelsWide - 8, y: bitmap.pixelsHigh - 8)?.usingColorSpace(.sRGB) else { fatalError("Cannot sample screenshot") }
         let expected: [CGFloat] = theme == "dark" ? [26, 29, 33] : [228, 226, 219]
         let actual = [colour.redComponent, colour.greenComponent, colour.blueComponent].map { $0 * 255 }
         check(zip(actual, expected).allSatisfy { abs($0 - $1) < 8 }, "Window did not follow requested Estuary system theme: \(actual)")

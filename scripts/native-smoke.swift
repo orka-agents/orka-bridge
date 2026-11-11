@@ -92,7 +92,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture Bridge")
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
-        let colour = bitmap.colorAt(x: bitmap.pixelsWide - 8, y: bitmap.pixelsHigh - 8)?.usingColorSpace(NSColorSpace.deviceRGB)
+        let colour = bitmap.colorAt(x: bitmap.pixelsWide - 8, y: bitmap.pixelsHigh - 8)?.usingColorSpace(NSColorSpace.sRGB)
         else { fatalError("Cannot sample native screenshot") }
     let expected: [CGFloat] = theme == "dark" ? [26, 29, 33] : [228, 226, 219]
     let actual = [colour.redComponent, colour.greenComponent, colour.blueComponent].map { $0 * 255 }
