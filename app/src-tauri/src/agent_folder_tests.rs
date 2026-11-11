@@ -40,6 +40,24 @@ fn git(root: &Path, args: &[&str]) -> Vec<u8> {
     output.stdout
 }
 #[test]
+fn marker_observation_shares_the_document_lock() {
+    let home = tempfile::tempdir().unwrap();
+    let root = fixture(home.path(), "helper", id());
+    let directory = Dir::open_ambient_dir(&root, cap_std::ambient_authority()).unwrap();
+    let mut observation = shared_marker(&directory).unwrap();
+    let writer = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(root.join(MARKER))
+        .unwrap();
+    assert!(writer.try_lock().is_err());
+    let mut bytes = Vec::new();
+    observation.read_to_end(&mut bytes).unwrap();
+    assert_eq!(bytes, fs::read(root.join(MARKER)).unwrap());
+    drop(observation);
+    writer.try_lock().unwrap();
+}
+#[test]
 fn created_document_uses_its_own_git_names() {
     let home = tempfile::tempdir().unwrap();
     let id = id();

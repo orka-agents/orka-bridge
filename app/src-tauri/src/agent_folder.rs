@@ -101,6 +101,15 @@ pub(crate) fn regular(file: &File) -> io::Result<()> {
     }
     Ok(())
 }
+fn shared_marker(root: &Dir) -> io::Result<std::fs::File> {
+    let marker = root.open_with(MARKER, &options())?;
+    regular(&marker)?;
+    let marker = marker.into_std();
+    // Windows byte-range locks are mandatory: observe through the same shared-
+    // locked handle rather than racing an exclusive document writer's marker.
+    marker.lock_shared()?;
+    Ok(marker)
+}
 pub(crate) fn read(dir: &Dir, name: &str, limit: usize) -> io::Result<Vec<u8>> {
     let file = dir.open_with(name, &options())?;
     regular(&file)?;
@@ -186,8 +195,13 @@ impl AgentFolder {
             return Err("The agent name is invalid.");
         }
         let root = Self::open_root(&home, name).map_err(|_| "The created agent is unavailable.")?;
-        let bytes =
-            read(&root, MARKER, 128).map_err(|_| "The created agent marker is unavailable.")?;
+        let mut marker =
+            shared_marker(&root).map_err(|_| "The created agent marker is unavailable.")?;
+        let mut bytes = Vec::new();
+        (&mut marker)
+            .take(129)
+            .read_to_end(&mut bytes)
+            .map_err(|_| "The created agent marker is unavailable.")?;
         let text =
             std::str::from_utf8(&bytes).map_err(|_| "The created agent marker is invalid.")?;
         let uuid = text
@@ -223,7 +237,10 @@ impl AgentFolder {
     pub(crate) fn available(&self) -> bool {
         (|| -> io::Result<()> {
             let root = self.root()?;
-            if read(&root, MARKER, 128)? != self.owner {
+            let mut marker = shared_marker(&root)?;
+            let mut ownership = Vec::new();
+            (&mut marker).take(129).read_to_end(&mut ownership)?;
+            if ownership != self.owner {
                 return Err(invalid());
             }
             self.pair(&root)?;
