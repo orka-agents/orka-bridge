@@ -59,8 +59,8 @@ test('Overview stays empty until an agent catalog exists', async () => {
 test('Designer opens the owned agent without workspace setup and shares its saved state', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
-    : command === 'agent_open' ? { agent: '---\nname: web-reader\ndescription: Reads a page.\n---\nRead.', tests: 'Checks' }
-    : command === 'setup_run_status' ? { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null }
+    : command === 'agent_open' ? { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: web-reader\ndescription: Reads a page.\n---\nRead.', tests: 'Checks' }
+    : command === 'agent_run_status' ? { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null }
     : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
@@ -117,8 +117,8 @@ test('setup refreshes while another page is open', async () => {
 });
 
 test('model acknowledgment and observed check counts survive navigation', async () => {
-  const pair = { agent: '---\nname: page-reader\n---\nRead a page.', tests: 'A check' };
-  const snapshot = { state: 'complete', canRun: true, report: { verdict: 'failed', cases: [
+  const pair = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: page-reader\n---\nRead a page.', tests: 'A check' };
+  const snapshot = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: true, report: { verdict: 'failed', cases: [
     { id: 'a', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' },
     { id: 'b', phase: 'Succeeded', answer: 'no', completedTools: [], assertions: [{ id: 'b1', kind: 'contains', verdict: 'failed' }], verdict: 'failed' },
   ] }, acknowledged: [], pending: null, error: null };
@@ -127,7 +127,7 @@ test('model acknowledgment and observed check counts survive navigation', async 
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_connect_model') { modelConnected = true; return { ready: true }; }
     if (command === 'agent_open') return pair;
-    if (command === 'setup_run_status') return { ...snapshot, modelConnected };
+    if (command === 'agent_run_status') return { ...snapshot, modelConnected };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
@@ -151,8 +151,8 @@ test('a running check finishes in the footer after leaving Designer', async () =
   const report = { verdict: 'passed', cases: [{ id: 'a', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] };
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
-    if (command === 'agent_open') return { agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
-    if (command === 'setup_run_status') return { state: complete ? 'complete' : 'running', canRun: complete, report: complete ? report : null, acknowledged: [], pending: null, error: null };
+    if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
+    if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: complete ? 'complete' : 'running', canRun: complete, report: complete ? report : null, acknowledged: [], pending: null, error: null };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
@@ -197,9 +197,9 @@ test('an unavailable example is not reported as still opening', async () => {
 test.each(['unknown', 'unavailable'])('background check status preserves %s outcomes', async state => {
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
-    if (command === 'agent_open') return { agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
-    if (command === 'setup_run_status') return state === 'unavailable' ? Promise.reject(new Error('IPC failed'))
-      : { state: 'unknown', canRun: false, report: null, acknowledged: [], pending: { kind: 'Task', name: 'maybe-created' }, error: 'observe' };
+    if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
+    if (command === 'agent_run_status') return state === 'unavailable' ? Promise.reject(new Error('IPC failed'))
+      : { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'unknown', canRun: false, report: null, acknowledged: [], pending: { kind: 'Task', name: 'maybe-created' }, error: 'observe' };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
@@ -216,8 +216,8 @@ test.each(['unknown', 'unavailable'])('background check status preserves %s outc
 test('a retained native report for older source is stale in the shared chrome', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
-    : command === 'agent_open' ? { agent: '---\nname: reader\n---\nEdited file.', tests: 'Checks', source: { agent: 'b'.repeat(64), tests: 'c'.repeat(64) } }
-    : { state: 'complete', canRun: false, source: { agent: 'a'.repeat(64), tests: 'c'.repeat(64) }, report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null });
+    : command === 'agent_open' ? { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: reader\n---\nEdited file.', tests: 'Checks', source: { agent: 'b'.repeat(64), tests: 'c'.repeat(64) } }
+    : { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: false, source: { agent: 'a'.repeat(64), tests: 'c'.repeat(64) }, report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null });
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('Checks not run since your change')).toBeTruthy();
@@ -227,8 +227,8 @@ test('Open example retries a failed read without discarding successful runs', as
   let fail = true;
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
-    if (command === 'agent_open') return fail ? Promise.reject(new Error('read failed')) : { agent: '---\nname: recovered-reader\n---\nRead.', tests: 'Check' };
-    if (command === 'setup_run_status') return { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'agent_open') return fail ? Promise.reject(new Error('read failed')) : { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: recovered-reader\n---\nRead.', tests: 'Check' };
+    if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);

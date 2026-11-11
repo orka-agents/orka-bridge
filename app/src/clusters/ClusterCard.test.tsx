@@ -40,7 +40,7 @@ test('local readiness never enables unconfirmed remote checks, and changing plac
     if (command === 'setup_requirements') return null;
     if (command === 'cluster_contexts') return [context];
     if (command === 'cluster_discover') return [target];
-    if (command === 'agent_open') return { agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
+    if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />);
@@ -53,7 +53,7 @@ test('local readiness never enables unconfirmed remote checks, and changing plac
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.getByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_change_local');
-  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_run_example');
+  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('agent_run');
 });
 
 test('a selected unavailable workspace can choose a cluster without resetting it', async () => {
@@ -81,8 +81,8 @@ test('local results remain explicitly local after confirming cluster access', as
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_requirements') return null;
-    if (command === 'agent_open') return { agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
-    if (command === 'setup_run_status') return { state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', verdict: 'passed' }] }] }, acknowledged: [], pending: null, error: null };
+    if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
+    if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', verdict: 'passed' }] }] }, acknowledged: [], pending: null, error: null };
     if (command === 'cluster_contexts') return [context];
     if (command === 'cluster_discover') return [target];
     if (command === 'cluster_use') return { status: 'connected', providers: [provider] };
@@ -125,8 +125,8 @@ test('local-result observation continues while remote access is unconfirmed', as
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_requirements') return null;
-    if (command === 'agent_open') return { agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
-    if (command === 'setup_run_status') return { state: complete ? 'complete' : 'running', canRun: false, report: complete ? { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', verdict: 'passed' }] }] } : null, acknowledged: [], pending: null, error: null };
+    if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
+    if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: complete ? 'complete' : 'running', canRun: false, report: complete ? { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', verdict: 'passed' }] }] } : null, acknowledged: [], pending: null, error: null };
     if (command === 'cluster_contexts') return [context];
     throw Error('Unsupported');
   });

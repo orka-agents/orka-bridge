@@ -40,6 +40,7 @@ impl CheckRow {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SendCheck {
+    pub document_id: crate::agent_folder::DocumentId,
     pub source: Option<SnapshotId>,
     pub target_id: String,
     pub provider_id: String,

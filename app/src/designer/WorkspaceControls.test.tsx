@@ -95,9 +95,9 @@ test('pending soul edits survive File view and block running until the atomic up
   vi.stubGlobal('isTauri', true);
   const inline = source.replace('  tools:', '  soul: {inline: old, digest: sha256:old}\n  tools:');
   mockIPC((command, args) => {
-    if (command === 'agent_open') return { agent: inline, tests: 'Checks' };
-    if (command === 'agent_save') { saves.push((args as { content: string }).content); return { agent: saves.at(-1), tests: 'Checks' }; }
-    return { state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: inline, tests: 'Checks' };
+    if (command === 'agent_save') { saves.push((args as { content: string }).content); return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: saves.at(-1), tests: 'Checks' }; }
+    return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
   });
   const user = userEvent.setup(); render(<Example />);
   const run = await screen.findByRole('button', { name: 'Run test' });
@@ -123,9 +123,9 @@ test('removing the last tool without a catalog returns focus to the Add placehol
 test('a failed catalog can be refreshed without changing the file', async () => {
   vi.stubGlobal('isTauri', true); let calls = 0;
   mockIPC(command => {
-    if (command === 'agent_open') return { agent: source, tests: 'Checks' };
+    if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: source, tests: 'Checks' };
     if (command === 'workspace_catalog') { if (++calls === 1) throw Error('temporary'); return catalog; }
-    return { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
   });
   const user = userEvent.setup(); render(<Example catalogKey={1} />);
   await user.click(await screen.findByRole('button', { name: 'Refresh catalog' }));
@@ -141,8 +141,9 @@ test('confirmed Change invalidates catalog before the stop reply, retaining the 
     if (command === 'setup_connect_model') return { ready: true };
     if (command === 'setup_change_local') return new Promise(resolve => { finish = resolve; });
     if (command === 'workspace_catalog') return catalog;
-    if (command === 'agent_open' || command === 'setup_example') return { agent: source, tests: 'Checks' };
-    return { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'setup_example') return { agent: source, tests: 'Checks' };
+    if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: source, tests: 'Checks' };
+    return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
   });
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
@@ -160,9 +161,9 @@ test('confirmed Change invalidates catalog before the stop reply, retaining the 
 test('workspace generation invalidates a late catalog without losing the owned draft', async () => {
   const pending: ((value: unknown) => void)[] = []; vi.stubGlobal('isTauri', true);
   mockIPC(command => {
-    if (command === 'agent_open') return { agent: source, tests: 'Checks' };
+    if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: source, tests: 'Checks' };
     if (command === 'workspace_catalog') return new Promise(resolve => pending.push(resolve));
-    return { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
   });
   const view = render(<Example catalogKey={1} />);
   await screen.findByRole('textbox', { name: 'Instructions' });
