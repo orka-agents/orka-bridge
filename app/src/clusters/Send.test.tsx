@@ -1,31 +1,125 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Example from '../designer/Example';
 import App from '../App';
+import Send from './Send';
 
 const target = { id: '00000000-0000-4000-8000-000000000002', context_id: '00000000-0000-4000-8000-000000000001', context_name: 'team-dev', service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka:0.9.4' };
-const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-model', ready: false };
+const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-model', ready: true };
 const place = { kind: 'cluster' as const, target, providers: [provider], providerId: provider.id };
 const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
 const pair = { agent: '---\nname: web-reader\nmodel: literal-model\n---\nRead the page.\n', tests: 'Checks from disk', source };
 const idle = { state: 'idle', canRun: false, modelConnected: false, report: null, acknowledged: [], pending: null, error: null };
 const report = { verdict: 'failed', cases: [{ id: 'reads-the-page', phase: 'Succeeded', answer: 'Not the expected text', completedTools: [], assertions: [{ id: 'has-text', kind: 'contains', verdict: 'failed' }], verdict: 'failed' }] };
 const running = { id: '00000000-0000-4000-8000-000000000004', targetId: target.id, providerId: provider.id, targetName: target.context_name, source, model: 'literal-model', agentName: 'bridge-run-frozen', state: 'running', stage: 'observe', acknowledged: [{ kind: 'Agent', name: 'bridge-run-frozen', uid: 'uid-agent' }], pending: null, report: null, error: null };
+const allowed = { source, targetId: target.id, providerId: provider.id, model: 'literal-model', rows: [{ label: 'Provider', status: 'allowed', message: 'Ready; the file model is tested by checks.' }], canSend: true };
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
-function native(local: unknown = idle, initial: unknown = null) {
+function native(local: unknown = idle, initial: unknown = null, preflight: unknown = allowed) {
   vi.stubGlobal('isTauri', true); let send = initial;
   const ipc = vi.fn((command: string) => {
     if (command === 'agent_open') return pair;
     if (command === 'setup_run_status') return local;
     if (command === 'send_status') return send;
+    if (command === 'send_preflight') return preflight;
     if (command === 'send_start') { send = running; return send; }
     if (command === 'send_stop') { send = { ...running, state: 'unknown', stage: 'stopped' }; return send; }
     throw Error('Unsupported');
   });
   mockIPC(ipc); return ipc;
 }
+test.each(['blocked', 'cannotCheck'])('preflight %s explains the problem and prevents submission', async status => {
+  const ipc = native(idle, null, { ...allowed, rows: [{ label: 'page-reader', status, message: status === 'blocked' ? 'Create page-reader on team-dev.' : 'Bridge cannot check page-reader.' }], canSend: false });
+  render(<Send place={place} source={source} stale={false} visible remote />);
+  expect(await screen.findByText(status === 'blocked' ? 'Create page-reader on team-dev.' : 'Bridge cannot check page-reader.')).toBeTruthy();
+  expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
+});
+test('stale local results do not gate checking or sending a saved pair', async () => {
+  native(); render(<Send place={place} source={source} stale visible remote />);
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(false));
+});
+test('capture failure shows the native check explanation, not a stale-file claim', async () => {
+  native(idle, null, { ...allowed, source: null, model: null, rows: [{ label: 'Saved files', status: 'cannotCheck', message: 'Your saved files could not be read.' }], canSend: false });
+  render(<Send place={place} source={source} stale={false} visible remote />);
+  expect(await screen.findByText('Your saved files could not be read.')).toBeTruthy();
+  expect(screen.queryByText(/saved files changed/)).toBeNull();
+});
+test('preflight pending blocks Send and only matching source enables it', async () => {
+  let finish!: (value: unknown) => void;
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => command === 'send_preflight' ? new Promise(resolve => { finish = resolve; }) : null);
+  render(<Send place={place} source={source} stale={false} visible remote />);
+  await screen.findByText('Checking this destination…');
+  expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(true);
+  finish({ ...allowed, source: { ...source, tests: 'c'.repeat(64) } });
+  await screen.findByText(/saved files changed/);
+  expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(true);
+});
+test('changed disk files can be explicitly reloaded before preflight is retried', async () => {
+  vi.stubGlobal('isTauri', true); let opened = false;
+  const changed = { ...pair, agent: pair.agent.replace('literal-model', 'file-model').replace('Read the page.', 'Changed on disk.'), source: { ...source, tests: 'c'.repeat(64) } };
+  mockIPC(command => {
+    if (command === 'agent_open') { const value = opened ? changed : pair; opened = true; return value; }
+    if (command === 'setup_run_status') return idle;
+    if (command === 'send_status') return null;
+    if (command === 'send_preflight') return { ...allowed, source: changed.source, model: 'file-model' };
+    throw Error('Unsupported');
+  });
+  const user = userEvent.setup(); render(<Example remote place={place} />);
+  await user.click(await screen.findByRole('button', { name: 'Reload saved files' }));
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Run all checks' }) as HTMLButtonElement).disabled).toBe(false));
+  expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toBe('Changed on disk.\n');
+  expect(screen.getByText('Your saved agent file · file-model')).toBeTruthy();
+});
+test('a delayed reload never overwrites edits made while files are being read', async () => {
+  vi.stubGlobal('isTauri', true); let opened = false; let finish!: (value: unknown) => void;
+  const changed = { ...pair, agent: pair.agent.replace('Read the page.', 'Disk replacement.'), source: { ...source, tests: 'c'.repeat(64) } };
+  mockIPC((command, args) => {
+    if (command === 'agent_open') { if (opened) return new Promise(resolve => { finish = resolve; }); opened = true; return pair; }
+    if (command === 'setup_run_status') return idle;
+    if (command === 'send_status') return null;
+    if (command === 'send_preflight') return { ...allowed, source: changed.source };
+    if (command === 'agent_save') return { ...pair, agent: (args as Record<string, string>).content };
+    throw Error('Unsupported');
+  });
+  const user = userEvent.setup(); render(<Example remote place={place} />);
+  await user.click(await screen.findByRole('button', { name: 'Reload saved files' }));
+  const instructions = screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement;
+  await user.clear(instructions); await user.type(instructions, 'My draft');
+  await act(async () => { finish(changed); });
+  expect(instructions.value).toBe('My draft');
+  expect(instructions.value).not.toContain('Disk replacement');
+});
+test('collision is unverified, not refused; details disclosure names its state', async () => {
+  native(idle, { ...running, state: 'complete', stage: 'done', report },  { ...allowed, rows: [{ label: 'page-reader', status: 'unverified', message: 'Implementation unverified: a built-in has this name.' }] });
+  const user = userEvent.setup(); render(<Send place={place} source={source} stale={false} visible remote />);
+  expect(await screen.findByText(/Implementation unverified/)).toBeTruthy();
+  expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(false);
+  await user.click(screen.getByText('Show details', { selector: 'summary' }));
+  expect(screen.getByText('Hide details', { selector: 'summary' })).toBeTruthy();
+});
+test('a late preflight for an old Provider cannot enable the current selection', async () => {
+  let finish!: (value: unknown) => void;
+  vi.stubGlobal('isTauri', true);
+  mockIPC((command, args) => command === 'send_preflight'
+    ? (args as Record<string, unknown> | undefined)?.providerId === provider.id ? new Promise(resolve => { finish = resolve; }) : new Promise(() => {}) : null);
+  const view = render(<Send place={place} source={source} stale={false} visible remote />);
+  await waitFor(() => expect(finish).toBeDefined());
+  view.rerender(<Send place={{ ...place, providers: [provider, { ...provider, id: '00000000-0000-4000-8000-000000000005' }], providerId: '00000000-0000-4000-8000-000000000005' }} source={source} stale={false} visible remote />);
+  finish(allowed);
+  await screen.findByText('Checking this destination…');
+  expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(true);
+  expect(screen.queryByText('Ready; the file model is tested by checks.')).toBeNull();
+});
+test('malformed preflight never displays raw fields or enables Send', async () => {
+  native(idle, null, { ...allowed, privateCredential: 'PRIVATE_DIAGNOSTIC' });
+  render(<Send place={place} source={source} stale={false} visible remote />);
+  expect(await screen.findByText(/Destination checks could not be read/)).toBeTruthy();
+  expect(document.body.textContent).not.toContain('PRIVATE_DIAGNOSTIC');
+  expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(true);
+});
 test('remote_checks_without_vm_or_local_model_gate', async () => {
   const ipc = native(); const user = userEvent.setup(); render(<Example remote place={place} />);
   await user.click(await screen.findByRole('button', { name: 'Run all checks' }));
@@ -111,7 +205,7 @@ test('malformed send data is not rendered or retried', async () => {
 test('a confirmed cluster opens the owned editor after failed local setup and keeps Provider choice', async () => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   const other = { ...provider, id: '00000000-0000-4000-8000-000000000005', name: 'second-model', ready: true };
-  let starts = 0;
+  let starts = 0; let sentArgs: unknown;
   mockIPC((command, args) => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'failed', localVmError: 'boot', model: 'locked' };
     if (command === 'setup_requirements') return null;
@@ -121,7 +215,8 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
     if (command === 'agent_open') return pair;
     if (command === 'setup_run_status') return idle;
     if (command === 'send_status') return null;
-    if (command === 'send_start') { starts++; expect(args).toEqual({ targetId: target.id, providerId: other.id }); return { ...running, providerId: other.id }; }
+    if (command === 'send_preflight') return { ...allowed, providerId: other.id };
+    if (command === 'send_start') { starts++; sentArgs = args; return { ...running, providerId: other.id }; }
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />);
@@ -134,6 +229,7 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
   expect(screen.queryByText('Read-only during setup')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Run all checks' }));
   await waitFor(() => expect(starts).toBe(1));
+  expect(sentArgs).toEqual({ targetId: target.id, providerId: other.id, expectedSource: source });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('radio', { name: 'On this computer' }));
   await user.click(screen.getByRole('button', { name: 'Designer' }));

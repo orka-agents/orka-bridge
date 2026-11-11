@@ -1,10 +1,15 @@
 //! Native remote Send owner. One admitted attempt at a time; credentials, the
 //! runner and its handles stay here beyond any IPC waiter. Stop ends admission
 //! and observation, never remote Task cancellation.
+pub use crate::clusters::preflight::SendCheck;
 use crate::{
     agent_folder::AgentFolder,
-    clusters::{commands::ClusterSession, ProviderId},
-    engine::run::{ErrorKind, NativeRunner, ParsedPair, RunReport},
+    clusters::{
+        commands::ClusterSession,
+        preflight::{CheckRow, CheckStatus},
+        ProviderId,
+    },
+    engine::run::{ErrorKind, NativeRunner, ParsedPair, RunReport, RunTransport},
     example_run::{receipts, PendingRef, Receipt},
     pair_source::CapturedPair,
 };
@@ -126,9 +131,93 @@ impl SendOwner {
             inner: Mutex::default(),
         })
     }
+    /// Fresh, GET-only preview. Failures are finite display rows, never raw IPC errors.
+    pub async fn preflight(&self, target: &str, provider: &str) -> SendCheck {
+        use CheckStatus::*;
+        let target = parse(target).map(|id| id.to_string()).unwrap_or_default();
+        let provider = parse(provider).map(ProviderId);
+        let mut check = SendCheck {
+            source: None,
+            target_id: target.clone(),
+            provider_id: provider.map(|p| p.0.to_string()).unwrap_or_default(),
+            model: None,
+            rows: Vec::new(),
+            can_send: false,
+        };
+        let folder = self.folder.clone();
+        let pair = tokio::task::spawn_blocking(move || capture(&folder)).await;
+        let Ok(Ok(pair)) = pair else {
+            check.rows.push(CheckRow::new("Source", Blocked, "Bridge cannot read a supported agent and companion tests. Check the files in Designer."));
+            return check.finish();
+        };
+        check.source = Some(pair.snapshot().clone());
+        check.model = Some(pair.model().into());
+        check.rows.push(CheckRow::new(
+            "Source",
+            Allowed,
+            "The current agent and companion tests were captured.",
+        ));
+        let rows = async {
+            let (access, reader) = self.session.send_access(&target).await;
+            let access = access.ok_or_else(|| {
+                CheckRow::new(
+                    "Access",
+                    CannotCheck,
+                    "Reconnect the selected context in Clusters.",
+                )
+            })?;
+            let provider = provider
+                .filter(|p| access.providers().iter().any(|v| v.id == *p))
+                .ok_or_else(|| {
+                    CheckRow::new(
+                        "Provider",
+                        Blocked,
+                        "Select a configured Provider in Clusters.",
+                    )
+                })?;
+            let kubeconfig = tokio::task::spawn_blocking(move || reader())
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .ok_or_else(|| {
+                    CheckRow::new(
+                        "Installation",
+                        CannotCheck,
+                        "Bridge cannot check the current context configuration.",
+                    )
+                })?;
+            let fresh = access.fresh_client(kubeconfig);
+            let transport = access.transport(&fresh, provider).await.map_err(|_| {
+                CheckRow::new(
+                    "Installation",
+                    CannotCheck,
+                    "Bridge cannot check the selected installation. Reconnect in Clusters.",
+                )
+            })?;
+            let mut rows = vec![CheckRow::new(
+                "Installation",
+                Allowed,
+                "The selected installation and required resources were checked.",
+            )];
+            rows.extend(access.check(&transport, provider, &pair).await);
+            transport.close().await;
+            Ok::<_, CheckRow>(rows)
+        }
+        .await;
+        match rows {
+            Ok(rows) => check.rows.extend(rows),
+            Err(row) => check.rows.push(row),
+        }
+        check.finish()
+    }
     /// Admits one job, or observes the running one, without waiting on the
     /// cluster session; capture, access and all rechecks happen inside the job.
-    pub async fn start(self: &Arc<Self>, target_id: &str, provider_id: &str) -> SendView {
+    pub async fn start(
+        self: &Arc<Self>,
+        target_id: &str,
+        provider_id: &str,
+        expected_source: SnapshotId,
+    ) -> SendView {
         let target = parse(target_id).map(|u| u.to_string()).unwrap_or_default();
         let provider = parse(provider_id).map(ProviderId);
         let mut inner = self.inner.lock().unwrap();
@@ -165,7 +254,9 @@ impl SendOwner {
         drop(inner);
         let owner = self.clone();
         tokio::spawn(async move {
-            let result = owner.drive(id, &target, provider, &mut stop_rx).await;
+            let result = owner
+                .drive(id, &target, provider, &expected_source, &mut stop_rx)
+                .await;
             let mut inner = owner.inner.lock().unwrap();
             let view = inner.views.get_mut(&id).unwrap();
             match result {
@@ -232,6 +323,7 @@ impl SendOwner {
         id: SendId,
         target: &str,
         provider: Option<ProviderId>,
+        expected_source: &SnapshotId,
         stop: &mut watch::Receiver<bool>,
     ) -> Result<RunReport, Stage> {
         // Freeze the pair once, before any network wait; later edits never reach this attempt.
@@ -242,6 +334,9 @@ impl SendOwner {
                 .map_err(drop)?
         })
         .await?;
+        if pair.snapshot() != expected_source {
+            return Err(Stage::Capture);
+        }
         self.update(id, |v| {
             v.source = Some(pair.snapshot().clone());
             v.model = Some(pair.model().into());
@@ -277,15 +372,16 @@ impl SendOwner {
             .transport(&fresh, provider)
             .await
             .map_err(|_| Stage::Preflight)?;
-        let checked = until_stop(
-            stop,
-            Stage::Preflight,
-            access.recheck(&transport, provider, pair.tools()),
-        )
+        let checked = until_stop(stop, Stage::Preflight, async {
+            Ok::<_, ()>(access.check(&transport, provider, &pair).await)
+        })
         .await;
         let runner = NativeRunner::with_transport(transport);
         let result = match checked {
-            Ok(()) => self.run(id, &runner, pair, stop).await,
+            Ok(rows) if rows.iter().all(CheckRow::permits) => {
+                self.run(id, &runner, pair, stop).await
+            }
+            Ok(_) => Err(Stage::Preflight),
             Err(stage) => Err(stage),
         };
         runner.close().await;
