@@ -268,7 +268,11 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
     }
     require(saved, "Native form did not preserve the file and append the exact instructions suffix")
     let savedForm = try capture("agent-form-saved", "Designer")
-    require(savedForm.contains { $0.topCandidates(1).first?.string == "Saved" }, "Form save was not acknowledged")
+    let savedFooter = savedForm.filter { $0.boundingBox.maxY < 0.1 }
+        .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    require(savedFooter.range(of: "\\bSaved\\b", options: .regularExpression) != nil
+        && !savedFooter.localizedCaseInsensitiveContains("not saved"),
+        "Form save was not acknowledged in footer: \(savedFooter)")
     clickTab("Clusters", savedForm)
     initial = try capture("chooser-after-form", "Clusters")
     // Selecting the default radio does not start anything; Continue is explicit.
