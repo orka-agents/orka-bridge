@@ -10,7 +10,7 @@
 .welcome-journey span { color: var(--color-text-secondary); }
 .journey-number { font: var(--type-small); font-family: var(--font-mono); }
 .workspace-primary { min-height: 38px; padding: 0 16px; border: 1px solid var(--color-action); border-radius: var(--radius-control); background: var(--color-action); color: var(--color-action-text); font-size: var(--size-body); font-weight: 500; }
-.workspace-primary:not(:disabled):hover { opacity: 0.85; }
+.workspace-primary:not(:disabled):hover { background: var(--color-action-hover); }
 .workspace-primary:disabled { cursor: not-allowed; background: var(--color-hover); color: var(--color-text-secondary); border-color: var(--color-border-strong); }
 .workspace-heading { display: grid; gap: 8px; margin-bottom: 16px; }
 .workspace-heading h1 { font: var(--type-title); }

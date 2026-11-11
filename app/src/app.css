@@ -151,7 +151,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tool-picker::backdrop { background: rgb(0 0 0 / .12); }
 .picker-close { justify-self: end; }
 .tool-picker ul { margin: 0; padding: 0; list-style: none; }
-.tool-picker li button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 100px; gap: var(--space-2); text-align: left; padding: var(--space-2); border: 0; border-radius: var(--radius-row); background: transparent; color: var(--color-text); font: inherit; }
+.tool-picker li button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 100px; gap: var(--space-2); text-align: left; overflow-wrap: anywhere; padding: var(--space-2); border: 0; border-radius: var(--radius-row); background: transparent; color: var(--color-text); font: inherit; }
 .tool-picker .tool-description { grid-column: 1 / -1; color: var(--color-text-secondary); overflow-wrap: anywhere; }
 .model-select { min-width: 12rem; }
 .soul-reference-field { display: grid; gap: 8px; }
