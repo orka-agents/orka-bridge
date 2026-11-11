@@ -84,6 +84,85 @@ fn terminal_request_has_one_winner_without_an_async_runtime() {
     assert!(!shutdown.completed());
 }
 
+// A deadline is not completion, and waiting must not itself close an idle VM.
+#[test]
+fn native_wait_deadline_does_not_invent_a_result_or_request_close() {
+    let shutdown = bridge_engine::shutdown::TerminalShutdown::default();
+    let vm = LocalVm::unavailable();
+    assert_eq!(shutdown.wait_timeout(std::time::Duration::ZERO), None);
+    assert_eq!(shutdown.result(), None);
+    assert!(!shutdown.closing());
+    assert_eq!(vm.status(), LocalVmStatus::NotIntegrated);
+}
+
+// Losing the result notification or publishing before cleanup would break native waiters.
+#[tokio::test]
+async fn native_waiters_join_the_one_failed_cleanup_without_a_runtime_on_the_waiting_thread() {
+    use bridge_engine::{
+        agent_folder::AgentFolder, clusters::commands::ClusterSession, send::SendOwner,
+    };
+    let p = Arc::new(Probe {
+        fail_stop: true,
+        ..Default::default()
+    });
+    let vm = owner(p.clone());
+    vm.start();
+    p.launch.notify_one();
+    phase(&vm, LocalVmStatus::Ready).await;
+    let shutdown = Arc::new(bridge_engine::shutdown::TerminalShutdown::default());
+    let engine = EngineState::with_transport(vm.clone());
+    assert!(shutdown.request(&vm, &engine));
+    assert_eq!(shutdown.native_termination(), None);
+    assert!(shutdown.closing());
+    let waiters: Vec<_> = (0..4)
+        .map(|_| {
+            let shutdown = shutdown.clone();
+            std::thread::spawn(move || shutdown.wait_timeout(std::time::Duration::from_secs(2)))
+        })
+        .collect();
+    let clusters = ClusterSession::default();
+    let send = SendOwner::new(Arc::new(AgentFolder::new(None)), clusters.clone());
+    assert!(!shutdown.finish(&clusters, &send, &vm).await);
+    for waiter in waiters {
+        assert_eq!(waiter.join().unwrap(), Some(false));
+    }
+    assert_eq!(shutdown.native_termination(), Some(false));
+    assert_eq!(p.stops.load(Ordering::SeqCst), 1);
+    let mut exited = false;
+    shutdown.exit_unless_native(|_| exited = true);
+    assert!(
+        !exited,
+        "native termination owns exit even after failed cleanup"
+    );
+}
+
+#[tokio::test]
+async fn result_publication_and_native_exit_ownership_do_not_allow_two_exit_dispatches() {
+    use bridge_engine::{
+        agent_folder::AgentFolder, clusters::commands::ClusterSession, send::SendOwner,
+    };
+    let shutdown = bridge_engine::shutdown::TerminalShutdown::default();
+    let vm = LocalVm::unavailable();
+    let engine = EngineState::with_transport(vm.clone());
+    let clusters = ClusterSession::default();
+    let send = SendOwner::new(Arc::new(AgentFolder::new(None)), clusters.clone());
+    let mut results = Vec::new();
+    shutdown.exit_unless_native(|clean| results.push(clean));
+    assert!(
+        results.is_empty(),
+        "pending cleanup cannot dispatch an exit"
+    );
+    assert!(shutdown.request(&vm, &engine));
+    assert!(shutdown.finish(&clusters, &send, &vm).await);
+    assert_eq!(shutdown.wait_timeout(std::time::Duration::ZERO), Some(true));
+    shutdown.exit_unless_native(|clean| results.push(clean));
+    assert_eq!(results, [true]);
+    // If ordinary exit was already queued, AppKit sees completed -> Now, never Later.
+    assert_eq!(shutdown.native_termination(), Some(true));
+    shutdown.exit_unless_native(|clean| results.push(clean));
+    assert_eq!(results, [true]);
+}
+
 struct ResponsiveTransport;
 impl EngineTransport for ResponsiveTransport {
     fn execute(&self, _: EngineRequest) -> TransportFuture<'_> {

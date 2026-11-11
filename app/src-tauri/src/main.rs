@@ -10,6 +10,8 @@ use bridge_engine::shutdown::TerminalShutdown;
 use std::sync::Arc;
 use tauri::Manager;
 
+mod lifecycle;
+
 #[tauri::command]
 async fn engine_call(
     request: EngineRequest,
@@ -171,7 +173,11 @@ async fn send_stop(
 fn main() {
     let shutdown = Arc::new(TerminalShutdown::default());
     tauri::Builder::default()
-        .setup(|app| {
+        .manage(shutdown.clone())
+        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
+            lifecycle::show(app)
+        }))
+        .setup(move |app| {
             let store = Arc::new(SetupStore::new(app.path().app_data_dir().ok()));
             let vm = local_vm::configured(
                 app.path().resource_dir().ok(),
@@ -196,6 +202,11 @@ fn main() {
                 bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE,
                 folder,
             ));
+            lifecycle::install(
+                app.handle(),
+                shutdown.clone(),
+                vm.status() != LocalVmStatus::NotIntegrated,
+            )?;
             tauri::async_runtime::spawn(async move {
                 if local_vm::resume_selected(store, &vm).await.is_err() {
                     eprintln!("The saved setup choice could not be read.");
@@ -228,8 +239,8 @@ fn main() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Bridge")
-        .run(move |app, event| {
-            if shutdown.completed() {
+        .run(|app, event| {
+            if app.state::<Arc<TerminalShutdown>>().completed() {
                 return;
             }
             let requested = match event {
@@ -239,7 +250,20 @@ fn main() {
                     ..
                 } if label == "main" => {
                     api.prevent_close();
+                    if app.state::<lifecycle::HideOnClose>().0 {
+                        if let Some(window) = app.get_webview_window("main") {
+                            if window.hide().is_ok() {
+                                return;
+                            }
+                        }
+                        eprintln!("Could not hide Bridge; stopping the workspace instead.");
+                    }
                     true
+                }
+                #[cfg(target_os = "macos")]
+                tauri::RunEvent::Reopen { .. } => {
+                    lifecycle::show(app);
+                    false
                 }
                 tauri::RunEvent::ExitRequested { api, .. } => {
                     api.prevent_exit();
@@ -250,20 +274,6 @@ fn main() {
             if !requested {
                 return;
             }
-            let vm = app.state::<Arc<LocalVm>>().inner().clone();
-            if !shutdown.request(&vm, &app.state::<EngineState>()) {
-                return;
-            }
-            let send = app.state::<Arc<SendOwner>>().inner().clone();
-            let clusters = app
-                .state::<bridge_engine::clusters::commands::ClusterSession>()
-                .inner()
-                .clone();
-            let handle = app.clone();
-            let shutdown = shutdown.clone();
-            tauri::async_runtime::spawn(async move {
-                let clean = shutdown.finish(&clusters, &send, &vm).await;
-                handle.exit(if clean { 0 } else { 1 });
-            });
+            lifecycle::stop(app);
         });
 }
