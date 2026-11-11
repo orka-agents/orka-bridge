@@ -10,22 +10,22 @@ const target = { id: '00000000-0000-4000-8000-000000000002', context_id: '000000
 const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-model', ready: true };
 const place = { kind: 'cluster' as const, target, providers: [provider], providerId: provider.id };
 const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
-const pair = { agent: '---\nname: web-reader\nmodel: literal-model\n---\nRead the page.\n', tests: 'Checks from disk', source };
-const idle = { state: 'idle', canRun: false, modelConnected: false, report: null, acknowledged: [], pending: null, error: null };
+const pair = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: web-reader\nmodel: literal-model\n---\nRead the page.\n', tests: 'Checks from disk', source };
+const idle = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: false, modelConnected: false, report: null, acknowledged: [], pending: null, error: null };
 const report = { verdict: 'failed', cases: [{ id: 'reads-the-page', phase: 'Succeeded', answer: 'Not the expected text', completedTools: [], assertions: [{ id: 'has-text', kind: 'contains', verdict: 'failed' }], verdict: 'failed' }] };
-const running = { id: '00000000-0000-4000-8000-000000000004', targetId: target.id, providerId: provider.id, targetName: target.context_name, source, model: 'literal-model', agentName: 'bridge-run-frozen', state: 'running', stage: 'observe', acknowledged: [{ kind: 'Agent', name: 'bridge-run-frozen', uid: 'uid-agent' }], pending: null, report: null, error: null, storageError: false };
-const allowed = { source, targetId: target.id, providerId: provider.id, model: 'literal-model', rows: [{ label: 'Provider', status: 'allowed', message: 'Ready; the file model is tested by checks.' }], canSend: true };
+const running = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', id: '00000000-0000-4000-8000-000000000004', targetId: target.id, providerId: provider.id, targetName: target.context_name, source, model: 'literal-model', agentName: 'bridge-run-frozen', state: 'running', stage: 'observe', acknowledged: [{ kind: 'Agent', name: 'bridge-run-frozen', uid: 'uid-agent' }], pending: null, report: null, error: null, storageError: false };
+const allowed = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', source, targetId: target.id, providerId: provider.id, model: 'literal-model', rows: [{ label: 'Provider', status: 'allowed', message: 'Ready; the file model is tested by checks.' }], canSend: true };
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 function native(local: unknown = idle, initial: unknown = null, preflight: unknown = allowed) {
   vi.stubGlobal('isTauri', true); let send = initial;
   const ipc = vi.fn((command: string) => {
     if (command === 'agent_open') return pair;
-    if (command === 'setup_run_status') return local;
-    if (command === 'send_status') return send;
+    if (command === 'agent_run_status') return local;
+    if (command === 'send_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: send, busy: null };
     if (command === 'send_history') return [];
     if (command === 'send_preflight') return preflight;
-    if (command === 'send_start') { send = running; return send; }
-    if (command === 'send_stop') { send = { ...running, state: 'unknown', stage: 'stopped' }; return send; }
+    if (command === 'send_start') { send = running; return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: send, busy: null }; }
+    if (command === 'send_stop') { send = { ...running, state: 'unknown', stage: 'stopped' }; return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: send, busy: null }; }
     throw Error('Unsupported');
   });
   mockIPC(ipc); return ipc;
@@ -63,8 +63,8 @@ test('changed disk files can be explicitly reloaded before preflight is retried'
   const changed = { ...pair, agent: pair.agent.replace('literal-model', 'file-model').replace('Read the page.', 'Changed on disk.'), source: { ...source, tests: 'c'.repeat(64) } };
   mockIPC(command => {
     if (command === 'agent_open') { const value = opened ? changed : pair; opened = true; return value; }
-    if (command === 'setup_run_status') return idle;
-    if (command === 'send_status') return null;
+    if (command === 'agent_run_status') return idle;
+    if (command === 'send_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: null, busy: null };
     if (command === 'send_preflight') return { ...allowed, source: changed.source, model: 'file-model' };
     throw Error('Unsupported');
   });
@@ -79,8 +79,8 @@ test('a delayed reload never overwrites edits made while files are being read', 
   const changed = { ...pair, agent: pair.agent.replace('Read the page.', 'Disk replacement.'), source: { ...source, tests: 'c'.repeat(64) } };
   mockIPC((command, args) => {
     if (command === 'agent_open') { if (opened) return new Promise(resolve => { finish = resolve; }); opened = true; return pair; }
-    if (command === 'setup_run_status') return idle;
-    if (command === 'send_status') return null;
+    if (command === 'agent_run_status') return idle;
+    if (command === 'send_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: null, busy: null };
     if (command === 'send_preflight') return { ...allowed, source: changed.source };
     if (command === 'agent_save') return { ...pair, agent: (args as Record<string, string>).content };
     throw Error('Unsupported');
@@ -126,12 +126,12 @@ test('remote_checks_without_vm_or_local_model_gate', async () => {
   await user.click(await screen.findByRole('button', { name: 'Run all checks' }));
   expect(await screen.findByText('Running checks on team-dev…')).toBeTruthy();
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'send_start')).toHaveLength(1);
-  expect(ipc.mock.calls.some(([cmd]) => cmd === 'setup_run_example' || cmd === 'setup_select_local' || cmd === 'setup_connect_model')).toBe(false);
+  expect(ipc.mock.calls.some(([cmd]) => cmd === 'agent_run' || cmd === 'setup_select_local' || cmd === 'setup_connect_model')).toBe(false);
 });
 test('failing_check_inline_note and fix_it_first_zero_post', async () => {
   const ipc = native({ ...idle, state: 'complete', source, report }); const user = userEvent.setup();
   render(<Example remote place={place} />);
-  await waitFor(() => expect(ipc.mock.calls.some(([cmd]) => cmd === 'setup_run_status')).toBe(true));
+  await waitFor(() => expect(ipc.mock.calls.some(([cmd]) => cmd === 'agent_run_status')).toBe(true));
   await user.click(screen.getByRole('button', { name: 'Send to a cluster' }));
   expect(screen.getByText(/reads-the-page.*failed/)).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Fix it first' }));
@@ -140,7 +140,7 @@ test('failing_check_inline_note and fix_it_first_zero_post', async () => {
 });
 test('send_anyway_explicit and duplicate clicks submit only once', async () => {
   const ipc = native({ ...idle, state: 'complete', source, report }); const user = userEvent.setup();
-  render(<Example remote place={place} />); await waitFor(() => expect(ipc.mock.calls.some(([cmd]) => cmd === 'setup_run_status')).toBe(true));
+  render(<Example remote place={place} />); await waitFor(() => expect(ipc.mock.calls.some(([cmd]) => cmd === 'agent_run_status')).toBe(true));
   await user.click(screen.getByRole('button', { name: 'Send to a cluster' }));
   await user.click(screen.getByRole('button', { name: 'Send anyway' }));
   expect(ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
@@ -214,10 +214,10 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
     if (command === 'cluster_discover') return [target];
     if (command === 'cluster_use') return { status: 'connected', providers: [provider, other] };
     if (command === 'agent_open') return pair;
-    if (command === 'setup_run_status') return idle;
-    if (command === 'send_status') return null;
+    if (command === 'agent_run_status') return idle;
+    if (command === 'send_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: null, busy: null };
     if (command === 'send_preflight') return { ...allowed, providerId: other.id };
-    if (command === 'send_start') { starts++; sentArgs = args; return { ...running, providerId: other.id }; }
+    if (command === 'send_start') { starts++; sentArgs = args; return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: { ...running, providerId: other.id }, busy: null }; }
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />);
@@ -230,7 +230,7 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
   expect(screen.queryByText('Read-only during setup')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Run all checks' }));
   await waitFor(() => expect(starts).toBe(1));
-  expect(sentArgs).toEqual({ targetId: target.id, providerId: other.id, expectedSource: source });
+  expect(sentArgs).toEqual({ documentId: '9b2b93c4-375c-4815-9717-39852a96e411', targetId: target.id, providerId: other.id, expectedSource: source });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('radio', { name: 'On this computer' }));
   await user.click(screen.getByRole('button', { name: 'Designer' }));

@@ -7,6 +7,90 @@ use bridge_engine::{
 };
 use bridge_runtime_protocol::SnapshotId;
 
+#[path = "created_agent.rs"]
+mod created_agent;
+
+#[tokio::test]
+async fn document_send_binds_preview_admission_stop_and_session_results() {
+    let s = setup().await;
+    let agent = AGENT.replace("Fetch only.", "Bound alpha instructions.");
+    let expected = SnapshotId::of(agent.as_bytes(), TESTS.as_bytes());
+    let a = created_agent::created(s.home.path(), "alpha", &agent, TESTS);
+    let b = created_agent::created(s.home.path(), "beta", &agent, TESTS);
+    let aid = a.document_id();
+    let bid = b.document_id();
+    let check = s
+        .owner
+        .preflight_document(b.clone(), &s.target, &s.provider)
+        .await;
+    assert_eq!(check.document_id, bid);
+    assert_eq!(check.source, Some(expected.clone()));
+    *s.api.wire.mode.lock().unwrap() = "hang";
+    let started = s
+        .owner
+        .start_document(a, &s.target, &s.provider, expected.clone())
+        .await;
+    let first = serde_json::to_value(started.view.unwrap()).unwrap();
+    until(|| s.api.wire.posts() == 1).await;
+    let foreign = s
+        .owner
+        .start_document(b.clone(), &s.target, &s.provider, expected.clone())
+        .await;
+    assert!(foreign.view.is_none());
+    assert_eq!(foreign.document_id, bid);
+    assert_eq!(foreign.busy.unwrap().document_id, aid);
+    assert!(s.owner.stop_document(bid, &id(&first)).await.is_err());
+    assert_eq!(s.api.wire.posts(), 1);
+    s.owner.stop_document(aid, &id(&first)).await.unwrap();
+    assert!(s.owner.status_document(bid).view.is_none());
+    assert_eq!(s.owner.status_document(aid).view.unwrap().document_id, aid);
+    *s.api.wire.mode.lock().unwrap() = "ok";
+    let started = s
+        .owner
+        .start_document(b, &s.target, &s.provider, expected)
+        .await;
+    let second = serde_json::to_value(started.view.unwrap()).unwrap();
+    let done = s.finish(&id(&second)).await;
+    assert_eq!(done["state"], "complete", "{done}");
+    assert_eq!(done["documentId"], serde_json::to_value(bid).unwrap());
+    assert_eq!(
+        s.agent_posts().last().unwrap()["spec"]["systemPrompt"]["inline"],
+        "Bound alpha instructions.\n"
+    );
+    assert_eq!(
+        s.owner.status_document(aid).view.unwrap().state,
+        SendState::Unknown
+    );
+    let fresh = SendOwner::with_history_root(
+        Arc::new(AgentFolder::new(Some(s.home.path().into()))),
+        s.session.clone(),
+        Some(s.home.path().join("app-local")),
+    );
+    assert!(fresh.status_document(bid).view.is_none());
+    // Live document ownership remains session-only, while metadata-only history
+    // retains both attempts, including the selected non-sample folder's hashes.
+    let saved = fresh.history().unwrap();
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[0].id, id(&second));
+    assert_eq!(
+        saved[0].source,
+        SnapshotId::of(agent.as_bytes(), TESTS.as_bytes())
+    );
+    assert_eq!(
+        saved[0].verdict,
+        bridge_engine::send_summary::AttemptVerdict::Passed
+    );
+    assert!(saved[0].agent_uid.is_some());
+    assert_eq!(saved[1].id, id(&first));
+    assert_eq!(
+        saved[1].verdict,
+        bridge_engine::send_summary::AttemptVerdict::Unknown
+    );
+    assert!(saved[1].agent_uid.is_none());
+    assert_ne!(saved[0].planned_agent_name, saved[1].planned_agent_name);
+    s.owner.shutdown().await;
+}
+
 #[path = "cluster_preflight.rs"]
 mod preflight;
 

@@ -6,15 +6,15 @@ import Example from './Example';
 import { agentCall } from './agent-api';
 const agent = '---\nname: reader\ndescription: "Reads a page"\nmodel: file-model\nfuture: {keep: yes}\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools:\n    - kind: builtin\n      name: web_fetch\n---\n\nRead a page.\n';
 const path = '/home/creator/Orka/agents/web-reader/web-reader.agent.md';
-const idle = { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+const idle = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 function native(source = agent) {
   const writes: string[] = []; vi.stubGlobal('isTauri', true);
   mockIPC((command, args) => {
     if (command === 'workspace_catalog') return { defaultModel: 'file-model', models: { state: 'ready', items: [{ id: 'file-model' }] }, tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Read a page' }, { kind: 'builtin', name: 'file_read', description: 'Read a file' }] } };
-    if (command === 'agent_open') return { agent: source, tests: 'Checks', path };
+    if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: source, tests: 'Checks', path };
     if (command === 'setup_example') return { agent: source, tests: 'Checks' };
-    if (command === 'agent_save') { writes.push((args as { content: string }).content); return { agent: writes.at(-1), tests: 'Checks', path }; }
+    if (command === 'agent_save') { writes.push((args as { content: string }).content); return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: writes.at(-1), tests: 'Checks', path }; }
     return idle;
   });
   return writes;

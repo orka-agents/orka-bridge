@@ -1,9 +1,9 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { isSourceId, type SourceId } from '../designer/agent-api';
+import { isDocumentRef, isDocumentId, SAMPLE_DOCUMENT_ID, isSourceId, type DocumentRef, type SourceId } from '../designer/agent-api';
 import { isRunSnapshot, type RunSnapshot } from '../designer/run-api';
 
 export type SendView = Pick<RunSnapshot, 'acknowledged' | 'pending' | 'report'> & {
-  id: string; targetId: string; providerId: string; targetName: string | null;
+  documentId: string; id: string; targetId: string; providerId: string; targetName: string | null;
   source: SourceId | null; model: string | null; agentName: string | null;
   state: 'running' | 'complete' | 'unknown';
   stage: 'capture' | 'access' | 'preflight' | 'submit' | 'storage' | 'observe' | 'stopped' | 'done';
@@ -23,9 +23,9 @@ export const sendErrors = {
 function valid(v: unknown): v is SendView {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
   const row = v as Record<string, unknown>;
-  return Object.keys(row).sort().join(',') === 'acknowledged,agentName,error,id,model,pending,providerId,report,source,stage,state,storageError,targetId,targetName'
+  return Object.keys(row).sort().join(',') === 'acknowledged,agentName,documentId,error,id,model,pending,providerId,report,source,stage,state,storageError,targetId,targetName'
     && typeof row.storageError === 'boolean'
-    && uuid(row.id) && uuid(row.targetId) && uuid(row.providerId) && text(row.targetName)
+    && isDocumentId(row.documentId) && uuid(row.id) && uuid(row.targetId) && uuid(row.providerId) && text(row.targetName)
     && (row.source === null || isSourceId(row.source)) && text(row.model) && text(row.agentName)
     && ['running', 'complete', 'unknown'].includes(row.state as string)
     && ['capture', 'access', 'preflight', 'submit', 'storage', 'observe', 'stopped', 'done'].includes(row.stage as string)
@@ -33,15 +33,15 @@ function valid(v: unknown): v is SendView {
     && isRunSnapshot({ state: row.state, canRun: false, report: row.report, acknowledged: row.acknowledged, pending: row.pending, error: null });
 }
 export type SendCheck = {
-  source: SourceId | null; targetId: string; providerId: string; model: string | null;
+  documentId: string; source: SourceId | null; targetId: string; providerId: string; model: string | null;
   rows: { label: string; status: 'allowed' | 'blocked' | 'cannotCheck' | 'unverified'; message: string }[];
   canSend: boolean;
 };
 function isCheck(v: unknown): v is SendCheck {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
   const row = v as Record<string, unknown>;
-  return Object.keys(row).sort().join(',') === 'canSend,model,providerId,rows,source,targetId'
-    && uuid(row.targetId) && uuid(row.providerId) && text(row.model)
+  return Object.keys(row).sort().join(',') === 'canSend,documentId,model,providerId,rows,source,targetId'
+    && isDocumentId(row.documentId) && uuid(row.targetId) && uuid(row.providerId) && text(row.model)
     && (row.source === null || isSourceId(row.source))
     && Array.isArray(row.rows) && row.rows.length > 0 && row.rows.length <= 1024
     && row.rows.every(r => r && typeof r === 'object' && Object.keys(r).sort().join(',') === 'label,message,status'
@@ -50,11 +50,11 @@ function isCheck(v: unknown): v is SendCheck {
     && typeof row.canSend === 'boolean'
     && (!row.canSend || row.source !== null && row.model !== null && row.rows.every(r => r.status === 'allowed' || r.status === 'unverified'));
 }
-export async function sendPreflight(targetId: string, providerId: string): Promise<SendCheck> {
+export async function sendPreflight(targetId: string, providerId: string, documentId = SAMPLE_DOCUMENT_ID): Promise<SendCheck> {
   if (isTauri()) {
     try {
-      const value: unknown = await invoke('send_preflight', { targetId, providerId });
-      if (isCheck(value) && value.targetId === targetId && value.providerId === providerId) return value;
+      const value: unknown = await invoke('send_preflight', { documentId, targetId, providerId });
+      if (isCheck(value) && value.documentId === documentId && value.targetId === targetId && value.providerId === providerId) return value;
     } catch { /* Do not forward native diagnostics. */ }
   }
   throw Error('Destination checks could not be read. Check your cluster and try again.');
@@ -88,8 +88,16 @@ export async function sendHistory(): Promise<AttemptSummary[]> {
   }
   throw Error('Saved Send summaries could not be read. They are unavailable, not passing results.');
 }
-export async function sendCall(command: 'send_start' | 'send_status' | 'send_stop', args: Record<string, unknown> = {}): Promise<SendView | null> {
+export type SendStatus = { documentId: string; view: SendView | null; busy: DocumentRef | null };
+export async function sendCall(command: 'send_start' | 'send_status' | 'send_stop', args: Record<string, unknown> = {}): Promise<SendStatus> {
   if (!isTauri()) throw Error('Send is available only in the desktop app.');
-  try { const value: unknown = await invoke(command, args); if (valid(value) || command === 'send_status' && value === null) return value as SendView | null; } catch { /* No native diagnostics or credentials reach the screen. */ }
+  const documentId = args.documentId ?? SAMPLE_DOCUMENT_ID;
+  try {
+    const value: unknown = await invoke(command, { ...args, documentId });
+    if (typeof value === 'object' && value !== null && Object.keys(value).sort().join(',') === 'busy,documentId,view'
+      && 'documentId' in value && value.documentId === documentId && isDocumentId(value.documentId)
+      && 'view' in value && (value.view === null || valid(value.view) && value.view.documentId === documentId)
+      && 'busy' in value && (value.busy === null || isDocumentRef(value.busy))) return value as SendStatus;
+  } catch { /* No native diagnostics or credentials reach the screen. */ }
   throw Error('Send information could not be read. Nothing was retried. Reopen this view to check the result.');
 }

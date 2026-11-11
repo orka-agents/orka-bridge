@@ -3,6 +3,8 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Send from './Send';
+import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
+const idle = { documentId: SAMPLE_DOCUMENT_ID, view: null, busy: null };
 
 const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
 const summary = {
@@ -16,7 +18,7 @@ afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 function native(history: unknown) {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn((command: string) => {
-    if (command === 'send_status') return null;
+    if (command === 'send_status') return idle;
     if (command === 'send_history') return history;
     throw Error('Unexpected operation');
   });
@@ -57,7 +59,7 @@ test.each([
 test('history read failure is explicit and retry only rereads local summaries', async () => {
   vi.stubGlobal('isTauri', true); let broken = true;
   const ipc = vi.fn((command: string) => {
-    if (command === 'send_status') return null;
+    if (command === 'send_status') return idle;
     if (command === 'send_history') { if (broken) throw Error('PRIVATE_DIAGNOSTIC'); return [summary]; }
     throw Error('Unexpected operation');
   });
@@ -78,6 +80,22 @@ test('saved history remains readable without a selected cluster or permission to
   expect(ipc.mock.calls.every(([command]) => ['send_status', 'send_history'].includes(command))).toBe(true);
 });
 
+test('global history refreshes when another document’s Send releases admission', async () => {
+  vi.stubGlobal('isTauri', true);
+  const other = '00000000-0000-4000-8000-000000000003';
+  let busy: { documentId: string; name: string } | null = { documentId: other, name: 'other-agent' };
+  let history: unknown[] = [];
+  mockIPC(command => {
+    if (command === 'send_status') return { ...idle, busy };
+    if (command === 'send_history') return history;
+    throw Error('Unexpected operation');
+  });
+  render(panel());
+  await screen.findByText('No saved Sends yet.');
+  history = [summary]; busy = null;
+  expect(await screen.findByText('bridge-run-before-restart')).toBeTruthy();
+});
+
 test('empty history says no saved Sends, not that no remote Agents exist', async () => {
   native([]); render(panel());
   expect(await screen.findByText('No saved Sends yet.')).toBeTruthy();
@@ -88,11 +106,11 @@ test('a failed initial save explains that nothing was sent, rather than suggesti
   vi.stubGlobal('isTauri', true);
   mockIPC(command => {
     if (command === 'send_history') return [];
-    if (command === 'send_status') return {
-      id: summary.id, targetId: summary.id, providerId: summary.id, targetName: 'team-dev', source,
+    if (command === 'send_status') return { ...idle, view: {
+      documentId: SAMPLE_DOCUMENT_ID, id: summary.id, targetId: summary.id, providerId: summary.id, targetName: 'team-dev', source,
       model: 'model', agentName: summary.plannedAgentName, state: 'unknown', stage: 'submit',
       acknowledged: [], pending: null, report: null, error: 'storage', storageError: true,
-    };
+    } };
     throw Error('Unexpected operation');
   });
   render(panel());
@@ -104,11 +122,11 @@ test('a storage write failure stays visible with an unknown live result', async 
   vi.stubGlobal('isTauri', true);
   mockIPC(command => {
     if (command === 'send_history') return [summary];
-    if (command === 'send_status') return {
-      id: summary.id, targetId: summary.id, providerId: summary.id, targetName: 'team-dev', source,
+    if (command === 'send_status') return { ...idle, view: {
+      documentId: SAMPLE_DOCUMENT_ID, id: summary.id, targetId: summary.id, providerId: summary.id, targetName: 'team-dev', source,
       model: 'model', agentName: summary.plannedAgentName, state: 'unknown', stage: 'done',
       acknowledged: [], pending: null, report: null, error: null, storageError: true,
-    };
+    } };
     throw Error('Unexpected operation');
   });
   render(panel());
