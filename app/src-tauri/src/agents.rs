@@ -1,7 +1,7 @@
 //! Native document identity and registration. Paths are derived, never imported.
 pub use crate::agent_folder::DocumentId;
 use crate::agent_folder::{
-    child, invalid, options, read, regular, replace, valid_name, AgentFolder,
+    child, invalid, options, read, regular, replace, trace_error, valid_name, AgentFolder,
 };
 use bridge_runtime_protocol::MAX_FILE;
 use cap_fs_ext::DirExt;
@@ -135,20 +135,41 @@ impl Agents {
         // No document lock is held here. Other processes serialize on the same
         // regular file, and every writer reloads after acquiring that file lock.
         let _access = self.access.lock().map_err(|_| ERROR)?;
-        let root = self.root(true).map_err(|_| ERROR)?.ok_or(ERROR)?;
+        let root = self
+            .root(true)
+            .map_err(|e| {
+                trace_error("registry.root", e);
+                ERROR
+            })?
+            .ok_or(ERROR)?;
         let mut opts = options();
         opts.write(true).create(true);
-        let lock = root.open_with("registry.lock", &opts).map_err(|_| ERROR)?;
-        regular(&lock).map_err(|_| ERROR)?;
+        let lock = root.open_with("registry.lock", &opts).map_err(|e| {
+            trace_error("registry.lock_open", e);
+            ERROR
+        })?;
+        regular(&lock).map_err(|e| {
+            trace_error("registry.lock_regular", e);
+            ERROR
+        })?;
         let lock = lock.into_std();
-        lock.lock().map_err(|_| ERROR)?;
-        let mut registry = Registry::load(Some(&root)).map_err(|_| ERROR)?;
+        lock.lock().map_err(|e| {
+            trace_error("registry.lock_acquire", e);
+            ERROR
+        })?;
+        let mut registry = Registry::load(Some(&root)).map_err(|e| {
+            trace_error("registry.load", e);
+            ERROR
+        })?;
         let result = work(&mut registry)?;
         let bytes = serde_json::to_vec(&registry).map_err(|_| ERROR)?;
         if bytes.len() > MAX_FILE {
             return Err(ERROR);
         }
-        replace(&root, "registry.json", &bytes).map_err(|_| ERROR)?;
+        replace(&root, "registry.json", &bytes).map_err(|e| {
+            trace_error("registry.replace", e);
+            ERROR
+        })?;
         Ok(result)
     }
     pub fn list(&self) -> Result<Vec<AgentEntry>> {

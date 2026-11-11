@@ -56,14 +56,24 @@ pub struct AgentFolder {
 pub(crate) fn invalid() -> io::Error {
     io::ErrorKind::InvalidData.into()
 }
+pub(crate) fn trace_error(stage: &str, error: io::Error) -> io::Error {
+    eprintln!(
+        "REGISTRY_DIAG {stage} kind={:?} errno={:?}",
+        error.kind(),
+        error.raw_os_error()
+    );
+    error
+}
 pub(crate) fn child(parent: &Dir, name: &str) -> io::Result<Dir> {
     match parent.create_dir(name) {
         Ok(()) => (),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
         Err(e) => return Err(e),
     }
-    let directory = parent.open_dir_nofollow(name)?;
-    sync(parent)?; // Also retry a prior mkdir's failed parent flush.
+    let directory = parent
+        .open_dir_nofollow(name)
+        .map_err(|e| trace_error("child.open", e))?;
+    sync(parent).map_err(|e| trace_error("child.parent_sync", e))?;
     Ok(directory)
 }
 pub(crate) fn options() -> OpenOptions {
@@ -151,11 +161,14 @@ pub(crate) fn replace(dir: &Dir, name: &str, bytes: &[u8]) -> io::Result<()> {
     options.write(true).create_new(true);
     let mut file = dir.open_with(&temp, &options)?;
     let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
+        file.write_all(bytes)
+            .map_err(|e| trace_error("replace.write", e))?;
+        file.sync_all()
+            .map_err(|e| trace_error("replace.file_sync", e))?;
         drop(file);
-        dir.rename(&temp, dir, name)?;
-        sync(dir)
+        dir.rename(&temp, dir, name)
+            .map_err(|e| trace_error("replace.rename", e))?;
+        sync(dir).map_err(|e| trace_error("replace.directory_sync", e))
     })();
     if result.is_err() {
         let _ = dir.remove_file(&temp);

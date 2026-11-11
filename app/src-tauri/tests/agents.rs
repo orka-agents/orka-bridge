@@ -11,7 +11,7 @@ fn id() -> DocumentId {
     serde_json::from_value(json!(Uuid::new_v4().to_string())).unwrap()
 }
 fn root(home: &Path, name: &str) -> PathBuf {
-    home.join("Orka/agents").join(name)
+    home.join("Orka").join("agents").join(name)
 }
 fn fixture(home: &Path, name: &str, id: DocumentId) -> PathBuf {
     let root = root(home, name);
@@ -139,6 +139,20 @@ fn registrations_and_selection_survive_restart() {
     )
     .unwrap();
     assert!(restarted.register_created("helper").is_err());
+}
+#[test]
+fn registry_diagnostic_with_child_activity() {
+    let home = tempfile::tempdir().unwrap();
+    let folder = fixture(home.path(), "diagnostic", id());
+    let child = std::thread::spawn(move || {
+        for _ in 0..512 {
+            git(&folder, &["version"]);
+        }
+    });
+    for _ in 0..128 {
+        concurrent_owners_preserve_both_registrations();
+    }
+    child.join().unwrap();
 }
 #[test]
 fn concurrent_owners_preserve_both_registrations() {
