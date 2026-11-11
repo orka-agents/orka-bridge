@@ -499,6 +499,15 @@ fn verify(r: &Receipt, i: usize, object: &DynamicObject) -> Result<(), Error> {
                 return Err(Error::Conflict);
             }
         }
+        for key in ["lifecycle", "startupProbe", "livenessProbe"] {
+            if !(container[key].is_null()
+                || container[key]
+                    .as_object()
+                    .is_some_and(serde_json::Map::is_empty))
+            {
+                return Err(Error::Conflict);
+            }
+        }
         // The pinned image owns startup defaults; extra environment entries can replace them.
         for key in ["env", "envFrom"] {
             if !(container[key].is_null() || container[key].as_array().is_some_and(Vec::is_empty)) {

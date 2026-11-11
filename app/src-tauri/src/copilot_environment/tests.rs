@@ -680,6 +680,9 @@ async fn start_rejects_unexpected_profiles_and_environment_injection() {
         "selinux",
         "env",
         "env-from",
+        "lifecycle",
+        "startup-probe",
+        "liveness-probe",
     ] {
         let dir = tempfile::tempdir().unwrap();
         let owner = Owner::new(dir.path().into());
@@ -713,9 +716,20 @@ async fn start_rejects_unexpected_profiles_and_environment_injection() {
                     pod["containers"][0]["env"] =
                         serde_json::json!([{"name":"LD_PRELOAD","value":"/tmp/unexpected.so"}])
                 }
-                _ => {
+                "env-from" => {
                     pod["containers"][0]["envFrom"] =
                         serde_json::json!([{"secretRef":{"name":"unexpected-secret"}}])
+                }
+                "lifecycle" => {
+                    pod["containers"][0]["lifecycle"] = serde_json::json!({"postStart":{"exec":{"command":["touch","/home/creator/unexpected"]}}})
+                }
+                "startup-probe" => {
+                    pod["containers"][0]["startupProbe"] =
+                        serde_json::json!({"exec":{"command":["touch","/home/creator/unexpected"]}})
+                }
+                _ => {
+                    pod["containers"][0]["livenessProbe"] =
+                        serde_json::json!({"exec":{"command":["touch","/home/creator/unexpected"]}})
                 }
             }
             s.requests.clear();
