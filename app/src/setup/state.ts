@@ -1,5 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
-import { isPreflightFailure, type PreflightFailure } from './preflight';
+import { isPreflightFailure, type PreflightFailure } from './preflight-state';
 
 const localStates = ['notIntegrated', 'idle', 'preparing', 'installing', 'starting', 'ready', 'closing', 'closed', 'cancelled', 'failed'] as const;
 export type LocalVmState = (typeof localStates)[number];

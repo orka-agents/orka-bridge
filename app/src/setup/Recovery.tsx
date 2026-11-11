@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { helpDetails, workspaceRecovery } from './recovery-info';
-import { preflightRecovery, type PreflightFailure } from './preflight';
+import { preflightRecovery, type PreflightFailure } from './preflight-state';
 
 export default function Recovery({ detail, preflightFailure, disabled, onRetry, onCluster }: { detail?: string | null; preflightFailure?: PreflightFailure; disabled: boolean; onRetry: () => void; onCluster?: () => void }) {
   const [expanded, setExpanded] = useState(false);

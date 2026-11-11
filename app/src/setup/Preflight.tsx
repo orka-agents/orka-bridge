@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { readPreflight, type HostPreflight } from './preflight';
+import { readPreflight, type HostPreflight } from './preflight-state';
 import { formatSize } from './requirements';
 
 export default function Preflight({ requiredMemoryBytes, onBlocked }: { requiredMemoryBytes: number; onBlocked: (blocked: boolean) => void }) {

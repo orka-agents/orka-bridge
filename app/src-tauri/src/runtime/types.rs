@@ -3,13 +3,22 @@ use bridge_runtime_protocol::{ProtocolError, Uuid};
 use serde::{Deserialize, Serialize};
 use std::{any::Any, fs::File, path::PathBuf, sync::Arc};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PreflightFailure {
+    VirtualizationDisabled,
+    HypervisorUnavailable,
+    VirtualizationUnsupported,
+    InsufficientMemory,
+}
+
 #[derive(Debug)]
 pub enum RuntimeError {
     Io(std::io::Error),
     Busy,
     RetainedState,
     Unavailable,
-    Preflight(crate::setup::preflight::Failure),
+    Preflight(PreflightFailure),
     Closed,
     /// A native writer may still be alive; never admit another startup.
     StopUnconfirmed(String),
@@ -38,8 +47,8 @@ impl std::fmt::Display for UnconfirmedStop {
     }
 }
 impl std::error::Error for UnconfirmedStop {}
-impl From<crate::setup::preflight::Failure> for RuntimeError {
-    fn from(failure: crate::setup::preflight::Failure) -> Self {
+impl From<PreflightFailure> for RuntimeError {
+    fn from(failure: PreflightFailure) -> Self {
         Self::Preflight(failure)
     }
 }

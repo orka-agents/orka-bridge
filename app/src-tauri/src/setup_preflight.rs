@@ -23,14 +23,7 @@ pub enum Memory {
     Insufficient,
     Unknown,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Failure {
-    VirtualizationDisabled,
-    HypervisorUnavailable,
-    VirtualizationUnsupported,
-    InsufficientMemory,
-}
+pub use crate::runtime::types::PreflightFailure as Failure;
 impl Failure {
     pub fn summary(self) -> &'static str {
         match self {
