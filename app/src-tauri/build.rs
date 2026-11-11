@@ -27,6 +27,10 @@ fn main() {
             "cluster_contexts",
             "cluster_discover",
             "cluster_use",
+            "send_preflight",
+            "send_start",
+            "send_status",
+            "send_stop",
             "setup_requirements",
             "setup_open_help",
         ]));

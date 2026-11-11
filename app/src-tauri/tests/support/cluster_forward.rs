@@ -14,6 +14,7 @@ mod send;
 pub(super) struct Wire {
     calls: Mutex<Vec<(String, Value)>>,
     mode: Mutex<&'static str>,
+    catalog: Mutex<Option<Vec<(u16, Value)>>>,
     active: AtomicUsize,
     forwards: AtomicUsize,
 }
@@ -162,10 +163,24 @@ impl Wire {
                         json!({"items":[{"metadata":{"name":"model","namespace":"agents"},"status":{"ready":mode != "unready"}}],"metadata":{}}),
                     )
                 } else if route.ends_with("/tools") {
-                    (
-                        200,
-                        json!({"items":[{"name":"web_fetch","builtin":true}],"metadata":{}}),
-                    )
+                    let pages = self.catalog.lock().unwrap();
+                    if let Some(pages) = pages.as_ref() {
+                        let url = reqwest::Url::parse(&format!("http://fixture{path}")).unwrap();
+                        let index = url
+                            .query_pairs()
+                            .find(|(k, _)| k == "continue")
+                            .map(|(_, v)| {
+                                assert_eq!(v, "next+/ =?");
+                                1
+                            })
+                            .unwrap_or(0);
+                        pages[index].clone()
+                    } else {
+                        (
+                            200,
+                            json!({"items":[{"name":"web_fetch","builtin":true}],"metadata":{}}),
+                        )
+                    }
                 } else if route.ends_with("/agents") {
                     (200, json!({"items":[],"metadata":{}}))
                 } else if route.ends_with("/result") {

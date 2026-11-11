@@ -31,9 +31,12 @@ export default function Example({ active = true, readOnly = false, remote = fals
   const [error, setError] = useState<string>();
   const [saveState, setSaveState] = useState<SaveState>('saved');
   const [pendingSoul, setPendingSoul] = useState(false);
+  const pendingSoulCurrent = useRef(false);
+  const [reloading, setReloading] = useState(false);
+  const reloadAdmitted = useRef(false);
   const [view, setView] = useState<'Agent' | 'File'>('Agent');
   const [stale, setStale] = useState(false);
-  const observePendingSoul = useCallback((pending: boolean) => { setPendingSoul(pending); if (pending) setStale(true); }, []);
+  const observePendingSoul = useCallback((pending: boolean) => { pendingSoulCurrent.current = pending; setPendingSoul(pending); if (pending) setStale(true); }, []);
   const [sendOpen, setSendOpen] = useState(false);
   const [localRun, setLocalRun] = useState<RunSnapshot>();
   const observeRun = useCallback((value: RunSnapshot | undefined) => { setLocalRun(value); onRun?.(value); }, [onRun]);
@@ -84,10 +87,24 @@ export default function Example({ active = true, readOnly = false, remote = fals
     setSaveState('dirty'); clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush(); }, 500);
   };
+  async function reloadSource() {
+    if (readOnly || reloadAdmitted.current || busy.current || needsCommit.current || pendingSoulCurrent.current || latest.current !== saved.current) return;
+    reloadAdmitted.current = true; setReloading(true);
+    const before = latest.current;
+    try {
+      const value = await agentCall('agent_open');
+      // A file read must not replace edits made while it was in flight, including
+      // the separate soul field whose draft is not yet in latest.current.
+      if (latest.current !== before || saved.current !== before || busy.current || needsCommit.current || pendingSoulCurrent.current) return;
+      setPair(value); setDraft(value.agent); latest.current = saved.current = value.agent;
+      lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n';
+      setStale(false); onPair?.(value);
+    } finally { reloadAdmitted.current = false; setReloading(false); }
+  }
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const saveLabel = pendingSoul ? 'Unsaved changes' : { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
   const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
-    : readOnly ? 'Sending is unavailable while this example is read-only during setup'
+    : reloading ? 'Wait for your saved files to reload' : readOnly ? 'Sending is unavailable while this example is read-only during setup'
     : saveState !== 'saved' || pendingSoul ? 'Save your changes first' : undefined;
   return <section className="designer" aria-labelledby={active ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
@@ -120,7 +137,7 @@ export default function Example({ active = true, readOnly = false, remote = fals
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
-        <Send place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} />
+        <Send place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
         {!remote && readOnly ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
           : null}
         {!readOnly && <div hidden={remote}><Run source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} /></div>}

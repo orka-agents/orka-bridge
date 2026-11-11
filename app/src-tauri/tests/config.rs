@@ -77,6 +77,7 @@ fn agent_commands_are_granted_only_to_local_main_window() {
         "cluster_contexts",
         "cluster_discover",
         "cluster_use",
+        "send_preflight",
         "send_start",
         "send_status",
         "send_stop",
