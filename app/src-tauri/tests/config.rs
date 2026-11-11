@@ -10,7 +10,7 @@ fn native_window_uses_local_assets_and_fits_a_laptop() {
     assert_eq!(window.title, "Bridge");
     assert!(matches!(&window.url, WebviewUrl::App(path) if path.to_str() == Some("index.html")));
     assert!(window.decorations && window.resizable && !window.fullscreen);
-    assert_eq!(window.min_width, Some(960.0));
+    assert_eq!(window.min_width, Some(540.0));
     assert_eq!(window.min_height, Some(640.0));
     assert!(window.width >= 960.0 && window.height >= 640.0);
     assert!(!config.app.with_global_tauri);
@@ -46,8 +46,8 @@ fn release_context_embeds_fonts_and_all_license_notices() {
         "licenses/shell-MIT.txt",
         "licenses/Orka-MIT.txt",
         "licenses/Tauri-API-MIT.txt",
-        "licenses/Geist-OFL.txt",
-        "licenses/Geist-Mono-OFL.txt",
+        "licenses/Inter-OFL.txt",
+        "licenses/JetBrains-Mono-OFL.txt",
         "licenses/git2-MIT.txt",
         "licenses/libgit2-COPYING.txt",
         "licenses/libz-sys-MIT.txt",
@@ -60,7 +60,7 @@ fn release_context_embeds_fonts_and_all_license_notices() {
             .is_empty());
     }
     let names: Vec<_> = assets.iter().map(|(name, _)| name.into_owned()).collect();
-    for font in ["geist-latin-", "geist-mono-latin-"] {
+    for font in ["inter-latin-", "jetbrains-mono-latin-"] {
         assert!(names
             .iter()
             .any(|name| name.contains(font) && name.ends_with(".woff2")));

@@ -97,8 +97,8 @@ test('collision is unverified, not refused; details disclosure names its state',
   const user = userEvent.setup(); render(<Send place={place} source={source} stale={false} visible remote />);
   expect(await screen.findByText(/Implementation unverified/)).toBeTruthy();
   expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(false);
-  await user.click(screen.getByText('Show details', { selector: 'summary' }));
-  expect(screen.getByText('Hide details', { selector: 'summary' })).toBeTruthy();
+  await user.click(screen.getByText('Details'));
+  expect(document.querySelector('.card-details')?.hasAttribute('open')).toBe(true);
 });
 test('a late preflight for an old Provider cannot enable the current selection', async () => {
   let finish!: (value: unknown) => void;
@@ -161,8 +161,9 @@ test('Stop shows retained receipts and remount observes without replay', async (
   const ipc = native(idle, running); const user = userEvent.setup(); const view = render(<Example remote place={place} />);
   await user.click(await screen.findByRole('button', { name: 'Stop' }));
   expect(await screen.findByText(/cluster may still be running checks/)).toBeTruthy();
-  await user.click(screen.getByText('Show details', { selector: 'summary' }));
-  expect(screen.getByText('Agent: bridge-run-frozen')).toBeTruthy();
+  await user.click(screen.getByText('Details'));
+  expect(screen.getByRole('button', { name: 'Copy Agent' })).toBeTruthy();
+  expect(screen.getAllByText('brid…ozen').length).toBeGreaterThan(0);
   view.unmount(); render(<Example remote place={place} />);
   await screen.findByText(/Stopped watching/);
   expect(ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
@@ -180,8 +181,9 @@ test('an unknown submission names its uncertain resources, not a pass, and waits
   const ipc = native(idle, { ...running, state: 'unknown', stage: 'submit', error: 'submit', pending: { kind: 'Task', name: 'bridge-task-uncertain' } });
   const user = userEvent.setup(); render(<Example remote place={place} />);
   expect(await screen.findByText('Checks: unknown')).toBeTruthy();
-  await user.click(screen.getByText('Show details', { selector: 'summary' }));
-  expect(screen.getByText('Possibly created Task: bridge-task-uncertain')).toBeTruthy();
+  await user.click(screen.getByText('Details'));
+  expect(screen.getByRole('button', { name: 'Copy Possibly created Task' })).toBeTruthy();
+  expect(screen.getByText('brid…tain')).toBeTruthy();
   expect(ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
   await user.click(screen.getByRole('button', { name: 'Run all checks' }));
   await screen.findByText('Running checks on team-dev…');

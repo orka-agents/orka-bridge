@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import ApplicationServices
 import Vision
 
 func require(_ condition: Bool, _ message: String) {
@@ -91,11 +92,12 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture Bridge")
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
-        let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(NSColorSpace.deviceRGB)
+        let colour = bitmap.colorAt(x: bitmap.pixelsWide - 8, y: bitmap.pixelsHigh - 8)?.usingColorSpace(NSColorSpace.deviceRGB)
         else { fatalError("Cannot sample native screenshot") }
-    let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
-    require(theme == "dark" ? brightness < 0.2 : brightness > 0.9,
-            "Native screenshot does not show the expected \(theme) theme")
+    let expected: [CGFloat] = theme == "dark" ? [26, 29, 33] : [228, 226, 219]
+    let actual = [colour.redComponent, colour.greenComponent, colour.blueComponent].map { $0 * 255 }
+    require(zip(actual, expected).allSatisfy { abs($0 - $1) < 8 },
+            "Native screenshot does not show the expected \(theme) Estuary chrome: \(actual)")
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
@@ -195,7 +197,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         let seen = try capture("send-probe", "Designer")
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
-        if let control = observed.first(where: { $0 == label || (label == "Show details" && $0 == "• \(label)") }) {
+        if let control = observed.first(where: { $0 == label || (label == "Details" && $0.lowercased().contains("details")) }) {
             clickText(control, in: seen)
             return
         }
@@ -216,9 +218,8 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" 
 if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) {
     // The owned form works before any workspace exists. Exercise its real writer,
     // not injected renderer data; the later setup preview must remain read-only.
-    // Welcome focuses the choice heading. Search, Clusters, then Designer are
-    // the three preceding keyboard stops; don't depend on OCR splitting tab copy.
-    key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
+    // Welcome focuses the choice heading. Clusters and Designer precede it.
+    key(48, shift: true); key(48, shift: true); key(49)
     let form = try capture("agent-form", "Designer")
     guard let label = form.first(where: {
         let text = $0.topCandidates(1).first?.string ?? ""
@@ -282,8 +283,8 @@ clickTab("Designer", overview)
 let designer = try capture("designer-pointer", "Designer")
 clickTab("Clusters", designer)
 try capture("clusters-pointer", "Clusters")
-// The keyboard-reachable Search explanation adds a stop after navigation.
-key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
+// From Clusters, Designer and Overview are the preceding navigation stops.
+key(48, shift: true); key(48, shift: true); key(49)
 try capture("overview-keyboard", "Overview")
 key(48); key(49); try capture("designer-keyboard", "Designer")
 key(48); key(36); try capture("clusters-keyboard", "Clusters")
@@ -341,7 +342,7 @@ let rect = window()!.1
 // The display may constrain the initial size. Derive the minimum frame from
 // AppKit's content-to-frame conversion, not the requested initial dimensions.
 let minimumFrame = NSWindow.frameRect(
-    forContentRect: CGRect(x: 0, y: 0, width: 960, height: 640),
+    forContentRect: CGRect(x: 0, y: 0, width: 540, height: 640),
     styleMask: [.titled, .closable, .miniaturizable, .resizable])
 let start = CGPoint(x: rect.maxX - 10, y: rect.maxY - 5)
 let end = CGPoint(x: rect.minX + minimumFrame.width - 10, y: rect.minY + minimumFrame.height - 5)
@@ -356,6 +357,25 @@ Thread.sleep(forTimeInterval: 0.5)
 let minimum = window()!.1
 require(abs(minimum.width - minimumFrame.width) < 3 && abs(minimum.height - minimumFrame.height) < 3, "Native minimum-size resize not verified: \(minimum), expected \(minimumFrame.size)")
 try capture("clusters-minimum", "Clusters")
+// Set the CI-owned native content area to 540x900, not a browser viewport.
+let application = AXUIElementCreateApplication(app.processIdentifier)
+var windowsValue: CFTypeRef?
+require(AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windowsValue) == .success,
+        "Cannot read native windows for compact walk")
+let nativeWindow = (windowsValue as! [AXUIElement])[0]
+var origin = CGPoint(x: 20, y: 40)
+require(AXUIElementSetAttributeValue(nativeWindow, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &origin)!) == .success, "Cannot position compact window")
+let compactFrame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: 540, height: 900),
+    styleMask: [.titled, .closable, .miniaturizable, .resizable])
+var compactSize = compactFrame.size
+require(AXUIElementSetAttributeValue(nativeWindow, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &compactSize)!) == .success, "Cannot resize compact window")
+Thread.sleep(forTimeInterval: 0.5)
+require(abs(window()!.1.width - compactSize.width) < 3 && abs(window()!.1.height - compactSize.height) < 3,
+        "Native 540x900 content area not verified: \(window()!.1)")
+let compactClusters = try capture("clusters-compact", "Clusters")
+clickTab("Designer", compactClusters)
+let compactDesigner = try capture("designer-compact", "Designer")
+clickTab("Clusters", compactDesigner)
 print("PASS native walk: pointer, Shift-Tab/Tab, Space, Enter and minimum window")
 if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let local = try capture("before-cluster", "Clusters")
@@ -437,7 +457,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 1)
     let result = try capture("send-result", "Designer")
     require(result.contains { $0.topCandidates(1).first?.string == "Checks: pass" }, "Fixture-backed Send did not pass its real assertions")
-    try clickSendControl("Show details", scrolling: -350)
+    try clickSendControl("Details", scrolling: -350)
     scrollMain(-350)
     let details = try capture("send-result-details", "Designer")
     require(details.contains { ($0.topCandidates(1).first?.string ?? "").contains("bridge-run-") }, "Agent identity is not visible in native Send details")

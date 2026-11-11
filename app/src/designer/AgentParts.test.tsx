@@ -1,13 +1,17 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import Example from './Example';
 import { agentCall } from './agent-api';
 const agent = '---\nname: reader\ndescription: "Reads a page"\nmodel: file-model\nfuture: {keep: yes}\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools:\n    - kind: builtin\n      name: web_fetch\n---\n\nRead a page.\n';
 const path = '/home/creator/Orka/agents/web-reader/web-reader.agent.md';
 const idle = { state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
-afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
+beforeEach(() => {
+  // jsdom has popover hiding but no top-layer show/focus implementation.
+  Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; this.querySelector('input')?.focus(); } });
+});
+afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
 function native(source = agent) {
   const writes: string[] = []; vi.stubGlobal('isTauri', true);
   mockIPC((command, args) => {
@@ -22,10 +26,12 @@ function native(source = agent) {
 test('Instructions autosave through the existing writer without changing metadata', async () => {
   const writes = native(); render(<Example />);
   const field = await screen.findByRole('textbox', { name: 'Instructions' });
-  expect((field as HTMLTextAreaElement).value).toBe('\nRead a page.\n');
+  expect((field as HTMLTextAreaElement).value).toBe('Read a page.\n');
   fireEvent.change(field, { target: { value: 'New instructions\n' } });
-  await waitFor(() => expect(writes).toEqual([agent.replace('\nRead a page.\n', 'New instructions\n')]));
-  await screen.findByText('Saved');
+  await waitFor(() => expect(writes).toEqual([agent.replace('Read a page.\n', 'New instructions\n')]));
+  await waitFor(() => expect(screen.queryByText('Saving…')).toBeNull());
+  expect(screen.queryByText('Saved')).toBeNull();
+  expect(writes[0]).toContain('---\n\nNew instructions\n');
 });
 test('a no-op visit, disclosure and switches never write the file', async () => {
   const writes = native(agent.replaceAll('\n', '\r\n')); const user = userEvent.setup(); render(<Example />);

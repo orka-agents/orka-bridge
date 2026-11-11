@@ -6,13 +6,13 @@ const palettes = [...css.matchAll(/:root\s*\{([^}]+)\}/g)].map(([, block]) =>
   Object.fromEntries([...block.matchAll(/--([\w-]+):\s*([^;]+);/g)].map(([, name, value]) => [name, value.trim()])),
 );
 
-describe('Tuxedo theme contract', () => {
+describe('Estuary theme contract', () => {
   it.each([
-    ['light', 0, '#FCFCFD', '#0B0B0C', '#0369A1', '#15803D'],
-    ['dark', 1, '#0E0E10', '#F4F4F5', '#4CB8F5', '#4ADE80'],
+    ['light', 0, '#f2f1ed', '#1b2026', '#1f62b0', '#17793f'],
+    ['dark', 1, '#1f2226', '#e6e4df', '#8ab8ea', '#7cc598'],
   ] as const)('%s keeps neutral chrome and Orka phase meanings', (_, index, page, ink, running, succeeded) => {
     expect(palettes[index]).toMatchObject({
-      'color-page': page, 'color-text': ink, 'color-action': ink,
+      'color-page': page, 'color-text': ink,
       'color-status-running': running, 'color-status-succeeded': succeeded,
     });
   });
@@ -30,10 +30,9 @@ describe('Tuxedo theme contract', () => {
       }
     }
   });
-  it('uses the system dark preference and bundled Geist families', () => {
+  it('uses the system dark preference and bundled reading and code families', () => {
     expect(css).toContain('@media (prefers-color-scheme: dark)');
-    expect(palettes[0]['font-ui']).toContain('Geist Variable');
-    expect(palettes[0]['font-mono']).toContain('Geist Mono Variable');
-    expect(css).not.toContain('Estuary');
+    expect(palettes[0]['font-ui']).toContain('Inter Variable');
+    expect(palettes[0]['font-mono']).toContain('JetBrains Mono Variable');
   });
 });

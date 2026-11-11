@@ -50,11 +50,22 @@ test.each([
 });
 test('uncertain submission names retained receipts and never retries automatically', async () => {
   vi.stubGlobal('isTauri', true); const ipc = vi.fn((command: string) => { expect(command).toBe('setup_run_status'); return { ...idle, state: 'unknown', error: 'submit', acknowledged: [{ kind: 'Agent', name: 'bridge-run-example', uid: 'uid-a' }], pending: { kind: 'Task', name: 'bridge-task-example' } }; }); mockIPC(ipc); render(<Run />);
-  expect(await screen.findByText(/bridge-task-example/)).toBeTruthy(); expect(screen.getByText(/bridge-run-example/)).toBeTruthy();
+  expect(await screen.findAllByText('brid…mple')).toHaveLength(2);
+  expect(screen.getByRole('button', { name: 'Copy Possibly created Task', hidden: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Copy Agent', hidden: true })).toBeTruthy();
   expect(ipc.mock.calls.every(([cmd]) => cmd === 'setup_run_status')).toBe(true);
 });
 test.each([null, { ...idle, modelConnected: 'true' }, { ...idle, state: ['idle'] }, { ...idle, error: 'PRIVATE_DIAGNOSTIC' }, { ...complete, extra: 'PRIVATE_DIAGNOSTIC' }, { ...complete, report: { ...complete.report, verdict: 'passed', cases: [{ secret: 'PRIVATE_DIAGNOSTIC' }] } }])('malformed Run data never renders raw diagnostics', async value => {
   vi.stubGlobal('isTauri', true); mockIPC(() => value); render(<Run />); expect(await screen.findByText('Run information is not supported by this build.')).toBeTruthy(); expect(document.body.textContent).not.toContain('PRIVATE_DIAGNOSTIC');
+});
+test('an older pass is a stale pill and never a green result', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => ({ ...complete, report: { ...complete.report, verdict: 'passed' } }));
+  const { container } = render(<Run stale />);
+  await screen.findByText('Not run since your edit');
+  expect(container.querySelector('.pill.status-stale')).toBeTruthy();
+  expect(container.querySelector('.pill.status-passed')).toBeNull();
+  expect(screen.getByText('<script>not executable</script>').tagName).toBe('P');
 });
 test('preview never fabricates a native test or sends Run IPC', async () => {
   vi.stubGlobal('isTauri', false); const ipc = vi.fn(); mockIPC(ipc); render(<Run />);

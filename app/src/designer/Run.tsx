@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { CardSection, Details, Elapsed, GeneratedValue, LongCard, StatusIcon, StatusPill, type Status } from '../components/DesignSystem';
 import { errors, runCall, type RunSnapshot } from './run-api';
 import { sameSource, type SourceId } from './agent-api';
 export default function Run({ onSnapshot, blocked = false, stale = false, onStart, source }: { onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId }) {
@@ -28,28 +29,34 @@ export default function Run({ onSnapshot, blocked = false, stale = false, onStar
   };
   const running = sending || snapshot?.state === 'running';
   const outdated = stale || (sourceCurrent === false && !!snapshot?.report);
-  return <div className="example-run" aria-labelledby="run-title">
-    <h3 id="run-title">Test on the local VM</h3>
-    <p className="muted">Run creates an Orka Agent and Task from these exact files.{snapshot?.modelConnected === false && ' Connect the model in Clusters first.'}</p>
-    <button type="button" className="setup-button" disabled={blocked || running || !snapshot?.canRun} title={blocked ? 'Save your changes before running the check' : running ? 'Check is running' : !snapshot?.canRun ? 'Connect your workspace and AI in Clusters first' : undefined} onClick={() => { void start(); }}>Run test</button>
-    {outdated && <p role="status">Not run since your change. Any result below is from the earlier file.</p>}
-    {running && <p role="status">Running on the local VM…</p>}
-    {message && <p role="status">{message}</p>}
-    {snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected) && <p role="alert">{errors[snapshot.error]}</p>}
-    {snapshot?.pending && <p>Possibly created {snapshot.pending.kind}: {snapshot.pending.name}</p>}
-    {snapshot?.report && <>
-      <p role="status">{outdated ? 'Earlier test verdict' : 'Test verdict'}: {snapshot.report.verdict}</p>
-      {snapshot.report.cases.map(c => <div key={c.id}>
-        <h4>{c.id}</h4>
-        <p>Task: {c.phase}</p>
-        <h4>Answer</h4>
-        {c.answer !== null ? <pre className="example-source" tabIndex={0}>{c.answer}</pre> : <p>No answer was observed.</p>}
-        <h4>Completed tool calls</h4>
-        {c.completedTools.length ? <ul>{c.completedTools.map(tool => <li key={tool}>{tool}</li>)}</ul> : <p>No completed tool calls were observed. Missing evidence is unknown.</p>}
-        <h4>Assertions</h4>
-        <ul>{c.assertions.map(a => <li key={a.id}><span>{a.kind}: {a.verdict}</span> <span className="muted">({a.id})</span></li>)}</ul>
-      </div>)}
-    </>}
-    {!!snapshot?.acknowledged.length && <details><summary>Acknowledged resources</summary><ul>{snapshot.acknowledged.map(r => <li key={r.uid}>{r.kind}: {r.name}</li>)}</ul></details>}
+  const state: Status = outdated ? 'stale' : running ? 'running' : snapshot?.error ? 'failed' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' ? 'failed' : 'not-started';
+  return <div className="example-run" aria-label="Test on the local VM">
+    <LongCard title="Test on the local VM" status={<StatusPill state={state} />} summary={<>Run creates an Orka Agent and Task from these exact files.{snapshot?.modelConnected === false && ' Connect the model in Clusters first.'}</>}
+      action={<button type="button" className="setup-button" disabled={blocked || running || !snapshot?.canRun} title={blocked ? 'Save your changes before running the check' : running ? 'Check is running' : !snapshot?.canRun ? 'Connect your workspace and AI in Clusters first' : undefined} onClick={() => { void start(); }}>Run test</button>}>
+      <CardSection title="What happened">
+        {outdated && <p role="status">Not run since your change. Any result below is from the earlier file.</p>}
+        {running && <><p role="status">Running on the local VM…</p><Elapsed /></>}
+        {message && <p role="status">{message}</p>}
+        {snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected) && <p role="alert">{errors[snapshot.error]}</p>}
+        {snapshot?.report && <div className={outdated ? 'result-stale' : undefined}>
+          <p role="status">{outdated ? 'Earlier test verdict' : 'Test verdict'}: {snapshot.report.verdict}</p>
+          {snapshot.report.cases.map(c => <div className="result-row" key={c.id}>
+            <StatusIcon state={outdated ? 'stale' : c.verdict === 'unknown' ? 'not-started' : c.verdict} /><h4><code>{c.id}</code></h4>
+            <p>Task: {c.phase}</p>
+            <h4>Answer</h4>
+            {c.answer !== null ? <p className="reading">{c.answer}</p> : <p>No answer was observed.</p>}
+            <h4>Completed tool calls</h4>
+            {c.completedTools.length ? <ul>{c.completedTools.map(tool => <li key={tool}><code>{tool}</code></li>)}</ul> : <p>No completed tool calls were observed. Missing evidence is unknown.</p>}
+            <h4>Assertions</h4>
+            <ul>{c.assertions.map(a => <li key={a.id}><span>{a.kind}: {a.verdict}</span> <code className="muted">({a.id})</code></li>)}</ul>
+          </div>)}
+        </div>}
+      </CardSection>
+      {(!!snapshot?.acknowledged.length || snapshot?.pending || snapshot?.source) && <Details hint="Resources and file hashes">
+        {snapshot.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Check file hash" value={snapshot.source.tests} /></>}
+        {snapshot.acknowledged.map(r => <GeneratedValue key={r.uid} label={r.kind} value={r.name} />)}
+        {snapshot.pending && <GeneratedValue label={`Possibly created ${snapshot.pending.kind}`} value={snapshot.pending.name} />}
+      </Details>}
+    </LongCard>
   </div>;
 }

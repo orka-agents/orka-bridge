@@ -3,16 +3,15 @@ import { agentInfo } from '../designer/agent-api';
 import { formatSize } from './requirements';
 import { type ExamplePair, loadExample, type SetupStatus } from './state';
 import Recovery from './Recovery';
+import { StatusIcon, type Status } from '../components/DesignSystem';
 import { modelDetails } from './recovery-info';
 import './steps.css';
 
 export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
 
 function PhaseIcon({ phase }: { phase: 'done' | 'current' | 'waiting' | 'failed' }) {
-  return <svg className={`icon step-icon step-${phase}`} viewBox="0 0 24 24" aria-hidden="true">
-    {phase === 'done' ? <path d="m5 12 4 4L19 6" /> : phase === 'failed' ? <><circle cx="12" cy="12" r="9" /><path d="m9 9 6 6m0-6-6 6" /></>
-      : <><circle cx="12" cy="12" r="9" /><path d={phase === 'current' ? 'M12 3v18' : 'M12 8v4l3 2'} /></>}
-  </svg>;
+  const state: Status = phase === 'done' ? 'passed' : phase === 'failed' ? 'failed' : phase === 'current' ? 'running' : 'not-started';
+  return <StatusIcon state={state} />;
 }
 export default function Steps({ status, busy, stopping, error, modelConnected, firstCheck, onCancel, onRestart, onCluster, onChange, onOpenExample }: {
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean; firstCheck?: CheckStepState;
@@ -54,8 +53,8 @@ export default function Steps({ status, busy, stopping, error, modelConnected, f
           </div>}</>}
         </div>
       </li>
-      <li className={modelConnected ? 'step-done' : ready ? 'step-current' : 'step-waiting'}><PhaseIcon phase={modelConnected ? 'done' : ready ? 'current' : 'waiting'} /><b>Choose the AI your agent uses</b><span className="step-result">{modelConnected ? 'Connected' : ready ? 'Needs you' : 'Waiting'}</span></li>
-      <li className={`step-${checkPhase}`}><PhaseIcon phase={checkPhase} /><b>Run your first test</b><span className="step-result">{checkLabel}</span></li>
+      <li className={modelConnected ? 'step-done' : ready ? 'step-current' : 'step-waiting'}><StatusIcon state={modelConnected ? 'passed' : ready ? 'needs-you' : 'not-started'} /><b>Choose the AI your agent uses</b><span className="step-result">{modelConnected ? 'Connected' : ready ? 'Needs you' : 'Waiting'}</span></li>
+      <li className={`step-${checkPhase}`}><StatusIcon state={firstCheck === 'stale' ? 'stale' : firstCheck === 'running' ? 'running' : modelConnected && !firstCheck ? 'needs-you' : checkPhase === 'done' ? 'passed' : checkPhase === 'failed' ? 'failed' : 'not-started'} /><b>Run your first test</b><span className="step-result">{checkLabel}</span></li>
     </ol>
     <div className="workspace-step-actions">
       {['preparing', 'installing', 'starting'].includes(status.localVm) && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</button><span className="muted">Cancel keeps what has arrived.</span></>}

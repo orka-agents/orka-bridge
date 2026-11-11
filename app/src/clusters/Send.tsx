@@ -4,6 +4,7 @@ import type { RunSnapshot } from '../designer/run-api';
 import type { SelectedPlace } from './api';
 import { type SendCheck, type SendView, sendCall, sendErrors, sendPreflight } from './send-api';
 import './clusters.css';
+import { CardSection, Details, Elapsed, GeneratedValue, LongCard, StatusIcon, StatusPill, type Status } from '../components/DesignSystem';
 
 export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failingCheck?: string; blocked?: string; onProceed: () => void; onFix: () => void }) {
   const [warning, setWarning] = useState(false);
@@ -41,7 +42,6 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const provider = place.kind === 'cluster' ? place.providers?.find(p => p.id === providerId) : undefined;
   const [refresh, setRefresh] = useState(0);
   const [check, setCheck] = useState<{ key: string; value?: SendCheck; error?: string }>();
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [reloadError, setReloadError] = useState<string>();
   const targetId = target?.id;
   const agentHash = source?.agent; const testsHash = source?.tests;
@@ -83,9 +83,13 @@ export default function Send({ place, source, model, local, stale, blocked, visi
   const current = !stale && sameSource(source, snapshot?.source) === true;
   const localCurrent = !stale && sameSource(source, local?.source) === true;
   const targetName = snapshot?.targetName ?? (snapshot?.targetId === target?.id ? target?.context_name : undefined);
+  const resultState: Status = snapshot && !current ? 'stale' : running || busy ? 'running' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' || snapshot?.error ? 'failed' : reason ? 'needs-you' : 'not-started';
   return <section tabIndex={-1} className="send-panel" aria-label="Send and cluster checks" hidden={!visible && !remote && !running}>
-    <h3>{visible ? 'Send your agent' : 'Checks on your cluster'}</h3>
-    <p>The saved agent and check files go together. Each Send creates a new Agent, kept on the cluster even if a check fails.</p>
+    <LongCard title={visible ? 'Send your agent' : 'Checks on your cluster'} status={<StatusPill state={resultState} />} summary="The saved agent and check files go together. Each Send creates a new Agent, kept on the cluster even if a check fails."
+      action={<div className="workspace-step-actions"><button type="button" className="setup-button" disabled={!!reason || busy || running || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run checks' : 'Run all checks'}</button>
+      {running && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void mutate('send_stop'); }}>Stop</button>}
+    </div>}>
+    <CardSection title="What you send">
     <dl className="cluster-details"><div><dt>Source</dt><dd>Your saved agent file{model ? ` · ${model}` : ''}</dd></div>
       <div><dt>This computer</dt><dd>{local?.report ? localCurrent ? `Checks: ${words[local.report.verdict]}` : 'Changed since local checks, or revision not confirmed' : 'No local check result'}</dd></div>
       <div><dt>Destination</dt><dd>{target ? `${target.context_name} · ${target.watched_namespace}` : 'Choose a cluster'}</dd></div>
@@ -105,29 +109,32 @@ export default function Send({ place, source, model, local, stale, blocked, visi
       }}>Reload saved files</button> : <button type="button" className="workspace-secondary" disabled={busy || running} onClick={() => setRefresh(v => v + 1)}>Check again</button>)}
       {reloadError && <p role="alert">{reloadError}</p>}
     </section>}
-    <div className="workspace-step-actions"><button type="button" className="setup-button" disabled={!!reason || busy || running || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run checks' : 'Run all checks'}</button>
-      {running && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void mutate('send_stop'); }}>Stop</button>}
-    </div>
+    </CardSection>
+    <CardSection title="What happened">
     {message && <p role="alert">{message}</p>}
-    {running && <p role="status">Running checks on {targetName ?? 'the cluster'}…</p>}
+    {running && <><p role="status">Running checks on {targetName ?? 'the cluster'}…</p><Elapsed /></>}
     {snapshot?.stage === 'stopped' && <p role="status">Stopped watching. The cluster may still be running checks.</p>}
     {snapshot?.error && snapshot.stage !== 'stopped' && <p role="alert">{sendErrors[snapshot.error as keyof typeof sendErrors]}</p>}
     {snapshot && !samePlace && <p role="status">This result belongs to another cluster or Provider. It is not validation of your current selection.</p>}
     {snapshot && !current && <p className="muted">This result is for the captured file, not confirmed as your current revision.</p>}
     {snapshot?.state === 'unknown' && !snapshot.report && <p role="status">Checks: unknown</p>}
-    {snapshot?.report && <><p role="status">Checks: {words[snapshot.report.verdict]}</p>
-      {snapshot.report.cases.map(check => <div key={check.id}><h4>{check.id}: {words[check.verdict]}</h4>
-        {check.answer !== null ? <pre className="example-source" tabIndex={0}>{check.answer}</pre> : <p>No answer was observed.</p>}
+    {snapshot?.report && <div className={!current ? 'result-stale' : undefined}><p role="status">Checks: {words[snapshot.report.verdict]}</p>
+      {snapshot.report.cases.map(check => <div className="result-row" key={check.id}><StatusIcon state={!current ? 'stale' : check.verdict === 'unknown' ? 'not-started' : check.verdict} /><h4><code>{check.id}</code>: {words[check.verdict]}</h4>
+        {check.answer !== null ? <p className="reading">{check.answer}</p> : <p>No answer was observed.</p>}
         {!!check.completedTools.length && <p>Completed tool calls: {check.completedTools.join(', ')}</p>}
         <ul>{check.assertions.map(a => <li key={a.id}>{a.id}: {words[a.verdict]}</li>)}</ul>
       </div>)}
-    </>}
-    {snapshot && <details onToggle={event => setDetailsOpen(event.currentTarget.open)}><summary>{detailsOpen ? 'Hide details' : 'Show details'}</summary><dl className="cluster-details"><div><dt>Result destination</dt><dd>{targetName ?? 'Not confirmed'}</dd></div>
-      <div><dt>Model sent</dt><dd>{snapshot.model ?? 'Not captured'}</dd></div><div><dt>Planned Agent</dt><dd>{snapshot.agentName ?? 'Not prepared'}</dd></div>
-      <div><dt>Agent file hash</dt><dd>{snapshot.source?.agent ?? 'Not captured'}</dd></div><div><dt>Check file hash</dt><dd>{snapshot.source?.tests ?? 'Not captured'}</dd></div>
-    </dl><ul>{snapshot.acknowledged.map(r => <li key={`${r.kind}-${r.uid}`}>{r.kind}: {r.name}</li>)}</ul>
-      {snapshot.pending && <p>Possibly created {snapshot.pending.kind}: {snapshot.pending.name}</p>}
+    </div>}
+    </CardSection>
+    {snapshot && <Details hint="Resources and file hashes"><dl className="cluster-details"><div><dt>Result destination</dt><dd>{targetName ?? 'Not confirmed'}</dd></div>
+      <div><dt>Model sent</dt><dd><code>{snapshot.model ?? 'Not captured'}</code></dd></div>
+    </dl>
+      {snapshot.agentName && <GeneratedValue label="Planned Agent" value={snapshot.agentName} />}
+      {snapshot.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Check file hash" value={snapshot.source.tests} /></>}
+      {snapshot.acknowledged.map(r => <GeneratedValue key={`${r.kind}-${r.uid}`} label={r.kind} value={r.name} />)}
+      {snapshot.pending && <GeneratedValue label={`Possibly created ${snapshot.pending.kind}`} value={snapshot.pending.name} />}
       <p>Results are kept only while Bridge is open. Stop ends watching and prevents further submissions; it does not cancel checks already sent.</p>
-    </details>}
+    </Details>}
+    </LongCard>
   </section>;
 }

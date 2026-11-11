@@ -2,7 +2,13 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
-import Example from './Example';
+import { useState, type ComponentProps } from 'react';
+import ExampleView from './Example';
+// Exercise the save-state boundary used by App's single status-bar label.
+function Example(props: ComponentProps<typeof ExampleView>) {
+  const [state, setState] = useState('');
+  return <><ExampleView {...props} onSaveState={value => { setState(value); props.onSaveState?.(value); }} /><output aria-label="Save-state observer">{state === 'saved' ? 'Saved' : ''}</output></>;
+}
 const pair = { agent: '---\nname: web-reader\ndescription: Reads a page you name.\n---\nRead the page.\n', tests: 'Checks from disk' };
 const idle = { state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
