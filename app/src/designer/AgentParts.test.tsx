@@ -43,6 +43,18 @@ test('new leading blank lines remain visible and removable without changing the 
   expect(field.value).toBe('Read a page.\n');
   await waitFor(() => expect(writes.at(-1)).toBe(agent));
 });
+test('removing the separator in File view does not hide a later Agent-view newline', async () => {
+  native(); const user = userEvent.setup(); render(<Example />);
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  const file = screen.getByRole('textbox', { name: 'Agent file' });
+  fireEvent.change(file, { target: { value: agent.replace('---\n\nRead', '---\nRead') } }); fireEvent.blur(file);
+  await waitFor(() => expect(screen.queryByText('Saving…')).toBeNull());
+  await user.click(screen.getByRole('button', { name: 'Agent' }));
+  const field = screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement;
+  fireEvent.change(field, { target: { value: '\nRead a page.\n' } });
+  expect(field.value).toBe('\nRead a page.\n');
+});
 test('a no-op visit, disclosure and switches never write the file', async () => {
   const writes = native(agent.replaceAll('\n', '\r\n')); const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('textbox', { name: 'Instructions' }));

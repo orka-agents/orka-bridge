@@ -13,7 +13,9 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
 }) {
   const form = readForm(source); const id = useId();
   // Markdown's separating blank lines stay in the file, not above the prompt.
-  const [separator] = useState(() => form.instructions.match(/^(?:[ \t]*\r?\n)+/)?.[0] ?? '');
+  const [separator, setSeparator] = useState(() => form.instructions.match(/^(?:[ \t]*\r?\n)+/)?.[0] ?? '');
+  // A raw File edit can remove the original separator; do not hide a later user newline.
+  if (separator && !form.instructions.startsWith(separator)) setSeparator('');
   const leading = form.instructions.startsWith(separator) ? separator : '';
   const instructions = form.instructions.slice(leading.length);
   const input = useRef<HTMLTextAreaElement>(null);
