@@ -96,7 +96,7 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
           : <button className="part-button" type="button" ref={add} aria-expanded={picker} aria-controls={`${id}-picker`} onClick={() => { if (picker) close(); else setPicker(true); }}><span aria-hidden="true">+ </span>Add a tool</button>}
       </div>
       {toolReason && <p className="muted">{toolReason}</p>}
-      {picker && !toolReason && <div ref={popover} popover="auto" id={`${id}-picker`} className="tool-picker" onToggle={event => { if (event.newState === 'closed') { setPicker(false); setQuery(''); } }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
+      {picker && !toolReason && <div role="dialog" aria-label="Choose a tool" ref={popover} popover="auto" id={`${id}-picker`} className="tool-picker" onToggle={event => { if (event.newState === 'closed') { setPicker(false); setQuery(''); } }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
         <button className="part-button picker-close" type="button" onClick={close}>Close picker</button>
         <label htmlFor={`${id}-search`}>Find a tool</label>
         <input id={`${id}-search`} type="search" autoFocus value={query} onChange={event => setQuery(event.target.value)} />
