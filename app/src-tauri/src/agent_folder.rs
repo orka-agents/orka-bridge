@@ -15,6 +15,27 @@ const TESTS: &str = "web-reader.agent.test.md";
 const MARKER: &str = ".bridge-agent-folder";
 const OWNER: &[u8] = b"Bridge web-reader folder v1\n";
 type Result<T> = std::result::Result<T, &'static str>;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct DocumentId(pub(crate) Uuid);
+impl DocumentId {
+    pub const SAMPLE: Self = Self(Uuid::from_u128(0x9b2b93c4_375c_4815_9717_39852a96e411));
+}
+
+pub(crate) fn valid_name(name: &str) -> bool {
+    let alnum = |b: u8| b.is_ascii_lowercase() || b.is_ascii_digit();
+    let bytes = name.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= 63
+        && alnum(bytes[0])
+        && alnum(bytes[bytes.len() - 1])
+        && bytes.iter().all(|b| alnum(*b) || *b == b'-')
+        && !matches!(name, "web-reader" | "con" | "prn" | "aux" | "nul")
+        && !(name.len() == 4
+            && (name.starts_with("com") || name.starts_with("lpt"))
+            && matches!(bytes[3], b'1'..=b'9'))
+}
 #[derive(serde::Serialize)]
 pub struct AgentPair {
     pub agent: String,
@@ -25,12 +46,17 @@ pub struct AgentPair {
 }
 pub struct AgentFolder {
     home: Option<PathBuf>,
+    name: String,
+    agent: String,
+    tests: String,
+    owner: Vec<u8>,
+    sample: bool,
     lock: Mutex<()>,
 }
-fn invalid() -> io::Error {
+pub(crate) fn invalid() -> io::Error {
     io::ErrorKind::InvalidData.into()
 }
-fn child(parent: &Dir, name: &str) -> io::Result<Dir> {
+pub(crate) fn child(parent: &Dir, name: &str) -> io::Result<Dir> {
     match parent.create_dir(name) {
         Ok(()) => (),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
@@ -40,7 +66,7 @@ fn child(parent: &Dir, name: &str) -> io::Result<Dir> {
     sync(parent)?; // Also retry a prior mkdir's failed parent flush.
     Ok(directory)
 }
-fn options() -> OpenOptions {
+pub(crate) fn options() -> OpenOptions {
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
     #[cfg(unix)]
@@ -50,7 +76,7 @@ fn options() -> OpenOptions {
     }
     options
 }
-fn regular(file: &File) -> io::Result<()> {
+pub(crate) fn regular(file: &File) -> io::Result<()> {
     let meta = file.metadata()?;
     if !meta.is_file() {
         return Err(invalid());
@@ -75,7 +101,7 @@ fn regular(file: &File) -> io::Result<()> {
     }
     Ok(())
 }
-fn read(dir: &Dir, name: &str, limit: usize) -> io::Result<Vec<u8>> {
+pub(crate) fn read(dir: &Dir, name: &str, limit: usize) -> io::Result<Vec<u8>> {
     let file = dir.open_with(name, &options())?;
     regular(&file)?;
     let mut bytes = Vec::new();
@@ -110,7 +136,7 @@ fn sync(dir: &Dir) -> io::Result<()> {
 }
 // All destinations are fixed single leaves on retained no-follow capabilities.
 // A fresh inode + rename cannot truncate a hardlinked or symlinked destination.
-fn replace(dir: &Dir, name: &str, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn replace(dir: &Dir, name: &str, bytes: &[u8]) -> io::Result<()> {
     let temp = format!(".bridge-{}", Uuid::new_v4());
     let mut options = options();
     options.write(true).create_new(true);
@@ -131,8 +157,79 @@ impl AgentFolder {
     pub fn new(home: Option<PathBuf>) -> Self {
         Self {
             home,
+            name: "web-reader".into(),
+            agent: AGENT.into(),
+            tests: TESTS.into(),
+            owner: OWNER.into(),
+            sample: true,
             lock: Mutex::new(()),
         }
+    }
+    pub(crate) fn created(home: Option<PathBuf>, name: &str, id: DocumentId) -> Result<Self> {
+        if !valid_name(name) || id == DocumentId::SAMPLE {
+            return Err("The agent name or identity is invalid.");
+        }
+        Ok(Self {
+            home,
+            name: name.into(),
+            agent: format!("{name}.agent.md"),
+            tests: format!("{name}.agent.test.md"),
+            owner: format!("Bridge agent folder v1\n{}\n", id.0).into_bytes(),
+            sample: false,
+            lock: Mutex::new(()),
+        })
+    }
+    pub(crate) fn created_id(home: Option<PathBuf>, name: &str) -> Result<DocumentId> {
+        // Constructing an owner does not grant authority: validate the native marker
+        // and the bound pair/Git layout before the registry can publish its identity.
+        if !valid_name(name) {
+            return Err("The agent name is invalid.");
+        }
+        let root = Self::open_root(&home, name).map_err(|_| "The created agent is unavailable.")?;
+        let bytes =
+            read(&root, MARKER, 128).map_err(|_| "The created agent marker is unavailable.")?;
+        let text =
+            std::str::from_utf8(&bytes).map_err(|_| "The created agent marker is invalid.")?;
+        let uuid = text
+            .strip_prefix("Bridge agent folder v1\n")
+            .and_then(|s| s.strip_suffix('\n'))
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .ok_or("The created agent marker is invalid.")?;
+        let id = DocumentId(uuid);
+        if id == DocumentId::SAMPLE
+            || bytes != format!("Bridge agent folder v1\n{uuid}\n").as_bytes()
+        {
+            return Err("The created agent marker is invalid.");
+        }
+        let folder = Self::created(home, name, id)?;
+        if folder.pair(&root).is_err() || git::inspect(&root).is_err() {
+            return Err("The created agent is unavailable.");
+        }
+        Ok(id)
+    }
+    fn root(&self) -> io::Result<Dir> {
+        Self::open_root(&self.home, &self.name)
+    }
+    fn open_root(home: &Option<PathBuf>, name: &str) -> io::Result<Dir> {
+        let home = home.as_ref().ok_or_else(invalid)?;
+        if std::fs::symlink_metadata(home)?.file_type().is_symlink() {
+            return Err(invalid());
+        }
+        Dir::open_ambient_dir(home, cap_std::ambient_authority())?
+            .open_dir_nofollow("Orka")?
+            .open_dir_nofollow("agents")?
+            .open_dir_nofollow(name)
+    }
+    pub(crate) fn available(&self) -> bool {
+        (|| -> io::Result<()> {
+            let root = self.root()?;
+            if read(&root, MARKER, 128)? != self.owner {
+                return Err(invalid());
+            }
+            self.pair(&root)?;
+            git::inspect(&root)
+        })()
+        .is_ok()
     }
     fn with<T>(&self, work: impl FnOnce(&Dir) -> io::Result<T>) -> Result<T> {
         let _guard = self
@@ -140,6 +237,22 @@ impl AgentFolder {
             .lock()
             .map_err(|_| "The local agent folder is unavailable.")?;
         let operation = || -> io::Result<T> {
+            if !self.sample {
+                let root = self.root()?;
+                let mut opts = options();
+                opts.write(true);
+                let marker = root.open_with(MARKER, &opts)?;
+                regular(&marker)?;
+                let mut marker = marker.into_std();
+                marker.lock()?;
+                let mut ownership = Vec::new();
+                (&mut marker).take(129).read_to_end(&mut ownership)?;
+                if ownership != self.owner {
+                    return Err(invalid());
+                }
+                sync(&root)?;
+                return work(&root);
+            }
             let home = self.home.as_ref().ok_or_else(invalid)?;
             if std::fs::symlink_metadata(home)?.file_type().is_symlink() {
                 return Err(invalid());
@@ -202,19 +315,19 @@ impl AgentFolder {
         };
         operation().map_err(|_| "The local agent folder could not be read or saved. Check that it is a Bridge-managed folder with regular files, then retry.")
     }
-    fn display_path(&self) -> Option<String> {
+    pub(crate) fn display_path(&self) -> Option<String> {
         self.home.as_ref().and_then(|home| {
             home.join("Orka")
                 .join("agents")
-                .join("web-reader")
-                .join(AGENT)
+                .join(&self.name)
+                .join(&self.agent)
                 .to_str()
                 .map(str::to_owned)
         })
     }
     fn pair(&self, root: &Dir) -> io::Result<AgentPair> {
-        let agent = String::from_utf8(read(root, AGENT, MAX_FILE)?).map_err(|_| invalid())?;
-        let tests = String::from_utf8(read(root, TESTS, MAX_FILE)?).map_err(|_| invalid())?;
+        let agent = String::from_utf8(read(root, &self.agent, MAX_FILE)?).map_err(|_| invalid())?;
+        let tests = String::from_utf8(read(root, &self.tests, MAX_FILE)?).map_err(|_| invalid())?;
         let source = SnapshotId::of(agent.as_bytes(), tests.as_bytes());
         Ok(AgentPair {
             agent,
@@ -226,7 +339,7 @@ impl AgentFolder {
     pub fn open(&self) -> Result<AgentPair> {
         self.with(|root| {
             let pair = self.pair(root)?;
-            git::commit(root, &pair)?; // Dirty reopen is committed, never silently reported Saved.
+            git::commit(root, &pair, &self.agent, &self.tests)?; // Dirty reopen is committed, never silently reported Saved.
             Ok(pair)
         })
     }
@@ -239,12 +352,12 @@ impl AgentFolder {
             git::validate(root)?;
             if pair.agent != content {
                 // Preserve edits from another editor before replacing the disk version.
-                git::commit(root, &pair)?;
-                replace(root, AGENT, content.as_bytes())?;
+                git::commit(root, &pair, &self.agent, &self.tests)?;
+                replace(root, &self.agent, content.as_bytes())?;
                 pair.agent = content;
                 pair.source = SnapshotId::of(pair.agent.as_bytes(), pair.tests.as_bytes());
             }
-            git::commit(root, &pair)?; // Failure leaves draft bytes; retry reconciles disk with HEAD.
+            git::commit(root, &pair, &self.agent, &self.tests)?; // Failure leaves draft bytes; retry reconciles disk with HEAD.
             Ok(pair)
         })
     }
@@ -252,22 +365,26 @@ impl AgentFolder {
     pub fn source(&self) -> Result<(PathBuf, AgentDocument)> {
         self.open()?;
         Ok((
-            self.home.as_ref().unwrap().join("Orka/agents/web-reader"),
+            self.home
+                .as_ref()
+                .unwrap()
+                .join("Orka/agents")
+                .join(&self.name),
             AgentDocument {
-                agent: AGENT.into(),
-                tests: TESTS.into(),
+                agent: self.agent.clone().into(),
+                tests: self.tests.clone().into(),
             },
         ))
     }
     pub fn capture(&self) -> Result<Snapshot> {
         self.with(|root| {
             let pair = self.pair(root)?;
-            git::commit(root, &pair)?;
+            git::commit(root, &pair, &self.agent, &self.tests)?;
             let snapshot = Snapshot::capture_dir(
                 root,
                 &AgentDocument {
-                    agent: AGENT.into(),
-                    tests: TESTS.into(),
+                    agent: self.agent.clone().into(),
+                    tests: self.tests.clone().into(),
                 },
             )?;
             if snapshot.file(FileSlot::Agent) != pair.agent.as_bytes()
@@ -279,6 +396,10 @@ impl AgentFolder {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "agent_folder_tests.rs"]
+mod tests;
 
 #[cfg(all(test, unix))]
 mod display_path_tests {
