@@ -252,7 +252,10 @@ async fn scale(c: &Connection, r: &Receipt, replicas: u32) -> Result<(), Error> 
         .as_ref()
         .filter(|s| !s.is_empty())
         .ok_or(Error::Unavailable)?;
-    let body = json!({"metadata":{"uid":r.deployment_uid,"resourceVersion":version},"spec":{"replicas":replicas}});
+    // A no-op replica patch may not advance resourceVersion. Force a write so a timed-out,
+    // delayed Start with the previous version cannot commit after a successful Stop.
+    let body = json!({"metadata":{"uid":r.deployment_uid,"resourceVersion":version,
+        "annotations":{"bridge.orka.ai/control":Uuid::new_v4().to_string()}},"spec":{"replicas":replicas}});
     request(api(c, &r.namespace, 2).patch(
         &r.resource_name(),
         &PatchParams::default(),

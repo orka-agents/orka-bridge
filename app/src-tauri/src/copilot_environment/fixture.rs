@@ -102,10 +102,25 @@ pub(super) fn connection() -> (Connection, Arc<Mutex<Cluster>>) {
                     status = 409;
                     json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Conflict","code":409})
                 } else {
+                    let changed = old["spec"]["replicas"] != body["spec"]["replicas"]
+                        || (body["metadata"]["annotations"].is_object()
+                            && old["metadata"]["annotations"] != body["metadata"]["annotations"]);
                     old["spec"]["replicas"] = body["spec"]["replicas"].clone();
-                    let generation = old["metadata"]["generation"].as_i64().unwrap_or(1) + 1;
-                    old["metadata"]["generation"] = json!(generation);
-                    old["status"] = json!({"observedGeneration":generation,"replicas":body["spec"]["replicas"]});
+                    if body["metadata"]["annotations"].is_object() {
+                        old["metadata"]["annotations"] = body["metadata"]["annotations"].clone();
+                    }
+                    if changed {
+                        let generation = old["metadata"]["generation"].as_i64().unwrap_or(1) + 1;
+                        let version = old["metadata"]["resourceVersion"]
+                            .as_str()
+                            .unwrap()
+                            .parse::<u64>()
+                            .unwrap()
+                            + 1;
+                        old["metadata"]["resourceVersion"] = json!(version.to_string());
+                        old["metadata"]["generation"] = json!(generation);
+                        old["status"] = json!({"observedGeneration":generation,"replicas":body["spec"]["replicas"]});
+                    }
                     old.clone()
                 }
             } else if method == "DELETE" && s.objects.contains_key(&path) {

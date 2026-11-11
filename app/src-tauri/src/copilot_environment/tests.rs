@@ -734,6 +734,38 @@ async fn start_rejects_unexpected_profiles_and_environment_injection() {
     }
 }
 
+#[tokio::test]
+async fn stopping_an_already_zero_deployment_invalidates_a_delayed_start() {
+    use k8s_openapi::api::apps::v1::Deployment;
+    use kube::api::{Patch, PatchParams};
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Owner::new(dir.path().into());
+    let (c, cluster) = fixture::connection();
+    let input = receipt();
+    let r = owner
+        .create(&c, input.workspace_id, &input.namespace, &input.image)
+        .await
+        .unwrap();
+    let late_start = serde_json::json!({"metadata":{"uid":r.deployment_uid,"resourceVersion":"1"},"spec":{"replicas":1}});
+    owner.stop(&c, r.environment_id).await.unwrap();
+    let api: kube::Api<Deployment> = kube::Api::namespaced(c.client.clone(), &r.namespace);
+    let result = api
+        .patch(
+            &r.resource_name(),
+            &PatchParams::default(),
+            &Patch::Merge(late_start),
+        )
+        .await;
+    assert!(matches!(result,Err(kube::Error::Api(error)) if error.code == 409));
+    assert!(cluster
+        .lock()
+        .unwrap()
+        .objects
+        .values()
+        .filter(|v| v["kind"] == "Deployment")
+        .all(|v| v["spec"]["replicas"] == 0));
+}
+
 #[test]
 fn corrupt_or_oversized_receipt_is_not_an_environment() {
     let dir = tempfile::tempdir().unwrap();

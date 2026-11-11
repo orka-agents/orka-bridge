@@ -102,3 +102,28 @@ impl Store {
         Ok(())
     }
 }
+
+impl Drop for Store {
+    fn drop(&mut self) {
+        // A concurrent fork retains this description until exec; closing only our descriptor
+        // can leave the next operation spuriously Busy. No backend retains Store ownership.
+        let _ = self._lock.unlock();
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn drop_releases_ownership_even_if_a_concurrent_spawn_inherits_the_description() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Store::new(dir.path()).unwrap();
+        // A fork before exec retains the same open-file description despite CLOEXEC.
+        let inherited = owner._lock.try_clone().unwrap();
+        drop(owner);
+        let reopened = Store::new(dir.path()).expect("parent ownership must be released now");
+        drop(reopened);
+        drop(inherited);
+    }
+}
