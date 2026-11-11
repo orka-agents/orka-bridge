@@ -95,7 +95,7 @@ jobs:
         run: |
           bash ../scripts/build-vm-helper-macos.sh
           bash ../scripts/test-vm-helper-macos.sh
-          cargo +1.98.1 test --manifest-path ../runtime/Cargo.toml --locked -p bridge-runtime-protocol --test runtime_core --test windows_backend
+          cargo +1.98.1 test --manifest-path ../runtime/Cargo.toml --locked -p bridge-runtime-protocol --test runtime_core --test windows_backend --test agents
       - name: Mac deferred termination (no VM or host logout)
         if: runner.os == 'macOS'
         run: cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --test native_termination --features custom-protocol
