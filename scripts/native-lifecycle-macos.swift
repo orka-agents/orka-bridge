@@ -195,7 +195,8 @@ var main = find(root, "main-window") { attribute($0, "AXRole") as? String == "AX
 press(find(main, "Clusters") { pressable($0, "Clusters") })
 wait("Requirements choice did not appear") { nodes(main).contains { pressable($0, "Get started") || pressable($0, "Check again") } }
 if let start = nodes(main).first(where: { pressable($0, "Get started") }) { press(start) }
-_ = find(main, "computer-requirements") { pressable($0, "Check again") }
+let requirements = find(main, "computer-requirements-panel") { text($0).contains("Computer requirements") }
+_ = find(requirements, "computer-requirements") { pressable($0, "Check again") }
 // Capture the runner observations as drawn, without selecting local or asserting Ready.
 try command("/usr/sbin/screencapture", ["-x", "-o", "-l", String(windowInfo()!.0), "\(output)/computer-requirements.png"])
 check(!FileManager.default.fileExists(atPath: selected), "Preflight selected a workspace")
