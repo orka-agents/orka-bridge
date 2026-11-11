@@ -49,6 +49,10 @@ pub(super) fn connection() -> (Connection, Arc<Mutex<Cluster>>) {
                 let key = format!("{}/{}", path, object["metadata"]["name"].as_str().unwrap());
                 object["metadata"]["uid"] = json!(format!("uid-{}", s.objects.len()));
                 object["metadata"]["resourceVersion"] = json!("1");
+                if object["kind"] == "Deployment" {
+                    object["metadata"]["generation"] = json!(1);
+                    object["status"] = json!({"observedGeneration":1,"replicas":0});
+                }
                 s.objects.insert(key, object.clone());
                 if s.fail_create
                     .as_ref()
@@ -64,7 +68,11 @@ pub(super) fn connection() -> (Connection, Arc<Mutex<Cluster>>) {
             } else if method == "GET"
                 && matches!(
                     path.rsplit('/').next().unwrap(),
-                    "deployments" | "persistentvolumeclaims" | "networkpolicies" | "pods"
+                    "deployments"
+                        | "persistentvolumeclaims"
+                        | "networkpolicies"
+                        | "pods"
+                        | "replicasets"
                 )
             {
                 if path.ends_with("/pods") && s.restart_after_stop {
@@ -89,6 +97,9 @@ pub(super) fn connection() -> (Connection, Arc<Mutex<Cluster>>) {
                     json!({"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Conflict","code":409})
                 } else {
                     old["spec"]["replicas"] = body["spec"]["replicas"].clone();
+                    let generation = old["metadata"]["generation"].as_i64().unwrap_or(1) + 1;
+                    old["metadata"]["generation"] = json!(generation);
+                    old["status"] = json!({"observedGeneration":generation,"replicas":body["spec"]["replicas"]});
                     old.clone()
                 }
             } else if method == "DELETE" && s.objects.contains_key(&path) {

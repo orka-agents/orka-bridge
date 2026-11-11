@@ -267,26 +267,38 @@ async fn stop(c: &Connection, r: &Receipt) -> Result<(), Error> {
             scale(c, r, 0).await?;
         }
         loop {
-            if let Some(deployment) = get_owned(c, r, 2).await? {
-                if deployment.data["spec"]["replicas"] != 0 {
-                    return Err(Error::Conflict);
+            let deployment = get_owned(c, r, 2).await?;
+            if deployment
+                .as_ref()
+                .is_some_and(|d| d.data["spec"]["replicas"] != 0)
+            {
+                return Err(Error::Conflict);
+            }
+            let mut active = deployment.as_ref().is_some_and(|d| !observed_zero(d));
+            // An empty Pod list can precede a controller's pending create. Keep policy/storage
+            // until scale-down is observed, and after parent deletion until children are gone.
+            for rs in request(api(c, &r.namespace, 4).list(&ListParams::default())).await? {
+                let owned = rs.metadata.owner_references.as_ref().is_some_and(|refs| {
+                    refs.iter().any(|reference| {
+                        reference.controller == Some(true)
+                            && reference.kind == "Deployment"
+                            && reference.api_version == "apps/v1"
+                            && reference.name == r.resource_name()
+                            && Some(&reference.uid) == r.deployment_uid.as_ref()
+                    })
+                });
+                if owned || may_use_environment(&rs, r) {
+                    active |= deployment.is_none() || !observed_zero(&rs);
                 }
             }
             let pods = request(api(c, &r.namespace, 3).list(&ListParams::default())).await?;
-            let mut active = false;
             for pod in pods {
+                if conclusively_terminated(&pod) {
+                    continue;
+                }
                 // Hints may block cleanup, never authorize mutation. Orphaning must not turn a live
                 // coding pod into proof of Stop, or remove its policy while its PVC is still mounted.
-                if pod.metadata.labels.as_ref().is_some_and(|labels| {
-                    labels.get(resources::ENVIRONMENT) == Some(&r.environment_id.to_string())
-                }) || pod.data["spec"]["volumes"]
-                    .as_array()
-                    .is_some_and(|volumes| {
-                        volumes
-                            .iter()
-                            .any(|v| v["persistentVolumeClaim"]["claimName"] == r.resource_name())
-                    })
-                {
+                if may_use_environment(&pod, r) {
                     active = true;
                     continue;
                 }
@@ -310,7 +322,7 @@ async fn stop(c: &Connection, r: &Receipt) -> Result<(), Error> {
                     continue;
                 };
                 if rs.metadata.uid.as_deref() != Some(&reference.uid) {
-                    return Err(Error::Conflict);
+                    continue;
                 }
                 if rs.metadata.owner_references.as_ref().is_some_and(|refs| {
                     refs.iter().any(|reference| {
@@ -333,6 +345,65 @@ async fn stop(c: &Connection, r: &Receipt) -> Result<(), Error> {
     tokio::time::timeout(Duration::from_secs(20), operation)
         .await
         .map_err(|_| Error::Pending)?
+}
+
+fn observed_zero(object: &DynamicObject) -> bool {
+    object.metadata.generation.is_some_and(|generation| {
+        object.data["status"]["observedGeneration"]
+            .as_i64()
+            .is_some_and(|seen| seen >= generation)
+    }) && object.data["spec"]["replicas"] == 0
+        && object.data["status"]["replicas"].as_i64().unwrap_or(0) == 0
+}
+fn may_use_environment(object: &DynamicObject, r: &Receipt) -> bool {
+    object.metadata.labels.as_ref().is_some_and(|labels| {
+        labels.get(resources::ENVIRONMENT) == Some(&r.environment_id.to_string())
+    }) || [
+        &object.data["spec"]["volumes"],
+        &object.data["spec"]["template"]["spec"]["volumes"],
+    ]
+    .iter()
+    .any(|volumes| {
+        volumes.as_array().is_some_and(|volumes| {
+            volumes
+                .iter()
+                .any(|v| v["persistentVolumeClaim"]["claimName"] == r.resource_name())
+        })
+    })
+}
+fn conclusively_terminated(pod: &DynamicObject) -> bool {
+    let status = &pod.data["status"];
+    if !matches!(status["phase"].as_str(), Some("Failed" | "Succeeded")) {
+        return false;
+    }
+    for (spec, state) in [
+        ("containers", "containerStatuses"),
+        ("initContainers", "initContainerStatuses"),
+        ("ephemeralContainers", "ephemeralContainerStatuses"),
+    ] {
+        let expected = pod.data["spec"][spec]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let reported = status[state]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if (spec == "containers" && expected.is_empty())
+            || expected.len() != reported.len()
+            || !expected.iter().all(|container| {
+                reported.iter().any(|reported| {
+                    reported["name"] == container["name"]
+                        && reported["state"]["terminated"].is_object()
+                        && reported["state"]["running"].is_null()
+                        && reported["state"]["waiting"].is_null()
+                })
+            })
+        {
+            return false;
+        }
+    }
+    true
 }
 
 fn api(c: &Connection, ns: &str, i: usize) -> Api<DynamicObject> {
@@ -392,6 +463,17 @@ fn verify(r: &Receipt, i: usize, object: &DynamicObject) -> Result<(), Error> {
         }
     }
     let mut expected = resources::manifests(r)?[i].clone();
+    if i == 1 {
+        let selector = &actual["spec"]["podSelector"];
+        if selector["matchLabels"] != expected["spec"]["podSelector"]["matchLabels"]
+            || !(selector["matchExpressions"].is_null()
+                || selector["matchExpressions"]
+                    .as_array()
+                    .is_some_and(Vec::is_empty))
+        {
+            return Err(Error::Conflict);
+        }
+    }
     if i == 2 {
         expected["spec"]
             .as_object_mut()
@@ -429,7 +511,7 @@ async fn permissions(c: &Connection, ns: &str) -> Result<(), Error> {
             "get list create delete",
         ),
         ("apps", "deployments", "get list create patch delete"),
-        ("apps", "replicasets", "get"),
+        ("apps", "replicasets", "get list"),
         ("", "pods", "get list"),
     ] {
         for verb in verbs.split_whitespace() {

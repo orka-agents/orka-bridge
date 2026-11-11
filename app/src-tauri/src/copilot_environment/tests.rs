@@ -451,6 +451,143 @@ async fn remove_rechecks_stopped_replicas_before_deleting_the_deployment() {
     assert_eq!(cluster.lock().unwrap().objects.len(), 3);
 }
 
+#[tokio::test]
+async fn start_rejects_policy_selectors_that_exclude_the_environment() {
+    for variant in ["label", "expression"] {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Owner::new(dir.path().into());
+        let (c, cluster) = fixture::connection();
+        let input = receipt();
+        let r = owner
+            .create(&c, input.workspace_id, &input.namespace, &input.image)
+            .await
+            .unwrap();
+        {
+            let mut s = cluster.lock().unwrap();
+            let policy = s
+                .objects
+                .values_mut()
+                .find(|v| v["kind"] == "NetworkPolicy")
+                .unwrap();
+            if variant == "label" {
+                policy["spec"]["podSelector"]["matchLabels"]["unmatched"] =
+                    serde_json::json!("extra");
+            } else {
+                policy["spec"]["podSelector"]["matchExpressions"] =
+                    serde_json::json!([{"key":"unmatched","operator":"Exists"}]);
+            }
+            s.requests.clear();
+        }
+        assert_eq!(
+            owner.start(&c, r.environment_id).await,
+            Err(Error::Conflict),
+            "{variant}"
+        );
+        assert!(!cluster
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .any(|(m, _, _)| m == "PATCH"));
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn stop_waits_for_replica_set_scale_down_and_remove_waits_for_child_gc() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Owner::new(dir.path().into());
+    let (c, cluster) = fixture::connection();
+    let input = receipt();
+    let r = owner
+        .create(&c, input.workspace_id, &input.namespace, &input.image)
+        .await
+        .unwrap();
+    let key = format!(
+        "/apis/apps/v1/namespaces/{}/replicasets/owned-rs",
+        r.namespace
+    );
+    cluster.lock().unwrap().objects.insert(key.clone(),serde_json::json!({"apiVersion":"apps/v1","kind":"ReplicaSet","metadata":{
+        "name":"owned-rs","namespace":r.namespace,"uid":"rs-uid","generation":1,"ownerReferences":[{
+            "apiVersion":"apps/v1","kind":"Deployment","name":r.resource_name(),"uid":r.deployment_uid,"controller":true}]},
+        "spec":{"replicas":1},"status":{"replicas":0,"observedGeneration":1}}));
+    assert_eq!(owner.stop(&c, r.environment_id).await, Err(Error::Pending));
+    assert!(!cluster
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .any(|(m, _, _)| m == "DELETE"));
+    cluster.lock().unwrap().objects.get_mut(&key).unwrap()["spec"]["replicas"] =
+        serde_json::json!(0);
+    owner.stop(&c, r.environment_id).await.unwrap();
+    assert_eq!(
+        owner.remove(&c, r.environment_id).await,
+        Err(Error::Pending)
+    );
+    assert!(cluster
+        .lock()
+        .unwrap()
+        .objects
+        .values()
+        .any(|v| v["kind"] == "NetworkPolicy"));
+    cluster.lock().unwrap().objects.remove(&key);
+    owner.remove(&c, r.environment_id).await.unwrap();
+    assert!(owner.receipts().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn only_conclusively_terminated_pods_can_be_ignored_by_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Owner::new(dir.path().into());
+    let (c, cluster) = fixture::connection();
+    let input = receipt();
+    let r = owner
+        .create(&c, input.workspace_id, &input.namespace, &input.image)
+        .await
+        .unwrap();
+    let key = format!("/api/v1/namespaces/{}/pods/terminal", r.namespace);
+    cluster.lock().unwrap().objects.insert(key.clone(),serde_json::json!({"apiVersion":"v1","kind":"Pod","metadata":{
+        "name":"terminal","namespace":r.namespace,"uid":"pod-uid","labels":{resources::ENVIRONMENT:r.environment_id.to_string()}},
+        "spec":{"containers":[{"name":"environment"}]},"status":{"phase":"Failed"}}));
+    assert_eq!(owner.stop(&c, r.environment_id).await, Err(Error::Pending));
+    cluster.lock().unwrap().objects.get_mut(&key).unwrap()["status"]["containerStatuses"] = serde_json::json!([
+        {"name":"environment","state":{"terminated":{"exitCode":1}}}]);
+    owner.stop(&c, r.environment_id).await.unwrap();
+    assert!(!cluster
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .any(|(m, _, _)| m == "DELETE"));
+}
+
+#[tokio::test]
+async fn an_unrelated_pod_with_a_reused_replica_set_name_does_not_block_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Owner::new(dir.path().into());
+    let (c, cluster) = fixture::connection();
+    let input = receipt();
+    let r = owner
+        .create(&c, input.workspace_id, &input.namespace, &input.image)
+        .await
+        .unwrap();
+    {
+        let mut s = cluster.lock().unwrap();
+        s.objects.insert(format!("/api/v1/namespaces/{}/pods/unrelated",r.namespace),serde_json::json!({"apiVersion":"v1","kind":"Pod","metadata":{
+            "name":"unrelated","namespace":r.namespace,"uid":"unrelated","ownerReferences":[{
+                "apiVersion":"apps/v1","kind":"ReplicaSet","name":"reused-rs","uid":"old-uid","controller":true}]}}));
+        s.objects.insert(
+            format!(
+                "/apis/apps/v1/namespaces/{}/replicasets/reused-rs",
+                r.namespace
+            ),
+            serde_json::json!({"apiVersion":"apps/v1","kind":"ReplicaSet","metadata":{
+            "name":"reused-rs","namespace":r.namespace,"uid":"new-uid"}}),
+        );
+    }
+    owner.stop(&c, r.environment_id).await.unwrap();
+}
+
 #[test]
 fn corrupt_or_oversized_receipt_is_not_an_environment() {
     let dir = tempfile::tempdir().unwrap();
