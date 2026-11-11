@@ -13,7 +13,7 @@ const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
 const pair = { agent: '---\nname: web-reader\nmodel: literal-model\n---\nRead the page.\n', tests: 'Checks from disk', source };
 const idle = { state: 'idle', canRun: false, modelConnected: false, report: null, acknowledged: [], pending: null, error: null };
 const report = { verdict: 'failed', cases: [{ id: 'reads-the-page', phase: 'Succeeded', answer: 'Not the expected text', completedTools: [], assertions: [{ id: 'has-text', kind: 'contains', verdict: 'failed' }], verdict: 'failed' }] };
-const running = { id: '00000000-0000-4000-8000-000000000004', targetId: target.id, providerId: provider.id, targetName: target.context_name, source, model: 'literal-model', agentName: 'bridge-run-frozen', state: 'running', stage: 'observe', acknowledged: [{ kind: 'Agent', name: 'bridge-run-frozen', uid: 'uid-agent' }], pending: null, report: null, error: null };
+const running = { id: '00000000-0000-4000-8000-000000000004', targetId: target.id, providerId: provider.id, targetName: target.context_name, source, model: 'literal-model', agentName: 'bridge-run-frozen', state: 'running', stage: 'observe', acknowledged: [{ kind: 'Agent', name: 'bridge-run-frozen', uid: 'uid-agent' }], pending: null, report: null, error: null, storageError: false };
 const allowed = { source, targetId: target.id, providerId: provider.id, model: 'literal-model', rows: [{ label: 'Provider', status: 'allowed', message: 'Ready; the file model is tested by checks.' }], canSend: true };
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 function native(local: unknown = idle, initial: unknown = null, preflight: unknown = allowed) {
@@ -22,6 +22,7 @@ function native(local: unknown = idle, initial: unknown = null, preflight: unkno
     if (command === 'agent_open') return pair;
     if (command === 'setup_run_status') return local;
     if (command === 'send_status') return send;
+    if (command === 'send_history') return [];
     if (command === 'send_preflight') return preflight;
     if (command === 'send_start') { send = running; return send; }
     if (command === 'send_stop') { send = { ...running, state: 'unknown', stage: 'stopped' }; return send; }

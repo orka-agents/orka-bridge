@@ -82,6 +82,13 @@ async fn setup_with(agent: &str) -> Setup {
     setup_with_auth(agent, json!({"token":"creator-fixture"})).await
 }
 async fn setup_with_auth(agent: &str, auth: Value) -> Setup {
+    setup_with_auth_and_history(agent, auth, None).await
+}
+async fn setup_with_auth_and_history(
+    agent: &str,
+    auth: Value,
+    history_root: Option<std::path::PathBuf>,
+) -> Setup {
     let api = Arc::new(ApiFixture::default());
     let cfg = config(&api.start(), auth);
     let fresh = Arc::new(Mutex::new(cfg.clone()));
@@ -112,8 +119,10 @@ async fn setup_with_auth(agent: &str, auth: Value) -> Setup {
         TESTS,
     )
     .unwrap();
+    let root = history_root.unwrap_or_else(|| home.path().join("app-local"));
+    let owner = SendOwner::with_history_root(folder, session.clone(), Some(root));
     Setup {
-        owner: SendOwner::new(folder, session.clone()),
+        owner,
         session,
         api,
         home,
@@ -183,6 +192,7 @@ async fn send_click_runs_captured_file() {
     assert_eq!(receipts[0]["kind"], "Agent");
     assert_eq!(receipts[0]["name"], view["agentName"]);
     assert_eq!(view["pending"], Value::Null);
+    assert_eq!(view["storageError"], false);
     assert_eq!(s.api.wire.posts(), 2);
     assert_eq!(
         s.agent_posts()[0]["spec"]["systemPrompt"]["inline"],
@@ -439,6 +449,103 @@ async fn shutdown_stops_and_refuses_new_admission() {
     let refused = s.start().await;
     assert_ne!(refused["state"], "running");
     assert_eq!(s.api.wire.posts(), 2);
+}
+
+#[tokio::test]
+async fn planned_agent_saved_before_post_and_crash_midcreate_unknown_with_no_uid() {
+    use bridge_engine::send_summary::{AttemptVerdict, SummaryStore};
+    let history = tempfile::tempdir().unwrap();
+    let s = setup_with_auth_and_history(
+        AGENT,
+        json!({"token":"creator-fixture"}),
+        Some(history.path().into()),
+    )
+    .await;
+    *s.api.wire.mode.lock().unwrap() = "hang";
+    let first = s.start().await;
+    until(|| s.api.wire.posts() == 1).await;
+    // The Agent request is in flight, with no ACK. Moving begin() after submit
+    // would leave this real request without its planned identity on disk.
+    let saved = SummaryStore::new(Some(history.path().into()))
+        .list()
+        .unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].planned_agent_name, s.view(None)["agentName"]);
+    assert_eq!(saved[0].verdict, AttemptVerdict::Running);
+    assert!(saved[0].agent_uid.is_none());
+    let reopened = SendOwner::with_history_root(
+        Arc::new(AgentFolder::new(None)),
+        ClusterSession::default(),
+        Some(history.path().into()),
+    );
+    let calls = s.api.wire.calls.lock().unwrap().len();
+    let restored = reopened.history().unwrap();
+    assert_eq!(restored[0].verdict, AttemptVerdict::Unknown);
+    assert!(restored[0].agent_uid.is_none());
+    assert!(reopened.status(None).is_none());
+    assert_eq!(s.api.wire.calls.lock().unwrap().len(), calls);
+    s.owner.stop(&id(&first)).await;
+    s.idle_forwards().await;
+}
+
+#[tokio::test]
+async fn explicit_resend_new_attempt_preserves_old_unknown() {
+    use bridge_engine::send_summary::AttemptVerdict;
+    let history = tempfile::tempdir().unwrap();
+    let s = setup_with_auth_and_history(
+        AGENT,
+        json!({"token":"creator-fixture"}),
+        Some(history.path().into()),
+    )
+    .await;
+    *s.api.wire.mode.lock().unwrap() = "hang";
+    let first = s.start().await;
+    until(|| s.api.wire.posts() == 1).await;
+    s.owner.stop(&id(&first)).await;
+    s.idle_forwards().await;
+    let old_name = s.view(None)["agentName"].clone();
+    *s.api.wire.mode.lock().unwrap() = "normal";
+    let second = s.start().await;
+    let done = s.finish(&id(&second)).await;
+    assert_ne!(first["id"], second["id"]);
+    assert_ne!(old_name, done["agentName"]);
+    assert_eq!(done["report"]["verdict"], "passed");
+    let reopened = SendOwner::with_history_root(
+        Arc::new(AgentFolder::new(None)),
+        ClusterSession::default(),
+        Some(history.path().into()),
+    );
+    let saved = reopened.history().unwrap();
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[0].id, id(&second));
+    assert_eq!(saved[0].verdict, AttemptVerdict::Passed);
+    assert!(saved[0].agent_uid.is_some());
+    assert_eq!(saved[1].id, id(&first));
+    assert_eq!(saved[1].verdict, AttemptVerdict::Unknown);
+    assert!(saved[1].agent_uid.is_none());
+    let bytes = std::fs::read(history.path().join("send-history-v1/history.json")).unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(!text.contains(AGENT));
+    assert!(!text.contains(TESTS));
+    assert!(!text.contains("creator-fixture"));
+    assert!(!text.contains("bridge-task-"));
+    assert!(!text.contains("expected answer"));
+}
+
+#[tokio::test]
+async fn storage_failure_visible_and_never_passes() {
+    let history = tempfile::tempdir().unwrap();
+    let blocked = history.path().join("history-root");
+    std::fs::write(&blocked, b"not-a-directory").unwrap();
+    let s =
+        setup_with_auth_and_history(AGENT, json!({"token":"creator-fixture"}), Some(blocked)).await;
+    let view = s.finish(&id(&s.start().await)).await;
+    assert_eq!(view["storageError"], true);
+    assert_eq!(view["state"], "unknown");
+    assert_eq!(view["report"], Value::Null);
+    assert!(s.owner.history().is_err());
+    assert_eq!(view["error"], "storage");
+    assert_eq!(s.api.wire.posts(), 0);
 }
 
 #[tokio::test]

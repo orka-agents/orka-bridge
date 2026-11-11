@@ -119,6 +119,13 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): observed native preflight evidence; no workload submitted")
         return observations
     }
+    if name == "send-history-restarted" {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("Past Sends") && text.contains("Saved checks: pass") && text.contains("Saved checks: unknown"), "Saved pass and unknown missing after restart: \(text)")
+        require(text.contains("bridge-run-") && text.contains("fixture-cluster"), "Saved destination or planned Agent missing: \(text)")
+        print("PASS send-history-restarted: saved summaries after app restart; no reconnect or Send")
+        return observations
+    }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Send your agent") || text.contains("Checks on your cluster") || text.contains("Checks:") || text.contains("Running checks") || text.contains("Planned Agent"), "Send panel not visible: \(text)")
@@ -455,4 +462,39 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Send to a cluster", in: returned)
     let returnedResult = try capturePreflight("send-page-return", "Stopped watching")
     require(returnedResult.contains { ($0.topCandidates(1).first?.string ?? "").contains("Stopped watching") }, "Page return lost the stopped Send result")
+    // Reopen without reconnecting the cluster or sending again. Only the small
+    // saved summaries survive; detailed results and live handles do not.
+    app.terminate()
+    for _ in 0..<30 {
+        if app.isTerminated { break }
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+    }
+    require(app.isTerminated, "Bridge did not quit before Send history check")
+    app = try launch()
+    app.activate(options: [])
+    for _ in 0..<30 {
+        if window() != nil { break }
+        Thread.sleep(forTimeInterval: 1)
+    }
+    require(window() != nil, "Relaunched Bridge window did not appear for Send history")
+    Thread.sleep(forTimeInterval: 2)
+    let restarted = try capture("choice-retained", "Clusters")
+    clickTab("Designer", restarted)
+    Thread.sleep(forTimeInterval: 1)
+    scrollMain(3000)
+    var historyFound = false
+    for _ in 0..<12 {
+        let seen = try capture("send-probe", "Designer")
+        if let heading = seen.first(where: { $0.topCandidates(1).first?.string == "Past Sends" }) {
+            // Position the heading near the top so the two newest summaries fit
+            // even when the dark walk also retains the light walk's history.
+            let y = (1 - heading.boundingBox.maxY) * window()!.1.height
+            scrollMain(-Int32(max(0, y - 110)))
+            historyFound = true
+            break
+        }
+        scrollMain(-250)
+    }
+    require(historyFound, "Saved Send history was not reachable after restart")
+    try capture("send-history-restarted", "Designer")
 }

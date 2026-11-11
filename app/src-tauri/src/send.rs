@@ -9,16 +9,19 @@ use crate::{
         preflight::{CheckRow, CheckStatus},
         ProviderId,
     },
-    engine::run::{ErrorKind, NativeRunner, ParsedPair, RunReport, RunTransport},
+    engine::run::{ErrorKind, NativeRunner, ParsedPair, RunReport, RunTransport, Verdict},
     example_run::{receipts, PendingRef, Receipt},
     pair_source::CapturedPair,
+    send_summary::{AttemptSummary, AttemptVerdict, SummaryError, SummaryStore, TargetUids},
 };
 use bridge_runtime_protocol::{SnapshotId, Uuid};
 use serde::Serialize;
 use std::{
     collections::HashMap,
     future::Future,
+    path::PathBuf,
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tokio::sync::watch;
 
@@ -39,6 +42,7 @@ pub enum Stage {
     Access,
     Preflight,
     Submit,
+    Storage,
     Observe,
     Stopped,
     Done,
@@ -60,6 +64,7 @@ pub struct SendView {
     pub pending: Option<PendingRef>,
     pub report: Option<RunReport>,
     pub error: Option<Stage>,
+    pub storage_error: bool,
 }
 struct Active {
     id: SendId,
@@ -82,6 +87,7 @@ struct Inner {
 pub struct SendOwner {
     folder: Arc<AgentFolder>,
     session: ClusterSession,
+    summary: SummaryStore,
     inner: Mutex<Inner>,
 }
 fn parse(id: &str) -> Option<Uuid> {
@@ -123,13 +129,53 @@ fn capture(folder: &AgentFolder) -> Result<ParsedPair, ()> {
         .map_err(drop)?
         .into_pair())
 }
+fn unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+struct AttemptSeed {
+    source: SnapshotId,
+    target_display: String,
+    target_uids: TargetUids,
+    provider: String,
+    time: u64,
+}
 impl SendOwner {
     pub fn new(folder: Arc<AgentFolder>, session: ClusterSession) -> Arc<Self> {
+        Self::with_history_root(folder, session, None)
+    }
+    pub fn with_history_root(
+        folder: Arc<AgentFolder>,
+        session: ClusterSession,
+        app_local_data: Option<PathBuf>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             folder,
             session,
+            summary: SummaryStore::new(app_local_data),
             inner: Mutex::default(),
         })
+    }
+    pub fn history(&self) -> Result<Vec<AttemptSummary>, SummaryError> {
+        let mut attempts = self.summary.list()?;
+        let active = self
+            .inner
+            .lock()
+            .unwrap()
+            .active
+            .as_ref()
+            .map(|active| active.id.0.to_string());
+        for attempt in &mut attempts {
+            if attempt.verdict == AttemptVerdict::Running
+                && Some(attempt.id.as_str()) != active.as_deref()
+            {
+                attempt.verdict = AttemptVerdict::Unknown;
+            }
+        }
+        attempts.reverse();
+        Ok(attempts)
     }
     /// Fresh, GET-only preview. Failures are finite display rows, never raw IPC errors.
     pub async fn preflight(&self, target: &str, provider: &str) -> SendCheck {
@@ -239,6 +285,7 @@ impl SendOwner {
             pending: None,
             report: None,
             error: None,
+            storage_error: false,
         };
         inner.current = Some(id);
         if inner.closed {
@@ -261,8 +308,15 @@ impl SendOwner {
             let view = inner.views.get_mut(&id).unwrap();
             match result {
                 Ok(report) => {
-                    (view.state, view.stage) = (SendState::Complete, Stage::Done);
-                    view.report = Some(report);
+                    if view.storage_error {
+                        (view.state, view.stage) = (SendState::Unknown, Stage::Done);
+                        // Keep actual failed/unknown check details in memory;
+                        // a storage error must never become a passing result.
+                        view.report = (report.verdict != Verdict::Passed).then_some(report);
+                    } else {
+                        (view.state, view.stage) = (SendState::Complete, Stage::Done);
+                        view.report = Some(report);
+                    }
                 }
                 Err(stage) => {
                     view.state = SendState::Unknown;
@@ -356,6 +410,12 @@ impl SendOwner {
             .zip(provider)
             .filter(|(a, p)| a.providers().iter().any(|v| v.id == *p))
             .ok_or(Stage::Access)?;
+        let provider_name = access
+            .providers()
+            .iter()
+            .find(|v| v.id == provider)
+            .map(|v| v.name.clone())
+            .ok_or(Stage::Access)?;
         let kubeconfig = until_stop(stop, Stage::Access, async move {
             tokio::task::spawn_blocking(move || reader())
                 .await
@@ -377,9 +437,23 @@ impl SendOwner {
         })
         .await;
         let runner = NativeRunner::with_transport(transport);
+        let binding = access.binding();
+        let seed = AttemptSeed {
+            source: pair.snapshot().clone(),
+            target_display: format!("{} · {}", binding.context_name, binding.watched_namespace),
+            target_uids: TargetUids {
+                service_namespace: binding.service_namespace.clone(),
+                service_uid: binding.service_uid.clone(),
+                deployment_namespace: binding.deployment_namespace.clone(),
+                deployment_uid: binding.deployment_uid.clone(),
+                watched_namespace: binding.watched_namespace.clone(),
+            },
+            provider: provider_name,
+            time: unix_seconds(),
+        };
         let result = match checked {
             Ok(rows) if rows.iter().all(CheckRow::permits) => {
-                self.run(id, &runner, pair, stop).await
+                self.run(id, &runner, pair, seed, stop).await
             }
             Ok(_) => Err(Stage::Preflight),
             Err(stage) => Err(stage),
@@ -392,16 +466,34 @@ impl SendOwner {
         id: SendId,
         runner: &NativeRunner<'_>,
         pair: ParsedPair,
+        seed: AttemptSeed,
         stop: &watch::Receiver<bool>,
     ) -> Result<RunReport, Stage> {
         if *stop.borrow() {
             return Err(Stage::Stopped);
         }
         let prepared = runner.prepare(pair).map_err(|_| Stage::Submit)?;
+        let planned_agent_name = prepared.agent_name().to_string();
         self.update(id, |v| {
-            v.agent_name = Some(prepared.agent_name().into());
+            v.agent_name = Some(planned_agent_name.clone());
             v.stage = Stage::Submit;
         });
+        let mut summary = AttemptSummary {
+            id: id.0.to_string(),
+            source: seed.source,
+            target_display: seed.target_display,
+            target_uids: seed.target_uids,
+            provider: seed.provider,
+            planned_agent_name,
+            agent_uid: None,
+            verdict: AttemptVerdict::Running,
+            time: seed.time,
+        };
+        if self.summary.begin(summary.clone()).is_err() {
+            self.update(id, |v| v.storage_error = true);
+            return Err(Stage::Storage);
+        }
+        let mut storage_error = false;
         let handle = match runner.submit_prepared(prepared, stop.clone()).await {
             Ok(handle) => handle,
             Err(error) => {
@@ -413,16 +505,55 @@ impl SendOwner {
                         name: p.name,
                     });
                 });
+                summary.agent_uid = error.handle.agent().map(|agent| agent.uid.clone());
+                summary.verdict = AttemptVerdict::Unknown;
+                if self.summary.finish(summary).is_err() {
+                    storage_error = true;
+                }
+                if storage_error {
+                    self.update(id, |v| v.storage_error = true);
+                }
                 return Err(failed(error.kind, Stage::Submit));
             }
         };
+        summary.agent_uid = handle.agent().map(|agent| agent.uid.clone());
+        if self.summary.finish(summary.clone()).is_err() {
+            storage_error = true;
+            self.update(id, |v| v.storage_error = true);
+        }
         self.update(id, |v| {
             v.acknowledged = receipts(&handle);
             v.stage = Stage::Observe;
         });
-        runner
-            .observe_stoppable(&handle, stop.clone())
-            .await
-            .map_err(|e| failed(e.kind, Stage::Observe))
+        let observed = runner.observe_stoppable(&handle, stop.clone()).await;
+        match observed {
+            Ok(report) => {
+                summary.verdict = match report.verdict {
+                    Verdict::Passed => AttemptVerdict::Passed,
+                    Verdict::Failed => AttemptVerdict::Failed,
+                    Verdict::Unknown => AttemptVerdict::Unknown,
+                };
+                if storage_error && summary.verdict == AttemptVerdict::Passed {
+                    summary.verdict = AttemptVerdict::Unknown;
+                }
+                if self.summary.finish(summary).is_err() {
+                    storage_error = true;
+                }
+                if storage_error {
+                    self.update(id, |v| v.storage_error = true);
+                }
+                Ok(report)
+            }
+            Err(error) => {
+                summary.verdict = AttemptVerdict::Unknown;
+                if self.summary.finish(summary).is_err() {
+                    storage_error = true;
+                }
+                if storage_error {
+                    self.update(id, |v| v.storage_error = true);
+                }
+                Err(failed(error.kind, Stage::Observe))
+            }
+        }
     }
 }
