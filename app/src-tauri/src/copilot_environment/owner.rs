@@ -499,7 +499,7 @@ fn verify(r: &Receipt, i: usize, object: &DynamicObject) -> Result<(), Error> {
                 return Err(Error::Conflict);
             }
         }
-        for key in ["lifecycle", "startupProbe", "livenessProbe"] {
+        for key in ["lifecycle", "startupProbe"] {
             if !(container[key].is_null()
                 || container[key]
                     .as_object()
