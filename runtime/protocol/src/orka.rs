@@ -24,7 +24,7 @@ pub struct OrkaReply {
     pub status: u16,
     pub body: Value,
 }
-fn generated(name: &str, prefix: &str) -> bool {
+pub(super) fn generated(name: &str, prefix: &str) -> bool {
     name.strip_prefix(prefix).is_some_and(|id| {
         id.len() == 32
             && id

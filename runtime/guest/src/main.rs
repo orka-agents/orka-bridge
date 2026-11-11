@@ -1360,6 +1360,32 @@ mod tests {
                 },
             ),
             (4, RequestBody::Engine(EngineActionWire::Orka { request })),
+            (
+                5,
+                RequestBody::Execute {
+                    operation: Uuid::new_v4(),
+                    action: EngineActionWire::OrkaChat {
+                        request: ChatRequest {
+                            method: ChatMethod::Delete,
+                            path: "tasks/bridge-chat-task-0123456789abcdef0123456789abcdef".into(),
+                            after: None,
+                            body: None,
+                        },
+                    },
+                    snapshot: None,
+                },
+            ),
+            (
+                6,
+                RequestBody::Engine(EngineActionWire::OrkaChat {
+                    request: ChatRequest {
+                        method: ChatMethod::Get,
+                        path: "sessions/bridge-chat-0123456789abcdef0123456789abcdef".into(),
+                        after: None,
+                        body: None,
+                    },
+                }),
+            ),
         ] {
             let (mut host, guest) = UnixStream::pair().unwrap();
             host.write_all(

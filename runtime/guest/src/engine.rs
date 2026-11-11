@@ -277,7 +277,7 @@ fn projection(action: &EngineActionWire, bytes: &[u8]) -> io::Result<Vec<u8>> {
             Ok(format!("kmx {token}\n").into_bytes())
         }
         // Exact status plus bounded JSON; the runner already refused bearer echoes.
-        EngineActionWire::Orka { .. } => {
+        EngineActionWire::Orka { .. } | EngineActionWire::OrkaChat { .. } => {
             let reply: OrkaReply = serde_json::from_slice(bytes).map_err(|_| invalid())?;
             let bytes = serde_json::to_vec(&reply).map_err(|_| invalid())?;
             if bytes.len() > MAX_FILE {
@@ -331,6 +331,7 @@ pub struct Kmx;
 pub struct GuestRunner {
     pub kmx: Kmx,
     pub orka: crate::orka::Orka,
+    pub chat: crate::orka::Orka,
     pub catalog_provider: Option<String>,
 }
 impl GuestRunner {
@@ -338,6 +339,7 @@ impl GuestRunner {
         Self {
             kmx: Kmx,
             orka: crate::orka::Orka::new(installation),
+            chat: crate::orka::Orka::new_chat(installation),
             catalog_provider: None,
         }
     }
@@ -346,6 +348,7 @@ impl Runner for GuestRunner {
     fn execute(&mut self, action: &EngineActionWire) -> io::Result<EngineResult> {
         match action {
             EngineActionWire::Orka { request } => self.orka.execute(request),
+            EngineActionWire::OrkaChat { request } => self.chat.execute_chat(request),
             EngineActionWire::WorkspaceCatalog {} => {
                 let provider = self.catalog_provider.take().ok_or_else(invalid)?;
                 Ok(EngineResult {
@@ -376,9 +379,9 @@ pub fn argv(action: &EngineActionWire) -> io::Result<Vec<String>> {
         .into_iter()
         .map(str::to_owned)
         .collect(),
-        EngineActionWire::Orka { .. } | EngineActionWire::WorkspaceCatalog {} => {
-            return Err(invalid())
-        }
+        EngineActionWire::Orka { .. }
+        | EngineActionWire::OrkaChat { .. }
+        | EngineActionWire::WorkspaceCatalog {} => return Err(invalid()),
     })
 }
 impl Kmx {

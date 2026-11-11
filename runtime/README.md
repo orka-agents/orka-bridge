@@ -6,9 +6,9 @@ Boot's Ready acknowledgment validates identity, mounts and the endpoint, not Ork
 Post-boot Readiness also reports the matching bootstrap phase and current infrastructure
 service state. Native startup waits for `infrastructure-ready` and successful service
 completion before unlocking model setup. Older storage-only replies cannot satisfy this check.
-Serve accepts digest-committed agent/test snapshots and the delivered typed kmx
-Version and ListAgents actions. File-Test, mutations, remote cancellation and model
-credentials remain unavailable until their upstream contracts are delivered.
+Serve accepts digest-committed agent/test snapshots, typed kmx Version and
+ListAgents actions, and bounded native Run/Chat Orka requests. The Chat contract
+below does not enable generic command execution or a general HTTP proxy.
 
 ## Files and typed operations
 
@@ -40,8 +40,51 @@ is bounded; only version/Agent metadata is persisted, not CRD specs or raw stder
 Results are ID-bound chunks, never guest-selected paths or writes over creator
 files. A lost response stays Unknown until an explicit ID lookup; duplicate IDs
 never reexecute. Interrupted active records become Unknown.
-Current actions are read-only: no file execution flags, Task/package lookup or
-cancellation is inferred from incomplete upstream machine-output work.
+The kmx actions remain read-only: no file execution flags, Task/package lookup
+or cancellation is inferred from incomplete upstream machine-output work. Native
+Orka requests use their separate guest-owned transport.
+
+## Native Chat transport
+
+The physical host channel also accepts the separate `orkaChat` action. Its request
+has an explicit `method` (`get`, `post`, `delete`), `path`, optional event cursor
+`after`, and optional JSON `body`. Run's existing `orka` schema and identity do not
+accept DELETE. Neither action can be invoked through the in-guest local socket or
+translated into a kmx command.
+
+Chat creates generated `bridge-chat-agent-<32 lowercase hex>` Agents and
+`bridge-chat-task-<32 lowercase hex>` native AI Tasks in `orka-system`, with
+`bridge-chat-<32 lowercase hex>` conversation references. It reads those named
+Agents, Tasks, Task results/events and Sessions. Only generated Chat Tasks may be
+deleted; lists, arbitrary paths/URLs and Agent/Session deletion are unavailable.
+Task references must name Chat resources; an Agent reference's optional namespace
+must be `orka-system`. Other Agent/Task configuration remains the native caller's
+responsibility, as with Run.
+
+The lazy guest-owned `bridge-native-chat` identity has separate credentials and
+forward state from `bridge-native-run`. Its namespaced RBAC permits Agent
+create/get, Task create/get/delete, Session get and provider/tool reads. Kubernetes
+Task deletion permission is namespace-wide: validated Chat paths and the bearer
+remaining inside the guest, not RBAC name restrictions, provide Chat-only access.
+Identity setup reuses only exact guest-owned manifests, never rewrites Run's Role,
+and never sends bearer credentials to the host. Requests retain the existing
+64 KiB create-body and 128 KiB frame bounds, no redirects or automatic HTTP
+retries. Both the raw reply and its status-wrapped JSON must fit 1 MiB, so a
+near-limit raw response can still be withheld with an Unknown operation outcome.
+Oversized replies and bearer echoes are withheld before result persistence.
+
+A DELETE acknowledgement is only a deletion request acknowledgement, not evidence
+that the worker terminated. Preserve HTTP status and JSON for the host to report
+best-effort Stop with execution termination unconfirmed. Task deletion removes
+its stored result and events; it cannot undo tool effects. Operation-ID replay
+returns the recorded outcome without repeating the request. Generated Agents and
+Sessions are not cleaned up by this transport. Submitted message bodies can also
+remain in the VM's private operation records; quitting the app is not erasure.
+
+This is guest/protocol groundwork only: it does not enable Designer Chat, provide
+host conversation state, or ship a new VM image. Using it requires a rebuilt guest
+image; older guests do not understand the action. The host follow-on must detect
+an unsupported image, not fall back to another credential or transport authority.
 
 ## Image integration boundary
 
