@@ -381,14 +381,11 @@ pub fn argv(action: &EngineActionWire) -> io::Result<Vec<String>> {
         }
     })
 }
-impl Runner for Kmx {
-    fn execute(&mut self, action: &EngineActionWire) -> io::Result<EngineResult> {
-        use std::{
-            os::unix::process::CommandExt,
-            process::{Command, Stdio},
-            time::Duration,
-        };
-        let child = Command::new("/usr/local/bin/kmx")
+impl Kmx {
+    fn command(action: &EngineActionWire) -> io::Result<std::process::Command> {
+        use std::{os::unix::process::CommandExt, process::Stdio};
+        let mut command = std::process::Command::new("/usr/local/bin/kmx");
+        command
             .args(argv(action)?)
             .env_clear()
             .env("PATH", "/usr/local/bin:/usr/bin:/bin")
@@ -399,9 +396,19 @@ impl Runner for Kmx {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .process_group(0)
-            .spawn()?;
-        collect(child, Duration::from_secs(60))
+            .process_group(0);
+        if matches!(action, EngineActionWire::ListAgents { .. }) {
+            command
+                .env("KUBECONFIG", "/var/lib/bridge/kubeconfig")
+                .env("KMX_HOME", "/var/lib/bridge/kmx");
+        }
+        Ok(command)
+    }
+}
+impl Runner for Kmx {
+    fn execute(&mut self, action: &EngineActionWire) -> io::Result<EngineResult> {
+        let child = Self::command(action)?.spawn()?;
+        collect(child, std::time::Duration::from_secs(60))
     }
 }
 pub(crate) struct Collected {
@@ -543,6 +550,40 @@ mod driver_tests {
             .spawn()
             .unwrap()
     }
+    #[test]
+    fn list_agents_uses_bootstrap_state_and_version_keeps_its_environment() {
+        let list = EngineActionWire::ListAgents {
+            context: "kind-bridge-fixture".into(),
+            namespace: "orka-system".into(),
+        };
+        for (action, kubeconfig, kmx_home) in [
+            (
+                list,
+                "/var/lib/bridge/kubeconfig",
+                Some("/var/lib/bridge/kmx"),
+            ),
+            (EngineActionWire::Version {}, "/root/.kube/config", None),
+        ] {
+            let command = Kmx::command(&action).unwrap();
+            assert_eq!(command.get_program(), "/usr/local/bin/kmx");
+            assert_eq!(command.get_current_dir(), Some(std::path::Path::new("/")));
+            let mut expected = std::collections::BTreeMap::from([
+                ("HOME", "/root"),
+                ("KUBECONFIG", kubeconfig),
+                ("LC_ALL", "C"),
+                ("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            ]);
+            if let Some(home) = kmx_home {
+                expected.insert("KMX_HOME", home);
+            }
+            let actual: std::collections::BTreeMap<_, _> = command
+                .get_envs()
+                .map(|(key, value)| (key.to_str().unwrap(), value.unwrap().to_str().unwrap()))
+                .collect();
+            assert_eq!(actual, expected);
+        }
+    }
+
     #[test]
     fn drains_both_pipes_and_preserves_nonzero_exit() {
         let output = collect(

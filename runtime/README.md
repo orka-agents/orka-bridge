@@ -32,12 +32,14 @@ once their payload expires. Future file-execution support must pin active input 
 
 Operations record their caller ID before fixed `/usr/local/bin/kmx` execution.
 Argv uses the existing version and scoped JSON agent-list commands; no shell or
-caller environment is accepted. Guest HOME and KUBECONFIG are fixed to `/root`
-and `/root/.kube/config`; image integration must supply the pinned kmx and its
-helper dependencies. Output is bounded; only version/Agent metadata is persisted,
-not CRD specs or raw stderr. Results are ID-bound chunks, never guest-selected
-paths or writes over creator files. A lost response stays Unknown until an explicit
-ID lookup; duplicate IDs never reexecute. Interrupted active records become Unknown.
+caller environment is accepted. Guest HOME is fixed to `/root`. ListAgents uses
+bootstrap's state-disk `KUBECONFIG=/var/lib/bridge/kubeconfig` and
+`KMX_HOME=/var/lib/bridge/kmx`; Version keeps `/root/.kube/config` and no KMX_HOME.
+Image integration must supply the pinned kmx and its helper dependencies. Output
+is bounded; only version/Agent metadata is persisted, not CRD specs or raw stderr.
+Results are ID-bound chunks, never guest-selected paths or writes over creator
+files. A lost response stays Unknown until an explicit ID lookup; duplicate IDs
+never reexecute. Interrupted active records become Unknown.
 Current actions are read-only: no file execution flags, Task/package lookup or
 cancellation is inferred from incomplete upstream machine-output work.
 
