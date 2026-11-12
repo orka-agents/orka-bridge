@@ -9,6 +9,8 @@ use std::collections::HashSet;
 pub struct ParsedPair {
     snapshot: SnapshotId,
     prompt: String,
+    name: Option<String>,
+    description: Option<String>,
     model: String,
     tools: Vec<String>,
     declared_tools: Vec<DeclaredTool>,
@@ -195,8 +197,6 @@ impl ParsedPair {
         {
             return Err(ErrorKind::Source);
         }
-        // Metadata is deliberately inert; it never chooses a remote resource name.
-        let _ = (agent.name, agent.description);
         let mut tools = Vec::new();
         for tool in &agent.kmx.tools {
             if !present(&tool.name) || tools.contains(&tool.name) {
@@ -255,6 +255,8 @@ impl ParsedPair {
         Ok(Self {
             snapshot,
             prompt: prompt.into(),
+            name: agent.name,
+            description: agent.description,
             model: agent.model,
             tools,
             declared_tools: agent.kmx.tools,
@@ -267,6 +269,12 @@ impl ParsedPair {
     }
     pub fn prompt(&self) -> &str {
         &self.prompt
+    }
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
     }
     pub fn model(&self) -> &str {
         &self.model

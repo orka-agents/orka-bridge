@@ -312,7 +312,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): native workspace screen observed")
         return observations
     }
-    let pages = ["Overview", "Designer", "Clusters", "web-reader"]
+    let pages = ["Your agents", "Designer", "Clusters", "web-reader"]
     let headings = Set(observations.compactMap { observation -> String? in
         let top = 1 - observation.boundingBox.maxY
         guard top > 0.10 && top < 0.25,
@@ -321,10 +321,10 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         return text
     })
     // Negative control: persistent nav labels must not qualify as page headings.
-    for wrong in pages where wrong != page && !(page == "Designer" && wrong == "web-reader") {
+    let expectedHeading = page == "Designer" ? "web-reader" : page == "Overview" ? "Your agents" : page
+    for wrong in pages where wrong != expectedHeading && !(page == "Designer" && wrong == "Designer") {
         require(!headings.contains(wrong), "Unexpected \(wrong) page heading; expected \(page)")
     }
-    let expectedHeading = page == "Designer" ? "web-reader" : page
     require(headings == Set([expectedHeading]), "Native screenshot does not show the expected \(expectedHeading) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
     return observations
@@ -429,6 +429,10 @@ Thread.sleep(forTimeInterval: 2)
 let retained = try capture("choice-retained", "Clusters")
 clickTab("Overview", retained)
 let overview = try capture("overview", "Overview")
+require(nativeTextIsVisible("Agent list unavailable with this Mac image"),
+        "Overview must explain the source-inferred old Mac image limit")
+require(nativeTextIsVisible("Saved file") && nativeTextIsVisible("web-reader"),
+        "Overview must show the saved file opened through the native Designer")
 clickTab("Designer", overview)
 let designer = try capture("designer-pointer", "Designer")
 let clustersTab = clickTab("Clusters", designer)
