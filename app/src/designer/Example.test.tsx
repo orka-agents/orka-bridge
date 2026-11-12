@@ -21,6 +21,17 @@ function native(save?: (content: string) => unknown) {
     throw Error(`Unexpected command ${command}`);
   });
 }
+test('opening keeps a form-shaped skeleton until the owned document arrives', async () => {
+  vi.stubGlobal('isTauri', true); let finish!: (value: unknown) => void;
+  mockIPC(command => command === 'agent_open' ? new Promise(resolve => { finish = resolve; }) : idle);
+  render(<Example />);
+  const loading = screen.getByRole('status', { name: 'Opening your agent' });
+  expect(loading.getAttribute('aria-busy')).toBe('true');
+  expect(loading.querySelectorAll('.skeleton-field').length).toBeGreaterThan(2);
+  await act(async () => finish(pair));
+  expect(screen.queryByRole('status', { name: 'Opening your agent' })).toBeNull();
+  expect(screen.getByRole('textbox', { name: 'Instructions' })).toBeTruthy();
+});
 test('opens the owned pair without a VM and exposes a keyboard File switch', async () => {
   native(); const user = userEvent.setup(); render(<Example />);
   expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();

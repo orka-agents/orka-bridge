@@ -143,7 +143,7 @@ export default function App() {
     : cases?.some(check => check.verdict === 'unknown') ? 'check result unknown'
     : cases ? 'checks passing' : 'ready to edit';
   const tabStatus: Record<Page, string> = {
-    Overview: checks ?? 'No agents yet',
+    Overview: checksStale ? 'Tests need a run' : checks ?? 'No agents yet',
     Designer: agentName ? `${agentName}, ${remote ? 'checks on your cluster' : agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
@@ -169,7 +169,7 @@ export default function App() {
                 setPage(name);
               }}>
               <span className={`icon-tile tile-${name.toLowerCase()}`}><PageIcon page={name} /></span>
-              <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{name === 'Designer' && agentName ? <>{agentName}, <span className={`tab-status-word status-${tabTone}`}>{tabStatus[name].slice(agentName.length + 2)}</span></> : tabStatus[name]}</small></span>
+              <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{name === 'Designer' && agentName ? <><span className="tab-agent-name">{agentName}, </span><span className={`tab-status-word status-${tabTone}`}>{tabStatus[name].slice(agentName.length + 2)}</span></> : tabStatus[name]}</small></span>
             </button>
           ))}
         </nav>

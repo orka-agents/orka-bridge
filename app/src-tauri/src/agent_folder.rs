@@ -363,6 +363,19 @@ impl AgentFolder {
         };
         operation().map_err(|_| "The local agent folder could not be read or saved. Check that it is a Bridge-managed folder with regular files, then retry.")
     }
+    pub(crate) fn reveal_path(&self) -> Result<PathBuf> {
+        if !self.available() {
+            return Err("The agent folder is unavailable.");
+        }
+        Ok(self
+            .home
+            .as_ref()
+            .ok_or("The agent folder is unavailable.")?
+            .join("Orka")
+            .join("agents")
+            .join(&self.name)
+            .join(&self.agent))
+    }
     pub(crate) fn display_path(&self) -> Option<String> {
         self.home.as_ref().and_then(|home| {
             home.join("Orka")

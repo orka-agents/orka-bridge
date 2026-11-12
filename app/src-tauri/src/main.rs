@@ -122,6 +122,19 @@ async fn agent_save(
 }
 
 #[tauri::command]
+async fn agent_reveal(
+    document_id: DocumentId,
+    state: tauri::State<'_, Arc<Agents>>,
+) -> Result<(), &'static str> {
+    let agents = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        bridge_engine::agent_reveal::reveal(&agents, document_id)
+    })
+    .await
+    .map_err(|_| "Could not show the agent folder.")?
+}
+
+#[tauri::command]
 async fn workspace_catalog(
     state: tauri::State<'_, Arc<SetupStore>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
@@ -310,6 +323,7 @@ fn main() {
             agent_selected,
             agent_open,
             agent_save,
+            agent_reveal,
             workspace_catalog,
             cluster_contexts,
             cluster_reload,

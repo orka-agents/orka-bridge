@@ -4,6 +4,8 @@ import { SAMPLE_DOCUMENT_ID, agentCall, agentInfo, type AgentPair, type SaveStat
 import Run from './Run';
 import { readWorkspaceCatalog, type WorkspaceCatalogReply } from '../catalog';
 import AgentParts from './AgentParts';
+import FileEditor from './FileEditor';
+import FileLocation from './FileLocation';
 import { readForm } from './agent-form';
 import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
@@ -130,19 +132,17 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
           onProceed={openSend} onFix={() => { setView('Agent'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.instructions-editor')?.focus()); }} />
       </div>
     </div>
-    {!pair ? error ? <p role="alert">{error}</p> : <p role="status">Opening your agent…</p> : <>
+    {!pair ? error ? <p role="alert">{error}</p> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div className="designer-file card">
         <div className="file-toolbar"><h2>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2><span className="muted" role="status">{saveLabel}</span></div>
         {view === 'File' ? <>
-          <label className="sr-only" htmlFor="agent-file">Agent file</label>
-          <p className="muted" id="file-hint">Changes save automatically in your agent’s folder. Each save is kept in its Git history.</p>
-          <textarea id="agent-file" aria-describedby="file-hint" className="agent-editor" spellCheck={false} value={draft} onChange={event => edit(event.target.value, true)} onBlur={() => { void flush(); }} onKeyDown={event => {
-            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void flush(); }
-          }} />
+          <FileLocation path={pair.path} documentId={boundDocument} />
+          <p className="muted" id="file-hint">The --- block contains the agent’s name, model and tools. kmx, schemaVersion and runtime describe the Orka file format. Instructions follow the block. Each edit saves automatically in Git history.</p>
+          <FileEditor value={draft} onChange={value => edit(value, true)} onSave={() => { void flush(); }} />
         </> : null}
         <div hidden={view !== 'Agent'}>
-          <AgentParts source={draft} path={pair.path} readOnly={false} setupPending={setupPending} catalog={currentCatalog?.reply} catalogLoading={catalogEnabled && !currentCatalog} onPendingEdit={observePendingSoul} onChange={edit} />
-          {currentCatalog && (!currentCatalog.reply || currentCatalog.reply.models.state === 'unavailable' || currentCatalog.reply.tools.state === 'unavailable') && <button type="button" className="part-button" onClick={() => setCatalogAttempt(attempt => attempt + 1)}>Refresh catalog</button>}
+          <AgentParts source={draft} path={pair.path} documentId={boundDocument} readOnly={false} setupPending={setupPending} catalog={currentCatalog?.reply} catalogLoading={catalogEnabled && !currentCatalog} onPendingEdit={observePendingSoul} onChange={edit} />
+          {currentCatalog && (!currentCatalog.reply || currentCatalog.reply.models.state === 'unavailable' || currentCatalog.reply.tools.state === 'unavailable') && <button type="button" className="part-button" onClick={() => setCatalogAttempt(attempt => attempt + 1)}>Refresh tools and models</button>}
         </div>
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
