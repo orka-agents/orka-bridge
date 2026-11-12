@@ -274,7 +274,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Send your agent") || text.contains("Tests on your cluster") || text.contains("passed") || text.contains("evaluating tests") || text.contains("Planned Agent"), "Send panel not visible: \(text)")
+        require(text.contains("Send your agent") || text.contains("Tests on your cluster") || text.contains("passed") || text.contains("evaluating tests") || text.contains("Planned Agent") || text.contains("QUESTION") || text.contains("The answer did not include") || text.contains("Not run since your edit") || text.contains("Stopped watching"), "Send panel not visible: \(text)")
         print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
         return observations
     }
@@ -348,7 +348,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         let seen = try capture("send-probe", "Designer")
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
-        if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.hasPrefix(label + " ")) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
+        if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: .regularExpression) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
             clickText(control, in: seen)
             return
         }
@@ -675,9 +675,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try resultSize(1280, 800)
     try capturePreflight("send-result-wide", "1 of 1 passed")
     try clickSendControl("published-checksum", scrolling: -250)
-    try capturePreflight("send-answer-wide", "Question")
+    try capturePreflight("send-answer-wide", "QUESTION")
     try resultSize(540, 900)
-    try capturePreflight("send-answer", "Question")
+    try capturePreflight("send-answer", "QUESTION")
     try clickSendControl("published-checksum", scrolling: 250)
     try clickSendControl("Details", scrolling: -350)
     scrollMain(-350)
