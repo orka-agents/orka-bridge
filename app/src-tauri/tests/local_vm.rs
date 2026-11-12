@@ -117,8 +117,17 @@ async fn cancellation_joins_late_session_before_restart_and_change_clears_choice
     let store = Arc::new(SetupStore::new(Some(temp.path().to_owned())));
     let p = Arc::new(Probe::default());
     let vm = owner(p.clone());
+    let initial =
+        serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap()).unwrap();
+    assert_eq!(initial["modelSupported"], local_vm::MODEL_IMAGE_AVAILABLE);
     local_vm::select_local(store.clone(), &vm).await.unwrap();
     phase(&vm, LocalVmStatus::Installing).await;
+    let installing =
+        serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap()).unwrap();
+    assert_eq!(
+        installing["modelSupported"],
+        local_vm::MODEL_IMAGE_AVAILABLE
+    );
     let cancelling = {
         let vm = vm.clone();
         let store = store.clone();

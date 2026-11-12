@@ -10,6 +10,7 @@ import type { SelectedPlace } from './clusters/api';
 import type { ModelState } from './setup/Model';
 import { workspaceRecovery } from './setup/recovery-info';
 import { preflightRecovery } from './setup/preflight-state';
+import { setupView } from './setup/progress';
 import { sampleRun, type RunSnapshot } from './designer/run-api';
 import { agentInfo, type SaveState } from './designer/agent-api';
 
@@ -45,19 +46,6 @@ function PageIcon({ page }: { page: Page }) {
   );
 }
 
-const workspaceCopy = {
-  idle: ['Setting up, step 1 of 4', 'Choose where agents run', 'wait'],
-  preparing: ['Setting up, step 2 of 4', 'Getting workspace ready', 'busy'],
-  installing: ['Setting up, step 2 of 4', 'Getting workspace ready', 'busy'],
-  starting: ['Setting up, step 2 of 4', 'Starting workspace', 'busy'],
-  ready: ['Setting up, step 3 of 4', 'Choose the AI', 'ready'],
-  failed: ['Setup failed', 'Workspace needs attention', 'bad'],
-  closing: ['Stopping workspace', 'Stopping workspace', 'busy'],
-  closed: ['Workspace stopped', 'Workspace stopped', 'wait'],
-  cancelled: ['Setup paused', 'What has arrived is kept', 'wait'],
-  notIntegrated: ['Workspace unavailable', 'Workspace unavailable', 'wait'],
-} as const;
-
 function ComingButton({ label, reason }: { label: string; reason: string }) {
   // The wrapper makes the disabled control's reason reachable with the keyboard.
   return <span className="coming-control" tabIndex={0} role="group" aria-label={`${label}: ${reason}`} title={reason}>
@@ -70,7 +58,6 @@ export default function App() {
   const [page, setPage] = useState<Page>('Clusters');
   const [place, setPlace] = useState<SelectedPlace>({ kind: 'thisComputer' });
   const remote = place.kind === 'cluster';
-  const placeName = remote ? place.target?.context_name ?? 'Choose a cluster' : 'This computer';
   const content = useRef<HTMLElement>(null);
   useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);
@@ -121,16 +108,6 @@ export default function App() {
     setExampleState(pair ? 'loaded' : 'failed');
     setAgentName(agentInfo(pair?.agent).name);
   }, []);
-  const [setupLine, detail, tone] = setup ? workspaceCopy[setup.localVm]
-    : checking ? ['Checking workspace…', 'Checking workspace…', 'wait'] : ['Workspace unavailable', 'Workspace unavailable', 'wait'];
-  const workspaceReady = setup?.localVm === 'ready';
-  const modelDetail = setup?.model === 'locked' ? 'AI connection unavailable'
-    : model === 'removing' ? 'Removing the AI sign-in…' : model === 'connecting' ? 'Connecting the AI…' : model === 'connected' ? 'AI connected'
-    : model === 'failed' ? 'AI connection needs attention' : detail;
-  const workspaceDetail = setup?.localVm === 'failed'
-    ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
-  const hostDetail = workspaceReady ? modelDetail : workspaceDetail;
-  const hostTone = workspaceReady && model === 'failed' ? 'bad' : tone;
   const cases = run?.report?.cases;
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
   const localChecks = checksStale ? 'Checks not run since your change' : runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
@@ -140,6 +117,13 @@ export default function App() {
   const sample = sampleRun(run);
   const firstCheck = run && !sample ? undefined : checksStale ? 'stale' : runUnavailable || run?.state === 'unknown' ? 'unknown'
     : run?.state === 'running' ? 'running' : run?.state === 'complete' ? run.report?.verdict : undefined;
+  // Tab, footer and the Setup card share this derivation. Native selection, not the default radio, names the host.
+  const view = setupView(setup, { checking, model, check: firstCheck });
+  const { line: setupLine, detail, tone: hostTone } = view;
+  const workspaceReady = setup?.localVm === 'ready';
+  const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
+    : { local: 'This computer', none: 'No place selected', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
+  const hostDetail = setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
   const agentStatus = checksStale ? 'checks need running' : runUnavailable ? 'check status unavailable' : run?.state === 'unknown' ? 'check result unknown'
     : run?.state === 'running' ? 'running checks'
@@ -150,9 +134,7 @@ export default function App() {
     Overview: overviewCounts,
     Designer: agentName ? `${agentName}, ${remote ? 'checks on your cluster' : agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
-    Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
-      : model === 'connected' ? sample?.state === 'complete' ? 'This computer ready' : 'AI connected'
-      : model === 'failed' ? 'AI needs attention' : model === 'idle' ? setupLine : modelDetail,
+    Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : setupLine,
   };
   const tabTone = remote || exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const copy = emptyCopy[page];
@@ -213,12 +195,12 @@ export default function App() {
       </main>
       <footer className="status-bar">
         <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" />
-        <span>{remote ? place.target ? `${placeName} · Access confirmed` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : workspaceReady ? 'This computer ready' : setupLine}</span>
-        {!remote && !welcome && (detail !== setupLine || workspaceReady) ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : workspaceDetail}</span></> : null}
+        <span>{remote ? place.target ? `${placeName} · Access confirmed` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : setupLine}</span>
+        {!remote && !welcome && hostDetail !== setupLine ? <><span aria-hidden="true">·</span><span>{hostDetail}</span></> : null}
         {exampleState === 'loaded' && <><span aria-hidden="true">·</span><span aria-live="polite" aria-atomic="true">{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
-          page !== 'Clusters' ? (remote ? placeName : workspaceReady ? `This computer ready · ${modelDetail}` : `${setupLine} · ${workspaceDetail}`) : undefined,
+          page !== 'Clusters' ? (remote ? placeName : hostDetail === setupLine ? setupLine : `${setupLine} · ${hostDetail}`) : undefined,
           page !== 'Designer' ? checks : undefined,
         ].filter(Boolean).join(' · ')}</span>
       </footer>

@@ -102,7 +102,8 @@ test('Overview reads saved documents without opening, setup or VM commands; Open
   expect(calls.some(c => /setup_select|agent_run$|send_start/.test(c))).toBe(false);
   await user.click(screen.getByRole('button', { name: 'Open second' }));
   expect(await screen.findByRole('heading', { name: 'second', level: 1 })).toBeTruthy();
-  expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');
+  // Native selection is still null, so the chip does not invent a place after Open.
+  expect(document.querySelector('.host-chip')?.textContent).toContain('No place selected');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open second' }));
   expect(calls.filter(c => c === 'agent_open')).toHaveLength(1);
@@ -162,10 +163,10 @@ test('Designer opens the owned agent without workspace setup and shares its save
 });
 
 test.each([
-  ['idle', null, 'Choose where agents run', 'Setting up, step 1 of 4'],
-  ['preparing', 'localVm', 'Getting workspace ready', 'Setting up, step 2 of 4'],
-  ['installing', 'localVm', 'Getting workspace ready', 'Setting up, step 2 of 4'],
-  ['starting', 'localVm', 'Starting workspace', 'Setting up, step 2 of 4'],
+  ['idle', null, 'Choose where agents run', 'Choose where agents run'],
+  ['preparing', 'localVm', 'Getting workspace ready', 'Setting up, step 1 of 5'],
+  ['installing', 'localVm', 'Getting workspace ready', 'Setting up, step 1 of 5'],
+  ['starting', 'localVm', 'Starting workspace', 'Setting up, step 2 of 5'],
   ['ready', 'localVm', 'AI connection unavailable', 'AI unavailable'],
   ['failed', 'localVm', "Bridge couldn't establish why the workspace failed.", 'Setup failed'],
   ['closed', 'localVm', 'Workspace stopped', 'Workspace stopped'],
@@ -190,7 +191,10 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
     expect(button.getAttribute('title')).toMatch(/coming/i);
   }
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/agent folder|Reopen your agent/);
-  expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');
+  // Browser preview cannot read native selection, so the host is neither "This computer" nor "No place selected".
+  expect(screen.getByText('Status unavailable')).toBeTruthy();
+  // The Overview page also has a "This computer" heading, so assert on the host chip.
+  expect(document.querySelector('.host-chip')?.textContent).not.toContain('This computer');
 });
 
 test('setup refreshes while another page is open', async () => {
@@ -232,7 +236,8 @@ test('model acknowledgment and observed check counts survive navigation', async 
   expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(within(screen.getByRole('contentinfo')).getByText('AI connected')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Model connected' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByText(/Model connected:/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /Model connected|Connecting/ })).toBeNull();
 });
 
 test('a running check finishes in the footer after leaving Designer', async () => {
@@ -338,7 +343,7 @@ test('a transient setup read failure recovers while off Clusters', async () => {
   const user = userEvent.setup(); render(<App />);
   await within(screen.getByRole('navigation')).findByText('Workspace unavailable');
   await user.click(screen.getByRole('button', { name: 'Overview' })); fail = false;
-  expect(await within(screen.getByRole('navigation')).findByText('Setting up, step 2 of 4', {}, { timeout: 2000 })).toBeTruthy();
+  expect(await within(screen.getByRole('navigation')).findByText('Setting up, step 2 of 5', {}, { timeout: 2000 })).toBeTruthy();
 });
 
 test('a transient setup read failure does not invalidate an admitted model connection', async () => {
@@ -355,10 +360,11 @@ test('a transient setup read failure does not invalidate an admitted model conne
   fail = true;
   await within(screen.getByRole('navigation')).findByText('Workspace unavailable', {}, { timeout: 2000 });
   await act(async () => { finishConnect({ ready: true }); });
-  expect(screen.getByRole('button', { name: 'Model connected' }).matches(':disabled')).toBe(true);
+  expect(screen.getByText(/Model connected:/)).toBeTruthy();
   fail = false;
   expect(await within(screen.getByRole('contentinfo')).findByText('AI connected', {}, { timeout: 2000 })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Model connected' }).matches(':disabled')).toBe(true);
+  expect(screen.getByText(/Model connected:/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Model connected' })).toBeNull();
 });
 
 test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remembered cluster needs a fresh successful Use before preflight', async origin => {

@@ -63,7 +63,7 @@ test('keyboard retry calls native selection once and returns to progress', async
   const user = userEvent.setup(); render(<App />);
   const retry = await screen.findByRole('button', { name: 'Try again' });
   retry.focus(); await user.keyboard('{Enter}{Enter}');
-  await screen.findByRole('progressbar', { name: 'Workspace startup' });
+  await screen.findByRole('progressbar', { name: 'Workspace setup progress' });
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toHaveLength(1);
   expect(screen.queryByRole('alert')).toBeNull();
 });
@@ -130,7 +130,7 @@ test('AI failure marks its setup step and every shell status without losing the 
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Guest Connect did not acknowledge a ready model'));
   expect(screen.getByText('Needs attention').closest('li')?.className).toBe('step-failed');
-  expect(screen.getByText('AI needs attention')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText('AI needs attention')).toBeTruthy();
   expect(screen.getByRole('contentinfo').textContent).toContain('AI connection needs attention');
   expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('AI connection needs attention');
   expect(document.querySelector('.host-chip .live-dot')?.className).toContain('bad');
