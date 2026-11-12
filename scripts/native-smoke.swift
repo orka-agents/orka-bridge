@@ -102,6 +102,35 @@ func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) 
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.5)
 }
+func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+}
+func nativeElements() -> [AXUIElement] {
+    var nodes = [AXUIElementCreateApplication(app.processIdentifier)]
+    var index = 0
+    while index < nodes.count && nodes.count < 4000 {
+        let element = nodes[index]; index += 1
+        for key in ["AXChildren", "AXWindows"] {
+            for child in attribute(element, key) as? [AXUIElement] ?? []
+                where !nodes.contains(where: { CFEqual($0, child) }) { nodes.append(child) }
+        }
+    }
+    return nodes
+}
+func nativeTextIsVisible(_ expected: String) -> Bool {
+    nativeElements().contains { element in
+        guard attribute(element, "AXRole") as? String == "AXStaticText",
+            (attribute(element, "AXValue") as? String)?.contains(expected) == true,
+            let position = attribute(element, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
+            let size = attribute(element, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else { return false }
+        var point = CGPoint.zero; var extent = CGSize.zero
+        guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
+            AXValueGetValue(size as! AXValue, .cgSize, &extent), extent.width > 0, extent.height > 0,
+            let rect = window()?.1 else { return false }
+        return rect.contains(CGRect(origin: point, size: extent))
+    }
+}
 @discardableResult
 func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> AXUIElement {
     // Small Inter labels can be grouped with subtitles by Vision. Identify the
@@ -110,24 +139,10 @@ func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> 
     let header = observations.filter { 1 - $0.boundingBox.maxY < 0.10 }
         .compactMap { $0.topCandidates(1).first?.string }
     print("NAV \(page): header OCR \(header)")
-    func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
-        var value: CFTypeRef?
-        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
-    }
-    var nodes = [AXUIElementCreateApplication(app.processIdentifier)]
-    var index = 0
-    var matches: [AXUIElement] = []
-    while index < nodes.count && nodes.count < 4000 {
-        let element = nodes[index]; index += 1
-        if attribute(element, "AXRole") as? String == "AXButton",
-            attribute(element, "AXEnabled") as? Bool == true,
-            ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == page }) {
-            matches.append(element)
-        }
-        for key in ["AXChildren", "AXWindows"] {
-            for child in attribute(element, key) as? [AXUIElement] ?? []
-                where !nodes.contains(where: { CFEqual($0, child) }) { nodes.append(child) }
-        }
+    let matches = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && attribute(element, "AXEnabled") as? Bool == true
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == page })
     }
     require(matches.count == 1, "Expected one enabled native tab named \(page), found \(matches.count)")
     let target = matches[0]
@@ -242,8 +257,8 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         let selected = text.contains("Get your workspace ready")
         require(welcome || choice || selected, "Workspace heading not visible; observed: \(text)")
         if !welcome {
-            require(text.contains("Workspace setup is not included"),
-                    "Release setup IPC did not report its real integration state")
+            require(nativeTextIsVisible("Workspace setup is not included in this build. Nothing will be downloaded or started."),
+                    "Release setup IPC did not visibly report its real integration state")
         }
         if ["local-selected", "choice-retained"].contains(name) {
             require(selected && !welcome && !choice, "Native preference was not acknowledged or retained")
