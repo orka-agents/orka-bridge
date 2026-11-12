@@ -634,6 +634,30 @@ impl LocalVm {
             })
         })?
     }
+    pub async fn remove_model(
+        &self,
+        setup: Arc<crate::setup::SetupStore>,
+    ) -> Result<crate::setup::ModelSetupState, crate::setup::SetupError> {
+        let inner = self.inner.clone();
+        self.with_client(move |id, client| {
+            let result = setup.sign_out_model(
+                id,
+                Some(client),
+                &crate::runtime::credential_store::OsCredentialStore,
+            );
+            // Even a failed remove may already have stopped the guest model.
+            inner.model_result(&result);
+            result
+        })
+        .await
+        .map_err(|error| {
+            crate::setup::SetupError::model(if matches!(error, RuntimeError::Busy) {
+                "modelBusy"
+            } else {
+                "modelSession"
+            })
+        })?
+    }
     pub fn request_close(&self) {
         let mut state = self.inner.state.lock().unwrap();
         state.terminal = true;

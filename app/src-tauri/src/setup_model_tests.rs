@@ -906,6 +906,126 @@ fn pending_known_id_needs_an_advanced_cleared_generation_before_host_recovery() 
 }
 
 #[test]
+fn new_boot_remove_cleans_guest_before_deleting_only_the_owned_slot() {
+    let (_tmp, setup, install, vault) = associated();
+    let root = setup.root.as_ref().unwrap().clone();
+    let mut binding = read_binding(&root).unwrap().unwrap();
+    binding.phase = Phase::Connected;
+    binding.nonce = Some(Uuid::new_v4());
+    binding.connection = Some(connection());
+    write_binding(&root, &binding).unwrap();
+    let expected = binding.connection.clone().unwrap();
+    let (mut client, worker) = peer(Uuid::new_v4(), move |request| {
+        Some(match &request.body {
+            RequestBody::ModelStatus {} => idle(),
+            RequestBody::ModelDisconnectRetained { connection } => {
+                assert_eq!(connection, &expected);
+                ResultBody::Ready {}
+            }
+            _ => panic!("removal must not load, publish or clear an absent guest credential"),
+        })
+    });
+    setup
+        .sign_out_model(install, Some(&mut client), &vault)
+        .unwrap();
+    drop(client);
+    assert_eq!(worker.join().unwrap().frames.len(), 2);
+    assert_eq!(vault.counts(), (1, 0, 1));
+    assert!(!setup.model_binding_status().unwrap().associated);
+    setup.sign_out_model(install, None, &vault).unwrap();
+    assert_eq!(vault.counts(), (1, 0, 1));
+}
+
+#[test]
+fn new_boot_cleanup_refusal_preserves_slot_and_binding_before_any_secret_load() {
+    for reply in [
+        idle(),
+        ResultBody::Error {
+            code: ErrorCode::Unavailable,
+        },
+        ResultBody::ModelState(ModelState {
+            phase: ModelPhase::Idle,
+            connection: None,
+            credential: credential(Some(Uuid::new_v4()), false),
+            diagnostic: None,
+        }),
+    ] {
+        let (_tmp, setup, install, vault) = associated();
+        let root = setup.root.as_deref().unwrap();
+        let mut binding = read_binding(root).unwrap().unwrap();
+        binding.phase = Phase::Connected;
+        binding.nonce = Some(Uuid::new_v4());
+        binding.connection = Some(connection());
+        write_binding(root, &binding).unwrap();
+        let before = fs::read(root.join("model-v1")).unwrap();
+        let (mut client, worker) = peer(Uuid::new_v4(), move |request| {
+            Some(match request.body {
+                RequestBody::ModelStatus {} => reply.clone(),
+                RequestBody::ModelDisconnectRetained { .. } => ResultBody::Error {
+                    code: ErrorCode::Unavailable,
+                },
+                _ => panic!("no credential operations after cleanup refusal"),
+            })
+        });
+        assert!(setup
+            .connect_stored_model(install, &mut client, &vault, || panic!("no capture"))
+            .is_err());
+        drop(client);
+        worker.join().unwrap();
+        assert_eq!(vault.counts(), (1, 0, 0));
+        assert_eq!(fs::read(root.join("model-v1")).unwrap(), before);
+        assert!(vault.slots.lock().unwrap().contains_key(&binding.slot));
+    }
+}
+
+#[test]
+fn new_boot_reconnect_cleans_retained_connection_before_loading_saved_sign_in() {
+    for phase in [Phase::Connected, Phase::Pending] {
+        let (_tmp, setup, install, vault) = associated();
+        let root = setup.root.as_ref().unwrap().clone();
+        let mut binding = read_binding(&root).unwrap().unwrap();
+        binding.phase = phase;
+        binding.nonce = Some(Uuid::new_v4());
+        binding.connection = Some(connection());
+        write_binding(&root, &binding).unwrap();
+        let next = connection();
+        let expected = next.clone();
+        let (mut client, worker) = peer(Uuid::new_v4(), move |request| {
+            Some(match &request.body {
+                RequestBody::ModelStatus {} => idle(),
+                RequestBody::CredentialStatus {} => {
+                    ResultBody::CredentialState(credential(None, false))
+                }
+                RequestBody::CredentialPublish { .. } => {
+                    assert_eq!(read_binding(&root).unwrap().unwrap().phase, Phase::Pending);
+                    ResultBody::CredentialState(credential(Some(expected.generation), true))
+                }
+                RequestBody::ModelConnect { .. } => remote(&expected, ModelPhase::Ready),
+                RequestBody::ModelDisconnectRetained { connection: old } => {
+                    assert_eq!(old, &binding.connection.clone().unwrap());
+                    ResultBody::Ready {}
+                }
+                _ => panic!("unexpected reconnect request"),
+            })
+        });
+        let result =
+            setup.connect_stored_model(install, &mut client, &vault, || panic!("no recapture"));
+        drop(client);
+        let traffic = worker.join().unwrap();
+        assert!(result.unwrap().ready);
+        assert_eq!(traffic.publications(), 1);
+        assert_eq!(vault.counts(), (1, 1, 0));
+        assert_eq!(
+            read_binding(setup.root.as_deref().unwrap())
+                .unwrap()
+                .unwrap()
+                .slot,
+            binding.slot
+        );
+    }
+}
+
+#[test]
 fn pending_wrong_lease_never_probes_or_replays_connect() {
     let (_tmp, setup, install, vault) = associated();
     let root = setup.root.as_deref().unwrap();

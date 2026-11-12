@@ -32,7 +32,7 @@ test('insufficient installed memory blocks preparation, explains RAM, and can be
   const panel = await screen.findByRole('region', { name: 'Computer requirements' });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true));
   const memory = within(panel).getByRole('region', { name: 'Installed memory' });
-  expect(memory.textContent).toContain('4 GiB');
+  await waitFor(() => expect(memory.textContent).toContain('4 GiB'));
   await user.click(within(memory).getByRole('button', { name: 'Show me how' }));
   expect(memory.textContent).toMatch(/Closing apps does not increase installed memory/);
   expect(memory.textContent).toMatch(/cluster/);

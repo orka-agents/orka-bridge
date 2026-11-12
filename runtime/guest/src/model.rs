@@ -61,6 +61,8 @@ pub struct ModelLifecycle<R = Kmx> {
     connection: Option<ModelConnection>,
     attempted: Option<(Uuid, ModelSelection)>,
     diagnostic: Option<ModelDiagnostic>,
+    // Same-boot acknowledgment survives a failed host metadata write, not a VM reboot.
+    retained: Option<(ModelConnection, bool)>,
 }
 impl Runner for Kmx {
     fn execute(&mut self, command: &ModelCommand) -> Outcome {
@@ -166,6 +168,7 @@ impl<R: Runner> ModelLifecycle<R> {
             connection: None,
             attempted: None,
             diagnostic: None,
+            retained: None,
         }
     }
     pub fn ready_connection(&self) -> Option<&ModelConnection> {
@@ -174,7 +177,7 @@ impl<R: Runner> ModelLifecycle<R> {
             .filter(|_| self.phase == ModelPhase::Ready)
     }
     pub fn allows_credential_mutation(&self) -> bool {
-        self.phase == ModelPhase::Idle
+        self.phase == ModelPhase::Idle && self.retained.as_ref().is_none_or(|(_, done)| *done)
     }
     // The serving loop supplies actual store status and guards physical-root dispatch.
     pub fn handle(
@@ -184,6 +187,37 @@ impl<R: Runner> ModelLifecycle<R> {
     ) -> Option<ResultBody> {
         match request {
             RequestBody::ModelStatus {} => {}
+            RequestBody::ModelDisconnectRetained { connection } => {
+                // No token or current-boot model may coexist with prior-boot cleanup.
+                let pristine = self.phase == ModelPhase::Idle
+                    && self.attempted.is_none()
+                    && !credential.installed
+                    && credential.generation.is_none();
+                if !pristine
+                    || self
+                        .retained
+                        .as_ref()
+                        .is_some_and(|(known, _)| known != connection)
+                {
+                    return Some(ResultBody::Error {
+                        code: ErrorCode::Unavailable,
+                    });
+                }
+                if !self.retained.as_ref().is_some_and(|(_, done)| *done) {
+                    self.retained = Some((connection.clone(), false));
+                    let result = self.runner.execute(&ModelCommand::Disconnect {
+                        connection: connection.clone(),
+                    });
+                    let done = result.success && result.connection.as_ref() == Some(connection);
+                    self.retained = Some((connection.clone(), done));
+                    if !done {
+                        return Some(ResultBody::Error {
+                            code: ErrorCode::Unavailable,
+                        });
+                    }
+                }
+                return Some(ResultBody::Ready {});
+            }
             RequestBody::ModelConnect {
                 generation,
                 selection,
@@ -196,6 +230,7 @@ impl<R: Runner> ModelLifecycle<R> {
                     || (self.phase == ModelPhase::Unknown
                         && self.connection.is_none()
                         && same_attempt))
+                    && self.retained.as_ref().is_none_or(|(_, done)| *done)
                     && credential.installed
                     && credential.generation == Some(*generation)
                     && selection.valid()
@@ -421,6 +456,157 @@ mod tests {
             generation: id(1),
             selection: selection(),
         }
+    }
+    fn retained_request() -> RequestBody {
+        serde_json::from_value(serde_json::json!({"op": "modelDisconnectRetained", "body": {"connection": connection()}})).unwrap()
+    }
+    fn pristine() -> CredentialState {
+        CredentialState {
+            profile: CREDENTIAL_PROFILE,
+            installed: false,
+            generation: None,
+        }
+    }
+    #[test]
+    fn retained_cleanup_uses_verified_disconnect_and_replays_ack_without_another_command() {
+        let mut m = lifecycle(vec![Outcome {
+            connection: Some(connection()),
+            success: true,
+            diagnostic: None,
+        }]);
+        for _ in 0..2 {
+            assert_eq!(
+                m.handle(pristine(), &retained_request()),
+                Some(ResultBody::Ready {})
+            );
+        }
+        assert_eq!(
+            m.runner.calls,
+            vec![ModelCommand::Disconnect {
+                connection: connection()
+            }]
+        );
+        assert!(m.ready_connection().is_none());
+    }
+    #[test]
+    fn retained_cleanup_then_connect_uses_the_new_generation() {
+        let old = connection();
+        let mut next = old.clone();
+        next.generation = id(7);
+        next.id = id(8);
+        let mut m = lifecycle(vec![
+            Outcome {
+                connection: Some(old.clone()),
+                success: true,
+                diagnostic: None,
+            },
+            Outcome {
+                connection: Some(next.clone()),
+                success: true,
+                diagnostic: None,
+            },
+        ]);
+        assert_eq!(
+            m.handle(pristine(), &retained_request()),
+            Some(ResultBody::Ready {})
+        );
+        assert!(m.allows_credential_mutation());
+        let result = m.handle(
+            CredentialState {
+                generation: Some(id(7)),
+                ..credential()
+            },
+            &RequestBody::ModelConnect {
+                generation: id(7),
+                selection: selection(),
+            },
+        );
+        assert!(matches!(
+            result,
+            Some(ResultBody::ModelState(ModelState {
+                phase: ModelPhase::Ready,
+                ..
+            }))
+        ));
+        assert_eq!(m.ready_connection(), Some(&next));
+        assert_eq!(
+            m.runner.calls,
+            vec![
+                ModelCommand::Disconnect { connection: old },
+                ModelCommand::Connect {
+                    generation: id(7),
+                    selection: selection()
+                }
+            ]
+        );
+    }
+    #[test]
+    fn retained_cleanup_refuses_current_boot_credentials_or_a_different_identity() {
+        let mut m = lifecycle(vec![Outcome {
+            connection: Some(connection()),
+            success: true,
+            diagnostic: None,
+        }]);
+        for current in [
+            credential(),
+            CredentialState {
+                installed: false,
+                ..credential()
+            },
+        ] {
+            assert_eq!(
+                m.handle(current, &retained_request()),
+                Some(ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                })
+            );
+        }
+        assert!(m.runner.calls.is_empty());
+        assert_eq!(
+            m.handle(pristine(), &retained_request()),
+            Some(ResultBody::Ready {})
+        );
+        let mut other = connection();
+        other.id = id(8);
+        let request = serde_json::from_value(
+            serde_json::json!({"op": "modelDisconnectRetained", "body": {"connection": other}}),
+        )
+        .unwrap();
+        assert_eq!(
+            m.handle(pristine(), &request),
+            Some(ResultBody::Error {
+                code: ErrorCode::Unavailable
+            })
+        );
+        assert_eq!(m.runner.calls.len(), 1);
+    }
+    #[test]
+    fn failed_retained_cleanup_is_not_acknowledged_and_can_only_retry_same_identity() {
+        let mut m = lifecycle(vec![
+            Outcome {
+                connection: Some(connection()),
+                success: false,
+                diagnostic: None,
+            },
+            Outcome {
+                connection: Some(connection()),
+                success: true,
+                diagnostic: None,
+            },
+        ]);
+        assert_eq!(
+            m.handle(pristine(), &retained_request()),
+            Some(ResultBody::Error {
+                code: ErrorCode::Unavailable
+            })
+        );
+        assert!(!m.allows_credential_mutation());
+        assert_eq!(
+            m.handle(pristine(), &retained_request()),
+            Some(ResultBody::Ready {})
+        );
+        assert!(m.allows_credential_mutation());
+        assert_eq!(m.runner.calls.len(), 2);
     }
     #[test]
     fn wrong_generation_absent_credentials_and_invalid_selection_never_run() {

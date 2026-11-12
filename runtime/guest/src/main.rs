@@ -327,7 +327,8 @@ fn control(
             RequestBody::CredentialStatus {}
             | RequestBody::ModelStatus {}
             | RequestBody::ModelConnect { .. }
-            | RequestBody::ModelDisconnect { .. } => serving.2.status(),
+            | RequestBody::ModelDisconnect { .. }
+            | RequestBody::ModelDisconnectRetained { .. } => serving.2.status(),
             RequestBody::CredentialPublish {
                 expected_generation,
                 token,

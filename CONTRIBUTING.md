@@ -90,6 +90,24 @@ in to github.com. Bridge does not install it or open browser sign-in. Starting
 a VM alone does not verify model inference. Local images are debug-only;
 release builds ignore `BRIDGE_DEV_IMAGE_DIR`.
 
+## Reopen and remove the saved sign-in
+
+After **Stop workspace and quit**, reopen Bridge and use **Use GitHub sign-in**
+once the workspace is running. Bridge reuses its native-store copy without
+reading GitHub CLI again. A new VM boot first disconnects the prior owned model
+route. This requires an image built with the retained-connection cleanup handler;
+older development images cannot reconnect across boots.
+
+While the workspace is running, choose **Remove sign-in** in the model section
+before removing Bridge. This stops the owned model route, clears its guest
+credential and removes only Bridge's native-store copy. You can connect again.
+GitHub CLI remains signed in; removal is not token revocation. A failed or
+unknown guest cleanup keeps the saved sign-in for another explicit attempt.
+An interrupted first Connect with no acknowledged connection identity, or a
+completed disconnect whose host update was lost before another VM boot, may
+still require maintainer help. Bridge never guesses an identity or deletes
+metadata to bypass cleanup.
+
 ## Checks
 
 From `app/`, run the [contributor checks in AGENTS.md](AGENTS.md#checks).

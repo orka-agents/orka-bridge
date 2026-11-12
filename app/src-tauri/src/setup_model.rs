@@ -138,6 +138,32 @@ fn finish_connect(
     write_binding(root, b)?;
     Ok(state(Some(b), true))
 }
+// Explicit intent only, under both ownership locks. A fresh guest has no token,
+// but kmx's owned model resources survive on the state disk and must be stopped.
+fn cleanup_previous_boot(
+    root: &Path,
+    b: &mut Binding,
+    client: &mut VmClient,
+) -> Result<(), SetupError> {
+    let connection = b.connection.as_ref().ok_or_else(unavailable)?;
+    let before = client
+        .model_status()
+        .map_err(|_| SetupError::model("modelReconnect"))?;
+    if before.phase != ModelPhase::Idle
+        || before.connection.is_some()
+        || before.credential.installed
+        || before.credential.generation.is_some()
+    {
+        return Err(SetupError::model("modelReconnect"));
+    }
+    client
+        .disconnect_retained_model(connection)
+        .map_err(|_| SetupError::model("modelReconnect"))?;
+    b.phase = Phase::Stored;
+    b.nonce = None;
+    b.connection = None;
+    write_binding(root, b)
+}
 impl SetupStore {
     fn recover_empty_reservation(
         &self,
@@ -296,6 +322,11 @@ impl SetupStore {
         if b.installation != installation || matches!(b.phase, Phase::Storing | Phase::Cleared) {
             return Err(unavailable());
         }
+        if matches!(b.phase, Phase::Pending | Phase::Connected)
+            && b.nonce != Some(client.boot_nonce())
+        {
+            cleanup_previous_boot(root, &mut b, client)?;
+        }
         if b.phase == Phase::Pending {
             // Only explicit intent on the original lease can reconcile an uncertain attempt.
             if b.nonce != Some(client.boot_nonce()) {
@@ -408,10 +439,32 @@ impl SetupStore {
         let _access = self.access.lock().map_err(|_| unavailable())?;
         let root = self.root.as_deref().ok_or_else(unavailable)?;
         let _owner = model_owner(root)?;
-        let mut b = read_binding(root)?.ok_or_else(unavailable)?;
+        if installation.is_nil() {
+            return Err(unavailable());
+        }
+        let Some(mut b) = read_binding(root)? else {
+            return Ok(state(None, false));
+        };
         if b.installation != installation {
             return Err(unavailable());
         }
+        if matches!(b.phase, Phase::Pending | Phase::Connected) {
+            let client = client.ok_or_else(unavailable)?;
+            if b.nonce != Some(client.boot_nonce()) {
+                cleanup_previous_boot(root, &mut b, client)?;
+            } else {
+                return self.finish_sign_out(root, b, Some(client), store);
+            }
+        }
+        self.finish_sign_out(root, b, None, store)
+    }
+    fn finish_sign_out(
+        &self,
+        root: &Path,
+        mut b: Binding,
+        client: Option<&mut VmClient>,
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, SetupError> {
         if !matches!(b.phase, Phase::Storing | Phase::Stored | Phase::Cleared) {
             let client = client.ok_or_else(unavailable)?;
             if b.nonce != Some(client.boot_nonce()) {
@@ -433,7 +486,7 @@ impl SetupStore {
             b.phase = Phase::Cleared;
             write_binding(root, &b)?;
         }
-        store.delete(b.slot).map_err(|_| unavailable())?;
+        store.delete(b.slot).map_err(SetupError::store)?;
         fs::remove_file(root.join("model-v1")).map_err(|_| unavailable())?;
         Ok(state(None, false))
     }
