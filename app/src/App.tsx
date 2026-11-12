@@ -75,6 +75,7 @@ export default function App() {
   useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);
   const [documentId, setDocumentId] = useState(SAMPLE_DOCUMENT_ID);
+  const [examplePreview, setExamplePreview] = useState(true);
   const [overviewCounts, setOverviewCounts] = useState('Saved files and local Agents');
   const [exampleAttempt, setExampleAttempt] = useState(0);
   const [engineReady, setEngineReady] = useState(false);
@@ -156,9 +157,9 @@ export default function App() {
   };
   const tabTone = remote || exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const copy = emptyCopy[page];
-  const openDesigner = (id = documentId) => {
+  const openDesigner = (id = documentId, preview = examplePreview) => {
     if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
-    setDocumentId(id); setExampleOpen(true); setPage('Designer');
+    setDocumentId(id); setExamplePreview(preview); setExampleOpen(true); setPage('Designer');
   };
   return (
     <div className="app-shell">
@@ -192,14 +193,14 @@ export default function App() {
         </div>}
         <div hidden={page !== 'Clusters'}>
           <Setup place={place} onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
-            onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
+            onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID, true)} onOpenAgent={() => openDesigner()} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} documentId={documentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} documentId={documentId} preview={exampleReadOnly && examplePreview} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
         </>} /></div>}
         <Overview active={page === 'Overview'} runBusy={!!run?.busy} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} onCounts={setOverviewCounts}
-          onOpenDocument={id => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(id); }}
-          onOpenExample={() => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(SAMPLE_DOCUMENT_ID); }}
+          onOpenDocument={id => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(id, false); }}
+          onOpenExample={() => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(SAMPLE_DOCUMENT_ID, true); }}
           onChooseWorkspace={() => setPage('Clusters')} />
         {page === 'Designer' && !exampleOpen && <section className="card empty-state">
           <span className="icon-tile empty-icon"><PageIcon page={page} /></span>

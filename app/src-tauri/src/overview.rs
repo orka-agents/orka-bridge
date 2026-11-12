@@ -96,10 +96,10 @@ fn summarize(inspection: InspectedFile) -> Option<SavedFile> {
     Some(file)
 }
 pub fn saved_files(agents: &Agents, run_active: bool) -> SavedFiles {
-    match agents.inspect_files() {
+    match agents.inspect_files(summarize) {
         Ok(files) => SavedFiles {
             state: "complete",
-            files: files.into_iter().filter_map(summarize).collect(),
+            files,
             run_active,
         },
         Err(_) => SavedFiles {

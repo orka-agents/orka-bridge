@@ -9,8 +9,8 @@ import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
 import Send, { SendEntry, SendHistory } from '../clusters/Send';
 
-export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true, readOnly = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
-  documentId?: string; active?: boolean; readOnly?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
+export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true, readOnly = false, preview = readOnly, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
+  documentId?: string; active?: boolean; readOnly?: boolean; preview?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void;
   onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
 }) {
@@ -51,14 +51,14 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   const lineEnding = useRef('\n'); const needsCommit = useRef(false);
   useEffect(() => {
     let mounted = true;
-    const open = readOnly && boundDocument === SAMPLE_DOCUMENT_ID ? loadExample().then(result => { if (!result.ok) throw Error(result.message); return result.pair; }) : agentCall('agent_open', undefined, boundDocument);
+    const open = preview && boundDocument === SAMPLE_DOCUMENT_ID ? loadExample().then(result => { if (!result.ok) throw Error(result.message); return result.pair; }) : agentCall('agent_open', undefined, boundDocument);
     void open.then(value => {
       if (!mounted) return;
       setPair(value); setDraft(value.agent); latest.current = saved.current = value.agent;
       lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n'; onPair?.(value);
     }, () => { if (mounted) { setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined); } });
     return () => { mounted = false; };
-  }, [onPair, readOnly, boundDocument]);
+  }, [onPair, preview, boundDocument]);
   useEffect(() => { onSaveState?.(pendingSoul ? 'dirty' : saveState); }, [saveState, pendingSoul, onSaveState]);
   useEffect(() => { onStale?.(stale); }, [stale, onStale]);
 

@@ -75,6 +75,26 @@ test('Overview reads saved documents without opening, setup or VM commands; Open
   expect(calls.filter(c => c === 'agent_open')).toHaveLength(1);
 });
 
+test('saved sample Open reads the actual file while setup still keeps Designer read-only', async () => {
+  vi.stubGlobal('isTauri', true); const calls: string[] = [];
+  const id = '9b2b93c4-375c-4815-9717-39852a96e411';
+  mockIPC(command => {
+    calls.push(command);
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'starting', model: 'locked' };
+    if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'web-reader', state: 'readable', source: null, summary: null, reason: null }] };
+    if (command === 'setup_example') return { agent: '---\nname: bundled-example\n---\nBundled content', tests: 'Checks' };
+    if (command === 'agent_open') return { documentId: id, name: 'web-reader', agent: '---\nname: saved-reader\n---\nMy saved changes', tests: 'Checks' };
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open web-reader' }));
+  expect(await screen.findByRole('heading', { name: 'saved-reader', level: 1 })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).readOnly).toBe(true);
+  expect(calls.some(c => /setup_select|agent_run$|send_start/.test(c))).toBe(false);
+});
+
 test('Designer opens the owned agent without workspace setup and shares its saved state', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }

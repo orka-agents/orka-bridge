@@ -192,19 +192,26 @@ impl Agents {
         Ok(result)
     }
     /// One registry snapshot and one inspection per owned folder; no selection writes.
-    pub fn inspect_files(&self) -> Result<Vec<InspectedFile>> {
+    pub fn inspect_files<T>(
+        &self,
+        mut project: impl FnMut(InspectedFile) -> Option<T>,
+    ) -> Result<Vec<T>> {
         let _access = self.access.lock().map_err(|_| ERROR)?;
         let registry = self.registry()?;
-        let mut files = vec![InspectedFile {
-            document: self.sample.document(),
-            pair: self.sample.inspect(),
-        }];
-        for entry in registry.agents {
-            let folder = AgentFolder::created(self.home.clone(), &entry.name, entry.id)?;
-            files.push(InspectedFile {
+        let mut files = Vec::new();
+        // Project before reading the next pair so prompt/test bodies are not accumulated.
+        let mut observe = |folder: &AgentFolder| {
+            if let Some(file) = project(InspectedFile {
                 document: folder.document(),
                 pair: folder.inspect(),
-            });
+            }) {
+                files.push(file);
+            }
+        };
+        observe(&self.sample);
+        for entry in registry.agents {
+            let folder = AgentFolder::created(self.home.clone(), &entry.name, entry.id)?;
+            observe(&folder);
         }
         Ok(files)
     }

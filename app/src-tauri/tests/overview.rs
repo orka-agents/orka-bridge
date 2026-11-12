@@ -52,6 +52,37 @@ fn registry_observation_is_non_mutating_and_keeps_document_identity() {
     assert_eq!(before, tree(home.path()));
 }
 #[test]
+fn projects_each_pair_before_reading_the_next_folder() {
+    let home = tempfile::tempdir().unwrap();
+    let agents = owner(home.path());
+    let pair = agents.sample().open().unwrap();
+    created_agent::created(home.path(), "alpha", &pair.agent, &pair.tests);
+    let beta = created_agent::created(home.path(), "beta", &pair.agent, &pair.tests);
+    let changed = format!("{}\nEdited before beta is inspected", pair.agent);
+    let expected =
+        bridge_runtime_protocol::SnapshotId::of(changed.as_bytes(), pair.tests.as_bytes());
+    let observed = agents
+        .inspect_files(|file| {
+            if file.document.name == "alpha" {
+                fs::write(home.path().join("Orka/agents/beta/beta.agent.md"), &changed).unwrap();
+            }
+            // Retain only the projected identity, never source text from previous pairs.
+            Some((
+                file.document.document_id,
+                file.pair.unwrap().unwrap().source,
+            ))
+        })
+        .unwrap();
+    assert_eq!(
+        observed
+            .iter()
+            .find(|(id, _)| *id == beta.document_id())
+            .unwrap()
+            .1,
+        expected
+    );
+}
+#[test]
 fn dirty_reopen_is_not_committed_and_unsupported_source_is_unavailable() {
     let home = tempfile::tempdir().unwrap();
     let agents = owner(home.path());
