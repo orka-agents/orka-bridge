@@ -150,6 +150,7 @@ export default function App() {
       : model === 'connected' ? sample?.state === 'complete' ? 'This computer ready' : 'AI connected'
       : model === 'failed' ? 'AI needs attention' : model === 'idle' ? setupLine : modelDetail,
   };
+  const tabTone = remote || exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const copy = emptyCopy[page];
   return (
     <div className="app-shell">
@@ -167,20 +168,13 @@ export default function App() {
                 }
                 setPage(name);
               }}>
-              <span className="icon-tile"><PageIcon page={name} /></span>
-              <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{tabStatus[name]}</small></span>
+              <span className={`icon-tile tile-${name.toLowerCase()}`}><PageIcon page={name} /></span>
+              <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{name === 'Designer' && agentName ? <>{agentName}, <span className={`tab-status-word status-${tabTone}`}>{tabStatus[name].slice(agentName.length + 2)}</span></> : tabStatus[name]}</small></span>
             </button>
           ))}
         </nav>
         <div className="chrome-tools">
-          <span className="coming-control search-control" tabIndex={0} role="group" aria-label="Search: Search is coming" title="Search is coming">
-            <button type="button" className="shell-search" disabled title="Search is coming">
-              <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6" /><path d="m15 15 5 5" /></svg>
-              <span>Search</span><kbd>{/Mac/i.test(navigator.platform) ? '⌘K' : 'Ctrl K'}</kbd>
-            </button>
-            <span className="control-tip" aria-hidden="true">Search is coming</span>
-          </span>
-          <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" />{placeName}<span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
+          <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span><span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
         </div>
       </header>
       <main ref={content} className="page-content" aria-labelledby="page-title">
@@ -215,7 +209,7 @@ export default function App() {
         <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" />
         <span>{remote ? place.target ? `${placeName} · Access confirmed` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : workspaceReady ? 'This computer ready' : setupLine}</span>
         {!remote && !welcome && (detail !== setupLine || workspaceReady) ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : workspaceDetail}</span></> : null}
-        {exampleState === 'loaded' && !exampleReadOnly && <><span aria-hidden="true">·</span><span>{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
+        {exampleState === 'loaded' && !exampleReadOnly && <><span aria-hidden="true">·</span><span aria-live="polite" aria-atomic="true">{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
           page !== 'Clusters' ? (remote ? placeName : workspaceReady ? `This computer ready · ${modelDetail}` : `${setupLine} · ${workspaceDetail}`) : undefined,

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Chip } from '../components/DesignSystem';
 import Model, { type ModelState } from './Model';
 import Preflight from './Preflight';
 import { type LocalVmState, type SetupStatus, cancelLocal, changeLocal, selectLocal, setupStatus } from './state';
@@ -138,7 +139,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
           <legend className="workspace-sr-only">Where agents run</legend>
           <div className={`workspace-option${!cluster ? ' workspace-selected' : ''}`}>
             <input id="workspace-local" type="radio" name="workspace" aria-label="On this computer" aria-describedby="local-description" disabled={!cluster && (busy || !status || !!error)} checked={!cluster} onChange={chooseComputer} />
-            <label htmlFor="workspace-local">On this computer</label><span className="workspace-badge">recommended</span>
+            <label htmlFor="workspace-local">On this computer</label><span className="pill">recommended</span>
             <div className="workspace-option-detail">
               <p id="local-description">Bridge runs a ready-made workspace quietly in the background. It needs virtualization turned on{requirements ? `, ${formatSize(requirements.memoryBytes)} of memory and a ${formatSize(requirements.imageBytes)} workspace image.` : '.'}</p>
               {requirements && <p>The data disk can grow to {formatSize(requirements.stateDiskBytes)}, in addition to the image.</p>}
@@ -153,7 +154,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
           </div>
           <div className={`workspace-option${cluster ? ' workspace-selected' : ''}`}>
             <input id="workspace-cluster" type="radio" name="workspace" aria-label="On a cluster you already have" checked={cluster} onChange={chooseCluster} />
-            <label htmlFor="workspace-cluster">On a cluster you already have</label><span className="muted workspace-expert">for Kubernetes users</span>
+            <label htmlFor="workspace-cluster">On a cluster you already have</label><Chip>for Kubernetes users</Chip>
             <p className="workspace-option-detail">Pick a kubectl context and Bridge uses the Orka on that cluster.</p>
             {cluster && <ClusterCard onPlace={place => onPlace?.(place)} onOpenAgent={onOpenExample} />}
           </div>

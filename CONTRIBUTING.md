@@ -19,6 +19,8 @@ npm ci
 npm run tauri dev
 ```
 
+The default window is 1280×800, with a 540×640 minimum. The native smoke walk also captures a 540×900 content area in both system themes.
+
 This opens the native app with frontend hot reload. You can edit the UI without
 a VM; running an agent needs the local development image described below.
 Dependency lifecycle scripts are disabled in `app/.npmrc`. Do not enable them

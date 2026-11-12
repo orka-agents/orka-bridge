@@ -17,7 +17,7 @@
         "title": "Bridge",
         "width": 1280,
         "height": 800,
-        "minWidth": 960,
+        "minWidth": 540,
         "minHeight": 640,
         "decorations": true,
         "resizable": true,

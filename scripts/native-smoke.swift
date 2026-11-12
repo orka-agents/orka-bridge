@@ -1,15 +1,52 @@
 import AppKit
 import CoreGraphics
+import ApplicationServices
 import Vision
+import ImageIO
 
+let display = CGMainDisplayID()
+var previousDisplayMode: CGDisplayMode?
+func restoreDisplay() {
+    if let previous = previousDisplayMode {
+        previousDisplayMode = nil
+        if CGDisplaySetDisplayMode(display, previous, nil) != .success {
+            fputs("Cannot restore CI display mode\n", stderr)
+        }
+    }
+}
+func fail(_ message: String) -> Never {
+    fputs("\(message)\n", stderr)
+    restoreDisplay()
+    exit(1)
+}
 func require(_ condition: Bool, _ message: String) {
-    if !condition { fputs("\(message)\n", stderr); exit(1) }
+    if !condition { fail(message) }
 }
 let output = CommandLine.arguments[1]
 let theme = CommandLine.arguments[3]
 require(["light", "dark"].contains(theme), "Expected light or dark theme")
 require(NSRunningApplication.runningApplications(withBundleIdentifier: "ai.orka.bridge").isEmpty,
         "Quit running Bridge before running the native walk")
+// Hosted Macs default to 1024x768, which constrains a 900pt content window.
+// Only reconfigure the disposable CI display, never an operator's desktop.
+if CGDisplayBounds(display).width < 1280 || CGDisplayBounds(display).height < 1080 {
+    require(ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
+            "The native walk needs a display of at least 1280x1080 logical points")
+    let options = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
+    let modes = CGDisplayCopyAllDisplayModes(display, options) as? [CGDisplayMode] ?? []
+    print("CI display modes: \(modes.map { "\($0.width)x\($0.height)" })")
+    guard let previous = CGDisplayCopyDisplayMode(display),
+        let larger = modes.filter({ $0.isUsableForDesktopGUI() && $0.width >= 1280 && $0.height >= 1080 })
+            .min(by: { $0.width * $0.height < $1.width * $1.height }) else {
+        fail("No CI display mode can fit the required native window")
+    }
+    previousDisplayMode = previous
+    require(CGDisplaySetDisplayMode(display, larger, nil) == .success, "Cannot enlarge CI display")
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 1))
+    require(CGDisplayBounds(display).width >= 1280 && CGDisplayBounds(display).height >= 1080,
+            "CI display mode did not take effect: \(CGDisplayBounds(display))")
+}
+defer { restoreDisplay() }
 func launch() throws -> NSRunningApplication {
 let opened = Process()
 opened.executableURL = URL(fileURLWithPath: "/usr/bin/open")
@@ -27,7 +64,7 @@ for _ in 0..<30 {
     if running != nil { break }
     Thread.sleep(forTimeInterval: 1)
 }
-guard let launched = running else { fatalError("Bridge process did not appear") }
+guard let launched = running else { fail("Bridge process did not appear") }
 return launched
 }
 var app = try launch()
@@ -62,7 +99,22 @@ func mouse(_ type: CGEventType, _ point: CGPoint) {
 }
 func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) {
     guard let target = observations.first(where: { $0.topCandidates(1).first?.string == label }) else {
-        fatalError("Control not visible: \(label)")
+        // Preserve the label's actual pointer action when small dark text is
+        // unreadable to Vision; require one exact, fully visible native label.
+        let labels = nativeElements().filter {
+            attribute($0, "AXRole") as? String == "AXStaticText"
+                && attribute($0, "AXValue") as? String == label
+        }.compactMap { nativeBounds($0) }.filter { window()!.1.contains($0) }
+        require(!labels.isEmpty, "No visible native label: \(label)")
+        // WebKit can expose both a label and its text node. They must refer to
+        // the same on-screen hit region; distinct/ambiguous labels still fail.
+        let hit = labels.dropFirst().reduce(labels[0]) { $0.intersection($1) }
+        require(!hit.isNull && !hit.isEmpty, "Ambiguous native label \(label): \(labels)")
+        print("Native label \(label): \(labels), hit \(hit)")
+        let point = CGPoint(x: hit.midX, y: hit.midY)
+        mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+        Thread.sleep(forTimeInterval: 0.5)
+        return
     }
     let rect = window()!.1
     let point = CGPoint(x: rect.minX + target.boundingBox.midX * rect.width,
@@ -70,8 +122,68 @@ func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) 
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.5)
 }
-func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) {
-    clickText(page, in: observations.filter { 1 - $0.boundingBox.maxY < 0.10 })
+func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+}
+func nativeElements() -> [AXUIElement] {
+    var nodes = [AXUIElementCreateApplication(app.processIdentifier)]
+    var index = 0
+    while index < nodes.count && nodes.count < 4000 {
+        let element = nodes[index]; index += 1
+        for key in ["AXChildren", "AXWindows"] {
+            for child in attribute(element, key) as? [AXUIElement] ?? []
+                where !nodes.contains(where: { CFEqual($0, child) }) { nodes.append(child) }
+        }
+    }
+    return nodes
+}
+func nativeBounds(_ element: AXUIElement) -> CGRect? {
+    guard let position = attribute(element, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
+        let size = attribute(element, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+    var point = CGPoint.zero; var extent = CGSize.zero
+    guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
+        AXValueGetValue(size as! AXValue, .cgSize, &extent), extent.width > 0, extent.height > 0 else { return nil }
+    return CGRect(origin: point, size: extent)
+}
+func nativeTextIsVisible(_ expected: String) -> Bool {
+    nativeElements().contains { element in
+        guard attribute(element, "AXRole") as? String == "AXStaticText",
+            (attribute(element, "AXValue") as? String)?.contains(expected) == true,
+            let bounds = nativeBounds(element), let rect = window()?.1 else { return false }
+        return rect.contains(bounds)
+    }
+}
+@discardableResult
+func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> AXUIElement {
+    // Small Inter labels can be grouped with subtitles by Vision. Identify the
+    // real enabled native button, but still pointer-click it and verify the
+    // rendered destination in the next capture (not AXPress or renderer hooks).
+    let header = observations.filter { 1 - $0.boundingBox.maxY < 0.10 }
+        .compactMap { $0.topCandidates(1).first?.string }
+    print("NAV \(page): header OCR \(header)")
+    let matches = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && attribute(element, "AXEnabled") as? Bool == true
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == page })
+    }
+    require(matches.count == 1, "Expected one enabled native tab named \(page), found \(matches.count)")
+    let target = matches[0]
+    guard let position = attribute(target, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
+        let size = attribute(target, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else {
+        fail("Native tab has no bounds: \(page)")
+    }
+    var origin = CGPoint.zero; var extent = CGSize.zero
+    require(AXValueGetValue(position as! AXValue, .cgPoint, &origin)
+        && AXValueGetValue(size as! AXValue, .cgSize, &extent), "Cannot read native tab bounds")
+    let rect = window()!.1
+    let bounds = CGRect(origin: origin, size: extent)
+    require(extent.width > 0 && extent.height > 0 && rect.contains(bounds)
+        && bounds.maxY <= rect.minY + 110, "Native tab is not visible in the header: \(page), \(bounds)")
+    let point = CGPoint(x: bounds.midX, y: bounds.midY)
+    mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+    Thread.sleep(forTimeInterval: 0.5)
+    return target
 }
 func key(_ code: CGKeyCode, shift: Bool = false) {
     for down in [true, false] {
@@ -90,16 +202,33 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     command.arguments = ["-x", "-o", "-l", String(window()!.0), file]
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture Bridge")
-    guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
-        let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(NSColorSpace.deviceRGB)
-        else { fatalError("Cannot sample native screenshot") }
-    let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
-    require(theme == "dark" ? brightness < 0.2 : brightness > 0.9,
-            "Native screenshot does not show the expected \(theme) theme")
+    // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
+    guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
+        let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+        let pixel = image.cropping(to: CGRect(x: CGFloat(image.width - 8), y: CGFloat(image.height - 8), width: 1, height: 1)),
+        let space = CGColorSpace(name: CGColorSpace.sRGB) else { fail("Cannot decode screenshot") }
+    var rgba = [UInt8](repeating: 0, count: 4)
+    let sampled = rgba.withUnsafeMutableBytes { bytes in
+        guard let context = CGContext(data: bytes.baseAddress, width: 1, height: 1,
+            bitsPerComponent: 8, bytesPerRow: 4, space: space,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
+            else { return false }
+        context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return true
+    }
+    require(sampled, "Cannot sample screenshot in sRGB")
+    let expected: [CGFloat] = theme == "dark" ? [26, 29, 33] : [228, 226, 219]
+    let actual = rgba.prefix(3).map { CGFloat($0) }
+    require(zip(actual, expected).allSatisfy { abs($0 - $1) < 8 },
+            "Native screenshot does not show the expected \(theme) Estuary chrome: \(actual)")
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
+    let recognized = observations.map { observation in
+        "\(observation.boundingBox): \(observation.topCandidates(1).first?.string ?? "")"
+    }.joined(separator: "\n")
+    try recognized.write(toFile: "\(output)/\(name).ocr.txt", atomically: true, encoding: .utf8)
     if name == "send-probe" || name == "cluster-probe" { return observations }
     if name.hasPrefix("cluster-reload") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
@@ -163,8 +292,8 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         let selected = text.contains("Get your workspace ready")
         require(welcome || choice || selected, "Workspace heading not visible; observed: \(text)")
         if !welcome {
-            require(text.contains("Workspace setup is not included"),
-                    "Release setup IPC did not report its real integration state")
+            require(nativeTextIsVisible("Workspace setup is not included in this build. Nothing will be downloaded or started."),
+                    "Release setup IPC did not visibly report its real integration state")
         }
         if ["local-selected", "choice-retained"].contains(name) {
             require(selected && !welcome && !choice, "Native preference was not acknowledged or retained")
@@ -214,13 +343,13 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         let seen = try capture("send-probe", "Designer")
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
-        if let control = observed.first(where: { $0 == label || (label == "Show details" && $0 == "• \(label)") }) {
+        if let control = observed.first(where: { $0 == label || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
             clickText(control, in: seen)
             return
         }
         scrollMain(pixels)
     }
-    fatalError("Send control not visible: \(label); observed: \(observed)")
+    fail("Send control not visible: \(label); observed: \(observed)")
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 var initial = try capture("initial", "Clusters")
@@ -235,15 +364,14 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" 
 if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) {
     // The owned form works before any workspace exists. Exercise its real writer,
     // not injected renderer data; the later setup preview must remain read-only.
-    // Welcome focuses the choice heading. Search, Clusters, then Designer are
-    // the three preceding keyboard stops; don't depend on OCR splitting tab copy.
-    key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
+    // Welcome focuses the choice heading. Clusters and Designer precede it.
+    key(48, shift: true); key(48, shift: true); key(49)
     let form = try capture("agent-form", "Designer")
     guard let label = form.first(where: {
         let text = $0.topCandidates(1).first?.string ?? ""
         return text == "Instructions" || (text.hasPrefix("Instructions ") && text.contains("What the agent"))
     }) else {
-        fatalError("Instructions field is not visible")
+        fail("Instructions field is not visible")
     }
     let owned = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
     let before = try String(contentsOf: owned, encoding: .utf8)
@@ -273,7 +401,11 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
     }
     require(saved, "Native form did not preserve the file and append the exact instructions suffix")
     let savedForm = try capture("agent-form-saved", "Designer")
-    require(savedForm.contains { $0.topCandidates(1).first?.string == "Saved" }, "Form save was not acknowledged")
+    let savedFooter = savedForm.filter { $0.boundingBox.maxY < 0.1 }
+        .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    require(savedFooter.range(of: "\\bSaved\\b", options: .regularExpression) != nil
+        && !savedFooter.localizedCaseInsensitiveContains("not saved"),
+        "Form save was not acknowledged in footer: \(savedFooter)")
     clickTab("Clusters", savedForm)
     initial = try capture("chooser-after-form", "Clusters")
     // Selecting the default radio does not start anything; Continue is explicit.
@@ -299,10 +431,17 @@ clickTab("Overview", retained)
 let overview = try capture("overview", "Overview")
 clickTab("Designer", overview)
 let designer = try capture("designer-pointer", "Designer")
-clickTab("Clusters", designer)
+let clustersTab = clickTab("Clusters", designer)
 try capture("clusters-pointer", "Clusters")
-// The keyboard-reachable Search explanation adds a stop after navigation.
-key(48, shift: true); key(48, shift: true); key(48, shift: true); key(49)
+// Pointer activation on macOS need not focus a button. Establish and verify the
+// native keyboard starting point, then exercise actual traversal/activation.
+require(AXUIElementSetAttributeValue(clustersTab, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success,
+        "Cannot focus Clusters for native keyboard traversal")
+var focused: CFTypeRef?
+require(AXUIElementCopyAttributeValue(clustersTab, kAXFocusedAttribute as CFString, &focused) == .success
+    && focused as? Bool == true, "Clusters did not receive native keyboard focus")
+// From Clusters, Designer and Overview are the preceding navigation stops.
+key(48, shift: true); key(48, shift: true); key(49)
 try capture("overview-keyboard", "Overview")
 key(48); key(49); try capture("designer-keyboard", "Designer")
 key(48); key(36); try capture("clusters-keyboard", "Clusters")
@@ -311,7 +450,7 @@ let clusters = try capture("before-file", "Clusters")
 clickTab("Designer", clusters)
 let agent = try capture("agent-view", "Designer")
 guard let fileButton = agent.first(where: { $0.topCandidates(1).first?.string == "File" }) else {
-    fatalError("File view switch is not visible")
+    fail("File view switch is not visible")
 }
 let fileRect = window()!.1
 let filePoint = CGPoint(x: fileRect.minX + fileButton.boundingBox.midX * fileRect.width,
@@ -343,6 +482,10 @@ for character in marker.utf16 {
     }
 }
 Thread.sleep(forTimeInterval: 1)
+// Keyboard traversal can scroll the outer page to newly added controls below
+// the read-only editor. Restore its heading before the visual assertion; the
+// exact owned-file byte comparison below still detects any persisted edit.
+scrollMain(1000)
 try capture("file-edited", "Designer")
 let existsAfterEdit = FileManager.default.fileExists(atPath: ownedFile.path)
 require(existsAfterEdit == existedBeforeEdit, "Setup preview changed owned-file existence")
@@ -360,7 +503,7 @@ let rect = window()!.1
 // The display may constrain the initial size. Derive the minimum frame from
 // AppKit's content-to-frame conversion, not the requested initial dimensions.
 let minimumFrame = NSWindow.frameRect(
-    forContentRect: CGRect(x: 0, y: 0, width: 960, height: 640),
+    forContentRect: CGRect(x: 0, y: 0, width: 540, height: 640),
     styleMask: [.titled, .closable, .miniaturizable, .resizable])
 let start = CGPoint(x: rect.maxX - 10, y: rect.maxY - 5)
 let end = CGPoint(x: rect.minX + minimumFrame.width - 10, y: rect.minY + minimumFrame.height - 5)
@@ -375,6 +518,25 @@ Thread.sleep(forTimeInterval: 0.5)
 let minimum = window()!.1
 require(abs(minimum.width - minimumFrame.width) < 3 && abs(minimum.height - minimumFrame.height) < 3, "Native minimum-size resize not verified: \(minimum), expected \(minimumFrame.size)")
 try capture("clusters-minimum", "Clusters")
+// Set the CI-owned native content area to 540x900, not a browser viewport.
+let application = AXUIElementCreateApplication(app.processIdentifier)
+var windowsValue: CFTypeRef?
+require(AXUIElementCopyAttributeValue(application, kAXWindowsAttribute as CFString, &windowsValue) == .success,
+        "Cannot read native windows for compact walk")
+let nativeWindow = (windowsValue as! [AXUIElement])[0]
+var origin = CGPoint(x: 20, y: 40)
+require(AXUIElementSetAttributeValue(nativeWindow, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &origin)!) == .success, "Cannot position compact window")
+let compactFrame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: 540, height: 900),
+    styleMask: [.titled, .closable, .miniaturizable, .resizable])
+var compactSize = compactFrame.size
+require(AXUIElementSetAttributeValue(nativeWindow, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &compactSize)!) == .success, "Cannot resize compact window")
+Thread.sleep(forTimeInterval: 0.5)
+require(abs(window()!.1.width - compactSize.width) < 3 && abs(window()!.1.height - compactSize.height) < 3,
+        "Native 540x900 content area not verified: \(window()!.1)")
+let compactClusters = try capture("clusters-compact", "Clusters")
+clickTab("Designer", compactClusters)
+let compactDesigner = try capture("designer-compact", "Designer")
+clickTab("Clusters", compactDesigner)
 print("PASS native walk: pointer, Shift-Tab/Tab, Space, Enter and minimum window")
 if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let local = try capture("before-cluster", "Clusters")
@@ -393,7 +555,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     key(125); key(125); key(36)
     Thread.sleep(forTimeInterval: 2)
     // Capture discovery before the explicit access confirmation.
-    try capture("cluster-card-minimum", "Clusters")
+    try capture("cluster-card-compact", "Clusters")
     // Exercise the existing conditional field and a denial, without issuing a token.
     func chooseFixture(_ index: Int) throws -> [VNRecognizedTextObservation] {
         scrollMain(1000)
@@ -457,7 +619,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             }
             scrollMain(-100)
         }
-        fatalError("Preflight state missing: \(expected)")
+        fail("Preflight state missing: \(expected)")
     }
     // Read-only preflight states use distinct synthetic identities. No workload
     // is submitted for either blocked card.
@@ -491,12 +653,15 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Built in to this Orka") }, "Allowed preflight evidence is missing")
     try clickSendControl("Send and run checks", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
-    let result = try capture("send-result", "Designer")
+    // The shared card's action is above preflight; reveal the actual report,
+    // not merely its aggregate pill, before asserting fixture evidence.
+    let result = try capturePreflight("send-result", "Checks: pass")
     require(result.contains { $0.topCandidates(1).first?.string == "Checks: pass" }, "Fixture-backed Send did not pass its real assertions")
-    try clickSendControl("Show details", scrolling: -350)
+    try clickSendControl("Details", scrolling: -350)
     scrollMain(-350)
     let details = try capture("send-result-details", "Designer")
-    require(details.contains { ($0.topCandidates(1).first?.string ?? "").contains("bridge-run-") }, "Agent identity is not visible in native Send details")
+    let detailsText = details.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    require(detailsText.contains("Planned Agent") && detailsText.contains("Copy"), "Short Agent identity and Copy are not visible in native Send details")
     // The fixture's second Agent stays Running so this is a real Stop, not an
     // injected renderer state. Previously created resources remain on the fixture.
     try clickSendControl("Send and run checks", scrolling: 350)

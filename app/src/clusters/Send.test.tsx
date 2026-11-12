@@ -72,7 +72,7 @@ test('changed disk files can be explicitly reloaded before preflight is retried'
   await user.click(await screen.findByRole('button', { name: 'Reload saved files' }));
   await waitFor(() => expect((screen.getByRole('button', { name: 'Run all checks' }) as HTMLButtonElement).disabled).toBe(false));
   expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toBe('Changed on disk.\n');
-  expect(screen.getByText('Your saved agent file · file-model')).toBeTruthy();
+  expect(screen.getByText((_, node) => node?.tagName === 'DD' && node.textContent === 'Your saved agent file · file-model')).toBeTruthy();
 });
 test('a delayed reload never overwrites edits made while files are being read', async () => {
   vi.stubGlobal('isTauri', true); let opened = false; let finish!: (value: unknown) => void;
@@ -98,8 +98,27 @@ test('collision is unverified, not refused; details disclosure names its state',
   const user = userEvent.setup(); render(<Send place={place} source={source} stale={false} visible remote />);
   expect(await screen.findByText(/Implementation unverified/)).toBeTruthy();
   expect((screen.getByRole('button', { name: 'Send and run checks' }) as HTMLButtonElement).disabled).toBe(false);
-  await user.click(screen.getByText('Show details', { selector: 'summary' }));
-  expect(screen.getByText('Hide details', { selector: 'summary' })).toBeTruthy();
+  await user.click(screen.getByText('Details'));
+  expect(document.querySelector('.card-details')?.hasAttribute('open')).toBe(true);
+});
+test.each([
+  { state: 'running', stage: 'capture', error: null, label: 'Running' },
+  { state: 'unknown', stage: 'capture', error: 'capture', label: 'Result unknown' },
+  { state: 'unknown', stage: 'stopped', error: 'stopped', label: 'Stopped watching' },
+])('a source not yet captured keeps its $label status', async ({ state, stage, error, label }) => {
+  native(idle, { ...running, source: null, state, stage, error });
+  const { container } = render(<Send place={place} source={source} stale={false} visible remote />);
+  if (state === 'running') await screen.findByText('Running checks on team-dev…');
+  await screen.findByText(label, { exact: true });
+  expect(container.querySelector('.pill.status-stale')).toBeNull();
+});
+test('pending destination checks are blue running, not waiting on the creator', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => command === 'send_preflight' ? new Promise(() => {}) : null);
+  const { container } = render(<Send place={place} source={source} stale={false} visible remote />);
+  await screen.findByText('Checking this destination…');
+  expect(container.querySelector('.pill.status-running')).toBeTruthy();
+  expect(container.querySelector('.pill.status-needs-you')).toBeNull();
 });
 test('a late preflight for an old Provider cannot enable the current selection', async () => {
   let finish!: (value: unknown) => void;
@@ -162,10 +181,11 @@ test('Stop shows retained receipts and remount observes without replay', async (
   const ipc = native(idle, running); const user = userEvent.setup(); const view = render(<Example remote place={place} />);
   await user.click(await screen.findByRole('button', { name: 'Stop' }));
   expect(await screen.findByText(/cluster may still be running checks/)).toBeTruthy();
-  await user.click(screen.getByText('Show details', { selector: 'summary' }));
-  expect(screen.getByText('Agent: bridge-run-frozen')).toBeTruthy();
+  await user.click(screen.getByText('Details'));
+  expect(screen.getByRole('button', { name: 'Copy Agent' })).toBeTruthy();
+  expect(screen.getAllByText('brid…ozen').length).toBeGreaterThan(0);
   view.unmount(); render(<Example remote place={place} />);
-  await screen.findByText(/Stopped watching/);
+  await screen.findByText('Stopped watching. The cluster may still be running checks.');
   expect(ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
 });
 test('no_only_you_pre_live_or_internal_jargon and honest unknown evidence', async () => {
@@ -181,12 +201,19 @@ test('an unknown submission names its uncertain resources, not a pass, and waits
   const ipc = native(idle, { ...running, state: 'unknown', stage: 'submit', error: 'submit', pending: { kind: 'Task', name: 'bridge-task-uncertain' } });
   const user = userEvent.setup(); render(<Example remote place={place} />);
   expect(await screen.findByText('Checks: unknown')).toBeTruthy();
-  await user.click(screen.getByText('Show details', { selector: 'summary' }));
-  expect(screen.getByText('Possibly created Task: bridge-task-uncertain')).toBeTruthy();
+  await user.click(screen.getByText('Details'));
+  expect(screen.getByRole('button', { name: 'Copy Possibly created Task' })).toBeTruthy();
+  expect(screen.getByText('brid…tain')).toBeTruthy();
   expect(ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
   await user.click(screen.getByRole('button', { name: 'Run all checks' }));
   await screen.findByText('Running checks on team-dev…');
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'send_start')).toHaveLength(1);
+});
+test.each(['stopped', 'observe', 'submit'])('uncertain %s never claims a failed verdict', async error => {
+  native(idle, { ...running, state: 'unknown', stage: error === 'stopped' ? 'stopped' : 'observe', error });
+  const { container } = render(<Send place={place} source={source} stale={false} visible remote />);
+  expect(await screen.findByText(error === 'stopped' ? 'Stopped watching' : 'Result unknown', { exact: true })).toBeTruthy();
+  expect(container.querySelector('.pill.status-failed')).toBeNull();
 });
 test('changing Provider or destination does not validate the new selection with an older pass', async () => {
   native(idle, { ...running, state: 'complete', stage: 'done', report: { ...report, verdict: 'passed' } });
@@ -194,6 +221,8 @@ test('changing Provider or destination does not validate the new selection with 
   await screen.findByText('Checks: pass');
   view.rerender(<Example remote place={{ ...place, providerId: '00000000-0000-4000-8000-000000000005' }} />);
   expect(await screen.findByText(/not validation of your current selection/)).toBeTruthy();
+  expect(document.querySelector('.send-panel .pill.status-passed')).toBeNull();
+  expect(document.querySelector('.send-panel .pill.status-stale')).toBeTruthy();
   view.rerender(<Example remote place={{ ...place, target: { ...target, id: '00000000-0000-4000-8000-000000000006', context_name: 'other-cluster' } }} />);
   expect(screen.getByText(/not validation of your current selection/)).toBeTruthy();
 });
