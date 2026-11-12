@@ -15,6 +15,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
 }) {
   const [boundDocument, setBoundDocument] = useState(documentId);
+  const [boundPreview, setBoundPreview] = useState(preview);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [catalog, setCatalog] = useState<{ key: number; attempt: number; reply?: WorkspaceCatalogReply }>();
   const catalogEnabled = catalogKey !== undefined && !readOnly && !remote;
@@ -51,14 +52,14 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   const lineEnding = useRef('\n'); const needsCommit = useRef(false);
   useEffect(() => {
     let mounted = true;
-    const open = preview && boundDocument === SAMPLE_DOCUMENT_ID ? loadExample().then(result => { if (!result.ok) throw Error(result.message); return result.pair; }) : agentCall('agent_open', undefined, boundDocument);
+    const open = boundPreview && boundDocument === SAMPLE_DOCUMENT_ID ? loadExample().then(result => { if (!result.ok) throw Error(result.message); return result.pair; }) : agentCall('agent_open', undefined, boundDocument);
     void open.then(value => {
       if (!mounted) return;
       setPair(value); setDraft(value.agent); latest.current = saved.current = value.agent;
       lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n'; onPair?.(value);
     }, () => { if (mounted) { setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined); } });
     return () => { mounted = false; };
-  }, [onPair, preview, boundDocument]);
+  }, [onPair, boundPreview, boundDocument]);
   useEffect(() => { onSaveState?.(pendingSoul ? 'dirty' : saveState); }, [saveState, pendingSoul, onSaveState]);
   useEffect(() => { onStale?.(stale); }, [stale, onStale]);
 
@@ -82,13 +83,14 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   }, [onPair, readOnly, boundDocument]);
   useEffect(() => () => { clearTimeout(timer.current); reloadEpoch.current++; }, []);
   useEffect(() => {
-    if (documentId === boundDocument || busy.current || pendingSoul || saveState === 'saving' || saveState === 'error') return;
+    if (documentId === boundDocument) { setBoundPreview(preview); return; }
+    if (busy.current || pendingSoul || saveState === 'saving' || saveState === 'error') return;
     if (saveState === 'dirty') { void flush(); return; }
     reloadEpoch.current++; reloadAdmitted.current = false; setReloading(false);
     setPair(undefined); setDraft(''); latest.current = saved.current = '';
     setLocalRun(undefined); setStale(false); setError(undefined); setSendOpen(false);
-    onPair?.(undefined); onRun?.(undefined); setBoundDocument(documentId);
-  }, [documentId, boundDocument, pendingSoul, saveState, flush, onPair, onRun]);
+    onPair?.(undefined); onRun?.(undefined); setBoundPreview(preview); setBoundDocument(documentId);
+  }, [documentId, boundDocument, preview, pendingSoul, saveState, flush, onPair, onRun]);
   const edit = (value: string, rawFile = false) => {
     if (readOnly) return;
     const content = rawFile ? value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current) : value;

@@ -95,6 +95,25 @@ test('saved sample Open reads the actual file while setup still keeps Designer r
   expect(calls.some(c => /setup_select|agent_run$|send_start/.test(c))).toBe(false);
 });
 
+test('switching a readonly preview to a registered document never opens the unrelated sample', async () => {
+  vi.stubGlobal('isTauri', true); const opened: string[] = [];
+  const id = '12345678-1234-1234-1234-123456789abc';
+  mockIPC((command, args) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'starting', model: 'locked' };
+    if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'other', state: 'readable', source: null, summary: null, reason: null }] };
+    if (command === 'setup_example') return { agent: '---\nname: bundled-example\n---\nBundled content', tests: 'Checks' };
+    if (command === 'agent_open') { const doc = (args as { documentId: string }).documentId; opened.push(doc); return { documentId: doc, name: 'other', agent: '---\nname: other\n---\nSaved content', tests: 'Checks' }; }
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await screen.findByRole('heading', { name: 'bundled-example', level: 1 });
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open other' }));
+  await screen.findByRole('heading', { name: 'other', level: 1 });
+  expect(opened).toEqual([id]);
+});
+
 test('Designer opens the owned agent without workspace setup and shares its saved state', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
