@@ -34,6 +34,8 @@ fn main() {
                     json!({"documentId":"9b2b93c4-375c-4815-9717-39852a96e411", "name":"web-reader", "agent":*content, "tests":tests,
                         "source":bridge_runtime_protocol::SnapshotId::of(content.as_bytes(), tests.as_bytes())})
                 }
+                "send_history" => json!([]),
+                "send_status" => json!({"documentId":"9b2b93c4-375c-4815-9717-39852a96e411", "view":null, "busy":null}),
                 "agent_run_status" | "agent_run" => {
                     if invoke.message.command() == "agent_run" {
                         running.store(true, std::sync::atomic::Ordering::SeqCst);

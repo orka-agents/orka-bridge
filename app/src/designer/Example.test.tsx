@@ -31,6 +31,12 @@ test('opens the owned pair without a VM and exposes a keyboard File switch', asy
   screen.getByRole('button', { name: 'File' }).focus(); await user.keyboard('{Enter}');
   expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).value).toBe(pair.agent);
 });
+test('local test results lead the card, ahead of past Sends', async () => {
+  native(); render(<Example />);
+  const run = await screen.findByRole('region', { name: 'Tests on local' });
+  const history = screen.getByRole('region', { name: 'Past Sends' });
+  expect(run.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
 test('does not claim Saved or allow Run before the commit reply', async () => {
   let finish!: (value: unknown) => void; let saved = '';
   native(content => { saved = content; return new Promise(resolve => { finish = resolve; }); });
