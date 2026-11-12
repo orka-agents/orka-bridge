@@ -5,9 +5,33 @@ import CoreGraphics
 import ApplicationServices
 import Vision
 
-func require(_ value: Bool, _ message: String) {
-    if !value { fputs("\(message)\n", stderr); exit(1) }
+let display = CGMainDisplayID()
+var previousDisplayMode: CGDisplayMode?
+func restoreDisplay() {
+    if let previous = previousDisplayMode {
+        previousDisplayMode = nil
+        if CGDisplaySetDisplayMode(display, previous, nil) != .success {
+            fputs("Cannot restore CI display mode\n", stderr)
+        }
+    }
 }
+func require(_ value: Bool, _ message: String) {
+    if !value { fputs("\(message)\n", stderr); restoreDisplay(); exit(1) }
+}
+// The preceding native walk restores the hosted Mac's small default display.
+// Enlarge only that disposable CI display for the local 540x900 result captures.
+if CGDisplayBounds(display).width < 1280 || CGDisplayBounds(display).height < 1080 {
+    require(ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true", "Local result captures need a 1280x1080 CI display")
+    let options = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
+    let modes = CGDisplayCopyAllDisplayModes(display, options) as? [CGDisplayMode] ?? []
+    guard let previous = CGDisplayCopyDisplayMode(display),
+        let larger = modes.filter({ $0.isUsableForDesktopGUI() && $0.width >= 1280 && $0.height >= 1080 })
+            .min(by: { $0.width * $0.height < $1.width * $1.height }) else { fatalError("No suitable CI display mode") }
+    previousDisplayMode = previous
+    require(CGDisplaySetDisplayMode(display, larger, nil) == .success, "Cannot enlarge CI display")
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 1))
+}
+defer { restoreDisplay() }
 let output = CommandLine.arguments[1]
 let theme = CommandLine.arguments[3]
 require(["light", "dark"].contains(theme), "Expected light or dark")
