@@ -289,3 +289,68 @@ test('a mouse-started removal does not steal keyboard focus', async () => {
   await screen.findByText(/no longer has a saved sign-in/);
   expect(document.activeElement).toBe(document.body);
 });
+
+// Focus follows an operation only while the creator has not moved it. These tests put another control in the page.
+function withNeighbour(props: { enabled: boolean; queueable?: boolean }, hidden = false) {
+  return <><div hidden={hidden}><Model {...props} /></div><button type="button">Elsewhere</button></>;
+}
+const neighbour = () => screen.getByRole('button', { name: 'Elsewhere' });
+
+test('a queued keyboard choice does not take focus back when Orka becomes ready after the creator moved on', async () => {
+  invoke.mockImplementation(() => new Promise(() => {}));
+  const user = userEvent.setup(); const view = render(withNeighbour({ enabled: false, queueable: true }));
+  screen.getByRole('button', { name: 'Use GitHub sign-in' }).focus(); await user.keyboard('{Enter}');
+  expect(document.activeElement).toBe(screen.getByText('Queued').closest('[tabindex="-1"]'));
+  await user.tab(); await user.tab();
+  neighbour().focus();
+  view.rerender(withNeighbour({ enabled: true, queueable: true }));
+  await screen.findByText('Connecting model…');
+  expect(document.activeElement).toBe(neighbour());
+});
+
+test('a settled connection does not pull focus from another control, on success or failure', async () => {
+  let settle!: (ok: boolean) => void;
+  invoke.mockImplementation(() => new Promise((resolve, reject) => { settle = ok => ok ? resolve({ ready: true }) : reject({ kind: 'modelConnect' }); }));
+  const user = userEvent.setup(); render(withNeighbour({ enabled: true }));
+  screen.getByRole('button', { name: 'Use GitHub sign-in' }).focus(); await user.keyboard('{Enter}');
+  neighbour().focus();
+  await act(async () => settle(false));
+  await screen.findByRole('alert');
+  expect(document.activeElement).toBe(neighbour());
+  // The failed attempt is over; a later keyboard retry owns focus again.
+  const retry = screen.getByRole('button', { name: 'Check again' });
+  retry.focus(); await user.keyboard('{Enter}');
+  neighbour().focus();
+  await act(async () => settle(true));
+  await screen.findByText(/Model connected:/);
+  expect(document.activeElement).toBe(neighbour());
+});
+
+test('a pending removal does not pull focus from another control once it settles', async () => {
+  let settle!: (ok: boolean) => void;
+  invoke.mockImplementation(() => new Promise((resolve, reject) => { settle = ok => ok ? resolve({ ready: false }) : reject({ kind: 'modelStore' }); }));
+  const user = userEvent.setup(); render(withNeighbour({ enabled: true }));
+  screen.getByRole('button', { name: 'Remove sign-in' }).focus(); await user.keyboard('{Enter}');
+  neighbour().focus();
+  await act(async () => settle(false));
+  await screen.findByRole('alert');
+  expect(document.activeElement).toBe(neighbour());
+  screen.getByRole('button', { name: 'Remove sign-in' }).focus(); await user.keyboard('{Enter}');
+  neighbour().focus();
+  await act(async () => settle(true));
+  await screen.findByText(/no longer has a saved sign-in/);
+  expect(document.activeElement).toBe(neighbour());
+});
+
+test('a hidden Model never takes focus when its queued connection starts', async () => {
+  invoke.mockImplementation(() => new Promise(() => {}));
+  const user = userEvent.setup(); const view = render(withNeighbour({ enabled: false, queueable: true }));
+  screen.getByRole('button', { name: 'Use GitHub sign-in' }).focus(); await user.keyboard('{Enter}');
+  const status = screen.getByText('Queued').closest<HTMLElement>('[tabindex="-1"]')!;
+  const focus = vi.spyOn(status, 'focus');
+  // jsdom leaves focus on an element that a browser would drop when its page is hidden, so the Model must check visibility itself.
+  view.rerender(withNeighbour({ enabled: false, queueable: true }, true));
+  view.rerender(withNeighbour({ enabled: true, queueable: true }, true));
+  await screen.findByText('Connecting model…');
+  expect(focus).not.toHaveBeenCalled();
+});

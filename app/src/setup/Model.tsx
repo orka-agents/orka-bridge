@@ -12,6 +12,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
 }) {
   // In-memory consent only. It never carries a credential and is consumed once.
   const [queued, setQueued] = useState(false);
+  const root = useRef<HTMLElement>(null);
   const status = useRef<HTMLDivElement>(null);
   const retry = useRef<HTMLButtonElement>(null);
   const removal = useRef<HTMLButtonElement>(null);
@@ -40,8 +41,13 @@ export default function Model({ enabled, queueable = false, paused = false, away
     if (queued && enabled && !paused && !away) { setQueued(false); void perform('connect'); }
   }, [queued, enabled, paused, away]);
   // Busy and queued states replace the action with status; keep keyboard focus with the operation.
+  // Focus is restored only while the operation still owns it: on the page (not hidden), and on nothing,
+  // the status or its own action. Anywhere else the creator moved it, so drop the intent and leave focus alone.
   useEffect(() => {
     if (!refocus.current) return;
+    const at = document.activeElement;
+    const owns = !root.current?.closest('[hidden]') && (!at || at === document.body || at === status.current || at === retry.current || at === removal.current);
+    if (!owns) { refocus.current = undefined; return; }
     if (busy || queued) { status.current?.focus(); return; }
     (refocus.current === 'remove' ? removal.current : retry.current)?.focus();
     if (document.activeElement === document.body) status.current?.focus();
@@ -78,7 +84,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
   }
   const cliUnavailable = error?.category === 'modelCaptureUnavailable';
   const signInCheck = error && ['modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(error.category);
-  return <section className="card setup-model" aria-labelledby="model-title" aria-busy={!!busy}>
+  return <section ref={root} className="card setup-model" aria-labelledby="model-title" aria-busy={!!busy}>
     <h2 id="model-title">{enabled || queueable || queued ? 'Connect a model' : 'Model connection locked'}</h2>
     {!enabled && (queueable || queued) ? <p className="muted">You can choose now. Bridge connects it automatically when Orka is ready. No credentials are read or sent until then.</p>
       : !enabled ? <p className="muted">Start the local VM before connecting a model. No credentials are sent.</p>

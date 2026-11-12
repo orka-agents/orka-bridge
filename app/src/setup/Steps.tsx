@@ -17,7 +17,7 @@ type Props = {
 const rowClass: Record<Status, string> = { passed: 'step-done', failed: 'step-failed', running: 'step-current', 'needs-you': 'step-current', stale: 'step-waiting', 'not-started': 'step-waiting' };
 const infraResult = ['Installed', 'Started', 'Ready'];
 // The five rows come from the same derivation as the tab and footer.
-function stepRows({ status, stopping, modelState = 'idle', firstCheck }: Pick<Props, 'status' | 'stopping' | 'modelState' | 'firstCheck'>) {
+function stepRows({ status, stopping, error, modelState = 'idle', firstCheck }: Pick<Props, 'status' | 'stopping' | 'error' | 'modelState' | 'firstCheck'>) {
   const view = setupView(status, { model: modelState, check: firstCheck });
   const failed = status.localVm === 'failed';
   const paused = status.localVm === 'cancelled' || status.localVm === 'closed';
@@ -33,17 +33,21 @@ function stepRows({ status, stopping, modelState = 'idle', firstCheck }: Pick<Pr
     : modelState === 'queued' ? ['not-started', 'Queued']
     : status.localVm === 'ready' ? status.model === 'locked' ? ['not-started', 'Unavailable'] : ['needs-you', 'Needs you']
     : canQueueModel(status) ? ['needs-you', 'Pick any time'] : ['not-started', 'Waiting'];
-  const test: [Status, string] = firstCheck ? [{ running: 'running', passed: 'passed', failed: 'failed', unknown: 'not-started', stale: 'stale' }[firstCheck] as Status,
+  // A kept result belongs to an earlier workspace until this one is ready with its model connected.
+  const test: [Status, string] = firstCheck && status.localVm === 'ready' && connected ? [{ running: 'running', passed: 'passed', failed: 'failed', unknown: 'not-started', stale: 'stale' }[firstCheck] as Status,
     { running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown', stale: 'Needs running' }[firstCheck]]
     : connected ? ['needs-you', 'Needs you'] : ['not-started', 'Waiting'];
   const names = ['Install your workspace files', 'Start your workspace', 'Orka ready', 'Choose the AI your agent uses', 'Run your first test'];
-  return { view, failed, paused, infra, rows: [infraRow(1), infraRow(2), infraRow(3), model, test].map(([state, result], i) => ({ name: names[i], state, result })) };
+  // After an unreadable poll the snapshot is last known, not observed: keep the words but nothing runs or is current.
+  const rows = [infraRow(1), infraRow(2), infraRow(3), model, test].map(([state, result], i) => ({ name: names[i], state: error ? 'not-started' as Status : state, result: error ? `Last known: ${result}` : result }));
+  return { view, failed, paused, infra, rows };
 }
 
 export function SetupProgress(props: Props & { confirm?: ReactNode }) {
   const { status, busy, stopping, error, onCancel, onRestart, onCluster, onChange, onOpenExample, confirm } = props;
   const [details, setDetails] = useState(false);
-  const { view, failed, paused, infra } = stepRows(props);
+  const { view, failed: failedStatus, paused, infra } = stepRows(props);
+  const failed = failedStatus && !error;
   const ready = status.localVm === 'ready';
   const progress = status.workspaceProgress;
   const copying = !stopping && status.localVm === 'installing' && progress?.phase === 'materializing';
@@ -52,17 +56,17 @@ export function SetupProgress(props: Props & { confirm?: ReactNode }) {
     : status.localVm === 'closing' ? 'Stopping your workspace…'
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
     : copying ? 'Installing your workspace…' : 'Checking your workspace files…';
-  const pill: [Status, string] = failed ? ['failed', 'Needs attention'] : paused || status.localVm === 'notIntegrated' ? ['not-started', paused ? 'Paused' : 'Unavailable']
+  const pill: [Status, string] = error ? ['not-started', 'Unavailable'] : failed ? ['failed', 'Needs attention'] : paused || status.localVm === 'notIntegrated' ? ['not-started', paused ? 'Paused' : 'Unavailable']
     : view.done ? ['passed', 'Ready'] : [{ busy: 'running', 'needs-you': 'needs-you', wait: 'not-started', ready: 'running', bad: 'failed' }[view.tone] as Status, `Step ${view.step} of ${setupSteps}`];
   return <section className="card workspace-steps setup-progress" aria-label="Workspace setup">
     <div className="steps-head"><h2>Setting up on this computer</h2><StatusPill state={pill[0]}>{pill[1]}</StatusPill></div>
     <p className="step-place"><span>Where agents run</span><b>On this computer</b></p>
     {!failed && <p role="status">{stateLine}</p>}
-    {infra && !failed && <><div role="progressbar" aria-label="Workspace setup progress" aria-valuemin={0} aria-valuemax={100}
+    {infra && !failed && !error && <><div role="progressbar" aria-label="Workspace setup progress" aria-valuemin={0} aria-valuemax={100}
       aria-valuenow={infra.value === null ? undefined : Math.round(infra.value * 100)} className={`infra-bar${infra.value === null ? ' indeterminate' : ''}`}>
       <span style={infra.value === null ? undefined : { width: `${Math.round(infra.value * 100)}%` }} /></div>
       {infra.text && <p className="muted">{infra.text}</p>}{infra.estimate && <p className="muted">{infra.estimate}</p>}</>}
-    {!failed && <><button type="button" className="workspace-disclosure" aria-expanded={details} aria-controls="workspace-progress-details" onClick={() => setDetails(value => !value)}>{details ? 'Hide details' : 'Show details'}</button>
+    {!failed && !error && <><button type="button" className="workspace-disclosure" aria-expanded={details} aria-controls="workspace-progress-details" onClick={() => setDetails(value => !value)}>{details ? 'Hide details' : 'Show details'}</button>
       {details && <div id="workspace-progress-details" className="workspace-progress-details">
         <dl><div><dt>Checking workspace files</dt><dd>{status.localVm === 'preparing' || progress?.phase === 'verifying' ? 'In progress' : ready || copying || status.localVm === 'starting' ? 'Checked' : 'Waiting'}</dd></div>
           <div><dt>Installing workspace files</dt><dd>{ready || status.localVm === 'starting' ? 'Installed' : copying ? 'In progress' : 'Waiting'}</dd></div>

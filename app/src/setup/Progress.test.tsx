@@ -3,6 +3,7 @@ import { cleanup, render, screen, within, waitFor } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
+import { SetupSteps } from './Steps';
 
 const pair = { agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\nkmx:\n  tools:\n    - kind: builtin\n      name: web_fetch\n---\nFetch before answering.', tests: 'The checksum check.' };
 const progress = { phase: 'materializing', bytes: 1200000000, totalBytes: 3000000000, elapsedMs: 20000, remainingMs: 30000 };
@@ -21,7 +22,7 @@ function native(initial = 'installing', numbers: { phase: string; bytes: number 
     if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
     throw new Error('Unexpected command: ' + command);
   }); mockIPC(ipc);
-  return { ipc, ready: () => { localVm = 'ready'; }, fail: () => { localVm = 'failed'; }, unreadable: () => { unavailable = true; } };
+  return { ipc, ready: () => { localVm = 'ready'; }, fail: () => { localVm = 'failed'; }, unreadable: () => { unavailable = true; }, readable: () => { unavailable = false; } };
 }
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
@@ -216,6 +217,9 @@ test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup s
   const snapshot = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: result === 'running' ? 'running' : 'complete', canRun: result !== 'running', report: result === 'running' ? null : { verdict: result, cases: [{ id: 'checksum', phase: 'Succeeded', answer: 'checksum', completedTools: ['web_fetch'], verdict: result, assertions: [{ id: 'value', kind: 'contains', verdict: result }] }] }, acknowledged: [], pending: null, error: null };
   mockIPC(command => command === 'agent_run_status' ? snapshot : ipc(command));
   const user = userEvent.setup(); render(<App />);
+  // A test result is shown only for a ready workspace whose AI is connected.
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await screen.findByText('Model connected: copilot / gpt-5.6-terra.');
   await user.click(await screen.findByRole('button', { name: 'Open example' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
@@ -304,4 +308,45 @@ test('Change where agents run does not stop until confirmed, and returns to choo
   await user.click(screen.getByRole('button', { name: 'Stop workspace and change' }));
   expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_change_local')).toHaveLength(1);
+});
+
+test('an unreadable status makes the card unavailable instead of keeping the last running snapshot, and recovery keeps the queued choice', async () => {
+  const { ipc, unreadable, readable } = native(); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  expect(screen.getByRole('progressbar')).toBeTruthy();
+  const card = () => within(screen.getByRole('region', { name: 'Workspace setup' }));
+  expect(card().getByText('Step 1 of 5')).toBeTruthy();
+  unreadable();
+  await waitFor(() => expect(within(screen.getByRole('contentinfo')).getAllByText('Workspace unavailable').length).toBeGreaterThan(0), { timeout: 3000 });
+  expect(card().getByText('Unavailable', { selector: '.pill' })).toBeTruthy();
+  expect(card().queryByText('Step 1 of 5')).toBeNull();
+  expect(screen.queryByRole('progressbar')).toBeNull();
+  expect(screen.queryByText(/Installing, 1.1 GiB/)).toBeNull();
+  expect(card().getByText('Workspace status is unavailable.')).toBeTruthy();
+  const steps = screen.getByRole('list', { name: 'Setup steps' });
+  // The list is a last-known snapshot, not a live observation: nothing runs and no row is current.
+  expect(steps.querySelector('.step-current, [aria-current]')).toBeNull();
+  expect(within(steps).getAllByText(/^Last known: /)).toHaveLength(5);
+  expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toHaveLength(0);
+  readable();
+  await waitFor(() => expect(screen.getByRole('progressbar')).toBeTruthy(), { timeout: 3000 });
+  expect(card().getByText('Step 1 of 5')).toBeTruthy();
+  expect(within(steps).queryByText(/^Last known: /)).toBeNull();
+  expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toHaveLength(0);
+});
+
+test.each([
+  ['a workspace that is installing again', { selected: 'localVm', localVm: 'installing', model: 'locked' }, 'idle'],
+  ['a disconnected workspace', { selected: 'localVm', localVm: 'ready', model: 'available' }, 'idle'],
+  ['a failed AI connection', { selected: 'localVm', localVm: 'ready', model: 'available' }, 'failed'],
+] as const)('a kept passed result is not shown for %s', (_name, status, modelState) => {
+  render(<SetupSteps status={status} busy={false} stopping={false} modelState={modelState} firstCheck="passed" onRestart={() => {}} />);
+  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testWaiting');
+});
+
+test('a passed result is shown only once the workspace is ready and the AI is connected', () => {
+  render(<SetupSteps status={{ selected: 'localVm', localVm: 'ready', model: 'available' }} busy={false} stopping={false} modelState="connected" firstCheck="passed" onRestart={() => {}} />);
+  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testPassed');
 });
