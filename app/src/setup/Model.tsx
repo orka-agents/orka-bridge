@@ -14,7 +14,9 @@ export default function Model({ enabled, queueable = false, paused = false, away
   const [queued, setQueued] = useState(false);
   const status = useRef<HTMLDivElement>(null);
   const retry = useRef<HTMLButtonElement>(null);
-  const refocus = useRef(false);
+  const removal = useRef<HTMLButtonElement>(null);
+  // Which action the keyboard user started: focus follows its operation and returns to that same action.
+  const refocus = useRef<'connect' | 'remove'>(undefined);
   const [busy, setBusy] = useState<'connect' | 'remove'>();
   const [removed, setRemoved] = useState(false);
   const [ready, setReady] = useState(false);
@@ -40,8 +42,10 @@ export default function Model({ enabled, queueable = false, paused = false, away
   // Busy and queued states replace the action with status; keep keyboard focus with the operation.
   useEffect(() => {
     if (!refocus.current) return;
-    if (busy || queued) status.current?.focus();
-    else { (retry.current ?? status.current)?.focus(); refocus.current = false; }
+    if (busy || queued) { status.current?.focus(); return; }
+    (refocus.current === 'remove' ? removal.current : retry.current)?.focus();
+    if (document.activeElement === document.body) status.current?.focus();
+    refocus.current = undefined;
   }, [busy, queued, ready, error]);
   async function perform(action: 'connect' | 'remove') {
     if (!enabled || paused || active.current || (action === 'connect' && ready)) return;
@@ -69,7 +73,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
     } catch { setNotice("Couldn't copy. Share the visible error message for help."); }
   }
   function choose() {
-    refocus.current = document.activeElement === retry.current;
+    refocus.current = document.activeElement === retry.current ? 'connect' : undefined;
     if (enabled) void perform('connect'); else if (queueable && !paused) setQueued(true);
   }
   const cliUnavailable = error?.category === 'modelCaptureUnavailable';
@@ -101,7 +105,8 @@ export default function Model({ enabled, queueable = false, paused = false, away
           : <button key="model-connect" ref={retry} type="button" className="workspace-primary" disabled={(!enabled && !queueable) || paused || !!busy} onClick={choose}>
             {!enabled && !queueable ? 'Connect model' : error && failedAction === 'connect' ? 'Check again' : 'Use GitHub sign-in'}
           </button>}
-          {busy !== 'remove' && <button type="button" className="workspace-link" disabled={!enabled || paused || !!busy} onClick={() => { void perform('remove'); }}>Remove sign-in</button>}
+          {busy !== 'remove' && <button ref={removal} type="button" className="workspace-link" disabled={!enabled || paused || !!busy}
+            onClick={() => { refocus.current = document.activeElement === removal.current ? 'remove' : undefined; void perform('remove'); }}>Remove sign-in</button>}
           {error && <button type="button" className="workspace-secondary" onClick={() => { void copy(); }}>Copy details for help</button>}
         </div>
       </div>

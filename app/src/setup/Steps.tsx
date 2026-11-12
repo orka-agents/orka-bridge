@@ -53,7 +53,7 @@ export function SetupProgress(props: Props & { confirm?: ReactNode }) {
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
     : copying ? 'Installing your workspace…' : 'Checking your workspace files…';
   const pill: [Status, string] = failed ? ['failed', 'Needs attention'] : paused || status.localVm === 'notIntegrated' ? ['not-started', paused ? 'Paused' : 'Unavailable']
-    : view.done ? ['passed', 'Ready'] : ['running', `Step ${view.step} of ${setupSteps}`];
+    : view.done ? ['passed', 'Ready'] : [{ busy: 'running', 'needs-you': 'needs-you', wait: 'not-started', ready: 'running', bad: 'failed' }[view.tone] as Status, `Step ${view.step} of ${setupSteps}`];
   return <section className="card workspace-steps setup-progress" aria-label="Workspace setup">
     <div className="steps-head"><h2>Setting up on this computer</h2><StatusPill state={pill[0]}>{pill[1]}</StatusPill></div>
     <p className="step-place"><span>Where agents run</span><b>On this computer</b></p>

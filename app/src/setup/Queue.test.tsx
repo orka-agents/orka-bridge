@@ -6,11 +6,11 @@ import App from '../App';
 
 const pair = { agent: '---\nname: web-reader\ndescription: Reads a page\n---\nFetch before answering.', tests: 'The checksum check.' };
 const doc = '9b2b93c4-375c-4815-9717-39852a96e411';
-type Sim = { selected: 'localVm' | null; localVm: string; model: 'locked' | 'available'; unreadable: boolean; connect: 'ok' | 'fail' };
+type Sim = { selected: 'localVm' | null; localVm: string; model: 'locked' | 'available'; unreadable: boolean; connect: 'ok' | 'fail' | 'hang'; remove: 'ok' | 'fail' | 'hang' };
 // A mutable native stand-in. Tests flip its status the way a real download and startup would.
 function native(localVm = 'installing', extra: Partial<Sim> = {}) {
   vi.stubGlobal('isTauri', true);
-  const sim: Sim = { selected: 'localVm', localVm, model: 'locked', unreadable: false, connect: 'ok', ...extra };
+  const sim: Sim = { selected: 'localVm', localVm, model: 'locked', unreadable: false, connect: 'ok', remove: 'ok', ...extra };
   const ipc = vi.fn((command: string) => {
     switch (command) {
       case 'setup_status': if (sim.unreadable) throw Error('unreadable');
@@ -19,7 +19,8 @@ function native(localVm = 'installing', extra: Partial<Sim> = {}) {
       case 'setup_cancel_local': sim.localVm = 'cancelled'; return { selected: sim.selected, localVm: sim.localVm, model: 'locked' };
       case 'setup_select_local': sim.selected = 'localVm'; sim.localVm = 'installing'; return { selected: 'localVm', localVm: 'installing', model: 'locked' };
       case 'setup_change_local': sim.selected = null; sim.localVm = 'idle'; sim.model = 'locked'; return { selected: null, localVm: 'idle', model: 'locked' };
-      case 'setup_connect_model': if (sim.connect === 'fail') throw { kind: 'modelConnect' }; return { ready: true };
+      case 'setup_connect_model': if (sim.connect === 'hang') return new Promise(() => {}); if (sim.connect === 'fail') throw { kind: 'modelConnect' }; return { ready: true };
+      case 'setup_remove_model': if (sim.remove === 'hang') return new Promise(() => {}); if (sim.remove === 'fail') throw { kind: 'modelStore' }; return { ready: false };
       case 'setup_requirements': return null;
       case 'cluster_contexts': return [];
       case 'setup_example': return pair;
@@ -198,4 +199,29 @@ test('an edit makes the first-test step and shell status stale immediately, so s
   expect(within(screen.getByRole('navigation')).getByText('Setting up, step 5 of 5')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).queryByText('This computer ready')).toBeNull();
   expect(screen.getByText('Needs running')).toBeTruthy();
+});
+
+test('host and footer dots are busy blue while connecting or removing, amber when it is the creator\'s move, and green only when complete', async () => {
+  native('ready', { model: 'available', connect: 'hang' }); const user = userEvent.setup(); render(<App />);
+  const dots = () => [...document.querySelectorAll('.live-dot')].map(dot => dot.className.replace('live-dot', '').trim());
+  await screen.findByRole('button', { name: 'Use GitHub sign-in' });
+  expect(dots()).toEqual(['needs-you', 'needs-you']);
+  expect(screen.getByText('Step 4 of 5').className).toContain('status-needs-you');
+  await user.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  await screen.findByText('Connecting model…');
+  expect(dots()).toEqual(['busy', 'busy']);
+  expect(screen.getByText('Step 4 of 5').className).toContain('status-running');
+  expect(within(screen.getByRole('contentinfo')).getByText('Connecting the AI…')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText('Setting up, step 4 of 5')).toBeTruthy();
+});
+
+test('removing the sign-in is busy blue and a connected model with no test yet is amber, not green', async () => {
+  native('ready', { model: 'available', remove: 'hang' }); const user = userEvent.setup(); render(<App />);
+  const dots = () => [...document.querySelectorAll('.live-dot')].map(dot => dot.className.replace('live-dot', '').trim());
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await screen.findByText(/Model connected:/);
+  expect(dots()).toEqual(['needs-you', 'needs-you']);
+  await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  await screen.findByText('Removing sign-in…');
+  expect(dots()).toEqual(['busy', 'busy']);
 });

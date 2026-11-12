@@ -259,3 +259,33 @@ test('a failed queued connection is not retried automatically', async () => {
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_connect_model')).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
 });
+
+test('keyboard removal keeps focus with the operation and returns it to Remove sign-in on failure and success', async () => {
+  let settle!: (value: { ok: boolean }) => void;
+  invoke.mockImplementation(() => new Promise((resolve, reject) => { settle = ({ ok }) => ok ? resolve({ ready: false }) : reject({ kind: 'modelStore' }); }));
+  const user = userEvent.setup(); render(<Model enabled />);
+  const remove = screen.getByRole('button', { name: 'Remove sign-in' });
+  remove.focus(); await user.keyboard('{Enter}');
+  expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
+  expect(document.activeElement).not.toBe(document.body);
+  expect(document.activeElement).toBe(screen.getByText('Removing sign-in…').closest('[tabindex="-1"]'));
+  await act(async () => settle({ ok: false }));
+  await screen.findByRole('alert');
+  // Failed removal retries cleanup, so focus must land on Remove sign-in, never on Connect's retry.
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove sign-in' }));
+  expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  await user.keyboard('{Enter}');
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_remove_model')).toHaveLength(2);
+  expect(document.activeElement).not.toBe(document.body);
+  await act(async () => settle({ ok: true }));
+  await screen.findByText(/no longer has a saved sign-in/);
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove sign-in' }));
+});
+
+test('a mouse-started removal does not steal keyboard focus', async () => {
+  invoke.mockResolvedValue({ ready: false });
+  render(<Model enabled />);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  await screen.findByText(/no longer has a saved sign-in/);
+  expect(document.activeElement).toBe(document.body);
+});

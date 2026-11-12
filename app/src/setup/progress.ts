@@ -12,7 +12,8 @@ export const startupEstimateMs = 30_000;
 const transferShare = 0.7;
 const startupShare = 0.28;
 
-export type Tone = 'wait' | 'busy' | 'ready' | 'bad';
+// busy = the app is working (blue); needs-you = the creator's move (amber); ready = finished (green).
+export type Tone = 'wait' | 'busy' | 'needs-you' | 'ready' | 'bad';
 export type SetupView = { place: 'checking' | 'unavailable' | 'none' | 'local'; step: number; done: boolean; line: string; detail: string; tone: Tone };
 
 export const plural = (count: number, unit: string) => `${count} ${unit}${count === 1 ? '' : 's'}`;
@@ -39,15 +40,16 @@ export function setupView(status: SetupStatus | undefined, { checking = false, m
     case 'closed': return view(place, 1, 'Workspace stopped', 'Workspace stopped', 'wait');
     case 'cancelled': return view(place, 1, 'Setup paused', 'What has arrived is kept', 'wait');
     case 'ready': {
-      if (status.model === 'locked') return view(place, 4, 'AI unavailable', 'AI connection unavailable', 'ready');
+      if (status.model === 'locked') return view(place, 4, 'AI unavailable', 'AI connection unavailable', 'wait');
       if (model === 'failed') return view(place, 4, 'AI needs attention', 'AI connection needs attention', 'bad');
       if (model !== 'connected') {
         const detail = { connecting: 'Connecting the AI…', removing: 'Removing the AI sign-in…', queued: 'AI queued', idle: 'Choose the AI' }[model];
-        return view(place, 4, at(4), detail, 'ready');
+        return view(place, 4, at(4), detail, model === 'idle' ? 'needs-you' : model === 'queued' ? 'wait' : 'busy');
       }
       // A stale, running or unknown first test is not evidence that setup finished.
       const done = check === 'passed' || check === 'failed';
-      return view(place, 5, done ? 'This computer ready' : at(5), 'AI connected', 'ready', done);
+      const tone = done ? 'ready' : check === 'running' ? 'busy' : check === 'unknown' ? 'wait' : 'needs-you';
+      return view(place, 5, done ? 'This computer ready' : at(5), 'AI connected', tone, done);
     }
     default: return view(place, 1, at(1), 'Getting workspace ready', 'busy');
   }

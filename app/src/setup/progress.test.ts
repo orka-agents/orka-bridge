@@ -105,3 +105,24 @@ test('startup is an explicit rough estimate, with elapsed time and honest overru
   expect(late.text).toBe('45 seconds elapsed');
   expect(infraProgress(status('starting', { workspaceProgress: starting(1000) }))!.text).toBe('1 second elapsed');
 });
+
+test('tone: running work is busy blue, waiting for the creator is needs-you, ready only when truly complete', () => {
+  const tone = (state: Parameters<typeof setupView>[1], s = status('ready')) => setupView(s, state).tone;
+  // Busy, never green, while the app is working.
+  for (const model of ['connecting', 'removing'] as const) expect(tone({ model })).toBe('busy');
+  expect(tone({ model: 'connected', check: 'running' })).toBe('busy');
+  for (const state of ['preparing', 'installing', 'starting'] as const) expect(setupView(status(state)).tone).toBe('busy');
+  // Waiting on the creator is amber, not ready; waiting on the machine is neutral.
+  expect(tone({ model: 'idle' })).toBe('needs-you');
+  expect(tone({ model: 'connected' })).toBe('needs-you');
+  expect(tone({ model: 'connected', check: 'stale' })).toBe('needs-you');
+  expect(tone({ model: 'connected', check: 'unknown' })).toBe('wait');
+  expect(tone({ model: 'queued' })).toBe('wait');
+  expect(tone({ model: 'idle' }, status('ready', { model: 'locked' }))).toBe('wait');
+  expect(tone({}, status('cancelled'))).toBe('wait');
+  // Only a finished flow is green; model trouble is red.
+  expect(tone({ model: 'connected', check: 'passed' })).toBe('ready');
+  expect(tone({ model: 'connected', check: 'failed' })).toBe('ready');
+  expect(tone({ model: 'failed' })).toBe('bad');
+  expect(setupView(status('failed')).tone).toBe('bad');
+});
