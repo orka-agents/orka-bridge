@@ -145,6 +145,7 @@ test('Continue shows real startup states and a ready session can open the owned 
     if (command === 'setup_requirements') return null;
     if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: 'exact agent source', tests: 'exact test source' };
     if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'send_history') return [];
     throw { kind: 'unavailable' };
   }); mockIPC(ipc);
   const user = userEvent.setup(); render(<App />);
@@ -158,7 +159,7 @@ test('Continue shows real startup states and a ready session can open the owned 
   await user.click(screen.getByRole('button', { name: 'Open example' }));
   expect(await screen.findByText('exact agent source')).toBeTruthy();
   expect(screen.getByText('exact test source')).toBeTruthy();
-  expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_requirements', 'setup_select_local', 'setup_example', 'agent_open', 'agent_run_status', 'send_status', 'engine_call'].includes(name))).toBe(true);
+  expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_requirements', 'setup_select_local', 'setup_example', 'agent_open', 'agent_run_status', 'send_status', 'send_history', 'engine_call'].includes(name))).toBe(true);
 });
 
 test.each([

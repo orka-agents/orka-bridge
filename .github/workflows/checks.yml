@@ -51,8 +51,17 @@ jobs:
         include:
           - os: windows-2022
             artifact: windows-x64
+            suite: all
+            rust-cache: app-windows-2022-rust-1.98.1
+          # Rust checks and GUI walks run in parallel, not against one 30m budget.
           - os: macos-15
             artifact: macos-arm64
+            suite: checks
+            rust-cache: app-macos-15-rust-1.98.1
+          - os: macos-15
+            artifact: macos-arm64
+            suite: bundle
+            rust-cache: app-macos-15-bundle-rust-1.98.1
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     defaults:
@@ -80,26 +89,30 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             app/src-tauri/target
-          key: app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock', 'app/src-tauri/Cargo.toml') }}
-          restore-keys: app-${{ matrix.os }}-rust-1.98.1-
+          key: ${{ matrix.rust-cache }}-${{ hashFiles('app/src-tauri/Cargo.lock', 'app/src-tauri/Cargo.toml') }}
+          restore-keys: |
+            ${{ matrix.rust-cache }}-
+            app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock', 'app/src-tauri/Cargo.toml') }}
+            app-${{ matrix.os }}-rust-1.98.1-
       - run: npm ci
       - run: npm run build
       - name: Clean Intel Mac shell resource check
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.suite == 'checks'
         run: |
           test ! -e src-tauri/gen/apple-helper/BridgeVM
           rustup target add x86_64-apple-darwin --toolchain 1.98.1
           cargo +1.98.1 check --manifest-path src-tauri/Cargo.toml --locked --target x86_64-apple-darwin --features custom-protocol
       - name: Apple helper build and tests
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.suite == 'checks'
         run: |
           bash ../scripts/build-vm-helper-macos.sh
           bash ../scripts/test-vm-helper-macos.sh
           cargo +1.98.1 test --manifest-path ../runtime/Cargo.toml --locked -p bridge-runtime-protocol --test runtime_core --test windows_backend --test agents
       - name: Mac deferred termination (no VM or host logout)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.suite == 'checks'
         run: cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --test native_termination --features custom-protocol
       - name: Rust checks
+        if: matrix.suite != 'bundle'
         run: |
           cargo +1.98.1 fmt --manifest-path src-tauri/Cargo.toml --all -- --check
           cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --test engine
@@ -110,7 +123,7 @@ jobs:
           cargo +1.98.1 clippy --release --manifest-path src-tauri/Cargo.toml --locked --all-targets --features custom-protocol -- -D warnings
       # Keep successful compilation/tests even if the later desktop walk fails.
       - name: Preserve verified Rust cache
-        if: steps.rust-cache.outputs.cache-hit != 'true'
+        if: matrix.suite != 'bundle' && steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -144,8 +157,15 @@ jobs:
           git rev-parse HEAD | Set-Content windows-artifact/native-lifecycle/head.txt
           & ../scripts/native-lifecycle-windows.ps1 -Executable src-tauri/target/debug/orka-bridge.exe -Output windows-artifact/native-lifecycle
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      # Restored targets do not include generated helper resources. Warm debug
+      # dependencies outside the lifecycle walk's six-minute desktop deadline.
+      - name: Prepare Mac bundle builds
+        if: runner.os == 'macOS' && matrix.suite == 'bundle'
+        run: |
+          bash ../scripts/build-vm-helper-macos.sh
+          cargo +1.98.1 build --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol
       - name: Mac integrated debug lifecycle walk (no VM)
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.suite == 'bundle'
         timeout-minutes: 6
         run: |
           npm run tauri -- build --debug --features custom-protocol --bundles app --no-sign --no-binary-patching --config '{"identifier":"ai.orka.bridge.lifecycle"}' -- --locked
@@ -177,7 +197,7 @@ jobs:
             swift ../scripts/native-lifecycle-macos.swift "native-lifecycle/$theme" "$bundle" "$theme"
           done
       - name: Mac app bundle and native walk
-        if: runner.os == 'macOS'
+        if: runner.os == 'macOS' && matrix.suite == 'bundle'
         run: |
           npm run tauri -- build --bundles app --no-sign --no-binary-patching -- --locked
           bundle=src-tauri/target/release/bundle/macos/Bridge.app
@@ -223,6 +243,15 @@ jobs:
             test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
             swift ../scripts/native-smoke.swift "native-walk/$theme" "$PWD/smoke-app/Bridge.app" "$theme"
           done
+      - name: Preserve Mac bundle cache
+        if: matrix.suite == 'bundle' && steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            app/src-tauri/target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
       - name: Preserve compiled dependencies after a failed native check
         if: failure() && steps.rust-cache.outcome == 'success' && steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -231,7 +260,7 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             app/src-tauri/target
-          key: app-${{ matrix.os }}-rust-1.98.1-${{ hashFiles('app/src-tauri/Cargo.lock', 'app/src-tauri/Cargo.toml') }}
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always() && runner.os == 'Windows'
         with:
@@ -240,7 +269,7 @@ jobs:
           retention-days: 3
           if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always() && runner.os == 'macOS'
+        if: always() && runner.os == 'macOS' && matrix.suite == 'bundle'
         with:
           name: bridge-${{ matrix.artifact }}
           path: |

@@ -42,7 +42,7 @@ test('foreign busy names the owner without its result, resources or Stop control
 });
 test('Send report validation keeps document ownership after Run DTO changes', async () => {
   native(); const view = { documentId: a, id: b, targetId: a, providerId: b, targetName: 'team', source,
-    model: 'model', agentName: 'submitted', state: 'complete', stage: 'done', report: complete.report, acknowledged: [], pending: null, error: null };
+    model: 'model', agentName: 'submitted', state: 'complete', stage: 'done', report: complete.report, acknowledged: [], pending: null, error: null, storageError: false };
   mockIPC(() => ({ documentId: a, view, busy: null }));
   expect((await sendCall('send_status', { documentId: a })).view?.report?.verdict).toBe('passed');
   await expect(sendCall('send_status', { documentId: b })).rejects.toThrow();

@@ -137,7 +137,7 @@ pub(crate) fn read(dir: &Dir, name: &str, limit: usize) -> io::Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn sync(dir: &Dir) -> io::Result<()> {
+pub(crate) fn sync(dir: &Dir) -> io::Result<()> {
     #[cfg(unix)]
     let file = dir.open(".")?;
     #[cfg(windows)]

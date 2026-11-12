@@ -6,8 +6,8 @@ export type SendView = Pick<RunSnapshot, 'acknowledged' | 'pending' | 'report'> 
   documentId: string; id: string; targetId: string; providerId: string; targetName: string | null;
   source: SourceId | null; model: string | null; agentName: string | null;
   state: 'running' | 'complete' | 'unknown';
-  stage: 'capture' | 'access' | 'preflight' | 'submit' | 'observe' | 'stopped' | 'done';
-  error: string | null;
+  stage: 'capture' | 'access' | 'preflight' | 'submit' | 'storage' | 'observe' | 'stopped' | 'done';
+  error: string | null; storageError: boolean;
 };
 const uuid = (v: unknown) => typeof v === 'string' && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(v);
 const text = (v: unknown) => v === null || typeof v === 'string' && v.length > 0 && v.length <= 4096;
@@ -15,6 +15,7 @@ export const sendErrors = {
   capture: 'Your saved agent or check files changed, or could not be read. Check this destination again before sending.',
   access: 'Cluster access could not be confirmed. Choose your cluster again in Clusters.',
   preflight: 'The installation, tools or Provider could not be confirmed. Check your cluster and try again.',
+  storage: 'Nothing was sent because Bridge could not save a summary. Check local storage before trying again.',
   submit: 'Sending was not confirmed. Named resources may still exist. Nothing was retried.',
   observe: 'The result could not be confirmed. The cluster may still be running checks.',
   stopped: 'Stopped watching. The cluster may still be running checks.',
@@ -22,11 +23,12 @@ export const sendErrors = {
 function valid(v: unknown): v is SendView {
   if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
   const row = v as Record<string, unknown>;
-  return Object.keys(row).sort().join(',') === 'acknowledged,agentName,documentId,error,id,model,pending,providerId,report,source,stage,state,targetId,targetName'
+  return Object.keys(row).sort().join(',') === 'acknowledged,agentName,documentId,error,id,model,pending,providerId,report,source,stage,state,storageError,targetId,targetName'
+    && typeof row.storageError === 'boolean'
     && isDocumentId(row.documentId) && uuid(row.id) && uuid(row.targetId) && uuid(row.providerId) && text(row.targetName)
     && (row.source === null || isSourceId(row.source)) && text(row.model) && text(row.agentName)
     && ['running', 'complete', 'unknown'].includes(row.state as string)
-    && ['capture', 'access', 'preflight', 'submit', 'observe', 'stopped', 'done'].includes(row.stage as string)
+    && ['capture', 'access', 'preflight', 'submit', 'storage', 'observe', 'stopped', 'done'].includes(row.stage as string)
     && (row.error === null || typeof row.error === 'string' && Object.hasOwn(sendErrors, row.error))
     && isRunSnapshot({ state: row.state, canRun: false, report: row.report, acknowledged: row.acknowledged, pending: row.pending, error: null });
 }
@@ -56,6 +58,35 @@ export async function sendPreflight(targetId: string, providerId: string, docume
     } catch { /* Do not forward native diagnostics. */ }
   }
   throw Error('Destination checks could not be read. Check your cluster and try again.');
+}
+export type AttemptSummary = {
+  id: string; source: SourceId; targetDisplay: string;
+  targetUids: { serviceNamespace: string; serviceUid: string; deploymentNamespace: string; deploymentUid: string; watchedNamespace: string };
+  provider: string; plannedAgentName: string; agentUid: string | null;
+  verdict: 'running' | 'passed' | 'failed' | 'unknown'; time: number;
+};
+function isSummary(value: unknown): value is AttemptSummary {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  const identity = row.targetUids;
+  return Object.keys(row).sort().join(',') === 'agentUid,id,plannedAgentName,provider,source,targetDisplay,targetUids,time,verdict'
+    && uuid(row.id) && isSourceId(row.source)
+    && [row.targetDisplay, row.provider, row.plannedAgentName].every(v => v !== null && text(v))
+    && text(row.agentUid)
+    && ['running', 'passed', 'failed', 'unknown'].includes(row.verdict as string)
+    && typeof row.time === 'number' && Number.isSafeInteger(row.time) && row.time >= 0 && row.time <= 253402300799
+    && typeof identity === 'object' && identity !== null && !Array.isArray(identity)
+    && Object.keys(identity).sort().join(',') === 'deploymentNamespace,deploymentUid,serviceNamespace,serviceUid,watchedNamespace'
+    && Object.values(identity).every(v => v !== null && text(v));
+}
+export async function sendHistory(): Promise<AttemptSummary[]> {
+  if (isTauri()) {
+    try {
+      const value: unknown = await invoke('send_history');
+      if (Array.isArray(value) && value.length <= 1024 && value.every(isSummary)) return value;
+    } catch { /* Stored bytes and diagnostics are not display data. */ }
+  }
+  throw Error('Saved Send summaries could not be read. They are unavailable, not passing results.');
 }
 export type SendStatus = { documentId: string; view: SendView | null; busy: DocumentRef | null };
 export async function sendCall(command: 'send_start' | 'send_status' | 'send_stop', args: Record<string, unknown> = {}): Promise<SendStatus> {
