@@ -67,7 +67,7 @@ test('Designer opens the owned agent without workspace setup and shares its save
   expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
   expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   expect(screen.getByRole('main', { name: 'web-reader' })).toBeTruthy();
-  expect(within(screen.getByRole('contentinfo')).getByText('Saved')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Saved').getAttribute('aria-live')).toBe('polite');
 });
 
 test.each([
@@ -91,9 +91,7 @@ test.each([
 
 test('unbuilt controls are disabled with discoverable reasons', async () => {
   const user = userEvent.setup(); render(<App />);
-  const search = screen.getByRole('button', { name: /Search/ });
-  expect(search.hasAttribute('disabled')).toBe(true);
-  expect(search.getAttribute('title')).toMatch(/Search.*coming/i);
+  expect(screen.queryByRole('button', { name: /Search/ })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   for (const name of ['New agent']) {
     const button = screen.getByRole('button', { name });
@@ -134,12 +132,12 @@ test('model acknowledgment and observed check counts survive navigation', async 
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('AI connected')).toBeTruthy();
-  expect(screen.getByText('This computer').getAttribute('title')).toBe('AI connected');
-  expect(screen.getByText('This computer').textContent).toBe('This computer: AI connected');
+  expect(screen.getByText('This computer').closest('.host-chip')?.getAttribute('title')).toBe('AI connected');
+  expect(screen.getByText('This computer').closest('.host-chip')?.textContent).toBe('This computer: AI connected');
   await user.click(screen.getByRole('button', { name: 'Open example' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 checks passing')).toBeTruthy();
   expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
-  expect(within(screen.getByRole('navigation')).getByText('page-reader, 1 check failing')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'page-reader, 1 check failing')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(within(screen.getByRole('contentinfo')).getByText('AI connected')).toBeTruthy();
@@ -209,7 +207,7 @@ test.each(['unknown', 'unavailable'])('background check status preserves %s outc
   await within(screen.getByRole('contentinfo')).findByText(expected);
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   expect(within(screen.getByRole('contentinfo')).getByText(expected)).toBeTruthy();
-  expect(within(screen.getByRole('navigation')).getByText(`reader, ${expected.toLowerCase()}`)).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === `reader, ${expected.toLowerCase()}`)).toBeTruthy();
   expect(within(screen.getByRole('contentinfo')).getByRole('status').textContent).toContain(expected);
 });
 
@@ -237,7 +235,7 @@ test('Open example retries a failed read without discarding successful runs', as
   await within(screen.getByRole('navigation')).findByText('Example unavailable');
   await user.click(screen.getByRole('button', { name: 'Clusters' })); fail = false;
   await user.click(screen.getByRole('button', { name: 'Open example' }));
-  expect(await within(screen.getByRole('navigation')).findByText('recovered-reader, ready to edit')).toBeTruthy();
+  expect(await within(screen.getByRole('navigation')).findByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'recovered-reader, ready to edit')).toBeTruthy();
 });
 
 test('a transient setup read failure recovers while off Clusters', async () => {

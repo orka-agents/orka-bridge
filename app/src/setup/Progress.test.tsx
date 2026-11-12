@@ -76,7 +76,7 @@ test('Meet opens the actual example read-only without owned-file or Run commands
   const { ipc } = native(); const user = userEvent.setup(); render(<App />);
   expect(await screen.findByRole('heading', { name: 'web-reader' })).toBeTruthy();
   expect(screen.getByText('Answers from the web page named in the request')).toBeTruthy();
-  expect(await within(screen.getByRole('navigation')).findByText('web-reader, ready to read')).toBeTruthy();
+  expect(await within(screen.getByRole('navigation')).findByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'web-reader, ready to read')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   const main = screen.getByRole('main', { name: 'web-reader' });
   expect(within(main).getByText('Fetch before answering.')).toBeTruthy();
@@ -87,7 +87,7 @@ test('Meet opens the actual example read-only without owned-file or Run commands
   const editor = screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
   expect(editor.readOnly).toBe(true); editor.focus(); await user.keyboard('{Control>}s{/Control}');
   expect(ipc.mock.calls.some(([c]) => ['agent_open', 'agent_save', 'agent_run', 'agent_run_status'].includes(c))).toBe(false);
-  expect(within(screen.getByRole('navigation')).getByText('web-reader, ready to read')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'web-reader, ready to read')).toBeTruthy();
 });
 
 test('unreadable status never upgrades the setup preview into an editable file', async () => {
