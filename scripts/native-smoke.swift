@@ -656,6 +656,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 1)
     let allowed = try capturePreflight("send-ready", "Built in to this Orka")
     require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Built in to this Orka") }, "Allowed preflight evidence is missing")
+    func focusSend() throws {
+        scrollMain(4000)
+        try clickSendControl("Send to a cluster", scrolling: -250)
+    }
     func resultSize(_ width: CGFloat, _ height: CGFloat) throws {
         let frame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable])
@@ -665,8 +669,15 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Result window size was not applied")
         // Reflow can move the result header above the preserved scroll offset.
         // Reopen the existing panel without starting another Send.
-        scrollMain(4000)
-        try clickSendControl("Send to a cluster", scrolling: -250)
+        try focusSend()
+    }
+    func captureAnswer(_ name: String) throws {
+        let seen = try capturePreflight("send-probe", "QUESTION")
+        let question = seen.first { ($0.topCandidates(1).first?.string ?? "") == "QUESTION" }!
+        let y = (1 - question.boundingBox.maxY) * window()!.1.height
+        scrollMain(-Int32(max(0, y - 180)))
+        let answer = try capture(name, "Designer")
+        require(answer.contains { ($0.topCandidates(1).first?.string ?? "").contains("Fixture answer:") }, "Question and answer are not visible together")
     }
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
@@ -675,9 +686,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try resultSize(1280, 800)
     try capturePreflight("send-result-wide", "1 of 1 passed")
     try clickSendControl("published-checksum", scrolling: -250)
-    try capturePreflight("send-answer-wide", "QUESTION")
+    try captureAnswer("send-answer-wide")
     try resultSize(540, 900)
-    try capturePreflight("send-answer", "QUESTION")
+    try captureAnswer("send-answer")
     try clickSendControl("published-checksum", scrolling: 250)
     try clickSendControl("Details", scrolling: -350)
     scrollMain(-350)
@@ -695,6 +706,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try mixedTests.write(to: testsURL, options: .atomic)
     try clickSendControl("Check again", scrolling: 350)
     try clickSendControl("Reload saved files", scrolling: -250)
+    try focusSend()
     try capturePreflight("send-stale", "Not run since your edit")
     try resultSize(1280, 800)
     try capturePreflight("send-stale-wide", "Not run since your edit")
@@ -712,6 +724,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try capturePreflight("send-running", "Waiting for answers and evaluating tests")
     try resultSize(1280, 800)
     try capturePreflight("send-running-wide", "Waiting for answers and evaluating tests")
+    try focusSend()
     try clickSendControl("Stop", scrolling: -350)
     Thread.sleep(forTimeInterval: 0.5)
     let stopped = try capture("send-stopped", "Designer")
