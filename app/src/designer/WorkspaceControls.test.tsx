@@ -49,6 +49,14 @@ test('tool choices show descriptions as text, distinguish kinds and suppress eff
   await user.click(screen.getByRole('button', { name: 'Remove lookup' }));
   expect(readForm(changed.mock.calls.at(-1)![0]).tools).toEqual([]);
 });
+test.each(['__proto__', 'constructor', 'toString'])('unknown built-in %s renders its supplied description, not inherited map values', async name => {
+  const user = userEvent.setup(); const changed = vi.fn();
+  render(<AgentParts source={source} readOnly={false} catalog={{ ...catalog, tools: { state: 'ready', items: [{ kind: 'builtin', name, description: 'Supplied tool description' }] } }} onChange={changed} />);
+  await user.click(screen.getByRole('button', { name: 'Add a tool' }));
+  expect(screen.getByText('Supplied tool description')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: new RegExp(name) }));
+  expect(readForm(changed.mock.calls[0][0]).tools[0]).toMatchObject({ name, kind: 'builtin' });
+});
 test('a restored catalog never reopens a picker dismissed by unavailability', async () => {
   const user = userEvent.setup();
   const view = render(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={() => {}} />);

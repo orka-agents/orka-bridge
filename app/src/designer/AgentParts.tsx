@@ -111,7 +111,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
         <ul aria-label="Workspace tools">{choices?.map(tool => <li key={`${tool.kind}:${tool.name}`}><button type="button" onClick={() => { change(addTool(source, tool.name, tool.kind)); close(); }}>
           <span>{tool.kind === 'builtin' ? labelFor(tool.name) : tool.name}</span><code>{tool.name}</code>
           <span className="muted">{tool.kind === 'builtin' ? 'Built-in' : 'Workspace tool'}</span>
-          <span className="tool-description">{tool.kind === 'builtin' ? builtInToolDescriptions[tool.name] ?? tool.description : tool.description}</span>
+          <span className="tool-description">{tool.kind === 'builtin' && Object.hasOwn(builtInToolDescriptions, tool.name) ? builtInToolDescriptions[tool.name] : tool.description}</span>
           {tool.available === false && <span className="muted">Observed unavailable</span>}
         </button></li>)}</ul>
         {!choices?.length && <p className="muted">{tools?.length ? 'No matching tools to add.' : 'No tools listed by this workspace.'}</p>}
