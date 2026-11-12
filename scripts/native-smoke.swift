@@ -105,8 +105,13 @@ func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) 
             attribute($0, "AXRole") as? String == "AXStaticText"
                 && attribute($0, "AXValue") as? String == label
         }.compactMap { nativeBounds($0) }.filter { window()!.1.contains($0) }
-        require(labels.count == 1, "Expected one visible native label \(label); found \(labels.count)")
-        let point = CGPoint(x: labels[0].midX, y: labels[0].midY)
+        require(!labels.isEmpty, "No visible native label: \(label)")
+        // WebKit can expose both a label and its text node. They must refer to
+        // the same on-screen hit region; distinct/ambiguous labels still fail.
+        let hit = labels.dropFirst().reduce(labels[0]) { $0.intersection($1) }
+        require(!hit.isNull && !hit.isEmpty, "Ambiguous native label \(label): \(labels)")
+        print("Native label \(label): \(labels), hit \(hit)")
+        let point = CGPoint(x: hit.midX, y: hit.midY)
         mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
         Thread.sleep(forTimeInterval: 0.5)
         return
