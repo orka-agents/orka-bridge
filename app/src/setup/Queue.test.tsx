@@ -39,20 +39,33 @@ const wait = { timeout: 3000 };
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
+// One explicit native observation: the window-focus event is Setup's own refresh path. The setup_status call count proves the
+// refresh was requested, and a macrotask flush lets its reply and the resulting React updates land before anything is asserted.
+const statusReads = (ipc: { mock: { calls: unknown[][] } }) => ipc.mock.calls.filter(([command]) => command === 'setup_status').length;
+async function observe(ipc: { mock: { calls: unknown[][] } }) {
+  const before = statusReads(ipc);
+  await act(async () => { window.dispatchEvent(new Event('focus')); });
+  await waitFor(() => expect(statusReads(ipc)).toBeGreaterThan(before));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+}
+
 test('a choice during transfer connects exactly once at readiness, with no second click and no disabled status buttons', async () => {
-  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  const { ipc, sim, connects } = native(); const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
   expect(screen.getByText('Queued', { selector: '.pill' }).closest('button')).toBeNull();
   expect(screen.getByText('Queued', { selector: '.step-result' })).toBeTruthy();
   expect(connects()).toBe(0);
   // Orka can be ready before the model unlocks: hold, neither fire nor forget.
   sim.localVm = 'ready';
-  await within(screen.getByRole('navigation')).findByText('AI unavailable', {}, wait);
-  await settle(); expect(connects()).toBe(0);
+  await observe(ipc);
+  expect(within(screen.getByRole('navigation')).getByText('AI unavailable')).toBeTruthy();
+  expect(connects()).toBe(0);
   expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
   sim.model = 'available';
-  await screen.findByText(/Model connected:/, {}, wait);
-  await settle();
+  await observe(ipc);
+  await screen.findByText(/Model connected:/);
+  expect(connects()).toBe(1);
+  await observe(ipc);
   expect(connects()).toBe(1);
   expect(within(screen.getByRole('contentinfo')).getByText('AI connected')).toBeTruthy();
   expect(screen.getAllByRole('button').filter(button => button.hasAttribute('disabled') && /connect|queued|removing/i.test(button.textContent ?? ''))).toEqual([]);

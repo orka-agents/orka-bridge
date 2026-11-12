@@ -156,18 +156,22 @@ try {
   const setupFixtures = [
     ['setup-transfer', 'installing', transfer, false, 'Installing, 1.1 GiB of 2.8 GiB'],
     ['setup-transfer-queued', 'installing', transfer, true, 'Connects automatically when Orka is ready.'],
+    // A valid first observation, then every later read fails: the card must say unavailable, not keep the old bar.
+    ['setup-unavailable', 'installing', transfer, false, 'Workspace status is unavailable.', true],
     ['setup-startup', 'starting', startup(12000), false, 'Rough estimate, not a measurement'],
     ['setup-startup-slow', 'starting', startup(45000), false, 'Taking longer than the rough 30-second estimate'],
     ['setup-ready', 'ready', null, false, 'Your workspace is running on this computer.'],
   ];
   const pair = { agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\n---\nFetch before answering.', tests: 'The checksum check.' };
-  async function captureSetup(theme, size, [name, localVm, progress, queue, expected]) {
+  async function captureSetup(theme, size, [name, localVm, progress, queue, expected, failLater]) {
     ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `setup-${theme}-${size}-${name}` }));
     await evaluate(`(() => {
       const pair = ${JSON.stringify(pair)};
+      let reads = 0;
       localStorage.setItem('bridge.welcomeSeen.v1', '1');
       window.isTauri = true;
       window.__TAURI_INTERNALS__ = { invoke: async command => {
+        if (command === 'setup_status' && ${JSON.stringify(!!failLater)} && reads++ > 0) throw Error('Fixture status unreadable');
         if (command === 'setup_status') return { selected: 'localVm', localVm: ${JSON.stringify(localVm)}, model: ${JSON.stringify(localVm === 'ready' ? 'available' : 'locked')}, workspaceProgress: ${JSON.stringify(progress)}, localVmError: null };
         if (command === 'setup_example') return pair;
         if (command === 'setup_requirements') return null;
