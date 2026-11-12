@@ -72,7 +72,8 @@ func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) 
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.5)
 }
-func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) {
+@discardableResult
+func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> AXUIElement {
     // Small Inter labels can be grouped with subtitles by Vision. Identify the
     // real enabled native button, but still pointer-click it and verify the
     // rendered destination in the next capture (not AXPress or renderer hooks).
@@ -114,6 +115,7 @@ func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) {
     let point = CGPoint(x: bounds.midX, y: bounds.midY)
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.5)
+    return target
 }
 func key(_ code: CGKeyCode, shift: Bool = false) {
     for down in [true, false] {
@@ -349,8 +351,15 @@ clickTab("Overview", retained)
 let overview = try capture("overview", "Overview")
 clickTab("Designer", overview)
 let designer = try capture("designer-pointer", "Designer")
-clickTab("Clusters", designer)
+let clustersTab = clickTab("Clusters", designer)
 try capture("clusters-pointer", "Clusters")
+// Pointer activation on macOS need not focus a button. Establish and verify the
+// native keyboard starting point, then exercise actual traversal/activation.
+require(AXUIElementSetAttributeValue(clustersTab, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success,
+        "Cannot focus Clusters for native keyboard traversal")
+var focused: CFTypeRef?
+require(AXUIElementCopyAttributeValue(clustersTab, kAXFocusedAttribute as CFString, &focused) == .success
+    && focused as? Bool == true, "Clusters did not receive native keyboard focus")
 // From Clusters, Designer and Overview are the preceding navigation stops.
 key(48, shift: true); key(48, shift: true); key(49)
 try capture("overview-keyboard", "Overview")
