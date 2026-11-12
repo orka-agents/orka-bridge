@@ -23,7 +23,7 @@
 .card-details > summary::before { content: '›'; font-size: var(--size-reading); }
 .card-details[open] > summary::before { transform: rotate(90deg); }
 .card-details > div { margin-top: var(--space-3); display: grid; gap: var(--space-2); }
-.generated-value { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
+.generated-value { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); min-width: 0; }
 .generated-value > span:first-child { min-width: 100px; color: var(--color-text-secondary); }
 .generated-value code { overflow-wrap: anywhere; }
 .generated-value [role="status"] { font: var(--type-small); }
