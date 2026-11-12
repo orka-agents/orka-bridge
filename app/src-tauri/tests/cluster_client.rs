@@ -1229,6 +1229,44 @@ async fn failed_reload_invalidates_and_keeps_the_injected_orka_reader() {
 }
 
 #[tokio::test]
+async fn timed_out_reload_does_not_accumulate_blocked_readers() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let session = bridge_engine::clusters::commands::ClusterSession::with_reader(
+        ClusterClient::new(Kubeconfig::default(), Arc::new(OrkaFixture::default())),
+        Arc::new(move || {
+            count.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_secs(2));
+            Ok(Kubeconfig::default())
+        }),
+    );
+    let first = session.clone();
+    let first = tokio::spawn(async move { first.reload().await });
+    let ready = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while calls.load(Ordering::SeqCst) == 0 {
+        assert!(std::time::Instant::now() < ready);
+        tokio::task::yield_now().await;
+    }
+    tokio::time::pause();
+    tokio::time::advance(std::time::Duration::from_secs(11)).await;
+    assert!(first.await.unwrap().is_err());
+    let again = session.clone();
+    let again = tokio::spawn(async move { again.reload().await });
+    while !again.is_finished() && calls.load(Ordering::SeqCst) < 2 {
+        assert!(std::time::Instant::now() < ready);
+        tokio::task::yield_now().await;
+    }
+    let outstanding = calls.load(Ordering::SeqCst);
+    tokio::time::advance(std::time::Duration::from_secs(11)).await;
+    assert!(again.await.unwrap().is_err());
+    assert_eq!(
+        outstanding, 1,
+        "a timed-out reader must not admit another read"
+    );
+}
+
+#[tokio::test]
 async fn reload_waits_for_discovery_and_use_and_late_replies_are_stale() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());
@@ -1386,11 +1424,20 @@ async fn discovery_deadline_keeps_the_compatibility_check_in_progress() {
     tokio::time::pause();
     let task = tokio::spawn(async move { client.discover(id).await });
     let mut last_release = None;
+    let wall_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     for stage in 0..4 {
         let (path, release) = loop {
             if let Ok(step) = received.try_recv() {
                 break step;
             }
+            assert!(
+                !task.is_finished(),
+                "discovery ended before gated request {stage}"
+            );
+            assert!(
+                std::time::Instant::now() < wall_deadline,
+                "gated discovery request not received"
+            );
             tokio::task::yield_now().await;
         };
         if stage == 3 {
@@ -1428,11 +1475,20 @@ async fn use_deadline_during_pod_opening_keeps_the_connection_stage() {
     *api.step_gate.lock().unwrap() = Some(steps);
     tokio::time::pause();
     let task = tokio::spawn(async move { client.connect(target, None).await.err() });
+    let wall_deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let last_release = loop {
         let (path, release) = loop {
             if let Ok(step) = received.try_recv() {
                 break step;
             }
+            assert!(
+                !task.is_finished(),
+                "Use ended before the Pod opening request"
+            );
+            assert!(
+                std::time::Instant::now() < wall_deadline,
+                "gated Use request not received"
+            );
             tokio::task::yield_now().await;
         };
         if path.ends_with("/pods") {

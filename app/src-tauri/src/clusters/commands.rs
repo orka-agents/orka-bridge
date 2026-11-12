@@ -2,7 +2,13 @@
 use super::credentials::ExecOwner;
 use super::*;
 use kube::config::Kubeconfig;
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio::sync::Mutex;
 
 const READ_LIMIT: Duration = Duration::from_secs(10);
@@ -58,8 +64,28 @@ impl Session {
         let client = match self.client.take() {
             Some(client) => client,
             None => {
+                if owner.5.swap(true, Ordering::SeqCst) {
+                    return Err(UNKNOWN_CONFIGURATION);
+                }
                 let reader = owner.1.clone();
-                let read = tokio::task::spawn_blocking(move || reader());
+                let running = owner.5.clone();
+                let (reply, read) = tokio::sync::oneshot::channel();
+                // A stuck file read cannot be cancelled. Admit at most one, outside
+                // Tokio's blocking pool so it cannot hold up runtime shutdown.
+                if std::thread::Builder::new()
+                    .name("bridge-kubeconfig".into())
+                    .spawn(move || {
+                        let result =
+                            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| reader()))
+                                .unwrap_or(Err(ClusterError::Unavailable));
+                        running.store(false, Ordering::SeqCst);
+                        let _ = reply.send(result);
+                    })
+                    .is_err()
+                {
+                    owner.5.store(false, Ordering::SeqCst);
+                    return Err(UNKNOWN_CONFIGURATION);
+                }
                 let kubeconfig = tokio::time::timeout(READ_LIMIT, read)
                     .await
                     .ok()
@@ -84,6 +110,7 @@ pub struct ClusterSession(
     Arc<dyn OrkaRead>,
     // Memory-only admission snapshot, independent of bounded discovery/Use waits.
     Arc<std::sync::Mutex<ConfirmedAccess>>,
+    Arc<AtomicBool>,
 );
 impl Default for ClusterSession {
     fn default() -> Self {
@@ -92,6 +119,7 @@ impl Default for ClusterSession {
             Arc::new(read_kubeconfig),
             ExecOwner::default(),
             Arc::new(PodOrkaRead),
+            Arc::default(),
             Arc::default(),
         )
     }
@@ -112,6 +140,7 @@ impl ClusterSession {
             reader,
             exec,
             orka,
+            Arc::default(),
             Arc::default(),
         )
     }
