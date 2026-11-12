@@ -581,7 +581,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Built in to this Orka") }, "Allowed preflight evidence is missing")
     try clickSendControl("Send and run checks", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
-    let result = try capture("send-result", "Designer")
+    // The shared card's action is above preflight; reveal the actual report,
+    // not merely its aggregate pill, before asserting fixture evidence.
+    let result = try capturePreflight("send-result", "Checks: pass")
     require(result.contains { $0.topCandidates(1).first?.string == "Checks: pass" }, "Fixture-backed Send did not pass its real assertions")
     try clickSendControl("Details", scrolling: -350)
     scrollMain(-350)
