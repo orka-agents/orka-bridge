@@ -166,6 +166,7 @@ impl SetupError {
             "modelCaptureTimedOut" => "Reading the stored GitHub sign-in timed out.",
             "modelStore" => "The native credential store could not save or load the sign-in.",
             "modelGuest" => "The guest model handler is unavailable or is not idle.",
+            "modelReconnect" => "Bridge could not clean up the previous model connection. This workspace may need a newer image. The saved sign-in was kept.",
             "modelDelivery" => {
                 "Private credential delivery was not acknowledged. Completion is unknown."
             }

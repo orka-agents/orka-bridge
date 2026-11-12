@@ -8,6 +8,53 @@ const { invoke, isTauri } = vi.hoisted(() => ({ invoke: vi.fn(), isTauri: vi.fn(
 vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri }));
 beforeEach(() => { invoke.mockReset(); isTauri.mockReturnValue(true); });
 afterEach(() => { cleanup(); });
+test('remove is explicit, excludes duplicates and permits connecting again', async () => {
+  const onState = vi.fn();
+  invoke.mockResolvedValue({ ready: true });
+  render(<Model enabled onState={onState} />);
+  expect(invoke).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  await screen.findByText(/Model connected:/);
+  let complete!: (value: unknown) => void;
+  invoke.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+  const remove = screen.getByRole('button', { name: 'Remove sign-in' });
+  fireEvent.click(remove); fireEvent.click(remove);
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_remove_model')).toEqual([['setup_remove_model']]);
+  expect(screen.queryByText(/Model connected:/)).toBeNull();
+  await act(async () => { complete({ ready: false }); });
+  expect(screen.getByText(/GitHub CLI stays signed in/)).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Use GitHub sign-in' }).hasAttribute('disabled')).toBe(false);
+  expect(onState).toHaveBeenLastCalledWith('idle');
+});
+test('remove is available before connecting and after connection failure, and never echoes raw failures', async () => {
+  invoke.mockRejectedValue({ kind: 'modelConnect', message: 'synthetic-private-token' });
+  const view = render(<Model enabled />);
+  expect(screen.getByRole('button', { name: 'Remove sign-in' }).hasAttribute('disabled')).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  await screen.findByRole('alert');
+  invoke.mockRejectedValue({ kind: 'invented', message: 'synthetic-private-token' });
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('could not confirm sign-in removal'));
+  expect(document.body.textContent).not.toContain('synthetic-private-token');
+  expect(screen.queryByText(/no longer has a saved sign-in/)).toBeNull();
+  view.rerender(<Model enabled paused />);
+  expect(screen.getByRole('button', { name: 'Remove sign-in' }).hasAttribute('disabled')).toBe(true);
+});
+test('failed removal retries cleanup rather than Connect and copies its own operation', async () => {
+  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  invoke.mockRejectedValue({ kind: 'modelStore', native: { call: 'CredDeleteW', code: 5 }, message: 'SECRET' });
+  render(<Model enabled />);
+  await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('Remove sign-in again');
+  await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
+  expect(copy.mock.calls[0][0]).toBe('Bridge AI connection\nOperation: Removing sign-in\nCategory: modelStore\nOS code: 5');
+  invoke.mockResolvedValue({ ready: false });
+  await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  await screen.findByText(/no longer has a saved sign-in/);
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_remove_model')).toHaveLength(2);
+  expect(invoke.mock.calls.some(([cmd]) => cmd === 'setup_connect_model')).toBe(false);
+  expect(document.body.textContent).not.toContain('SECRET');
+});
 test('locked model cannot invoke credentials', () => {
   render(<Model enabled={false} />);
   expect(screen.getByRole('button', { name: 'Connect model' }).hasAttribute('disabled')).toBe(true);

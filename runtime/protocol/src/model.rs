@@ -113,11 +113,17 @@ pub struct ModelDiagnostic {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelState {
+    /// Absence on older images means the retained-cleanup opcode is unsupported.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub retained_cleanup: bool,
     pub phase: ModelPhase,
     pub connection: Option<ModelConnection>,
     pub credential: CredentialState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diagnostic: Option<ModelDiagnostic>,
+}
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 impl ModelState {
     pub(crate) fn valid(&self) -> bool {

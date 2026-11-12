@@ -88,6 +88,10 @@ pub enum RequestBody {
     ModelDisconnect {
         connection: Uuid,
     },
+    /// Explicit cleanup of a known prior-boot connection, before any new credential.
+    ModelDisconnectRetained {
+        connection: ModelConnection,
+    },
     CredentialStatus {},
     CredentialPublish {
         expected_generation: Option<Uuid>,
@@ -284,6 +288,13 @@ impl Frame {
                         return Err(ProtocolError::Invalid)
                     }
                     RequestBody::ModelDisconnect { connection } if connection.is_nil() => {
+                        return Err(ProtocolError::Invalid)
+                    }
+                    RequestBody::ModelDisconnectRetained { connection }
+                        if connection.id.is_nil()
+                            || connection.generation.is_nil()
+                            || !connection.selection.valid() =>
+                    {
                         return Err(ProtocolError::Invalid)
                     }
                     RequestBody::CredentialPublish {

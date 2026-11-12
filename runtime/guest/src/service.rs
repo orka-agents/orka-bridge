@@ -184,6 +184,7 @@ pub fn credential_request(
             | RequestBody::ModelStatus {}
             | RequestBody::ModelConnect { .. }
             | RequestBody::ModelDisconnect { .. }
+            | RequestBody::ModelDisconnectRetained { .. }
     ) {
         Some(if host_channel {
             run()
@@ -222,12 +223,23 @@ mod credential_tests {
                 },
             },
             RequestBody::ModelDisconnect { connection: id },
+            RequestBody::ModelDisconnectRetained {
+                connection: ModelConnection {
+                    id,
+                    generation: id,
+                    selection: ModelSelection {
+                        provider: "copilot".into(),
+                        model: "gpt-4.1".into(),
+                    },
+                },
+            },
         ] {
             for host in [false, true] {
                 let called = std::cell::Cell::new(false);
                 let reply = credential_request(host, &request, || {
                     called.set(true);
                     ResultBody::ModelState(ModelState {
+                        retained_cleanup: true,
                         phase: ModelPhase::Idle,
                         connection: None,
                         diagnostic: None,

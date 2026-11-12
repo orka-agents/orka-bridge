@@ -142,6 +142,15 @@ async fn setup_connect_model(
 }
 
 #[tauri::command]
+async fn setup_remove_model(
+    state: tauri::State<'_, Arc<SetupStore>>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
+) -> Result<ModelReply, SetupError> {
+    let model = vm.remove_model(Arc::clone(state.inner())).await?;
+    Ok(ModelReply { ready: model.ready })
+}
+
+#[tauri::command]
 fn agent_run_status(
     document_id: DocumentId,
     state: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
@@ -294,6 +303,7 @@ fn main() {
             setup_open_help,
             setup_example,
             setup_connect_model,
+            setup_remove_model,
             agent_run_status,
             agent_run,
             agents_list,

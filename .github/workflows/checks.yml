@@ -173,6 +173,7 @@ jobs:
         run: |
           bash ../scripts/build-vm-helper-macos.sh
           cargo +1.98.1 build --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol
+          cargo +1.98.1 build --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol --example model_walk
       - name: Mac integrated debug lifecycle walk (no VM)
         if: runner.os == 'macOS' && matrix.suite == 'bundle'
         timeout-minutes: 6
@@ -246,11 +247,14 @@ jobs:
           test -s "$RUNNER_TEMP/cluster-card-kubeconfig.json"
           export BRIDGE_WALK_KUBECONFIG="$RUNNER_TEMP/cluster-card-kubeconfig.json"
           defaults write -g AppleKeyboardUIMode -int 3
+          mkdir -p native-model
+          git rev-parse HEAD > native-model/head.txt
           for theme in light dark; do
             if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
             osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
             test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
             swift ../scripts/native-smoke.swift "native-walk/$theme" "$PWD/smoke-app/Bridge.app" "$theme"
+            swift ../scripts/native-model-macos.swift "native-model/$theme" "$PWD/src-tauri/target/debug/examples/model_walk" "$theme"
           done
       - name: Preserve Mac bundle cache
         if: matrix.suite == 'bundle' && steps.rust-cache.outputs.cache-hit != 'true'
@@ -285,6 +289,7 @@ jobs:
             app/bridge-macos-arm64.tar.gz
             app/native-walk/
             app/native-lifecycle/
+            app/native-model/
           retention-days: 3
           if-no-files-found: error
 
