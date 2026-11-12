@@ -12,9 +12,10 @@ pub(super) struct ReleaseImage {
     pub state_compatibility_id: String,
 }
 impl ReleaseImage {
-    fn validate_host(&self, host: &HostTarget) -> Result<(), ImageError> {
+    fn validate_host(&self, host: &HostTarget) -> Result<ResolvedImage, ImageError> {
         let resolved = crate::runtime::manifest::resolve_image(&self.pin, &self.manifest, host)?;
-        self.validate(resolved.identity(), resolved.target())
+        self.validate(resolved.identity(), resolved.target())?;
+        Ok(resolved)
     }
     pub fn validate(
         &self,
@@ -150,13 +151,16 @@ pub(super) fn prepare_installation(
             None => None,
         }
     };
-    match &source {
+    let resolved = match &source {
         #[cfg(debug_assertions)]
-        ImageSource::Development => {}
-        ImageSource::Pinned { profile, host } => profile.validate_host(host)?,
-    }
+        ImageSource::Development => None,
+        ImageSource::Pinned { profile, host } => Some(profile.validate_host(host)?),
+    };
     if let Some(image) = existing {
         source.validate(image.identity(), image.target())?;
+        if let Some(resolved) = &resolved {
+            image.validate_pinned(resolved)?;
+        }
         return Ok(image);
     }
     let prepared = match &source {
@@ -204,6 +208,9 @@ pub(super) fn prepare_installation(
         closed,
         |event| progress(LocalProgress::Image(event)),
     ))?;
+    if let Some(resolved) = &resolved {
+        image.validate_pinned(resolved)?;
+    }
     Ok(std::sync::Arc::new(image))
 }
 

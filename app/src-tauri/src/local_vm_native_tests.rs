@@ -977,6 +977,122 @@ mod release_image_tests {
     }
 
     #[test]
+    fn pinned_reopen_rejects_self_consistent_boot_binding_tampering() {
+        use sha2::{Digest, Sha256};
+        for changed in ["kernel", "initrd", "rootSelector", "buildSourceCommit"] {
+            let (temp, profile, _) = profile();
+            let root = temp.path().join("install");
+            let cache = temp.path().join("cache");
+            let runtime = runtime();
+            let (_stop, closed) = watch::channel(false);
+            let mut custody = JournalCustody(None);
+            prepare_installation(
+                &source(profile.clone()),
+                &root,
+                &cache,
+                &mut custody,
+                closed.clone(),
+                |_| {},
+                || Journal::create(&root, BackendKind::Qemu, vec![1]),
+                runtime.handle(),
+            )
+            .unwrap();
+            fs::remove_dir_all(&cache).unwrap();
+            let binding_path = root.join("image-binding.json");
+            let mut binding: serde_json::Value =
+                serde_json::from_slice(&fs::read(&binding_path).unwrap()).unwrap();
+            if changed == "kernel" || changed == "initrd" {
+                let path = root.join(format!("image/1/os.{changed}"));
+                let mut bytes = fs::read(&path).unwrap();
+                bytes[0] ^= 1;
+                fs::write(&path, &bytes).unwrap();
+                let hash = format!("{:x}", Sha256::digest(&bytes));
+                binding[changed]["initialSha256"] = hash.clone().into();
+                binding["boot"][changed]["sha256"] = hash.into();
+            } else if changed == "rootSelector" {
+                let original = binding["boot"][changed]["value"].as_str().unwrap();
+                let mut replacement = original.to_owned();
+                replacement.replace_range(..1, if original.starts_with('0') { "1" } else { "0" });
+                let command = binding["boot"]["commandLine"]
+                    .as_str()
+                    .unwrap()
+                    .replace(original, &replacement);
+                binding["boot"][changed]["value"] = replacement.into();
+                binding["boot"]["commandLine"] = command.into();
+            } else {
+                let original = binding["identity"][changed].as_str().unwrap();
+                let mut replacement = original.to_owned();
+                replacement.replace_range(..1, if original.starts_with('a') { "b" } else { "a" });
+                binding["identity"][changed] = replacement.into();
+            }
+            fs::write(&binding_path, serde_json::to_vec(&binding).unwrap()).unwrap();
+            let journal = custody.0.as_ref().unwrap();
+            // File/binding self-consistency is not proof of the selected pin.
+            let opened = open_installed_image(
+                &journal
+                    .image_target(&profile.state_compatibility_id)
+                    .unwrap(),
+            );
+            assert!(opened.is_ok(), "{changed}: {opened:?}");
+            drop(custody.0.take());
+            let result = prepare_installation(
+                &source(profile),
+                &root,
+                &cache,
+                &mut custody,
+                closed,
+                |_| {},
+                || panic!("a mismatch cannot replace the install"),
+                runtime.handle(),
+            );
+            assert!(
+                matches!(result, Err(RuntimeError::Image(ImageError::Integrity))),
+                "{changed}"
+            );
+            assert!(!cache.exists());
+        }
+    }
+
+    #[test]
+    fn pinned_reopen_keeps_writable_os_disk_policy() {
+        let (temp, profile, _) = profile();
+        let root = temp.path().join("install");
+        let cache = temp.path().join("cache");
+        let runtime = runtime();
+        let (_stop, closed) = watch::channel(false);
+        let mut custody = JournalCustody(None);
+        prepare_installation(
+            &source(profile.clone()),
+            &root,
+            &cache,
+            &mut custody,
+            closed.clone(),
+            |_| {},
+            || Journal::create(&root, BackendKind::Qemu, vec![1]),
+            runtime.handle(),
+        )
+        .unwrap();
+        let disk = root.join("image/1/os.disk");
+        let mut bytes = fs::read(&disk).unwrap();
+        bytes[0] ^= 1;
+        fs::write(&disk, bytes).unwrap();
+        drop(custody.0.take());
+        fs::remove_dir_all(&cache).unwrap();
+        prepare_installation(
+            &source(profile),
+            &root,
+            &cache,
+            &mut custody,
+            closed,
+            |_| {},
+            || panic!("retained OS writes do not require replacement"),
+            runtime.handle(),
+        )
+        .unwrap();
+        assert!(!cache.exists());
+    }
+
+    #[test]
     fn pinned_reopen_without_cache_does_not_create_cache() {
         let (temp, profile, expected) = profile();
         let root = temp.path().join("install");
