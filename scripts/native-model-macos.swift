@@ -70,6 +70,8 @@ var rows = try capture("before-connect", ["Use GitHub sign-in", "Remove sign-in"
 click("Use GitHub sign-in", rows)
 rows = try capture("connected", ["Model connected", "Remove sign-in"])
 click("Remove sign-in", rows)
+rows = try capture("remove-failed", ["Remove sign-in again", "Copy details for help"])
+click("Remove sign-in", rows)
 rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Use GitHub sign-in"])
 click("Use GitHub sign-in", rows)
 _ = try capture("reconnected", ["Model connected", "Remove sign-in"])

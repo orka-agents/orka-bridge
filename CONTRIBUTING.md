@@ -96,7 +96,9 @@ After **Stop workspace and quit**, reopen Bridge and use **Use GitHub sign-in**
 once the workspace is running. Bridge reuses its native-store copy without
 reading GitHub CLI again. A new VM boot first disconnects the prior owned model
 route. This requires an image built with the retained-connection cleanup handler;
-older development images cannot reconnect across boots.
+older development images cannot reconnect across boots. Build and pin the new
+guest together with its matching app and a new source-bound state compatibility
+ID. New guest replies are not supported by older app builds.
 
 While the workspace is running, choose **Remove sign-in** in the model section
 before removing Bridge. This stops the owned model route, clears its guest

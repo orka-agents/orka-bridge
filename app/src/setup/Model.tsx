@@ -64,7 +64,7 @@ export default function Model({ enabled, paused = false, onState, onSettled }: {
           : error.category === 'modelBusy' ? 'Wait for the other operation to finish, then press Check again.'
           : 'Press Check again to reconnect. If it happens again, copy the details for help.'}</p>
         {(cliUnavailable || signInCheck) && <pre>{cliUnavailable ? 'gh auth login --hostname github.com --web' : 'gh auth status --hostname github.com'}</pre>}
-        <p>Your running workspace and agent files are kept. A sign-in may already have been saved.</p>
+        <p>Your running workspace and agent files are kept. {failedAction === 'remove' ? 'Removal has not been confirmed.' : 'A sign-in may already have been saved.'}</p>
         {failedAction === 'connect' && <p className="muted">Check again reconnects the AI and may reuse the sign-in already saved for this workspace.</p>}</>}
         <div className="workspace-step-actions">
           {cliUnavailable && <button type="button" className="workspace-secondary" onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</button>}
