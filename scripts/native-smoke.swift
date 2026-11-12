@@ -658,8 +658,21 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let allowed = try capturePreflight("send-ready", "Built in to this Orka")
     require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Built in to this Orka") }, "Allowed preflight evidence is missing")
     func focusSend() throws {
-        scrollMain(4000)
-        try clickSendControl("Send to a cluster", scrolling: -250)
+        // Pixel scroll offsets are not stable across responsive reflow. Focus
+        // the real entry button, then pointer-click its verified native bounds.
+        let matches = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXButton"
+                && attribute(element, "AXEnabled") as? Bool == true
+                && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Send to a cluster" }
+        }
+        require(matches.count == 1, "Expected one enabled Send entry")
+        let entry = matches[0]
+        require(AXUIElementSetAttributeValue(entry, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus Send entry")
+        Thread.sleep(forTimeInterval: 0.3)
+        guard let bounds = nativeBounds(entry), window()!.1.contains(bounds) else { fail("Focused Send entry is not visible") }
+        mouse(.leftMouseDown, CGPoint(x: bounds.midX, y: bounds.midY))
+        mouse(.leftMouseUp, CGPoint(x: bounds.midX, y: bounds.midY))
+        Thread.sleep(forTimeInterval: 0.5)
     }
     func resultSize(_ width: CGFloat, _ height: CGFloat) throws {
         let frame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height),
