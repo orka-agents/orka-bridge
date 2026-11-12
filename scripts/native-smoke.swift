@@ -73,7 +73,47 @@ func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) 
     Thread.sleep(forTimeInterval: 0.5)
 }
 func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) {
-    clickText(page, in: observations.filter { 1 - $0.boundingBox.maxY < 0.10 })
+    // Small Inter labels can be grouped with subtitles by Vision. Identify the
+    // real enabled native button, but still pointer-click it and verify the
+    // rendered destination in the next capture (not AXPress or renderer hooks).
+    let header = observations.filter { 1 - $0.boundingBox.maxY < 0.10 }
+        .compactMap { $0.topCandidates(1).first?.string }
+    print("NAV \(page): header OCR \(header)")
+    func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+        var value: CFTypeRef?
+        return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
+    }
+    var nodes = [AXUIElementCreateApplication(app.processIdentifier)]
+    var index = 0
+    var matches: [AXUIElement] = []
+    while index < nodes.count && nodes.count < 4000 {
+        let element = nodes[index]; index += 1
+        if attribute(element, "AXRole") as? String == "AXButton",
+            attribute(element, "AXEnabled") as? Bool == true,
+            ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == page }) {
+            matches.append(element)
+        }
+        for key in ["AXChildren", "AXWindows"] {
+            for child in attribute(element, key) as? [AXUIElement] ?? []
+                where !nodes.contains(where: { CFEqual($0, child) }) { nodes.append(child) }
+        }
+    }
+    require(matches.count == 1, "Expected one enabled native tab named \(page), found \(matches.count)")
+    let target = matches[0]
+    guard let position = attribute(target, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
+        let size = attribute(target, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else {
+        fatalError("Native tab has no bounds: \(page)")
+    }
+    var origin = CGPoint.zero; var extent = CGSize.zero
+    require(AXValueGetValue(position as! AXValue, .cgPoint, &origin)
+        && AXValueGetValue(size as! AXValue, .cgSize, &extent), "Cannot read native tab bounds")
+    let rect = window()!.1
+    let bounds = CGRect(origin: origin, size: extent)
+    require(extent.width > 0 && extent.height > 0 && rect.contains(bounds)
+        && bounds.maxY <= rect.minY + 110, "Native tab is not visible in the header: \(page), \(bounds)")
+    let point = CGPoint(x: bounds.midX, y: bounds.midY)
+    mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+    Thread.sleep(forTimeInterval: 0.5)
 }
 func key(_ code: CGKeyCode, shift: Bool = false) {
     for down in [true, false] {
@@ -115,6 +155,10 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
+    let recognized = observations.map { observation in
+        "\(observation.boundingBox): \(observation.topCandidates(1).first?.string ?? "")"
+    }.joined(separator: "\n")
+    try recognized.write(toFile: "\(output)/\(name).ocr.txt", atomically: true, encoding: .utf8)
     if name == "send-probe" || name == "cluster-probe" { return observations }
     if name == "cluster-conditional" || name == "cluster-denied" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
