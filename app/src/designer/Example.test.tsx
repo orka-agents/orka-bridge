@@ -173,9 +173,12 @@ test('typing autosaves without leaving the field', async () => {
 });
 test.each([null, {}, { agent: 'SECRET_MARKER', tests: '', extra: 'secret' }])('malformed folder reply cannot render private data', async value => {
   vi.stubGlobal('isTauri', true); mockIPC(() => value); render(<Example />);
-  expect(await screen.findByRole('alert')).toBeTruthy(); expect(document.body.textContent).not.toContain('SECRET_MARKER');
+  expect((await screen.findByText('Your agent folder could not be opened. Open it again from Designer.')).getAttribute('role')).toBe('alert');
+  expect(document.body.textContent).not.toContain('SECRET_MARKER');
 });
 test('browser preview does not fabricate a native folder', async () => {
   vi.stubGlobal('isTauri', false); const ipc = vi.fn(); mockIPC(ipc); render(<Example />);
-  expect(await screen.findByRole('alert')).toBeTruthy(); expect(ipc).not.toHaveBeenCalled();
+  expect((await screen.findByText('Your agent folder could not be opened. Open it again from Designer.')).getAttribute('role')).toBe('alert');
+  expect(await screen.findByText(/Saved Send summaries could not be read/)).toBeTruthy();
+  expect(ipc).not.toHaveBeenCalled();
 });

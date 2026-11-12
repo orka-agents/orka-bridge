@@ -13,7 +13,7 @@ const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
 const pair = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: web-reader\nmodel: literal-model\n---\nRead the page.\n', tests: 'Checks from disk', source };
 const idle = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: false, modelConnected: false, report: null, acknowledged: [], pending: null, error: null };
 const report = { verdict: 'failed', cases: [{ id: 'reads-the-page', phase: 'Succeeded', answer: 'Not the expected text', completedTools: [], assertions: [{ id: 'has-text', kind: 'contains', verdict: 'failed' }], verdict: 'failed' }] };
-const running = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', id: '00000000-0000-4000-8000-000000000004', targetId: target.id, providerId: provider.id, targetName: target.context_name, source, model: 'literal-model', agentName: 'bridge-run-frozen', state: 'running', stage: 'observe', acknowledged: [{ kind: 'Agent', name: 'bridge-run-frozen', uid: 'uid-agent' }], pending: null, report: null, error: null };
+const running = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', id: '00000000-0000-4000-8000-000000000004', targetId: target.id, providerId: provider.id, targetName: target.context_name, source, model: 'literal-model', agentName: 'bridge-run-frozen', state: 'running', stage: 'observe', acknowledged: [{ kind: 'Agent', name: 'bridge-run-frozen', uid: 'uid-agent' }], pending: null, report: null, error: null, storageError: false };
 const allowed = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', source, targetId: target.id, providerId: provider.id, model: 'literal-model', rows: [{ label: 'Provider', status: 'allowed', message: 'Ready; the file model is tested by checks.' }], canSend: true };
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 function native(local: unknown = idle, initial: unknown = null, preflight: unknown = allowed) {
@@ -22,6 +22,7 @@ function native(local: unknown = idle, initial: unknown = null, preflight: unkno
     if (command === 'agent_open') return pair;
     if (command === 'agent_run_status') return local;
     if (command === 'send_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: send, busy: null };
+    if (command === 'send_history') return [];
     if (command === 'send_preflight') return preflight;
     if (command === 'send_start') { send = running; return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: send, busy: null }; }
     if (command === 'send_stop') { send = { ...running, state: 'unknown', stage: 'stopped' }; return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: send, busy: null }; }

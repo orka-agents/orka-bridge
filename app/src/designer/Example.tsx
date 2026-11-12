@@ -7,7 +7,7 @@ import AgentParts from './AgentParts';
 import { readForm } from './agent-form';
 import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
-import Send, { SendEntry } from '../clusters/Send';
+import Send, { SendEntry, SendHistory } from '../clusters/Send';
 
 export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true, readOnly = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
   documentId?: string; active?: boolean; readOnly?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
@@ -155,5 +155,6 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
         <details className="check-source"><summary>Check file: {pair.name ?? 'web-reader'}.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Check file, read-only">{pair.tests}</pre></details>
       </div>
     </>}
+    {!pair && <div className="designer-checks card"><SendHistory revision={boundDocument} /></div>}
   </section>;
 }
