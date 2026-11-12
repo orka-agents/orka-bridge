@@ -7,6 +7,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import sys
+from urllib.parse import parse_qs, urlsplit
 
 
 def send_schema(plural):
@@ -28,31 +29,83 @@ def send_schema(plural):
 
 class Discovery(BaseHTTPRequestHandler):
     objects = {}
-    agents = 0
+    agents = {}
+    offline = set()
+    lose_receipt = set()
     lock = threading.Lock()
+
+    @staticmethod
+    def place(authorization):
+        return "fixture-secondary" if authorization == "Bearer secondary-fixture" else "fixture-cluster"
 
     def log_message(self, *_):
         pass
 
+    def reply(self, status, value):
+        body = json.dumps(value).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_POST(self):
+        # Fixture controls live only on this loopback server, never in the app.
+        if self.path != "/fixture-control" or self.client_address[0] != "127.0.0.1":
+            self.send_error(404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if not 0 < length <= 4096:
+                raise ValueError()
+            control = json.loads(self.rfile.read(length))
+            action = control["action"]
+            with self.lock:
+                if action == "reset":
+                    self.objects.clear()
+                    self.agents.clear()
+                    self.offline.clear()
+                    self.lose_receipt.clear()
+                elif action == "lose-agent-receipt" and control["place"] in ["fixture-cluster", "fixture-secondary"]:
+                    self.lose_receipt.add(control["place"])
+                elif action == "offline" and control["place"] in ["fixture-cluster", "fixture-secondary"] and isinstance(control["offline"], bool):
+                    if control["offline"]:
+                        self.offline.add(control["place"])
+                    else:
+                        self.offline.discard(control["place"])
+                else:
+                    raise ValueError()
+        except (ValueError, KeyError, TypeError):
+            self.reply(400, {"error": "Invalid fixture control"})
+            return
+        self.reply(200, {"ok": True})
+
     def do_GET(self):
         path = self.path.split("?")[0]
+        place = self.place(self.headers.get("Authorization", ""))
+        with self.lock:
+            offline = place in self.offline
+        if offline:
+            self.reply(503, {"error": "Synthetic place offline"})
+            return
+        suffix = "-secondary" if place == "fixture-secondary" else ""
         if path.endswith("/portforward"):
             self.forward()
             return
         if path.endswith("/pods"):
             value = {"apiVersion": "v1", "kind": "PodList", "items": [{
-                "metadata": {"name": "ready", "namespace": "control", "uid": "pod-fixture", "labels": {"app": "orka"}},
+                "metadata": {"name": "ready", "namespace": "control", "uid": "pod-fixture" + suffix, "labels": {"app": "orka"}},
                 "spec": {"containers": [{"name": "controller", "ports": [{"containerPort": 8080}]}]},
                 "status": {"phase": "Running", "conditions": [{"type": "Ready", "status": "True"}]},
             }]}
         elif path.endswith("/services"):
             value = {"apiVersion": "v1", "kind": "ServiceList", "items": [{
-                "metadata": {"name": "orka", "namespace": "control", "uid": "service-fixture"},
+                "metadata": {"name": "orka", "namespace": "control", "uid": "service-fixture" + suffix},
                 "spec": {"selector": {"app": "orka"}, "ports": [{"name": "api", "port": 80, "targetPort": 8080}]},
             }]}
         elif path.endswith("/deployments"):
             value = {"apiVersion": "apps/v1", "kind": "DeploymentList", "items": [{
-                "metadata": {"name": "controller", "namespace": "control", "uid": "deployment-fixture"},
+                "metadata": {"name": "controller", "namespace": "control", "uid": "deployment-fixture" + suffix},
                 "spec": {"selector": {"matchLabels": {"app": "orka"}}, "template": {
                     "metadata": {"labels": {"app": "orka"}}, "spec": {"containers": [{
                         "name": "controller", "image": "ghcr.io/orka-agents/orka:fixture",
@@ -72,12 +125,7 @@ class Discovery(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
             return
-        body = json.dumps(value).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self.reply(200, value)
 
     def frame(self, payload):
         length = len(payload)
@@ -123,7 +171,7 @@ class Discovery(BaseHTTPRequestHandler):
                     if len(body) < length:
                         break
                     method, route, _ = lines[0].split(" ")
-                    status, value = self.orka(method, route.split("?")[0], json.loads(body[:length]) if length else None, headers.get("authorization", "").strip())
+                    status, value = self.orka(method, route, json.loads(body[:length]) if length else None, headers.get("authorization", "").strip())
                     encoded = json.dumps(value).encode()
                     reply = f"HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {len(encoded)}\r\n\r\n".encode() + encoded
                     self.frame(b"\x00" + reply)
@@ -132,6 +180,9 @@ class Discovery(BaseHTTPRequestHandler):
             pass
 
     def orka(self, method, route, body, authorization=""):
+        query = parse_qs(urlsplit(route).query)
+        route = urlsplit(route).path
+        place = self.place(authorization)
         if route.endswith("/tools") and authorization == "Bearer unreadable-tools-fixture":
             return 403, {}
         if route.endswith("/tools") and authorization == "Bearer missing-tools-fixture":
@@ -141,17 +192,22 @@ class Discovery(BaseHTTPRequestHandler):
         if route.endswith("/auth/whoami") and authorization == "Bearer conditional-fixture":
             return 200, {"authenticated": True, "authType": "tokenReview", "namespace": ""}
         with self.lock:
+            if place in self.offline:
+                return 503, {"error": "Synthetic place offline"}
             if method == "POST":
                 kind = "Agent" if route.endswith("/agents") else "Task"
                 if kind == "Agent":
-                    type(self).agents += 1
+                    self.agents[place] = self.agents.get(place, 0) + 1
                 value = {"apiVersion": "core.orka.ai/v1alpha1", "kind": kind,
                          "metadata": {"name": body["name"], "namespace": "agents", "uid": "uid-" + body["name"], "generation": 1},
-                         "spec": body["spec"], "status": {"phase": "Succeeded" if self.agents % 2 else "Running"}}
+                         "spec": body["spec"], "status": {"phase": "Succeeded" if self.agents.get(place, 0) % 2 else "Running"}}
                 if kind == "Task" and "timeout" in value["spec"]:
                     value["spec"]["timeout"] = "2m0s"
                     value["spec"]["retryPolicy"].pop("maxRetries", None)
-                self.objects[route + "/" + body["name"]] = value
+                self.objects[place, route + "/" + body["name"]] = value
+                if kind == "Agent" and place in self.lose_receipt:
+                    self.lose_receipt.remove(place)
+                    return 503, {"error": "Synthetic lost create receipt"}
                 return 201, value
             if route.endswith("/auth/whoami"):
                 value = {"authenticated": True, "authType": "oidc", "namespace": "agents"}
@@ -160,16 +216,20 @@ class Discovery(BaseHTTPRequestHandler):
             elif route.endswith("/tools"):
                 value = {"items": [{"name": "web_fetch", "builtin": True}], "metadata": {}}
             elif route.endswith("/agents"):
-                value = {"items": [], "metadata": {}}
+                external = {"apiVersion": "core.orka.ai/v1alpha1", "kind": "Agent",
+                            "metadata": {"name": "runtime-reader", "namespace": "agents", "uid": "runtime-" + place},
+                            "spec": {"type": "runtime", "model": {"name": "external-model"}, "tools": [{"name": "web_fetch"}]}}
+                agents = [external] + [item for (scope, _), item in self.objects.items() if scope == place and item["kind"] == "Agent"]
+                value = {"items": agents if query.get("namespace", ["agents"]) == ["agents"] else [], "metadata": {}}
             elif route.endswith("/result"):
                 value = {"result": "Fixture answer: cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918"}
             elif route.endswith("/events"):
                 task = route.rsplit("/", 2)[1]
-                agent = self.objects[route.rsplit("/", 1)[0]]["spec"]["agentRef"]["name"]
+                agent = self.objects[place, route.rsplit("/", 1)[0]]["spec"]["agentRef"]["name"]
                 event = {"namespace": "agents", "streamType": "task", "streamID": task, "seq": 1, "type": "ToolCallCompleted", "taskName": task, "agentName": agent, "toolName": "web_fetch", "toolCallID": "fixture-call"}
                 value = {"namespace": "agents", "streamType": "task", "streamID": task, "afterSeq": 0, "latestSeq": 1, "events": [event]}
-            elif route in self.objects:
-                value = self.objects[route]
+            elif (place, route) in self.objects:
+                value = self.objects[place, route]
             else:
                 return 404, {}
             return 200, value
@@ -181,7 +241,7 @@ if __name__ == "__main__":
     Path(sys.argv[1]).write_text(json.dumps({
         "apiVersion": "v1", "kind": "Config", "current-context": "fixture-cluster",
         "clusters": [{"name": "fixture", "cluster": {"server": f"http://127.0.0.1:{server.server_port}"}}],
-        "contexts": [{"name": name, "context": {"cluster": "fixture", "user": user}} for name, user in [("fixture-cluster", "fixture"), ("conditional-fixture", "conditional"), ("denied-fixture", "denied"), ("missing-tools-fixture", "missing-tools"), ("unreadable-tools-fixture", "unreadable-tools")]],
-        "users": [{"name": name, "user": {"token": token}} for name, token in [("fixture", "ci-fixture-not-a-credential"), ("conditional", "conditional-fixture"), ("denied", "denied-fixture"), ("missing-tools", "missing-tools-fixture"), ("unreadable-tools", "unreadable-tools-fixture")]],
+        "contexts": [{"name": name, "context": {"cluster": "fixture", "user": user}} for name, user in [("fixture-cluster", "fixture"), ("conditional-fixture", "conditional"), ("denied-fixture", "denied"), ("missing-tools-fixture", "missing-tools"), ("unreadable-tools-fixture", "unreadable-tools"), ("fixture-secondary", "secondary")]],
+        "users": [{"name": name, "user": {"token": token}} for name, token in [("fixture", "ci-fixture-not-a-credential"), ("conditional", "conditional-fixture"), ("denied", "denied-fixture"), ("missing-tools", "missing-tools-fixture"), ("unreadable-tools", "unreadable-tools-fixture"), ("secondary", "secondary-fixture")]],
     }))
     server.serve_forever()

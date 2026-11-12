@@ -328,7 +328,7 @@ test('a transient setup read failure does not invalidate an admitted model conne
   expect(screen.getByRole('button', { name: 'Model connected' }).matches(':disabled')).toBe(true);
 });
 
-test('local Open clears shared cluster selection; remembered cluster needs a fresh successful Use before preflight', async () => {
+test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remembered cluster needs a fresh successful Use before preflight', async origin => {
   vi.stubGlobal('isTauri', true);
   const id = '12345678-1234-1234-1234-123456789abc';
   const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' };
@@ -343,6 +343,7 @@ test('local Open clears shared cluster selection; remembered cluster needs a fre
     if (command === 'cluster_contexts') return [context];
     if (command === 'cluster_discover') return [target];
     if (command === 'cluster_use') return ++uses === 1 ? connected : new Promise(resolve => { finish = resolve; });
+    if (command === 'overview_places') return { historyState: 'complete', unobserved: [], places: origin === 'saved file' ? [] : [{ key: 'team-place', context: 'team-dev', service: 'control/orka', namespace: 'agents', stale: false, observedAt: 123, agents: [{ name: 'bridge-reader', namespace: 'agents', uid: 'remote-uid', agentType: null, model: null, tools: null, record: { id, source, targetDisplay: 'team-dev · agents', targetUids: { serviceNamespace: 'control', serviceUid: 'svc', deploymentNamespace: 'control', deploymentUid: 'dep', watchedNamespace: 'agents' }, provider: 'team-model', plannedAgentName: 'bridge-reader', agentUid: 'remote-uid', verdict: 'passed', time: 123 } }] }] };
     if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'reader', source, state: 'readable', summary: null, reason: null }] };
     if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
     if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\nmodel: literal-model\n---\nRead.', tests: 'Checks', source };
@@ -359,7 +360,8 @@ test('local Open clears shared cluster selection; remembered cluster needs a fre
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   await screen.findByRole('button', { name: 'Open your agent' });
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(await screen.findByRole('button', { name: 'Open reader' }));
+  const originRegion = await screen.findByRole('region', { name: origin === 'saved file' ? 'This computer' : 'team-dev · agents' });
+  await user.click(await within(originRegion).findByRole('button', { name: 'Open reader' }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
   expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
@@ -460,7 +462,7 @@ test('Overview waits for native busy release even when the report is already com
   await user.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(lists).toBe(0);
   busy = false;
-  await within(screen.getByRole('region', { name: 'Agents on this computer' })).findByText('Workspace stopped', {}, { timeout: 2000 });
+  await within(screen.getByRole('region', { name: 'This computer' })).findByText('Workspace stopped', {}, { timeout: 2000 });
   expect(lists).toBe(1);
 });
 

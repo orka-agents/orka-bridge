@@ -395,6 +395,42 @@ async fn disk_pair_to_cluster_checks_pass() {
     );
 }
 #[tokio::test]
+async fn overview_inventory_wire_has_one_scoped_page_limit_not_the_access_probe() {
+    let api = Arc::new(ApiFixture::default());
+    let mut client = ClusterClient::new(
+        config(&api.start(), json!({"token":"creator-fixture"})),
+        Arc::new(PodOrkaRead),
+    );
+    let id = target(&mut client).await;
+    let access = client.connect(id, None).await.unwrap();
+    api.wire.calls.lock().unwrap().clear();
+    access.inventory().await.unwrap();
+    let calls = api.wire.calls.lock().unwrap();
+    let request = &calls
+        .iter()
+        .find(|c| c.0.starts_with("GET /api/v1/agents?"))
+        .unwrap()
+        .0;
+    let url = reqwest::Url::parse(&format!(
+        "http://fixture{}",
+        request.trim_start_matches("GET ")
+    ))
+    .unwrap();
+    assert_eq!(
+        url.query_pairs()
+            .filter(|(k, _)| k == "limit")
+            .map(|(_, v)| v.into_owned())
+            .collect::<Vec<_>>(),
+        ["100"]
+    );
+    assert!(url
+        .query_pairs()
+        .any(|(k, v)| k == "namespace" && v == "agents"));
+    drop(calls);
+    assert_eq!(api.wire.posts(), 0);
+}
+
+#[tokio::test]
 async fn agent_access_probe_requests_only_one_item() {
     let api = Arc::new(ApiFixture::default());
     let _ = access(&api).await;

@@ -83,6 +83,9 @@ impl ClusterClient {
         self.exec = exec;
         self
     }
+    pub(crate) fn target_binding(&self, id: TargetId) -> Option<&TargetBinding> {
+        self.targets.get(&id)
+    }
     pub fn contexts(&self) -> Result<Vec<ContextView>, ClusterError> {
         Ok(self.contexts.clone())
     }
@@ -314,6 +317,54 @@ impl ClusterClient {
     }
 }
 impl RemoteAccess {
+    /// A complete bounded GET-only inventory using already confirmed access.
+    pub async fn inventory(
+        &self,
+    ) -> Result<Vec<crate::overview_places::RemoteAgent>, ClusterError> {
+        if self
+            .expiry
+            .as_ref()
+            .is_some_and(|t| t.0 <= k8s_openapi::jiff::Timestamp::now())
+        {
+            return Err(ClusterError::Denied);
+        }
+        tokio::time::timeout(OPERATION_LIMIT, async {
+            let mut agents = Vec::new();
+            let mut after = None;
+            let mut cursors = HashSet::new();
+            let mut uids = HashSet::new();
+            let mut bytes = 0;
+            loop {
+                let page = self
+                    .read(OrkaResource::AgentInventory, after.as_deref())
+                    .await
+                    .map_err(cluster_error)?;
+                bytes += serde_json::to_vec(&page)
+                    .map_err(|_| ClusterError::Unavailable)?
+                    .len();
+                if bytes > 16 * 1024 * 1024 {
+                    return Err(ClusterError::Unavailable);
+                }
+                for item in items(&page).map_err(cluster_error)? {
+                    let agent =
+                        crate::overview_places::agent(item, &self.binding.watched_namespace)?;
+                    if !uids.insert(agent.uid.clone()) || agents.len() >= 4096 {
+                        return Err(ClusterError::Unavailable);
+                    }
+                    agents.push(agent);
+                }
+                after = continuation(&page).map_err(cluster_error)?;
+                if after.is_none() {
+                    return Ok(agents);
+                }
+                if !cursors.insert(after.clone()) {
+                    return Err(ClusterError::Unavailable);
+                }
+            }
+        })
+        .await
+        .unwrap_or(Err(ClusterError::Unavailable))
+    }
     pub fn binding(&self) -> &TargetBinding {
         &self.binding
     }

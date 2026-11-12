@@ -15,6 +15,88 @@ spec.loader.exec_module(fixture)
 
 
 class SendFixtureTest(unittest.TestCase):
+    def setUp(self):
+        fixture.Discovery.objects = {}
+        fixture.Discovery.agents = {}
+        fixture.Discovery.offline = set()
+        fixture.Discovery.lose_receipt = set()
+
+    def test_inventory_retains_unique_versions_and_external_runtime_metadata(self):
+        handler = object.__new__(fixture.Discovery)
+        for name in ["bridge-run-first", "bridge-run-second"]:
+            status, _ = handler.orka("POST", "/api/v1/agents", {
+                "name": name, "spec": {"model": {"name": "exact"}, "tools": [{"name": "web_fetch"}]},
+            })
+            self.assertEqual(status, 201)
+        status, page = handler.orka("GET", "/api/v1/agents?namespace=agents&limit=100", None)
+        self.assertEqual(status, 200)
+        by_name = {agent["metadata"]["name"]: agent for agent in page["items"]}
+        self.assertEqual(set(by_name), {"bridge-run-first", "bridge-run-second", "runtime-reader"})
+        self.assertEqual(len({agent["metadata"]["uid"] for agent in page["items"]}), 3)
+        self.assertTrue(all(agent["metadata"]["namespace"] == "agents" for agent in page["items"]))
+        self.assertEqual(by_name["runtime-reader"]["spec"], {
+            "type": "runtime", "model": {"name": "external-model"}, "tools": [{"name": "web_fetch"}],
+        })
+        self.assertEqual(by_name["bridge-run-first"]["spec"]["model"]["name"], "exact")
+        self.assertEqual(handler.orka("GET", "/api/v1/agents?namespace=elsewhere", None)[1]["items"], [])
+
+    def test_places_have_distinct_installations_and_isolated_retained_agents(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), fixture.Discovery)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        connection = http.client.HTTPConnection(*server.server_address, timeout=2)
+        self.addCleanup(connection.close)
+        identities = []
+        handler = object.__new__(fixture.Discovery)
+        for token, name in [("ci-fixture-not-a-credential", "first-only"), ("secondary-fixture", "second-only")]:
+            authorization = "Bearer " + token
+            uids = []
+            for path in ["/api/v1/services", "/apis/apps/v1/deployments"]:
+                connection.request("GET", path, headers={"Authorization": authorization})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                uids.append(json.loads(response.read())["items"][0]["metadata"]["uid"])
+            identities.append(uids)
+            handler.orka("POST", "/api/v1/agents", {"name": name, "spec": {}}, authorization)
+            _, task = handler.orka("POST", "/api/v1/tasks", {"name": name, "spec": {}}, authorization)
+            self.assertEqual(task["status"]["phase"], "Succeeded")
+        self.assertNotEqual(identities[0][0], identities[1][0])
+        self.assertNotEqual(identities[0][1], identities[1][1])
+        for token, expected in [("ci-fixture-not-a-credential", "first-only"), ("secondary-fixture", "second-only")]:
+            status, page = handler.orka("GET", "/api/v1/agents?namespace=agents&limit=100", None, "Bearer " + token)
+            self.assertEqual(status, 200)
+            self.assertEqual({agent["metadata"]["name"] for agent in page["items"]}, {expected, "runtime-reader"})
+
+    def test_fixture_control_takes_only_one_place_offline_and_reset_restores_it(self):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), fixture.Discovery)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        connection = http.client.HTTPConnection(*server.server_address, timeout=2)
+        self.addCleanup(connection.close)
+        handler = object.__new__(fixture.Discovery)
+        auth = "Bearer secondary-fixture"
+        handler.orka("POST", "/api/v1/agents", {"name": "retained", "spec": {}}, auth)
+        for control in [{"action": "offline", "place": "fixture-secondary", "offline": True},
+                        {"action": "offline", "place": "fixture-secondary", "offline": False},
+                        {"action": "reset"}]:
+            connection.request("POST", "/fixture-control", json.dumps(control), {"Content-Type": "application/json"})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            response.read()
+            offline = control.get("offline", False)
+            connection.request("GET", "/api/v1/services", headers={"Authorization": auth})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 503 if offline else 200)
+            response.read()
+            self.assertEqual(handler.orka("GET", "/api/v1/agents", None)[0], 200)
+            status, page = handler.orka("GET", "/api/v1/agents", None, auth)
+            self.assertEqual(status, 503 if offline else 200)
+            if not offline:
+                self.assertEqual("retained" in [agent["metadata"]["name"] for agent in page["items"]],
+                                 control["action"] != "reset")
+
     def test_conditional_and_denied_access_are_distinct(self):
         handler = object.__new__(fixture.Discovery)
         status, identity = handler.orka("GET", "/api/v1/auth/whoami", None, "Bearer conditional-fixture")
@@ -103,6 +185,22 @@ class SendFixtureTest(unittest.TestCase):
             request("agents", {"name": "probe2", "namespace": "agents", "spec": {}}, expected_status=201)
             second = request("tasks", {"name": "check2", "namespace": "agents", "spec": {"agentRef": {"name": "probe2"}}}, expected_status=201)
             self.assertEqual(second["status"]["phase"], "Running")
+            control = http.client.HTTPConnection(*server.server_address, timeout=2)
+            self.addCleanup(control.close)
+            control.request("POST", "/fixture-control", json.dumps({"action": "lose-agent-receipt", "place": "fixture-cluster"}))
+            response = control.getresponse()
+            self.assertEqual(response.status, 200)
+            response.read()
+            lost = request("agents", {"name": "unacknowledged", "spec": {}}, expected_status=503)
+            self.assertNotIn("metadata", lost)
+            inventory = request("agents")
+            self.assertEqual({agent["metadata"]["name"] for agent in inventory["items"]},
+                             {"probe", "probe2", "unacknowledged", "runtime-reader"})
+            external = next(agent for agent in inventory["items"] if agent["metadata"]["name"] == "runtime-reader")
+            self.assertEqual(external["spec"]["type"], "runtime")
+            self.assertEqual(external["spec"]["tools"], [{"name": "web_fetch"}])
+            # The fault is consumed once. Another explicit create receives its UID.
+            self.assertIn("uid", request("agents", {"name": "after-loss", "spec": {}}, expected_status=201)["metadata"])
             wire.close()
 
 

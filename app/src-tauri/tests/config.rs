@@ -76,6 +76,7 @@ fn agent_commands_are_granted_only_to_local_main_window() {
         "workspace_catalog",
         "overview_files",
         "overview_agents",
+        "overview_places",
         "cluster_contexts",
         "cluster_discover",
         "cluster_use",

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { CardSection, Details, GeneratedValue, LongCard, StatusPill, type Status } from '../components/DesignSystem';
 import { sameSource } from '../designer/agent-api';
-import { readAgents, readFiles, type Agent, type LiveAgents, type Observation, type SavedFile, type SavedFiles } from './api';
+import { readAgents, readFiles, readPlaces, type Agent, type LiveAgents, type Observation, type Places, type SavedFile, type SavedFiles } from './api';
+import { PlaceCards, RecordedAttempts, remoteCards, SourceGroups, type AgentCard } from './places';
 import './overview.css';
 
 type Props = { active: boolean; runBusy: boolean; workspaceKey: string; onOpenDocument: (id: string) => void; onOpenExample: () => void; onChooseWorkspace: () => void; onCounts?: (label: string) => void };
@@ -24,6 +25,19 @@ export default function Overview({ active, runBusy, workspaceKey, onOpenDocument
   const [last, setLast] = useState<CompleteAgents>();
   const [pending, setPending] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [byAgent, setByAgent] = useState(false);
+  const [places, setPlaces] = useState<Places>();
+  const [placeError, setPlaceError] = useState(false);
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    void readPlaces().then(value => {
+      if (cancelled) return;
+      setPlaceError(!value);
+      setPlaces(previous => value ?? (previous && { ...previous, historyState: 'unavailable', places: previous.places.map(p => ({ ...p, stale: true })) }));
+    });
+    return () => { cancelled = true; };
+  }, [active, refresh]);
   const epoch = useRef(0);
   const knownWorkspace = useRef(workspaceKey);
   useEffect(() => {
@@ -53,7 +67,9 @@ export default function Overview({ active, runBusy, workspaceKey, onOpenDocument
   const observed = complete(live) ? live : last;
   const fileLabel = files?.state === 'complete' ? `${files.files.length} saved ${files.files.length === 1 ? 'file' : 'files'}` : 'Saved files unavailable';
   const agentLabel = live?.state === 'complete' && !pending ? `${live.agents.length} ${live.agents.length === 1 ? 'Agent' : 'Agents'}` : 'Agent count unavailable';
-  const counts = files ? `${fileLabel} · ${agentLabel}` : 'Reading saved files…';
+  const clusterCount = places?.places.reduce((sum, p) => sum + p.agents.length, 0) ?? 0;
+  const clusterCounts = places?.places.length ? ` · ${clusterCount} cluster ${clusterCount === 1 ? 'Agent' : 'Agents'}${places.places.some(p => p.stale) ? ' (last seen)' : ''}` : '';
+  const counts = files ? `${fileLabel} · ${agentLabel}${clusterCounts}` : 'Reading saved files…';
   useEffect(() => { if (active) onCounts?.(counts); }, [active, counts, onCounts]);
   const saved = files?.files ?? [];
   const visibleFiles = saved.filter(file => !observed?.agents.some(agent => {
@@ -64,8 +80,32 @@ export default function Overview({ active, runBusy, workspaceKey, onOpenDocument
   const message = pending ? 'Refresh pending until checks finish' : live?.state === 'busy' ? 'Workspace busy'
     : live?.state === 'unavailable' ? live.reason === 'image' ? 'Agent list unavailable with this Mac image' : live.reason === 'stopped' ? 'Workspace stopped' : 'Could not read agents'
     : !live ? 'Reading agents…' : 'Workspace available';
-  return <section className="overview" aria-label="Agents on this computer" hidden={!active}>
-    <div className="page-heading"><h1 id={active ? 'page-title' : undefined}>Your agents</h1><button type="button" className="workspace-secondary" onClick={() => setRefresh(value => value + 1)}>Refresh</button></div>
+  const localCards: AgentCard[] = observed?.agents.map(agent => {
+        const o = associated(observed, agent);
+        const file = o && saved.find(f => f.documentId === o.documentId);
+        const also = o && places?.historyState === 'complete' ? [...new Set(places.places.filter(p => p.agents.some(a => a.record && sameSource(a.record.source, o.source) === true)).map(p => `${p.context} · ${p.namespace}`))] : [];
+        const sourceUnavailable = !!o && !file?.source;
+        const stale = !!o && (sourceUnavailable || sameSource(file?.source ?? undefined, o.source) !== true);
+        const state: Status = stale ? 'stale' : o?.state === 'running' ? 'running' : o?.state === 'complete' && o.report?.verdict !== 'unknown' ? o.report?.verdict ?? 'not-started' : 'not-started';
+        const check = sourceUnavailable ? 'Current saved version unavailable' : stale ? 'Checks not run since your change' : o?.state === 'running' ? 'Running checks' : o?.state === 'complete' && o.report && o.report.verdict !== 'unknown' ? `Checks ${o.report.verdict} in this session` : o ? 'Check result unknown' : 'Not tested by Bridge in this session';
+        return { key: `${observed.installation}/${agent.namespace}/${agent.uid}`, source: o?.source, place: 'This computer', node: <LongCard key={`${observed.installation}/${agent.namespace}/${agent.uid}`} title={file?.summary?.name || file?.name || agent.name}
+          status={<StatusPill state={state}>Orka Agent</StatusPill>}
+          action={file?.state === 'readable' ? <button type="button" className="workspace-secondary" aria-label={`Open ${file.name}`} onClick={() => onOpenDocument(file.documentId)}>Open</button> : undefined}
+          summary={file?.summary?.description ?? 'Origin unavailable'}>
+          <CardSection title="Checks"><p>{check}</p><p>{o ? `Bridge run observed: ${when(o.observedAt)}` : 'Last run: unavailable'}</p></CardSection>
+          {file && <CardSection title="File declarations">{declarations(file)}</CardSection>}
+          {!!also.length && <p className="muted">Also observed on {also.join('; ')}</p>}
+          <CardSection title="Observed settings"><p>Type: unavailable · Model: unavailable · Tools: unavailable</p></CardSection>
+          {file?.state === 'readable' ? <Details hint="Observed identity">{identity(agent, observed.installation, observed.observedAt)}</Details>
+            : <details className="card-details"><summary>Open</summary><p>Read-only observation. No file is associated for editing.</p>{identity(agent, observed.installation, observed.observedAt)}</details>}
+        </LongCard> };
+      }) ?? [];
+  const clusterCards = places ? remoteCards(places, saved, localCards, onOpenDocument) : [];
+  return <section className="overview" aria-label="Agents by place" hidden={!active}>
+    <div className="page-heading"><h1 id={active ? 'page-title' : undefined}>Your agents</h1><div className="overview-actions"><fieldset className="overview-grouping"><legend className="sr-only">Group agents</legend><button type="button" className="workspace-secondary" aria-pressed={!byAgent} onClick={() => setByAgent(false)}>By place</button><button type="button" className="workspace-secondary" aria-pressed={byAgent} onClick={() => setByAgent(true)}>By agent</button></fieldset><button type="button" className="workspace-secondary" onClick={() => setRefresh(value => value + 1)}>Refresh</button></div></div>
+    {placeError && <p role="status">Could not read cluster places</p>}
+    {places?.historyState === 'unavailable' && <p role="alert">Saved Send summaries unavailable. Recorded checks cannot be confirmed.</p>}
+    <div className={byAgent ? undefined : "overview-board"}><section className="overview-place-section" aria-label="This computer">
     <div className="overview-place"><h2>This computer</h2><p role="status">{message}</p></div>
     <p className="muted overview-counts">{counts}</p>
     {pending && !observed && <p>Workspace busy running checks</p>}
@@ -82,24 +122,10 @@ export default function Overview({ active, runBusy, workspaceKey, onOpenDocument
         <CardSection title="Checks"><p>Check result unavailable for this saved version</p></CardSection>
         {file.source && <Details hint="Saved file hashes"><GeneratedValue label="Agent file hash" value={file.source.agent} /><GeneratedValue label="Check file hash" value={file.source.tests} /></Details>}
       </LongCard>)}
-      {observed?.agents.map(agent => {
-        const o = associated(observed, agent);
-        const file = o && saved.find(f => f.documentId === o.documentId);
-        const sourceUnavailable = !!o && !file?.source;
-        const stale = !!o && (sourceUnavailable || sameSource(file?.source ?? undefined, o.source) !== true);
-        const state: Status = stale ? 'stale' : o?.state === 'running' ? 'running' : o?.state === 'complete' && o.report?.verdict !== 'unknown' ? o.report?.verdict ?? 'not-started' : 'not-started';
-        const check = sourceUnavailable ? 'Current saved version unavailable' : stale ? 'Checks not run since your change' : o?.state === 'running' ? 'Running checks' : o?.state === 'complete' && o.report && o.report.verdict !== 'unknown' ? `Checks ${o.report.verdict} in this session` : o ? 'Check result unknown' : 'Not tested by Bridge in this session';
-        return <LongCard key={`${observed.installation}/${agent.namespace}/${agent.uid}`} title={file?.summary?.name || file?.name || agent.name}
-          status={<StatusPill state={state}>Orka Agent</StatusPill>}
-          action={file?.state === 'readable' ? <button type="button" className="workspace-secondary" aria-label={`Open ${file.name}`} onClick={() => onOpenDocument(file.documentId)}>Open</button> : undefined}
-          summary={file?.summary?.description ?? 'Origin unavailable'}>
-          <CardSection title="Checks"><p>{check}</p><p>{o ? `Bridge run observed: ${when(o.observedAt)}` : 'Last run: unavailable'}</p></CardSection>
-          {file && <CardSection title="File declarations">{declarations(file)}</CardSection>}
-          <CardSection title="Observed settings"><p>Type: unavailable · Model: unavailable · Tools: unavailable</p></CardSection>
-          {file?.state === 'readable' ? <Details hint="Observed identity">{identity(agent, observed.installation, observed.observedAt)}</Details>
-            : <details className="card-details"><summary>Open</summary><p>Read-only observation. No file is associated for editing.</p>{identity(agent, observed.installation, observed.observedAt)}</details>}
-        </LongCard>;
-      })}
+      {!byAgent && localCards.map(card => <div key={card.key}>{card.node}</div>)}
     </div>
+    </section>{!byAgent && places && <PlaceCards places={places} cards={clusterCards} />}</div>
+    {byAgent && <SourceGroups cards={[...localCards, ...clusterCards]} files={saved} />}
+    {places && <RecordedAttempts attempts={places.unobserved} />}
   </section>;
 }
