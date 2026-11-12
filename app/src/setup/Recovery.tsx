@@ -6,7 +6,7 @@ import { preflightRecovery, type PreflightFailure } from './preflight-state';
 export default function Recovery({ detail, preflightFailure, failure, disabled, onRetry, onCluster }: { detail?: string | null; preflightFailure?: PreflightFailure; failure?: WorkspaceFailure; disabled: boolean; onRetry: () => void; onCluster?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [notice, setNotice] = useState('');
-  const info = preflightFailure ? preflightRecovery(preflightFailure) : workspaceRecovery(failure);
+  const info = preflightFailure ? { ...preflightRecovery(preflightFailure), category: preflightFailure } : workspaceRecovery(failure);
   async function help() {
     try { await invoke('setup_open_help', { topic: info.topic }); setNotice('Help opened in your browser.'); }
     catch { setNotice("Couldn't open help. Open Show details and ask for help with this error."); }

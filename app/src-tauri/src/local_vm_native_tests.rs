@@ -304,14 +304,17 @@ async fn windows_session_startup_inside_tokio_reaches_child_creation_without_pan
     // The real backend reaches CreateProcessW, which refuses the inert fixture.
     // A panic is mapped to Unavailable instead, so it cannot satisfy this check.
     match result {
-        Err(RuntimeError::Io(error)) => {
-            let reason = error.to_string();
-            assert!(reason.contains("Run qemu-img"), "{reason}");
-            assert!(
-                reason.contains("(os error 193)") || reason.contains("(os error 216)"),
-                "{reason}"
-            );
-            assert!(reason.contains("Details:"), "{reason}");
+        Err(RuntimeError::Startup(context)) => {
+            assert_eq!(context.operation, WorkspaceOperation::Start);
+            let RuntimeError::Io(error) = &context.error else {
+                panic!(
+                    "expected native executable refusal, got {:?}",
+                    context.error
+                );
+            };
+            assert!(matches!(error.raw_os_error(), Some(193 | 216)), "{error}");
+            assert!(context.diagnostic.contains("Run qemu-img"));
+            assert!(context.diagnostic.contains("Details:"));
         }
         Err(error) => panic!("expected native executable refusal, got {error:?}"),
         Ok(_) => panic!("inert fixture must not start a session"),

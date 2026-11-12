@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
 import type { WorkspaceFailure } from './recovery-info';
+import Recovery from './Recovery';
 
 function native(failure?: WorkspaceFailure, raw = 'PRIVATE native diagnostic') {
   vi.stubGlobal('isTauri', true);
@@ -95,6 +96,14 @@ test('copy and help failures do not echo rejected text', async () => {
   await user.click(screen.getByRole('button', { name: 'Show me how' }));
   expect(screen.getByText("Couldn't open help. Open Show details and ask for help with this error.")).toBeTruthy();
   expect(screen.queryByText('SECRET')).toBeNull();
+});
+
+test.each(['insufficientMemory', 'virtualizationDisabled', 'hypervisorUnavailable', 'virtualizationUnsupported'] as const)('copied preflight category retains %s without raw details', async preflightFailure => {
+  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  render(<Recovery preflightFailure={preflightFailure} detail="SECRET" disabled={false} onRetry={() => {}} />);
+  await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
+  expect(copy.mock.calls[0][0]).toContain(`Category: ${preflightFailure}`);
+  expect(copy.mock.calls[0][0]).not.toContain('SECRET');
 });
 
 test('typed unconfirmed stop cannot admit a second workspace', async () => {

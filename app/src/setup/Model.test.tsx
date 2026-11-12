@@ -89,6 +89,21 @@ test('reading sign-in errors show the status command without copying diagnostics
   expect(document.body.textContent).not.toContain('SECRET');
 });
 
+test('keyboard connection and retry keep the same focused control across failure and busy states', async () => {
+  let reject!: (error: unknown) => void;
+  invoke.mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
+  const user = userEvent.setup(); render(<Model enabled />);
+  const button = screen.getByRole('button', { name: 'Use GitHub sign-in' });
+  button.focus(); await user.keyboard('{Enter}');
+  await act(async () => reject({ kind: 'modelConnect' }));
+  const retry = await screen.findByRole('button', { name: 'Check again' });
+  expect(retry).toBe(button); expect(document.activeElement).toBe(button);
+  await user.keyboard('{Enter}');
+  expect(screen.getByRole('button', { name: 'Connecting model…' })).toBe(button);
+  await act(async () => reject({ kind: 'modelConnect' }));
+  expect(document.activeElement).toBe(button);
+});
+
 test('help buttons select native topics and copying cannot include arbitrary native data', async () => {
   invoke.mockRejectedValue({ kind: 'modelCaptureUnavailable', message: 'SECRET /private/path', diagnostic: 'code: 5' });
   const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();

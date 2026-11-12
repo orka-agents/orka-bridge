@@ -52,29 +52,29 @@ export default function Model({ enabled, paused = false, onState, onSettled }: {
     <h2 id="model-title">{enabled ? 'Connect a model' : 'Model connection locked'}</h2>
     {!enabled ? <p className="muted">Start the local VM before connecting a model. No credentials are sent.</p>
       : <p className="muted">Use your existing GitHub CLI sign-in for Copilot in this VM. Bridge stores it in the native credential store and delivers it privately to the guest.</p>}
-    {!error && <button type="button" className="setup-button" disabled={!enabled || paused || busy || ready} onClick={() => { void connect(); }}>
-      {!enabled ? 'Connect model' : busy ? 'Connecting model…' : ready ? 'Model connected' : 'Use GitHub sign-in'}
-    </button>}
-    {busy && <p role="status">Reading the sign-in, storing it and connecting the guest model…</p>}
-    {ready && <><p role="status">Model connected: copilot / gpt-5.6-terra.</p>
-      <p className="muted">The guest acknowledged Connect. This does not prove inference.</p></>}
-    {error && <div className="workspace-failure" role="alert">
-      <div className="workspace-failure-explanation"><p className="failure-summary">{error.message}</p>
+    <div className={error ? 'workspace-failure' : undefined} role={error ? 'alert' : undefined}>
+      <div className={error ? 'workspace-failure-explanation' : undefined}>
+        {error && <><p className="failure-summary">{error.message}</p>
         <p>{cliUnavailable ? 'Install GitHub CLI if needed, then sign in to github.com in your terminal:'
           : signInCheck ? 'Check your GitHub CLI sign-in in your terminal:'
           : error.category === 'modelBusy' ? 'Wait for the other operation to finish, then press Check again.'
           : 'Press Check again to reconnect. If it happens again, copy the details for help.'}</p>
         {(cliUnavailable || signInCheck) && <pre>{cliUnavailable ? 'gh auth login --hostname github.com --web' : 'gh auth status --hostname github.com'}</pre>}
         <p>Your running workspace and agent files are kept. A sign-in may already have been saved.</p>
-        <p className="muted">Check again reconnects the AI using your GitHub CLI sign-in, including native credential storage and private delivery.</p>
+        <p className="muted">Check again reconnects the AI using your GitHub CLI sign-in, including native credential storage and private delivery.</p></>}
         <div className="workspace-step-actions">
           {cliUnavailable && <button type="button" className="workspace-secondary" onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</button>}
           {(cliUnavailable || signInCheck) && <button type="button" className="workspace-secondary" onClick={() => { void help('githubSignIn'); }}>Sign-in help</button>}
-          <button type="button" className="workspace-primary" disabled={!enabled || paused || busy} onClick={() => { void connect(); }}>Check again</button>
-          <button type="button" className="workspace-secondary" onClick={() => { void copy(); }}>Copy details for help</button>
+          <button key="model-connect" type="button" className={error ? 'workspace-primary' : 'setup-button'} disabled={!enabled || paused || busy || ready} onClick={() => { void connect(); }}>
+            {!enabled ? 'Connect model' : busy ? 'Connecting model…' : ready ? 'Model connected' : error ? 'Check again' : 'Use GitHub sign-in'}
+          </button>
+          {error && <button type="button" className="workspace-secondary" onClick={() => { void copy(); }}>Copy details for help</button>}
         </div>
       </div>
-    </div>}
+    </div>
+    {busy && <p role="status">Reading the sign-in, storing it and connecting the guest model…</p>}
+    {ready && <><p role="status">Model connected: copilot / gpt-5.6-terra.</p>
+      <p className="muted">The guest acknowledged Connect. This does not prove inference.</p></>}
     {notice && <p role="status">{notice}</p>}
   </section>;
 }

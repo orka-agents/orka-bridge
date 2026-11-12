@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 if (process.platform !== 'win32' || process.env.GITHUB_ACTIONS !== 'true') throw Error('Hosted Windows CI only');
@@ -68,7 +69,7 @@ try {
   // isolated world with its own fixture IPC, sharing only the native WebView DOM.
   // Re-run the exact compiled entry; no product hooks or native setup mutations.
   const entry = await evaluate('document.querySelector("script[type=module][src]").src');
-  const bundle = await readFile(join('dist', 'assets', new URL(entry).pathname.split('/').pop()), 'utf8');
+  const bundle = await readFile(join(fileURLToPath(new URL('../app/dist/assets/', import.meta.url)), new URL(entry).pathname.split('/').pop()), 'utf8');
   const { frameTree } = await call('Page.getFrameTree');
   const fixtures = [
     ['permission', { operation: 'start', cause: 'permission', codes: [5] }, 'operating system denied'],
@@ -114,5 +115,9 @@ try {
   await writeFile(join(output, 'head.txt'), await readFile(join(output, '..', 'native-lifecycle', 'head.txt')));
 } finally {
   socket?.close();
-  child.kill();
+  await new Promise(resolve => {
+    if (child.exitCode !== null || child.signalCode !== null || !child.pid) { resolve(); return; }
+    child.once('exit', resolve);
+    child.kill();
+  });
 }
