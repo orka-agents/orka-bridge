@@ -839,8 +839,11 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 1)
     try overviewShot("overview-fixture-multiple-places-by-place", ["fixture-secondary", "3 Agents", "Orka Agent"], heading: "fixture-secondary")
     let attempt = "fixture-secondary · agents · Checks unknown"
-    let attempts = try overviewShot("overview-probe", [attempt])
-    clickText(attempt, in: attempts)
+    try overviewShot("overview-probe", [attempt])
+    guard let attemptBounds = nativeTextBounds(attempt).first else { fail("Recorded attempt disclosure is not visible") }
+    let attemptPoint = CGPoint(x: attemptBounds.midX, y: attemptBounds.midY)
+    mouse(.leftMouseDown, attemptPoint); mouse(.leftMouseUp, attemptPoint)
+    Thread.sleep(forTimeInterval: 0.5)
     try overviewShot("overview-fixture-unknown-attempt", ["Agent creation not confirmed", "Checks unknown", "Planned name: bridge-run-"])
     scrollMain(12000)
     clickText("By agent", in: try capture("overview-probe", "Overview"))
