@@ -45,7 +45,14 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     let rows = request.results ?? []
     let text = rows.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     try text.write(toFile: "\(output)/\(name).txt", atomically: true, encoding: .utf8)
-    let visible = text.replacingOccurrences(of: "\n", with: " ")
+    // Vision can interleave the adjacent setup column between wrapped lines.
+    // Check phrases within the model panel, not the whole window's reading order.
+    guard let panel = rows.first(where: { $0.topCandidates(1).first?.string == "Connect a model" })
+        else { fatalError("Model panel heading was not recognized") }
+    let visible = rows.filter {
+        $0.boundingBox.minX >= panel.boundingBox.minX - 0.02 &&
+        $0.boundingBox.maxY <= panel.boundingBox.maxY + 0.01
+    }.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     for value in expected { require(visible.contains(value), "Missing \(value) in \(name): \(text)") }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
