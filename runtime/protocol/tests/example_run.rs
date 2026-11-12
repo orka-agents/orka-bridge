@@ -14,6 +14,8 @@ pub mod engine;
 pub mod example_run;
 #[path = "../../../app/src-tauri/src/local_vm.rs"]
 pub mod local_vm;
+#[path = "../../../app/src-tauri/src/overview.rs"]
+pub mod overview;
 #[path = "../../../app/src-tauri/src/pair_source.rs"]
 pub mod pair_source;
 #[path = "../../../app/src-tauri/src/runtime/mod.rs"]
