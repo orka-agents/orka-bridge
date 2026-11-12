@@ -374,18 +374,17 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
     // not injected renderer data; editing remains owned during setup too.
     // Welcome focuses the choice heading. Clusters and Designer precede it.
     key(48, shift: true); key(48, shift: true); key(49)
-    let form = try capture("agent-form", "Designer")
-    guard let label = form.first(where: {
-        let text = $0.topCandidates(1).first?.string ?? ""
-        return text == "Instructions" || (text.hasPrefix("Instructions ") && text.contains("What the agent"))
-    }) else {
-        fail("Instructions field is not visible")
-    }
+    try capture("agent-form", "Designer")
+    let instructions = nativeElements().filter { attribute($0, "AXRole") as? String == "AXTextArea"
+        && ((attribute($0, "AXTitle") as? String == "Instructions") || (attribute($0, "AXDescription") as? String == "Instructions")) }
+    require(instructions.count == 1, "Cannot identify the owned Instructions field")
+    guard let fieldBounds = nativeBounds(instructions[0]) else { fail("Instructions field bounds missing") }
+    let rect = window()!.1
+    let visibleField = fieldBounds.intersection(rect)
+    require(!visibleField.isEmpty && !visibleField.isNull, "Instructions field is not visible")
     let owned = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
     let before = try String(contentsOf: owned, encoding: .utf8)
-    let rect = window()!.1
-    let fieldPoint = CGPoint(x: rect.midX,
-        y: rect.minY + (1 - label.boundingBox.midY) * rect.height + 70)
+    let fieldPoint = CGPoint(x: visibleField.midX, y: visibleField.midY)
     mouse(.leftMouseDown, fieldPoint); mouse(.leftMouseUp, fieldPoint)
     for down in [true, false] {
         let event = CGEvent(keyboardEventSource: nil, virtualKey: 125, keyDown: down)!
