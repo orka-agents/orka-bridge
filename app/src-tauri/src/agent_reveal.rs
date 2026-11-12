@@ -24,6 +24,7 @@ pub fn reveal(agents: &Agents, id: DocumentId) -> Result<(), &'static str> {
         // Open the folder, never execute the agent file or trust explorer's exit code.
         let parent = path.parent().ok_or(ERROR)?;
         let folder: Vec<_> = parent.as_os_str().encode_wide().chain(Some(0)).collect();
+        let _spawn_guard = crate::runtime::spawn_guard::blocking_guard();
         let result = unsafe {
             ShellExecuteW(
                 std::ptr::null_mut(),
