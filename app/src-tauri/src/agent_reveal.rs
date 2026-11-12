@@ -4,7 +4,11 @@ use std::path::PathBuf;
 const ERROR: &str = "Could not show the agent folder.";
 
 fn owned_path(agents: &Agents, id: DocumentId) -> Result<PathBuf, &'static str> {
-    agents.get(id)?.reveal_path()
+    let folder = agents.get(id)?;
+    if !folder.available() {
+        return Err(ERROR);
+    }
+    folder.file_path().ok_or(ERROR)
 }
 
 #[cfg(any(all(test, unix), target_os = "macos"))]

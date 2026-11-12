@@ -19,6 +19,16 @@ test('copies the complete native path and reveals by document identity, never a 
   await user.click(screen.getByRole('button', { name: 'Show in folder' }));
   expect(calls).toEqual([['agent_reveal', { documentId: SAMPLE_DOCUMENT_ID }]]);
 });
+test('an owned document with no UTF-8 display path can still be shown in its folder', async () => {
+  const user = userEvent.setup(); const calls: unknown[] = [];
+  vi.stubGlobal('isTauri', true); mockIPC((command, args) => { calls.push([command, args]); return null; });
+  render(<FileLocation documentId={SAMPLE_DOCUMENT_ID} />);
+  expect(screen.getByText('The file path is unavailable.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Copy file path' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Show in folder' }));
+  await screen.findByText('Folder opened');
+  expect(calls).toEqual([['agent_reveal', { documentId: SAMPLE_DOCUMENT_ID }]]);
+});
 test('clipboard and native failures are visible without exposing native errors', async () => {
   const user = userEvent.setup(); vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue(Error('secret'));
   vi.stubGlobal('isTauri', true); mockIPC(() => { throw Error('private-native-path'); });
