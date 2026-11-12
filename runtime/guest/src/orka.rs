@@ -532,6 +532,20 @@ mod tests {
             .into_bytes(),
         )
     }
+    fn executable(path: &Path, script: &str) {
+        let source = path.with_extension("source");
+        fs::write(&source, script).unwrap();
+        // Parallel tests may fork while this process holds the source writer.
+        // Only the copy child opens the executable for writing, so that writer
+        // cannot leak into another test's child and cause ETXTBSY at exec.
+        assert!(Command::new("/bin/cp")
+            .arg(&source)
+            .arg(path)
+            .status()
+            .unwrap()
+            .success());
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
     /// A fake kubectl recording argv; existing objects live in `<kind>.json`.
     fn kube(port: u16) -> (tempfile::TempDir, Orka) {
         let dir = tempfile::tempdir().unwrap();
@@ -559,8 +573,7 @@ esac
 "#
         );
         let path = dir.path().join("kubectl");
-        fs::write(&path, script).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+        executable(&path, &script);
         let orka = Orka::with_kubectl(installation(), path);
         (dir, orka)
     }
@@ -806,11 +819,10 @@ esac
         let s = server(vec![http("201 Created", "{}")]);
         let (dir, mut orka) = kube(s.port);
         let script = fs::read_to_string(&orka.kubectl).unwrap();
-        fs::write(
+        executable(
             &orka.kubectl,
-            script.replace("#!/bin/sh\n", "#!/bin/sh\nsleep 0.04\n"),
-        )
-        .unwrap();
+            &script.replace("#!/bin/sh\n", "#!/bin/sh\nsleep 0.04\n"),
+        );
         let deadline = Instant::now() + Duration::from_millis(70);
         assert!(orka.execute_until(&create(), deadline).is_err());
         assert!(
