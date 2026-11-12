@@ -90,7 +90,10 @@ for On this computer. On Windows, the running VM
 unlocks Use GitHub sign-in, which needs GitHub CLI already installed and signed
 in to github.com. Bridge does not install it or open browser sign-in. Starting
 a VM alone does not verify model inference. Local images are debug-only;
-release builds ignore `BRIDGE_DEV_IMAGE_DIR`.
+release builds ignore `BRIDGE_DEV_IMAGE_DIR`. Native release startup now shares
+verified image acquisition and installation, but its shipping image catalog is
+still empty. Release builds remain unable to start a workspace until reviewed
+platform pins are added; this is not a downloadable working release.
 
 ## Reopen and remove the saved sign-in
 

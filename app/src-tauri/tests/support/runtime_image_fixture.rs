@@ -6,6 +6,13 @@ fn hash(data: &[u8]) -> String {
     format!("{:x}", Sha256::digest(data))
 }
 pub fn verified(path: &Path, target: ImageTarget) -> VerifiedImageSet {
+    verified_with_compatibility(path, target, None)
+}
+pub fn verified_with_compatibility(
+    path: &Path,
+    target: ImageTarget,
+    compatibility: Option<&str>,
+) -> VerifiedImageSet {
     let disk = b"private synthetic disk";
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(disk).unwrap();
@@ -24,6 +31,9 @@ pub fn verified(path: &Path, target: ImageTarget) -> VerifiedImageSet {
         }
     };
     let mut value: serde_json::Value = serde_json::from_slice(raw).unwrap();
+    if let Some(compatibility) = compatibility {
+        value["stateCompatibilityId"] = compatibility.into();
+    }
     value["artifact"]["uncompressedBytes"] = disk.len().into();
     value["artifact"]["uncompressedSha256"] = hash(disk).into();
     value["artifact"]["compressedBytes"] = compressed.len().into();
