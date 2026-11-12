@@ -99,7 +99,10 @@ while Date() < rendererDeadline {
         let names = Set(buttons.flatMap { element in
             ["AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
         })
-        let bodyReady = buttons.contains { nativeBounds($0).map { $0.minY > frame.minY + 110 } == true }
+        // Navigation/footer controls can render before setup_status settles.
+        // Observe the welcome or the actual release setup result, not a button
+        // that merely happens to be below the header.
+        let bodyReady = names.contains("Get started") || nativeTextIsVisible("Workspace setup is not included in this build. Nothing will be downloaded or started.")
         if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names) && bodyReady { found = true; break }
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))

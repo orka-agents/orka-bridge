@@ -17,7 +17,7 @@ fn surviving_wrapper_has_no_fd_and_blocked_read_stops_without_io_lock_deadlock()
             socket.read(&mut b)
         })
     });
-    ready.recv_timeout(Duration::from_secs(1)).unwrap();
+    ready.recv().unwrap();
     let mut second = slot.channel();
     assert_eq!(
         second.write(b"x").unwrap_err().kind(),

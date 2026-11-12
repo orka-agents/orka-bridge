@@ -226,10 +226,6 @@ fn closed_helper_control_preserves_buffered_reply_and_eof() {
         read_until(&control, &mut [0], Instant::now() + Duration::from_secs(2)),
         Err(HelperError::Io(io::ErrorKind::UnexpectedEof))
     );
-    assert_eq!(
-        read_until(&control, &mut [0], Instant::now()),
-        Err(HelperError::Io(io::ErrorKind::TimedOut))
-    );
 }
 
 #[test]

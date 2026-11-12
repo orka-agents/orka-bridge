@@ -123,8 +123,12 @@ fn registrations_and_selection_survive_restart() {
     );
     assert!(entries[1].available);
     assert_eq!(
-        entries[1].path.as_deref(),
-        root(home.path(), "helper").join("helper.agent.md").to_str()
+        entries[1].path.as_deref().map(std::path::Path::new),
+        Some(
+            root(home.path(), "helper")
+                .join("helper.agent.md")
+                .as_path()
+        )
     );
     assert!(restarted.get(id()).is_err());
     assert!(restarted.select(id()).is_err());
