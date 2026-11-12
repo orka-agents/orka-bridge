@@ -37,7 +37,7 @@ pub struct SetupSnapshot {
     local_vm: &'static str,
     local_vm_error: Option<String>,
     model: &'static str,
-    /// Whether this build ships a model-capable image; fixed per platform, not readiness.
+    /// Affirmed by the native VM facet, never inferred from saved selection or readiness.
     model_supported: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_progress: Option<WorkspaceProgress>,
@@ -49,6 +49,10 @@ pub struct SetupSnapshot {
 }
 
 impl SetupSnapshot {
+    pub fn with_model_support(mut self, supported: bool) -> Self {
+        self.model_supported = supported;
+        self
+    }
     pub fn with_model(mut self, state: &'static str) -> Self {
         self.model = state;
         self
@@ -296,7 +300,7 @@ fn snapshot(root: &Path) -> Result<SetupSnapshot, SetupError> {
         local_vm: "notIntegrated",
         local_vm_error: None,
         model: "locked",
-        model_supported: crate::local_vm::MODEL_IMAGE_AVAILABLE,
+        model_supported: false,
         workspace_progress: None,
         preflight_failure: None,
         workspace_failure: None,
@@ -310,6 +314,30 @@ mod tests {
         sync::{mpsc, Arc, Barrier},
         time::Duration,
     };
+
+    #[test]
+    fn only_native_enrichment_affirms_model_support() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = SetupStore::new(Some(tmp.path().to_owned()));
+        let selected = store
+            .select_local()
+            .unwrap()
+            .with_local_vm("ready", None)
+            .with_model("available");
+        assert!(!selected.model_supported);
+        for supported in [false, true] {
+            let enriched = store
+                .status()
+                .unwrap()
+                .with_model_support(supported)
+                .with_local_vm("installing", None)
+                .with_model("locked");
+            assert_eq!(
+                serde_json::to_value(enriched).unwrap()["modelSupported"],
+                supported
+            );
+        }
+    }
 
     #[tokio::test(flavor = "current_thread")]
     async fn filesystem_waits_do_not_stall_the_async_caller() {
