@@ -7,7 +7,7 @@ import type { Place, Places, RemoteAgent, SavedFile } from './api';
 export type AgentCard = { key: string; placeKey?: string; source?: SourceId; place: string; node: ReactNode };
 export const sourceKey = (source: SourceId) => `${source.agent}/${source.tests}`;
 const when = (ms: number) => new Date(ms).toLocaleString();
-const label = (p: Place) => `${p.context} · ${p.namespace}`;
+const label = (p: Place) => `${p.context} · ${p.namespace} · ${p.service}`;
 function ownedFile(source: SourceId, files: SavedFile[]) {
   const matches = files.filter(f => f.state === 'readable' && f.source && sourceKey(f.source) === sourceKey(source));
   return matches.length === 1 ? matches[0] : undefined;
@@ -43,8 +43,8 @@ export function remoteCards(places: Places, files: SavedFile[], local: AgentCard
 export function PlaceCards({ places, cards }: { places: Places; cards: AgentCard[] }) {
   return <>{places.places.map(place => <section key={place.key} className="overview-place-section" aria-label={label(place)}>
     <div className="overview-place"><h2>{place.context}</h2><p>{place.namespace} · {place.service}</p></div>
-    <p role="status">{place.stale ? 'Offline or access unavailable' : `${place.agents.length} ${place.agents.length === 1 ? 'Agent' : 'Agents'}`}</p>
-    {place.observedAt !== null ? <p className="muted">{place.stale ? 'Last seen' : 'Bridge observed'} {when(place.observedAt)}</p> : <p>Agents unavailable. Use this place in Clusters to check access.</p>}
+    <p role="status">{place.stale ? 'Observation stale. Refresh to check this place.' : `${place.agents.length} ${place.agents.length === 1 ? 'Agent' : 'Agents'}`}</p>
+    {place.observedAt !== null ? <p className="muted">{place.stale ? 'Last seen' : 'Bridge observed'} {when(place.observedAt)}</p> : <p>No Agent observation yet. Refresh or check access in Clusters.</p>}
     {!place.agents.length && !place.stale && <p>No Agents in this watched namespace</p>}
     <div className="overview-cards">{cards.filter(c => c.placeKey === place.key).map(c => <div key={c.key}>{c.node}</div>)}</div>
   </section>)}</>;

@@ -360,7 +360,7 @@ test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remem
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   await screen.findByRole('button', { name: 'Open your agent' });
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  const originRegion = await screen.findByRole('region', { name: origin === 'saved file' ? 'This computer' : 'team-dev · agents' });
+  const originRegion = await screen.findByRole('region', { name: origin === 'saved file' ? 'This computer' : 'team-dev · agents · control/orka' });
   await user.click(await within(originRegion).findByRole('button', { name: 'Open reader' }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
   expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');

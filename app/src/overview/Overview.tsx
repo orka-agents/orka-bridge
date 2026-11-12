@@ -83,7 +83,7 @@ export default function Overview({ active, runBusy, workspaceKey, onOpenDocument
   const localCards: AgentCard[] = observed?.agents.map(agent => {
         const o = associated(observed, agent);
         const file = o && saved.find(f => f.documentId === o.documentId);
-        const also = o && places?.historyState === 'complete' ? [...new Set(places.places.filter(p => p.agents.some(a => a.record && sameSource(a.record.source, o.source) === true)).map(p => `${p.context} · ${p.namespace}`))] : [];
+        const also = o && places?.historyState === 'complete' ? [...new Set(places.places.filter(p => p.agents.some(a => a.record && sameSource(a.record.source, o.source) === true)).map(p => `${p.context} · ${p.namespace} · ${p.service}`))] : [];
         const sourceUnavailable = !!o && !file?.source;
         const stale = !!o && (sourceUnavailable || sameSource(file?.source ?? undefined, o.source) !== true);
         const state: Status = stale ? 'stale' : o?.state === 'running' ? 'running' : o?.state === 'complete' && o.report?.verdict !== 'unknown' ? o.report?.verdict ?? 'not-started' : 'not-started';

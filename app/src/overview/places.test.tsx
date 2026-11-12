@@ -20,9 +20,22 @@ function ipc(value: unknown = places, files: unknown[] = [file], live: unknown =
 }
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
+test('two installations in the same context and namespace keep distinct accessible place labels and cross-links', async () => {
+  const a = { ...second, key: 'a', context: 'same-team', service: 'control/orka-a' };
+  const b = { ...second, key: 'b', context: 'same-team', service: 'control/orka-b' };
+  ipc({ ...places, places: [a, b] }); render(<Overview {...props} />);
+  expect(await screen.findByRole('region', { name: 'same-team · agents · control/orka-a' })).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'same-team · agents · control/orka-b' })).toBeTruthy();
+  expect(screen.getByText('Also observed on same-team · agents · control/orka-b')).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'By agent' }));
+  const group = screen.getByRole('region', { name: 'reader · recorded revision' });
+  expect(within(group).getAllByRole('heading', { level: 3 })).toHaveLength(2);
+  expect(within(group).getAllByText('same-team · agents · control/orka-a').length).toBeGreaterThan(0);
+});
+
 test('each retained Agent has a card per place, external runtime is read-only and not blessed by its name', async () => {
   ipc(); render(<Overview {...props} />);
-  const one = await screen.findByRole('region', { name: 'team-one · agents' });
+  const one = await screen.findByRole('region', { name: 'team-one · agents · control/orka' });
   expect(within(one).getAllByRole('heading', { name: 'reader' })).toHaveLength(2);
   expect(within(one).getByRole('heading', { name: 'same-name' })).toBeTruthy();
   expect(within(one).getByText('Not tested by Bridge')).toBeTruthy();
@@ -33,7 +46,7 @@ test('each retained Agent has a card per place, external runtime is read-only an
   await userEvent.click(within(external).getByText('Open'));
   expect(within(external).getByText('external')).toBeTruthy();
   expect(props.onOpenDocument).not.toHaveBeenCalled();
-  expect(screen.getAllByText('Also observed on team-two · agents')).toHaveLength(2);
+  expect(screen.getAllByText('Also observed on team-two · agents · control/orka')).toHaveLength(2);
 });
 
 test('By agent joins only known pair hashes across places and local Agent, leaving unassociated identities separate', async () => {
@@ -44,9 +57,9 @@ test('By agent joins only known pair hashes across places and local Agent, leavi
   const revision = screen.getByRole('region', { name: 'reader · recorded revision' });
   expect(within(revision).getAllByRole('heading', { level: 3 })).toHaveLength(4);
   expect(within(revision).getByText('This computer')).toBeTruthy();
-  expect(within(revision).getByText('Also observed on team-one · agents; team-two · agents')).toBeTruthy();
-  expect(within(revision).getAllByText('team-two · agents').length).toBeGreaterThan(0);
-  const unassociated = screen.getByRole('region', { name: 'Unassociated Agent · team-one · agents' });
+  expect(within(revision).getByText('Also observed on team-one · agents · control/orka; team-two · agents · control/orka')).toBeTruthy();
+  expect(within(revision).getAllByText('team-two · agents · control/orka').length).toBeGreaterThan(0);
+  const unassociated = screen.getByRole('region', { name: 'Unassociated Agent · team-one · agents · control/orka' });
   expect(within(unassociated).getAllByRole('heading', { level: 3 })).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'By agent' }).getAttribute('aria-pressed')).toBe('true');
 });
@@ -61,7 +74,7 @@ test('different check-file hashes form different revision groups even with ident
 
 test('remote Open uses one exact owned hash binding, but identical files are ambiguous and remain read-only', async () => {
   ipc({ ...places, places: [second] }); const view = render(<Overview {...props} />);
-  const remote = await screen.findByRole('region', { name: 'team-two · agents' });
+  const remote = await screen.findByRole('region', { name: 'team-two · agents · control/orka' });
   await userEvent.click(within(remote).getByRole('button', { name: 'Open reader' }));
   expect(props.onOpenDocument).toHaveBeenCalledWith(id);
   ipc({ ...places, places: [second] }, [file, { ...file, documentId: '22345678-1234-1234-1234-123456789abc' }]);
@@ -73,8 +86,8 @@ test('remote Open uses one exact owned hash binding, but identical files are amb
 
 test('offline last-seen cards never present a current green pass and recover only on fresh native result', async () => {
   ipc({ ...places, places: [{ ...second, stale: true }] }); render(<Overview {...props} />);
-  const remote = await screen.findByRole('region', { name: 'team-two · agents' });
-  expect(within(remote).getByText(/Offline or access unavailable/)).toBeTruthy();
+  const remote = await screen.findByRole('region', { name: 'team-two · agents · control/orka' });
+  expect(within(remote).getByText('Observation stale. Refresh to check this place.')).toBeTruthy();
   expect(within(remote).getByText(/Last seen/)).toBeTruthy();
   expect(within(remote).getByText('Recorded checks passed; observation stale')).toBeTruthy();
   expect(remote.querySelector('.status-passed')).toBeNull();
@@ -102,5 +115,5 @@ test('cluster inventory refresh works while the local VM is busy and ignores rep
   expect(resolve).toBeTypeOf('function');
   view.rerender(<Overview {...props} active={false} runBusy />);
   resolve(places); await Promise.resolve();
-  expect(screen.queryByRole('region', { name: 'team-one · agents' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'team-one · agents · control/orka' })).toBeNull();
 });

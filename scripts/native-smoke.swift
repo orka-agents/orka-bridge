@@ -782,7 +782,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try overviewShot("overview-fixture-offline-by-agent", ["fixture-secondary · agents", "Recorded checks passed; observation stale", "Orka Agent · stale"])
     scrollMain(12000)
     clickText("By place", in: try capture("overview-probe", "Overview"))
-    try overviewShot("overview-fixture-offline-by-place", ["fixture-secondary", "Offline or access unavailable", "Last seen", "Orka Agent · stale"])
+    try overviewShot("overview-fixture-offline-by-place", ["fixture-secondary", "Observation stale", "Last seen", "Orka Agent · stale"])
     try overviewShot("overview-fixture-offline-record-by-place", ["Recorded checks passed; observation stale", "Orka Agent · stale"])
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false])
     // Keep the existing preflight-only cards out of the focused Overview walk.

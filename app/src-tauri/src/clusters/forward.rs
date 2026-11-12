@@ -329,7 +329,7 @@ impl Connection {
             url.query_pairs_mut().append_pair("namespace", namespace);
             if path == "agents" && body.is_none() {
                 url.query_pairs_mut()
-                    .append_pair("limit", if inventory { "100" } else { "1" });
+                    .append_pair("limit", if inventory { "10" } else { "1" });
             }
             if let Some(after) = after {
                 let key = if path.ends_with("/events") {
