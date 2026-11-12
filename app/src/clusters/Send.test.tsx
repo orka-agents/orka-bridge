@@ -37,6 +37,17 @@ test.each(['blocked', 'cannotCheck'])('preflight %s explains the problem and pre
   expect((screen.getByRole('button', { name: 'Send and run tests' }) as HTMLButtonElement).disabled).toBe(true);
   expect(ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
 });
+test('a persistent polite status announces the final Send verdict', async () => {
+  vi.stubGlobal('isTauri', true); let view: unknown = running;
+  mockIPC(command => command === 'send_status' ? { documentId: pair.documentId, view, busy: null } : command === 'send_history' ? [] : allowed);
+  render(<Send place={place} source={source} stale={false} visible remote />);
+  await screen.findByText('Waiting for answers and evaluating tests');
+  const live = screen.getAllByRole('status').find(node => node.classList.contains('sr-only'));
+  expect(live).toBeTruthy();
+  view = { ...running, state: 'complete', stage: 'done', report };
+  await waitFor(() => expect(live?.textContent).toBe('Test result failed. 0 of 1 passed.'));
+  expect(live?.isConnected).toBe(true);
+});
 test('stale local results do not gate checking or sending a saved pair', async () => {
   native(); render(<Send place={place} source={source} stale visible remote />);
   await waitFor(() => expect((screen.getByRole('button', { name: 'Send and run tests' }) as HTMLButtonElement).disabled).toBe(false));

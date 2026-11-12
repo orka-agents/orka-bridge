@@ -16,12 +16,16 @@ test('Run is explicit, duplicate clicks and remounts only observe existing work'
   await userEvent.dblClick(button); expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run')).toHaveLength(1);
   view.unmount(); render(<Run />); expect(await screen.findByText('Starting your tests')).toBeTruthy();
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run')).toHaveLength(1);
+  const live = screen.getAllByRole('status').find(node => node.classList.contains('sr-only'));
+  expect(live).toBeTruthy();
   value = complete;
   expect(await screen.findByText('<script>not executable</script>')).toBeTruthy();
   expect(screen.getByText('published-checksum').closest('details')?.open).toBe(true);
   expect(screen.getByText('What did the page say?')).toBeTruthy();
   expect(document.querySelector('script')).toBeNull();
   expect(screen.getByText('A call to web_fetch was not observed; this result is unknown.')).toBeTruthy();
+  expect(live?.isConnected).toBe(true);
+  expect(live?.textContent).toBe('Test result unknown.');
 });
 test('model connection advice follows the acknowledged model state, not Run availability', async () => {
   vi.stubGlobal('isTauri', true);

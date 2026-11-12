@@ -11,6 +11,10 @@ export function resultLabel(report: Report | null | undefined) {
   if (report.verdict === 'unknown') return 'Result unknown';
   return `${report.cases.filter(c => c.verdict === 'passed').length} of ${report.cases.length} passed`;
 }
+export function resultAnnouncement(report: Report | null | undefined) {
+  if (!report) return undefined;
+  return report.verdict === 'unknown' ? 'Test result unknown.' : `Test result ${report.verdict}. ${resultLabel(report)}.`;
+}
 export function changedFiles(current: SourceId | undefined, captured: SourceId | null | undefined, unsaved: boolean) {
   if (current && captured) {
     const agent = current.agent !== captured.agent, tests = current.tests !== captured.tests;

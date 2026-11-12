@@ -14,8 +14,11 @@ func restoreDisplay() {
         }
     }
 }
+var restoreTemporaryTests: (() throws -> Void)?
 func fail(_ message: String) -> Never {
     fputs("\(message)\n", stderr)
+    do { try restoreTemporaryTests?() }
+    catch { fputs("Cannot restore original test file: \(error)\n", stderr) }
     restoreDisplay()
     exit(1)
 }
@@ -658,7 +661,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         for _ in 0..<8 {
             let seen = try capture("send-probe", "Designer")
             if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(expected) }) {
-                return try capture(name, "Designer")
+                let captured = try capture(name, "Designer")
+                require(captured.contains { ($0.topCandidates(1).first?.string ?? "").contains(expected) }, "Captured state missing in \(name): \(expected)")
+                return captured
             }
             scrollMain(-100)
         }
@@ -729,7 +734,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         let y = (1 - question.boundingBox.maxY) * window()!.1.height
         scrollMain(-Int32(max(0, y - 180)))
         let answer = try capture(name, "Designer")
-        require(answer.contains { ($0.topCandidates(1).first?.string ?? "").contains("Fixture answer:") }, "Question and answer are not visible together")
+        let text = answer.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("What SHA-256 checksum does") && text.contains("Fixture answer:"), "Question and answer are not visible together")
     }
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
@@ -752,7 +758,11 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // existing preflight flow; the earlier pass must turn stale, not stay green.
     let testsURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.test.md")
     let originalTests = try Data(contentsOf: testsURL)
-    defer { try? originalTests.write(to: testsURL, options: .atomic) }
+    restoreTemporaryTests = { try originalTests.write(to: testsURL, options: .atomic) }
+    defer {
+        do { try restoreTemporaryTests?(); restoreTemporaryTests = nil }
+        catch { fail("Cannot restore original test file: \(error)") }
+    }
     var mixedTests = originalTests
     mixedTests.append(Data("\n```yaml agent-test\nid: has-a-date\ninput: Which date is shown on the page?\nassertions:\n  - id: date\n    type: contains\n    value: '2099-12-31'\n```\n".utf8))
     try mixedTests.write(to: testsURL, options: .atomic)

@@ -5,7 +5,7 @@ import type { SelectedPlace } from './api';
 import { type AttemptSummary, type SendCheck, type SendStatus, sendCall, sendErrors, sendHistory, sendPreflight } from './send-api';
 import './clusters.css';
 import { CardSection, Details, Elapsed, GeneratedValue, LongCard, type Status, StatusIcon, StatusPill } from '../components/DesignSystem';
-import { changedFiles, resultLabel, TestProgress, TestResults } from '../components/TestResults';
+import { changedFiles, resultAnnouncement, resultLabel, TestProgress, TestResults } from '../components/TestResults';
 
 export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failingCheck?: string; blocked?: string; onProceed: () => void; onFix: () => void }) {
   const [warning, setWarning] = useState(false);
@@ -122,6 +122,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
       action={<div className="workspace-step-actions">{!running && <button type="button" className="setup-button" disabled={!!reason || busy || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run tests' : 'Run all tests'}</button>}
       {running && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void mutate('send_stop'); }}>Stop</button>}
     </div>}>
+    <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{!running && !outdated ? resultAnnouncement(snapshot?.report) : undefined}</p>
     <CardSection title="What you send">
     <dl className="cluster-details"><div><dt>Source</dt><dd>Your saved agent and test files</dd></div>
       <div><dt>This computer</dt><dd>{local?.report ? localCurrent ? `Tests: ${words[local.report.verdict]}` : 'Changed since local tests, or revision not confirmed' : 'No local test result'}</dd></div>
