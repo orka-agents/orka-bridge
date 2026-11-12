@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { loadExample, type ExamplePair } from '../setup/state';
+import { type ExamplePair } from '../setup/state';
 import { SAMPLE_DOCUMENT_ID, agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
 import { readWorkspaceCatalog, type WorkspaceCatalogReply } from '../catalog';
@@ -9,15 +9,15 @@ import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
 import Send, { SendEntry, SendHistory } from '../clusters/Send';
 
-export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true, readOnly = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
-  documentId?: string; active?: boolean; readOnly?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
+export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true, setupPending = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
+  documentId?: string; active?: boolean; setupPending?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void;
   onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
 }) {
   const [boundDocument, setBoundDocument] = useState(documentId);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [catalog, setCatalog] = useState<{ key: number; attempt: number; reply?: WorkspaceCatalogReply }>();
-  const catalogEnabled = catalogKey !== undefined && !readOnly && !remote;
+  const catalogEnabled = catalogKey !== undefined && !setupPending && !remote;
   useEffect(() => {
     if (!catalogEnabled || catalogKey === undefined) return;
     const controller = new AbortController();
@@ -51,20 +51,20 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   const lineEnding = useRef('\n'); const needsCommit = useRef(false);
   useEffect(() => {
     let mounted = true;
-    const open = readOnly && boundDocument === SAMPLE_DOCUMENT_ID ? loadExample().then(result => { if (!result.ok) throw Error(result.message); return result.pair; }) : agentCall('agent_open', undefined, boundDocument);
+    const open = agentCall('agent_open', undefined, boundDocument);
     void open.then(value => {
       if (!mounted) return;
       setPair(value); setDraft(value.agent); latest.current = saved.current = value.agent;
       lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n'; onPair?.(value);
     }, () => { if (mounted) { setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined); } });
     return () => { mounted = false; };
-  }, [onPair, readOnly, boundDocument]);
+  }, [onPair, boundDocument]);
   useEffect(() => { onSaveState?.(pendingSoul ? 'dirty' : saveState); }, [saveState, pendingSoul, onSaveState]);
   useEffect(() => { onStale?.(stale); }, [stale, onStale]);
 
   const flush = useCallback(async (retry = false) => {
     clearTimeout(timer.current);
-    if (readOnly || busy.current) return;
+    if (busy.current) return;
     if (!retry && !needsCommit.current && latest.current === saved.current) { setSaveState('saved'); return; }
     busy.current = true; setSaveState('saving'); setError(undefined);
     try {
@@ -79,7 +79,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
       needsCommit.current = false; setSaveState('saved');
     } catch { needsCommit.current = true; setSaveState('error'); setError('Your changes could not be saved. Your draft is still here.'); }
     finally { busy.current = false; }
-  }, [onPair, readOnly, boundDocument]);
+  }, [onPair, boundDocument]);
   useEffect(() => () => { clearTimeout(timer.current); reloadEpoch.current++; }, []);
   useEffect(() => {
     if (documentId === boundDocument || busy.current || pendingSoul || saveState === 'saving' || saveState === 'error') return;
@@ -90,7 +90,6 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
     onPair?.(undefined); onRun?.(undefined); setBoundDocument(documentId);
   }, [documentId, boundDocument, pendingSoul, saveState, flush, onPair, onRun]);
   const edit = (value: string, rawFile = false) => {
-    if (readOnly) return;
     const content = rawFile ? value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current) : value;
     if (content === latest.current) return;
     latest.current = content; setDraft(content); setStale(!pair?.source || content !== saved.current); setError(undefined);
@@ -98,7 +97,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
     timer.current = setTimeout(() => { void flush(); }, 500);
   };
   async function reloadSource() {
-    if (readOnly || reloadAdmitted.current || busy.current || needsCommit.current || pendingSoulCurrent.current || latest.current !== saved.current) return;
+    if (reloadAdmitted.current || busy.current || needsCommit.current || pendingSoulCurrent.current || latest.current !== saved.current) return;
     reloadAdmitted.current = true; setReloading(true);
     const request = reloadEpoch.current;
     const before = latest.current;
@@ -115,7 +114,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const saveLabel = pendingSoul ? 'Unsaved changes' : { saved: '', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
   const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
-    : reloading ? 'Wait for your saved files to reload' : readOnly ? 'Sending is unavailable while this example is read-only during setup'
+    : reloading ? 'Wait for your saved files to reload' : setupPending ? 'Wait for your workspace to be ready before sending'
     : saveState !== 'saved' || pendingSoul ? 'Save your changes first' : undefined;
   return <section className="designer" aria-labelledby={active ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
@@ -133,25 +132,25 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
     </div>
     {!pair ? error ? <p role="alert">{error}</p> : <p role="status">Opening your agent…</p> : <>
       <div className="designer-file card">
-        <div className="file-toolbar"><h2>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2><span className="muted" role="status">{readOnly ? 'Read-only during setup' : saveLabel}</span></div>
+        <div className="file-toolbar"><h2>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2><span className="muted" role="status">{saveLabel}</span></div>
         {view === 'File' ? <>
           <label className="sr-only" htmlFor="agent-file">Agent file</label>
-          <p className="muted" id="file-hint">{readOnly ? 'You can read the example while your workspace gets ready. Editing opens after setup.' : 'Changes save automatically in your agent’s folder. Each save is kept in its Git history.'}</p>
-          <textarea readOnly={readOnly} id="agent-file" aria-describedby="file-hint" className="agent-editor" spellCheck={false} value={draft} onChange={event => edit(event.target.value, true)} onBlur={() => { void flush(); }} onKeyDown={event => {
+          <p className="muted" id="file-hint">Changes save automatically in your agent’s folder. Each save is kept in its Git history.</p>
+          <textarea id="agent-file" aria-describedby="file-hint" className="agent-editor" spellCheck={false} value={draft} onChange={event => edit(event.target.value, true)} onBlur={() => { void flush(); }} onKeyDown={event => {
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void flush(); }
           }} />
         </> : null}
         <div hidden={view !== 'Agent'}>
-          <AgentParts source={draft} path={pair.path} readOnly={readOnly} catalog={currentCatalog?.reply} catalogLoading={catalogEnabled && !currentCatalog} onPendingEdit={observePendingSoul} onChange={edit} />
+          <AgentParts source={draft} path={pair.path} readOnly={false} setupPending={setupPending} catalog={currentCatalog?.reply} catalogLoading={catalogEnabled && !currentCatalog} onPendingEdit={observePendingSoul} onChange={edit} />
           {currentCatalog && (!currentCatalog.reply || currentCatalog.reply.models.state === 'unavailable' || currentCatalog.reply.tools.state === 'unavailable') && <button type="button" className="part-button" onClick={() => setCatalogAttempt(attempt => attempt + 1)}>Refresh catalog</button>}
         </div>
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
         <Send documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
-        {!remote && readOnly ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
+        {!remote && setupPending ? <div><h3>Checks</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run test: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run test</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a check.</p></div>
           : null}
-        {!readOnly && <div hidden={remote}><Run documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} /></div>}
+        {!setupPending && <div hidden={remote}><Run documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} /></div>}
         <details className="check-source"><summary>Check file: {pair.name ?? 'web-reader'}.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Check file, read-only">{pair.tests}</pre></details>
       </div>
     </>}

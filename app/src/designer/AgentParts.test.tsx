@@ -118,13 +118,17 @@ test('editing a commented description keeps it in the heading', async () => {
   fireEvent.change(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Edited' } });
   expect(screen.getByText('Edited', { selector: 'p' })).toBeTruthy();
 });
-test('setup preview exposes the form read-only with no owned path or writes', async () => {
-  const writes = native(); const user = userEvent.setup(); render(<Example readOnly />);
+test('setup opens the owned document for editing but keeps discovery and Run gated', async () => {
+  const writes = native(); const user = userEvent.setup(); render(<Example setupPending catalogKey={1} />);
   const instructions = await screen.findByRole('textbox', { name: 'Instructions' });
-  expect((instructions as HTMLTextAreaElement).readOnly).toBe(true);
+  expect((instructions as HTMLTextAreaElement).readOnly).toBe(false);
   expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('combobox').matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByText('More settings: description, personality (soul), file'));
-  expect(screen.queryByText(path)).toBeNull(); expect(writes).toEqual([]);
+  expect(screen.getByText(path)).toBeTruthy();
+  fireEvent.change(instructions, { target: { value: 'Edited during setup.' } }); fireEvent.blur(instructions);
+  await waitFor(() => expect(writes).toEqual([agent.replace('Read a page.\n', 'Edited during setup.')]));
 });
 test.each([42, '', 'bad\0path', 'x'.repeat(32769)])('rejects malformed outbound display paths (%j)', async path => {
   vi.stubGlobal('isTauri', true); mockIPC(() => ({ agent, tests: 'Checks', path }));

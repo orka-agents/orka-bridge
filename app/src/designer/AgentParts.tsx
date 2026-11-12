@@ -8,8 +8,8 @@ function Unavailable({ label, reason, children, focusRef }: { label: string; rea
     {children}<span className="control-tip" aria-hidden="true">{reason}</span>
   </span>;
 }
-export default function AgentParts({ source, path, readOnly, catalog, catalogLoading = false, onPendingEdit, onChange }: {
-  source: string; path?: string; readOnly: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; onPendingEdit?: (pending: boolean) => void; onChange: (source: string) => void;
+export default function AgentParts({ source, path, readOnly, setupPending = false, catalog, catalogLoading = false, onPendingEdit, onChange }: {
+  source: string; path?: string; readOnly: boolean; setupPending?: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; onPendingEdit?: (pending: boolean) => void; onChange: (source: string) => void;
 }) {
   const form = readForm(source); const id = useId();
   // Markdown's separating blank lines stay in the file, not above the prompt.
@@ -58,13 +58,13 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
   const knownModel = catalog?.models.state === 'ready' && catalog.models.items.some(model => model.id === form.model);
   const unlistedLabel = models ? knownModel ? ' (not offered for chat)' : ' (unlisted)' : '';
   const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit tools in File view for this file’s format.'
-    : catalogLoading ? 'Reading the workspace catalog…' : tools === undefined ? 'Tool catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
+    : setupPending ? 'Tools will be available when your workspace is ready.' : catalogLoading ? 'Reading the workspace catalog…' : tools === undefined ? 'Tool catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
   useEffect(() => {
     if (toolReason) { setPicker(false); setQuery(''); return; }
     if (picker) { popover.current?.showPopover?.(); popover.current?.querySelector('input')?.focus(); }
   }, [picker, toolReason]);
   const modelReason = readOnly ? 'You can change the model after setup.' : !form.modelEditable ? 'Edit the model in File view for this file’s format.'
-    : catalogLoading ? 'Reading the workspace catalog…' : models === undefined ? 'Model catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
+    : setupPending ? 'Models will be available when your workspace is ready.' : catalogLoading ? 'Reading the workspace catalog…' : models === undefined ? 'Model catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
   const labelFor = (name: string) => Object.hasOwn(builtInTools, name) ? builtInTools[name] : name;
   const editSoul = async (value: string) => {
     if (readOnly || !form.soulEditable) return;

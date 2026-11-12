@@ -1,11 +1,44 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from './App';
 
 beforeEach(() => { localStorage.setItem('bridge.welcomeSeen.v1', '1'); });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+
+test.each(['Agent', 'File'] as const)('a pending %s draft survives setup readiness without reopening the document', async view => {
+  const pair = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: reader\n---\nOriginal instructions.', tests: 'Checks', path: '/owned/reader.agent.md' };
+  let localVm = 'starting'; let opens = 0; const discovery: string[] = [];
+  let finish!: (value: unknown) => void; let pending = '';
+  vi.stubGlobal('isTauri', true);
+  mockIPC((command, args) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm, model: localVm === 'ready' ? 'available' : 'locked' };
+    if (command === 'setup_example') return { agent: pair.agent, tests: pair.tests };
+    if (command === 'agent_open') { opens++; return pair; }
+    if (command === 'agent_save') { pending = (args as { content: string }).content; return new Promise(resolve => { finish = resolve; }); }
+    if (command === 'workspace_catalog' || command === 'agent_run') { discovery.push(command); throw Error('Must stay gated'); }
+    if (command === 'agent_run_status') return { documentId: pair.documentId, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  const user = userEvent.setup(); render(<App />);
+  await within(screen.getByRole('contentinfo')).findByText('Starting workspace');
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  if (view === 'File') await user.click(screen.getByRole('button', { name: 'File' }));
+  const editor = screen.getByRole('textbox', { name: view === 'File' ? 'Agent file' : 'Instructions' }) as HTMLTextAreaElement;
+  const edited = view === 'File' ? pair.agent.replace('Original instructions.', 'Draft kept through setup.') : 'Draft kept through setup.';
+  fireEvent.change(editor, { target: { value: edited } }); fireEvent.blur(editor);
+  await waitFor(() => expect(pending).toContain('Draft kept through setup.'));
+  localVm = 'ready';
+  await within(screen.getByRole('contentinfo')).findByText('Choose the AI', {}, { timeout: 2000 });
+  expect(screen.getByRole('textbox', { name: view === 'File' ? 'Agent file' : 'Instructions' })).toBe(editor);
+  expect(editor.value).toBe(edited); expect(opens).toBe(1); expect(discovery).toEqual([]);
+  expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
+  await act(async () => finish({ ...pair, agent: pending }));
+  await within(screen.getByRole('contentinfo')).findByText('Saved');
+  expect(editor.value).toBe(edited);
+});
 
 test('navigation_order', () => {
   render(<App />);
