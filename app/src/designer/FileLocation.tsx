@@ -17,7 +17,7 @@ export default function FileLocation({ path, documentId }: { path?: string; docu
     } catch { setFeedback({ path: filePath, text: 'Could not show the folder. Copy the path to open it yourself.' }); }
   }
   return <div className="file-location"><code className="agent-path">{path}</code><div className="agent-tool-row">
-    <button type="button" className="part-button" aria-label="Copy file path" onClick={() => { void copy(); }}>Copy path</button>
+    <button type="button" className="part-button" aria-label="Copy file path" onClick={() => { void copy(); }}>Copy file path</button>
     <button type="button" className="part-button" onClick={() => { void reveal(); }}>Show in folder</button>
     <span className="muted" role="status">{feedback?.path === path ? feedback.text : ''}</span>
   </div></div>;

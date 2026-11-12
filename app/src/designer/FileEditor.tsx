@@ -18,7 +18,7 @@ export default function FileEditor({ value, onChange, onSave }: { value: string;
   }, [value]);
   let settings = false;
   return <div className="file-editor">
-    <pre className="file-highlight" aria-hidden="true">{value.replaceAll('\r\n', '\n').split('\n').map((line, index) => {
+    <pre className="file-highlight" aria-hidden="true">{value.replace(/\r\n?/g, '\n').split('\n').map((line, index) => {
       const delimiter = line === '---' && (index === 0 || settings);
       if (delimiter) settings = !settings;
       const key = settings && !delimiter ? line.match(/^(\s*(?:-\s+)?)([\w.-]+)(:)/) : null;

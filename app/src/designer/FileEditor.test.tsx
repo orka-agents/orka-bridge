@@ -2,6 +2,11 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import FileEditor from './FileEditor';
 afterEach(cleanup);
+test('lone carriage returns use the same lines as the native textarea', () => {
+  render(<FileEditor value={'one\rtwo\r'} onChange={() => {}} onSave={() => {}} />);
+  expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('one\ntwo\n');
+  expect(document.querySelectorAll('.file-line')).toHaveLength(3);
+});
 test('highlights settings and numbers source lines without parsing or rewriting unfinished files', () => {
   const source = '---\r\nname: reader\r\nkmx:\r\n  tools: [\r\n---\r\n\r\n# Instructions\r\n<img src=x onerror=alert(1)>\r\n';
   const changed = vi.fn(); const saved = vi.fn();

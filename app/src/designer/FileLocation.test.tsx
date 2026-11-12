@@ -12,7 +12,9 @@ test('copies the complete native path and reveals by document identity, never a 
   const path = '/home/creator/Orka/agents/a-long-agent/a-long-agent.agent.md';
   render(<FileLocation path={path} documentId={SAMPLE_DOCUMENT_ID} />);
   expect(screen.getByText(path)).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Copy file path' }));
+  const copyButton = screen.getByRole('button', { name: 'Copy file path' });
+  expect(screen.getByRole('button', { name: copyButton.textContent! })).toBe(copyButton);
+  await user.click(copyButton);
   await screen.findByText('Path copied'); expect(copy).toHaveBeenCalledWith(path);
   await user.click(screen.getByRole('button', { name: 'Show in folder' }));
   expect(calls).toEqual([['agent_reveal', { documentId: SAMPLE_DOCUMENT_ID }]]);
