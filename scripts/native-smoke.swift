@@ -168,13 +168,14 @@ func clickDesignerView(_ name: String) {
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.3)
 }
-func nativeTextBounds(_ expected: String) -> [CGRect] {
+func nativeTextBounds(_ expected: String, heading: Bool = false) -> [CGRect] {
     guard let rect = window()?.1 else { return [] }
     // Destination chips and footer mirrors are not evidence of a visible card.
     let body = CGRect(x: rect.minX, y: rect.minY + 110, width: rect.width, height: max(0, rect.height - 142))
     return nativeElements().filter { element in
         guard let role = attribute(element, "AXRole") as? String,
             ["AXStaticText", "AXHeading", "AXGroup", "AXDisclosureTriangle"].contains(role) else { return false }
+        if heading && role != "AXHeading" { return false }
         var values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
         if role == "AXGroup", let children = attribute(element, "AXChildren") as? [AXUIElement],
             !children.isEmpty && children.allSatisfy({ attribute($0, "AXRole") as? String == "AXStaticText" }) {
@@ -186,7 +187,7 @@ func nativeTextBounds(_ expected: String) -> [CGRect] {
                 values.append(children.compactMap { attribute($0, "AXValue") as? String }.joined())
             }
         }
-        return values.contains { $0.contains(expected) }
+        return values.contains { heading ? $0 == expected : $0.contains(expected) }
     }.compactMap { nativeBounds($0) }.filter { body.contains($0) }
 }
 func nativeTextIsVisible(_ expected: String) -> Bool { !nativeTextBounds(expected).isEmpty }
@@ -755,13 +756,14 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             "Native Overview size not verified")
     func visibleTextBounds(_ text: String) -> [CGRect] { nativeTextBounds(text) }
     @discardableResult
-    func overviewShot(_ name: String, _ required: [String]) throws -> [VNRecognizedTextObservation] {
+    func overviewShot(_ name: String, _ required: [String], heading: String? = nil) throws -> [VNRecognizedTextObservation] {
         scrollMain(12000)
         for _ in 0..<40 {
-            if required.allSatisfy({ nativeTextIsVisible($0) }) {
-                let anchor = visibleTextBounds(required[0])[0]
+            let anchors = heading.map { nativeTextBounds($0, heading: true) } ?? visibleTextBounds(required[0])
+            if !anchors.isEmpty && required.allSatisfy({ nativeTextIsVisible($0) }) {
+                let anchor = anchors[0]
                 scrollMain(-Int32(max(0, anchor.minY - window()!.1.minY - 150)))
-                require(required.allSatisfy({ nativeTextIsVisible($0) }), "Overview state moved out of view: \(required)")
+                require(required.allSatisfy({ nativeTextIsVisible($0) }) && (heading.map { !nativeTextBounds($0, heading: true).isEmpty } ?? true), "Overview state moved out of view: \(required)")
                 let seen = try capture(name, "Overview")
                 print("PASS \(name): visible native state \(required)")
                 return seen
@@ -835,7 +837,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let noReceipt = try capturePreflight("send-no-agent-receipt", "Checks: unknown")
     clickTab("Overview", noReceipt)
     Thread.sleep(forTimeInterval: 1)
-    try overviewShot("overview-fixture-multiple-places-by-place", ["fixture-secondary", "3 Agents", "Orka Agent"])
+    try overviewShot("overview-fixture-multiple-places-by-place", ["fixture-secondary", "3 Agents", "Orka Agent"], heading: "fixture-secondary")
     let attempt = "fixture-secondary · agents · Checks unknown"
     let attempts = try overviewShot("overview-probe", [attempt])
     clickText(attempt, in: attempts)
@@ -851,7 +853,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try overviewShot("overview-fixture-offline-by-agent", ["fixture-secondary · agents", "Recorded checks passed; observation stale", "Orka Agent · stale"])
     scrollMain(12000)
     clickText("By place", in: try capture("overview-probe", "Overview"))
-    try overviewShot("overview-fixture-offline-by-place", ["fixture-secondary", "Observation stale", "Last seen", "Orka Agent · stale"])
+    try overviewShot("overview-fixture-offline-by-place", ["fixture-secondary", "Observation stale", "Last seen", "Orka Agent · stale"], heading: "fixture-secondary")
     try overviewShot("overview-fixture-offline-record-by-place", ["Recorded checks passed; observation stale", "Orka Agent · stale"])
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false])
     // Keep the existing preflight-only cards out of the focused Overview walk.
