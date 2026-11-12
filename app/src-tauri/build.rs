@@ -29,6 +29,7 @@ fn main() {
             "agent_open",
             "agent_save",
             "cluster_contexts",
+            "cluster_reload",
             "cluster_discover",
             "cluster_use",
             "send_preflight",

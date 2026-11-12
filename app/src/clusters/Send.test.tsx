@@ -212,7 +212,7 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
     if (command === 'setup_requirements') return null;
     if (command === 'cluster_contexts') return [{ id: target.context_id, name: target.context_name }];
     if (command === 'cluster_discover') return [target];
-    if (command === 'cluster_use') return { status: 'connected', providers: [provider, other] };
+    if (command === 'cluster_use') return { status: 'connected', providers: [provider, other], failure: null };
     if (command === 'agent_open') return pair;
     if (command === 'agent_run_status') return idle;
     if (command === 'send_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: null, busy: null };

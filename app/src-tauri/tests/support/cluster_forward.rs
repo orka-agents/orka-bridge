@@ -209,6 +209,19 @@ impl Wire {
                 } else {
                     (200, objects.get(route).unwrap().clone())
                 };
+                if method == "GET"
+                    && mode
+                        .strip_prefix("get-")
+                        .is_some_and(|m| route.ends_with(m))
+                {
+                    status = 401;
+                } else if method == "GET"
+                    && mode
+                        .strip_prefix("deny-")
+                        .is_some_and(|m| route.ends_with(m))
+                {
+                    status = 403;
+                }
                 if method == "POST" {
                     match mode {
                         "401" => {
@@ -292,6 +305,63 @@ fn pair_with_prompt(extra: &str) -> ParsedPair {
     let parsed = captured.into_pair();
     std::fs::write(agent, "changed after capture").unwrap();
     parsed
+}
+#[tokio::test]
+async fn pod_reads_keep_kubernetes_and_orka_status_origins() {
+    let cases = [
+        (
+            "get-whoami",
+            Check::OrkaIdentity,
+            CheckResult::AuthenticationRejected,
+        ),
+        (
+            "deny-whoami",
+            Check::OrkaIdentity,
+            CheckResult::PermissionDenied,
+        ),
+        ("deny-agents", Check::Agents, CheckResult::PermissionDenied),
+        (
+            "get-providers",
+            Check::Providers,
+            CheckResult::AuthenticationRejected,
+        ),
+    ];
+    for (mode, check, result) in cases {
+        let api = Arc::new(ApiFixture::default());
+        *api.wire.mode.lock().unwrap() = mode;
+        let mut client = ClusterClient::new(
+            config(&api.start(), json!({"token":"creator-fixture"})),
+            Arc::new(PodOrkaRead),
+        );
+        let id = target(&mut client).await;
+        assert_eq!(
+            client.connect(id, None).await.err(),
+            Some(failed(check, result)),
+            "{mode}"
+        );
+    }
+    // Opening the Pod stream is the Orka connection check, with Kubernetes' own status.
+    for (code, result) in [
+        (401, CheckResult::AuthenticationRejected),
+        (403, CheckResult::PermissionDenied),
+    ] {
+        let api = Arc::new(ApiFixture::default());
+        let mut client = ClusterClient::new(
+            config(&api.start(), json!({"token":"creator-fixture"})),
+            Arc::new(PodOrkaRead),
+        );
+        let id = target(&mut client).await;
+        *api.override_response.lock().unwrap() = Some((
+            "/pods".into(),
+            code,
+            json!({"kind":"Status","apiVersion":"v1","status":"Failure","message":"creator-fixture","reason":"Fixture","code":code}),
+        ));
+        assert_eq!(
+            client.connect(id, None).await.err(),
+            Some(failed(Check::OrkaConnection, result))
+        );
+        assert_eq!(api.wire.posts(), 0);
+    }
 }
 async fn transport(api: &Arc<ApiFixture>) -> OrkaStreamTransport {
     let (client, access) = access(api).await;

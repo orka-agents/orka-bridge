@@ -117,7 +117,7 @@ test('help buttons select native topics and copying cannot include arbitrary nat
   expect(copy.mock.calls[0][0]).toBe('Bridge AI connection\nOperation: Connecting AI\nCategory: modelCaptureUnavailable');
   invoke.mockRejectedValue('SECRET'); copy.mockRejectedValue('SECRET');
   await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
-  expect(screen.getByRole('status').textContent).toContain("Couldn't copy");
+  expect(screen.getByRole('status').textContent).toContain("Couldn't copy. Share the visible error message for help.");
   await user.click(screen.getByRole('button', { name: 'Sign-in help' }));
   expect(screen.getByRole('status').textContent).toContain("Couldn't open help");
   expect(document.body.textContent).not.toContain('SECRET');

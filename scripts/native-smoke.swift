@@ -101,6 +101,18 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let observations = request.results ?? []
     if name == "send-probe" || name == "cluster-probe" { return observations }
+    if name.hasPrefix("cluster-reload") {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        if name == "cluster-reload-failed" {
+            require(text.contains("kubeconfig could not be read") && text.contains("Copy details"), "Reload failure recovery missing: \(text)")
+        } else if name == "cluster-reload-options" {
+            require(text.contains("fixture-reloaded"), "Corrected kubeconfig context not reread: \(text)")
+        } else {
+            require(!text.contains("Access confirmed") && !text.contains("Orka found"), "Reload retained stale selection: \(text)")
+        }
+        print("PASS \(name): offline native reload, no real credentials")
+        return observations
+    }
     if name == "cluster-conditional" || name == "cluster-denied" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can split the camel-case label even though the native field is present.
@@ -108,7 +120,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         if name == "cluster-conditional" {
             require(accountName && text.contains("existing account in agents"), "Conditional name-only access prompt missing: \(text)")
         } else {
-            require(text.contains("Access was denied") && !accountName, "Denial incorrectly offered identity substitution: \(text)")
+            require(text.contains("Orka identity") && text.contains("Access was denied") && !accountName, "Denial incorrectly offered identity substitution: \(text)")
         }
         print("PASS \(name): native fixture access state, no real credentials")
         return observations
@@ -399,6 +411,43 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         Thread.sleep(forTimeInterval: 1)
         scrollMain(-250)
         try capture(name, "Clusters")
+    }
+    // Change only the CI-owned synthetic kubeconfig, then prove the native session
+    // rereads it and invalidates prior access on both failure and correction.
+    let configURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"]!)
+    let originalConfig = try Data(contentsOf: configURL)
+    func reloadFixture() throws {
+        for _ in 0..<6 {
+            let seen = try capture("cluster-probe", "Clusters")
+            if seen.contains(where: { $0.topCandidates(1).first?.string == "Reload kubeconfig" }) {
+                clickText("Reload kubeconfig", in: seen)
+                Thread.sleep(forTimeInterval: 1)
+                return
+            }
+            scrollMain(-200)
+        }
+        fatalError("Reload kubeconfig control not found")
+    }
+    do {
+        defer { try? originalConfig.write(to: configURL, options: .atomic) }
+        try Data("invalid kubeconfig: [".utf8).write(to: configURL, options: .atomic)
+        try reloadFixture()
+        try capture("cluster-reload-failed", "Clusters")
+        var corrected = try JSONSerialization.jsonObject(with: originalConfig) as! [String: Any]
+        var configuredContexts = corrected["contexts"] as! [[String: Any]]
+        configuredContexts[0]["name"] = "fixture-reloaded"
+        corrected["contexts"] = configuredContexts
+        corrected["current-context"] = "fixture-reloaded"
+        try JSONSerialization.data(withJSONObject: corrected).write(to: configURL, options: .atomic)
+        try reloadFixture()
+        scrollMain(1000)
+        let reread = try capture("cluster-reload-cleared", "Clusters")
+        clickText("kubectl context", in: reread)
+        key(49)
+        try capture("cluster-reload-options", "Clusters")
+        key(53) // Close the native context popup without selecting or using it.
+        try originalConfig.write(to: configURL, options: .atomic)
+        try reloadFixture()
     }
     func capturePreflight(_ name: String, _ expected: String) throws -> [VNRecognizedTextObservation] {
         for _ in 0..<8 {

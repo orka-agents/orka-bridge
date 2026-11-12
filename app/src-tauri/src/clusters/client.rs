@@ -22,9 +22,11 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use tokio::time::Instant;
+use tokio::time::{timeout_at, Instant};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// One discovery or Use, from taking the session lock, including every Provider page.
+const OPERATION_LIMIT: Duration = Duration::from_secs(30);
 #[derive(PartialEq)]
 enum Identity {
     NeedAccount,
@@ -51,12 +53,6 @@ pub struct RemoteAccess {
     providers: Vec<ProviderView>,
 }
 impl ClusterClient {
-    pub fn read(orka: Arc<dyn OrkaRead>) -> Result<Self, ClusterError> {
-        Ok(Self::new(
-            Kubeconfig::read().map_err(|_| ClusterError::Unavailable)?,
-            orka,
-        ))
-    }
     pub fn new(kubeconfig: Kubeconfig, orka: Arc<dyn OrkaRead>) -> Self {
         let contexts = kubeconfig
             .contexts
@@ -80,6 +76,9 @@ impl ClusterClient {
     pub(super) fn exec_owner(&self) -> ExecOwner {
         self.exec.clone()
     }
+    pub(super) fn orka(&self) -> Arc<dyn OrkaRead> {
+        self.orka.clone()
+    }
     pub(super) fn with_exec_owner(mut self, exec: ExecOwner) -> Self {
         self.exec = exec;
         self
@@ -92,31 +91,43 @@ impl ClusterClient {
         context_id: ContextId,
         deadline: Instant,
     ) -> Result<ResolvedCreator, ClusterError> {
+        self.resolve(context_id, deadline)
+            .await
+            .map_err(cluster_error)
+    }
+    async fn resolve(
+        &self,
+        context_id: ContextId,
+        deadline: Instant,
+    ) -> Result<ResolvedCreator, AccessOutcome> {
         let name = &self
             .contexts
             .iter()
             .find(|c| c.id == context_id)
-            .ok_or(ClusterError::Unavailable)?
+            .ok_or(Check::Configuration.unknown())?
             .name;
-        credentials::resolve(&self.kubeconfig, name, deadline, &self.exec)
-            .await
-            .map_err(cluster_error)
+        credentials::resolve(&self.kubeconfig, name, deadline, &self.exec).await
     }
-    pub async fn discover(&mut self, id: ContextId) -> Result<Vec<TargetView>, ClusterError> {
-        let config = self
-            .resolve_creator(id, Instant::now() + REQUEST_TIMEOUT)
+    pub async fn discover(&mut self, id: ContextId) -> Result<Vec<TargetView>, ClusterFailure> {
+        self.discover_targets(id)
+            .await
+            .map_err(|e| e.failure(Check::ClusterApi))
+    }
+    async fn discover_targets(&mut self, id: ContextId) -> Result<Vec<TargetView>, AccessOutcome> {
+        let deadline = Instant::now() + OPERATION_LIMIT;
+        let config = within(deadline, Check::Credentials, self.resolve(id, deadline))
             .await?
             .config;
-        let client = Client::try_from(config.clone()).map_err(|_| ClusterError::Unavailable)?;
+        let client =
+            Client::try_from(config.clone()).map_err(|_| Check::Configuration.unknown())?;
         let name = &self
             .contexts
             .iter()
             .find(|c| c.id == id)
-            .ok_or(ClusterError::Unavailable)?
+            .ok_or(Check::Configuration.unknown())?
             .name;
-        let bindings = installations(client, id, name, &config.cluster_url.to_string())
-            .await
-            .map_err(cluster_error)?;
+        let server = config.cluster_url.to_string();
+        let bindings = installations(client, id, name, &server, deadline).await?;
         let mut views = Vec::new();
         for binding in bindings {
             let target_id = self
@@ -148,24 +159,33 @@ impl ClusterClient {
         binding: &TargetBinding,
         creator: &Client,
     ) -> Result<(), ClusterError> {
-        let config = selected_config(&self.kubeconfig, &binding.context_name, "binding-only")
+        self.check_binding(binding, creator, Instant::now() + OPERATION_LIMIT)
             .await
-            .map_err(cluster_error)?;
+            .map_err(cluster_error)
+    }
+    async fn check_binding(
+        &self,
+        binding: &TargetBinding,
+        creator: &Client,
+        deadline: Instant,
+    ) -> Result<(), AccessOutcome> {
+        let config =
+            selected_config(&self.kubeconfig, &binding.context_name, "binding-only").await?;
         if config.cluster_url.to_string() != binding.server_address {
-            return Err(ClusterError::Unavailable);
+            return Err(Check::Configuration.unknown());
         }
         let bindings = installations(
             creator.clone(),
             binding.context_id,
             &binding.context_name,
             &config.cluster_url.to_string(),
+            deadline,
         )
-        .await
-        .map_err(cluster_error)?;
+        .await?;
         if bindings.contains(binding) {
             Ok(())
         } else {
-            Err(ClusterError::Unavailable)
+            Err(Check::ClusterApi.unknown())
         }
     }
     /// Calling connect is the native Use confirmation; discovery never requests a token.
@@ -174,18 +194,22 @@ impl ClusterClient {
         id: TargetId,
         sa_name: Option<String>,
     ) -> Result<RemoteAccess, AccessOutcome> {
+        use Check::{Agents, Configuration, Credentials, OrkaIdentity, Permissions, Providers};
+        let deadline = Instant::now() + OPERATION_LIMIT;
         if sa_name.as_ref().is_some_and(|s| !dns_subdomain(s)) {
-            return Err(AccessOutcome::Unavailable);
+            return Err(Check::ServiceAccount.unknown());
         }
         let binding = self
             .targets
             .get(&id)
-            .ok_or(AccessOutcome::Unavailable)?
+            .ok_or(Configuration.unknown())?
             .clone();
-        let resolved = self
-            .resolve_creator(binding.context_id, Instant::now() + REQUEST_TIMEOUT)
-            .await
-            .map_err(access_error)?;
+        let resolved = within(
+            deadline,
+            Credentials,
+            self.resolve(binding.context_id, deadline),
+        )
+        .await?;
         let (bearer, expiry) = match resolved.credential {
             Credential::Bearer {
                 value,
@@ -193,7 +217,7 @@ impl ClusterClient {
             } => (value, known_expiry),
             Credential::CertificateOnly => (String::new(), None),
         };
-        let creator = Client::try_from(resolved.config).map_err(|_| AccessOutcome::Unavailable)?;
+        let creator = Client::try_from(resolved.config).map_err(|_| Configuration.unknown())?;
         let mut access = RemoteAccess {
             creator,
             creator_bearer: bearer.clone(),
@@ -203,11 +227,12 @@ impl ClusterClient {
             orka: self.orka.clone(),
             providers: Vec::new(),
         };
-        self.revalidate(&access).await.map_err(access_error)?;
+        self.check_binding(&access.binding, &access.creator, deadline)
+            .await?;
         let mut identity = if access.bearer.is_empty() {
             Identity::NeedAccount
         } else {
-            access.identity().await?
+            within(deadline, OrkaIdentity, access.identity()).await?
         };
         if identity == Identity::NeedAccount {
             let name = sa_name.ok_or(AccessOutcome::NeedServiceAccount)?;
@@ -219,24 +244,30 @@ impl ClusterClient {
                 },
                 ..Default::default()
             };
-            let response = Api::<ServiceAccount>::namespaced(
+            let accounts = Api::<ServiceAccount>::namespaced(
                 access.creator.clone(),
                 &access.binding.watched_namespace,
-            )
-            .create_token_request(&name, &PostParams::default(), &request)
-            .await
-            .map_err(kube_error)?;
-            let status = response.status.ok_or(AccessOutcome::Unavailable)?;
+            );
+            let issue = async {
+                accounts
+                    .create_token_request(&name, &PostParams::default(), &request)
+                    .await
+                    .map_err(|e| kube_error(Check::ServiceAccount, e))
+            };
+            let status = within(deadline, Check::ServiceAccount, issue)
+                .await?
+                .status
+                .ok_or(Check::ServiceAccount.unknown())?;
             if status.token.is_empty()
                 || status.expiration_timestamp.0 <= k8s_openapi::jiff::Timestamp::now()
             {
-                return Err(AccessOutcome::Unavailable);
+                return Err(Check::ServiceAccount.unknown());
             }
             access.bearer = status.token;
             access.expiry = Some(status.expiration_timestamp);
-            identity = access.identity().await?;
+            identity = within(deadline, OrkaIdentity, access.identity()).await?;
             if identity == Identity::NeedAccount {
-                return Err(AccessOutcome::Denied);
+                return Err(OrkaIdentity.fail(CheckResult::IdentityRejected));
             }
         }
         // Even a certificate creator must check permissions as the frozen Orka bearer alone.
@@ -248,11 +279,16 @@ impl ClusterClient {
             )
             .await?;
             let token_client =
-                Client::try_from(token_config).map_err(|_| AccessOutcome::Unavailable)?;
-            permissions(token_client, &access.binding.watched_namespace).await?;
+                Client::try_from(token_config).map_err(|_| Configuration.unknown())?;
+            let review = permissions(token_client, &access.binding.watched_namespace);
+            within(deadline, Permissions, review).await?;
         }
-        access.read(OrkaResource::Agents, None).await?;
-        for (name, ready) in access.configured_providers(&*access.orka).await? {
+        let agents = within(deadline, Agents, access.read(OrkaResource::Agents, None)).await?;
+        if !agents["items"].is_array() {
+            return Err(Agents.unknown());
+        }
+        let providers = access.configured_providers(&*access.orka);
+        for (name, ready) in within(deadline, Providers, providers).await? {
             access.providers.push(ProviderView {
                 id: ProviderId(Uuid::new_v4()),
                 name,
@@ -260,7 +296,7 @@ impl ClusterClient {
             });
         }
         if access.providers.is_empty() {
-            return Err(AccessOutcome::Unavailable);
+            return Err(Providers.fail(CheckResult::NoProviders));
         }
         Ok(access)
     }
@@ -285,6 +321,7 @@ impl RemoteAccess {
         resource: OrkaResource,
         after: Option<&str>,
     ) -> Result<Value, AccessOutcome> {
+        let check = resource.check();
         let value = tokio::time::timeout(
             REQUEST_TIMEOUT,
             orka.get(
@@ -297,15 +334,13 @@ impl RemoteAccess {
             ),
         )
         .await
-        .map_err(|_| AccessOutcome::Unavailable)??;
-        if serde_json::to_vec(&value)
-            .map_err(|_| AccessOutcome::Unavailable)?
-            .len()
-            > 1024 * 1024
+        .map_err(|_| check.unknown())?
+        .map_err(|e| e.at(check))?;
+        if serde_json::to_vec(&value).map_or(true, |v| v.len() > 1024 * 1024)
             || echoed(&value, &self.bearer)
             || echoed(&value, &self.creator_bearer)
         {
-            return Err(AccessOutcome::Unavailable);
+            return Err(check.unknown());
         }
         Ok(value)
     }
@@ -314,19 +349,24 @@ impl RemoteAccess {
     }
     async fn identity_via(&self, orka: &dyn OrkaRead) -> Result<Identity, AccessOutcome> {
         let identity = self.read_via(orka, OrkaResource::WhoAmI, None).await?;
-        if identity["authenticated"] != true {
-            return Err(AccessOutcome::Denied);
+        let rejected = Check::OrkaIdentity.fail(CheckResult::IdentityRejected);
+        match identity["authenticated"].as_bool() {
+            Some(true) => {}
+            Some(false) => return Err(rejected),
+            None => return Err(Check::OrkaIdentity.unknown()),
         }
-        let ns = identity["namespace"]
-            .as_str()
-            .ok_or(AccessOutcome::Unavailable)?;
-        match identity["authType"].as_str() {
-            Some("tokenReview") if ns.is_empty() => Ok(Identity::NeedAccount),
-            Some("tokenReview") if ns == self.binding.watched_namespace => {
-                Ok(Identity::TokenReview)
-            }
-            Some("oidc") if ns == self.binding.watched_namespace => Ok(Identity::Oidc),
-            _ => Err(AccessOutcome::Denied),
+        // A malformed reply is unknown, never an identity rejection.
+        let (Some(ns), Some(auth)) = (
+            identity["namespace"].as_str(),
+            identity["authType"].as_str(),
+        ) else {
+            return Err(Check::OrkaIdentity.unknown());
+        };
+        match auth {
+            "tokenReview" if ns.is_empty() => Ok(Identity::NeedAccount),
+            "tokenReview" if ns == self.binding.watched_namespace => Ok(Identity::TokenReview),
+            "oidc" if ns == self.binding.watched_namespace => Ok(Identity::Oidc),
+            _ => Err(rejected),
         }
     }
     pub(super) async fn configured_providers(
@@ -424,15 +464,22 @@ async fn installations(
     context_id: ContextId,
     context_name: &str,
     server: &str,
+    deadline: Instant,
 ) -> Result<Vec<TargetBinding>, AccessOutcome> {
-    let services = Api::<Service>::all(client.clone())
-        .list(&ListParams::default())
-        .await
-        .map_err(kube_error)?;
-    let deployments = Api::<Deployment>::all(client.clone())
-        .list(&ListParams::default())
-        .await
-        .map_err(kube_error)?;
+    let services = within(deadline, Check::ClusterApi, async {
+        Api::<Service>::all(client.clone())
+            .list(&ListParams::default())
+            .await
+            .map_err(|e| kube_error(Check::ClusterApi, e))
+    })
+    .await?;
+    let deployments = within(deadline, Check::ClusterApi, async {
+        Api::<Deployment>::all(client.clone())
+            .list(&ListParams::default())
+            .await
+            .map_err(|e| kube_error(Check::ClusterApi, e))
+    })
+    .await?;
     let mut bindings = Vec::new();
     for service in services {
         let Some(spec) = &service.spec else {
@@ -495,12 +542,13 @@ async fn installations(
                             .flatten()
                     })
                 });
+                let incompatible = Check::Compatibility.fail(CheckResult::Incompatible);
                 let namespace = watched
                     .next()
                     .filter(|s| dns_label(s))
-                    .ok_or(AccessOutcome::Unavailable)?;
+                    .ok_or(incompatible)?;
                 if watched.next().is_some() {
-                    return Err(AccessOutcome::Unavailable);
+                    return Err(incompatible);
                 }
                 let target_port = match &port.target_port {
                     Some(IntOrString::Int(n)) => *n,
@@ -540,10 +588,13 @@ async fn installations(
     }
     if !bindings.is_empty() {
         for resource in ["agents", "tasks", "providers", "tools"] {
-            let crd = Api::<CustomResourceDefinition>::all(client.clone())
-                .get(&format!("{resource}.core.orka.ai"))
-                .await
-                .map_err(kube_error)?;
+            let crd = within(deadline, Check::Compatibility, async {
+                Api::<CustomResourceDefinition>::all(client.clone())
+                    .get(&format!("{resource}.core.orka.ai"))
+                    .await
+                    .map_err(|e| kube_error(Check::Compatibility, e))
+            })
+            .await?;
             if crd.spec.group != "core.orka.ai"
                 || crd.spec.scope != "Namespaced"
                 || crd.spec.names.plural != resource
@@ -557,7 +608,7 @@ async fn installations(
                             .is_some_and(|s| super::preflight::supports_schema(resource, &s))
                 })
             {
-                return Err(AccessOutcome::Unavailable);
+                return Err(Check::Compatibility.fail(CheckResult::Incompatible));
             }
         }
     }
@@ -587,7 +638,7 @@ async fn permissions(client: Client, namespace: &str) -> Result<(), AccessOutcom
             let result = Api::<SelfSubjectAccessReview>::all(client.clone())
                 .create(&PostParams::default(), &review)
                 .await
-                .map_err(kube_error)?;
+                .map_err(|e| kube_error(Check::Permissions, e))?;
             let status = result.status.ok_or(AccessOutcome::Unavailable)?;
             if status
                 .evaluation_error
@@ -597,7 +648,7 @@ async fn permissions(client: Client, namespace: &str) -> Result<(), AccessOutcom
                 return Err(AccessOutcome::Unavailable);
             }
             if !status.allowed || status.denied == Some(true) {
-                return Err(AccessOutcome::Denied);
+                return Err(Check::Permissions.fail(CheckResult::PermissionDenied));
             }
         }
     }
@@ -641,23 +692,54 @@ pub(super) fn echoed(value: &Value, bearer: &str) -> bool {
         _ => false,
     }
 }
-fn kube_error(error: kube::Error) -> AccessOutcome {
-    match error {
-        kube::Error::Api(e) if e.code == 401 || e.code == 403 => AccessOutcome::Denied,
-        _ => AccessOutcome::Unavailable,
+/// Bounds one check by the shared operation deadline; a timeout is unknown at that check.
+async fn within<T>(
+    deadline: Instant,
+    check: Check,
+    work: impl std::future::Future<Output = Result<T, AccessOutcome>>,
+) -> Result<T, AccessOutcome> {
+    timeout_at(deadline, work)
+        .await
+        .unwrap_or(Err(check.unknown()))
+        .map_err(|e| e.at(check))
+}
+fn kube_error(check: Check, error: kube::Error) -> AccessOutcome {
+    check.fail(match &error {
+        kube::Error::Api(e) if e.code == 401 => CheckResult::AuthenticationRejected,
+        kube::Error::Api(e) if e.code == 403 => CheckResult::PermissionDenied,
+        kube::Error::Api(e) if e.code == 404 && check == Check::Compatibility => {
+            CheckResult::Incompatible
+        }
+        _ if connection_failed(&error) => CheckResult::ConnectionFailed,
+        _ => CheckResult::Unknown,
+    })
+}
+/// Only an OS-reported connection error counts; DNS, TLS and timeouts stay unknown.
+fn connection_failed(error: &(dyn std::error::Error + 'static)) -> bool {
+    use std::io::ErrorKind::*;
+    let mut source = Some(error);
+    while let Some(error) = source {
+        if error.downcast_ref::<std::io::Error>().is_some_and(|e| {
+            matches!(
+                e.kind(),
+                ConnectionRefused
+                    | ConnectionReset
+                    | ConnectionAborted
+                    | HostUnreachable
+                    | NetworkUnreachable
+            )
+        }) {
+            return true;
+        }
+        source = error.source();
     }
+    false
 }
 fn cluster_error(error: AccessOutcome) -> ClusterError {
     match error {
         AccessOutcome::Denied => ClusterError::Denied,
         AccessOutcome::UnsupportedCredential => ClusterError::UnsupportedCredential,
+        AccessOutcome::Failed(failure) => failure.legacy(),
         _ => ClusterError::Unavailable,
-    }
-}
-fn access_error(error: ClusterError) -> AccessOutcome {
-    match error {
-        ClusterError::Denied => AccessOutcome::Denied,
-        ClusterError::UnsupportedCredential => AccessOutcome::UnsupportedCredential,
-        _ => AccessOutcome::Unavailable,
     }
 }

@@ -143,7 +143,7 @@ async fn command_unsupported_discovery_remains_distinct() {
     let error = session.discover(&id).await.unwrap_err();
     assert_eq!(
         serde_json::to_value(error).unwrap(),
-        "unsupportedCredential"
+        json!({"check":"credentials","result":"unsupportedCredential"})
     );
     assert!(api.calls.lock().unwrap().is_empty());
 }
@@ -190,6 +190,7 @@ fn send_schema(resource: &str) -> Value {
 }
 
 type ImpersonatedRequest = (String, Vec<(String, String)>);
+type GateStep = (String, std::sync::mpsc::Sender<()>);
 #[derive(Default)]
 struct ApiFixture {
     wire: forward::Wire,
@@ -200,8 +201,9 @@ struct ApiFixture {
     no_watch: Mutex<bool>,
     unrelated_api: Mutex<bool>,
     override_response: Mutex<Option<(String, u16, Value)>>,
-    // Holds one Service list open, so a test can keep discovery's session lock.
+    // Hold an individual check open to exercise lock queuing and deadline labels.
     gate: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+    step_gate: Mutex<Option<std::sync::mpsc::Sender<GateStep>>>,
 }
 impl ApiFixture {
     fn start(self: &Arc<Self>) -> String {
@@ -271,13 +273,28 @@ impl ApiFixture {
                     ));
                     let (status, response) = fixture.response(path.split('?').next().unwrap());
                     let body = response.to_string();
-                    write!(stream, "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                    let reply = write!(stream, "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                    // A deadline test deliberately drops the gated request before its reply.
+                    assert!(
+                        reply.is_ok()
+                            || reply.err().is_some_and(|e| matches!(
+                                e.kind(),
+                                std::io::ErrorKind::BrokenPipe
+                                    | std::io::ErrorKind::ConnectionReset
+                            ))
+                    );
                 });
             }
         });
         address
     }
     fn response(&self, path: &str) -> (u16, Value) {
+        if let Some(gate) = self.step_gate.lock().unwrap().as_ref() {
+            let (release, wait) = std::sync::mpsc::channel();
+            if gate.send((path.into(), release)).is_ok() {
+                let _ = wait.recv();
+            }
+        }
         if let Some((suffix, status, body)) = self.override_response.lock().unwrap().as_ref() {
             if path.ends_with(suffix) {
                 return (*status, body.clone());
@@ -353,8 +370,12 @@ type OrkaCall = (OrkaResource, String, String, Option<String>);
 struct OrkaFixture {
     calls: Mutex<Vec<OrkaCall>>,
     providers: Mutex<Option<Value>>,
+    agents: Mutex<Option<Value>>,
     identity: Mutex<Value>,
     fail: Mutex<Option<AccessOutcome>>,
+    fail_at: Mutex<Option<(OrkaResource, AccessOutcome)>>,
+    // Endless Provider pages, each slower than a third of the operation budget.
+    slow_pages: Mutex<bool>,
     echo: Mutex<bool>,
     paged: Mutex<bool>,
 }
@@ -363,10 +384,13 @@ impl Default for OrkaFixture {
         Self {
             calls: Mutex::default(),
             providers: Mutex::new(None),
+            agents: Mutex::new(None),
             identity: Mutex::new(
                 json!({"authenticated":true,"authType":"tokenReview","namespace":"agents"}),
             ),
             fail: Mutex::new(None),
+            fail_at: Mutex::new(None),
+            slow_pages: Mutex::new(false),
             echo: Mutex::new(false),
             paged: Mutex::new(false),
         }
@@ -392,6 +416,16 @@ impl OrkaRead for OrkaFixture {
             if let Some(error) = *self.fail.lock().unwrap() {
                 return Err(error);
             }
+            if let Some((at, error)) = *self.fail_at.lock().unwrap() {
+                if at == resource {
+                    return Err(error);
+                }
+            }
+            if resource == OrkaResource::Providers && *self.slow_pages.lock().unwrap() {
+                tokio::time::sleep(std::time::Duration::from_secs(9)).await;
+                let next = format!("page-{}", self.calls.lock().unwrap().len());
+                return Ok(json!({"items":[],"metadata":{"continue":next}}));
+            }
             if *self.echo.lock().unwrap() {
                 return Ok(json!({"echo":bearer}));
             }
@@ -407,10 +441,16 @@ impl OrkaRead for OrkaFixture {
                 OrkaResource::Tools => {
                     json!({"items":[{"name":"web_fetch","builtin":true}],"metadata":{}})
                 }
-                OrkaResource::Agents => json!({"items":[],"metadata":{}}),
+                OrkaResource::Agents => self.agents.lock().unwrap().clone().unwrap_or_else(|| json!({"items":[],"metadata":{}})),
             })
         })
     }
+}
+fn failure(check: Check, result: CheckResult) -> ClusterFailure {
+    ClusterFailure { check, result }
+}
+fn failed(check: Check, result: CheckResult) -> AccessOutcome {
+    AccessOutcome::Failed(failure(check, result))
 }
 fn config(server: &str, auth: Value) -> Kubeconfig {
     serde_json::from_value(json!({"apiVersion":"v1","kind":"Config","current-context":"wrong","clusters":[{"name":"fixture","cluster":{"server":server}}],"users":[{"name":"user","user":auth}],"contexts":[{"name":"selected","context":{"cluster":"fixture","user":"user"}},{"name":"exec","context":{"cluster":"fixture","user":"helper"}}]})).unwrap()
@@ -434,10 +474,10 @@ async fn creator_bearer_echo_after_serviceaccount_fallback_is_not_exported() {
     );
     let mut client = client(&api, &orka, json!({"token":"creator-fixture"}));
     let id = target(&mut client).await;
-    assert!(matches!(
-        client.connect(id, Some("existing".into())).await,
-        Err(AccessOutcome::Unavailable)
-    ));
+    assert_eq!(
+        client.connect(id, Some("existing".into())).await.err(),
+        Some(failed(Check::Providers, CheckResult::Unknown))
+    );
     let calls = api.calls.lock().unwrap();
     assert_eq!(calls.iter().filter(|c| c.1.ends_with("/token")).count(), 1);
     assert!(calls.iter().all(|c| c.0 == "GET"
@@ -467,10 +507,10 @@ async fn omitted_provider_readiness_is_false_beside_a_ready_provider() {
     *orka.providers.lock().unwrap() = Some(
         json!({"items":[{"metadata":{"name":"invalid","namespace":"agents"},"status":{"ready":"false"}}],"metadata":{"continue":null}}),
     );
-    assert!(matches!(
-        client.connect(id, None).await,
-        Err(AccessOutcome::Unavailable)
-    ));
+    assert_eq!(
+        client.connect(id, None).await.err(),
+        Some(failed(Check::Providers, CheckResult::Unknown))
+    );
 }
 
 #[tokio::test]
@@ -529,7 +569,7 @@ async fn missing_watch_namespace_is_not_guessed() {
     let id = client.contexts().unwrap()[0].id;
     assert_eq!(
         client.discover(id).await.err(),
-        Some(ClusterError::Unavailable)
+        Some(failure(Check::Compatibility, CheckResult::Incompatible))
     );
 }
 #[tokio::test]
@@ -574,10 +614,11 @@ async fn oidc_no_sar_and_denial_does_not_substitute_identity() {
     let id = target(&mut client).await;
     client.connect(id, None).await.unwrap();
     assert!(api.calls.lock().unwrap().iter().all(|c| c.0 == "GET"));
-    *orka.fail.lock().unwrap() = Some(AccessOutcome::Denied);
+    let rejected = failed(Check::OrkaIdentity, CheckResult::AuthenticationRejected);
+    *orka.fail.lock().unwrap() = Some(rejected);
     assert_eq!(
         client.connect(id, Some("existing".into())).await.err(),
-        Some(AccessOutcome::Denied)
+        Some(rejected)
     );
     assert!(!api
         .calls
@@ -634,7 +675,7 @@ async fn sa_name_not_uri_no_request() {
     ] {
         assert_eq!(
             client.connect(id, Some(bad.into())).await.err(),
-            Some(AccessOutcome::Unavailable)
+            Some(failed(Check::ServiceAccount, CheckResult::Unknown))
         );
     }
     assert_eq!(api.calls.lock().unwrap().len(), before);
@@ -652,7 +693,7 @@ async fn denied_create_reports_denied_no_product_post() {
     let id = target(&mut client).await;
     assert_eq!(
         client.connect(id, None).await.err(),
-        Some(AccessOutcome::Denied)
+        Some(failed(Check::Permissions, CheckResult::PermissionDenied))
     );
     assert!(api
         .calls
@@ -669,7 +710,10 @@ async fn effective_exec_visible_but_unavailable_and_credential_echo_not_exported
     let id = client.contexts().unwrap()[0].id;
     assert_eq!(
         client.discover(id).await.err(),
-        Some(ClusterError::UnsupportedCredential)
+        Some(failure(
+            Check::Credentials,
+            CheckResult::UnsupportedCredential
+        ))
     );
     assert!(api.calls.lock().unwrap().is_empty());
     let mut client = ClusterClient::new(
@@ -679,7 +723,10 @@ async fn effective_exec_visible_but_unavailable_and_credential_echo_not_exported
     let id = target(&mut client).await;
     *orka.echo.lock().unwrap() = true;
     let result = client.connect(id, None).await;
-    assert_eq!(result.err(), Some(AccessOutcome::Unavailable));
+    assert_eq!(
+        result.err(),
+        Some(failed(Check::OrkaIdentity, CheckResult::Unknown))
+    );
 }
 #[tokio::test]
 async fn exec_creator_preserves_impersonation_but_ssar_is_token_only() {
@@ -830,7 +877,10 @@ async fn certificate_creator_existing_sa_and_issued_ssar_has_no_creator_tls_cert
     let exec_id = exec_client.contexts().unwrap()[0].id;
     assert_eq!(
         exec_client.discover(exec_id).await.err(),
-        Some(ClusterError::UnsupportedCredential)
+        Some(failure(
+            Check::Credentials,
+            CheckResult::UnsupportedCredential
+        ))
     );
     assert!(api.calls.lock().unwrap().is_empty());
     let mut client = ClusterClient::new(cfg, orka.clone());
@@ -893,7 +943,10 @@ async fn stronger_credentials_do_not_run_exec_or_auth_provider_helpers() {
         let id = client.contexts().unwrap()[0].id;
         assert_eq!(
             client.discover(id).await.err(),
-            Some(ClusterError::UnsupportedCredential)
+            Some(failure(
+                Check::Credentials,
+                CheckResult::UnsupportedCredential
+            ))
         );
     }
     assert!(api.calls.lock().unwrap().is_empty());
@@ -993,7 +1046,7 @@ async fn ssar_http_403_is_denied_and_tokenrequest_503_is_not_retried() {
     ));
     assert_eq!(
         client.connect(id, None).await.err(),
-        Some(AccessOutcome::Denied)
+        Some(failed(Check::Permissions, CheckResult::PermissionDenied))
     );
     *orka.identity.lock().unwrap() =
         json!({"authenticated":true,"authType":"tokenReview","namespace":""});
@@ -1004,7 +1057,7 @@ async fn ssar_http_403_is_denied_and_tokenrequest_503_is_not_retried() {
     ));
     assert_eq!(
         client.connect(id, Some("existing".into())).await.err(),
-        Some(AccessOutcome::Unavailable)
+        Some(failed(Check::ServiceAccount, CheckResult::Unknown))
     );
     assert_eq!(
         api.calls
@@ -1041,6 +1094,448 @@ async fn binding_changed_before_access_and_missing_builtin_cannot_pass() {
     *api.replacement.lock().unwrap() = true;
     assert_eq!(
         client.connect(id, None).await.err(),
-        Some(AccessOutcome::Unavailable)
+        Some(failed(Check::ClusterApi, CheckResult::Unknown))
     );
+}
+
+type Fresh = Arc<Mutex<Option<Kubeconfig>>>;
+fn reading_session(
+    cfg: Kubeconfig,
+    orka: &Arc<OrkaFixture>,
+) -> (bridge_engine::clusters::commands::ClusterSession, Fresh) {
+    let fresh: Fresh = Arc::new(Mutex::new(Some(cfg.clone())));
+    let reader = {
+        let fresh = fresh.clone();
+        Arc::new(move || {
+            fresh
+                .lock()
+                .unwrap()
+                .clone()
+                .ok_or(ClusterError::Unavailable)
+        })
+    };
+    let session = bridge_engine::clusters::commands::ClusterSession::with_reader(
+        ClusterClient::new(cfg, orka.clone()),
+        reader,
+    );
+    (session, fresh)
+}
+fn id_of(value: impl serde::Serialize) -> String {
+    serde_json::to_value(value).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+fn reply(value: impl serde::Serialize) -> Value {
+    serde_json::to_value(value).unwrap()
+}
+async fn until(done: impl Fn() -> bool) {
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while !done() {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("condition was not reached");
+}
+fn stale() -> Value {
+    json!({"check":"configuration","result":"unknown"})
+}
+
+#[tokio::test]
+async fn reload_rereads_corrected_config_and_invalidates_old_ids_offline() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let cfg = config(&api.start(), json!({"token":"static-fixture"}));
+    let (session, fresh) = reading_session(cfg.clone(), &orka);
+    let old = session.contexts().await.unwrap();
+    let old_ids: Vec<_> = old.iter().map(id_of).collect();
+    let old_target = id_of(&session.discover(&old_ids[0]).await.unwrap()[0]);
+    let used = reply(session.use_target(&old_target, None).await);
+    assert_eq!(used["status"], "connected");
+    assert_eq!(used["failure"], Value::Null);
+    let mut corrected = cfg;
+    corrected.contexts[0].name = "corrected".into();
+    *fresh.lock().unwrap() = Some(corrected);
+    let calls = (
+        api.calls.lock().unwrap().len(),
+        orka.calls.lock().unwrap().len(),
+    );
+    let reloaded = session.reload().await.unwrap();
+    assert_eq!(
+        reloaded.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+        ["corrected", "exec"]
+    );
+    assert!(reloaded.iter().all(|c| !old_ids.contains(&id_of(c))));
+    // Old IDs and confirmed access are gone; reload reached neither the cluster nor Orka.
+    assert_eq!(
+        reply(session.discover(&old_ids[0]).await.unwrap_err()),
+        stale()
+    );
+    let old_use = reply(session.use_target(&old_target, None).await);
+    assert_eq!(old_use["status"], "unavailable");
+    assert_eq!(old_use["failure"], stale());
+    assert_eq!(
+        (
+            api.calls.lock().unwrap().len(),
+            orka.calls.lock().unwrap().len()
+        ),
+        calls
+    );
+    // An explicit new selection and Use are required.
+    let target = id_of(&session.discover(&id_of(&reloaded[0])).await.unwrap()[0]);
+    assert_ne!(target, old_target);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+}
+
+#[tokio::test]
+async fn failed_reload_invalidates_and_keeps_the_injected_orka_reader() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let cfg = config(&api.start(), json!({"token":"static-fixture"}));
+    let (session, fresh) = reading_session(cfg.clone(), &orka);
+    let old_context = id_of(&session.contexts().await.unwrap()[0]);
+    let old_target = id_of(&session.discover(&old_context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&old_target, None).await)["status"],
+        "connected"
+    );
+    *fresh.lock().unwrap() = None;
+    let calls = api.calls.lock().unwrap().len();
+    assert_eq!(reply(session.reload().await.unwrap_err()), stale());
+    assert_eq!(
+        reply(session.discover(&old_context).await.unwrap_err()),
+        stale()
+    );
+    assert_eq!(
+        reply(session.use_target(&old_target, None).await)["failure"],
+        stale()
+    );
+    assert_eq!(reply(session.contexts().await.unwrap_err()), stale());
+    assert_eq!(api.calls.lock().unwrap().len(), calls);
+    *fresh.lock().unwrap() = Some(cfg);
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    assert_ne!(context, old_context);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    let orka_calls = orka.calls.lock().unwrap().len();
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    assert!(orka.calls.lock().unwrap().len() > orka_calls);
+}
+
+#[tokio::test]
+async fn reload_waits_for_discovery_and_use_and_late_replies_are_stale() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let (session, _fresh) = reading_session(
+        config(&api.start(), json!({"token":"static-fixture"})),
+        &orka,
+    );
+    let services = || {
+        let calls = api.calls.lock().unwrap();
+        calls.iter().filter(|c| c.1.ends_with("/services")).count()
+    };
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let (release, gate) = std::sync::mpsc::channel();
+    *api.gate.lock().unwrap() = Some(gate);
+    let discovery = tokio::spawn({
+        let session = session.clone();
+        async move { session.discover(&context).await }
+    });
+    until(|| services() == 1).await;
+    let reload = tokio::spawn({
+        let session = session.clone();
+        async move { session.reload().await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!reload.is_finished(), "reload must queue behind discovery");
+    release.send(()).unwrap();
+    let late = id_of(&discovery.await.unwrap().unwrap()[0]);
+    let contexts = reload.await.unwrap().unwrap();
+    assert_eq!(
+        reply(session.use_target(&late, None).await)["failure"],
+        stale()
+    );
+
+    let target = id_of(&session.discover(&id_of(&contexts[0])).await.unwrap()[0]);
+    let (release, gate) = std::sync::mpsc::channel();
+    *api.gate.lock().unwrap() = Some(gate);
+    let before = services();
+    let using = tokio::spawn({
+        let session = session.clone();
+        let target = target.clone();
+        async move { reply(session.use_target(&target, None).await) }
+    });
+    until(|| services() > before).await;
+    let reload = tokio::spawn({
+        let session = session.clone();
+        async move { session.reload().await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!reload.is_finished(), "reload must queue behind Use");
+    release.send(()).unwrap();
+    assert_eq!(using.await.unwrap()["status"], "connected");
+    reload.await.unwrap().unwrap();
+    // The access confirmed just before reload is no longer selectable.
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["failure"],
+        stale()
+    );
+}
+
+#[tokio::test]
+async fn reload_never_runs_the_plugin_and_keeps_its_shutdown_owner() {
+    let api = Arc::new(ApiFixture::default());
+    let dir = tempfile::tempdir().unwrap();
+    let count = dir.path().join("calls");
+    let version = "client.authentication.k8s.io/v1";
+    let mut response = credential_fixture::response(version);
+    response["status"]["token"] = json!("creator-fixture");
+    let mut auth = credential_fixture::exec(version, response);
+    auth["exec"]["env"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"name":"RECORD_FILE","value":count}));
+    let (session, _fresh) = reading_session(
+        config(&api.start(), auth),
+        &Arc::new(OrkaFixture::default()),
+    );
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    session.discover(&context).await.unwrap();
+    assert_eq!(std::fs::read(&count).unwrap().len(), 1);
+    let contexts = session.reload().await.unwrap();
+    assert_eq!(std::fs::read(&count).unwrap().len(), 1);
+    // The retained owner still refuses plugin work after app shutdown.
+    session.shutdown().await;
+    assert_eq!(
+        reply(session.discover(&id_of(&contexts[0])).await.unwrap_err()),
+        json!({"check":"credentials","result":"unknown"})
+    );
+    assert_eq!(std::fs::read(&count).unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn discovery_reports_its_first_failed_check() {
+    let orka = Arc::new(OrkaFixture::default());
+    for (suffix, code, check, result) in [
+        (
+            "/services",
+            401,
+            Check::ClusterApi,
+            CheckResult::AuthenticationRejected,
+        ),
+        (
+            "/services",
+            403,
+            Check::ClusterApi,
+            CheckResult::PermissionDenied,
+        ),
+        ("/deployments", 500, Check::ClusterApi, CheckResult::Unknown),
+        (
+            "agents.core.orka.ai",
+            404,
+            Check::Compatibility,
+            CheckResult::Incompatible,
+        ),
+        (
+            "tools.core.orka.ai",
+            403,
+            Check::Compatibility,
+            CheckResult::PermissionDenied,
+        ),
+    ] {
+        let api = Arc::new(ApiFixture::default());
+        *api.override_response.lock().unwrap() = Some((
+            suffix.into(),
+            code,
+            json!({"kind":"Status","apiVersion":"v1","status":"Failure","message":"static-fixture","reason":"Fixture","code":code}),
+        ));
+        let mut client = client(&api, &orka, json!({"token":"static-fixture"}));
+        let id = client.contexts().unwrap()[0].id;
+        assert_eq!(
+            client.discover(id).await.err(),
+            Some(failure(check, result)),
+            "{suffix} {code}"
+        );
+    }
+    // A refused connection is established as such; it is not a permission problem.
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    let server = format!("http://{}", closed.local_addr().unwrap());
+    drop(closed);
+    let mut client = ClusterClient::new(config(&server, json!({"token":"static-fixture"})), orka);
+    let id = client.contexts().unwrap()[0].id;
+    assert_eq!(
+        client.discover(id).await.err(),
+        Some(failure(Check::ClusterApi, CheckResult::ConnectionFailed))
+    );
+}
+
+#[tokio::test]
+async fn discovery_deadline_keeps_the_compatibility_check_in_progress() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let mut client = client(&api, &orka, json!({"token":"static-fixture"}));
+    let id = client.contexts().unwrap()[0].id;
+    let (steps, received) = std::sync::mpsc::channel();
+    *api.step_gate.lock().unwrap() = Some(steps);
+    tokio::time::pause();
+    let task = tokio::spawn(async move { client.discover(id).await });
+    let mut last_release = None;
+    for stage in 0..4 {
+        let (path, release) = loop {
+            if let Ok(step) = received.try_recv() {
+                break step;
+            }
+            tokio::task::yield_now().await;
+        };
+        if stage == 3 {
+            assert!(path.contains("/customresourcedefinitions/"));
+        }
+        tokio::time::advance(std::time::Duration::from_secs(if stage == 3 {
+            4
+        } else {
+            9
+        }))
+        .await;
+        if stage == 3 {
+            last_release = Some(release);
+        } else {
+            let _ = release.send(());
+        }
+    }
+    let result = task.await.unwrap();
+    let _ = last_release.unwrap().send(());
+    assert_eq!(
+        result.err(),
+        Some(failure(Check::Compatibility, CheckResult::Unknown))
+    );
+}
+
+type Arrange = fn(&ApiFixture, &OrkaFixture);
+#[tokio::test]
+async fn use_keeps_kubernetes_permission_apart_from_orka_identity() {
+    let cases: [(Arrange, Check, CheckResult); 9] = [
+        (
+            |_, orka| {
+                *orka.identity.lock().unwrap() = json!({"authType":"oidc","namespace":"agents"})
+            },
+            Check::OrkaIdentity,
+            CheckResult::Unknown,
+        ),
+        (
+            |_, orka| {
+                *orka.identity.lock().unwrap() =
+                    json!({"authenticated":"true","authType":"oidc","namespace":"agents"})
+            },
+            Check::OrkaIdentity,
+            CheckResult::Unknown,
+        ),
+        (
+            |_, orka| *orka.agents.lock().unwrap() = Some(json!({"items":"not-an-array"})),
+            Check::Agents,
+            CheckResult::Unknown,
+        ),
+        (
+            |api, _| {
+                *api.override_response.lock().unwrap() = Some((
+                    "/selfsubjectaccessreviews".into(),
+                    200,
+                    json!({"apiVersion":"authorization.k8s.io/v1","kind":"SelfSubjectAccessReview","spec":{},"status":{"allowed":false,"evaluationError":"static-fixture"}}),
+                ))
+            },
+            Check::Permissions,
+            CheckResult::Unknown,
+        ),
+        (
+            |_, orka| *orka.identity.lock().unwrap() = json!({"authenticated":false}),
+            Check::OrkaIdentity,
+            CheckResult::IdentityRejected,
+        ),
+        (
+            |_, orka| {
+                *orka.identity.lock().unwrap() =
+                    json!({"authenticated":true,"authType":"tokenReview","namespace":"other"})
+            },
+            Check::OrkaIdentity,
+            CheckResult::IdentityRejected,
+        ),
+        (
+            |_, orka| {
+                *orka.identity.lock().unwrap() =
+                    json!({"authenticated":true,"authType":7,"namespace":"agents"})
+            },
+            Check::OrkaIdentity,
+            CheckResult::Unknown,
+        ),
+        (
+            |_, orka| {
+                *orka.identity.lock().unwrap() =
+                    json!({"authenticated":true,"authType":"tokenReview"})
+            },
+            Check::OrkaIdentity,
+            CheckResult::Unknown,
+        ),
+        (
+            |_, orka| *orka.providers.lock().unwrap() = Some(json!({"items":[],"metadata":{}})),
+            Check::Providers,
+            CheckResult::NoProviders,
+        ),
+    ];
+    for (i, (arrange, check, result)) in cases.into_iter().enumerate() {
+        let api = Arc::new(ApiFixture::default());
+        let orka = Arc::new(OrkaFixture::default());
+        let (session, _fresh) = reading_session(
+            config(&api.start(), json!({"token":"static-fixture"})),
+            &orka,
+        );
+        let context = id_of(&session.contexts().await.unwrap()[0]);
+        let target = id_of(&session.discover(&context).await.unwrap()[0]);
+        arrange(&api, &orka);
+        let view = reply(session.use_target(&target, None).await);
+        assert_eq!(view["failure"], reply(failure(check, result)), "case {i}");
+        let status = match result {
+            CheckResult::IdentityRejected => "denied",
+            _ => "unavailable",
+        };
+        assert_eq!(view["status"], status, "case {i}");
+        assert_eq!(api.wire.posts(), 0);
+    }
+}
+
+#[tokio::test]
+async fn need_service_account_has_no_failure() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    *orka.identity.lock().unwrap() =
+        json!({"authenticated":true,"authType":"tokenReview","namespace":""});
+    let (session, _fresh) = reading_session(
+        config(&api.start(), json!({"token":"static-fixture"})),
+        &orka,
+    );
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    let view = reply(session.use_target(&target, None).await);
+    assert_eq!(view["status"], "needServiceAccount");
+    assert_eq!(view["failure"], Value::Null);
+}
+
+#[tokio::test]
+async fn use_deadline_is_unknown_at_the_provider_page_in_progress() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let mut client = client(&api, &orka, json!({"token":"static-fixture"}));
+    let id = target(&mut client).await;
+    *orka.slow_pages.lock().unwrap() = true;
+    let start = std::time::Instant::now();
+    assert_eq!(
+        client.connect(id, None).await.err(),
+        Some(failed(Check::Providers, CheckResult::Unknown))
+    );
+    let elapsed = start.elapsed().as_secs();
+    assert!((29..33).contains(&elapsed), "{elapsed}s");
 }
