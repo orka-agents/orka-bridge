@@ -402,6 +402,10 @@ for character in marker.utf16 {
     }
 }
 Thread.sleep(forTimeInterval: 1)
+// Keyboard traversal can scroll the outer page to newly added controls below
+// the read-only editor. Restore its heading before the visual assertion; the
+// exact owned-file byte comparison below still detects any persisted edit.
+scrollMain(1000)
 try capture("file-edited", "Designer")
 let existsAfterEdit = FileManager.default.fileExists(atPath: ownedFile.path)
 require(existsAfterEdit == existedBeforeEdit, "Setup preview changed owned-file existence")

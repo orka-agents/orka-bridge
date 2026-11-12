@@ -23,6 +23,10 @@ describe('Estuary theme contract', () => {
         .map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4);
       return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
     };
+    const components = readFileSync('src/components/design-system.css', 'utf8');
+    const stale = components.match(/\.status-stale\s*\{\s*--status:\s*var\(--([\w-]+)\);\s*--status-tint:\s*var\(--([\w-]+)\)/)!;
+    const [staleInk, staleSurface] = [luminance(palette[stale[1]]), luminance(palette[stale[2]])].sort((a, b) => b - a);
+    expect((staleInk + 0.05) / (staleSurface + 0.05)).toBeGreaterThanOrEqual(4.5);
     for (const ink of ['color-text-secondary', 'color-text-tertiary', 'color-status-failed']) {
       for (const surface of ['color-page', 'color-card', 'color-chrome', 'color-hover']) {
         const [a, b] = [luminance(palette[ink]), luminance(palette[surface])].sort((a, b) => b - a);

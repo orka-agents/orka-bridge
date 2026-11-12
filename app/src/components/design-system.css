@@ -1,7 +1,7 @@
 .status-passed { --status: var(--color-status-succeeded); --status-tint: var(--color-tint-succeeded); }
 .status-failed { --status: var(--color-status-failed); --status-tint: var(--color-tint-failed); }
 .status-running { --status: var(--color-status-running); --status-tint: var(--color-tint-running); }
-.status-stale { --status: var(--color-status-cancelled); --status-tint: var(--color-tint-stale); }
+.status-stale { --status: var(--color-text-secondary); --status-tint: var(--color-tint-stale); }
 .status-needs-you { --status: var(--color-status-pending); --status-tint: var(--color-tint-pending); }
 .status-not-started { --status: var(--color-text-tertiary); --status-tint: transparent; }
 .status-icon { color: var(--status); flex: none; width: 16px; height: 16px; }
