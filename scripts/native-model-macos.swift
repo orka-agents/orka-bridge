@@ -96,7 +96,16 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     print("PASS \(name): real native frontend, synthetic IPC only")
     return rows
 }
+func enabledButton(_ label: String) -> AXUIElement? {
+    let buttons = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && attribute(element, "AXEnabled") as? Bool == true
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
+    }
+    return buttons.count == 1 ? buttons[0] : nil
+}
 func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
+    guard let button = enabledButton(label) else { require(false, "Native button is disabled or missing: \(label)"); return }
     let rect = window()!.1
     let p: CGPoint
     if let row = rows.first(where: { $0.topCandidates(1).first?.string == label }) {
@@ -105,13 +114,7 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     } else {
         // Vision can join Connected and Remove sign-in on one line. Still
         // pointer-click the exact enabled native button, never the joined row.
-        let buttons = nativeElements().filter { element in
-            attribute(element, "AXRole") as? String == "AXButton"
-                && attribute(element, "AXEnabled") as? Bool == true
-                && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
-        }
-        require(buttons.count == 1, "Expected one native button: \(label)")
-        guard let bounds = nativeBounds(buttons[0]), rect.contains(bounds) else {
+        guard let bounds = nativeBounds(button), rect.contains(bounds) else {
             require(false, "Native button is not visible: \(label)"); return
         }
         p = CGPoint(x: bounds.midX, y: bounds.midY)
@@ -139,7 +142,10 @@ func scroll(_ pixels: Int32) {
 func seek(_ label: String, _ pixels: Int32) throws -> [VNRecognizedTextObservation] {
     for _ in 0..<6 {
         let seen = try capture("local-probe", [])
-        if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(label) }) { return seen }
+        if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(label) }) {
+            if label == "Run tests" && enabledButton(label) == nil { Thread.sleep(forTimeInterval: 0.3); continue }
+            return seen
+        }
         scroll(pixels)
     }
     fatalError("Native local result control missing: \(label)")
@@ -234,7 +240,8 @@ for character in "Changed fixture instructions.".utf16 {
 Thread.sleep(forTimeInterval: 1)
 require((attribute(editor, "AXValue") as? String)?.contains("Changed fixture instructions.") == true, "Native keystrokes did not edit Instructions")
 _ = try seek("Not run since your edit", -250)
-rows = try capture("local-stale", ["Not run since your edit"])
+_ = try capture("local-stale", ["Not run since your edit"])
+rows = try seek("Run tests", -150)
 click("Run tests", rows)
 _ = try seek("Waiting for answers", -150)
 _ = try capture("local-running", ["Waiting for answers", "Observed for"])

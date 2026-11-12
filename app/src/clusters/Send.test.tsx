@@ -78,6 +78,25 @@ test('a fresh preflight file change makes the earlier pass stale before Reload',
   expect(screen.getByText('Test file changed since this run.')).toBeTruthy();
   expect(screen.getByText('reads-the-page').closest('details')?.querySelector('.status-passed')).toBeNull();
 });
+test.each(['failed', 'editorMismatch'])('preflight %s cannot promote an earlier pass', async mode => {
+  const passed = { verdict: 'passed', cases: [{ ...report.cases[0], answer: 'checksum', verdict: 'passed', assertions: [{ id: 'has-text', kind: 'contains', expected: 'checksum', verdict: 'passed' }] }] };
+  native(idle, { ...running, state: 'complete', stage: 'done', report: passed });
+  if (mode === 'failed') mockIPC(command => {
+    if (command === 'send_preflight') throw Error('unavailable');
+    if (command === 'send_history') return [];
+    return { documentId: pair.documentId, view: { ...running, state: 'complete', stage: 'done', report: passed }, busy: null };
+  });
+  render(<Send place={place} source={mode === 'editorMismatch' ? { ...source, tests: 'd'.repeat(64) } : source} stale={false} visible remote />);
+  await screen.findByRole('button', { name: mode === 'failed' ? 'Check again' : 'Reload saved files' });
+  await screen.findByText('reads-the-page');
+  expect(screen.getByText('reads-the-page').closest('details')?.querySelector('.status-passed')).toBeNull();
+});
+test.each(['retained', 'discarded', 'stopped'])('unknown Send with %s evidence announces its actual state', async mode => {
+  native(idle, { ...running, state: 'unknown', stage: mode === 'stopped' ? 'stopped' : 'done', report: mode === 'retained' ? report : null, error: 'storage' });
+  render(<Send place={place} source={source} stale={false} visible remote />);
+  const expected = mode === 'stopped' ? 'Stopped watching.' : 'Test result unknown.';
+  await waitFor(() => expect(screen.getAllByRole('status').find(node => node.classList.contains('test-announcement'))?.textContent).toBe(expected));
+});
 test('changed disk files can be explicitly reloaded before preflight is retried', async () => {
   vi.stubGlobal('isTauri', true); let opened = false;
   const changed = { ...pair, agent: pair.agent.replace('literal-model', 'file-model').replace('Read the page.', 'Changed on disk.'), source: { ...source, tests: 'c'.repeat(64) } };

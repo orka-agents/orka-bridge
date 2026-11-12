@@ -27,6 +27,12 @@ test('Run is explicit, duplicate clicks and remounts only observe existing work'
   expect(live?.isConnected).toBe(true);
   expect(live?.textContent).toBe('Test result unknown.');
 });
+test.each(['passed', 'failed'])('unknown local operation overrides a retained %s report announcement', async verdict => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => ({ ...complete, state: 'unknown', report: { verdict, cases: [{ id: 'a', question: 'What did the page say?', phase: 'Succeeded', answer: verdict === 'passed' ? 'checksum' : 'other', completedTools: [], verdict, assertions: [{ id: 'text', kind: 'contains', expected: 'checksum', verdict }] }] } }));
+  render(<Run />);
+  await waitFor(() => expect(screen.getAllByRole('status').find(node => node.classList.contains('test-announcement'))?.textContent).toBe('Test result unknown.'));
+});
 test('model connection advice follows the acknowledged model state, not Run availability', async () => {
   vi.stubGlobal('isTauri', true);
   let modelConnected = false;
