@@ -465,7 +465,7 @@ fn start_windows_session(
             failure.stage(),
             error,
             failure.stderr(),
-            WorkspaceOperation::Start,
+            failure.operation(),
         )),
     }
 }

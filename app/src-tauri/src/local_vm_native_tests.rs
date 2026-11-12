@@ -305,7 +305,7 @@ async fn windows_session_startup_inside_tokio_reaches_child_creation_without_pan
     // A panic is mapped to Unavailable instead, so it cannot satisfy this check.
     match result {
         Err(RuntimeError::Startup(context)) => {
-            assert_eq!(context.operation, WorkspaceOperation::Start);
+            assert_eq!(context.operation, WorkspaceOperation::Prepare);
             let RuntimeError::Io(error) = &context.error else {
                 panic!(
                     "expected native executable refusal, got {:?}",
