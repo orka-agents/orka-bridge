@@ -22,13 +22,13 @@ fn actual_app_binary_contains_the_local_image_selector_only_in_debug() {
     );
     #[cfg(not(debug_assertions))]
     for hash in [
-        "a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27",
+        "b4cbacc7d7212c9e7e3a4ed4cac306bb466b165efcab6f05252d4b00860f5e5f",
         "33d6946647e7d6ab3e83e42a25caa497aea215ad1cac91d011473a4ad0a008ae",
-        "9eb75d4a9de5f2e922157dc597601d7f10d3b71f3c52fd6ffd3f18d59c6a799b",
+        "03a3d4900bafb9970ea0eba6c7b0be19b57ba4fb2f0e3cabbd2f4a2ccd1571ba",
         "a2787ff53247377e0d16b94dbc7ee43033c00aea8379de0cfe68ce58f843426e",
         "27f833e233753a0a601f3a6792dcd73e2f2c7c8bd30e00b837315c71c5996dcb",
         "4a44487bb3cfdc2be1d7697b8c71c97733d6ab2db62e6e6e8f1c6af9431ffd2e",
-        "606891f6e94ce5c4263bbc5360d7fdb6bb874b2109478e4e9e67322fd47d7f20",
+        "694704f1580e9986fc5426bb9b3d1221be94c3f6ef81eff22df8b4eff658dcec",
         "6f843edde13d7a26b14e54e10838fe5a70aedb2a3c26bbfb998fd45ae90d743a",
         "a1dead19c0d1dcef558008e556cd9bd4a8c5082daf4ecea6f531d03173748385",
     ] {

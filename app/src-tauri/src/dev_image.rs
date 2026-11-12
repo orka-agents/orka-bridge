@@ -29,13 +29,13 @@ pub enum DevImageDiskFormat {
 impl DevImagePlatform {
     pub const fn state_compatibility_id(self) -> &'static str {
         match self {
-            Self::MacOsArm64 => "engineering-afc68ae1",
+            Self::MacOsArm64 => "engineering-74e6c5e4",
             Self::WindowsAmd64 => "engineering-74e6c5e4",
         }
     }
     pub const fn source_commit(self) -> &'static str {
         match self {
-            Self::MacOsArm64 => "afc68ae14e9702d148b01b243cc2a27d90fde5a6",
+            Self::MacOsArm64 => "74e6c5e4f662d9e7b2c8559be0dc77191fe2889a",
             Self::WindowsAmd64 => "74e6c5e4f662d9e7b2c8559be0dc77191fe2889a",
         }
     }
@@ -129,7 +129,7 @@ const MAC_PINS: Pins = Pins {
         FilePin {
             name: "boot-assets.json",
             bytes: 12546,
-            sha256: digest(b"a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27"),
+            sha256: digest(b"b4cbacc7d7212c9e7e3a4ed4cac306bb466b165efcab6f05252d4b00860f5e5f"),
         },
         FilePin {
             name: "os.kernel",
@@ -138,13 +138,13 @@ const MAC_PINS: Pins = Pins {
         },
         FilePin {
             name: "os.initrd",
-            bytes: 35046667,
-            sha256: digest(b"606891f6e94ce5c4263bbc5360d7fdb6bb874b2109478e4e9e67322fd47d7f20"),
+            bytes: 35850150,
+            sha256: digest(b"694704f1580e9986fc5426bb9b3d1221be94c3f6ef81eff22df8b4eff658dcec"),
         },
         FilePin {
             name: "os.raw",
             bytes: 17179869184,
-            sha256: digest(b"9eb75d4a9de5f2e922157dc597601d7f10d3b71f3c52fd6ffd3f18d59c6a799b"),
+            sha256: digest(b"03a3d4900bafb9970ea0eba6c7b0be19b57ba4fb2f0e3cabbd2f4a2ccd1571ba"),
         },
     ],
 };
@@ -482,15 +482,15 @@ mod tests {
         );
         assert_eq!(
             DevImagePlatform::MacOsArm64.source_commit(),
-            "afc68ae14e9702d148b01b243cc2a27d90fde5a6"
+            "74e6c5e4f662d9e7b2c8559be0dc77191fe2889a"
         );
         assert_eq!(
             DevImagePlatform::MacOsArm64.state_compatibility_id(),
-            "engineering-afc68ae1"
+            "engineering-74e6c5e4"
         );
         assert_eq!(
             MAC_PINS.files[0].sha256,
-            digest(b"a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27")
+            digest(b"b4cbacc7d7212c9e7e3a4ed4cac306bb466b165efcab6f05252d4b00860f5e5f")
         );
     }
 
@@ -730,7 +730,7 @@ mod tests {
 
     #[test]
     fn pinned_image_bytes_sum_each_platform_pins() {
-        assert_eq!(image_bytes_for(&MAC_PINS), Some(17_259_087_309));
+        assert_eq!(image_bytes_for(&MAC_PINS), Some(17_259_890_792));
         assert_eq!(image_bytes_for(&WINDOWS_PINS), Some(3_637_297_985));
         assert_eq!(
             pinned_image_bytes(),

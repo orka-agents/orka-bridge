@@ -161,6 +161,39 @@ async fn engineering_binding_does_not_restore_release_compatibility_or_creation(
 }
 
 #[tokio::test]
+async fn engineering_mac_retains_previous_binding_without_migration() {
+    use crate::runtime::{image_install::open_installed_image, image_types::ImageError};
+    let platform = DevImagePlatform::MacOsArm64;
+    let f = boot_fixture(platform);
+    let source = verify(&f.root(), &f.pins).unwrap();
+    let (_sender, closed) = watch::channel(false);
+    let prepared = prepare_development_image(&source, closed.clone()).await.unwrap();
+    let path = f.temp.path().join("installation");
+    fs::create_dir(&path).unwrap();
+    let root = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+    let owner = Arc::new(std::fs::File::options().create_new(true).read(true).write(true).open(path.join("owner.lock")).unwrap());
+    owner.try_lock().unwrap();
+    let id = bridge_runtime_protocol::Uuid::new_v4();
+    let target = InstallationImageTarget::from_owned_installation(
+        &root, &owner, id, ImageTarget::MacosArm64, platform.state_compatibility_id(), true,
+    );
+    let installed = prepared.materialize(&target, closed, |_| {}).await.unwrap();
+    let binding_path = path.join("image-binding.json");
+    let mut previous: serde_json::Value = serde_json::from_slice(&fs::read(&binding_path).unwrap()).unwrap();
+    previous["identity"]["stateCompatibilityId"] = "engineering-afc68ae1".into();
+    let previous = serde_json::to_vec(&previous).unwrap();
+    fs::write(&binding_path, &previous).unwrap();
+    let disk_path = path.join(installed.disk_path());
+    let disk = fs::read(&disk_path).unwrap();
+    let reopen = InstallationImageTarget::from_owned_installation(
+        &root, &owner, id, ImageTarget::MacosArm64, platform.state_compatibility_id(), false,
+    );
+    assert!(matches!(open_installed_image(&reopen), Err(ImageError::RetainedImage)));
+    assert_eq!(fs::read(binding_path).unwrap(), previous);
+    assert_eq!(fs::read(disk_path).unwrap(), disk);
+}
+
+#[tokio::test]
 #[ignore = "explicit frozen source directories required; no VM is started"]
 async fn frozen_windows_source_materializes_actual_pinned_bytes() {
     let boot = std::env::var_os("BRIDGE_TEST_BOOT_DIR").expect("test boot directory");
