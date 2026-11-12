@@ -225,18 +225,18 @@ test('model acknowledgment and observed check counts survive navigation', async 
   });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('AI connected')).toBeTruthy();
   expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('AI connected');
   expect(document.querySelector('.host-chip')?.textContent).toBe('This computer: AI connected');
-  await user.click(screen.getByRole('button', { name: 'Open example' }));
+  await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 checks passing')).toBeTruthy();
   expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
   expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'page-reader, 1 check failing')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(within(screen.getByRole('contentinfo')).getByText('AI connected')).toBeTruthy();
-  expect(screen.getByText(/Model connected:/)).toBeTruthy();
+  expect(screen.getByText(/Connected with GitHub Copilot/)).toBeTruthy();
   expect(screen.queryByRole('button', { name: /Model connected|Connecting/ })).toBeNull();
 });
 
@@ -251,7 +251,7 @@ test('a running check finishes in the footer after leaving Designer', async () =
   });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await within(screen.getByRole('contentinfo')).findByText('Running checks…');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   complete = true;
@@ -283,7 +283,7 @@ test('an unavailable example is not reported as still opening', async () => {
   });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   expect(await within(screen.getByRole('navigation')).findByText('Example unavailable')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).queryByText('Opening example…')).toBeNull();
 });
@@ -298,7 +298,7 @@ test.each(['unknown', 'unavailable'])('background check status preserves %s outc
   });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   const expected = state === 'unknown' ? 'Check result unknown' : 'Check status unavailable';
   await within(screen.getByRole('contentinfo')).findByText(expected);
   await user.click(screen.getByRole('button', { name: 'Overview' }));
@@ -327,10 +327,10 @@ test('Open example retries a failed read without discarding successful runs', as
   });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await within(screen.getByRole('navigation')).findByText('Example unavailable');
   await user.click(screen.getByRole('button', { name: 'Clusters' })); fail = false;
-  await user.click(screen.getByRole('button', { name: 'Open example' }));
+  await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   expect(await within(screen.getByRole('navigation')).findByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'recovered-reader, ready to edit')).toBeTruthy();
 });
 
@@ -356,14 +356,14 @@ test('a transient setup read failure does not invalidate an admitted model conne
   });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   fail = true;
   await within(screen.getByRole('navigation')).findByText('Workspace unavailable', {}, { timeout: 2000 });
   await act(async () => { finishConnect({ ready: true }); });
-  expect(screen.getByText(/Model connected:/)).toBeTruthy();
+  expect(screen.getByText(/Connected with GitHub Copilot/)).toBeTruthy();
   fail = false;
   expect(await within(screen.getByRole('contentinfo')).findByText('AI connected', {}, { timeout: 2000 })).toBeTruthy();
-  expect(screen.getByText(/Model connected:/)).toBeTruthy();
+  expect(screen.getByText(/Connected with GitHub Copilot/)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Model connected' })).toBeNull();
 });
 
@@ -393,7 +393,7 @@ test('local Open clears shared cluster selection; remembered cluster needs a fre
   });
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   await screen.findByRole('button', { name: 'Open your agent' });
@@ -403,7 +403,7 @@ test('local Open clears shared cluster selection; remembered cluster needs a fre
   expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
   expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe(context.id);
   expect(uses).toBe(1); expect(calls).not.toContain('send_preflight'); expect(calls).not.toContain('send_start');
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
@@ -432,7 +432,7 @@ test('setup Open example restores the sample after Overview opened another docum
   await user.click(await screen.findByRole('button', { name: 'Open other' }));
   await screen.findByRole('heading', { name: 'other', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Open example' }));
+  await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   expect(await screen.findByRole('heading', { name: 'sample', level: 1 })).toBeTruthy();
 });
 
@@ -469,8 +469,8 @@ test('opening the already-local file does not acquire another VM catalog session
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
-  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('button', { name: 'Refresh tools and models' });
   const before = catalogs;
   await user.click(screen.getByRole('button', { name: 'Overview' }));
@@ -492,7 +492,7 @@ test('Overview waits for native busy release even when the report is already com
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await within(screen.getByRole('contentinfo')).findByText('1 of 1 checks passing');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await screen.findByText('Refresh pending until checks finish');
@@ -503,7 +503,7 @@ test('Overview waits for native busy release even when the report is already com
   expect(lists).toBe(1);
 });
 
-test('Clusters reads setup and version without fetch or legacy IPC', async () => {
+test('Clusters reads setup without engine diagnostics or legacy IPC', async () => {
   const ipc = vi.fn(command => command === 'setup_status'
     ? { selected: null, localVm: 'notIntegrated', model: 'locked' }
     : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
@@ -512,14 +512,11 @@ test('Clusters reads setup and version without fetch or legacy IPC', async () =>
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
   const user = userEvent.setup(); render(<App />);
   expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();
-  await user.click(screen.getByText('Engine diagnostics'));
-  expect(await screen.findByRole('heading', { name: 'Engine available' })).toBeTruthy();
-  expect(screen.getByText('Version v0.4.2. Cluster readiness has not been checked.')).toBeTruthy();
-  expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status', 'engine_call'].includes(command))).toBe(true);
+  expect(screen.queryByText('Engine diagnostics')).toBeNull();
+  expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status'].includes(command))).toBe(true);
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_requirements')).toEqual([['setup_requirements', {}]]);
-  expect(ipc).toHaveBeenCalledWith('engine_call', { request: { action: { type: 'version' } } });
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(screen.queryByRole('heading', { name: 'Engine available' })).toBeNull();
-  expect(ipc.mock.calls.filter(call => call[0] === 'engine_call')).toHaveLength(1);
+  expect(ipc.mock.calls.filter(call => call[0] === 'engine_call')).toHaveLength(0);
   expect(fetch).not.toHaveBeenCalled();
 });

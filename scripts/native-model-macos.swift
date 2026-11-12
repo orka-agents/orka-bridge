@@ -47,7 +47,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     try text.write(toFile: "\(output)/\(name).txt", atomically: true, encoding: .utf8)
     // Vision can interleave the adjacent setup column between wrapped lines.
     // Check phrases within the model panel, not the whole window's reading order.
-    guard let panel = rows.first(where: { $0.topCandidates(1).first?.string == "Connect a model" })
+    guard let panel = rows.filter({ $0.topCandidates(1).first?.string == "Connect the AI" && $0.boundingBox.minX > 0.5 }).max(by: { $0.boundingBox.maxY < $1.boundingBox.maxY })
         else { fatalError("Model panel heading was not recognized") }
     let visible = rows.filter {
         $0.boundingBox.minX >= panel.boundingBox.minX - 0.02 &&
@@ -63,7 +63,8 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     return rows
 }
 func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
-    guard let row = rows.first(where: { $0.topCandidates(1).first?.string == label })
+    // The step and card share the action name. The button is the lowest matching text.
+    guard let row = rows.filter({ $0.topCandidates(1).first?.string == label }).min(by: { $0.boundingBox.midY < $1.boundingBox.midY })
         else { fatalError("Native control not visible: \(label)") }
     let rect = window()!.1
     let p = CGPoint(x: rect.minX + row.boundingBox.midX * rect.width,
@@ -73,12 +74,12 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     }
     Thread.sleep(forTimeInterval: 1)
 }
-var rows = try capture("before-connect", ["Use GitHub sign-in", "Remove sign-in"])
-click("Use GitHub sign-in", rows)
-rows = try capture("connected", ["Model connected", "Remove sign-in"])
+var rows = try capture("before-connect", ["Connect the AI", "Remove sign-in"])
+click("Connect the AI", rows)
+rows = try capture("connected", ["Connected with GitHub Copilot", "Remove sign-in"])
 click("Remove sign-in", rows)
 rows = try capture("remove-failed", ["Remove sign-in again", "Copy details for help"])
 click("Remove sign-in", rows)
-rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Use GitHub sign-in"])
-click("Use GitHub sign-in", rows)
-_ = try capture("reconnected", ["Model connected", "Remove sign-in"])
+rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Connect the AI"])
+click("Connect the AI", rows)
+_ = try capture("reconnected", ["Connected with GitHub Copilot", "Remove sign-in"])

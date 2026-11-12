@@ -46,7 +46,7 @@ test('local readiness never enables unconfirmed remote checks, and changing plac
   });
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   const run = await screen.findByRole('button', { name: 'Run all checks' });
@@ -94,7 +94,7 @@ test('local results remain explicitly local after confirming cluster access', as
   await screen.findByText('1 of 1 checks passing', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
   await screen.findByRole('combobox', { name: 'kubectl context' }); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   await screen.findAllByText('Access confirmed');
@@ -111,14 +111,14 @@ test('local model acknowledgement survives a cluster round trip', async () => {
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
-  await screen.findByText(/Model connected:/);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText(/Connected with GitHub Copilot/);
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
   await user.click(screen.getByRole('radio', { name: 'On this computer' }));
-  expect(await screen.findByText(/Model connected:/)).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Use GitHub sign-in' })).toBeNull();
+  expect(await screen.findByText(/Connected with GitHub Copilot/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
 });
 
 test('local-result observation continues while remote access is unconfirmed', async () => {
@@ -136,7 +136,7 @@ test('local-result observation continues while remote access is unconfirmed', as
   await screen.findByText('Running checks…', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
   complete = true;
   expect(await screen.findByText('This computer: 1 of 1 checks passing', { selector: '.checks-status' })).toBeTruthy();

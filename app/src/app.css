@@ -183,5 +183,3 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .designer-heading { flex-wrap: wrap; }
   .designer-heading .heading-actions { margin-left: 0; flex-wrap: wrap; }
 }
-.engine-diagnostics { max-width: 760px; margin-top: 16px; }
-.engine-diagnostics summary { cursor: pointer; color: var(--color-text-secondary); }

@@ -78,7 +78,7 @@ try {
     ['unknown', { operation: 'start', cause: 'unknown', codes: [] }, "couldn't establish"],
     ['cli', 'modelCaptureUnavailable', 'gh auth login --hostname github.com --web'],
     ['sign-in', 'modelCaptureFailed', 'gh auth status --hostname github.com'],
-    ['model-store', 'modelStore', 'native credential store'],
+    ['model-store', 'modelStore', 'could not save or load your sign-in'],
     ['model-copy', 'modelCaptureFailed', 'Share the visible error message'],
     ['cluster-empty', null, 'No kubectl contexts were found'],
     ['cluster-configuration', { check: 'configuration', result: 'unknown' }, 'kubeconfig could not be read'],
@@ -119,8 +119,8 @@ try {
       })()`);
       await evaluate(bundle);
       if (model) {
-        await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Use GitHub sign-in')`), 'model action');
-        await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Use GitHub sign-in').click()`);
+        await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI')`), 'model action');
+        await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI').click()`);
       }
       if (cluster) {
         await until(() => evaluate(`!!document.querySelector('#workspace-cluster')`), 'cluster choice');
@@ -184,12 +184,12 @@ try {
     })()`);
     await evaluate(bundle);
     if (queue) {
-      await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Use GitHub sign-in')`), 'queueable model action');
-      await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Use GitHub sign-in').click()`);
+      await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI')`), 'queueable model action');
+      await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI').click()`);
     }
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && !!document.querySelector('.setup-progress')`), `${name} setup progress`);
     await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
-    if (!modelSupported && !await evaluate(`document.body.textContent.includes('Waiting') && !document.body.textContent.includes('Queued') && ![...document.querySelectorAll('button')].some(button => button.textContent === 'Use GitHub sign-in')`)) {
+    if (!modelSupported && !await evaluate(`document.body.textContent.includes('Waiting') && !document.body.textContent.includes('Queued') && ![...document.querySelectorAll('button')].some(button => button.textContent === 'Connect the AI')`)) {
       throw new Error(`${name}: an unsupported platform must show Waiting with no model action`);
     }
     const shoot = async suffix => {

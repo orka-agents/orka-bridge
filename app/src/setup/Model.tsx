@@ -85,10 +85,11 @@ export default function Model({ enabled, queueable = false, paused = false, away
   const cliUnavailable = error?.category === 'modelCaptureUnavailable';
   const signInCheck = error && ['modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(error.category);
   return <section ref={root} className="card setup-model" aria-labelledby="model-title" aria-busy={!!busy}>
-    <h2 id="model-title">{enabled || queueable || queued ? 'Connect a model' : 'Model connection locked'}</h2>
+    <h2 id="model-title">Connect the AI</h2>
+    <p className="muted">Use GitHub Copilot with GitHub CLI installed and signed in to github.com. Bridge keeps its own saved sign-in; GitHub CLI stays signed in.</p>
     {!enabled && (queueable || queued) ? <p className="muted">You can choose now. Bridge connects it automatically when Orka is ready. No credentials are read or sent until then.</p>
-      : !enabled ? <p className="muted">Start the local VM before connecting a model. No credentials are sent.</p>
-      : <p className="muted">Use your existing GitHub CLI sign-in for Copilot in this VM. Bridge stores it in the native credential store and delivers it privately to the guest.</p>}
+      : !enabled ? <p className="muted">Start your workspace before connecting the AI. No sign-in is read or sent yet.</p>
+      : <p className="muted">Your sign-in is shared only with your workspace on this computer.</p>}
     <div className={error ? 'workspace-failure' : undefined} role={error ? 'alert' : undefined}>
       <div className={error ? 'workspace-failure-explanation' : undefined}>
         {error && <><p className="failure-summary">{error.message}</p>
@@ -104,12 +105,12 @@ export default function Model({ enabled, queueable = false, paused = false, away
           {cliUnavailable && <button type="button" className="workspace-secondary" onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</button>}
           {(cliUnavailable || signInCheck) && <button type="button" className="workspace-secondary" onClick={() => { void help('githubSignIn'); }}>Sign-in help</button>}
           {queued || busy || ready ? <div ref={status} tabIndex={-1} className="model-state">
-            <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? 'Removing sign-in…' : ready ? 'Connected' : queued ? 'Queued' : 'Connecting model…'}</StatusPill>
+            <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? 'Removing sign-in…' : ready ? 'Connected' : queued ? 'Queued' : 'Connecting the AI…'}</StatusPill>
             {queued && <><span className="muted">Connects automatically when Orka is ready.</span>
               <button type="button" className="workspace-link" onClick={() => setQueued(false)}>Cancel queued connection</button></>}
           </div>
           : <button key="model-connect" ref={retry} type="button" className="workspace-primary" disabled={(!enabled && !queueable) || paused || !!busy} onClick={choose}>
-            {!enabled && !queueable ? 'Connect model' : error && failedAction === 'connect' ? 'Check again' : 'Use GitHub sign-in'}
+            {error && failedAction === 'connect' ? 'Check again' : 'Connect the AI'}
           </button>}
           {busy !== 'remove' && <button ref={removal} type="button" className="workspace-link" disabled={!enabled || paused || !!busy}
             onClick={() => { refocus.current = document.activeElement === removal.current ? 'remove' : undefined; void perform('remove'); }}>Remove sign-in</button>}
@@ -117,11 +118,10 @@ export default function Model({ enabled, queueable = false, paused = false, away
         </div>
       </div>
     </div>
-    {busy === 'connect' && <p role="status">Connecting with Bridge’s saved sign-in, or reading your GitHub CLI sign-in if none is saved…</p>}
-    {busy === 'remove' && <p role="status">Stopping the guest model and removing Bridge’s saved sign-in…</p>}
+    {busy === 'connect' && <p role="status">Connecting with your saved sign-in. This may take a few seconds…</p>}
+    {busy === 'remove' && <p role="status">Disconnecting the AI and removing Bridge’s saved sign-in…</p>}
     {removed && <p role="status">Bridge no longer has a saved sign-in. GitHub CLI stays signed in.</p>}
-    {ready && <><p role="status">Model connected: copilot / gpt-5.6-terra.</p>
-      <p className="muted">The guest acknowledged Connect. This does not prove inference.</p></>}
+    {ready && <p role="status">Connected with GitHub Copilot.</p>}
     {notice && <p role="status">{notice}</p>}
   </section>;
 }

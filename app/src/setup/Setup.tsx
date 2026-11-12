@@ -5,6 +5,7 @@ import Preflight from './Preflight';
 import { type LocalVmState, type SetupStatus, cancelLocal, changeLocal, selectLocal, setupStatus } from './state';
 import { Meet, SetupProgress, SetupSteps, type CheckStepState } from './Steps';
 import { canQueueModel } from './progress';
+import { armFirstTest, retireFirstTest } from './first-test';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
 import { formatSize, workspaceRequirements, type WorkspaceRequirements } from './requirements';
 import ClusterCard from '../clusters/ClusterCard';
@@ -16,8 +17,8 @@ const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting',
 const runtimeCopy = {
   notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
 };
-export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, onModelState, onWelcome, onExampleName, firstCheck, onStarting, onWorkspaceAction, onPlace, place, active = true }: {
-  onOpenExample: () => void; onOpenAgent?: () => void; onReady: () => void; active?: boolean;
+export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onExampleName, firstCheck, onStarting, onWorkspaceAction, onPlace, place, active = true }: {
+  onOpenExample: () => void; onOpenAgent?: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
   onModelState?: (state: ModelState) => void;
   onWelcome?: (visible: boolean) => void;
@@ -54,6 +55,8 @@ export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, o
   const heading = useRef<HTMLHeadingElement>(null);
   const focusChoice = useRef(false);
   const changeInvoker = useRef<HTMLButtonElement>(null);
+  const confirmation = useRef<HTMLElement>(null);
+  useEffect(() => { if (confirmChange && active) confirmation.current?.focus(); }, [confirmChange, active]);
   const welcome = !seen && !!status && !error && status.selected !== 'localVm';
   useEffect(() => { onWelcome?.(welcome); }, [welcome, onWelcome]);
   useEffect(() => {
@@ -93,7 +96,6 @@ export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, o
     });
     return () => { epoch.current++; clearTimeout(timer.current); };
   }, [check, onStatus]);
-  useEffect(() => { if (status?.localVm === 'ready') onReady(); }, [status?.localVm, onReady]);
   // Model stays mounted from preparing through ready, so it owns its queued state; no Model means no model state.
   const modelMounted = status?.selected === 'localVm' && (status.localVm === 'ready' || canQueueModel(status));
   useEffect(() => { if (!modelMounted) observeModel('idle'); }, [modelMounted, observeModel]);
@@ -104,6 +106,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, o
     setSeen(true);
   }
   function chooseCluster() {
+    retireFirstTest();
     start(); setOwnCluster(true); setConfirmChange(false); onPlace?.({ kind: 'cluster' });
   }
   function chooseComputer() {
@@ -113,6 +116,8 @@ export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, o
     if (mutation.current || !status || (action !== 'cancel' && busy)) return;
     if (action === 'start' && status.selected === 'localVm' && !['cancelled', 'closed', 'failed'].includes(status.localVm)) return;
     // Observation must not invalidate an explicit selection awaiting its reply.
+    const firstStart = action === 'start' && status.selected !== 'localVm';
+    if (action === 'change') retireFirstTest();
     clearTimeout(timer.current);
     ++epoch.current;
     mutation.current = true;
@@ -124,7 +129,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, o
     if (!mounted.current) return;
     onWorkspaceAction?.(false);
     setSending(false); setPendingAction(undefined); setConfirmChange(false);
-    if (result.ok) { focusChoice.current = true; setStatus(result.status); }
+    if (result.ok) { if (firstStart) armFirstTest(); focusChoice.current = true; setStatus(result.status); }
     else { setError(result.message); }
     onStatus?.(result.ok ? result.status : undefined);
     const waiting = result.ok && pending(result.status.localVm);
@@ -138,8 +143,9 @@ export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, o
   const selected = !cluster && status?.selected === 'localVm';
   return <>
     <div className="workspace-heading">
-      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? status?.localVm === 'ready' ? 'Choose the AI your agent uses' : status?.localVm === 'failed' ? workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
+      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? status?.localVm === 'ready' ? modelState === 'connected' ? 'Run your first test' : 'Connect the AI' : status?.localVm === 'failed' ? workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
       {selected && !['ready', 'failed', 'notIntegrated'].includes(status?.localVm ?? '') && <p className="muted">Meanwhile, meet the agent you'll test first.</p>}
+      {selected && status?.localVm === 'ready' && !firstCheck && <p className="muted">On first setup, Bridge tests the bundled example after you connect the AI, then opens its result in Designer.</p>}
       {!selected && <p className="muted">You can add more places later.</p>}
     </div>
     <div className={selected ? `setup workspace-setup-grid${status?.localVm === 'failed' ? ' workspace-setup-failed' : ''}` : 'workspace-choice'}>
@@ -150,7 +156,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, o
             <input id="workspace-local" type="radio" name="workspace" aria-label="On this computer" aria-describedby="local-description" disabled={!cluster && (busy || !status || !!error)} checked={!cluster} onChange={chooseComputer} />
             <label htmlFor="workspace-local">On this computer</label><span className="pill">recommended</span>
             <div className="workspace-option-detail">
-              <p id="local-description">Bridge runs a ready-made workspace quietly in the background. It needs virtualization turned on{requirements ? `, ${formatSize(requirements.memoryBytes)} of memory and a ${formatSize(requirements.imageBytes)} workspace image.` : '.'}</p>
+              <p id="local-description">Your workspace is Orka and the tools your agents use, running quietly on this computer. It needs virtualization turned on{requirements ? `, ${formatSize(requirements.memoryBytes)} of memory and a ${formatSize(requirements.imageBytes)} workspace image.` : '.'}</p>
               {requirements && <p>The data disk can grow to {formatSize(requirements.stateDiskBytes)}, in addition to the image.</p>}
               {requirements === undefined && <p>Reading this build's workspace size…</p>}
               {requirements === null && status?.localVm !== 'notIntegrated' && <p>Workspace size information is unavailable in this build.</p>}
@@ -158,13 +164,13 @@ export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, o
               <button className="workspace-disclosure" type="button" aria-expanded={inside} aria-controls="workspace-inside" onClick={() => setInside(value => !value)}>
                 <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d={inside ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6'} /></svg>What's inside
               </button>
-              <p id="workspace-inside" hidden={!inside}>A small virtual machine with Orka, the open-source engine agents run on. Its files are checked against their published digests before it starts.</p>
+              <p id="workspace-inside" hidden={!inside}>Orka, the open-source engine agents run on, in a separate workspace. Bridge checks its files before starting it.</p>
             </div>
           </div>
           <div className={`workspace-option${cluster ? ' workspace-selected' : ''}`}>
             <input id="workspace-cluster" type="radio" name="workspace" aria-label="On a cluster you already have" checked={cluster} onChange={chooseCluster} />
             <label htmlFor="workspace-cluster">On a cluster you already have</label><Chip>for Kubernetes users</Chip>
-            <p className="workspace-option-detail">Pick a kubectl context and Bridge uses the Orka on that cluster.</p>
+            <p className="workspace-option-detail">You need a Kubernetes cluster with Orka already installed. Pick its kubectl context to connect.</p>
           </div>
         </fieldset>
         {!cluster && <div className="workspace-choice-footer"><span className="muted">Choose where agents run</span>
@@ -173,10 +179,10 @@ export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, o
         {!cluster && status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
       </>}
       {selected && status && <SetupProgress status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={chooseCluster} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample}
-        confirm={confirmChange && <section className="workspace-change" aria-label="Change where agents run">
-          <button type="button" className="workspace-link" disabled={sending} onClick={chooseCluster}>Use a cluster you already have instead</button>
-          <h2>Stop this workspace?</h2><p>Changing where agents run stops the workspace on this computer. Your files are kept.</p>
-          <div className="workspace-step-actions"><button type="button" className="workspace-secondary" disabled={sending} onClick={() => { setConfirmChange(false); changeInvoker.current?.focus(); }}>Keep workspace running</button><button type="button" className="workspace-primary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and change</button></div>
+        confirm={confirmChange && <section ref={confirmation} tabIndex={-1} className="workspace-change" aria-label="Change where agents run">
+          <h2>Keep this workspace running?</h2><p>You can choose a cluster without stopping this workspace, or stop it and return to the place chooser. Your downloaded workspace files and agent files are kept.</p>
+          <div className="workspace-step-actions"><button type="button" className="workspace-primary" disabled={sending} onClick={() => { setConfirmChange(false); changeInvoker.current?.focus(); }}>Keep workspace running</button><button type="button" className="workspace-secondary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and choose a place</button></div>
+          <button type="button" className="workspace-link" disabled={sending} onClick={chooseCluster}>Choose a cluster, keep this workspace running</button>
         </section>} />}
       {status && modelMounted && <div className="setup-model-slot" hidden={cluster}><Model enabled={status.model === 'available'} queueable={canQueueModel(status)} paused={!!error || sending} away={cluster} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
       {selected && status && <SetupSteps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onRestart={() => { void chooseLocal(); }} onCluster={chooseCluster} />}

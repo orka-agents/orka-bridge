@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import mark from './assets/orka-mark.svg';
-import EngineStatus from './components/EngineStatus';
 import Setup from './setup/Setup';
+import { useFirstTest } from './setup/first-test';
 import Example from './designer/Example';
 import Overview from './overview/Overview';
 import { SAMPLE_DOCUMENT_ID } from './designer/agent-api';
@@ -64,8 +64,6 @@ export default function App() {
   const [documentId, setDocumentId] = useState(SAMPLE_DOCUMENT_ID);
   const [overviewCounts, setOverviewCounts] = useState('Saved files and local Agents');
   const [exampleAttempt, setExampleAttempt] = useState(0);
-  const [engineReady, setEngineReady] = useState(false);
-  const ready = useCallback(() => setEngineReady(true), []);
   const [setup, setSetup] = useState<SetupStatus>();
   const [setupReadOnly, setSetupReadOnly] = useState(true);
   const workspaceAdmitted = useRef(false);
@@ -115,7 +113,13 @@ export default function App() {
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} checks passing` : undefined;
   const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
   const sample = sampleRun(run);
-  const firstCheck = run && !sample ? undefined : checksStale ? 'stale' : runUnavailable || run?.state === 'unknown' ? 'unknown'
+  const firstTest = useFirstTest({
+    ready: setup?.selected === 'localVm' && setup.localVm === 'ready' && model === 'connected' && !workspaceBusy && !remote,
+    canOpen: page === 'Clusters' && setup?.localVm === 'ready' && !workspaceBusy && !remote,
+    sampleDirty: documentId === SAMPLE_DOCUMENT_ID && saveState !== 'saved',
+    onOpen: () => openDesigner(SAMPLE_DOCUMENT_ID),
+  });
+  const firstCheck = firstTest && !sample ? firstTest : run && !sample ? undefined : checksStale ? 'stale' : runUnavailable || run?.state === 'unknown' ? 'unknown'
     : run?.state === 'running' ? 'running' : run?.state === 'complete' ? run.report?.verdict : undefined;
   // Tab, footer and the Setup card share this derivation. Native selection, not the default radio, names the host.
   const view = setupView(setup, { checking, model, check: firstCheck });
@@ -173,7 +177,7 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup place={place} onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
+          <Setup place={place} onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
         {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} documentId={documentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
@@ -191,7 +195,6 @@ export default function App() {
             <p className="muted">{copy.detail}</p>
           </div>
         </section>}
-        {page === 'Clusters' && <details className="engine-diagnostics"><summary>Engine diagnostics</summary><EngineStatus key={String(engineReady)} /></details>}
       </main>
       <footer className="status-bar">
         <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" />
