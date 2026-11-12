@@ -253,6 +253,10 @@ try {
             if ($control -and $control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$value) -and !$value.Current.IsReadOnly) { $control }
         }
         $editor.SetFocus()
+        # Invoke-based navigation can leave the WebView's DOM editor unfocused
+        # even after UIA SetFocus. Establish real pointer/keyboard focus first.
+        Press $editor
+        Wait-For 'Native editor did not receive keyboard focus' { $editor.Current.HasKeyboardFocus } | Out-Null
         $script:marker = " lifecycle-$([Guid]::NewGuid().ToString('N'))"
         [System.Windows.Forms.SendKeys]::SendWait('^{END}')
         [System.Windows.Forms.SendKeys]::SendWait($script:marker)
