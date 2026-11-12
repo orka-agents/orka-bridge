@@ -31,8 +31,8 @@ test.each(['unavailable', 'other', 'sample'] as const)('setup keeps %s Run evide
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
   await user.click(await screen.findByRole('button', { name: 'Open example' }));
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[3].textContent)
+  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent)
     .toContain({ unavailable: 'Result unknown', other: 'Needs you', sample: 'Passed' }[kind]));
   const navigation = within(screen.getByRole('navigation'));
-  expect(navigation.getByText(kind === 'sample' ? 'This computer ready' : 'AI connected')).toBeTruthy();
+  expect(navigation.getByText(kind === 'sample' ? 'This computer ready' : 'Setting up, step 5 of 5')).toBeTruthy();
 });

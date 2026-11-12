@@ -501,6 +501,7 @@ impl LocalVm {
         };
         // Publish phase, failure text and model availability from the same observation.
         snapshot
+            .with_model_support(MODEL_IMAGE_AVAILABLE)
             .with_local_vm(state.phase.as_str(), state.failure.clone())
             .with_model(
                 if state.phase == LocalVmStatus::Ready && MODEL_IMAGE_AVAILABLE {

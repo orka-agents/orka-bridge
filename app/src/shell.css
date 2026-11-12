@@ -25,6 +25,7 @@
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-text-tertiary); flex: none; }
 .live-dot.ready { background: var(--color-status-succeeded); }
 .live-dot.busy { background: var(--color-status-running); }
+.live-dot.needs-you { background: var(--color-status-pending); }
 .live-dot.bad { background: var(--color-status-failed); }
 .shell-button { min-height: 30px; padding: var(--space-1) var(--space-3); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-card); font-weight: 500; white-space: nowrap; }
 .shell-button:disabled { color: var(--color-text-tertiary); background: var(--color-hover); cursor: not-allowed; }
