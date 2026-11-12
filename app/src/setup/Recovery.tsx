@@ -1,23 +1,23 @@
 import { useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { helpDetails, workspaceRecovery } from './recovery-info';
+import { helpDetails, workspaceRecovery, type WorkspaceFailure } from './recovery-info';
 import { preflightRecovery, type PreflightFailure } from './preflight-state';
 
-export default function Recovery({ detail, preflightFailure, disabled, onRetry, onCluster }: { detail?: string | null; preflightFailure?: PreflightFailure; disabled: boolean; onRetry: () => void; onCluster?: () => void }) {
+export default function Recovery({ detail, preflightFailure, failure, disabled, onRetry, onCluster }: { detail?: string | null; preflightFailure?: PreflightFailure; failure?: WorkspaceFailure; disabled: boolean; onRetry: () => void; onCluster?: () => void }) {
   const [expanded, setExpanded] = useState(false);
   const [notice, setNotice] = useState('');
-  const info = preflightFailure ? preflightRecovery(preflightFailure) : workspaceRecovery(detail);
+  const info = preflightFailure ? { ...preflightRecovery(preflightFailure), category: preflightFailure } : workspaceRecovery(failure);
   async function help() {
     try { await invoke('setup_open_help', { topic: info.topic }); setNotice('Help opened in your browser.'); }
     catch { setNotice("Couldn't open help. Open Show details and ask for help with this error."); }
   }
   async function copy() {
-    try { await navigator.clipboard.writeText(helpDetails(info, detail)); setNotice('Details copied. Private diagnostic text is not included.'); }
+    try { await navigator.clipboard.writeText(helpDetails(info, failure?.codes)); setNotice('Details copied. Private diagnostic text is not included.'); }
     catch { setNotice("Couldn't copy. Open Show details to read the error."); }
   }
   return <div className="workspace-failure" role="alert">
     <div className="workspace-failure-explanation"><p className="failure-summary">{info.summary}</p>
-    <p>{info.action}</p><p>{preflightFailure ? 'No workspace files were changed by this check.' : 'What you downloaded is kept.'}</p>
+    <p>{info.action}</p><p>{preflightFailure ? 'No workspace files were changed by this check.' : info.preservation}</p>
     <div className="workspace-step-actions">
       {info.topic && <button type="button" className="workspace-primary" onClick={() => { void help(); }}>Show me how</button>}
       <button type="button" className={info.topic ? 'workspace-secondary' : 'workspace-primary'} disabled={disabled || info.retryBlocked}

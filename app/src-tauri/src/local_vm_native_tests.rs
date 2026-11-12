@@ -1,4 +1,5 @@
 use super::*;
+use crate::runtime::types::WorkspaceCause;
 use sha2::{Digest, Sha256};
 use std::fs;
 
@@ -173,6 +174,14 @@ mod infrastructure_tests {
             let error = snapshot["localVmError"].as_str().unwrap();
             assert!(error.contains("infrastructure"), "{error}");
             assert_eq!(error.contains("stop detail"), fail_stop, "{error}");
+            assert_eq!(
+                snapshot["workspaceFailure"],
+                if fail_stop {
+                    serde_json::json!({"operation": "stop", "cause": "stopUnconfirmed", "codes": []})
+                } else {
+                    serde_json::json!({"operation": "services", "cause": "services", "codes": []})
+                }
+            );
             assert_eq!(probe.stops.load(Ordering::SeqCst), 1);
         }
     }
@@ -295,14 +304,17 @@ async fn windows_session_startup_inside_tokio_reaches_child_creation_without_pan
     // The real backend reaches CreateProcessW, which refuses the inert fixture.
     // A panic is mapped to Unavailable instead, so it cannot satisfy this check.
     match result {
-        Err(RuntimeError::Io(error)) => {
-            let reason = error.to_string();
-            assert!(reason.contains("Run qemu-img"), "{reason}");
-            assert!(
-                reason.contains("(os error 193)") || reason.contains("(os error 216)"),
-                "{reason}"
-            );
-            assert!(reason.contains("Details:"), "{reason}");
+        Err(RuntimeError::Startup(context)) => {
+            assert_eq!(context.operation, WorkspaceOperation::Prepare);
+            let RuntimeError::Io(error) = &context.error else {
+                panic!(
+                    "expected native executable refusal, got {:?}",
+                    context.error
+                );
+            };
+            assert!(matches!(error.raw_os_error(), Some(193 | 216)), "{error}");
+            assert!(context.diagnostic.contains("Run qemu-img"));
+            assert!(context.diagnostic.contains("Details:"));
         }
         Err(error) => panic!("expected native executable refusal, got {error:?}"),
         Ok(_) => panic!("inert fixture must not start a session"),
@@ -337,6 +349,7 @@ fn failed_start_retains_stage_stderr_and_existing_installation() {
         "Connect guest control",
         error,
         Ok(b"qemu: diagnostic\n".to_vec()),
+        WorkspaceOperation::Start,
     );
     let text = failure_reason(&reported);
     assert!(text.contains("Connect guest control"));
@@ -373,6 +386,47 @@ fn failed_start_retains_stage_stderr_and_existing_installation() {
     assert_eq!(fs::read(root.join("boot.log")).unwrap(), b"");
 }
 
+#[test]
+fn retained_diagnostics_keep_the_typed_error_operation_and_real_os_code() {
+    let denied_code = if cfg!(windows) { 5 } else { 13 };
+    let temp = tempfile::tempdir().unwrap();
+    let noisy = b"NoSpace code: 5 (os error 28) token=ghp_secret".to_vec();
+    let typed = |error| {
+        let reported = retain_start_failure(
+            temp.path(),
+            "Connect guest control",
+            error,
+            Ok(noisy.clone()),
+            WorkspaceOperation::Start,
+        );
+        assert!(failure_reason(&reported).contains("ghp_secret"));
+        let f = WorkspaceFailure::from_error(&reported, WorkspaceOperation::Prepare);
+        (f.operation, f.cause, f.codes)
+    };
+    assert_eq!(
+        typed(RuntimeError::Io(std::io::Error::from_raw_os_error(
+            denied_code
+        ))),
+        (
+            WorkspaceOperation::Start,
+            WorkspaceCause::Permission,
+            vec![denied_code as u32]
+        )
+    );
+    assert_eq!(
+        typed(RuntimeError::Io(std::io::Error::other("code: 5 NoSpace"))),
+        (WorkspaceOperation::Start, WorkspaceCause::Unknown, vec![])
+    );
+    // Unconfirmed cleanup stays the top-level quarantine error, not a wrapper.
+    let held = retain_start_failure(
+        temp.path(),
+        "Shut down guest",
+        RuntimeError::StopUnconfirmed("held".into()),
+        Ok(Vec::new()),
+        WorkspaceOperation::Stop,
+    );
+    assert!(matches!(held, RuntimeError::StopUnconfirmed(_)));
+}
 #[test]
 fn authenticated_nested_manifest_is_part_of_the_complete_runtime_inventory() {
     let temp = tempfile::tempdir().unwrap();
