@@ -835,7 +835,13 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try clickSendControl("Send and run checks", scrolling: 350)
     Thread.sleep(forTimeInterval: 1)
     let noReceipt = try capturePreflight("send-no-agent-receipt", "Checks: unknown")
+    try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": true])
     clickTab("Overview", noReceipt)
+    Thread.sleep(forTimeInterval: 1)
+    try overviewShot("overview-fixture-first-read-unavailable", ["Observation stale", "No Agent observation yet. Refresh or check access in Clusters."], heading: "fixture-secondary")
+    try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false])
+    scrollMain(12000)
+    clickText("Refresh", in: try capture("overview-probe", "Overview"))
     Thread.sleep(forTimeInterval: 1)
     try overviewShot("overview-fixture-multiple-places-by-place", ["fixture-secondary", "3 Agents", "Orka Agent"], heading: "fixture-secondary")
     let attempt = "fixture-secondary · agents · Checks unknown"
