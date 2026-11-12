@@ -5,10 +5,17 @@ use crate::runtime::image_types::*;
 #[derive(Clone)]
 pub(super) struct ReleaseImage {
     pub pin: ImagePin,
+    // Keep the reviewed manifest in the app profile so cache-free reopen can
+    // recheck authenticated host/app policy without network or new disk state.
+    pub manifest: Vec<u8>,
     pub image_id: String,
     pub state_compatibility_id: String,
 }
 impl ReleaseImage {
+    fn validate_host(&self, host: &HostTarget) -> Result<(), ImageError> {
+        let resolved = crate::runtime::manifest::resolve_image(&self.pin, &self.manifest, host)?;
+        self.validate(resolved.identity(), resolved.target())
+    }
     pub fn validate(
         &self,
         identity: &ImageIdentity,
@@ -67,7 +74,7 @@ pub(super) fn select_source(
     release: Option<(ReleaseImage, HostTarget)>,
 ) -> Option<ImageSource> {
     #[cfg(debug_assertions)]
-    if development && (override_present || installed) {
+    if development && (override_present || (installed && release.is_none())) {
         return Some(ImageSource::Development);
     }
     let _ = (development, override_present, installed);
@@ -75,6 +82,31 @@ pub(super) fn select_source(
         profile: Box::new(profile),
         host,
     })
+}
+
+pub(super) fn open_selected(
+    source: &mut ImageSource,
+    journal: &crate::runtime::journal::Journal,
+) -> Result<
+    std::sync::Arc<crate::runtime::image_install::InstalledImageSet>,
+    crate::runtime::types::RuntimeError,
+> {
+    use crate::runtime::image_install::open_installed_image;
+    let opened = open_installed_image(&journal.image_target(source.compatibility())?);
+    #[cfg(debug_assertions)]
+    if matches!(source, ImageSource::Pinned { .. })
+        && matches!(opened, Err(ImageError::RetainedImage))
+    {
+        // A root's existence does not identify its source. Preserve committed
+        // development reopen only when its verified binding has that identity.
+        if let Ok(image) =
+            open_installed_image(&journal.image_target(crate::dev_image::STATE_COMPATIBILITY_ID)?)
+        {
+            *source = ImageSource::Development;
+            return Ok(std::sync::Arc::new(image));
+        }
+    }
+    opened.map(std::sync::Arc::new).map_err(Into::into)
 }
 
 /// This helper never owns a backend. The factory keeps the original Journal
@@ -96,23 +128,21 @@ pub(super) fn prepare_installation(
 > {
     use crate::{
         local_vm::{LocalProgress, LocalVmStatus},
-        runtime::{
-            acquire::ImageHttpClient, image_cache::ImageCache, image_install::open_installed_image,
-            types::RuntimeError,
-        },
+        runtime::{acquire::ImageHttpClient, image_cache::ImageCache, types::RuntimeError},
     };
     if *closed.borrow() {
         return Err(RuntimeError::Closed);
     }
     progress(LocalProgress::Image(ImageProgress::Verifying));
+    let mut source = source.clone();
     let existing = if let Some(journal) = &custody.0 {
-        match open_installed_image(&journal.image_target(source.compatibility())?) {
-            Ok(image) => Some(std::sync::Arc::new(image)),
-            Err(ImageError::RetainedImage) => None,
-            Err(error) => return Err(error.into()),
+        match open_selected(&mut source, journal) {
+            Ok(image) => Some(image),
+            Err(RuntimeError::Image(ImageError::RetainedImage)) => None,
+            Err(error) => return Err(error),
         }
     } else {
-        match super::reopen(root, source.compatibility())? {
+        match super::reopen(root, &mut source)? {
             Some((journal, image)) => {
                 custody.0 = Some(journal);
                 Some(image)
@@ -120,11 +150,16 @@ pub(super) fn prepare_installation(
             None => None,
         }
     };
+    match &source {
+        #[cfg(debug_assertions)]
+        ImageSource::Development => {}
+        ImageSource::Pinned { profile, host } => profile.validate_host(host)?,
+    }
     if let Some(image) = existing {
         source.validate(image.identity(), image.target())?;
         return Ok(image);
     }
-    let prepared = match source {
+    let prepared = match &source {
         #[cfg(debug_assertions)]
         ImageSource::Development => {
             let image = crate::dev_image::from_environment_cancellable(&closed)

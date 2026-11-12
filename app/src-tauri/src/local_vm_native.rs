@@ -16,7 +16,7 @@ use crate::runtime::windows::inputs::{verify_windows_runtime, FilePin};
     all(target_os = "macos", target_arch = "aarch64")
 ))]
 use crate::runtime::{
-    image_install::{open_installed_image, InstalledImageSet},
+    image_install::InstalledImageSet,
     journal::{Journal, JournalCustody},
 };
 #[cfg(any(test, all(windows, target_arch = "x86_64")))]
@@ -292,15 +292,15 @@ fn read_runtime_manifest(root: &Path, pin: &FilePin) -> Result<Vec<FilePin>, Run
 ))]
 fn reopen(
     root: &Path,
-    compatibility: &str,
+    source: &mut image::ImageSource,
 ) -> Result<Option<(Journal, Arc<InstalledImageSet>)>, RuntimeError> {
     match fs::symlink_metadata(root) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(error.into()),
         Ok(_) => {
             let journal = Journal::open(root)?;
-            let image = open_installed_image(&journal.image_target(compatibility)?)?;
-            Ok(Some((journal, Arc::new(image))))
+            let image = image::open_selected(source, &journal)?;
+            Ok(Some((journal, image)))
         }
     }
 }

@@ -1,5 +1,5 @@
 use super::*;
-use crate::runtime::types::WorkspaceCause;
+use crate::runtime::{image_install::open_installed_image, types::WorkspaceCause};
 use sha2::{Digest, Sha256};
 use std::fs;
 
@@ -481,12 +481,14 @@ fn missing_manifest_and_untrusted_self_description_cannot_supply_runtime_pins() 
 fn reopen_never_creates_or_repairs_missing_or_incomplete_installations() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("local-vm-v1");
-    assert!(reopen(&root, "engineering-afc68ae1").unwrap().is_none());
+    let (_fixture, profile, _) = release_image_tests::profile();
+    let mut source = release_image_tests::source(profile);
+    assert!(reopen(&root, &mut source).unwrap().is_none());
     assert!(!root.exists());
     let journal = Journal::create(&root, BackendKind::Qemu, b"pc-q35-11.0".to_vec()).unwrap();
     drop(journal);
     let before = fs::read(root.join("record.json")).unwrap();
-    assert!(reopen(&root, "engineering-afc68ae1").is_err());
+    assert!(reopen(&root, &mut source).is_err());
     assert_eq!(fs::read(root.join("record.json")).unwrap(), before);
     assert_eq!(fs::metadata(root.join("state.disk")).unwrap().len(), 0);
     assert!(!root.join("image-binding.json").exists());
@@ -719,7 +721,7 @@ mod release_image_tests {
     use super::*;
     use crate::runtime::image_types::*;
 
-    fn profile() -> (tempfile::TempDir, ReleaseImage, ImageIdentity) {
+    pub(super) fn profile() -> (tempfile::TempDir, ReleaseImage, ImageIdentity) {
         let temp = tempfile::tempdir().unwrap();
         let verified = image_fixture::verified(temp.path(), ImageTarget::WindowsAmd64);
         let identity = verified.image().identity().clone();
@@ -742,6 +744,7 @@ mod release_image_tests {
                     initrd_bytes: 8192,
                 },
             },
+            manifest: verified.image().manifest_bytes().to_vec(),
             image_id: identity.image_id.clone(),
             state_compatibility_id: identity.state_compatibility_id.clone(),
         };
@@ -799,7 +802,7 @@ mod release_image_tests {
         );
     }
 
-    fn source(profile: ReleaseImage) -> ImageSource {
+    pub(super) fn source(profile: ReleaseImage) -> ImageSource {
         ImageSource::Pinned {
             host: HostTarget {
                 target: profile.pin.target,
@@ -838,6 +841,139 @@ mod release_image_tests {
         assert!(root.join("image-binding.json").exists());
         assert!(matches!(Journal::open(&root), Err(RuntimeError::Busy)));
         assert!(custody.0.is_some());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn debug_pinned_selection_survives_first_install_and_restart() {
+        let (temp, profile, expected) = profile();
+        let root = temp.path().join("install");
+        let cache = temp.path().join("cache");
+        let runtime = runtime();
+        let (_stop, closed) = watch::channel(false);
+        let mut custody = JournalCustody(None);
+        for existing in [false, true] {
+            let host = HostTarget {
+                target: profile.pin.target,
+                host_version: "13.0".into(),
+                app_version: "1.0.0".into(),
+            };
+            let selected =
+                select_source(true, false, existing, Some((profile.clone(), host))).unwrap();
+            let image = prepare_installation(
+                &selected,
+                &root,
+                &cache,
+                &mut custody,
+                closed.clone(),
+                |_| {},
+                || Journal::create(&root, BackendKind::Qemu, vec![1]),
+                runtime.handle(),
+            )
+            .unwrap();
+            assert_eq!(image.identity().manifest_sha256, expected.manifest_sha256);
+            drop(custody.0.take());
+            if !existing {
+                fs::remove_dir_all(&cache).unwrap();
+            }
+        }
+        assert!(!cache.exists());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn debug_retained_development_binding_reopens_when_a_pin_is_available() {
+        let temp = tempfile::tempdir().unwrap();
+        let verified = image_fixture::verified_with_compatibility(
+            temp.path(),
+            ImageTarget::WindowsAmd64,
+            Some(crate::dev_image::STATE_COMPATIBILITY_ID),
+        );
+        let root = temp.path().join("install");
+        let journal = Journal::create(&root, BackendKind::Qemu, vec![1]).unwrap();
+        let (_stop, closed) = watch::channel(false);
+        let runtime = runtime();
+        runtime
+            .block_on(crate::runtime::image_install::materialize_image(
+                &verified,
+                &journal
+                    .image_target(crate::dev_image::STATE_COMPATIBILITY_ID)
+                    .unwrap(),
+                closed.clone(),
+                |_| {},
+            ))
+            .unwrap();
+        drop((verified, journal));
+        fs::remove_dir_all(temp.path().join("cache")).unwrap();
+        let (_release_fixture, profile, _) = profile();
+        let mut custody = JournalCustody(None);
+        let image = prepare_installation(
+            &source(profile),
+            &root,
+            &temp.path().join("cache"),
+            &mut custody,
+            closed,
+            |_| {},
+            || panic!("retained development must not create"),
+            runtime.handle(),
+        )
+        .unwrap();
+        assert_eq!(
+            image.identity().state_compatibility_id,
+            crate::dev_image::STATE_COMPATIBILITY_ID
+        );
+        assert!(!temp.path().join("cache").exists());
+    }
+
+    #[test]
+    fn pinned_reopen_rechecks_minimum_versions_without_cache() {
+        let (temp, profile, _) = profile();
+        let root = temp.path().join("install");
+        let cache = temp.path().join("cache");
+        let runtime = runtime();
+        let (_stop, closed) = watch::channel(false);
+        let mut custody = JournalCustody(None);
+        prepare_installation(
+            &source(profile.clone()),
+            &root,
+            &cache,
+            &mut custody,
+            closed.clone(),
+            |_| {},
+            || Journal::create(&root, BackendKind::Qemu, vec![1]),
+            runtime.handle(),
+        )
+        .unwrap();
+        fs::remove_dir_all(&cache).unwrap();
+        for (host_version, app_version, reason) in [
+            ("1.0", "1.0.0", Incompatibility::HostVersion),
+            ("13.0", "0.0.0", Incompatibility::AppVersion),
+        ] {
+            let selected = ImageSource::Pinned {
+                profile: Box::new(profile.clone()),
+                host: HostTarget {
+                    target: profile.pin.target,
+                    host_version: host_version.into(),
+                    app_version: app_version.into(),
+                },
+            };
+            let result = prepare_installation(
+                &selected,
+                &root,
+                &cache,
+                &mut custody,
+                closed.clone(),
+                |_| {},
+                || panic!("version rejection cannot replace the install"),
+                runtime.handle(),
+            );
+            assert!(
+                matches!(result, Err(RuntimeError::Image(ImageError::Incompatible(actual))) if actual == reason)
+            );
+            assert!(!cache.exists());
+            // Exercise both already-held retry custody and committed reopen.
+            drop(custody.0.take());
+        }
     }
 
     #[test]
