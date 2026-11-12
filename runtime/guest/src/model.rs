@@ -268,6 +268,7 @@ impl<R: Runner> ModelLifecycle<R> {
             _ => return None,
         }
         Some(ResultBody::ModelState(ModelState {
+            retained_cleanup: true,
             phase: self.phase,
             connection: self.connection.clone(),
             credential,
@@ -474,6 +475,13 @@ mod tests {
             success: true,
             diagnostic: None,
         }]);
+        assert!(matches!(
+            m.handle(pristine(), &RequestBody::ModelStatus {}),
+            Some(ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
+                ..
+            }))
+        ));
         for _ in 0..2 {
             assert_eq!(
                 m.handle(pristine(), &retained_request()),

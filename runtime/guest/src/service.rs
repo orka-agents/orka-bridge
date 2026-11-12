@@ -239,6 +239,7 @@ mod credential_tests {
                 let reply = credential_request(host, &request, || {
                     called.set(true);
                     ResultBody::ModelState(ModelState {
+                        retained_cleanup: true,
                         phase: ModelPhase::Idle,
                         connection: None,
                         diagnostic: None,

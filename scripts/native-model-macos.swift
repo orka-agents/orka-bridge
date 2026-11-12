@@ -45,7 +45,8 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     let rows = request.results ?? []
     let text = rows.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     try text.write(toFile: "\(output)/\(name).txt", atomically: true, encoding: .utf8)
-    for value in expected { require(text.contains(value), "Missing \(value) in \(name): \(text)") }
+    let visible = text.replacingOccurrences(of: "\n", with: " ")
+    for value in expected { require(visible.contains(value), "Missing \(value) in \(name): \(text)") }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
         else { fatalError("Cannot sample native theme") }

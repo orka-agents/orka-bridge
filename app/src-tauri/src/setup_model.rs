@@ -149,7 +149,8 @@ fn cleanup_previous_boot(
     let before = client
         .model_status()
         .map_err(|_| SetupError::model("modelReconnect"))?;
-    if before.phase != ModelPhase::Idle
+    if !before.retained_cleanup
+        || before.phase != ModelPhase::Idle
         || before.connection.is_some()
         || before.credential.installed
         || before.credential.generation.is_some()
@@ -709,6 +710,7 @@ mod tests {
             boot_nonce: nonce,
             request_id: 3,
             body: ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
                 diagnostic: None,
                 phase: ModelPhase::Idle,
                 connection: None,
@@ -804,6 +806,7 @@ mod tests {
                     (0 | 1, RequestBody::ModelStatus {}) => {
                         seen.lock().unwrap().push("probe");
                         ResultBody::ModelState(ModelState {
+                            retained_cleanup: true,
                             diagnostic: None,
                             phase: ModelPhase::Idle,
                             connection: None,
@@ -831,6 +834,7 @@ mod tests {
                         assert_eq!(read_binding(&root).unwrap().unwrap().phase, Phase::Pending);
                         seen.lock().unwrap().push("connect");
                         ResultBody::ModelState(ModelState {
+                            retained_cleanup: true,
                             diagnostic: None,
                             phase: ModelPhase::Ready,
                             connection: Some(expected.clone()),
@@ -840,6 +844,7 @@ mod tests {
                     (5, RequestBody::ModelStatus {}) => {
                         seen.lock().unwrap().push("health");
                         ResultBody::ModelState(ModelState {
+                            retained_cleanup: true,
                             diagnostic: None,
                             phase: ModelPhase::Ready,
                             connection: Some(expected.clone()),
@@ -962,6 +967,7 @@ mod tests {
                     (0, RequestBody::ModelStatus {}) => {
                         seen.lock().unwrap().push("status");
                         ResultBody::ModelState(ModelState {
+                            retained_cleanup: true,
                             diagnostic: None,
                             phase: ModelPhase::Idle,
                             connection: None,
@@ -988,6 +994,7 @@ mod tests {
                         assert_eq!(read_binding(&root).unwrap().unwrap().phase, Phase::Pending);
                         seen.lock().unwrap().push("connect");
                         ResultBody::ModelState(ModelState {
+                            retained_cleanup: true,
                             diagnostic: None,
                             phase: ModelPhase::Ready,
                             connection: Some(expected.clone()),
@@ -995,6 +1002,7 @@ mod tests {
                         })
                     }
                     (4, RequestBody::ModelStatus {}) => ResultBody::ModelState(ModelState {
+                        retained_cleanup: true,
                         diagnostic: None,
                         phase: ModelPhase::Ready,
                         connection: Some(expected.clone()),
@@ -1004,6 +1012,7 @@ mod tests {
                         assert_eq!(*id, expected.id);
                         seen.lock().unwrap().push("disconnect");
                         ResultBody::ModelState(ModelState {
+                            retained_cleanup: true,
                             diagnostic: None,
                             phase: ModelPhase::Idle,
                             connection: None,

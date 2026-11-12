@@ -370,6 +370,7 @@ fn credential(generation: Option<Uuid>, installed: bool) -> CredentialState {
 }
 fn idle() -> ResultBody {
     ResultBody::ModelState(ModelState {
+        retained_cleanup: true,
         diagnostic: None,
         phase: ModelPhase::Idle,
         connection: None,
@@ -385,6 +386,7 @@ fn connection() -> ModelConnection {
 }
 fn remote(connection: &ModelConnection, phase: ModelPhase) -> ResultBody {
     ResultBody::ModelState(ModelState {
+        retained_cleanup: true,
         diagnostic: None,
         phase,
         connection: Some(connection.clone()),
@@ -605,6 +607,7 @@ fn failed_connect_retains_only_typed_guest_diagnostics_in_setup_details() {
                 ResultBody::CredentialState(credential(Some(expected.generation), true))
             }
             RequestBody::ModelConnect { .. } => ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
                 phase: ModelPhase::Unknown,
                 connection: Some(expected.clone()),
                 credential: credential(Some(expected.generation), true),
@@ -635,6 +638,7 @@ fn failed_connect_keeps_guest_diagnostics_when_binding_persistence_fails() {
     let missing_root = tmp.path().join("missing");
     let conn = connection();
     let remote = ModelState {
+        retained_cleanup: true,
         phase: ModelPhase::Unknown,
         credential: credential(Some(conn.generation), true),
         connection: Some(conn),
@@ -696,6 +700,7 @@ fn pending_without_id_retries_only_the_installed_generation_without_capture() {
     let (mut client, worker) = peer(nonce, move |request| {
         Some(match &request.body {
             RequestBody::ModelStatus {} => ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
                 diagnostic: None,
                 phase: ModelPhase::Unknown,
                 connection: None,
@@ -744,6 +749,7 @@ fn pending_known_failure_disconnects_and_clears_before_a_fresh_connect() {
             (2, RequestBody::ModelDisconnect { connection }) => {
                 assert_eq!(*connection, old.id);
                 ResultBody::ModelState(ModelState {
+                    retained_cleanup: true,
                     diagnostic: None,
                     phase: ModelPhase::Idle,
                     connection: None,
@@ -763,6 +769,7 @@ fn pending_known_failure_disconnects_and_clears_before_a_fresh_connect() {
                 ResultBody::CredentialState(credential(Some(cleared), false))
             }
             (5, RequestBody::ModelStatus {}) => ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
                 diagnostic: None,
                 phase: ModelPhase::Idle,
                 connection: None,
@@ -827,6 +834,7 @@ fn pending_after_acknowledged_clear_reconciles_before_reloading_sign_in() {
         step += 1;
         Some(match (step, &request.body) {
             (1 | 2, RequestBody::ModelStatus {}) => ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
                 diagnostic: None,
                 phase: ModelPhase::Idle,
                 connection: None,
@@ -889,6 +897,7 @@ fn pending_known_id_needs_an_advanced_cleared_generation_before_host_recovery() 
         let (mut client, worker) = peer(nonce, move |request| {
             assert!(matches!(request.body, RequestBody::ModelStatus {}));
             Some(ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
                 diagnostic: None,
                 phase: ModelPhase::Idle,
                 connection: None,
@@ -937,6 +946,44 @@ fn new_boot_remove_cleans_guest_before_deleting_only_the_owned_slot() {
 }
 
 #[test]
+fn older_image_refuses_reconnect_without_poisoning_its_existing_control_channel() {
+    let (_tmp, setup, install, vault) = associated();
+    let root = setup.root.as_deref().unwrap();
+    let mut binding = read_binding(root).unwrap().unwrap();
+    binding.phase = Phase::Connected;
+    binding.nonce = Some(Uuid::new_v4());
+    binding.connection = Some(connection());
+    write_binding(root, &binding).unwrap();
+    let before = fs::read(root.join("model-v1")).unwrap();
+    let legacy: ModelState =
+        serde_json::from_value(serde_json::json!({"phase":"idle", "connection":null,
+        "credential":{"profile":CREDENTIAL_PROFILE,"installed":false,"generation":null}}))
+        .unwrap();
+    let (mut client, worker) = peer(Uuid::new_v4(), move |request| {
+        assert!(
+            matches!(request.body, RequestBody::ModelStatus {}),
+            "never send a new opcode to an older guest"
+        );
+        Some(ResultBody::ModelState(legacy.clone()))
+    });
+    assert_eq!(
+        setup
+            .connect_stored_model(install, &mut client, &vault, || panic!("no capture"))
+            .unwrap_err()
+            .kind,
+        "modelReconnect"
+    );
+    assert!(
+        client.model_status().is_ok(),
+        "existing channel remains usable"
+    );
+    drop(client);
+    assert_eq!(worker.join().unwrap().frames.len(), 2);
+    assert_eq!(vault.counts(), (1, 0, 0));
+    assert_eq!(fs::read(root.join("model-v1")).unwrap(), before);
+}
+
+#[test]
 fn new_boot_cleanup_refusal_preserves_slot_and_binding_before_any_secret_load() {
     for reply in [
         idle(),
@@ -944,6 +991,7 @@ fn new_boot_cleanup_refusal_preserves_slot_and_binding_before_any_secret_load() 
             code: ErrorCode::Unavailable,
         },
         ResultBody::ModelState(ModelState {
+            retained_cleanup: true,
             phase: ModelPhase::Idle,
             connection: None,
             credential: credential(Some(Uuid::new_v4()), false),
@@ -1214,6 +1262,7 @@ fn acknowledged_clear_allows_explicit_host_cleanup_retry_without_guest_or_load()
             RequestBody::ModelDisconnect { connection } => {
                 assert_eq!(*connection, expected.id);
                 ResultBody::ModelState(ModelState {
+                    retained_cleanup: true,
                     diagnostic: None,
                     phase: ModelPhase::Idle,
                     connection: None,
