@@ -69,6 +69,15 @@ test('preflight pending blocks Send and only matching source enables it', async 
   await screen.findByText(/saved files changed/);
   expect((screen.getByRole('button', { name: 'Send and run tests' }) as HTMLButtonElement).disabled).toBe(true);
 });
+test('a fresh preflight file change makes the earlier pass stale before Reload', async () => {
+  const passed = { verdict: 'passed', cases: [{ ...report.cases[0], answer: 'checksum', verdict: 'passed', assertions: [{ id: 'has-text', kind: 'contains', expected: 'checksum', verdict: 'passed' }] }] };
+  native(idle, { ...running, state: 'complete', stage: 'done', report: passed }, { ...allowed, source: { ...source, tests: 'c'.repeat(64) } });
+  render(<Send place={place} source={source} stale={false} visible remote />);
+  await screen.findByRole('button', { name: 'Reload saved files' });
+  expect(screen.getByText('Not run since your edit')).toBeTruthy();
+  expect(screen.getByText('Test file changed since this run.')).toBeTruthy();
+  expect(screen.getByText('reads-the-page').closest('details')?.querySelector('.status-passed')).toBeNull();
+});
 test('changed disk files can be explicitly reloaded before preflight is retried', async () => {
   vi.stubGlobal('isTauri', true); let opened = false;
   const changed = { ...pair, agent: pair.agent.replace('literal-model', 'file-model').replace('Read the page.', 'Changed on disk.'), source: { ...source, tests: 'c'.repeat(64) } };

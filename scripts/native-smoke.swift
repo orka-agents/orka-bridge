@@ -767,6 +767,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     mixedTests.append(Data("\n```yaml agent-test\nid: has-a-date\ninput: Which date is shown on the page?\nassertions:\n  - id: date\n    type: contains\n    value: '2099-12-31'\n```\n".utf8))
     try mixedTests.write(to: testsURL, options: .atomic)
     try clickSendControl("Check again", scrolling: 350)
+    try focusSend()
+    try capturePreflight("send-disk-stale", "Not run since your edit")
     try clickSendControl("Reload saved files", scrolling: -250)
     try focusSend()
     try capturePreflight("send-stale", "Not run since your edit")

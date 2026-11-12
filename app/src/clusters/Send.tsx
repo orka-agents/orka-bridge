@@ -110,8 +110,9 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   }
   const running = snapshot?.state === 'running';
   const samePlace = snapshot?.targetId === target?.id && snapshot?.providerId === providerId;
-  const current = !stale && sameSource(source, snapshot?.source) === true;
-  const localCurrent = !stale && sameSource(source, local?.source) === true;
+  const resultSource = checked?.value ? checked.value.source ?? undefined : source;
+  const current = !stale && sameSource(resultSource, snapshot?.source) === true;
+  const localCurrent = !stale && sameSource(resultSource, local?.source) === true;
   const targetName = snapshot?.targetName ?? (snapshot?.targetId === target?.id ? target?.context_name : undefined);
   const outdated = !!snapshot && (!samePlace || (!!snapshot.source && !current));
   const uncertain = snapshot?.state === 'unknown' || snapshot?.report?.verdict === 'unknown';
@@ -153,7 +154,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
     {snapshot?.stage === 'stopped' && <p role="status">Stopped watching. The cluster may still be running checks.</p>}
     {snapshot?.error && snapshot.stage !== 'stopped' && <p role="alert">{sendErrors[snapshot.error as keyof typeof sendErrors]}</p>}
     {snapshot && !samePlace && <p role="status">This result belongs to another cluster or Provider. It is not validation of your current selection.</p>}
-    {snapshot?.source && !current && <p className="muted">{changedFiles(source, snapshot.source, stale)}</p>}
+    {snapshot?.source && !current && <p className="muted">{changedFiles(resultSource, snapshot.source, stale)}</p>}
     {outdated && uncertain && !snapshot?.report && <p>Earlier result unknown</p>}
     {!running && <TestResults report={snapshot?.report} stale={outdated} />}
     </CardSection>
