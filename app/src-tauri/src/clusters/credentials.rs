@@ -1,5 +1,5 @@
 //! Native-only credential resolution. A configured plugin is trusted code, not a sandbox.
-use super::AccessOutcome;
+use super::{AccessOutcome, Check, CheckResult};
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use kube::{
     client::{Body, ConfigExt},
@@ -214,22 +214,27 @@ fn selected<'a>(
         .iter()
         .find(|c| c.name == name)
         .and_then(|c| c.context.as_ref())
-        .ok_or(AccessOutcome::Unavailable)?;
+        .ok_or(Check::Configuration.unknown())?;
     let cluster = cfg
         .clusters
         .iter()
         .find(|c| c.name == context.cluster)
         .and_then(|c| c.cluster.clone())
-        .ok_or(AccessOutcome::Unavailable)?;
+        .ok_or(Check::Configuration.unknown())?;
     let user = cfg
         .auth_infos
         .iter_mut()
         .find(|u| Some(&u.name) == context.user.as_ref())
         .and_then(|u| u.auth_info.as_mut())
-        .ok_or(AccessOutcome::UnsupportedCredential)?;
+        .ok_or(Check::Credentials.fail(CheckResult::UnsupportedCredential))?;
     Ok((user, cluster))
 }
 async fn configured(copy: Kubeconfig, name: &str) -> Result<Config, AccessOutcome> {
+    configured_config(copy, name)
+        .await
+        .map_err(|e| e.at(Check::Configuration))
+}
+async fn configured_config(copy: Kubeconfig, name: &str) -> Result<Config, AccessOutcome> {
     let proxy = {
         let context = copy
             .contexts
@@ -263,6 +268,16 @@ async fn configured(copy: Kubeconfig, name: &str) -> Result<Config, AccessOutcom
     Ok(config)
 }
 pub(super) async fn resolve(
+    kubeconfig: &Kubeconfig,
+    name: &str,
+    deadline: Instant,
+    owner: &ExecOwner,
+) -> Result<ResolvedCreator, AccessOutcome> {
+    resolve_creator(kubeconfig, name, deadline, owner)
+        .await
+        .map_err(|e| e.at(Check::Credentials))
+}
+async fn resolve_creator(
     kubeconfig: &Kubeconfig,
     name: &str,
     deadline: Instant,

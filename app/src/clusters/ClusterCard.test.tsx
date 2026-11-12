@@ -8,7 +8,7 @@ const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' }
 const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name,
   service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka:0.9.4' };
 const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-model', ready: true };
-function native(status: object = { selected: null, localVm: 'idle', model: 'locked' }, use: unknown = { status: 'connected', providers: [provider] }) {
+function native(status: object = { selected: null, localVm: 'idle', model: 'locked' }, use: unknown = { status: 'connected', providers: [provider], failure: null }) {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_status') return status;
@@ -65,12 +65,12 @@ test('a selected unavailable workspace can choose a cluster without resetting it
 });
 
 test('a failed account attempt keeps the native-requested name field for correction', async () => {
-  const ipc = native(undefined, { status: 'needServiceAccount', providers: [] });
+  const ipc = native(undefined, { status: 'needServiceAccount', providers: [], failure: null });
   const user = await open(); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   const account = await screen.findByRole('textbox', { name: 'ServiceAccount name' });
   await user.type(account, 'misspelled');
-  ipc.mockImplementation(command => command === 'cluster_use' ? { status: 'unavailable', providers: [] } : Promise.reject('Unsupported'));
+  ipc.mockImplementation(command => command === 'cluster_use' ? { status: 'unavailable', providers: [], failure: { check: 'serviceAccount', result: 'unknown' } } : Promise.reject('Unsupported'));
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   await screen.findByRole('alert');
   expect(screen.getByRole('textbox', { name: 'ServiceAccount name' })).toBe(account);
@@ -85,7 +85,7 @@ test('local results remain explicitly local after confirming cluster access', as
     if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', verdict: 'passed' }] }] }, acknowledged: [], pending: null, error: null };
     if (command === 'cluster_contexts') return [context];
     if (command === 'cluster_discover') return [target];
-    if (command === 'cluster_use') return { status: 'connected', providers: [provider] };
+    if (command === 'cluster_use') return { status: 'connected', providers: [provider], failure: null };
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />);
@@ -164,7 +164,7 @@ test('v6_cluster_card_keyboard and Use confirms access only after discovery', as
   expect(screen.getByRole('button', { name: 'Open your agent' }).matches(':disabled')).toBe(false);
 });
 test('native_need_account_only_then_name_field', async () => {
-  const ipc = native(undefined, { status: 'needServiceAccount', providers: [] }); const user = await open(); await discover(user);
+  const ipc = native(undefined, { status: 'needServiceAccount', providers: [], failure: null }); const user = await open(); await discover(user);
   expect(screen.queryByRole('textbox', { name: 'ServiceAccount name' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   const account = await screen.findByRole('textbox', { name: 'ServiceAccount name' });
@@ -173,14 +173,14 @@ test('native_need_account_only_then_name_field', async () => {
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use').at(-1)).toEqual(['cluster_use', { targetId: target.id, saName: 'bridge-user' }]);
 });
 test.each(['unsupportedCredential', 'denied', 'unavailable'])('unsupported_access_stays_visible: %s', async status => {
-  native(undefined, { status, providers: [] }); const user = await open(); await discover(user);
+  native(undefined, { status, providers: [], failure: { check: status === 'unsupportedCredential' ? 'credentials' : 'providers', result: status === 'denied' ? 'permissionDenied' : status === 'unsupportedCredential' ? 'unsupportedCredential' : 'unknown' } }); const user = await open(); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   const alert = await screen.findByRole('alert');
   expect(alert).toBeTruthy(); expect(screen.getByText('Orka found')).toBeTruthy();
   if (status === 'unsupportedCredential') expect(alert.textContent).toMatch(/credential plugin outside Bridge/);
   if (status === 'unavailable') {
-    expect(alert.textContent).toMatch(/existing sign-in/);
-    expect(alert.textContent).toMatch(/configured Providers/);
+    expect(alert.textContent).toMatch(/Provider reading/);
+    expect(alert.textContent).toMatch(/cause could not be established/);
   }
   expect(screen.queryByRole('textbox', { name: 'ServiceAccount name' })).toBeNull();
 });
@@ -197,7 +197,7 @@ test('failure alternative does not stop or reset a local VM', async () => {
 });
 test('unsupported discovery names the access limitation and keeps the context', async () => {
   native(); mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
-    : command === 'cluster_contexts' ? [context] : Promise.reject('unsupportedCredential'));
+    : command === 'cluster_contexts' ? [context] : Promise.reject({ check: 'credentials', result: 'unsupportedCredential' }));
   const user = await open(); await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
   expect(await screen.findByText(/credential plugin outside Bridge/)).toBeTruthy();
   expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe(context.id);

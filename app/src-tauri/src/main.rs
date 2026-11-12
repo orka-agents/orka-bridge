@@ -172,15 +172,20 @@ async fn agent_run(
 #[tauri::command]
 async fn cluster_contexts(
     state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
-) -> Result<Vec<bridge_engine::clusters::ContextView>, &'static str> {
+) -> Result<Vec<bridge_engine::clusters::ContextView>, bridge_engine::clusters::ClusterFailure> {
     state.contexts().await
+}
+#[tauri::command]
+async fn cluster_reload(
+    state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+) -> Result<Vec<bridge_engine::clusters::ContextView>, bridge_engine::clusters::ClusterFailure> {
+    state.reload().await
 }
 #[tauri::command]
 async fn cluster_discover(
     context_id: String,
     state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
-) -> Result<Vec<bridge_engine::clusters::TargetView>, bridge_engine::clusters::commands::AccessStatus>
-{
+) -> Result<Vec<bridge_engine::clusters::TargetView>, bridge_engine::clusters::ClusterFailure> {
     state.discover(&context_id).await
 }
 #[tauri::command]
@@ -307,6 +312,7 @@ fn main() {
             agent_save,
             workspace_catalog,
             cluster_contexts,
+            cluster_reload,
             cluster_discover,
             cluster_use,
             send_preflight,

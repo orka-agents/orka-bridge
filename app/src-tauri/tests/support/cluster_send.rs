@@ -180,7 +180,9 @@ async fn setup_with_auth_and_history(
     let reader = {
         let (fresh, on_read) = (fresh.clone(), on_read.clone());
         Arc::new(move || {
-            if let Some(hook) = on_read.lock().unwrap().take() {
+            // Release the hook slot first; a hook may read configuration again.
+            let hook = on_read.lock().unwrap().take();
+            if let Some(hook) = hook {
                 hook();
             }
             Ok(fresh.lock().unwrap().clone())
@@ -642,6 +644,43 @@ async fn send_start_future_is_send_for_desktop_dispatch() {
         .await
         .unwrap();
     s.finish(&id(&serde_json::to_value(view).unwrap())).await;
+}
+
+#[tokio::test]
+async fn reload_during_send_keeps_its_frozen_target_and_requires_use_again() {
+    let s = setup().await;
+    // Reload lands while this attempt rereads configuration for its own admission.
+    let (session, handle) = (s.session.clone(), tokio::runtime::Handle::current());
+    *s.on_read.lock().unwrap() = Some(Box::new(move || {
+        handle.block_on(session.reload()).unwrap();
+    }));
+    let first = s.start().await;
+    let done = s.finish(&id(&first)).await;
+    assert_eq!(done["state"], "complete");
+    assert_eq!(done["report"]["verdict"], "passed");
+    assert_eq!(s.agent_posts().len(), 1);
+    s.idle_forwards().await;
+    // Future admission cannot reuse the old target or access.
+    let next = s.start().await;
+    let next = s.finish(&id(&next)).await;
+    assert_eq!(next["error"], "access");
+    assert_eq!(s.agent_posts().len(), 1);
+}
+
+#[tokio::test]
+async fn reload_immediately_after_running_admission_keeps_its_access() {
+    let s = setup().await;
+    let started = s.start().await;
+    assert_eq!(started["state"], "running");
+    assert_eq!(started["stage"], "capture");
+    s.session.reload().await.unwrap();
+    let done = s.finish(&id(&started)).await;
+    assert_eq!(done["report"]["verdict"], "passed", "{done}");
+    assert_eq!(s.agent_posts().len(), 1);
+    s.idle_forwards().await;
+    let next = s.start().await;
+    assert_eq!(s.finish(&id(&next)).await["error"], "access");
+    assert_eq!(s.agent_posts().len(), 1);
 }
 
 #[tokio::test]

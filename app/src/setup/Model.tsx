@@ -47,7 +47,7 @@ export default function Model({ enabled, paused = false, onState, onSettled }: {
       await navigator.clipboard.writeText(['Bridge AI connection', `Operation: ${failedAction === 'remove' ? 'Removing sign-in' : 'Connecting AI'}`, `Category: ${error.category}`,
         ...error.codes.map(code => `OS code: ${code}`)].join('\n'));
       setNotice('Details copied. Private diagnostic text is not included.');
-    } catch { setNotice("Couldn't copy. Read the error category here for help."); }
+    } catch { setNotice("Couldn't copy. Share the visible error message for help."); }
   }
   const cliUnavailable = error?.category === 'modelCaptureUnavailable';
   const signInCheck = error && ['modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(error.category);

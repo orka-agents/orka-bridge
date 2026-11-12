@@ -42,9 +42,11 @@ impl OrkaRead for PodOrkaRead {
     ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>> {
         Box::pin(async move {
             let deadline = Instant::now() + REQUEST_TIMEOUT;
+            Check::OrkaConnection.begin();
             let connection = Connection::open(creator, binding, deadline)
                 .await
-                .map_err(access_error)?;
+                .map_err(|e| orka_error(Check::OrkaConnection, e))?;
+            resource.check().begin();
             let result = connection
                 .request(
                     path(resource),
@@ -57,7 +59,7 @@ impl OrkaRead for PodOrkaRead {
                 )
                 .await;
             connection.close().await;
-            result.map_err(access_error)
+            result.map_err(|e| orka_error(resource.check(), e))
         })
     }
 }
@@ -93,15 +95,17 @@ impl OrkaRead for OrkaStreamTransport {
                     deadline,
                 )
                 .await
-                .map_err(access_error)
+                .map_err(|e| orka_error(resource.check(), e))
         })
     }
 }
-fn access_error(error: ErrorKind) -> AccessOutcome {
-    match error {
-        ErrorKind::Authentication | ErrorKind::Permission => AccessOutcome::Denied,
-        _ => AccessOutcome::Unavailable,
-    }
+/// Orka's own status codes; never relabelled as a Kubernetes permission check.
+fn orka_error(check: Check, error: ErrorKind) -> AccessOutcome {
+    check.fail(match error {
+        ErrorKind::Authentication => CheckResult::AuthenticationRejected,
+        ErrorKind::Permission => CheckResult::PermissionDenied,
+        _ => CheckResult::Unknown,
+    })
 }
 
 /// One opened Pod stream for the attempt. Never reconnect, reselect or retry a write.

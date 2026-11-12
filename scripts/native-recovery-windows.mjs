@@ -79,19 +79,38 @@ try {
     ['cli', 'modelCaptureUnavailable', 'gh auth login --hostname github.com --web'],
     ['sign-in', 'modelCaptureFailed', 'gh auth status --hostname github.com'],
     ['model-store', 'modelStore', 'native credential store'],
+    ['model-copy', 'modelCaptureFailed', 'Share the visible error message'],
+    ['cluster-empty', null, 'No kubectl contexts were found'],
+    ['cluster-configuration', { check: 'configuration', result: 'unknown' }, 'kubeconfig could not be read'],
+    ['cluster-permission', { check: 'providers', result: 'permissionDenied' }, 'Provider reading failed. Access was denied.'],
+    ['cluster-unknown', { check: 'orkaIdentity', result: 'unknown' }, 'The cause could not be established'],
+    ['cluster-reload-pending', null, 'Reload pending'],
+    ['cluster-reloaded', null, 'corrected-context'],
   ];
   for (const theme of ['light', 'dark']) {
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
     for (const [name, failure, expected] of fixtures) {
+      const cluster = name.startsWith('cluster-');
       const model = typeof failure === 'string';
       ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `recovery-${theme}-${name}` }));
       await evaluate(`(() => {
         const failure = ${JSON.stringify(failure)};
+        const context = { id: '00000000-0000-4000-8000-000000000001', name: 'fixture-context' };
+        const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name, service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'orka:fixture' };
+        const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'fixture-model', ready: true };
+        if (${JSON.stringify(name)} === 'model-copy') Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async () => { throw Error('Fixture clipboard unavailable'); } } });
         localStorage.setItem('bridge.welcomeSeen.v1', '1');
         window.isTauri = true;
         window.__TAURI_INTERNALS__ = { invoke: async command => {
-          if (command === 'setup_status') return { selected: 'localVm', localVm: ${JSON.stringify(model ? 'ready' : 'failed')}, model: ${JSON.stringify(model ? 'available' : 'locked')}, ${model ? '' : 'workspaceFailure: failure,'} localVmError: null };
+          if (command === 'setup_status') return { selected: ${JSON.stringify(cluster ? null : 'localVm')}, localVm: ${JSON.stringify(cluster ? 'idle' : model ? 'ready' : 'failed')}, model: ${JSON.stringify(model ? 'available' : 'locked')}, ${model || cluster ? '' : 'workspaceFailure: failure,'} localVmError: null };
           if (command === 'setup_connect_model') throw { kind: failure };
+          if (command === 'cluster_contexts') {
+            if (${JSON.stringify(name)} === 'cluster-configuration') throw failure;
+            return ${JSON.stringify(name)} === 'cluster-empty' ? [] : [context];
+          }
+          if (command === 'cluster_discover') return [target];
+          if (command === 'cluster_use') return failure ? { status: 'unavailable', providers: [], failure } : { status: 'connected', providers: [provider], failure: null };
+          if (command === 'cluster_reload') return ${JSON.stringify(name)} === 'cluster-reload-pending' ? new Promise(() => {}) : [{ ...context, id: '00000000-0000-4000-8000-000000000004', name: 'corrected-context' }];
           if (command === 'setup_requirements') return null;
           if (command === 'engine_call') throw { kind: 'unavailable' };
           throw Error('Unmocked fixture command: ' + command);
@@ -103,7 +122,26 @@ try {
         await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Use GitHub sign-in')`), 'model action');
         await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Use GitHub sign-in').click()`);
       }
-      await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && !!document.querySelector('[role=alert]')`), `${name} recovery`);
+      if (cluster) {
+        await until(() => evaluate(`!!document.querySelector('#workspace-cluster')`), 'cluster choice');
+        await evaluate(`document.querySelector('#workspace-cluster').click()`);
+        if (!['cluster-empty', 'cluster-configuration'].includes(name)) {
+          await until(() => evaluate(`document.querySelector('#cluster-context')?.options.length > 1`), 'fixture contexts');
+          await evaluate(`(() => { const select = document.querySelector('#cluster-context'); select.value = select.options[1].value; select.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+          await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Use this cluster')`), 'cluster Use');
+          await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Use this cluster').click()`);
+          if (name.startsWith('cluster-reload')) {
+            await until(() => evaluate(`document.body.textContent.includes('Access confirmed')`), 'confirmed fixture access');
+            await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Reload kubeconfig').click()`);
+          }
+        }
+      }
+      if (name === 'model-copy') {
+        await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Copy details for help')`), 'model copy');
+        await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Copy details for help').click()`);
+      }
+      await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && !!document.querySelector(${JSON.stringify(cluster ? '.cluster-card' : '[role=alert]')})`), `${name} recovery`);
+      if (cluster) await evaluate(`document.querySelector('.cluster-card').scrollIntoView({ block: 'end' })`);
       await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${name}.png`), Buffer.from(image.data, 'base64'));
