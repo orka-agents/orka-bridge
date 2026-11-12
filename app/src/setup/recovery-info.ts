@@ -1,48 +1,47 @@
-export type HelpTopic = 'virtualization' | 'hypervisor' | 'workspace';
-export type RecoveryInfo = { summary: string; action: string; topic?: HelpTopic; stage: string; retryBlocked?: boolean };
-const stages = ['Fill private state disk', 'Run qemu-img', 'Prepare QEMU control endpoint', 'Pin installed boot files', 'Create QEMU process', 'Open QEMU standard I/O', 'Resume QEMU process', 'Negotiate QMP', 'Check QEMU prelaunch status', 'Connect guest control', 'Start guest CPUs', 'Establish guest session'] as const;
-
-// Recognize only native labels. In particular, a generic WHPX error does not prove
-// that firmware virtualization is off or that a Windows feature is missing.
-export function workspaceRecovery(detail?: string | null): RecoveryInfo {
-  const text = detail ?? '';
-  const stage = stages.find(value => text.includes(`${value}:`)) ?? 'Starting workspace';
-  if (/Stopping the local VM failed|stopping the VM failed|startupStopFailed/.test(text)) return {
-    summary: "The workspace couldn't be stopped safely.", action: 'Quit Bridge and reopen it before trying again. Your workspace may still be stopping.', topic: 'workspace', stage: 'Stopping workspace', retryBlocked: true,
+export type HelpTopic = 'virtualization' | 'hypervisor' | 'workspace' | 'githubCliInstall' | 'githubSignIn';
+export type RecoveryInfo = { summary: string; action: string; topic?: HelpTopic; stage: string; retryBlocked?: boolean; heading?: string; preservation?: string; category?: string };
+const operations = ['requirements', 'download', 'verify', 'prepare', 'start', 'services', 'stop'] as const;
+const causes = ['permission', 'noSpace', 'integrity', 'inUse', 'network', 'preparation', 'guestConnection', 'services', 'stopUnconfirmed', 'unknown'] as const;
+export type WorkspaceFailure = { operation: typeof operations[number]; cause: typeof causes[number]; codes: number[] };
+export const isOsCode = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
+export function isWorkspaceFailure(value: unknown): value is WorkspaceFailure {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).sort().join(',') !== 'cause,codes,operation') return false;
+  const item = value as Record<string, unknown>;
+  return operations.some(operation => operation === item.operation) && causes.some(cause => cause === item.cause)
+    && Array.isArray(item.codes) && item.codes.length <= 4 && item.codes.every(isOsCode);
+}
+const operationLabels: Record<WorkspaceFailure['operation'], string> = {
+  requirements: 'Checking requirements', download: 'Getting workspace files', verify: 'Checking workspace files',
+  prepare: 'Preparing workspace copies', start: 'Starting workspace', services: 'Starting workspace services', stop: 'Stopping workspace',
+};
+// Only native finite metadata selects a cause. Private diagnostics are never input.
+export function workspaceRecovery(failure?: WorkspaceFailure): RecoveryInfo {
+  const operation = failure?.operation ?? 'start';
+  const cause = failure?.cause ?? 'unknown';
+  const common = { stage: operationLabels[operation], category: cause,
+    heading: operation === 'download' ? "Your workspace files couldn't be downloaded" : operation === 'prepare' || operation === 'verify' ? "Your workspace files couldn't be prepared" : "Your workspace couldn't start",
+    preservation: operation === 'requirements' ? 'No workspace files were changed by this check.'
+      : operation === 'download' ? 'Reusable verified content is kept. Rejected content is not kept.'
+      : operation === 'prepare' || operation === 'verify' ? 'Bridge prepares local copies, not downloads. Existing workspace and agent files are kept.'
+      : 'Your workspace and agent files are kept.',
   };
-  if (text.includes('virtualizationDisabled')) return {
-    summary: 'Virtualization is turned off on this PC.', action: "Turn it on in your PC's startup settings (often called Intel VT-x or AMD-V), restart, then press Try again.", topic: 'virtualization', stage: 'Windows virtualization',
-  };
-  if (text.includes('hypervisorUnavailable')) return {
-    summary: "Windows Hypervisor Platform (Hyper-V) isn't available.", action: 'Turn on Windows Hypervisor Platform in Windows features, restart this PC, then press Try again.', topic: 'hypervisor', stage: 'Windows Hypervisor Platform',
-  };
-  if (/NoSpace|StorageFull/.test(text)) return {
-    summary: "There isn't enough free space for the workspace.", action: 'Free some space on this computer, then press Try again.', topic: 'workspace', stage: 'Installing workspace files',
-  };
-  if (/Integrity|RetainedImage|Pin installed boot files|Image\((?:Invalid|Incompatible|Unsupported|UnsafePath)/.test(text)) return {
-    summary: "The workspace files couldn't be verified.", action: 'Check that you have the matching workspace files for this Bridge build, then press Try again.', topic: 'workspace', stage: 'Checking workspace files',
-  };
-  if (/RetainedState|\bBusy\b/.test(text)) return {
-    summary: 'The workspace files are still in use or need checking.', action: 'Close any other Bridge window, then press Try again. If it happens again, copy the details for help.', topic: 'workspace', stage: 'Checking workspace files',
-  };
-  if (/Orka infrastructure|InfrastructureFailed/.test(text)) return {
-    summary: "The workspace's services couldn't start.", action: 'Press Try again to restart the workspace. If it happens again, copy the details for help.', stage: 'Starting workspace services',
-  };
-  if (/Image\(Network/.test(text)) return { summary: "The workspace files couldn't be downloaded.", action: 'Check your internet connection, then press Try again.', stage: 'Getting workspace files' };
-  if (stage === 'Fill private state disk' || stage === 'Run qemu-img' || /Image\(Storage/.test(text)) return {
-    summary: "The workspace files couldn't be prepared.", action: 'Press Try again to reuse the kept files. If it happens again, copy the details for help.', stage,
-  };
-  if (stage === 'Connect guest control' || stage === 'Establish guest session' || /Protocol\(/.test(text)) return {
-    summary: "The workspace didn't finish starting.", action: 'Press Try again to restart it. If it happens again, copy the details for help.', stage,
-  };
-  return { summary: "The workspace couldn't start.", action: 'Press Try again to reuse the kept files. If it happens again, copy the details for help.', stage };
+  switch (cause) {
+    case 'permission': return { ...common, summary: operation === 'prepare' || operation === 'verify' ? 'The operating system denied preparing the workspace files.' : 'The operating system denied starting the workspace.', action: 'Check the permissions for Bridge and its workspace files, then press Try again.', topic: 'workspace' };
+    case 'noSpace': return { ...common, summary: "There isn't enough free space for the workspace.", action: 'Free some space on this computer, then press Try again.', topic: 'workspace' };
+    case 'integrity': return { ...common, summary: "The workspace files couldn't be verified.", action: 'Check that you have the matching workspace files for this Bridge build, then press Try again.', topic: 'workspace' };
+    case 'inUse': return { ...common, summary: 'The workspace files are still in use or need checking.', action: 'Close any other Bridge window, then press Try again.', topic: 'workspace' };
+    case 'network': return { ...common, summary: "The workspace files couldn't be downloaded.", action: 'Check your internet connection, then press Try again.' };
+    case 'preparation': return { ...common, summary: "The workspace files couldn't be prepared.", action: 'Press Try again. If it happens again, copy the details for help.' };
+    case 'guestConnection': return { ...common, summary: "The workspace didn't finish starting.", action: 'Press Try again to restart it. If it happens again, copy the details for help.' };
+    case 'services': return { ...common, summary: "The workspace's services couldn't start.", action: 'Press Try again to restart the workspace. If it happens again, copy the details for help.' };
+    case 'stopUnconfirmed': return { ...common, summary: "The workspace couldn't be stopped safely.", action: 'Quit Bridge and reopen it before trying again. Your workspace may still be stopping.', topic: 'workspace', retryBlocked: true };
+    default: return { ...common, summary: "Bridge couldn't establish why the workspace failed.", action: 'Press Try again. If it happens again, copy the details for help.' };
+  }
 }
 
-export function helpDetails(info: RecoveryInfo, detail?: string | null): string {
-  // Free-form stderr, paths and messages may contain credentials. Copy only fixed
-  // labels and bounded OS codes; Show details remains the local raw-error view.
-  const codes = [...new Set(detail?.match(/\b(?:code: |os error )\d{1,10}\b/g) ?? [])].slice(0, 4);
-  return ['Bridge workspace setup', `Stage: ${info.stage}`, info.summary, ...codes, 'Private diagnostic text is not included.'].join('\n');
+export function helpDetails(info: RecoveryInfo, codes: number[] = []): string {
+  return ['Bridge workspace setup', `Operation: ${info.stage}`, `Category: ${info.category ?? 'requirements'}`,
+    ...[...new Set(codes.filter(isOsCode))].slice(0, 4).map(code => `OS code: ${code}`), 'Private diagnostic text is not included.'].join('\n');
 }
 
 export function modelDetails(detail: string): string {

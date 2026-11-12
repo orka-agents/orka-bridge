@@ -1,10 +1,11 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { isPreflightFailure, type PreflightFailure } from './preflight-state';
+import { isWorkspaceFailure, type WorkspaceFailure } from './recovery-info';
 
 const localStates = ['notIntegrated', 'idle', 'preparing', 'installing', 'starting', 'ready', 'closing', 'closed', 'cancelled', 'failed'] as const;
 export type LocalVmState = (typeof localStates)[number];
 export type WorkspaceProgress = { phase: 'verifying' | 'materializing' | 'starting'; bytes: number | null; totalBytes: number | null; elapsedMs: number; remainingMs: number | null };
-export type SetupStatus = { selected: 'localVm' | null; localVm: LocalVmState; localVmError?: string | null; model: 'locked' | 'available'; preflightFailure?: PreflightFailure; workspaceProgress?: WorkspaceProgress | null };
+export type SetupStatus = { selected: 'localVm' | null; localVm: LocalVmState; localVmError?: string | null; model: 'locked' | 'available'; preflightFailure?: PreflightFailure; workspaceFailure?: WorkspaceFailure; workspaceProgress?: WorkspaceProgress | null };
 function isProgress(value: unknown): value is WorkspaceProgress | null {
   if (value === null) return true;
   if (typeof value !== 'object' || Array.isArray(value)
@@ -25,12 +26,13 @@ async function call(command: 'setup_status' | 'setup_select_local' | 'setup_canc
   try {
     const value = await invoke<unknown>(command);
     if (typeof value !== 'object' || value === null || Array.isArray(value)
-      || Object.keys(value).some(key => !['localVm', 'localVmError', 'model', 'selected', 'workspaceProgress', 'preflightFailure'].includes(key))
+      || Object.keys(value).some(key => !['localVm', 'localVmError', 'model', 'selected', 'workspaceProgress', 'preflightFailure', 'workspaceFailure'].includes(key))
       || !('selected' in value) || (value.selected !== null && value.selected !== 'localVm')
       || !('localVm' in value) || !isLocalState(value.localVm)
       || ('localVmError' in value && value.localVmError !== null && typeof value.localVmError !== 'string')
       || ('workspaceProgress' in value && !isProgress(value.workspaceProgress))
       || ('preflightFailure' in value && (!isPreflightFailure(value.preflightFailure) || value.localVm !== 'failed'))
+      || ('workspaceFailure' in value && (!isWorkspaceFailure(value.workspaceFailure) || value.localVm !== 'failed'))
       || (value.localVm === 'ready' && value.selected !== 'localVm')
       || !('model' in value) || (value.model !== 'locked' && value.model !== 'available')
       || (value.model === 'available' && value.localVm !== 'ready')
@@ -43,6 +45,7 @@ async function call(command: 'setup_status' | 'setup_select_local' | 'setup_canc
     }
     if ('preflightFailure' in value && isPreflightFailure(value.preflightFailure)) status.preflightFailure = value.preflightFailure;
     if ('workspaceProgress' in value && isProgress(value.workspaceProgress)) status.workspaceProgress = value.workspaceProgress;
+    if ('workspaceFailure' in value && isWorkspaceFailure(value.workspaceFailure)) status.workspaceFailure = value.workspaceFailure;
     return { ok: true, status };
   } catch {
     return { ok: false, message: 'The setup choice could not be read or saved.' };

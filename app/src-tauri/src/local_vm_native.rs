@@ -79,11 +79,10 @@ fn wait_for_infrastructure(
             }
             InfrastructureService::Starting => {}
             _ => {
-                return Err(std::io::Error::other(format!(
+                return Err(RuntimeError::Infrastructure(format!(
                     "Orka infrastructure failed (phase: {:?}, service: {:?})",
                     state.phase, state.service
-                ))
-                .into())
+                )))
             }
         }
         // Time only schedules the next observation; it never grants readiness.
@@ -117,6 +116,7 @@ fn retain_start_failure(
     stage: &str,
     error: RuntimeError,
     stderr: std::io::Result<Vec<u8>>,
+    operation: WorkspaceOperation,
 ) -> RuntimeError {
     use std::io::Write;
     let unconfirmed = matches!(error, RuntimeError::StopUnconfirmed(_));
@@ -176,7 +176,12 @@ fn retain_start_failure(
     if unconfirmed {
         RuntimeError::StopUnconfirmed(message)
     } else {
-        std::io::Error::other(message).into()
+        // Keep the original typed error; only the display text is private.
+        RuntimeError::Startup(Box::new(crate::runtime::types::StartupFailure {
+            error,
+            operation,
+            diagnostic: message,
+        }))
     }
 }
 
@@ -460,6 +465,7 @@ fn start_windows_session(
             failure.stage(),
             error,
             failure.stderr(),
+            WorkspaceOperation::Start,
         )),
     }
 }
@@ -543,7 +549,13 @@ impl LocalSession for NativeSession {
                     .diagnostics()
                     .map(|diagnostics| diagnostics.stderr)
                     .map_err(|error| std::io::Error::other(error.to_string()));
-                retain_start_failure(&self.root, "Shut down guest", error, stderr)
+                retain_start_failure(
+                    &self.root,
+                    "Shut down guest",
+                    error,
+                    stderr,
+                    WorkspaceOperation::Stop,
+                )
             })
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]

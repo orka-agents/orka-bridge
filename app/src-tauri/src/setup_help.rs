@@ -5,6 +5,8 @@ pub enum HelpTopic {
     Virtualization,
     Hypervisor,
     Workspace,
+    GithubCliInstall,
+    GithubSignIn,
 }
 impl HelpTopic {
     fn url(self) -> &'static str {
@@ -12,6 +14,8 @@ impl HelpTopic {
             Self::Virtualization => "https://support.microsoft.com/en-us/windows/experience/enable-virtualization-on-windows",
             Self::Hypervisor => "https://learn.microsoft.com/en-us/dotnet/maui/android/emulator/hardware-acceleration?view=net-maui-10.0",
             Self::Workspace => "https://github.com/orka-agents/orka-bridge/blob/main/CONTRIBUTING.md",
+            Self::GithubCliInstall => "https://cli.github.com/",
+            Self::GithubSignIn => "https://cli.github.com/manual/gh_auth_login",
         }
     }
 }
@@ -88,6 +92,8 @@ mod tests {
             ("virtualization", "https://support.microsoft.com/en-us/windows/experience/enable-virtualization-on-windows"),
             ("hypervisor", "https://learn.microsoft.com/en-us/dotnet/maui/android/emulator/hardware-acceleration?view=net-maui-10.0"),
             ("workspace", "https://github.com/orka-agents/orka-bridge/blob/main/CONTRIBUTING.md"),
+            ("githubCliInstall", "https://cli.github.com/"),
+            ("githubSignIn", "https://cli.github.com/manual/gh_auth_login"),
         ] {
             let topic: HelpTopic = serde_json::from_value(serde_json::json!(topic)).unwrap();
             assert_eq!(topic.url(), expected);
@@ -96,6 +102,8 @@ mod tests {
             "https://example.com",
             "file:///etc/passwd",
             "workspace;calc.exe",
+            "github_cli_install",
+            "githubSignIn ",
             "unknown",
             "",
         ] {
