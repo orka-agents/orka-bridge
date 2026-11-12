@@ -1,12 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
+import { StatusPill } from '../components/DesignSystem';
 import { connectModel, removeModel, type ModelFailure } from './modelState';
 import { invoke } from '@tauri-apps/api/core';
 import type { HelpTopic } from './recovery-info';
 
-export type ModelState = 'idle' | 'connecting' | 'removing' | 'connected' | 'failed';
-export default function Model({ enabled, paused = false, onState, onSettled }: {
-  enabled: boolean; paused?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void;
+export type ModelState = 'idle' | 'queued' | 'connecting' | 'removing' | 'connected' | 'failed';
+// `enabled` is native permission to touch credentials. `queueable` only permits remembering the
+// creator's choice while the workspace is still arriving. `away` means another place was chosen.
+export default function Model({ enabled, queueable = false, paused = false, away = false, onState, onSettled }: {
+  enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void;
 }) {
+  // In-memory consent only. It never carries a credential and is consumed once.
+  const [queued, setQueued] = useState(false);
+  const status = useRef<HTMLDivElement>(null);
+  const retry = useRef<HTMLButtonElement>(null);
+  const refocus = useRef(false);
   const [busy, setBusy] = useState<'connect' | 'remove'>();
   const [removed, setRemoved] = useState(false);
   const [ready, setReady] = useState(false);
@@ -22,8 +30,19 @@ export default function Model({ enabled, paused = false, onState, onSettled }: {
     return () => { epoch.current++; };
   }, [enabled]);
   useEffect(() => {
-    onState?.(!enabled ? 'idle' : busy === 'connect' ? 'connecting' : busy === 'remove' ? 'removing' : ready ? 'connected' : error ? 'failed' : 'idle');
-  }, [enabled, busy, ready, error, onState]);
+    onState?.(!enabled ? queued ? 'queued' : 'idle' : busy === 'connect' ? 'connecting' : busy === 'remove' ? 'removing' : ready ? 'connected' : error ? 'failed' : queued ? 'queued' : 'idle');
+  }, [enabled, busy, ready, error, queued, onState]);
+  useEffect(() => { if (away) setQueued(false); }, [away]);
+  // Runs after the enabled reset above. An unreadable observation or workspace mutation holds the intent.
+  useEffect(() => {
+    if (queued && enabled && !paused && !away) { setQueued(false); void perform('connect'); }
+  }, [queued, enabled, paused, away]);
+  // Busy and queued states replace the action with status; keep keyboard focus with the operation.
+  useEffect(() => {
+    if (!refocus.current) return;
+    if (busy || queued) status.current?.focus();
+    else { (retry.current ?? status.current)?.focus(); refocus.current = false; }
+  }, [busy, queued, ready, error]);
   async function perform(action: 'connect' | 'remove') {
     if (!enabled || paused || active.current || (action === 'connect' && ready)) return;
     active.current = true;
@@ -49,11 +68,16 @@ export default function Model({ enabled, paused = false, onState, onSettled }: {
       setNotice('Details copied. Private diagnostic text is not included.');
     } catch { setNotice("Couldn't copy. Share the visible error message for help."); }
   }
+  function choose() {
+    refocus.current = document.activeElement === retry.current;
+    if (enabled) void perform('connect'); else if (queueable && !paused) setQueued(true);
+  }
   const cliUnavailable = error?.category === 'modelCaptureUnavailable';
   const signInCheck = error && ['modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(error.category);
   return <section className="card setup-model" aria-labelledby="model-title" aria-busy={!!busy}>
-    <h2 id="model-title">{enabled ? 'Connect a model' : 'Model connection locked'}</h2>
-    {!enabled ? <p className="muted">Start the local VM before connecting a model. No credentials are sent.</p>
+    <h2 id="model-title">{enabled || queueable || queued ? 'Connect a model' : 'Model connection locked'}</h2>
+    {!enabled && (queueable || queued) ? <p className="muted">You can choose now. Bridge connects it automatically when Orka is ready. No credentials are read or sent until then.</p>
+      : !enabled ? <p className="muted">Start the local VM before connecting a model. No credentials are sent.</p>
       : <p className="muted">Use your existing GitHub CLI sign-in for Copilot in this VM. Bridge stores it in the native credential store and delivers it privately to the guest.</p>}
     <div className={error ? 'workspace-failure' : undefined} role={error ? 'alert' : undefined}>
       <div className={error ? 'workspace-failure-explanation' : undefined}>
@@ -69,12 +93,15 @@ export default function Model({ enabled, paused = false, onState, onSettled }: {
         <div className="workspace-step-actions">
           {cliUnavailable && <button type="button" className="workspace-secondary" onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</button>}
           {(cliUnavailable || signInCheck) && <button type="button" className="workspace-secondary" onClick={() => { void help('githubSignIn'); }}>Sign-in help</button>}
-          <button key="model-connect" type="button" className="workspace-primary" disabled={!enabled || paused || !!busy || ready} onClick={() => { void perform('connect'); }}>
-            {!enabled ? 'Connect model' : busy === 'connect' ? 'Connecting model…' : ready ? 'Model connected' : error && failedAction === 'connect' ? 'Check again' : 'Use GitHub sign-in'}
-          </button>
-          <button type="button" className="workspace-link" disabled={!enabled || paused || !!busy} onClick={() => { void perform('remove'); }}>
-            {busy === 'remove' ? 'Removing sign-in…' : 'Remove sign-in'}
-          </button>
+          {queued || busy || ready ? <div ref={status} tabIndex={-1} className="model-state">
+            <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? 'Removing sign-in…' : ready ? 'Connected' : queued ? 'Queued' : 'Connecting model…'}</StatusPill>
+            {queued && <><span className="muted">Connects automatically when Orka is ready.</span>
+              <button type="button" className="workspace-link" onClick={() => setQueued(false)}>Cancel queued connection</button></>}
+          </div>
+          : <button key="model-connect" ref={retry} type="button" className="workspace-primary" disabled={(!enabled && !queueable) || paused || !!busy} onClick={choose}>
+            {!enabled && !queueable ? 'Connect model' : error && failedAction === 'connect' ? 'Check again' : 'Use GitHub sign-in'}
+          </button>}
+          {busy !== 'remove' && <button type="button" className="workspace-link" disabled={!enabled || paused || !!busy} onClick={() => { void perform('remove'); }}>Remove sign-in</button>}
           {error && <button type="button" className="workspace-secondary" onClick={() => { void copy(); }}>Copy details for help</button>}
         </div>
       </div>

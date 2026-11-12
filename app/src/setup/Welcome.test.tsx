@@ -48,7 +48,7 @@ test('welcome chrome advances only after Get started, including with denied pref
   expect(await within(screen.getByRole('navigation')).findByText('Start here')).toBeTruthy();
   expect(within(screen.getByRole('contentinfo')).getByText('Nothing is set up yet')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Get started' }));
-  expect(within(screen.getByRole('navigation')).getByText('Setting up, step 1 of 4')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText('Choose where agents run')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(document.querySelectorAll('#page-title')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: 'Clusters' }));

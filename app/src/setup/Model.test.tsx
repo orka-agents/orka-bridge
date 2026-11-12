@@ -67,9 +67,13 @@ test('explicit sign-in uses no renderer arguments, excludes duplicate clicks and
   const button = screen.getByRole('button', { name: 'Use GitHub sign-in' });
   fireEvent.click(button); fireEvent.click(button);
   expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
-  expect(button.hasAttribute('disabled')).toBe(true);
+  // Busy is status text, not a disabled action button.
+  expect(screen.queryByRole('button', { name: /Connecting model/ })).toBeNull();
+  expect(screen.getByText('Connecting model…').closest('button')).toBeNull();
   await act(async () => { complete({ ready: true }); });
   expect(screen.getByText('Model connected: copilot / gpt-5.6-terra.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Model connected' })).toBeNull();
+  expect(screen.getByText('Connected').closest('button')).toBeNull();
   expect(screen.getByText(/does not prove inference/)).toBeTruthy();
   expect(screen.queryByText(/run the example/)).toBeNull();
 });
@@ -136,19 +140,21 @@ test('reading sign-in errors show the status command without copying diagnostics
   expect(document.body.textContent).not.toContain('SECRET');
 });
 
-test('keyboard connection and retry keep the same focused control across failure and busy states', async () => {
+test('keyboard connection moves focus to its busy status and back to the retry action', async () => {
   let reject!: (error: unknown) => void;
   invoke.mockImplementation(() => new Promise((_resolve, fail) => { reject = fail; }));
   const user = userEvent.setup(); render(<Model enabled />);
   const button = screen.getByRole('button', { name: 'Use GitHub sign-in' });
   button.focus(); await user.keyboard('{Enter}');
+  expect(screen.queryByRole('button', { name: /Connecting/ })).toBeNull();
+  expect(document.activeElement).toBe(screen.getByText('Connecting model…').closest('[tabindex="-1"]'));
   await act(async () => reject({ kind: 'modelConnect' }));
   const retry = await screen.findByRole('button', { name: 'Check again' });
-  expect(retry).toBe(button); expect(document.activeElement).toBe(button);
+  expect(document.activeElement).toBe(retry);
   await user.keyboard('{Enter}');
-  expect(screen.getByRole('button', { name: 'Connecting model…' })).toBe(button);
+  expect(screen.getByText('Connecting model…')).toBeTruthy();
   await act(async () => reject({ kind: 'modelConnect' }));
-  expect(document.activeElement).toBe(button);
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Check again' }));
 });
 
 test('help buttons select native topics and copying cannot include arbitrary native data', async () => {
@@ -177,4 +183,79 @@ test('preview and malformed responses cannot claim ready', async () => {
   for (const response of [{ ready: false }, { ready: true, token: 'synthetic-private-token' }, null]) {
     invoke.mockResolvedValue(response); expect((await connectModel()).ok).toBe(false);
   }
+});
+
+// Queued intent: in-memory consent to connect once Orka is ready. Credentials are untouched before then.
+test('a choice while the workspace is starting is queued without any credential command', () => {
+  const onState = vi.fn();
+  render(<Model enabled={false} queueable onState={onState} />);
+  expect(screen.getByRole('heading', { name: 'Connect a model' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Remove sign-in' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  expect(invoke).not.toHaveBeenCalled();
+  expect(screen.getByText('Queued').closest('button')).toBeNull();
+  expect(screen.getByText(/connects automatically when Orka is ready/i)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Use GitHub sign-in' })).toBeNull();
+  expect(onState).toHaveBeenLastCalledWith('queued');
+});
+
+test('queued intent connects exactly once when the model becomes available, without another click', async () => {
+  invoke.mockResolvedValue({ ready: true });
+  const view = render(<Model enabled={false} queueable />);
+  fireEvent.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  view.rerender(<Model enabled paused={false} />);
+  await screen.findByText(/Model connected:/);
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_connect_model')).toHaveLength(1);
+  view.rerender(<Model enabled={false} />); view.rerender(<Model enabled />);
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_connect_model')).toHaveLength(1);
+});
+
+test('queued intent survives the readiness transition and fires only once unpaused and enabled', async () => {
+  invoke.mockResolvedValue({ ready: true });
+  const view = render(<Model enabled={false} queueable />);
+  fireEvent.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  // Ready but locked (not yet available): hold, neither fire nor clear.
+  view.rerender(<Model enabled={false} queueable={false} />);
+  expect(invoke).not.toHaveBeenCalled();
+  expect(screen.getByText('Queued')).toBeTruthy();
+  // Available but an unreadable observation or mutation pauses: hold.
+  view.rerender(<Model enabled paused />);
+  expect(invoke).not.toHaveBeenCalled();
+  view.rerender(<Model enabled paused={false} />);
+  await screen.findByText(/Model connected:/);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
+});
+
+test('a locked model that is not queueable offers no queue', () => {
+  render(<Model enabled={false} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Connect model' }));
+  expect(screen.queryByText('Queued')).toBeNull();
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+test('cluster selection and cancelling clear intent so readiness needs fresh consent', () => {
+  const view = render(<Model enabled={false} queueable />);
+  fireEvent.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  view.rerender(<Model enabled={false} queueable away />);
+  view.rerender(<Model enabled queueable={false} away={false} />);
+  expect(invoke).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Use GitHub sign-in' })).toBeTruthy();
+  view.rerender(<Model enabled={false} queueable />);
+  fireEvent.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel queued connection' }));
+  expect(screen.queryByText('Queued')).toBeNull();
+  view.rerender(<Model enabled />);
+  expect(invoke).not.toHaveBeenCalled();
+});
+
+test('a failed queued connection is not retried automatically', async () => {
+  invoke.mockRejectedValue({ kind: 'modelConnect' });
+  const view = render(<Model enabled={false} queueable />);
+  fireEvent.click(screen.getByRole('button', { name: 'Use GitHub sign-in' }));
+  view.rerender(<Model enabled />);
+  await screen.findByRole('alert');
+  view.rerender(<Model enabled paused />); view.rerender(<Model enabled />);
+  await act(async () => { await Promise.resolve(); });
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_connect_model')).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
 });

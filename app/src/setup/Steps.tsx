@@ -1,68 +1,97 @@
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { agentInfo } from '../designer/agent-api';
-import { formatSize } from './requirements';
 import { type ExamplePair, loadExample, type SetupStatus } from './state';
 import Recovery from './Recovery';
-import { StatusIcon, type Status } from '../components/DesignSystem';
+import { StatusIcon, StatusPill, type Status } from '../components/DesignSystem';
+import type { ModelState } from './Model';
+import { canQueueModel, infraProgress, setupSteps, setupView } from './progress';
 import { modelDetails } from './recovery-info';
 import './steps.css';
 
 export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
 
-function PhaseIcon({ phase }: { phase: 'done' | 'current' | 'waiting' | 'failed' }) {
-  const state: Status = phase === 'done' ? 'passed' : phase === 'failed' ? 'failed' : phase === 'current' ? 'running' : 'not-started';
-  return <StatusIcon state={state} />;
-}
-export default function Steps({ status, busy, stopping, error, modelConnected, modelState, firstCheck, onCancel, onRestart, onCluster, onChange, onOpenExample }: {
-  status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean; modelState?: 'idle' | 'connecting' | 'removing' | 'connected' | 'failed'; firstCheck?: CheckStepState;
+type Props = {
+  status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onChange: (button: HTMLButtonElement) => void; onOpenExample: () => void;
-}) {
-  const [details, setDetails] = useState(false);
-  const ready = status.localVm === 'ready'; const failed = status.localVm === 'failed';
+};
+const rowClass: Record<Status, string> = { passed: 'step-done', failed: 'step-failed', running: 'step-current', 'needs-you': 'step-current', stale: 'step-waiting', 'not-started': 'step-waiting' };
+const infraResult = ['Installed', 'Started', 'Ready'];
+// The five rows come from the same derivation as the tab and footer.
+function stepRows({ status, stopping, modelState = 'idle', firstCheck }: Pick<Props, 'status' | 'stopping' | 'modelState' | 'firstCheck'>) {
+  const view = setupView(status, { model: modelState, check: firstCheck });
+  const failed = status.localVm === 'failed';
   const paused = status.localVm === 'cancelled' || status.localVm === 'closed';
+  const connected = modelState === 'connected';
+  const infra = stopping ? null : infraProgress(status);
+  const infraRow = (n: 1 | 2 | 3): [Status, string] => {
+    if (n < view.step) return ['passed', infraResult[n - 1]];
+    if (n !== view.step) return ['not-started', 'Waiting'];
+    return failed ? ['failed', 'Needs attention'] : paused ? ['not-started', 'Paused'] : ['running', n === 1 ? infra?.remaining ?? '' : 'Starting'];
+  };
+  const model: [Status, string] = modelState === 'failed' ? ['failed', 'Needs attention'] : connected ? ['passed', 'Connected']
+    : modelState === 'connecting' ? ['running', 'Connecting'] : modelState === 'removing' ? ['running', 'Removing sign-in']
+    : modelState === 'queued' ? ['not-started', 'Queued']
+    : status.localVm === 'ready' ? status.model === 'locked' ? ['not-started', 'Unavailable'] : ['needs-you', 'Needs you']
+    : canQueueModel(status) ? ['needs-you', 'Pick any time'] : ['not-started', 'Waiting'];
+  const test: [Status, string] = firstCheck ? [{ running: 'running', passed: 'passed', failed: 'failed', unknown: 'not-started', stale: 'stale' }[firstCheck] as Status,
+    { running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown', stale: 'Needs running' }[firstCheck]]
+    : connected ? ['needs-you', 'Needs you'] : ['not-started', 'Waiting'];
+  const names = ['Install your workspace files', 'Start your workspace', 'Orka ready', 'Choose the AI your agent uses', 'Run your first test'];
+  return { view, failed, paused, infra, rows: [infraRow(1), infraRow(2), infraRow(3), model, test].map(([state, result], i) => ({ name: names[i], state, result })) };
+}
+
+export function SetupProgress(props: Props & { confirm?: ReactNode }) {
+  const { status, busy, stopping, error, onCancel, onRestart, onCluster, onChange, onOpenExample, confirm } = props;
+  const [details, setDetails] = useState(false);
+  const { view, failed, paused, infra } = stepRows(props);
+  const ready = status.localVm === 'ready';
   const progress = status.workspaceProgress;
   const copying = !stopping && status.localVm === 'installing' && progress?.phase === 'materializing';
-  const numbers = copying && progress.bytes !== null && progress.totalBytes !== null;
-  const remaining = copying ? progress.remainingMs : null;
-  const eta = remaining != null && remaining > 0 ? `${Math.ceil(remaining / 1000)} seconds left` : undefined;
-  const checkPhase = firstCheck === 'passed' ? 'done' : firstCheck === 'failed' ? 'failed' : firstCheck === 'running' || (modelConnected && !firstCheck) ? 'current' : 'waiting';
-  const checkLabel = firstCheck ? { running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown', stale: 'Needs running' }[firstCheck] : modelConnected ? 'Needs you' : 'Waiting';
-  const phase = ready ? 'done' : failed ? 'failed' : paused || status.localVm === 'notIntegrated' ? 'waiting' : 'current';
   const stateLine = error ? 'Workspace status is unavailable.' : stopping ? 'Stopping your workspace…' : ready ? 'Your workspace is running on this computer.'
     : paused ? 'What has arrived is kept.' : status.localVm === 'starting' ? 'Starting your workspace…'
     : status.localVm === 'closing' ? 'Stopping your workspace…'
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
     : copying ? 'Installing your workspace…' : 'Checking your workspace files…';
-  return <section className="card workspace-steps" aria-label="Workspace setup">
-    <ol className="steps-four" aria-label="Setup steps">
-      <li className="step-done"><PhaseIcon phase="done" /><b>Where agents run</b><span className="step-result">On this computer</span></li>
-      <li className={`step-${phase}`} aria-current={phase === 'current' ? 'step' : undefined}>
-        <PhaseIcon phase={phase} /><b>Get your workspace ready</b><span className="step-result">{ready ? 'Ready' : paused ? 'Paused' : failed ? 'Needs attention' : eta}</span>
-        <div className="step-more">
-          {failed ? <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /> : <p role="status">{stateLine}</p>}
-          {!stopping && status.localVm === 'starting' && <><div className="workspace-indeterminate" role="progressbar" aria-label="Workspace startup" /><p className="muted">{progress?.phase === 'starting' ? `${Math.floor(progress.elapsedMs / 1000)} seconds elapsed` : 'Getting the workspace ready…'}</p></>}
-          {numbers && <><progress aria-label="Workspace installation" value={progress.bytes!} max={progress.totalBytes!} />
-            <p className="muted">Installing, {formatSize(progress.bytes!)} of {formatSize(progress.totalBytes!)}</p></>}
-          {!failed && <><button type="button" className="workspace-disclosure" aria-expanded={details} aria-controls="workspace-progress-details" onClick={() => setDetails(value => !value)}>{details ? 'Hide details' : 'Show details'}</button>
-          {details && <div id="workspace-progress-details" className="workspace-progress-details">
-            <dl><div><dt>Checking workspace files</dt><dd>{status.localVm === 'preparing' || progress?.phase === 'verifying' ? 'In progress' : ready || copying || status.localVm === 'starting' ? 'Checked' : 'Waiting'}</dd></div>
-              <div><dt>Installing workspace files</dt><dd>{ready || status.localVm === 'starting' ? 'Installed' : copying ? 'In progress' : 'Waiting'}</dd></div>
-              <div><dt>Starting workspace</dt><dd>{ready ? 'Ready' : status.localVm === 'starting' ? 'In progress' : 'Waiting'}</dd></div></dl>
-            {progress && <p className="muted">{Math.floor(progress.elapsedMs / 1000)} seconds in this file step.</p>}
-            {status.localVmError && <pre tabIndex={0}>{ready ? modelDetails(status.localVmError) : status.localVmError}</pre>}
-          </div>}</>}
-        </div>
-      </li>
-      <li className={modelState === 'failed' ? 'step-failed' : modelConnected ? 'step-done' : ready ? 'step-current' : 'step-waiting'}><StatusIcon state={modelState === 'failed' ? 'failed' : modelState === 'connecting' || modelState === 'removing' ? 'running' : modelConnected ? 'passed' : ready ? 'needs-you' : 'not-started'} /><b>Choose the AI your agent uses</b><span className="step-result">{modelState === 'failed' ? 'Needs attention' : modelConnected ? 'Connected' : modelState === 'connecting' ? 'Connecting' : modelState === 'removing' ? 'Removing sign-in' : ready ? 'Needs you' : 'Waiting'}</span></li>
-      <li className={`step-${checkPhase}`}><StatusIcon state={firstCheck === 'stale' ? 'stale' : firstCheck === 'running' ? 'running' : modelConnected && !firstCheck ? 'needs-you' : checkPhase === 'done' ? 'passed' : checkPhase === 'failed' ? 'failed' : 'not-started'} /><b>Run your first test</b><span className="step-result">{checkLabel}</span></li>
-    </ol>
+  const pill: [Status, string] = failed ? ['failed', 'Needs attention'] : paused || status.localVm === 'notIntegrated' ? ['not-started', paused ? 'Paused' : 'Unavailable']
+    : view.done ? ['passed', 'Ready'] : ['running', `Step ${view.step} of ${setupSteps}`];
+  return <section className="card workspace-steps setup-progress" aria-label="Workspace setup">
+    <div className="steps-head"><h2>Setting up on this computer</h2><StatusPill state={pill[0]}>{pill[1]}</StatusPill></div>
+    <p className="step-place"><span>Where agents run</span><b>On this computer</b></p>
+    {!failed && <p role="status">{stateLine}</p>}
+    {infra && !failed && <><div role="progressbar" aria-label="Workspace setup progress" aria-valuemin={0} aria-valuemax={100}
+      aria-valuenow={infra.value === null ? undefined : Math.round(infra.value * 100)} className={`infra-bar${infra.value === null ? ' indeterminate' : ''}`}>
+      <span style={infra.value === null ? undefined : { width: `${Math.round(infra.value * 100)}%` }} /></div>
+      {infra.text && <p className="muted">{infra.text}</p>}{infra.estimate && <p className="muted">{infra.estimate}</p>}</>}
+    {!failed && <><button type="button" className="workspace-disclosure" aria-expanded={details} aria-controls="workspace-progress-details" onClick={() => setDetails(value => !value)}>{details ? 'Hide details' : 'Show details'}</button>
+      {details && <div id="workspace-progress-details" className="workspace-progress-details">
+        <dl><div><dt>Checking workspace files</dt><dd>{status.localVm === 'preparing' || progress?.phase === 'verifying' ? 'In progress' : ready || copying || status.localVm === 'starting' ? 'Checked' : 'Waiting'}</dd></div>
+          <div><dt>Installing workspace files</dt><dd>{ready || status.localVm === 'starting' ? 'Installed' : copying ? 'In progress' : 'Waiting'}</dd></div>
+          <div><dt>Starting workspace</dt><dd>{ready ? 'Ready' : status.localVm === 'starting' ? 'In progress' : 'Waiting'}</dd></div></dl>
+        {progress && <p className="muted">{Math.floor(progress.elapsedMs / 1000)} seconds in this file step.</p>}
+        {status.localVmError && <pre tabIndex={0}>{ready ? modelDetails(status.localVmError) : status.localVmError}</pre>}
+      </div>}</>}
     <div className="workspace-step-actions">
       {['preparing', 'installing', 'starting'].includes(status.localVm) && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</button><span className="muted">Cancel keeps what has arrived.</span></>}
       {status.localVm === 'notIntegrated' && onCluster && <button type="button" className="workspace-link" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</button>}
       {paused && <button type="button" className="workspace-primary" disabled={busy || !!error} onClick={onRestart}>Start again</button>}
       {ready && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={event => onChange(event.currentTarget)}>Change where agents run</button><button type="button" className="workspace-primary" disabled={!!error} onClick={onOpenExample}>Open example</button></>}
     </div>
+    {confirm}
   </section>;
+}
+
+export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'onRestart' | 'onCluster'>) {
+  const { status, busy, error, onRestart, onCluster } = props;
+  const { view, failed, rows } = stepRows(props);
+  return <div className="card setup-history">
+    <ol className="steps-four" aria-label="Setup steps">
+      {rows.map(({ name, state, result }, index) => <li key={name} className={rowClass[state]} aria-current={index + 1 === view.step && ['running', 'needs-you'].includes(state) ? 'step' : undefined}>
+        <StatusIcon state={state} /><b>{name}</b><span className="step-result">{result}</span>
+        {failed && state === 'failed' && index < 3 && <div className="step-more">
+          <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /></div>}
+      </li>)}
+    </ol>
+  </div>;
 }
 
 export function Meet({ onRead, onName }: { onRead: () => void; onName?: (name: string | undefined) => void }) {

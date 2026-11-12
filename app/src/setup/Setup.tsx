@@ -3,7 +3,8 @@ import { Chip } from '../components/DesignSystem';
 import Model, { type ModelState } from './Model';
 import Preflight from './Preflight';
 import { type LocalVmState, type SetupStatus, cancelLocal, changeLocal, selectLocal, setupStatus } from './state';
-import Steps, { Meet, type CheckStepState } from './Steps';
+import { Meet, SetupProgress, SetupSteps, type CheckStepState } from './Steps';
+import { canQueueModel } from './progress';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
 import { formatSize, workspaceRequirements, type WorkspaceRequirements } from './requirements';
 import ClusterCard from '../clusters/ClusterCard';
@@ -87,7 +88,10 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     });
     return () => { epoch.current++; clearTimeout(timer.current); };
   }, [check, onStatus]);
-  useEffect(() => { if (status?.localVm === 'ready') onReady(); else observeModel('idle'); }, [status?.localVm, onReady, observeModel]);
+  useEffect(() => { if (status?.localVm === 'ready') onReady(); }, [status?.localVm, onReady]);
+  // Model stays mounted from preparing through ready, so it owns its queued state; no Model means no model state.
+  const modelMounted = status?.selected === 'localVm' && (status.localVm === 'ready' || canQueueModel(status));
+  useEffect(() => { if (!modelMounted) observeModel('idle'); }, [modelMounted, observeModel]);
 
   function start() {
     try { localStorage.setItem(welcomePreference, '1'); } catch { /* A presentation preference must not block setup. */ }
@@ -159,22 +163,20 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
             {cluster && <ClusterCard onPlace={place => onPlace?.(place)} onOpenAgent={onOpenExample} />}
           </div>
         </fieldset>
-        {!cluster && <div className="workspace-choice-footer"><span className="muted">Step 1 of 4</span>
+        {!cluster && <div className="workspace-choice-footer"><span className="muted">Choose where agents run</span>
           <button type="button" className="workspace-primary" disabled={busy || !status || !!error || (status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { void chooseLocal(); }}>Continue</button>
         </div>}
         {!cluster && status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
       </>}
-      {selected && status && <>
-        <div><Steps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelState} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={chooseCluster} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample} />
-          {confirmChange && <section className="workspace-change" aria-label="Change where agents run">
-            <button type="button" className="workspace-link" disabled={sending} onClick={chooseCluster}>Use a cluster you already have instead</button>
-            <h2>Stop this workspace?</h2><p>Changing where agents run stops the workspace on this computer. Your files are kept.</p>
-            <div className="workspace-step-actions"><button type="button" className="workspace-secondary" disabled={sending} onClick={() => { setConfirmChange(false); changeInvoker.current?.focus(); }}>Keep workspace running</button><button type="button" className="workspace-primary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and change</button></div>
-          </section>}
-        </div>
-        {status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={onOpenExample} onName={onExampleName} />}
-      </>}
-      {status?.selected === 'localVm' && status.localVm === 'ready' && <div hidden={cluster}><Model enabled={status.model === 'available'} paused={!!error || sending} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
+      {selected && status && <SetupProgress status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={chooseCluster} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample}
+        confirm={confirmChange && <section className="workspace-change" aria-label="Change where agents run">
+          <button type="button" className="workspace-link" disabled={sending} onClick={chooseCluster}>Use a cluster you already have instead</button>
+          <h2>Stop this workspace?</h2><p>Changing where agents run stops the workspace on this computer. Your files are kept.</p>
+          <div className="workspace-step-actions"><button type="button" className="workspace-secondary" disabled={sending} onClick={() => { setConfirmChange(false); changeInvoker.current?.focus(); }}>Keep workspace running</button><button type="button" className="workspace-primary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and change</button></div>
+        </section>} />}
+      {status && modelMounted && <div className="setup-model-slot" hidden={cluster}><Model enabled={status.model === 'available'} queueable={canQueueModel(status)} paused={!!error || sending} away={cluster} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
+      {selected && status && <SetupSteps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onRestart={() => { void chooseLocal(); }} onCluster={chooseCluster} />}
+      {selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={onOpenExample} onName={onExampleName} />}
       {!cluster && error && <div role="alert"><p>{error}</p>
         <button type="button" className="setup-button" disabled={busy}
           onClick={() => { setBusy(true); setError(undefined); setCheck(value => value + 1); }}>Check again</button>

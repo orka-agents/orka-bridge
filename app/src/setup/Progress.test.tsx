@@ -26,15 +26,19 @@ function native(initial = 'installing', numbers: { phase: string; bytes: number 
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
-test('four steps show only native transfer bytes and ETA, with expandable details', async () => {
+test('five steps show native transfer bytes and ETA in one bar, with expandable details', async () => {
   native(); const user = userEvent.setup(); render(<App />);
   await screen.findByRole('heading', { name: 'Getting your workspace ready' });
   const steps = screen.getByRole('list', { name: 'Setup steps' });
-  expect(within(steps).getAllByRole('listitem')).toHaveLength(4);
-  for (const name of ['Where agents run', 'Get your workspace ready', 'Choose the AI your agent uses', 'Run your first test']) expect(within(steps).getByText(name)).toBeTruthy();
+  expect(within(steps).getAllByRole('listitem')).toHaveLength(5);
+  for (const name of ['Install your workspace files', 'Start your workspace', 'Orka ready', 'Choose the AI your agent uses', 'Run your first test']) expect(within(steps).getByText(name)).toBeTruthy();
+  expect(screen.getByText('Where agents run').nextElementSibling?.textContent).toBe('On this computer');
   expect(screen.getByText('Installing, 1.1 GiB of 2.8 GiB')).toBeTruthy();
   expect(screen.getByText('30 seconds left')).toBeTruthy();
-  expect(screen.getByRole('progressbar').getAttribute('value')).toBe('1200000000');
+  const bar = screen.getByRole('progressbar');
+  expect(screen.getAllByRole('progressbar')).toHaveLength(1);
+  expect(Number(bar.getAttribute('aria-valuenow'))).toBeGreaterThan(0);
+  expect(Number(bar.getAttribute('aria-valuenow'))).toBeLessThan(70);
   expect(screen.queryByText(/Downloading/)).toBeNull();
   expect(screen.queryByRole('button', { name: 'Connect model' })).toBeNull();
   expect(screen.queryByText('Checking workspace files')).toBeNull();
@@ -43,21 +47,63 @@ test('four steps show only native transfer bytes and ETA, with expandable detail
   expect(screen.getAllByText('Starting workspace').length).toBeGreaterThan(0);
 });
 
-test('startup shows a moving indeterminate bar and native elapsed time near the top', async () => {
-  native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 42000, remainingMs: null }); render(<App />);
-  const bar = await screen.findByRole('progressbar', { name: 'Workspace startup' });
-  expect(bar.hasAttribute('value')).toBe(false);
-  expect(screen.getByText('42 seconds elapsed')).toBeTruthy();
-  expect(bar.closest('li')?.textContent).toContain('Get your workspace ready');
-  expect(bar.closest('main')).toBeTruthy();
-  expect(screen.queryByText(/seconds left/)).toBeNull();
+test('tab, footer and card agree on one step index and the model action is available during transfer', async () => {
+  native(); render(<App />);
+  expect(await within(screen.getByRole('navigation')).findByText('Setting up, step 1 of 5')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Setting up, step 1 of 5')).toBeTruthy();
+  expect(screen.getByText('Step 1 of 5')).toBeTruthy();
+  expect(document.body.textContent).not.toMatch(/of 4/);
+  expect(screen.getByRole('button', { name: 'Use GitHub sign-in' }).hasAttribute('disabled')).toBe(false);
+  expect(screen.getByText('Pick any time')).toBeTruthy();
 });
 
-test('unavailable progress never fabricates bytes or time left', async () => {
+test('compact order puts the model action before the long step history, with completed rows as single lines', async () => {
+  native(); render(<App />);
+  const model = (await screen.findByRole('heading', { name: 'Connect a model' })).closest('section')!;
+  const history = screen.getByRole('list', { name: 'Setup steps' });
+  const progress = screen.getByRole('region', { name: 'Workspace setup' });
+  expect(progress.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(model.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(history.querySelectorAll('button, a')).toHaveLength(0);
+});
+
+test('startup uses the same bar, labels its time as a rough estimate and shows native elapsed time', async () => {
+  native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 12000, remainingMs: null }); render(<App />);
+  const bar = await screen.findByRole('progressbar', { name: 'Workspace setup progress' });
+  expect(Number(bar.getAttribute('aria-valuenow'))).toBeGreaterThanOrEqual(70);
+  expect(Number(bar.getAttribute('aria-valuenow'))).toBeLessThan(100);
+  expect(screen.getByText('12 seconds elapsed')).toBeTruthy();
+  expect(screen.getByText(/Rough estimate, not a measurement: about 18 seconds left/)).toBeTruthy();
+  expect(screen.getByText('Start your workspace').closest('li')?.getAttribute('aria-current')).toBe('step');
+  expect(screen.getByText('Install your workspace files').closest('li')?.className).toBe('step-done');
+  expect(bar.closest('main')).toBeTruthy();
+});
+
+test('startup past its estimate stays incomplete and says it is taking longer', async () => {
+  native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 95000, remainingMs: null }); render(<App />);
+  const bar = await screen.findByRole('progressbar', { name: 'Workspace setup progress' });
+  expect(Number(bar.getAttribute('aria-valuenow'))).toBeLessThan(100);
+  expect(screen.getByText(/Taking longer than the rough 30-second estimate/)).toBeTruthy();
+  expect(screen.queryByText(/seconds left/)).toBeNull();
+  expect(screen.getByText('95 seconds elapsed')).toBeTruthy();
+});
+
+test('unavailable progress never fabricates bytes or time left, and the bar stays indeterminate', async () => {
   native('installing', null); render(<App />);
   await screen.findByRole('list', { name: 'Setup steps' });
-  expect(screen.queryByRole('progressbar')).toBeNull();
-  expect(screen.queryByText(/seconds left|minute left|of .*GB/)).toBeNull();
+  const bar = screen.getByRole('progressbar');
+  expect(bar.hasAttribute('aria-valuenow')).toBe(false);
+  expect(screen.queryByText(/seconds left|minute left|of .*GiB/)).toBeNull();
+});
+
+test('the one bar never completes before native ready and is gone once ready', async () => {
+  const { ready } = native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 31000, remainingMs: null }); render(<App />);
+  await screen.findByRole('progressbar');
+  ready();
+  await waitFor(() => expect(screen.queryByRole('progressbar')).toBeNull(), { timeout: 2000 });
+  const rows = within(screen.getByRole('list', { name: 'Setup steps' })).getAllByRole('listitem');
+  expect(rows.slice(0, 3).map(row => row.className)).toEqual(['step-done', 'step-done', 'step-done']);
+  expect(within(screen.getByRole('navigation')).getByText('Setting up, step 4 of 5')).toBeTruthy();
 });
 
 test('keyboard Cancel then start again calls native retry and keeps the Meet panel', async () => {
@@ -76,7 +122,7 @@ test('Meet opens the actual example read-only without owned-file or Run commands
   const { ipc } = native(); const user = userEvent.setup(); render(<App />);
   expect(await screen.findByRole('heading', { name: 'web-reader' })).toBeTruthy();
   expect(screen.getByText('Answers from the web page named in the request')).toBeTruthy();
-  expect(await within(screen.getByRole('navigation')).findByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'web-reader, ready to read')).toBeTruthy();
+  expect(await within(screen.getByRole('navigation')).findByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'web-reader, read-only during setup')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   const main = screen.getByRole('main', { name: 'web-reader' });
   expect(within(main).getByText('Fetch before answering.')).toBeTruthy();
@@ -87,14 +133,14 @@ test('Meet opens the actual example read-only without owned-file or Run commands
   const editor = screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
   expect(editor.readOnly).toBe(true); editor.focus(); await user.keyboard('{Control>}s{/Control}');
   expect(ipc.mock.calls.some(([c]) => ['agent_open', 'agent_save', 'agent_run', 'agent_run_status'].includes(c))).toBe(false);
-  expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'web-reader, ready to read')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'web-reader, read-only during setup')).toBeTruthy();
 });
 
 test('unreadable status never upgrades the setup preview into an editable file', async () => {
   const { ipc, unreadable } = native(); const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   unreadable();
-  await waitFor(() => expect(within(screen.getByRole('contentinfo')).getByText('Workspace unavailable')).toBeTruthy());
+  await waitFor(() => expect(within(screen.getByRole('contentinfo')).getAllByText('Workspace unavailable').length).toBeGreaterThan(0));
   await user.click(screen.getByRole('button', { name: 'File' }));
   expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).readOnly).toBe(true);
   expect(ipc.mock.calls.some(([c]) => ['agent_open', 'agent_save', 'agent_run_status'].includes(c))).toBe(false);
@@ -141,7 +187,7 @@ test('Designer stays read-only while the first native setup observation is pendi
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   expect(ipc.mock.calls.some(([command]) => command === 'agent_open')).toBe(false);
   observe({ selected: 'localVm', localVm: 'installing', model: 'locked' });
-  await within(screen.getByRole('contentinfo')).findByText('Setting up, step 2 of 4');
+  await within(screen.getByRole('contentinfo')).findByText('Setting up, step 1 of 5');
   expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
 });
 
@@ -156,7 +202,7 @@ test('opening Designer while Continue awaits native admission cannot open an own
   expect(ipc.mock.calls.some(([command]) => command === 'agent_open')).toBe(false);
   expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
   started = true; admit({ selected: 'localVm', localVm: 'installing', model: 'locked' });
-  await within(screen.getByRole('contentinfo')).findByText('Setting up, step 2 of 4');
+  await within(screen.getByRole('contentinfo')).findByText('Setting up, step 1 of 5');
 });
 
 test('a failed example read is not presented as an endless load', async () => {
@@ -173,7 +219,7 @@ test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup s
   await user.click(await screen.findByRole('button', { name: 'Open example' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[3].textContent).toContain({ running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown' }[result]));
+  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toContain({ running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown' }[result]));
 });
 
 test('changing workspace and starting again preserves an owned draft after a failed save', async () => {
@@ -200,7 +246,7 @@ test('the AI step resets after a connected workspace leaves ready', async () => 
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
   await screen.findByText('Model connected: copilot / gpt-5.6-terra.'); fail();
   await within(screen.getByRole('contentinfo')).findByText('Setup failed', {}, { timeout: 2000 });
-  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[2].textContent).not.toContain('Connected'));
+  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[3].textContent).not.toContain('Connected'));
 });
 
 test('a delayed Cancel shows pending stop near the top instead of old byte progress', async () => {

@@ -1,0 +1,201 @@
+import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import App from '../App';
+
+const pair = { agent: '---\nname: web-reader\ndescription: Reads a page\n---\nFetch before answering.', tests: 'The checksum check.' };
+const doc = '9b2b93c4-375c-4815-9717-39852a96e411';
+type Sim = { selected: 'localVm' | null; localVm: string; model: 'locked' | 'available'; unreadable: boolean; connect: 'ok' | 'fail' };
+// A mutable native stand-in. Tests flip its status the way a real download and startup would.
+function native(localVm = 'installing', extra: Partial<Sim> = {}) {
+  vi.stubGlobal('isTauri', true);
+  const sim: Sim = { selected: 'localVm', localVm, model: 'locked', unreadable: false, connect: 'ok', ...extra };
+  const ipc = vi.fn((command: string) => {
+    switch (command) {
+      case 'setup_status': if (sim.unreadable) throw Error('unreadable');
+        return { selected: sim.selected, localVm: sim.localVm, model: sim.model, workspaceProgress: sim.localVm === 'installing'
+          ? { phase: 'materializing', bytes: 1000, totalBytes: 4000, elapsedMs: 1000, remainingMs: 5000 } : null };
+      case 'setup_cancel_local': sim.localVm = 'cancelled'; return { selected: sim.selected, localVm: sim.localVm, model: 'locked' };
+      case 'setup_select_local': sim.selected = 'localVm'; sim.localVm = 'installing'; return { selected: 'localVm', localVm: 'installing', model: 'locked' };
+      case 'setup_change_local': sim.selected = null; sim.localVm = 'idle'; sim.model = 'locked'; return { selected: null, localVm: 'idle', model: 'locked' };
+      case 'setup_connect_model': if (sim.connect === 'fail') throw { kind: 'modelConnect' }; return { ready: true };
+      case 'setup_requirements': return null;
+      case 'cluster_contexts': return [];
+      case 'setup_example': return pair;
+      case 'agent_open': return { ...pair, documentId: doc, name: 'web-reader' };
+      case 'agent_save': return { ...pair, documentId: doc, name: 'web-reader' };
+      case 'agent_run_status': return { documentId: doc, busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
+      default: throw Error('Unexpected command: ' + command);
+    }
+  });
+  mockIPC(ipc);
+  const connects = () => ipc.mock.calls.filter(([command]) => command === 'setup_connect_model').length;
+  return { ipc, sim, connects };
+}
+const settle = (ms = 1300) => act(async () => { await new Promise(resolve => setTimeout(resolve, ms)); });
+const wait = { timeout: 3000 };
+beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
+afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+
+test('a choice during transfer connects exactly once at readiness, with no second click and no disabled status buttons', async () => {
+  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  expect(screen.getByText('Queued', { selector: '.pill' }).closest('button')).toBeNull();
+  expect(screen.getByText('Queued', { selector: '.step-result' })).toBeTruthy();
+  expect(connects()).toBe(0);
+  // Orka can be ready before the model unlocks: hold, neither fire nor forget.
+  sim.localVm = 'ready';
+  await within(screen.getByRole('navigation')).findByText('AI unavailable', {}, wait);
+  await settle(); expect(connects()).toBe(0);
+  expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
+  sim.model = 'available';
+  await screen.findByText(/Model connected:/, {}, wait);
+  await settle();
+  expect(connects()).toBe(1);
+  expect(within(screen.getByRole('contentinfo')).getByText('AI connected')).toBeTruthy();
+  expect(screen.getAllByRole('button').filter(button => button.hasAttribute('disabled') && /connect|queued|removing/i.test(button.textContent ?? ''))).toEqual([]);
+});
+
+test('readiness with an unlocked model connects once immediately', async () => {
+  const { sim, connects } = native('starting'); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  sim.localVm = 'ready'; sim.model = 'available';
+  await screen.findByText(/Model connected:/, {}, wait);
+  await settle(); expect(connects()).toBe(1);
+});
+
+test('an unreadable observation holds the intent without firing or clearing it', async () => {
+  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  sim.unreadable = true;
+  await within(screen.getByRole('navigation')).findByText('Workspace unavailable', {}, wait);
+  sim.localVm = 'ready'; sim.model = 'available';
+  await settle(); expect(connects()).toBe(0);
+  expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
+  expect(screen.queryByText(/Model connected:/)).toBeNull();
+  sim.unreadable = false;
+  await screen.findByText(/Model connected:/, {}, wait);
+  await settle(); expect(connects()).toBe(1);
+});
+
+test('the hidden Setup keeps polling and finishes an already-submitted intent from Designer', async () => {
+  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  sim.localVm = 'ready'; sim.model = 'available';
+  await waitFor(() => expect(connects()).toBe(1), wait);
+  await within(screen.getByRole('contentinfo')).findByText('AI connected', {}, wait);
+  await settle(); expect(connects()).toBe(1);
+});
+
+test('cancelling ends the attempt: a later readiness does not connect and a fresh attempt needs fresh consent', async () => {
+  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  await screen.findByRole('button', { name: 'Start again' });
+  expect(screen.queryByText('Queued')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Use GitHub sign-in' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Start again' }));
+  expect(await screen.findByRole('button', { name: 'Use GitHub sign-in' })).toBeTruthy();
+  sim.localVm = 'ready'; sim.model = 'available';
+  expect(await screen.findByRole('button', { name: 'Use GitHub sign-in' }, wait)).toBeTruthy();
+  await settle(); expect(connects()).toBe(0);
+});
+
+test('a failed attempt drops the intent and a retry reaching readiness does not connect', async () => {
+  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  sim.localVm = 'failed';
+  await screen.findByRole('alert', {}, wait);
+  expect(screen.queryByText('Queued')).toBeNull();
+  sim.localVm = 'ready'; sim.model = 'available';
+  expect(await screen.findByRole('button', { name: 'Use GitHub sign-in' }, wait)).toBeTruthy();
+  await settle(); expect(connects()).toBe(0);
+});
+
+test('a queued connection that fails is not retried without an explicit action', async () => {
+  const { sim, connects } = native('starting', { connect: 'fail' }); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  sim.localVm = 'ready'; sim.model = 'available';
+  await screen.findByText('Guest Connect did not acknowledge a ready model. Completion is unknown.', {}, wait);
+  await settle(); expect(connects()).toBe(1);
+  sim.connect = 'ok';
+  await user.click(screen.getByRole('button', { name: 'Check again' }));
+  await screen.findByText(/Model connected:/);
+  expect(connects()).toBe(2);
+});
+
+test('choosing a cluster clears the held intent even though the view stays mounted', async () => {
+  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  sim.localVm = 'ready';
+  await within(screen.getByRole('navigation')).findByText('AI unavailable', {}, wait);
+  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
+  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  await screen.findByRole('radio', { name: 'On a cluster you already have' });
+  sim.model = 'available';
+  await settle(); expect(connects()).toBe(0);
+  await user.click(screen.getByRole('radio', { name: 'On this computer' }));
+  expect(await screen.findByRole('button', { name: 'Use GitHub sign-in' })).toBeTruthy();
+  await settle(); expect(connects()).toBe(0);
+});
+
+test.each(['notIntegrated', 'cancelled', 'closed', 'closing', 'idle'])('nothing can be queued while the workspace is %s', async localVm => {
+  const { connects } = native(localVm); render(<App />);
+  await screen.findByRole('region', { name: 'Workspace setup' });
+  expect(screen.queryByRole('button', { name: 'Use GitHub sign-in' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Connect model' })).toBeNull();
+  expect(screen.queryByText('Queued')).toBeNull();
+  expect(connects()).toBe(0);
+});
+
+test('native selection, not the default radio, names the host, including checking, unreadable and relaunch', async () => {
+  const { sim } = native('installing', { selected: null }); sim.localVm = 'idle';
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  const ipc = vi.fn(async (command: string) => {
+    if (command === 'setup_status') { await gate; if (sim.unreadable) throw Error('unreadable'); return { selected: sim.selected, localVm: sim.localVm, model: 'locked' }; }
+    if (command === 'setup_requirements') return null;
+    throw Error('Unexpected command: ' + command);
+  });
+  mockIPC(ipc);
+  render(<App />);
+  const chip = () => document.querySelector('.host-chip')!;
+  expect(chip().querySelector('.host-label')?.textContent).toBe('Checking…');
+  await act(async () => { release(); });
+  await waitFor(() => expect(chip().querySelector('.host-label')?.textContent).toBe('No place selected'));
+  expect(chip().tagName).toBe('SPAN');
+  expect(within(screen.getByRole('navigation')).queryByRole('button', { name: /computer|place/i })).toBeNull();
+  // A valid saved choice restored after relaunch is "This computer"; an unreadable read afterwards is not "no selection".
+  sim.selected = 'localVm'; sim.localVm = 'starting';
+  await waitFor(() => expect(chip().querySelector('.host-label')?.textContent).toBe('This computer'), wait);
+  sim.unreadable = true;
+  await waitFor(() => expect(chip().querySelector('.host-label')?.textContent).toBe('Status unavailable'), wait);
+  expect(chip().textContent).not.toContain('No place selected');
+});
+
+test('an edit makes the first-test step and shell status stale immediately, so setup does not claim completion', async () => {
+  native('ready', { model: 'available' });
+  const snapshot = { documentId: doc, busy: null, state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'a', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null };
+  const user = userEvent.setup();
+  mockIPC(command => command === 'agent_run_status' ? snapshot : command === 'setup_status' ? { selected: 'localVm', localVm: 'ready', model: 'available' }
+    : command === 'setup_connect_model' ? { ready: true } : command === 'setup_requirements' ? null
+    : command === 'setup_example' ? pair : command === 'agent_open' ? { ...pair, documentId: doc, name: 'web-reader' }
+    : command === 'agent_save' ? new Promise(() => {}) : Promise.reject({ kind: 'unavailable' }));
+  render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await within(screen.getByRole('contentinfo')).findByText('1 of 1 checks passing');
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await waitFor(() => expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy());
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  await user.type(screen.getByRole('textbox', { name: 'Agent file' }), ' edit');
+  // No wait for a save or poll: the edit callback itself marks every consumer stale.
+  expect(within(screen.getByRole('contentinfo')).getByText('Checks not run since your change')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText(/checks need running/)).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  expect(within(screen.getByRole('navigation')).getByText('Setting up, step 5 of 5')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).queryByText('This computer ready')).toBeNull();
+  expect(screen.getByText('Needs running')).toBeTruthy();
+});
