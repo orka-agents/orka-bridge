@@ -1,7 +1,7 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import AgentParts from './AgentParts';
 import Example from './Example';
 import App from '../App';
@@ -13,7 +13,8 @@ const catalog: WorkspaceCatalogReply = { defaultModel: 'workspace-default', mode
   { kind: 'tool', name: 'lookup', description: '<b>Workspace lookup</b>', available: false },
   { kind: 'tool', name: 'web_fetch', description: 'Must not offer this target' },
 ] } };
-afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+beforeEach(() => { Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; } }); });
+afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
 test('catalog model choices retain unlisted file model and never substitute the default', () => {
   const changed = vi.fn(); render(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={changed} />);
   const model = screen.getByRole('combobox', { name: 'It thinks with' });
@@ -46,6 +47,18 @@ test('tool choices show descriptions as text, distinguish kinds and suppress eff
   await user.keyboard('{Escape}'); expect(document.activeElement).toBe(add);
   await user.click(screen.getByRole('button', { name: 'Remove lookup' }));
   expect(readForm(changed.mock.calls.at(-1)![0]).tools).toEqual([]);
+});
+test('a restored catalog never reopens a picker dismissed by unavailability', async () => {
+  const user = userEvent.setup();
+  const view = render(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={() => {}} />);
+  await user.click(screen.getByRole('button', { name: 'Add a tool' }));
+  await user.type(screen.getByRole('searchbox'), 'lookup');
+  view.rerender(<AgentParts source={source} readOnly={false} catalogLoading onChange={() => {}} />);
+  expect(screen.queryByRole('searchbox')).toBeNull();
+  view.rerender(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={() => {}} />);
+  expect(screen.queryByRole('searchbox')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Add a tool' }));
+  expect((screen.getByRole('searchbox') as HTMLInputElement).value).toBe('');
 });
 test('independent catalog failures and empty lists do not fall back to static inventory', async () => {
   const user = userEvent.setup(); const view = render(<AgentParts source={source} readOnly={false} onChange={() => {}} />);

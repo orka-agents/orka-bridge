@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from 'react';
 import { addTool, changeDescription, changeInstructions, changeModel, changeSoulInline, changeSoulReference, readForm, removeTool } from './agent-form';
 import { builtInTools } from './built-in-tools';
 import type { WorkspaceCatalogReply } from '../catalog';
@@ -12,6 +12,25 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
   source: string; path?: string; readOnly: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; onPendingEdit?: (pending: boolean) => void; onChange: (source: string) => void;
 }) {
   const form = readForm(source); const id = useId();
+  // Markdown's separating blank lines stay in the file, not above the prompt.
+  const [separator, setSeparator] = useState(() => form.instructions.match(/^(?:[ \t]*\r?\n)+/)?.[0] ?? '');
+  // A raw File edit can remove the original separator; do not hide a later user newline.
+  if (separator && !form.instructions.startsWith(separator)) setSeparator('');
+  const leading = form.instructions.startsWith(separator) ? separator : '';
+  const instructions = form.instructions.slice(leading.length);
+  const input = useRef<HTMLTextAreaElement>(null);
+  const popover = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const field = input.current;
+    if (!field) return;
+    const resize = () => { field.style.height = 'auto'; field.style.height = `${field.scrollHeight}px`; };
+    resize();
+    let mounted = true;
+    void document.fonts?.ready.then(() => { if (mounted) resize(); });
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(resize);
+    observer?.observe(field);
+    return () => { mounted = false; observer?.disconnect(); };
+  }, [instructions]);
   const [picker, setPicker] = useState(false); const [query, setQuery] = useState('');
   const [soulDraft, setSoulDraft] = useState<{ source: string; value: string }>();
   const [soulError, setSoulError] = useState<string>();
@@ -40,6 +59,10 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
   const unlistedLabel = models ? knownModel ? ' (not offered for chat)' : ' (unlisted)' : '';
   const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit tools in File view for this file’s format.'
     : catalogLoading ? 'Reading the workspace catalog…' : tools === undefined ? 'Tool catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
+  useEffect(() => {
+    if (toolReason) { setPicker(false); setQuery(''); return; }
+    if (picker) { popover.current?.showPopover?.(); popover.current?.querySelector('input')?.focus(); }
+  }, [picker, toolReason]);
   const modelReason = readOnly ? 'You can change the model after setup.' : !form.modelEditable ? 'Edit the model in File view for this file’s format.'
     : catalogLoading ? 'Reading the workspace catalog…' : models === undefined ? 'Model catalog unavailable. Connect the AI in Clusters or edit File view.' : undefined;
   const labelFor = (name: string) => Object.hasOwn(builtInTools, name) ? builtInTools[name] : name;
@@ -57,8 +80,8 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
     {!form.metadataEditable && <p className="muted">This file’s settings can be edited in File view.</p>}
     <div className="agent-part">
       <div className="instructions-heading"><label htmlFor={`${id}-instructions`}>Instructions</label><p className="muted" id={`${id}-hint`}>What the agent should do, in your own words.</p></div>
-      <textarea id={`${id}-instructions`} className="instructions-editor" aria-describedby={`${id}-hint`} value={form.instructions}
-        readOnly={readOnly || !form.instructionsEditable} onChange={event => change(changeInstructions(source, event.target.value))} />
+      <textarea ref={input} id={`${id}-instructions`} className="instructions-editor" aria-describedby={`${id}-hint`} value={instructions}
+        readOnly={readOnly || !form.instructionsEditable} onChange={event => change(changeInstructions(source, leading + event.target.value))} />
       {!form.instructionsEditable && <p className="muted">Finish the file’s opening settings in File view to edit its instructions here.</p>}
     </div>
     <section className="agent-part" aria-labelledby={`${id}-tools`}>
@@ -67,7 +90,7 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
         {form.tools.map(tool => {
           const name = tool.name ?? 'Unrecognised tool entry'; const label = tool.builtin ? labelFor(name) : name;
           const observation = tools?.find(item => item.kind === tool.kind && item.name === name);
-          return <span className="tool-pill" key={tool.index} title={observation?.description}>
+          return <span className="tool-pill chip" key={tool.index} title={observation?.description}>
             <span>{label}</span>{label !== name && <code>{name}</code>}
             {tool.kind === 'tool' && <span className="muted">(Tool resource{builtins.has(name) ? ', built-in takes precedence' : ''})</span>}
             {!readOnly && form.toolsEditable && ['builtin', 'tool'].includes(tool.kind ?? '') && <button type="button" className="tool-remove" aria-label={`Remove ${label}`} onClick={() => { change(removeTool(source, tool.index)); focusAdd(); }}>×</button>}
@@ -77,7 +100,8 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
           : <button className="part-button" type="button" ref={add} aria-expanded={picker} aria-controls={`${id}-picker`} onClick={() => { if (picker) close(); else setPicker(true); }}><span aria-hidden="true">+ </span>Add a tool</button>}
       </div>
       {toolReason && <p className="muted">{toolReason}</p>}
-      {picker && !toolReason && <div id={`${id}-picker`} className="tool-picker" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
+      {picker && !toolReason && <div role="dialog" aria-label="Choose a tool" ref={popover} popover="auto" id={`${id}-picker`} className="tool-picker" onToggle={event => { if (event.newState === 'closed') { setPicker(false); setQuery(''); } }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
+        <button className="part-button picker-close" type="button" onClick={close}>Close picker</button>
         <label htmlFor={`${id}-search`}>Find a tool</label>
         <input id={`${id}-search`} type="search" autoFocus value={query} onChange={event => setQuery(event.target.value)} />
         <p className="muted">Listed by this workspace. Tool availability does not guarantee a call is allowed.</p>
@@ -88,7 +112,6 @@ export default function AgentParts({ source, path, readOnly, catalog, catalogLoa
           {tool.available === false && <span className="muted">Observed unavailable</span>}
         </button></li>)}</ul>
         {!choices?.length && <p className="muted">{tools?.length ? 'No matching tools to add.' : 'No tools listed by this workspace.'}</p>}
-        <button className="part-button" type="button" onClick={close}>Close picker</button>
       </div>}
     </section>
     <div className="agent-part">

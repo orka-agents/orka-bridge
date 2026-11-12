@@ -116,8 +116,11 @@ function Capture([string]$Name, [bool]$Menu = $false) {
             # The maximized frame can extend below the display; sample the visible
             # window interior, not the themed taskbar or off-screen padding.
             $colour = $bitmap.GetPixel($bitmap.Width - 30, [int]($bitmap.Height / 2))
-            $brightness = ($colour.R + $colour.G + $colour.B) / 765.0
-            if (($script:theme -eq 'light' -and $brightness -lt 0.9) -or ($script:theme -eq 'dark' -and $brightness -gt 0.2)) { throw 'Window screenshot did not follow requested theme (or desktop capture unavailable)' }
+            $expected = if ($script:theme -eq 'dark') { @(31, 34, 38) } else { @(242, 241, 237) }
+            $actual = @($colour.R, $colour.G, $colour.B)
+            for ($channel = 0; $channel -lt 3; $channel++) {
+                if ([Math]::Abs($actual[$channel] - $expected[$channel]) -ge 8) { throw 'Window screenshot did not show the requested Estuary page colour (or desktop capture unavailable)' }
+            }
         }
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
@@ -250,6 +253,10 @@ try {
             if ($control -and $control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$value) -and !$value.Current.IsReadOnly) { $control }
         }
         $editor.SetFocus()
+        # Invoke-based navigation can leave the WebView's DOM editor unfocused
+        # even after UIA SetFocus. Establish real pointer/keyboard focus first.
+        Press $editor
+        Wait-For 'Native editor did not receive keyboard focus' { $editor.Current.HasKeyboardFocus } | Out-Null
         $script:marker = " lifecycle-$([Guid]::NewGuid().ToString('N'))"
         [System.Windows.Forms.SendKeys]::SendWait('^{END}')
         [System.Windows.Forms.SendKeys]::SendWait($script:marker)

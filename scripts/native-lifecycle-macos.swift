@@ -2,6 +2,7 @@
 import AppKit
 import ApplicationServices
 import Vision
+import ImageIO
 
 let args = CommandLine.arguments
 var app: NSRunningApplication?
@@ -152,10 +153,24 @@ func capture(_ name: String, menu: Bool = false) throws {
         check(seen.contains("Open Bridge") && seen.contains("Stop workspace and quit"), "Native menu not drawn in screenshot: \(seen)")
     } else {
         check(seen.contains("web-reader.agent.md"), "Reopened window lost File editor view: \(seen)")
-        guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
-            let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB) else { fatalError("Cannot sample screenshot") }
-        let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
-        check(theme == "dark" ? brightness < 0.2 : brightness > 0.9, "Window did not follow requested system theme")
+        // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
+        guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+            let pixel = image.cropping(to: CGRect(x: CGFloat(image.width - 8), y: CGFloat(image.height - 8), width: 1, height: 1)),
+            let space = CGColorSpace(name: CGColorSpace.sRGB) else { fatalError("Cannot decode screenshot") }
+        var rgba = [UInt8](repeating: 0, count: 4)
+        let sampled = rgba.withUnsafeMutableBytes { bytes in
+            guard let context = CGContext(data: bytes.baseAddress, width: 1, height: 1,
+                bitsPerComponent: 8, bytesPerRow: 4, space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue)
+                else { return false }
+            context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+            return true
+        }
+        check(sampled, "Cannot sample screenshot in sRGB")
+        let expected: [CGFloat] = theme == "dark" ? [26, 29, 33] : [228, 226, 219]
+        let actual = rgba.prefix(3).map { CGFloat($0) }
+        check(zip(actual, expected).allSatisfy { abs($0 - $1) < 8 }, "Window did not follow requested Estuary system theme: \(actual)")
     }
 }
 func launch() throws -> AXUIElement {
