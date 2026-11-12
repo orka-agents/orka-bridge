@@ -46,6 +46,8 @@ pub struct RunSnapshot {
     pub can_run: bool,
     pub model_connected: bool,
     pub source: Option<SnapshotId>,
+    pub stage: Option<&'static str>,
+    pub model: Option<String>,
     pub report: Option<RunReport>,
     pub acknowledged: Vec<Receipt>,
     pub pending: Option<PendingRef>,
@@ -60,6 +62,8 @@ impl RunSnapshot {
             can_run: false,
             model_connected: false,
             source: None,
+            stage: None,
+            model: None,
             report: None,
             acknowledged: Vec::new(),
             pending: None,
@@ -106,6 +110,8 @@ impl ExampleRun {
             .is_some_and(|job| job.document_id == id)
         {
             snapshot.state = RunState::Running;
+        } else if matches!(snapshot.state, RunState::Complete | RunState::Unknown) {
+            snapshot.stage = Some("done");
         }
         snapshot.model_connected = vm.model_connected();
         snapshot.can_run = self.2 && state.active.is_none() && vm.status() == LocalVmStatus::Ready;
@@ -139,6 +145,8 @@ impl ExampleRun {
             snapshot.error = None;
             snapshot.report = None;
             snapshot.source = None;
+            snapshot.stage = Some("capture");
+            snapshot.model = None;
             // Keep this document's receipts through preflight failures.
         }
         let owner = self.clone();
@@ -151,14 +159,13 @@ impl ExampleRun {
             .await;
             if let Ok(Ok(pair)) = pair {
                 let pair = pair.into_pair();
-                owner
-                    .0
-                    .lock()
-                    .unwrap()
-                    .snapshots
-                    .get_mut(&id)
-                    .unwrap()
-                    .source = Some(pair.snapshot().clone());
+                {
+                    let mut state = owner.0.lock().unwrap();
+                    let snapshot = state.snapshots.get_mut(&id).unwrap();
+                    snapshot.source = Some(pair.snapshot().clone());
+                    snapshot.model = Some(pair.model().into());
+                    snapshot.stage = Some("model");
+                }
                 let runtime = tokio::runtime::Handle::current();
                 let worker = owner.clone();
                 let observing = target.clone();
@@ -213,6 +220,7 @@ impl ExampleRun {
             provider: connection.selection.provider,
             vm,
         });
+        self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().stage = Some("submit");
         let prepared = match runner.prepare(pair) {
             Ok(prepared) => prepared,
             Err(_) => {
@@ -238,6 +246,7 @@ impl ExampleRun {
             }
         };
         self.record(id, &handle, None, None);
+        self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().stage = Some("observe");
         match runner.observe(&handle).await {
             Ok(report) => {
                 self.record(id, &handle, None, Some(report));

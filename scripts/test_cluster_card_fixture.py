@@ -102,7 +102,10 @@ class SendFixtureTest(unittest.TestCase):
             self.assertEqual(request("tasks/check/events")["events"][0]["toolName"], "web_fetch")
             request("agents", {"name": "probe2", "namespace": "agents", "spec": {}}, expected_status=201)
             second = request("tasks", {"name": "check2", "namespace": "agents", "spec": {"agentRef": {"name": "probe2"}}}, expected_status=201)
-            self.assertEqual(second["status"]["phase"], "Running")
+            self.assertEqual(second["status"]["phase"], "Succeeded")
+            request("agents", {"name": "probe3", "namespace": "agents", "spec": {}}, expected_status=201)
+            third = request("tasks", {"name": "check3", "namespace": "agents", "spec": {"agentRef": {"name": "probe3"}}}, expected_status=201)
+            self.assertEqual(third["status"]["phase"], "Running")
             wire.close()
 
 

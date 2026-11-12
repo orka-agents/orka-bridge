@@ -129,22 +129,22 @@ export default function App() {
   const hostTone = workspaceReady && model === 'failed' ? 'bad' : tone;
   const cases = run?.report?.cases;
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
-  const localChecks = checksStale ? 'Checks not run since your change' : runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
-    : run?.state === 'running' ? 'Running checks…' : cases
-    ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} checks passing` : undefined;
+  const localChecks = checksStale ? 'Tests not run since your edit' : runUnavailable ? 'Test status unavailable' : run?.state === 'unknown' ? 'Test result unknown'
+    : run?.state === 'running' ? 'Running tests…' : cases
+    ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} tests passing` : undefined;
   const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
   const sample = sampleRun(run);
   const firstCheck = run && !sample ? undefined : checksStale ? 'stale' : runUnavailable || run?.state === 'unknown' ? 'unknown'
     : run?.state === 'running' ? 'running' : run?.state === 'complete' ? run.report?.verdict : undefined;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
-  const agentStatus = checksStale ? 'checks need running' : runUnavailable ? 'check status unavailable' : run?.state === 'unknown' ? 'check result unknown'
-    : run?.state === 'running' ? 'running checks'
-    : failedChecks ? `${failedChecks} ${failedChecks === 1 ? 'check' : 'checks'} failing`
-    : cases?.some(check => check.verdict === 'unknown') ? 'check result unknown'
-    : cases ? 'checks passing' : 'ready to edit';
+  const agentStatus = checksStale ? 'tests need running' : runUnavailable ? 'test status unavailable' : run?.state === 'unknown' ? 'test result unknown'
+    : run?.state === 'running' ? 'running tests'
+    : failedChecks ? `${failedChecks} ${failedChecks === 1 ? 'test' : 'tests'} failing`
+    : cases?.some(check => check.verdict === 'unknown') ? 'test result unknown'
+    : cases ? 'tests passing' : 'ready to edit';
   const tabStatus: Record<Page, string> = {
     Overview: checks ?? 'No agents yet',
-    Designer: agentName ? `${agentName}, ${exampleReadOnly ? 'ready to read' : remote ? 'checks on your cluster' : agentStatus}` : !exampleOpen ? 'No agent open'
+    Designer: agentName ? `${agentName}, ${exampleReadOnly ? 'ready to read' : remote ? 'tests on your cluster' : agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
       : model === 'connected' ? sample?.state === 'complete' ? 'This computer ready' : 'AI connected'

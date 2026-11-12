@@ -86,7 +86,7 @@ test.each([
   const footer = screen.getByRole('contentinfo');
   expect(await within(footer).findByText(detail)).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText(tabLine)).toBeTruthy();
-  expect(within(footer).queryByText(/saved|GPT|checks passing/i)).toBeNull();
+  expect(within(footer).queryByText(/saved|GPT|tests passing/i)).toBeNull();
 });
 
 test('unbuilt controls are disabled with discoverable reasons', async () => {
@@ -117,8 +117,8 @@ test('setup refreshes while another page is open', async () => {
 test('model acknowledgment and observed check counts survive navigation', async () => {
   const pair = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: page-reader\n---\nRead a page.', tests: 'A check' };
   const snapshot = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: true, report: { verdict: 'failed', cases: [
-    { id: 'a', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' },
-    { id: 'b', phase: 'Succeeded', answer: 'no', completedTools: [], assertions: [{ id: 'b1', kind: 'contains', verdict: 'failed' }], verdict: 'failed' },
+    { id: 'a', question: 'What did the page say?', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' },
+    { id: 'b', question: 'What did the page say?', phase: 'Succeeded', answer: 'no', completedTools: [], assertions: [{ id: 'b1', kind: 'contains', expected: 'checksum', verdict: 'failed' }], verdict: 'failed' },
   ] }, acknowledged: [], pending: null, error: null };
   let modelConnected = false;
   mockIPC(command => {
@@ -135,9 +135,9 @@ test('model acknowledgment and observed check counts survive navigation', async 
   expect(screen.getByText('This computer').closest('.host-chip')?.getAttribute('title')).toBe('AI connected');
   expect(screen.getByText('This computer').closest('.host-chip')?.textContent).toBe('This computer: AI connected');
   await user.click(screen.getByRole('button', { name: 'Open example' }));
-  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 checks passing')).toBeTruthy();
+  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 tests passing')).toBeTruthy();
   expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
-  expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'page-reader, 1 check failing')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'page-reader, 1 test failing')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(within(screen.getByRole('contentinfo')).getByText('AI connected')).toBeTruthy();
@@ -146,7 +146,7 @@ test('model acknowledgment and observed check counts survive navigation', async 
 
 test('a running check finishes in the footer after leaving Designer', async () => {
   let complete = false;
-  const report = { verdict: 'passed', cases: [{ id: 'a', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] };
+  const report = { verdict: 'passed', cases: [{ id: 'a', question: 'What did the page say?', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' }] };
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
     if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
@@ -156,10 +156,10 @@ test('a running check finishes in the footer after leaving Designer', async () =
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Open example' }));
-  await within(screen.getByRole('contentinfo')).findByText('Running checks…');
+  await within(screen.getByRole('contentinfo')).findByText('Running tests…');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   complete = true;
-  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 1 checks passing')).toBeTruthy();
+  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 1 tests passing')).toBeTruthy();
   expect(document.querySelectorAll('#page-title')).toHaveLength(1);
 });
 
@@ -203,7 +203,7 @@ test.each(['unknown', 'unavailable'])('background check status preserves %s outc
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Open example' }));
-  const expected = state === 'unknown' ? 'Check result unknown' : 'Check status unavailable';
+  const expected = state === 'unknown' ? 'Test result unknown' : 'Test status unavailable';
   await within(screen.getByRole('contentinfo')).findByText(expected);
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   expect(within(screen.getByRole('contentinfo')).getByText(expected)).toBeTruthy();
@@ -215,11 +215,11 @@ test('a retained native report for older source is stale in the shared chrome', 
   vi.stubGlobal('isTauri', true);
   mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
     : command === 'agent_open' ? { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: reader\n---\nEdited file.', tests: 'Checks', source: { agent: 'b'.repeat(64), tests: 'c'.repeat(64) } }
-    : { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: false, source: { agent: 'a'.repeat(64), tests: 'c'.repeat(64) }, report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null });
+    : { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: false, source: { agent: 'a'.repeat(64), tests: 'c'.repeat(64) }, report: { verdict: 'passed', cases: [{ id: 'check', question: 'What did the page say?', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null });
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
-  expect(await within(screen.getByRole('contentinfo')).findByText('Checks not run since your change')).toBeTruthy();
-  expect(within(screen.getByRole('contentinfo')).queryByText('1 of 1 checks passing')).toBeNull();
+  expect(await within(screen.getByRole('contentinfo')).findByText('Tests not run since your edit')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).queryByText('1 of 1 tests passing')).toBeNull();
 });
 test('Open example retries a failed read without discarding successful runs', async () => {
   let fail = true;

@@ -262,14 +262,19 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     }
     if name == "send-history-restarted" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Past Sends") && text.contains("Saved checks: pass") && text.contains("Saved checks: unknown"), "Saved pass and unknown missing after restart: \(text)")
+        require(text.contains("Past Sends") && text.contains("Saved tests: fail") && text.contains("Saved tests: unknown"), "Newest saved results missing after restart: \(text)")
         require(text.contains("bridge-run-") && text.contains("fixture-cluster"), "Saved destination or planned Agent missing: \(text)")
         print("PASS send-history-restarted: saved summaries after app restart; no reconnect or Send")
         return observations
     }
+    if name == "send-history-passed" {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("Saved tests: pass"), "Earlier saved pass missing: \(text)")
+        return observations
+    }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Send your agent") || text.contains("Checks on your cluster") || text.contains("Checks:") || text.contains("Running checks") || text.contains("Planned Agent"), "Send panel not visible: \(text)")
+        require(text.contains("Send your agent") || text.contains("Tests on your cluster") || text.contains("passed") || text.contains("evaluating tests") || text.contains("Planned Agent"), "Send panel not visible: \(text)")
         print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
         return observations
     }
@@ -343,7 +348,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         let seen = try capture("send-probe", "Designer")
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
-        if let control = observed.first(where: { $0 == label || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
+        if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.hasPrefix(label + " ")) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
             clickText(control, in: seen)
             return
         }
@@ -651,22 +656,58 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 1)
     let allowed = try capturePreflight("send-ready", "Built in to this Orka")
     require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Built in to this Orka") }, "Allowed preflight evidence is missing")
-    try clickSendControl("Send and run checks", scrolling: -350)
+    func resultSize(_ width: CGFloat, _ height: CGFloat) throws {
+        let frame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable])
+        var size = frame.size
+        require(AXUIElementSetAttributeValue(nativeWindow, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!) == .success, "Cannot resize result window")
+        Thread.sleep(forTimeInterval: 0.3)
+        require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Result window size was not applied")
+    }
+    try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
-    // The shared card's action is above preflight; reveal the actual report,
-    // not merely its aggregate pill, before asserting fixture evidence.
-    let result = try capturePreflight("send-result", "Checks: pass")
-    require(result.contains { $0.topCandidates(1).first?.string == "Checks: pass" }, "Fixture-backed Send did not pass its real assertions")
+    let result = try capturePreflight("send-result", "1 of 1 passed")
+    require(result.contains { ($0.topCandidates(1).first?.string ?? "").contains("1 of 1 passed") }, "Fixture-backed Send did not pass its real tests")
+    try resultSize(1280, 800)
+    try capturePreflight("send-result-wide", "1 of 1 passed")
+    try clickSendControl("published-checksum", scrolling: -250)
+    try capturePreflight("send-answer-wide", "Question")
+    try resultSize(540, 900)
+    try capturePreflight("send-answer", "Question")
+    try clickSendControl("published-checksum", scrolling: 250)
     try clickSendControl("Details", scrolling: -350)
     scrollMain(-350)
     let details = try capture("send-result-details", "Designer")
     let detailsText = details.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     require(detailsText.contains("Planned Agent") && detailsText.contains("Copy"), "Short Agent identity and Copy are not visible in native Send details")
-    // The fixture's second Agent stays Running so this is a real Stop, not an
-    // injected renderer state. Previously created resources remain on the fixture.
-    try clickSendControl("Send and run checks", scrolling: 350)
+    try clickSendControl("Details", scrolling: 350)
+    // Add a distinct failing test to the CI-owned saved file. Reload through the
+    // existing preflight flow; the earlier pass must turn stale, not stay green.
+    let testsURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.test.md")
+    let originalTests = try Data(contentsOf: testsURL)
+    defer { try? originalTests.write(to: testsURL, options: .atomic) }
+    var mixedTests = originalTests
+    mixedTests.append(Data("\n```yaml agent-test\nid: has-a-date\ninput: Which date is shown on the page?\nassertions:\n  - id: date\n    type: contains\n    value: '2099-12-31'\n```\n".utf8))
+    try mixedTests.write(to: testsURL, options: .atomic)
+    try clickSendControl("Check again", scrolling: 350)
+    try clickSendControl("Reload saved files", scrolling: -250)
+    try capturePreflight("send-stale", "Not run since your edit")
+    try resultSize(1280, 800)
+    try capturePreflight("send-stale-wide", "Not run since your edit")
+    try clickSendControl("Send and run tests", scrolling: 350)
+    Thread.sleep(forTimeInterval: 1)
+    try capturePreflight("send-mixed-wide", "1 of 2 passed")
+    let failed = try capturePreflight("send-failed-wide", "The answer did not include")
+    require(failed.contains { ($0.topCandidates(1).first?.string ?? "").contains("2099-12-31") }, "Plain test failure reason missing")
+    try resultSize(540, 900)
+    try capturePreflight("send-failed", "The answer did not include")
+    // The fixture's third Agent stays Running. This still stops watching only;
+    // it does not claim to cancel already-submitted cluster work.
+    try clickSendControl("Send and run tests", scrolling: 350)
     Thread.sleep(forTimeInterval: 0.5)
-    try capture("send-running", "Designer")
+    try capturePreflight("send-running", "Waiting for answers and evaluating tests")
+    try resultSize(1280, 800)
+    try capturePreflight("send-running-wide", "Waiting for answers and evaluating tests")
     try clickSendControl("Stop", scrolling: -350)
     Thread.sleep(forTimeInterval: 0.5)
     let stopped = try capture("send-stopped", "Designer")
@@ -711,4 +752,17 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     require(historyFound, "Saved Send history was not reachable after restart")
     try capture("send-history-restarted", "Designer")
+    // The passing Send is now third. Prove it is reachable instead of requiring
+    // three summaries to fit in the two-row restart capture.
+    var savedPass = false
+    for _ in 0..<6 {
+        let seen = try capture("send-probe", "Designer")
+        if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains("Saved tests: pass") }) {
+            try capture("send-history-passed", "Designer")
+            savedPass = true
+            break
+        }
+        scrollMain(-150)
+    }
+    require(savedPass, "Earlier saved pass was not reachable after restart")
 }
