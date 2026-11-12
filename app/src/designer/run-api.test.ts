@@ -4,6 +4,8 @@ const base = { state: 'complete', canRun: true, report: { verdict: 'passed', cas
 test('frozen evidence contract accepts long valid source fields and optional local stages', () => {
   expect(isRunSnapshot(base)).toBe(true); // Send reuses this six-key adapter.
   expect(isRunSnapshot({ ...base, stage: 'done', model: 'model' })).toBe(true);
+  expect(isRunSnapshot({ ...base, stage: 'done', model: 'm'.repeat(1048576) })).toBe(true);
+  expect(isRunSnapshot({ ...base, stage: 'done', model: 'm'.repeat(1048577) })).toBe(false);
   expect(isRunSnapshot({ ...base, report: { ...base.report, cases: [{ ...base.report.cases[0], question: 'q'.repeat(1048576), assertions: [{ ...base.report.cases[0].assertions[0], expected: 'e'.repeat(1048576) }] }] } })).toBe(true);
 });
 test('missing or malformed evidence and impossible local stages fail closed', () => {

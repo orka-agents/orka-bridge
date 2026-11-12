@@ -2,6 +2,7 @@
 // This is UI evidence only, not a VM, OS credential-store or inference walk.
 import AppKit
 import CoreGraphics
+import ApplicationServices
 import Vision
 
 func require(_ value: Bool, _ message: String) {
@@ -47,12 +48,17 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     try text.write(toFile: "\(output)/\(name).txt", atomically: true, encoding: .utf8)
     // Vision can interleave the adjacent setup column between wrapped lines.
     // Check phrases within the model panel, not the whole window's reading order.
-    guard let panel = rows.first(where: { $0.topCandidates(1).first?.string == "Connect a model" })
-        else { fatalError("Model panel heading was not recognized") }
-    let visible = rows.filter {
-        $0.boundingBox.minX >= panel.boundingBox.minX - 0.02 &&
-        $0.boundingBox.maxY <= panel.boundingBox.maxY + 0.01
-    }.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    let visible: String
+    if name.hasPrefix("local-") {
+        visible = rows.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    } else {
+        guard let panel = rows.first(where: { $0.topCandidates(1).first?.string == "Connect a model" })
+            else { fatalError("Model panel heading was not recognized") }
+        visible = rows.filter {
+            $0.boundingBox.minX >= panel.boundingBox.minX - 0.02 &&
+            $0.boundingBox.maxY <= panel.boundingBox.maxY + 0.01
+        }.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    }
     for value in expected { require(visible.contains(value), "Missing \(value) in \(name): \(text)") }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
@@ -82,3 +88,74 @@ click("Remove sign-in", rows)
 rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Use GitHub sign-in"])
 click("Use GitHub sign-in", rows)
 _ = try capture("reconnected", ["Model connected", "Remove sign-in"])
+func scroll(_ pixels: Int32) {
+    let rect = window()!.1
+    CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: rect.maxX - 20, y: rect.midY), mouseButton: .left)?.post(tap: .cghidEventTap)
+    CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
+    Thread.sleep(forTimeInterval: 0.3)
+}
+func seek(_ label: String, _ pixels: Int32) throws -> [VNRecognizedTextObservation] {
+    for _ in 0..<6 {
+        let seen = try capture("local-probe", [])
+        if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(label) }) { return seen }
+        scroll(pixels)
+    }
+    fatalError("Native local result control missing: \(label)")
+}
+func localSize(_ width: CGFloat, _ height: CGFloat) {
+    let app = AXUIElementCreateApplication(child.processIdentifier)
+    var windows: CFTypeRef?
+    require(AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windows) == .success, "Cannot read fixture window")
+    let native = (windows as! [AXUIElement])[0]
+    var origin = CGPoint(x: 0, y: 40)
+    require(AXUIElementSetAttributeValue(native, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &origin)!) == .success, "Cannot position fixture window")
+    var size = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled, .closable, .miniaturizable, .resizable]).size
+    require(AXUIElementSetAttributeValue(native, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!) == .success, "Cannot resize fixture window")
+    Thread.sleep(forTimeInterval: 0.3)
+    require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Fixture content size not applied")
+}
+// Synthetic IPC renders the real local result component; no VM or inference.
+rows = try seek("Open example", -200)
+click("Open example", rows)
+rows = try seek("Tests on local", -250)
+_ = try capture("local-result-wide", ["Tests on local", "1 of 2 passed"])
+_ = try seek("The answer did not include", -150)
+_ = try capture("local-answer-wide", ["Which date is shown", "No date was given", "2099-12-31"])
+localSize(540, 900)
+scroll(4000)
+_ = try seek("Tests on local", -250)
+_ = try capture("local-result", ["Tests on local", "1 of 2 passed"])
+_ = try seek("The answer did not include", -150)
+_ = try capture("local-answer", ["Which date is shown", "No date was given", "2099-12-31"])
+// Edit the fixture's Instructions field through the native text control. Its
+// writer is in-memory only, so no creator file or credential can be changed.
+scroll(4000)
+rows = try seek("Instructions", -150)
+let label = rows.first { ($0.topCandidates(1).first?.string ?? "").hasPrefix("Instructions") }!
+let rect = window()!.1
+let point = CGPoint(x: rect.minX + label.boundingBox.midX * rect.width, y: rect.minY + (1 - label.boundingBox.midY) * rect.height + 45)
+for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+}
+for down in [true, false] {
+    let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
+    event.flags = .maskCommand; event.post(tap: .cghidEventTap)
+}
+for character in "Changed fixture instructions.".utf16 {
+    var unit = character
+    for down in [true, false] {
+        let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
+        event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+        event.flags = []; event.post(tap: .cghidEventTap)
+    }
+}
+Thread.sleep(forTimeInterval: 1)
+_ = try seek("Not run since your edit", -250)
+rows = try capture("local-stale", ["Not run since your edit"])
+click("Run tests", rows)
+_ = try seek("Waiting for answers", -150)
+_ = try capture("local-running", ["Waiting for answers", "Observed for"])
+localSize(1280, 800)
+scroll(4000)
+_ = try seek("Waiting for answers", -250)
+_ = try capture("local-running-wide", ["Waiting for answers", "Observed for"])

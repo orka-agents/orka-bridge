@@ -29,7 +29,7 @@ export function isRunSnapshot(value: unknown): value is RunSnapshot {
   }
   if (!record(value, keys) || ('documentId' in value && !isDocumentId(value.documentId)) || ('busy' in value && value.busy !== null && !isDocumentRef(value.busy)) || ('modelConnected' in value && typeof value.modelConnected !== 'boolean') || ('source' in value && value.source !== null && !isSourceId(value.source)) || typeof value.state !== 'string' || !['idle', 'running', 'complete', 'unknown'].includes(value.state) || typeof value.canRun !== 'boolean' || value.state === 'running' && value.canRun || value.error !== null && !(typeof value.error === 'string' && Object.hasOwn(errors, value.error))) return false;
   if ('stage' in value && !(value.state === 'idle' ? value.stage === null : value.state === 'running' ? ['capture', 'model', 'submit', 'observe'].includes(value.stage as string) : value.stage === 'done')) return false;
-  if ('model' in value && value.model !== null && !text(value.model)) return false;
+  if ('model' in value && value.model !== null && !text(value.model, 1048576)) return false;
   if (!Array.isArray(value.acknowledged) || value.acknowledged.length > 33 || !value.acknowledged.every(r => record(r, ['kind', 'name', 'uid']) && (r.kind === 'Agent' || r.kind === 'Task') && text(r.name) && text(r.uid))) return false;
   if (value.pending !== null && !(record(value.pending, ['kind', 'name']) && (value.pending.kind === 'Agent' || value.pending.kind === 'Task') && text(value.pending.name))) return false;
   if (value.report === null) return value.state !== 'complete';

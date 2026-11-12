@@ -663,6 +663,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         require(AXUIElementSetAttributeValue(nativeWindow, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!) == .success, "Cannot resize result window")
         Thread.sleep(forTimeInterval: 0.3)
         require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Result window size was not applied")
+        // Reflow can move the result header above the preserved scroll offset.
+        // Reopen the existing panel without starting another Send.
+        scrollMain(4000)
+        try clickSendControl("Send to a cluster", scrolling: -250)
     }
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
