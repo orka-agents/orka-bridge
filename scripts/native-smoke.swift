@@ -14,8 +14,13 @@ func restoreDisplay() {
         }
     }
 }
+func fail(_ message: String) -> Never {
+    fputs("\(message)\n", stderr)
+    restoreDisplay()
+    exit(1)
+}
 func require(_ condition: Bool, _ message: String) {
-    if !condition { fputs("\(message)\n", stderr); restoreDisplay(); exit(1) }
+    if !condition { fail(message) }
 }
 let output = CommandLine.arguments[1]
 let theme = CommandLine.arguments[3]
@@ -33,7 +38,7 @@ if CGDisplayBounds(display).width < 1280 || CGDisplayBounds(display).height < 10
     guard let previous = CGDisplayCopyDisplayMode(display),
         let larger = modes.filter({ $0.isUsableForDesktopGUI() && $0.width >= 1280 && $0.height >= 1080 })
             .min(by: { $0.width * $0.height < $1.width * $1.height }) else {
-        fatalError("No CI display mode can fit the required native window")
+        fail("No CI display mode can fit the required native window")
     }
     previousDisplayMode = previous
     require(CGDisplaySetDisplayMode(display, larger, nil) == .success, "Cannot enlarge CI display")
@@ -59,7 +64,7 @@ for _ in 0..<30 {
     if running != nil { break }
     Thread.sleep(forTimeInterval: 1)
 }
-guard let launched = running else { fatalError("Bridge process did not appear") }
+guard let launched = running else { fail("Bridge process did not appear") }
 return launched
 }
 var app = try launch()
@@ -94,7 +99,17 @@ func mouse(_ type: CGEventType, _ point: CGPoint) {
 }
 func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) {
     guard let target = observations.first(where: { $0.topCandidates(1).first?.string == label }) else {
-        fatalError("Control not visible: \(label)")
+        // Preserve the label's actual pointer action when small dark text is
+        // unreadable to Vision; require one exact, fully visible native label.
+        let labels = nativeElements().filter {
+            attribute($0, "AXRole") as? String == "AXStaticText"
+                && attribute($0, "AXValue") as? String == label
+        }.compactMap { nativeBounds($0) }.filter { window()!.1.contains($0) }
+        require(labels.count == 1, "Expected one visible native label \(label); found \(labels.count)")
+        let point = CGPoint(x: labels[0].midX, y: labels[0].midY)
+        mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+        Thread.sleep(forTimeInterval: 0.5)
+        return
     }
     let rect = window()!.1
     let point = CGPoint(x: rect.minX + target.boundingBox.midX * rect.width,
@@ -118,17 +133,20 @@ func nativeElements() -> [AXUIElement] {
     }
     return nodes
 }
+func nativeBounds(_ element: AXUIElement) -> CGRect? {
+    guard let position = attribute(element, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
+        let size = attribute(element, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+    var point = CGPoint.zero; var extent = CGSize.zero
+    guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
+        AXValueGetValue(size as! AXValue, .cgSize, &extent), extent.width > 0, extent.height > 0 else { return nil }
+    return CGRect(origin: point, size: extent)
+}
 func nativeTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             (attribute(element, "AXValue") as? String)?.contains(expected) == true,
-            let position = attribute(element, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
-            let size = attribute(element, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else { return false }
-        var point = CGPoint.zero; var extent = CGSize.zero
-        guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
-            AXValueGetValue(size as! AXValue, .cgSize, &extent), extent.width > 0, extent.height > 0,
-            let rect = window()?.1 else { return false }
-        return rect.contains(CGRect(origin: point, size: extent))
+            let bounds = nativeBounds(element), let rect = window()?.1 else { return false }
+        return rect.contains(bounds)
     }
 }
 @discardableResult
@@ -148,7 +166,7 @@ func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> 
     let target = matches[0]
     guard let position = attribute(target, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
         let size = attribute(target, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else {
-        fatalError("Native tab has no bounds: \(page)")
+        fail("Native tab has no bounds: \(page)")
     }
     var origin = CGPoint.zero; var extent = CGSize.zero
     require(AXValueGetValue(position as! AXValue, .cgPoint, &origin)
@@ -183,7 +201,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
         let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
         let pixel = image.cropping(to: CGRect(x: CGFloat(image.width - 8), y: CGFloat(image.height - 8), width: 1, height: 1)),
-        let space = CGColorSpace(name: CGColorSpace.sRGB) else { fatalError("Cannot decode screenshot") }
+        let space = CGColorSpace(name: CGColorSpace.sRGB) else { fail("Cannot decode screenshot") }
     var rgba = [UInt8](repeating: 0, count: 4)
     let sampled = rgba.withUnsafeMutableBytes { bytes in
         guard let context = CGContext(data: bytes.baseAddress, width: 1, height: 1,
@@ -308,13 +326,13 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         let seen = try capture("send-probe", "Designer")
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
-        if let control = observed.first(where: { $0 == label || (label == "Details" && $0.lowercased().contains("details")) }) {
+        if let control = observed.first(where: { $0 == label || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
             clickText(control, in: seen)
             return
         }
         scrollMain(pixels)
     }
-    fatalError("Send control not visible: \(label); observed: \(observed)")
+    fail("Send control not visible: \(label); observed: \(observed)")
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 var initial = try capture("initial", "Clusters")
@@ -336,7 +354,7 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
         let text = $0.topCandidates(1).first?.string ?? ""
         return text == "Instructions" || (text.hasPrefix("Instructions ") && text.contains("What the agent"))
     }) else {
-        fatalError("Instructions field is not visible")
+        fail("Instructions field is not visible")
     }
     let owned = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
     let before = try String(contentsOf: owned, encoding: .utf8)
@@ -415,7 +433,7 @@ let clusters = try capture("before-file", "Clusters")
 clickTab("Designer", clusters)
 let agent = try capture("agent-view", "Designer")
 guard let fileButton = agent.first(where: { $0.topCandidates(1).first?.string == "File" }) else {
-    fatalError("File view switch is not visible")
+    fail("File view switch is not visible")
 }
 let fileRect = window()!.1
 let filePoint = CGPoint(x: fileRect.minX + fileButton.boundingBox.midX * fileRect.width,
@@ -547,7 +565,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             }
             scrollMain(-100)
         }
-        fatalError("Preflight state missing: \(expected)")
+        fail("Preflight state missing: \(expected)")
     }
     // Read-only preflight states use distinct synthetic identities. No workload
     // is submitted for either blocked card.
