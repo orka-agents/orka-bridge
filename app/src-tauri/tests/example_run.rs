@@ -58,8 +58,65 @@ async fn documents_keep_results_and_share_admission_not_hash_ownership() {
     assert!(run.status_document(&vm, bid).report.is_none());
     assert!(run.status(&vm).report.is_none());
     assert_eq!(run.status(&vm).document_id, DocumentId::SAMPLE);
+    let observation = run.overview_observation().unwrap();
+    assert_eq!(observation.document_id, aid);
+    assert_eq!(observation.state, RunState::Complete);
+    assert_eq!(
+        observation.source,
+        run.status_document(&vm, aid).source.unwrap()
+    );
+    assert_eq!(observation.agent_uid, done.acknowledged[0].uid);
+    // One coherent observation globally, not a document-keyed history.
+    let b = owner_folder_for_test(home.path(), "beta");
+    assert_eq!(run.start_document(vm.clone(), b).state, RunState::Running);
+    assert!(run.is_active());
+    for _ in 0..500 {
+        if !run.is_active() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert_eq!(run.overview_observation().unwrap().document_id, bid);
     let fresh = ExampleRun::new(tokio::runtime::Handle::current(), true, sample);
     assert!(fresh.status_document(&vm, aid).report.is_none());
+    assert!(fresh.overview_observation().is_none());
+    #[cfg(not(target_os = "macos"))]
+    {
+        let live = bridge_engine::overview::live_agents(vm.clone(), run.clone()).await;
+        assert_eq!(live.state, "complete");
+        assert_eq!(live.agents.len(), 2); // Every retained Agent, not just latest Run.
+        assert_eq!(live.observation.unwrap().document_id, bid);
+    }
+    vm.shutdown().await.unwrap();
+}
+
+fn owner_folder_for_test(home: &std::path::Path, name: &str) -> Arc<AgentFolder> {
+    let agents =
+        bridge_engine::agents::Agents::new(Some(home.into()), Some(home.join("fixture-data")));
+    let id = agents
+        .list()
+        .unwrap()
+        .into_iter()
+        .find(|f| f.name == name)
+        .unwrap()
+        .id;
+    agents.get(id).unwrap()
+}
+
+#[tokio::test]
+async fn session_failure_after_report_updates_only_current_observation_to_unknown() {
+    let (vm, _, _) = fixture_with_outcome(false, false, true).await;
+    let home = tempfile::tempdir().unwrap();
+    let run = ExampleRun::new(
+        tokio::runtime::Handle::current(),
+        true,
+        Arc::new(AgentFolder::new(Some(home.path().into()))),
+    );
+    run.start(vm.clone());
+    assert_eq!(finished(&run, &vm).await.state, RunState::Unknown);
+    let observed = run.overview_observation().unwrap();
+    assert_eq!(observed.state, RunState::Unknown);
+    assert!(observed.report.is_none());
     vm.shutdown().await.unwrap();
 }
 
@@ -153,6 +210,27 @@ impl Write for Channel {
                     },
                 }
             }
+            RequestBody::Execute {
+                operation,
+                action: EngineActionWire::ListAgents { context, namespace },
+                snapshot,
+            } => {
+                assert!(snapshot.is_none());
+                assert_eq!(context, format!("kind-bridge-{}", r.boot_nonce.simple()));
+                assert_eq!(namespace, "orka-system");
+                self.output = serde_json::to_vec(
+                    &json!({"apiVersion":"v1","kind":"List","items":self.objects.values().filter(|o| o["kind"] == "Agent").collect::<Vec<_>>()}),
+                )?;
+                ResultBody::Operation {
+                    operation,
+                    info: OperationInfo {
+                        state: OperationState::Completed,
+                        exit: Some(0),
+                        bytes: self.output.len(),
+                        has_diagnostics: false,
+                    },
+                }
+            }
             RequestBody::Status { operation } => ResultBody::Operation {
                 operation,
                 info: OperationInfo {
@@ -186,13 +264,18 @@ impl Read for Channel {
         self.input.read(bytes)
     }
 }
-struct Session(VmClient, Arc<AtomicBool>);
+struct Session(VmClient, Arc<AtomicBool>, Uuid, bool);
 impl LocalSession for Session {
     fn with_client(
         &mut self,
         work: &mut dyn FnMut(Uuid, &mut VmClient) -> Result<(), RuntimeError>,
     ) -> Result<(), RuntimeError> {
-        work(Uuid::new_v4(), &mut self.0)
+        work(self.2, &mut self.0)?;
+        if self.3 {
+            Err(RuntimeError::Closed)
+        } else {
+            Ok(())
+        }
     }
     fn execute(
         &mut self,
@@ -225,6 +308,13 @@ async fn fixture(
     missing_tools: bool,
     lost_task: bool,
 ) -> (Arc<LocalVm>, Arc<Mutex<Vec<Value>>>, Arc<AtomicBool>) {
+    fixture_with_outcome(missing_tools, lost_task, false).await
+}
+async fn fixture_with_outcome(
+    missing_tools: bool,
+    lost_task: bool,
+    closed_after_work: bool,
+) -> (Arc<LocalVm>, Arc<Mutex<Vec<Value>>>, Arc<AtomicBool>) {
     let id = Uuid::new_v4();
     let posts = Arc::new(Mutex::new(Vec::new()));
     let stopped = Arc::new(AtomicBool::new(false));
@@ -243,6 +333,8 @@ async fn fixture(
     let vm = LocalVm::new(Arc::new(Factory(Mutex::new(Some(Session(
         client,
         stopped.clone(),
+        id,
+        closed_after_work,
     ))))));
     vm.start();
     for _ in 0..100 {
@@ -366,12 +458,29 @@ async fn uncertain_task_write_keeps_agent_and_pending_task_without_retry() {
     let pending = result.pending.unwrap();
     assert_eq!(pending.kind, "Task");
     assert_eq!(posts.lock().unwrap().len(), 2);
+    let observation = run.overview_observation().unwrap();
+    assert_eq!(observation.agent_uid, result.acknowledged[0].uid);
+    assert_eq!(observation.state, RunState::Unknown);
+    assert!(observation.report.is_none());
+    // A changed-source retry on the retired channel must not rebind the old receipt.
+    let folder = AgentFolder::new(Some(home.path().into()));
+    let source = folder.open().unwrap();
+    let changed = folder
+        .save(format!("{}\nRetry new prompt", source.agent))
+        .unwrap()
+        .source;
     // A second attempt on the retired channel fails preflight without losing remote IDs.
     run.start(vm.clone());
     let refused = finished(&run, &vm).await;
     assert_eq!(refused.error, Some("session"));
     assert_eq!(refused.acknowledged.len(), 1);
     assert_eq!(refused.pending.unwrap().name, pending.name);
+    assert_eq!(refused.source.as_ref(), Some(&changed));
+    let retained = run.overview_observation().unwrap();
+    assert_eq!(retained.agent_uid, observation.agent_uid);
+    assert_eq!(retained.source, observation.source);
+    assert_ne!(retained.source, changed);
+    assert!(!run.is_active());
     assert_eq!(posts.lock().unwrap().len(), 2);
     vm.shutdown().await.unwrap();
 }
@@ -450,6 +559,9 @@ async fn preparation_refusal_keeps_previous_resource_receipts() {
             .collect::<Vec<_>>()
     );
     assert!(refused.pending.is_none());
+    let observed = run.overview_observation().unwrap();
+    assert_eq!(observed.source, completed.source.unwrap());
+    assert_eq!(observed.state, RunState::Complete); // Pre-ack failure did not change it.
     assert_eq!(posts.lock().unwrap().len(), 2);
     vm.shutdown().await.unwrap();
 }
@@ -504,7 +616,19 @@ async fn admitted_run_freezes_source_before_busy_vm_refusal() {
     });
     waiting.await.unwrap();
     let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder.clone());
+    #[cfg(not(target_os = "macos"))]
+    {
+        let busy = bridge_engine::overview::live_agents(vm.clone(), run.clone()).await;
+        assert_eq!(busy.state, "busy");
+        assert!(!busy.run_active); // A held session is not necessarily a Run.
+    }
     run.start(vm.clone());
+    #[cfg(not(target_os = "macos"))]
+    {
+        let busy = bridge_engine::overview::live_agents(vm.clone(), run.clone()).await;
+        assert_eq!(busy.state, "busy");
+        assert!(busy.run_active); // Defers before attempting the occupied session.
+    }
     // capture reconciles dirty disk to HEAD, proving it ran while the VM client is held.
     let mut frozen = false;
     for _ in 0..500 {

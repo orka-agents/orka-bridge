@@ -6,10 +6,11 @@ use crate::{
         RunTransport,
     },
     local_vm::{LocalVm, LocalVmStatus},
+    overview::{LocalRunObservation, ReportSummary},
     pair_source::CapturedPair,
     runtime::client::VmClient,
 };
-use bridge_runtime_protocol::{ModelPhase, OrkaRequest, SnapshotId, MAX_ORKA_BODY};
+use bridge_runtime_protocol::{ModelPhase, OrkaRequest, SnapshotId, Uuid, MAX_ORKA_BODY};
 use serde::Serialize;
 use serde_json::Value;
 use std::{
@@ -75,6 +76,8 @@ impl RunSnapshot {
 struct State {
     snapshots: HashMap<DocumentId, RunSnapshot>,
     active: Option<DocumentRef>,
+    observation: Option<LocalRunObservation>,
+    recorded_current: bool,
 }
 pub struct ExampleRun(Mutex<State>, tokio::runtime::Handle, bool, Arc<AgentFolder>);
 impl ExampleRun {
@@ -90,6 +93,12 @@ impl ExampleRun {
             model_image_available,
             folder,
         ))
+    }
+    pub fn is_active(&self) -> bool {
+        self.0.lock().unwrap().active.is_some()
+    }
+    pub fn overview_observation(&self) -> Option<LocalRunObservation> {
+        self.0.lock().unwrap().observation.clone()
     }
     /// Sample-only compatibility for native setup callers.
     pub fn status(&self, vm: &LocalVm) -> RunSnapshot {
@@ -136,6 +145,7 @@ impl ExampleRun {
                 return self.status_document(&vm, id);
             }
             state.active = Some(folder.document());
+            state.recorded_current = false;
             let snapshot = state
                 .snapshots
                 .entry(id)
@@ -170,8 +180,8 @@ impl ExampleRun {
                 let worker = owner.clone();
                 let observing = target.clone();
                 if target
-                    .with_client(move |_, client| {
-                        runtime.block_on(worker.execute(id, client, observing, pair))
+                    .with_client(move |installation, client| {
+                        runtime.block_on(worker.execute(id, installation, client, observing, pair))
                     })
                     .await
                     .is_err()
@@ -188,6 +198,12 @@ impl ExampleRun {
     }
     fn fail(&self, id: DocumentId, message: &'static str) {
         let mut state = self.0.lock().unwrap();
+        if state.recorded_current {
+            if let Some(observation) = &mut state.observation {
+                observation.state = RunState::Unknown;
+                observation.report = None;
+            }
+        }
         let snapshot = state.snapshots.get_mut(&id).unwrap();
         snapshot.state = RunState::Unknown;
         snapshot.error = Some(message);
@@ -195,6 +211,7 @@ impl ExampleRun {
     async fn execute(
         &self,
         id: DocumentId,
+        installation: Uuid,
         client: &mut VmClient,
         vm: Arc<LocalVm>,
         pair: ParsedPair,
@@ -234,35 +251,67 @@ impl ExampleRun {
             Err(error) => {
                 self.record(
                     id,
+                    installation,
                     &error.handle,
                     error.pending.map(|p| PendingRef {
                         kind: p.kind,
                         name: p.name,
                     }),
                     None,
+                    RunState::Unknown,
                 );
                 self.fail(id, "submit");
                 return;
             }
         };
-        self.record(id, &handle, None, None);
+        self.record(id, installation, &handle, None, None, RunState::Running);
         self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().stage = Some("observe");
         match runner.observe(&handle).await {
             Ok(report) => {
-                self.record(id, &handle, None, Some(report));
+                self.record(
+                    id,
+                    installation,
+                    &handle,
+                    None,
+                    Some(report),
+                    RunState::Complete,
+                );
                 self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().state = RunState::Complete;
             }
-            Err(_) => self.fail(id, "observe"),
+            Err(_) => {
+                self.record(id, installation, &handle, None, None, RunState::Unknown);
+                self.fail(id, "observe");
+            }
         }
     }
     fn record(
         &self,
         id: DocumentId,
+        installation: Uuid,
         handle: &RunHandle,
         pending: Option<PendingRef>,
         report: Option<RunReport>,
+        phase: RunState,
     ) {
         let mut state = self.0.lock().unwrap();
+        // Only this operation's acknowledged handle supplies both source and UID.
+        // A pre-ack retry failure must leave the previous coherent tuple untouched.
+        if let Some(agent) = handle.agent() {
+            state.recorded_current = true;
+            state.observation = Some(LocalRunObservation {
+                installation,
+                document_id: id,
+                source: handle.snapshot().clone(),
+                namespace: agent.namespace.clone(),
+                agent_name: agent.name.clone(),
+                agent_uid: agent.uid.clone(),
+                observed_at: crate::overview::now(),
+                state: phase,
+                report: report
+                    .as_ref()
+                    .map(|r| ReportSummary { verdict: r.verdict }),
+            });
+        }
         let snapshot = state.snapshots.get_mut(&id).unwrap();
         snapshot.acknowledged = receipts(handle);
         snapshot.pending = pending;

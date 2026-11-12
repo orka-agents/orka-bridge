@@ -72,11 +72,11 @@ test('keyboard Cancel then start again calls native retry and keeps the Meet pan
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_select_local')).toHaveLength(1);
 });
 
-test('Meet opens the actual example read-only without owned-file or Run commands', async () => {
+test('Meet opens the owned example for editing without Run commands', async () => {
   const { ipc } = native(); const user = userEvent.setup(); render(<App />);
   expect(await screen.findByRole('heading', { name: 'web-reader' })).toBeTruthy();
   expect(screen.getByText('Answers from the web page named in the request')).toBeTruthy();
-  expect(await within(screen.getByRole('navigation')).findByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'web-reader, ready to read')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText('No agent open')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   const main = screen.getByRole('main', { name: 'web-reader' });
   expect(within(main).getByText('Fetch before answering.')).toBeTruthy();
@@ -85,27 +85,31 @@ test('Meet opens the actual example read-only without owned-file or Run commands
   expect(run.title).toBe('Wait for your workspace and AI to be ready');
   await user.click(within(main).getByRole('button', { name: 'File' }));
   const editor = screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
-  expect(editor.readOnly).toBe(true); editor.focus(); await user.keyboard('{Control>}s{/Control}');
-  expect(ipc.mock.calls.some(([c]) => ['agent_open', 'agent_save', 'agent_run', 'agent_run_status'].includes(c))).toBe(false);
-  expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'web-reader, ready to read')).toBeTruthy();
+  expect(editor.readOnly).toBe(false); editor.focus(); await user.keyboard('{Control>}s{/Control}');
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
+  expect(ipc.mock.calls.some(([c]) => ['agent_save', 'agent_run', 'agent_run_status', 'workspace_catalog'].includes(c))).toBe(false);
+  expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'web-reader, ready to edit')).toBeTruthy();
 });
 
-test('unreadable status never upgrades the setup preview into an editable file', async () => {
+test('unreadable setup status keeps owned editing but never admits Run or discovery', async () => {
   const { ipc, unreadable } = native(); const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   unreadable();
   await waitFor(() => expect(within(screen.getByRole('contentinfo')).getByText('Workspace unavailable')).toBeTruthy());
   await user.click(screen.getByRole('button', { name: 'File' }));
-  expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).readOnly).toBe(true);
-  expect(ipc.mock.calls.some(([c]) => ['agent_open', 'agent_save', 'agent_run_status'].includes(c))).toBe(false);
+  expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).readOnly).toBe(false);
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
+  expect(ipc.mock.calls.some(([c]) => ['agent_save', 'agent_run_status', 'workspace_catalog'].includes(c))).toBe(false);
 });
 
-test('read-only view is freshly opened as editable only once setup is ready', async () => {
+test('setup readiness does not reopen the already editable document', async () => {
   const { ipc, ready } = native(); const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
-  expect(ipc.mock.calls.some(([c]) => c === 'agent_open')).toBe(false);
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
   ready();
-  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1));
+  await within(screen.getByRole('contentinfo')).findByText('Choose the AI', {}, { timeout: 2000 });
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: 'File' }));
   expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).readOnly).toBe(false);
 });
@@ -133,19 +137,19 @@ test('failure is one plain red step, native details stay behind disclosure', asy
   expect(screen.getByText('PRIVATE_NATIVE_DETAIL')).toBeTruthy();
 });
 
-test('Designer stays read-only while the first native setup observation is pending', async () => {
+test('Designer opens owned editing while the first native setup observation is pending', async () => {
   const { ipc } = native(); let observe!: (value: unknown) => void;
   mockIPC(command => command === 'setup_status' ? new Promise(resolve => { observe = resolve; }) : ipc(command));
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
-  expect(ipc.mock.calls.some(([command]) => command === 'agent_open')).toBe(false);
+  expect(ipc.mock.calls.filter(([command]) => command === 'agent_open')).toHaveLength(1);
   observe({ selected: 'localVm', localVm: 'installing', model: 'locked' });
   await within(screen.getByRole('contentinfo')).findByText('Setting up, step 2 of 4');
   expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
 });
 
-test('opening Designer while Continue awaits native admission cannot open an owned file', async () => {
+test('opening Designer while Continue awaits native admission opens editing but not Run', async () => {
   const { ipc } = native(); let admit!: (value: unknown) => void; let started = false;
   mockIPC(command => command === 'setup_status' ? { selected: started ? 'localVm' : null, localVm: started ? 'installing' : 'idle', model: 'locked' }
     : command === 'setup_select_local' ? new Promise(resolve => { admit = resolve; }) : ipc(command));
@@ -153,7 +157,7 @@ test('opening Designer while Continue awaits native admission cannot open an own
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
-  expect(ipc.mock.calls.some(([command]) => command === 'agent_open')).toBe(false);
+  expect(ipc.mock.calls.filter(([command]) => command === 'agent_open')).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   started = true; admit({ selected: 'localVm', localVm: 'installing', model: 'locked' });
   await within(screen.getByRole('contentinfo')).findByText('Setting up, step 2 of 4');

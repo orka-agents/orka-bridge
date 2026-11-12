@@ -1,8 +1,9 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
+import ClusterCard from './ClusterCard';
 
 const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' };
 const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name,
@@ -208,4 +209,162 @@ test('empty discovery is not an access error or a made-up version', async () => 
   const user = await open(); await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
   expect(await screen.findByText('No Orka was found on this context.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Use this cluster' })).toBeNull();
+});
+
+const connected = { status: 'connected', providers: [provider], failure: null };
+const fresh = { id: '00000000-0000-4000-8000-000000000004', name: 'corrected' };
+function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
+async function selectDirect(user: ReturnType<typeof userEvent.setup>) {
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
+  await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
+  await screen.findByText('Orka found');
+}
+
+test('deactivating hides the card, clears confirmed access and admitted locks, but keeps remembered context, target and provider; reactivating needs a fresh explicit Use', async () => {
+  vi.stubGlobal('isTauri', true);
+  const ipc = vi.fn((command: string) => command === 'cluster_contexts' ? [context] : command === 'cluster_discover' ? [target]
+    : command === 'cluster_use' ? connected : [fresh]);
+  mockIPC(ipc);
+  const onPlace = vi.fn(); const user = userEvent.setup();
+  const view = render(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  await selectDirect(user);
+  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
+  await screen.findByText('Access confirmed');
+  expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster', target, providers: [provider], providerId: provider.id });
+
+  view.rerender(<ClusterCard active={false} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  expect(document.querySelector('.cluster-card')?.hasAttribute('hidden')).toBe(true);
+
+  view.rerender(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  expect(document.querySelector('.cluster-card')?.hasAttribute('hidden')).toBe(false);
+  expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe(context.id);
+  expect(screen.getByText('Orka found')).toBeTruthy();
+  expect(screen.queryByText('Access confirmed')).toBeNull();
+  const use = screen.getByRole('button', { name: 'Use this cluster' });
+  expect(use.matches(':disabled')).toBe(false);
+  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toHaveLength(1);
+
+  await user.click(use);
+  await screen.findByText('Access confirmed');
+  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toHaveLength(2);
+  expect((screen.getByRole('combobox', { name: 'Provider' }) as HTMLSelectElement).value).toBe(provider.id);
+});
+
+test('a late Use reply after deactivation cannot publish the connected place or resurrect confirmed status', async () => {
+  vi.stubGlobal('isTauri', true);
+  const pending = deferred<unknown>();
+  const ipc = vi.fn((command: string) => command === 'cluster_contexts' ? [context] : command === 'cluster_discover' ? [target]
+    : command === 'cluster_use' ? pending.promise : [fresh]);
+  mockIPC(ipc);
+  const onPlace = vi.fn(); const user = userEvent.setup();
+  const view = render(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  await selectDirect(user);
+  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
+  expect(screen.getByRole('button', { name: 'Use this cluster' }).matches(':disabled')).toBe(true);
+  const callsBeforeDeactivate = onPlace.mock.calls.length;
+
+  view.rerender(<ClusterCard active={false} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  await act(async () => pending.resolve(connected));
+  expect(onPlace.mock.calls.length).toBe(callsBeforeDeactivate);
+
+  view.rerender(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  expect(screen.queryByText('Access confirmed')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Use this cluster' }).matches(':disabled')).toBe(false);
+});
+
+test('an initial kubeconfig read interrupted by deactivation resumes on reactivation, discarding the stale reply', async () => {
+  vi.stubGlobal('isTauri', true);
+  const first = deferred<unknown>(); const second = deferred<unknown>(); let calls = 0;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'cluster_contexts') { calls++; return calls === 1 ? first.promise : second.promise; }
+    throw Error('Unsupported');
+  });
+  mockIPC(ipc);
+  const onPlace = vi.fn(); const view = render(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(true);
+
+  view.rerender(<ClusterCard active={false} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  view.rerender(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  expect(calls).toBe(2);
+
+  await act(async () => first.resolve([{ id: 'stale', name: 'stale-context' }]));
+  expect(screen.queryByText('stale-context')).toBeNull();
+  expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(true);
+
+  await act(async () => second.resolve([context]));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
+  expect(screen.getByRole('option', { name: context.name })).toBeTruthy();
+});
+
+test('a Reload kubeconfig interrupted by deactivation resumes the reload on reactivation, discarding the stale reply', async () => {
+  vi.stubGlobal('isTauri', true);
+  const reloadFirst = deferred<unknown>(); const reloadSecond = deferred<unknown>(); let reloadCalls = 0;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'cluster_contexts') return [context];
+    if (command === 'cluster_discover') return [target];
+    if (command === 'cluster_reload') { reloadCalls++; return reloadCalls === 1 ? reloadFirst.promise : reloadSecond.promise; }
+    throw Error('Unsupported');
+  });
+  mockIPC(ipc);
+  const onPlace = vi.fn(); const user = userEvent.setup();
+  const view = render(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  await selectDirect(user);
+  await user.click(screen.getByRole('button', { name: 'Reload kubeconfig' }));
+  expect(screen.getByRole('button', { name: 'Reloading kubeconfig…' })).toBeTruthy();
+
+  view.rerender(<ClusterCard active={false} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  view.rerender(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  expect(reloadCalls).toBe(2);
+
+  await act(async () => reloadFirst.resolve([{ id: 'stale', name: 'stale-context' }]));
+  expect(screen.queryByText('stale-context')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Reloading kubeconfig…' })).toBeTruthy();
+
+  await act(async () => reloadSecond.resolve([context]));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Reload kubeconfig' })).toBeTruthy());
+  expect(screen.getByRole('option', { name: context.name })).toBeTruthy();
+});
+
+test('reactivating after a provider reconnect remaps the remembered provider name to its freshly minted ID', async () => {
+  vi.stubGlobal('isTauri', true);
+  const providerA = { id: '00000000-0000-4000-8000-000000000010', name: 'team-model', ready: true };
+  const providerB = { id: '00000000-0000-4000-8000-000000000011', name: 'other-model', ready: true };
+  const providerA2 = { id: '00000000-0000-4000-8000-000000000020', name: 'team-model', ready: true };
+  const providerB2 = { id: '00000000-0000-4000-8000-000000000021', name: 'other-model', ready: true };
+  let useCalls = 0;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'cluster_contexts') return [context];
+    if (command === 'cluster_discover') return [target];
+    if (command === 'cluster_use') {
+      useCalls++;
+      return useCalls === 1 ? { status: 'connected', providers: [providerA, providerB], failure: null }
+        : { status: 'connected', providers: [providerA2, providerB2], failure: null };
+    }
+    throw Error('Unsupported');
+  });
+  mockIPC(ipc);
+  const onPlace = vi.fn(); const user = userEvent.setup();
+  const view = render(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  await selectDirect(user);
+  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
+  await screen.findByText('Access confirmed');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Provider' }), providerB.id);
+  expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster', target, providers: [providerA, providerB], providerId: providerB.id });
+
+  view.rerender(<ClusterCard active={false} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  view.rerender(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  expect(screen.queryByText('Access confirmed')).toBeNull();
+
+  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
+  await screen.findByText('Access confirmed');
+  expect((screen.getByRole('combobox', { name: 'Provider' }) as HTMLSelectElement).value).toBe(providerB2.id);
+  expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster', target, providers: [providerA2, providerB2], providerId: providerB2.id });
+});
+
+test('ClusterCard stays active by default for callers that do not pass the prop', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => command === 'cluster_contexts' ? [context] : Promise.reject('Unsupported'));
+  render(<ClusterCard onPlace={vi.fn()} onOpenAgent={vi.fn()} />);
+  expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
+  expect(document.querySelector('.cluster-card')?.hasAttribute('hidden')).toBe(false);
 });

@@ -22,6 +22,21 @@ fn main() {
         })
         .invoke_handler(move |invoke| {
             let reply = match invoke.message.command() {
+                "overview_files" => {
+                    let content = agent.lock().unwrap();
+                    let summary = bridge_engine::engine::run::ParsedPair::parse(content.as_bytes(), tests.as_bytes())
+                        .ok()
+                        .map(|pair| json!({"name":pair.name(), "description":pair.description(), "model":pair.model(), "tools":pair.tools()}));
+                    let reason = summary.is_none().then_some("The saved declarations are unsupported or invalid.");
+                    json!({"state":"complete", "runActive":running.load(std::sync::atomic::Ordering::SeqCst), "files":[{
+                        "documentId":"9b2b93c4-375c-4815-9717-39852a96e411", "name":"web-reader", "state":"readable",
+                        "source":bridge_runtime_protocol::SnapshotId::of(content.as_bytes(), tests.as_bytes()),
+                        "summary":summary, "reason":reason
+                    }]})
+                }
+                // Match the native Mac image's unavailable-list contract, not a live VM.
+                "overview_agents" => json!({"state":"unavailable", "installation":null, "agents":[],
+                    "observedAt":null, "observation":null, "runActive":running.load(std::sync::atomic::Ordering::SeqCst), "reason":"image"}),
                 "agent_open" | "agent_save" => {
                     let mut content = agent.lock().unwrap();
                     if invoke.message.command() == "agent_save" {

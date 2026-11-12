@@ -84,6 +84,26 @@ async fn document_folder(
         .map_err(|_| "The agent is unavailable.")?
 }
 #[tauri::command]
+async fn overview_files(
+    state: tauri::State<'_, Arc<Agents>>,
+    run: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
+) -> Result<bridge_engine::overview::SavedFiles, &'static str> {
+    let agents = state.inner().clone();
+    let run = run.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        bridge_engine::overview::saved_files(&agents, run.is_active())
+    })
+    .await
+    .map_err(|_| "Could not read saved files.")
+}
+#[tauri::command]
+async fn overview_agents(
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    run: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
+) -> Result<bridge_engine::overview::LiveAgents, &'static str> {
+    Ok(bridge_engine::overview::live_agents(vm.inner().clone(), run.inner().clone()).await)
+}
+#[tauri::command]
 async fn agents_list(
     state: tauri::State<'_, Arc<Agents>>,
 ) -> Result<Vec<bridge_engine::agents::AgentEntry>, &'static str> {
@@ -119,6 +139,19 @@ async fn agent_save(
     tauri::async_runtime::spawn_blocking(move || agents.get(document_id)?.save(content))
         .await
         .map_err(|_| "The local agent folder is unavailable.")?
+}
+
+#[tauri::command]
+async fn agent_reveal(
+    document_id: DocumentId,
+    state: tauri::State<'_, Arc<Agents>>,
+) -> Result<(), &'static str> {
+    let agents = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        bridge_engine::agent_reveal::reveal(&agents, document_id)
+    })
+    .await
+    .map_err(|_| "Could not show the agent folder.")?
 }
 
 #[tauri::command]
@@ -307,9 +340,12 @@ fn main() {
             agent_run_status,
             agent_run,
             agents_list,
+            overview_files,
+            overview_agents,
             agent_selected,
             agent_open,
             agent_save,
+            agent_reveal,
             workspace_catalog,
             cluster_contexts,
             cluster_reload,
