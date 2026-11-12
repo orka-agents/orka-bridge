@@ -543,6 +543,52 @@ async fn native_resume_starts_only_a_saved_choice_without_resaving_it() {
     phase(&vm, LocalVmStatus::Ready).await;
     vm.shutdown().await.unwrap();
 }
+#[tokio::test]
+async fn preflight_failure_survives_direct_selection_and_reopen_without_image_progress() {
+    use bridge_engine::{
+        local_vm,
+        setup::{preflight::Failure, SetupStore},
+    };
+    struct Refused;
+    impl LocalFactory for Refused {
+        fn launch(
+            &self,
+            _: watch::Receiver<bool>,
+            _: Arc<dyn Fn(local_vm::LocalProgress) + Send + Sync>,
+        ) -> StartFuture<'_> {
+            Box::pin(async { Err(RuntimeError::Preflight(Failure::InsufficientMemory)) })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SetupStore::new(Some(temp.path().to_owned())));
+    for reopen in [false, true] {
+        let vm = LocalVm::new(Arc::new(Refused));
+        if reopen {
+            local_vm::resume_selected(store.clone(), &vm).await.unwrap();
+        } else {
+            local_vm::select_local(store.clone(), &vm).await.unwrap();
+        }
+        phase(&vm, LocalVmStatus::Failed).await;
+        let value = serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap())
+            .unwrap();
+        assert_eq!(value["preflightFailure"], "insufficientMemory");
+        assert_eq!(value["selected"], "localVm");
+        assert!(value["workspaceProgress"].is_null());
+        assert!(!value["localVmError"]
+            .as_str()
+            .unwrap()
+            .contains("Preflight("));
+        let changed =
+            serde_json::to_value(local_vm::change_local(store.clone(), &vm).await.unwrap())
+                .unwrap();
+        assert!(changed.get("preflightFailure").is_none());
+        assert!(store.status().unwrap().selected.is_none());
+        if !reopen {
+            store.select_local().unwrap();
+        }
+        vm.shutdown().await.unwrap();
+    }
+}
 #[test]
 fn fixed_example_is_the_exact_public_pair_not_an_edit_or_run_operation() {
     use sha2::{Digest, Sha256};

@@ -28,7 +28,9 @@ let (output, bundle, theme) = (args[1], args[2], args[3])
 let env = ProcessInfo.processInfo.environment
 check(env["GITHUB_ACTIONS"] == "true" && ["light", "dark"].contains(theme), "Hosted CI walk only")
 let home = URL(fileURLWithPath: env["HOME"]!)
-let data = home.appendingPathComponent("Library/Application Support/ai.orka.bridge")
+// CI builds this flavor separately so observing setup does not consume release welcome state.
+let identifier = "ai.orka.bridge.lifecycle"
+let data = home.appendingPathComponent("Library/Application Support/\(identifier)")
 let selected = data.appendingPathComponent("setup-v1/local-vm").path
 check(!FileManager.default.fileExists(atPath: selected), "Existing saved local selection; will not launch or erase it")
 check(!FileManager.default.fileExists(atPath: data.appendingPathComponent("local-vm-v1").path), "Existing VM data; refusing walk")
@@ -158,11 +160,11 @@ func capture(_ name: String, menu: Bool = false) throws {
 }
 func launch() throws -> AXUIElement {
     check(!FileManager.default.fileExists(atPath: selected) && !FileManager.default.fileExists(atPath: data.appendingPathComponent("local-vm-v1").path), "Saved selection or VM data appeared; refusing to resume")
-    check(NSRunningApplication.runningApplications(withBundleIdentifier: "ai.orka.bridge").isEmpty, "Bridge is already running")
+    check(NSRunningApplication.runningApplications(withBundleIdentifier: identifier).isEmpty, "Bridge is already running")
     // open supplies the override explicitly; release smoke uses its unchanged environment.
     try command("/usr/bin/open", [bundle, "--env", "BRIDGE_DEV_IMAGE_DIR=\(source)"])
     wait("Bridge did not launch") {
-        app = NSRunningApplication.runningApplications(withBundleIdentifier: "ai.orka.bridge").first
+        app = NSRunningApplication.runningApplications(withBundleIdentifier: identifier).first
         return app != nil
     }
     app!.activate(options: [])
@@ -190,6 +192,14 @@ let root = try launch()
 let pid = app!.processIdentifier
 let originalID = windowInfo()!.0
 var main = find(root, "main-window") { attribute($0, "AXRole") as? String == "AXWindow" }
+press(find(main, "Clusters") { pressable($0, "Clusters") })
+wait("Requirements choice did not appear") { nodes(main).contains { pressable($0, "Get started") || pressable($0, "Check again") } }
+if let start = nodes(main).first(where: { pressable($0, "Get started") }) { press(start) }
+let requirements = find(main, "computer-requirements-panel") { text($0).contains("Computer requirements") }
+_ = find(requirements, "computer-requirements") { pressable($0, "Check again") }
+// Capture the runner observations as drawn, without selecting local or asserting Ready.
+try command("/usr/sbin/screencapture", ["-x", "-o", "-l", String(windowInfo()!.0), "\(output)/computer-requirements.png"])
+check(!FileManager.default.fileExists(atPath: selected), "Preflight selected a workspace")
 press(find(main, "Designer") { pressable($0, "Designer") })
 // A writable Agent-view textarea proves the owned example loaded, not a
 // temporary read-only preview that will remount and reset its view toggle.
@@ -246,7 +256,7 @@ wait("Window did not minimize") { attribute(main, "AXMinimized") as? Bool == tru
 try command("\(bundle)/Contents/MacOS/orka-bridge", [])
 wait("Second executable launch did not unminimize/focus") { attribute(main, "AXMinimized") as? Bool == false && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
 retained(); try capture("reopened-second-launch-minimized")
-check(NSRunningApplication.runningApplications(withBundleIdentifier: "ai.orka.bridge").map(\.processIdentifier) == [pid], "Second Bridge instance survived")
+check(NSRunningApplication.runningApplications(withBundleIdentifier: identifier).map(\.processIdentifier) == [pid], "Second Bridge instance survived")
 let stop = menu(root)[1]
 try capture("menu-stop", menu: true)
 press(stop)

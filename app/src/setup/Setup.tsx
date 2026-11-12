@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Model, { type ModelState } from './Model';
+import Preflight from './Preflight';
 import { type LocalVmState, type SetupStatus, cancelLocal, changeLocal, selectLocal, setupStatus } from './state';
 import Steps, { Meet, type CheckStepState } from './Steps';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
@@ -39,6 +40,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   const [inside, setInside] = useState(false);
   const [cluster, setCluster] = useState(false);
   const [requirements, setRequirements] = useState<WorkspaceRequirements | null>();
+  const [preflightBlocked, setPreflightBlocked] = useState(true);
   const epoch = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -141,6 +143,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
               {requirements && <p>The data disk can grow to {formatSize(requirements.stateDiskBytes)}, in addition to the image.</p>}
               {requirements === undefined && <p>Reading this build's workspace size…</p>}
               {requirements === null && status?.localVm !== 'notIntegrated' && <p>Workspace size information is unavailable in this build.</p>}
+              {!cluster && !error && status && requirements && status.localVm !== 'notIntegrated' && <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} />}
               <button className="workspace-disclosure" type="button" aria-expanded={inside} aria-controls="workspace-inside" onClick={() => setInside(value => !value)}>
                 <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d={inside ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6'} /></svg>What's inside
               </button>
@@ -155,7 +158,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
           </div>
         </fieldset>
         {!cluster && <div className="workspace-choice-footer"><span className="muted">Step 1 of 4</span>
-          <button type="button" className="workspace-primary" disabled={busy || !status || !!error} onClick={() => { void chooseLocal(); }}>Continue</button>
+          <button type="button" className="workspace-primary" disabled={busy || !status || !!error || (status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { void chooseLocal(); }}>Continue</button>
         </div>}
         {!cluster && status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
       </>}

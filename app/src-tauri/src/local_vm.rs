@@ -112,6 +112,7 @@ impl LocalVmStatus {
 }
 fn failure_reason(error: &RuntimeError) -> String {
     match error {
+        RuntimeError::Preflight(failure) => failure.summary().to_owned(),
         RuntimeError::Io(error) if error.kind() == std::io::ErrorKind::StorageFull => {
             format!("NoSpace: {error}")
         }
@@ -154,6 +155,7 @@ struct State {
     phase: LocalVmStatus,
     model_connected: bool,
     failure: Option<String>,
+    preflight_failure: Option<crate::setup::preflight::Failure>,
     closing: bool,
     close_started: bool,
     stopped: Option<bool>,
@@ -387,9 +389,15 @@ impl Inner {
             }
         }
     }
-    fn fail(&self, reason: String, stop_unconfirmed: bool) {
+    fn fail(
+        &self,
+        reason: String,
+        stop_unconfirmed: bool,
+        preflight: Option<crate::setup::preflight::Failure>,
+    ) {
         let mut state = self.state.lock().unwrap();
         state.failure = Some(reason);
+        state.preflight_failure = preflight;
         state.progress = None;
         if !state.closing {
             state.phase = LocalVmStatus::Failed;
@@ -420,6 +428,7 @@ impl LocalVm {
                     },
                     model_connected: false,
                     failure: None,
+                    preflight_failure: None,
                     closing: false,
                     close_started: false,
                     stopped: None,
@@ -456,6 +465,11 @@ impl LocalVm {
     fn snapshot(&self, mut snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
         let state = self.inner.state.lock().unwrap();
         snapshot.workspace_progress = state.progress.as_ref().map(ProgressClock::snapshot);
+        snapshot.preflight_failure = if state.phase == LocalVmStatus::Failed {
+            state.preflight_failure
+        } else {
+            None
+        };
         // Publish phase, failure text and model availability from the same observation.
         snapshot
             .with_local_vm(state.phase.as_str(), state.failure.clone())
@@ -484,6 +498,7 @@ impl LocalVm {
         state.phase = LocalVmStatus::Preparing;
         state.model_connected = false;
         state.failure = None;
+        state.preflight_failure = None;
         state.close_started = false;
         state.stopped = None;
         state.progress = None;
@@ -505,7 +520,10 @@ impl LocalVm {
                     Err(RuntimeError::Closed
                         | RuntimeError::Image(crate::runtime::image_types::ImageError::Cancelled))
                 );
-            let successful = result.is_ok() || cancelled_error;
+            // Preflight refused before image/session work, so there is nothing to stop.
+            let successful = result.is_ok()
+                || cancelled_error
+                || matches!(&result, Err(RuntimeError::Preflight(_)));
             let mut session = inner.session.lock().await;
             match result {
                 Ok(live) => {
@@ -519,6 +537,11 @@ impl LocalVm {
                 Err(error) => inner.fail(
                     format!("Starting the local VM failed: {}", failure_reason(&error)),
                     matches!(error, RuntimeError::StopUnconfirmed(_)),
+                    if let RuntimeError::Preflight(failure) = error {
+                        Some(failure)
+                    } else {
+                        None
+                    },
                 ),
             }
             successful
@@ -664,6 +687,7 @@ impl LocalVm {
                                         failure_reason(&error)
                                     ),
                                     true,
+                                    None,
                                 );
                                 false
                             }

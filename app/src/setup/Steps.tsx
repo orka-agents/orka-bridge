@@ -40,7 +40,7 @@ export default function Steps({ status, busy, stopping, error, modelConnected, f
       <li className={`step-${phase}`} aria-current={phase === 'current' ? 'step' : undefined}>
         <PhaseIcon phase={phase} /><b>Get your workspace ready</b><span className="step-result">{ready ? 'Ready' : paused ? 'Paused' : failed ? 'Needs attention' : eta}</span>
         <div className="step-more">
-          {failed ? <Recovery key={status.localVmError} detail={status.localVmError} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /> : <p role="status">{stateLine}</p>}
+          {failed ? <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /> : <p role="status">{stateLine}</p>}
           {!stopping && status.localVm === 'starting' && <><div className="workspace-indeterminate" role="progressbar" aria-label="Workspace startup" /><p className="muted">{progress?.phase === 'starting' ? `${Math.floor(progress.elapsedMs / 1000)} seconds elapsed` : 'Getting the workspace ready…'}</p></>}
           {numbers && <><progress aria-label="Workspace installation" value={progress.bytes!} max={progress.totalBytes!} />
             <p className="muted">Installing, {formatSize(progress.bytes!)} of {formatSize(progress.totalBytes!)}</p></>}

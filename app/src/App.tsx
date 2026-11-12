@@ -7,6 +7,7 @@ import type { SetupStatus, ExamplePair } from './setup/state';
 import type { SelectedPlace } from './clusters/api';
 import type { ModelState } from './setup/Model';
 import { workspaceRecovery } from './setup/recovery-info';
+import { preflightRecovery } from './setup/preflight-state';
 import { sampleRun, type RunSnapshot } from './designer/run-api';
 import { agentInfo, type SaveState } from './designer/agent-api';
 
@@ -122,7 +123,8 @@ export default function App() {
   const modelDetail = setup?.model === 'locked' ? 'AI connection unavailable'
     : model === 'connecting' ? 'Connecting the AI…' : model === 'connected' ? 'AI connected'
     : model === 'failed' ? 'AI connection needs attention' : detail;
-  const workspaceDetail = setup?.localVm === 'failed' ? workspaceRecovery(setup.localVmError).summary : detail;
+  const workspaceDetail = setup?.localVm === 'failed'
+    ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.localVmError)).summary : detail;
   const hostDetail = workspaceReady ? modelDetail : workspaceDetail;
   const cases = run?.report?.cases;
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
