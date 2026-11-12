@@ -329,6 +329,30 @@ impl RemoteAccess {
             return Err(ClusterError::Denied);
         }
         tokio::time::timeout(OPERATION_LIMIT, async {
+            // A retained Service may now route to a recreated controller. Reuse
+            // discovery's list permission, scoped to the one recorded Deployment.
+            let deployments: Api<Deployment> =
+                Api::namespaced(self.creator.clone(), &self.binding.deployment_namespace);
+            let params = ListParams::default()
+                .fields(&format!("metadata.name={}", self.binding.deployment_name))
+                .limit(1);
+            let listed = tokio::time::timeout(REQUEST_TIMEOUT, deployments.list(&params))
+                .await
+                .map_err(|_| ClusterError::Unavailable)?
+                .map_err(|error| cluster_error(kube_error(Check::ClusterApi, error)))?;
+            if listed
+                .metadata
+                .continue_
+                .as_ref()
+                .is_some_and(|s| !s.is_empty())
+                || listed.items.len() != 1
+                || listed.items[0].metadata.uid.as_deref() != Some(&self.binding.deployment_uid)
+                || listed.items[0].metadata.name.as_deref() != Some(&self.binding.deployment_name)
+                || listed.items[0].metadata.namespace.as_deref()
+                    != Some(&self.binding.deployment_namespace)
+            {
+                return Err(ClusterError::Unavailable);
+            }
             let mut agents = Vec::new();
             let mut after = None;
             let mut cursors = HashSet::new();

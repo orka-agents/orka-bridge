@@ -17,6 +17,33 @@ use std::{
 mod forward;
 
 #[tokio::test]
+async fn overview_recreated_deployment_behind_retained_service_stays_stale() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let (session, _) = reading_session(
+        config(&api.start(), json!({"token":"static-fixture"})),
+        &orka,
+    );
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    let first = reply(session.overview().await);
+    assert_eq!(first[0]["stale"], false);
+    *api.deployment_replacement.lock().unwrap() = true;
+    orka.calls.lock().unwrap().clear();
+    let replaced = reply(session.overview().await);
+    assert_eq!(replaced[0]["stale"], true);
+    assert_eq!(replaced[0]["observedAt"], first[0]["observedAt"]);
+    assert!(
+        orka.calls.lock().unwrap().is_empty(),
+        "replacement must not be listed under old installation"
+    );
+}
+
+#[tokio::test]
 async fn overview_expired_access_never_sends_or_refreshes_a_credential() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());
@@ -145,10 +172,21 @@ async fn overview_inventory_is_get_only_and_keeps_stale_after_reload_without_rec
     assert_eq!(first[0]["agents"][0]["model"], "other");
     assert_eq!(first[0]["agents"][1]["model"], Value::Null);
     assert_eq!(first[0]["stale"], false);
-    assert!(
-        api.calls.lock().unwrap().is_empty(),
-        "inventory must not rediscover or issue tokens"
-    );
+    {
+        let calls = api.calls.lock().unwrap();
+        assert_eq!(
+            calls.len(),
+            1,
+            "inventory may only check its recorded Deployment"
+        );
+        assert_eq!(calls[0].0, "GET");
+        assert_eq!(calls[0].1, "/apis/apps/v1/namespaces/control/deployments");
+    }
+    let query = api.queries.lock().unwrap().last().unwrap().clone();
+    let url = reqwest::Url::parse(&format!("http://fixture{query}")).unwrap();
+    assert!(url
+        .query_pairs()
+        .any(|(k, v)| k == "fieldSelector" && v == "metadata.name=controller"));
     assert!(orka
         .calls
         .lock()
@@ -372,6 +410,8 @@ struct ApiFixture {
     impersonation: Mutex<Vec<ImpersonatedRequest>>,
     deny: Mutex<bool>,
     replacement: Mutex<bool>,
+    deployment_replacement: Mutex<bool>,
+    queries: Mutex<Vec<String>>,
     no_watch: Mutex<bool>,
     unrelated_api: Mutex<bool>,
     override_response: Mutex<Option<(String, u16, Value)>>,
@@ -445,6 +485,7 @@ impl ApiFixture {
                         header("authorization").unwrap_or_default(),
                         body,
                     ));
+                    fixture.queries.lock().unwrap().push(path.clone());
                     let (status, response) = fixture.response(path.split('?').next().unwrap());
                     let body = response.to_string();
                     let reply = write!(stream, "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
@@ -525,6 +566,9 @@ impl ApiFixture {
                 json!(["--api-port=8080", "--watch-namespace=agents"])
             };
             let mut list = json!({"apiVersion":"apps/v1","kind":"DeploymentList","metadata":{},"items":[{"metadata":{"name":"controller","namespace":"control","uid":"deployment-uid"},"spec":{"selector":{"matchLabels":{"app":"orka"}},"template":{"metadata":{"labels":{"app":"orka"}},"spec":{"containers":[{"name":"controller","image":"ghcr.io/orka-agents/orka:v99","args":args,"ports":[{"name":"api","containerPort":8080}]}]}}}}]});
+            if *self.deployment_replacement.lock().unwrap() {
+                list["items"][0]["metadata"]["uid"] = json!("replacement-deployment");
+            }
             if *self.unrelated_api.lock().unwrap() {
                 list["items"][0]["spec"]["template"]["metadata"]["labels"]
                     ["app.kubernetes.io/name"] = json!("orka");
