@@ -1,8 +1,10 @@
 # Cluster and model recovery
 
-Native light/dark captures from PR #140 at `13fe24c40a5f0e3f6633bf84d46381166e3efbda`, after merging #138. These retain the styling before #135; another main update is needed after that PR merges.
+The six Mac reload captures (failed, selection cleared, corrected contexts; light/dark) show PR #140 at `8e7fad3c83c810cc4440b279b0095fcfb031fa57`, after merging #135. [App run](https://github.com/orka-agents/orka-bridge/actions/runs/43242533862). They show the shared styling at a 540×900 native content size.
 
-Mac: [App run](https://github.com/orka-agents/orka-bridge/actions/runs/43234995435). Cluster captures exercise native IPC against a loopback-only fake Kubernetes/Orka server and a synthetic kubeconfig. Model captures use the separate compiled-frontend fixture with synthetic IPC.
+The other 26 images retain the previously reviewed captures at `13fe24c40a5f0e3f6633bf84d46381166e3efbda`, before #135's styling. They are not current-head appearance evidence.
+
+Mac: the reload captures above and the [earlier App run](https://github.com/orka-agents/orka-bridge/actions/runs/43234995435) exercise native IPC against a loopback-only fake Kubernetes/Orka server and a synthetic kubeconfig. Model captures use the separate compiled-frontend fixture with synthetic IPC.
 
 Windows: [App run](https://github.com/orka-agents/orka-bridge/actions/runs/43234980242). Renderer fixtures run the compiled frontend inside native WebView2 with synthetic IPC and clipboard failure. They are UI evidence, not native credential or cluster proof.
 
