@@ -75,7 +75,8 @@ test('a fresh preflight file change makes the earlier pass stale before Reload',
   render(<Send place={place} source={source} stale={false} visible remote />);
   await screen.findByRole('button', { name: 'Reload saved files' });
   expect(screen.getByText('Not run since your edit')).toBeTruthy();
-  expect(screen.getByText('Test file changed since this run.')).toBeTruthy();
+  expect(screen.getAllByText('Test file changed since this run.').some(node => !node.classList.contains('test-announcement'))).toBe(true);
+  expect(screen.getAllByRole('status').find(node => node.classList.contains('test-announcement'))?.textContent).toBe('Test file changed since this run.');
   expect(screen.getByText('reads-the-page').closest('details')?.querySelector('.status-passed')).toBeNull();
 });
 test.each(['failed', 'editorMismatch'])('preflight %s cannot promote an earlier pass', async mode => {
@@ -281,7 +282,7 @@ test('cluster results use frozen questions and plain reasons; stale rows cannot 
   expect(await screen.findByText('What did the page say?')).toBeTruthy();
   expect(screen.getByText('The answer did not include “checksum”.')).toBeTruthy();
   view.rerender(<Send place={place} source={{ ...source, tests: 'c'.repeat(64) }} stale={false} visible remote />);
-  expect(screen.getByText('Test file changed since this run.')).toBeTruthy();
+  expect(screen.getAllByText('Test file changed since this run.')).toHaveLength(2);
   expect(document.querySelector('.test-results .status-passed, .test-results .status-failed')).toBeNull();
 });
 test('malformed send data is not rendered or retried', async () => {

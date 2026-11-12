@@ -904,6 +904,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         let point = CGPoint(x: disclosure.midX, y: disclosure.midY)
         mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
         Thread.sleep(forTimeInterval: 0.5)
+        // Expanding the last card adds content below the old scroll limit.
+        // Bring its place row into view before checking the scoped identity.
+        try overviewShot("overview-probe", [checks, "fixture-cluster · agents"])
         guard let currentAnchor = visibleTextBounds(checks).first,
             let identity = visibleTextBounds("Observed identity").filter({ $0.minY > currentAnchor.minY }).min(by: { $0.minY < $1.minY }) else {
             fail("Selected identity moved out of view below \(checks)")
