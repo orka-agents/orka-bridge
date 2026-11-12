@@ -67,6 +67,53 @@ class LockTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "source identity"):
             validate_lock(self.value, production=False)
 
+    def preview_lock(self):
+        selected = VERSIONS['sourceOfflineProfile']
+        self.value['kmxProfileSha256'] = selected['profileSha256']
+        self.value['orka']['chartSha256'] = selected['chartSha256']
+        self.value['tools'].extend([
+            dict(name=name, version='fixture-1', path=name, sha256=digest)
+            for name, digest in [('kmx', '1' * 64),
+                                 ('orka-images', selected['artifactsSha256']),
+                                 ('kmx-offline-manifest', '2' * 64)]
+        ])
+        return {self.value['sourceCommit']: {'amd64': input_identity(self.value)}}
+
+    def test_publisher_preview_requires_explicit_exact_identity(self):
+        previews = self.preview_lock()
+        validate_lock(self.value, production=True, source_previews=previews)
+        with self.assertRaisesRegex(ValueError, 'release'):
+            validate_lock(self.value, production=True)
+        for mutate in [lambda v: v['tools'][0].update(sha256='3' * 64),
+                       lambda v: v.update(architecture='arm64', nodeLocalRef=v['nodeLocalRef'].replace('amd64', 'arm64'))]:
+            value = copy.deepcopy(self.value)
+            mutate(value)
+            with self.assertRaisesRegex(ValueError, 'preview'):
+                validate_lock(value, production=True, source_previews=previews)
+        path = self.root / 'preview.json'
+        path.write_text(json.dumps(self.value))
+        result = subprocess.run([sys.executable, str(Path(__file__).parents[1] / 'lock.py'), 'validate',
+                                 '--mode', 'release', '--lock', str(path)],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn('release', result.stderr)
+
+    def test_even_approved_preview_requires_offline_closure_and_pins(self):
+        approvals = self.preview_lock()
+        for mutation in ('missing', 'wrong-profile'):
+            value = copy.deepcopy(self.value)
+            if mutation == 'missing':
+                value['tools'] = [t for t in value['tools'] if t['name'] != 'kmx-offline-manifest']
+            else:
+                value['kmxProfileSha256'] = 'f' * 64
+            previews = {value['sourceCommit']: {'amd64': input_identity(value)}}
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, 'offline'):
+                validate_lock(value, production=True, source_previews=previews)
+        value = copy.deepcopy(self.value)
+        value['orka'].update(mode='release', identity='unreviewed')
+        with self.assertRaisesRegex(ValueError, 'release profile'):
+            validate_lock(value, production=True, source_previews=approvals)
+
     def test_release_missing_833(self):
         with self.assertRaisesRegex(ValueError, "release"):
             validate_lock(self.value, production=True)
