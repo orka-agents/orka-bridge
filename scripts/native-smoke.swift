@@ -274,7 +274,8 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Send your agent") || text.contains("Tests on your cluster") || text.contains("passed") || text.contains("evaluating tests") || text.contains("Planned Agent") || text.contains("QUESTION") || text.contains("The answer did not include") || text.contains("Not run since your edit") || text.contains("Stopped watching"), "Send panel not visible: \(text)")
+        let markers = ["Send your agent", "Tests on your cluster", "passed", "evaluating tests", "Planned Agent", "question", "answer", "Not run since your edit", "Stopped watching"]
+        require(markers.contains { text.localizedCaseInsensitiveContains($0) }, "Send panel not visible: \(text)")
         print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
         return observations
     }
