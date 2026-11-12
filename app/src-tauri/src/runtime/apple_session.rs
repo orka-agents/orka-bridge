@@ -31,7 +31,7 @@ impl AppleVmSession {
             RuntimeWorker::new(Box::new(AppleBackend::new(resource_root)), journal, image)?;
         Self::start(worker, host_utc)
     }
-    #[cfg(all(debug_assertions, target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     pub(crate) fn launch_retaining(
         resource_root: PathBuf,
         journal: Journal,

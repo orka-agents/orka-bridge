@@ -77,12 +77,12 @@ pub fn before_image_work<T>(
     }
     Ok(work())
 }
-#[cfg(any(test, all(debug_assertions, windows, target_arch = "x86_64")))]
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
 fn installed_bytes(kibibytes: u64) -> Option<u64> {
     kibibytes.checked_mul(1024).filter(|bytes| *bytes > 0)
 }
-#[cfg(all(debug_assertions, windows, target_arch = "x86_64"))]
-pub fn observe() -> Option<Preflight> {
+#[cfg(all(windows, target_arch = "x86_64"))]
+pub(crate) fn observe_native() -> Option<Preflight> {
     use windows_sys::Win32::System::SystemInformation::GetPhysicallyInstalledSystemMemory;
     let mut kibibytes = 0;
     // SMBIOS installed RAM, not GlobalMemoryStatusEx's smaller OS-usable total.
@@ -95,8 +95,8 @@ pub fn observe() -> Option<Preflight> {
         memory,
     ))
 }
-#[cfg(all(debug_assertions, target_os = "macos", target_arch = "aarch64"))]
-pub fn observe() -> Option<Preflight> {
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+pub(crate) fn observe_native() -> Option<Preflight> {
     fn read<T: Copy + Default>(name: &std::ffi::CStr) -> Option<T> {
         let mut value = T::default();
         let mut size = std::mem::size_of::<T>();
@@ -122,14 +122,20 @@ pub fn observe() -> Option<Preflight> {
         read::<u64>(c"hw.memsize"),
     ))
 }
-#[cfg(not(all(
-    debug_assertions,
-    any(
-        all(windows, target_arch = "x86_64"),
-        all(target_os = "macos", target_arch = "aarch64")
-    )
+#[cfg(not(any(
+    all(windows, target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64")
 )))]
+pub(crate) fn observe_native() -> Option<Preflight> {
+    None
+}
+
+/// The public setup command stays unavailable in unactivated release builds.
+/// The native factory uses its private observation only after selecting a source.
 pub fn observe() -> Option<Preflight> {
+    #[cfg(debug_assertions)]
+    return observe_native();
+    #[cfg(not(debug_assertions))]
     None
 }
 
@@ -221,6 +227,20 @@ mod tests {
         assert_eq!(installed_bytes(0), None);
         assert_eq!(installed_bytes(u64::MAX), None);
         assert_eq!(installed_bytes(6291456), Some(6442450944));
+    }
+
+    #[test]
+    fn native_and_public_observations_stay_separate() {
+        #[cfg(not(any(
+            all(windows, target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64")
+        )))]
+        assert!(observe_native().is_none());
+        #[cfg(any(
+            all(windows, target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64")
+        ))]
+        assert!(observe_native().is_some());
     }
 
     #[test]

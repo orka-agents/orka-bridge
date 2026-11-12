@@ -319,7 +319,7 @@ pub struct Prerequisites {
     pub hypervisor: Observation,
     pub usability: Usability,
 }
-#[cfg(any(all(debug_assertions, windows), test))]
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
 fn startup_prerequisites(
     hypervisor: Observation,
     firmware: Observation,
@@ -334,9 +334,9 @@ fn startup_prerequisites(
         _ => Virtualization::Unknown, // Defer to real launch without claiming readiness.
     }
 }
-#[cfg(any(test, all(debug_assertions, windows)))]
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
 type GetCapability = unsafe extern "system" fn(u32, *mut std::ffi::c_void, u32, *mut u32) -> i32;
-#[cfg(any(test, all(debug_assertions, windows)))]
+#[cfg(any(test, all(windows, target_arch = "x86_64")))]
 fn observe_hypervisor(get: GetCapability) -> Observation {
     // WHvGetCapability requires room for a 64-bit capability, even though
     // HypervisorPresent (code 0) is a 32-bit Win32 BOOL at the start of it.
@@ -353,7 +353,7 @@ fn observe_hypervisor(get: GetCapability) -> Observation {
     }
 }
 /// Observe WHP itself; feature flags alone do not prove a running hypervisor.
-#[cfg(all(debug_assertions, windows))]
+#[cfg(all(windows, target_arch = "x86_64"))]
 pub(crate) fn observe_startup_prerequisites() -> super::super::types::HostVirtualization {
     use std::ffi::c_void;
     use windows_sys::Win32::{

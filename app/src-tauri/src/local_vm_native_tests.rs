@@ -714,6 +714,310 @@ mod retry_custody_tests {
         assert!(matches!(Journal::open(&root), Err(RuntimeError::Busy)));
     }
 }
+mod release_image_tests {
+    use super::super::image::*;
+    use super::*;
+    use crate::runtime::image_types::*;
+
+    fn profile() -> (tempfile::TempDir, ReleaseImage, ImageIdentity) {
+        let temp = tempfile::tempdir().unwrap();
+        let verified = image_fixture::verified(temp.path(), ImageTarget::WindowsAmd64);
+        let identity = verified.image().identity().clone();
+        let profile = ReleaseImage {
+            pin: ImagePin {
+                release_id: "fixture".into(),
+                manifest_url: "https://fixture.invalid/manifest.json".into(),
+                manifest_sha256: identity.manifest_sha256.clone(),
+                accepted_schema_sha256: format!(
+                    "{:x}",
+                    Sha256::digest(include_bytes!("../../../images/manifest.schema.json"))
+                ),
+                target: ImageTarget::WindowsAmd64,
+                asset_base: "https://fixture.invalid/".into(),
+                redirect_origins: vec![],
+                limits: TransferLimits {
+                    compressed_bytes: 8192,
+                    disk_bytes: 1024 * 1024,
+                    kernel_bytes: 8192,
+                    initrd_bytes: 8192,
+                },
+            },
+            image_id: identity.image_id.clone(),
+            state_compatibility_id: identity.state_compatibility_id.clone(),
+        };
+        (temp, profile, identity)
+    }
+
+    #[test]
+    fn release_selection_never_uses_development_paths() {
+        for target in [ImageTarget::WindowsAmd64, ImageTarget::MacosArm64] {
+            // Neither a development override nor a retained root can turn an
+            // unpinned release into a configured workspace.
+            assert!(select_source(
+                false,
+                true,
+                true,
+                shipping_image(target).map(|p| (
+                    p,
+                    HostTarget {
+                        target,
+                        host_version: "13.0".into(),
+                        app_version: "1.0.0".into(),
+                    }
+                ))
+            )
+            .is_none());
+        }
+        #[cfg(debug_assertions)]
+        assert!(matches!(
+            select_source(true, true, false, None),
+            Some(ImageSource::Development)
+        ));
+    }
+
+    #[test]
+    fn selected_identity_requires_manifest_image_target_and_compatibility() {
+        let (_temp, profile, identity) = profile();
+        assert!(profile
+            .validate(&identity, ImageTarget::WindowsAmd64)
+            .is_ok());
+        for field in ["manifest", "image", "compatibility"] {
+            let mut other = identity.clone();
+            match field {
+                "manifest" => other.manifest_sha256 = "f".repeat(64),
+                "image" => other.image_id = "other".into(),
+                _ => other.state_compatibility_id = "other".into(),
+            }
+            assert_eq!(
+                profile.validate(&other, ImageTarget::WindowsAmd64),
+                Err(ImageError::Integrity)
+            );
+        }
+        assert_eq!(
+            profile.validate(&identity, ImageTarget::MacosArm64),
+            Err(ImageError::Integrity)
+        );
+    }
+
+    fn source(profile: ReleaseImage) -> ImageSource {
+        ImageSource::Pinned {
+            host: HostTarget {
+                target: profile.pin.target,
+                host_version: "13.0".into(),
+                app_version: "1.0.0".into(),
+            },
+            profile: Box::new(profile),
+        }
+    }
+    fn runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn pinned_startup_materializes_through_owned_journal() {
+        let (temp, profile, expected) = profile();
+        let root = temp.path().join("install");
+        let mut custody = JournalCustody(None);
+        let (_stop, closed) = watch::channel(false);
+        let runtime = runtime();
+        let image = prepare_installation(
+            &source(profile),
+            &root,
+            &temp.path().join("cache"),
+            &mut custody,
+            closed,
+            |_| {},
+            || Journal::create(&root, BackendKind::Qemu, vec![1]),
+            runtime.handle(),
+        )
+        .unwrap();
+        assert_eq!(image.identity().manifest_sha256, expected.manifest_sha256);
+        assert!(root.join("image-binding.json").exists());
+        assert!(matches!(Journal::open(&root), Err(RuntimeError::Busy)));
+        assert!(custody.0.is_some());
+    }
+
+    #[test]
+    fn pinned_reopen_without_cache_does_not_create_cache() {
+        let (temp, profile, expected) = profile();
+        let root = temp.path().join("install");
+        let cache = temp.path().join("cache");
+        let mut custody = JournalCustody(None);
+        let (_stop, closed) = watch::channel(false);
+        let runtime = runtime();
+        let source = source(profile);
+        prepare_installation(
+            &source,
+            &root,
+            &cache,
+            &mut custody,
+            closed.clone(),
+            |_| {},
+            || Journal::create(&root, BackendKind::Qemu, vec![1]),
+            runtime.handle(),
+        )
+        .unwrap();
+        drop(custody.0.take());
+        fs::remove_dir_all(&cache).unwrap();
+        let image = prepare_installation(
+            &source,
+            &root,
+            &cache,
+            &mut custody,
+            closed,
+            |_| {},
+            || panic!("reopen must not create"),
+            runtime.handle(),
+        )
+        .unwrap();
+        assert_eq!(image.identity().manifest_sha256, expected.manifest_sha256);
+        assert!(!cache.exists());
+    }
+
+    #[test]
+    fn pinned_reopen_rejects_other_image_without_writes() {
+        let (temp, profile, _) = profile();
+        let root = temp.path().join("install");
+        let cache = temp.path().join("cache");
+        let mut custody = JournalCustody(None);
+        let (_stop, closed) = watch::channel(false);
+        let runtime = runtime();
+        prepare_installation(
+            &source(profile.clone()),
+            &root,
+            &cache,
+            &mut custody,
+            closed.clone(),
+            |_| {},
+            || Journal::create(&root, BackendKind::Qemu, vec![1]),
+            runtime.handle(),
+        )
+        .unwrap();
+        let before = fs::read(root.join("image-binding.json")).unwrap();
+        fs::remove_dir_all(&cache).unwrap();
+        // Both retained retry custody and a new factory must reject the other
+        // image, even though its state compatibility string is identical.
+        for retained in [true, false] {
+            if !retained {
+                drop(custody.0.take());
+            }
+            let mut other = profile.clone();
+            other.pin.manifest_sha256 = "f".repeat(64);
+            let result = prepare_installation(
+                &source(other),
+                &root,
+                &cache,
+                &mut custody,
+                closed.clone(),
+                |_| {},
+                || panic!("mismatch must not replace installation"),
+                runtime.handle(),
+            );
+            assert!(matches!(
+                result,
+                Err(RuntimeError::Image(ImageError::Integrity))
+            ));
+            assert_eq!(fs::read(root.join("image-binding.json")).unwrap(), before);
+            assert!(!cache.exists());
+        }
+    }
+
+    #[test]
+    fn cancelled_pinned_startup_retains_original_owner() {
+        let (temp, profile, _) = profile();
+        let root = temp.path().join("install");
+        let cache = temp.path().join("cache");
+        let mut custody = JournalCustody(None);
+        let (stop, closed) = watch::channel(false);
+        let runtime = runtime();
+        let source = source(profile);
+        let result = prepare_installation(
+            &source,
+            &root,
+            &cache,
+            &mut custody,
+            closed.clone(),
+            |event| {
+                if matches!(event, LocalProgress::Image(ImageProgress::Materializing { bytes, .. }) if bytes > 0)
+                {
+                    stop.send_replace(true);
+                }
+            },
+            || Journal::create(&root, BackendKind::Qemu, vec![1]),
+            runtime.handle(),
+        );
+        assert!(matches!(
+            result,
+            Err(RuntimeError::Image(ImageError::Cancelled))
+        ));
+        assert!(custody.0.is_some());
+        assert!(matches!(Journal::open(&root), Err(RuntimeError::Busy)));
+        stop.send_replace(false);
+        prepare_installation(
+            &source,
+            &root,
+            &cache,
+            &mut custody,
+            closed,
+            |_| {},
+            || panic!("retry must retain original creation authority"),
+            runtime.handle(),
+        )
+        .unwrap();
+        assert!(root.join("image-binding.json").exists());
+    }
+
+    #[cfg(any(
+        all(windows, target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
+    ))]
+    #[test]
+    fn native_host_facts_come_from_the_running_os() {
+        #[cfg(windows)]
+        let target = ImageTarget::WindowsAmd64;
+        #[cfg(target_os = "macos")]
+        let target = ImageTarget::MacosArm64;
+        let host = native_host_target(target).unwrap();
+        assert_eq!(host.target, target);
+        assert_eq!(host.app_version, env!("CARGO_PKG_VERSION"));
+        assert!(checked_host_version(&host.host_version).is_ok());
+    }
+
+    #[test]
+    fn host_version_must_be_observed_not_invented() {
+        assert_eq!(checked_host_version("27.2\0"), Ok("27.2".into()));
+        for value in ["", "unknown", "13", "13.0.bad", "13.0\0extra"] {
+            assert_eq!(checked_host_version(value), Err(ImageError::Unsupported));
+        }
+        #[cfg(not(any(windows, all(target_os = "macos", target_arch = "aarch64"))))]
+        assert!(matches!(
+            native_host_target(ImageTarget::MacosArm64),
+            Err(ImageError::Unsupported)
+        ));
+    }
+}
+
+#[cfg(not(debug_assertions))]
+#[test]
+fn release_factory_does_not_activate_from_existing_state() {
+    let data = tempfile::tempdir().unwrap();
+    let root = data.path().join("local-vm-v1");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("record.json"), b"not an approved image").unwrap();
+    assert_eq!(
+        configured(Some(data.path().into()), Some(data.path().into())).status(),
+        LocalVmStatus::NotIntegrated
+    );
+    assert_eq!(
+        fs::read(root.join("record.json")).unwrap(),
+        b"not an approved image"
+    );
+    assert!(!data.path().join("image-cache-v1").exists());
+}
+
 #[test]
 fn factory_configuration_without_native_paths_cannot_activate_a_session() {
     assert_eq!(
