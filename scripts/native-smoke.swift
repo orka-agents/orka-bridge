@@ -687,7 +687,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     func captureAnswer(_ name: String) throws {
         let seen = try capturePreflight("send-probe", "QUESTION")
-        let question = seen.first { ($0.topCandidates(1).first?.string ?? "") == "QUESTION" }!
+        guard let question = seen.first(where: { ($0.topCandidates(1).first?.string ?? "").contains("QUESTION") })
+            else { fail("Question heading missing after native search") }
         let y = (1 - question.boundingBox.maxY) * window()!.1.height
         scrollMain(-Int32(max(0, y - 180)))
         let answer = try capture(name, "Designer")
