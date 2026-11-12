@@ -79,6 +79,7 @@ impl Write for Channel {
         };
         let result = match r.body {
             RequestBody::ModelStatus {} => ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
                 diagnostic: None,
                 phase: ModelPhase::Ready,
                 credential: CredentialState {

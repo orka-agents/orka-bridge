@@ -37,6 +37,33 @@ fn model_support_can_be_checked_without_loading_or_sending_a_secret() {
     );
 }
 #[test]
+fn retained_disconnect_validates_all_nonsecret_connection_fields() {
+    let good = ModelConnection {
+        id: Uuid::new_v4(),
+        generation: Uuid::new_v4(),
+        selection: ModelSelection {
+            provider: "copilot".into(),
+            model: "gpt-4.1".into(),
+        },
+    };
+    for case in 0..4 {
+        let mut connection = good.clone();
+        match case {
+            1 => connection.id = Uuid::nil(),
+            2 => connection.generation = Uuid::nil(),
+            3 => connection.selection.provider = "../other".into(),
+            _ => {}
+        }
+        let frame = Frame::Request(WireRequest {
+            version: VERSION,
+            boot_nonce: Uuid::new_v4(),
+            request_id: 1,
+            body: RequestBody::ModelDisconnectRetained { connection },
+        });
+        assert_eq!(encode(&frame).is_ok(), case == 0);
+    }
+}
+#[test]
 fn model_diagnostics_accept_old_omission_but_refuse_unbounded_vocabulary() {
     let old = serde_json::json!({"phase":"unknown", "connection":null,
         "credential":{"profile":CREDENTIAL_PROFILE,"installed":true,"generation":Uuid::new_v4()}});

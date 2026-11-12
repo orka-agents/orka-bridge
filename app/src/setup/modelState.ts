@@ -13,15 +13,18 @@ const errors = {
   modelBusy: 'Another operation is using the local VM. Wait for it to finish.',
   modelSession: 'The local VM is not available for model connection.',
   modelUnavailable: 'The stored model connection is unavailable or its completion is unknown.',
+  modelReconnect: 'Bridge could not clean up the previous model connection. This workspace may need a newer image. The saved sign-in was kept.',
 };
 export type ModelFailure = { message: string; category: keyof typeof errors | 'unknown'; codes: number[] };
 export type ModelResult = { ok: true } | ({ ok: false } & ModelFailure);
-export async function connectModel(): Promise<ModelResult> {
+export const connectModel = () => call('setup_connect_model', true, 'The model connection could not be completed.');
+export const removeModel = () => call('setup_remove_model', false, 'Bridge could not confirm sign-in removal. Try Remove sign-in again.');
+async function call(command: string, ready: boolean, fallback: string): Promise<ModelResult> {
   if (!isTauri()) return { ok: false, category: 'unknown', codes: [], message: 'Native model setup is not available in this preview.' };
   try {
-    const value = await invoke<unknown>('setup_connect_model');
+    const value = await invoke<unknown>(command);
     if (typeof value === 'object' && value !== null && !Array.isArray(value)
-      && Object.keys(value).join(',') === 'ready' && 'ready' in value && value.ready === true) {
+      && Object.keys(value).join(',') === 'ready' && 'ready' in value && value.ready === ready) {
       return { ok: true };
     }
   } catch (error: unknown) {
@@ -44,5 +47,5 @@ export async function connectModel(): Promise<ModelResult> {
       return { ok: false, category, codes: [], message: errors[category] };
     }
   }
-  return { ok: false, category: 'unknown', codes: [], message: 'The model connection could not be completed.' };
+  return { ok: false, category: 'unknown', codes: [], message: fallback };
 }
