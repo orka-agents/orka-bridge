@@ -97,11 +97,25 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     return rows
 }
 func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
-    guard let row = rows.first(where: { $0.topCandidates(1).first?.string == label })
-        else { fatalError("Native control not visible: \(label)") }
     let rect = window()!.1
-    let p = CGPoint(x: rect.minX + row.boundingBox.midX * rect.width,
+    let p: CGPoint
+    if let row = rows.first(where: { $0.topCandidates(1).first?.string == label }) {
+        p = CGPoint(x: rect.minX + row.boundingBox.midX * rect.width,
                     y: rect.minY + (1 - row.boundingBox.midY) * rect.height)
+    } else {
+        // Vision can join Connected and Remove sign-in on one line. Still
+        // pointer-click the exact enabled native button, never the joined row.
+        let buttons = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXButton"
+                && attribute(element, "AXEnabled") as? Bool == true
+                && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
+        }
+        require(buttons.count == 1, "Expected one native button: \(label)")
+        guard let bounds = nativeBounds(buttons[0]), rect.contains(bounds) else {
+            require(false, "Native button is not visible: \(label)"); return
+        }
+        p = CGPoint(x: bounds.midX, y: bounds.midY)
+    }
     for type in [CGEventType.leftMouseDown, .leftMouseUp] {
         CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
     }
@@ -174,6 +188,15 @@ func nativeElements() -> [AXUIElement] {
     }
     return elements
 }
+func nativeBounds(_ element: AXUIElement) -> CGRect? {
+    guard let position = attribute(element, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
+        let size = attribute(element, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
+    var origin = CGPoint.zero; var extent = CGSize.zero
+    guard AXValueGetValue(position as! AXValue, .cgPoint, &origin)
+        && AXValueGetValue(size as! AXValue, .cgSize, &extent)
+        && extent.width > 0 && extent.height > 0 else { return nil }
+    return CGRect(origin: origin, size: extent)
+}
 // Vision can read 2099 as 9099 in small Inter text. Require the exact rendered
 // failure text through native accessibility, fully within this window, instead
 // of accepting either number or weakening the expected value.
@@ -182,13 +205,8 @@ func nativeFailureTextIsVisible(_ expected: String) -> Bool {
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
             text.hasPrefix("The answer did not include"), text.contains(expected),
-            let position = attribute(element, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
-            let size = attribute(element, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else { return false }
-        var origin = CGPoint.zero; var extent = CGSize.zero
-        return AXValueGetValue(position as! AXValue, .cgPoint, &origin)
-            && AXValueGetValue(size as! AXValue, .cgSize, &extent)
-            && extent.width > 0 && extent.height > 0
-            && window()!.1.contains(CGRect(origin: origin, size: extent))
+            let bounds = nativeBounds(element) else { return false }
+        return window()!.1.contains(bounds)
     }
 }
 // Match the fixture's known Instructions value, not a label plus a guessed
