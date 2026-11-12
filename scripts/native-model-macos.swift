@@ -154,13 +154,29 @@ _ = try capture("local-answer", ["Which date is shown", "No date was given", "20
 // Edit the fixture's Instructions field through the native text control. Its
 // writer is in-memory only, so no creator file or credential can be changed.
 scroll(4000)
-rows = try seek("Instructions", -150)
-let label = rows.first { ($0.topCandidates(1).first?.string ?? "").hasPrefix("Instructions") }!
-let rect = window()!.1
-let point = CGPoint(x: rect.minX + label.boundingBox.midX * rect.width, y: rect.minY + (1 - label.boundingBox.midY) * rect.height + 45)
-for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
+func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    var value: CFTypeRef?
+    return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
 }
+var elements = [AXUIElementCreateApplication(child.processIdentifier)]
+var index = 0
+while index < elements.count && elements.count < 4000 {
+    let element = elements[index]; index += 1
+    for key in ["AXChildren", "AXWindows"] {
+        for item in attribute(element, key) as? [AXUIElement] ?? []
+            where !elements.contains(where: { CFEqual($0, item) }) { elements.append(item) }
+    }
+}
+// Match the fixture's known Instructions value, not a label plus a guessed
+// offset which can land outside the editor after responsive reflow.
+let editors = elements.filter {
+    attribute($0, "AXRole") as? String == "AXTextArea"
+        && (attribute($0, "AXValue") as? String)?.hasPrefix("Answer from the web page named in the request.") == true
+}
+require(editors.count == 1, "Expected the fixture Instructions editor")
+let editor = editors[0]
+require(AXUIElementSetAttributeValue(editor, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus fixture Instructions")
+Thread.sleep(forTimeInterval: 0.3)
 for down in [true, false] {
     let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
     event.flags = .maskCommand; event.post(tap: .cghidEventTap)
@@ -174,6 +190,7 @@ for character in "Changed fixture instructions.".utf16 {
     }
 }
 Thread.sleep(forTimeInterval: 1)
+require((attribute(editor, "AXValue") as? String)?.contains("Changed fixture instructions.") == true, "Native keystrokes did not edit Instructions")
 _ = try seek("Not run since your edit", -250)
 rows = try capture("local-stale", ["Not run since your edit"])
 click("Run tests", rows)
