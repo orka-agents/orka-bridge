@@ -1,3 +1,15 @@
+// Creator-facing descriptions for common built-ins; unknown tools keep their supplied text.
+export const builtInToolDescriptions: Readonly<Record<string, string>> = {
+  web_fetch: 'Read the contents of a web page at an address.',
+  web_search: 'Find current information on the web.',
+  file_read: 'Read a file available to the agent.',
+  file_write: 'Create or update a file available to the agent.',
+  code_exec: 'Run code and read its output.',
+  request_approval: 'Ask a person to approve an action.',
+  delegate_task: 'Pass a task to another agent.',
+  reply_in_conversation: 'Send a reply in the current conversation.',
+};
+
 // Orka KnownBuiltInToolNames union at image pin 7916cd1c8c083ade6b10df6ba408f854d930190c.
 // This is a naming map, not a claim that a workspace has enabled each tool.
 export const builtInTools: Readonly<Record<string, string>> = {

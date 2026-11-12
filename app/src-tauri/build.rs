@@ -30,6 +30,7 @@ fn main() {
             "agent_selected",
             "agent_open",
             "agent_save",
+            "agent_reveal",
             "cluster_contexts",
             "cluster_reload",
             "cluster_discover",

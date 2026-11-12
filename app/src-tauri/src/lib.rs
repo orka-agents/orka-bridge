@@ -1,4 +1,5 @@
 pub mod agent_folder;
+pub mod agent_reveal;
 pub mod agents;
 pub mod catalog;
 pub mod clusters;
