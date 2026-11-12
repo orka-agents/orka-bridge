@@ -79,11 +79,10 @@ fn wait_for_infrastructure(
             }
             InfrastructureService::Starting => {}
             _ => {
-                return Err(std::io::Error::other(format!(
+                return Err(RuntimeError::Infrastructure(format!(
                     "Orka infrastructure failed (phase: {:?}, service: {:?})",
                     state.phase, state.service
-                ))
-                .into())
+                )))
             }
         }
         // Time only schedules the next observation; it never grants readiness.
@@ -117,6 +116,7 @@ fn retain_start_failure(
     stage: &str,
     error: RuntimeError,
     stderr: std::io::Result<Vec<u8>>,
+    operation: WorkspaceOperation,
 ) -> RuntimeError {
     use std::io::Write;
     let unconfirmed = matches!(error, RuntimeError::StopUnconfirmed(_));
@@ -176,7 +176,12 @@ fn retain_start_failure(
     if unconfirmed {
         RuntimeError::StopUnconfirmed(message)
     } else {
-        std::io::Error::other(message).into()
+        // Keep the original typed error; only the display text is private.
+        RuntimeError::Startup(Box::new(crate::runtime::types::StartupFailure {
+            error,
+            operation,
+            diagnostic: message,
+        }))
     }
 }
 
@@ -325,101 +330,104 @@ impl LocalFactory for NativeFactory {
             if *closed.borrow() {
                 return Err(RuntimeError::Closed);
             }
-            #[cfg(windows)]
-            runtime::windows::inputs::probe_startup_prerequisites()?;
-            #[cfg(windows)]
-            let inputs = {
-                runtime::windows::launch::control_path(
-                    &root,
-                    bridge_runtime_protocol::Uuid::nil(),
-                )?;
-                let path = resources.join("native/qemu");
-                Arc::new(verify_windows_runtime(
-                    &read_runtime_manifest(&path, &runtime_manifest_pin())?,
-                    path,
-                )?)
-            };
-            use runtime::image_types::ImageProgress;
-            progress(LocalProgress::Image(ImageProgress::Verifying));
-            // This factory, not a reopened record, retains the original installation owner.
-            let mut custody = pending.lock().map_err(|_| RuntimeError::Unavailable)?;
-            let existing = if let Some(journal) = &custody.0 {
-                match open_installed_image(
-                    &journal.image_target(dev_image::STATE_COMPATIBILITY_ID)?,
-                ) {
-                    Ok(image) => Some(Arc::new(image)),
-                    Err(runtime::image_types::ImageError::RetainedImage) => None,
-                    Err(error) => return Err(error.into()),
-                }
-            } else {
-                match reopen(&root, dev_image::STATE_COMPATIBILITY_ID)? {
-                    Some((journal, image)) => {
-                        custody.0 = Some(journal);
-                        Some(image)
-                    }
-                    None => None,
-                }
-            };
-            let installed = match existing {
-                Some(image) => image,
-                None => {
-                    let image = dev_image::from_environment_cancellable(&closed)
-                        .map_err(|_| {
-                            if *closed.borrow() {
-                                RuntimeError::Closed
-                            } else {
-                                RuntimeError::Unavailable
-                            }
-                        })?
-                        .ok_or(RuntimeError::Unavailable)?;
-                    let prepared = runtime.block_on(
-                        runtime::setup_adapter::prepare_development_image(&image, closed.clone()),
+            crate::setup::preflight::before_image_work(crate::setup::preflight::observe(), || {
+                #[cfg(windows)]
+                let inputs = {
+                    runtime::windows::launch::control_path(
+                        &root,
+                        bridge_runtime_protocol::Uuid::nil(),
                     )?;
-                    if *closed.borrow() {
-                        return Err(RuntimeError::Closed);
+                    let path = resources.join("native/qemu");
+                    Arc::new(verify_windows_runtime(
+                        &read_runtime_manifest(&path, &runtime_manifest_pin())?,
+                        path,
+                    )?)
+                };
+                use runtime::image_types::ImageProgress;
+                progress(LocalProgress::Image(ImageProgress::Verifying));
+                // This factory, not a reopened record, retains the original installation owner.
+                let mut custody = pending.lock().map_err(|_| RuntimeError::Unavailable)?;
+                let existing = if let Some(journal) = &custody.0 {
+                    match open_installed_image(
+                        &journal.image_target(dev_image::STATE_COMPATIBILITY_ID)?,
+                    ) {
+                        Ok(image) => Some(Arc::new(image)),
+                        Err(runtime::image_types::ImageError::RetainedImage) => None,
+                        Err(error) => return Err(error.into()),
                     }
-                    if custody.0.is_none() {
-                        #[cfg(windows)]
-                        let (backend, identity) = (BackendKind::Qemu, b"pc-q35-11.0".to_vec());
-                        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-                        let (backend, identity) = (
-                            BackendKind::Apple,
-                            runtime::apple_input::machine_identifier(&resources)?,
-                        );
+                } else {
+                    match reopen(&root, dev_image::STATE_COMPATIBILITY_ID)? {
+                        Some((journal, image)) => {
+                            custody.0 = Some(journal);
+                            Some(image)
+                        }
+                        None => None,
+                    }
+                };
+                let installed = match existing {
+                    Some(image) => image,
+                    None => {
+                        let image = dev_image::from_environment_cancellable(&closed)
+                            .map_err(|_| {
+                                if *closed.borrow() {
+                                    RuntimeError::Closed
+                                } else {
+                                    RuntimeError::Unavailable
+                                }
+                            })?
+                            .ok_or(RuntimeError::Unavailable)?;
+                        let prepared =
+                            runtime.block_on(runtime::setup_adapter::prepare_development_image(
+                                &image,
+                                closed.clone(),
+                            ))?;
                         if *closed.borrow() {
                             return Err(RuntimeError::Closed);
                         }
-                        fs::create_dir_all(root.parent().ok_or(RuntimeError::Unavailable)?)?;
-                        custody.0 = Some(Journal::create(&root, backend, identity)?);
+                        if custody.0.is_none() {
+                            #[cfg(windows)]
+                            let (backend, identity) = (BackendKind::Qemu, b"pc-q35-11.0".to_vec());
+                            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                            let (backend, identity) = (
+                                BackendKind::Apple,
+                                runtime::apple_input::machine_identifier(&resources)?,
+                            );
+                            if *closed.borrow() {
+                                return Err(RuntimeError::Closed);
+                            }
+                            fs::create_dir_all(root.parent().ok_or(RuntimeError::Unavailable)?)?;
+                            custody.0 = Some(Journal::create(&root, backend, identity)?);
+                        }
+                        progress(LocalProgress::Status(LocalVmStatus::Installing));
+                        let journal = custody.0.as_ref().ok_or(RuntimeError::Unavailable)?;
+                        let image = runtime.block_on(prepared.materialize(
+                            &journal.image_target(dev_image::STATE_COMPATIBILITY_ID)?,
+                            closed.clone(),
+                            |event| progress(LocalProgress::Image(event)),
+                        ))?;
+                        Arc::new(image)
                     }
-                    progress(LocalProgress::Status(LocalVmStatus::Installing));
-                    let journal = custody.0.as_ref().ok_or(RuntimeError::Unavailable)?;
-                    let image = runtime.block_on(prepared.materialize(
-                        &journal.image_target(dev_image::STATE_COMPATIBILITY_ID)?,
-                        closed.clone(),
-                        |event| progress(LocalProgress::Image(event)),
-                    ))?;
-                    Arc::new(image)
-                }
-            };
-            progress(LocalProgress::Status(LocalVmStatus::Starting));
-            let utc = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|_| RuntimeError::Unavailable)?
-                .as_secs();
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            let installation = installed.installation_id();
-            let journal = custody.take_for_launch(&closed)?;
-            drop(custody); // A stopped worker returns the original owner through this slot.
-            #[cfg(windows)]
-            let native = start_windows_session(inputs, journal, installed, &root, utc, pending)?;
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            let session = runtime::apple_session::AppleVmSession::launch_retaining(
-                resources, journal, installed, utc, pending,
-            )?;
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            let native = NativeSession(session, installation);
-            wait_for_infrastructure(Box::new(native), closed, runtime)
+                };
+                progress(LocalProgress::Status(LocalVmStatus::Starting));
+                let utc = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| RuntimeError::Unavailable)?
+                    .as_secs();
+                #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                let installation = installed.installation_id();
+                let journal = custody.take_for_launch(&closed)?;
+                drop(custody); // A stopped worker returns the original owner through this slot.
+                #[cfg(windows)]
+                let native =
+                    start_windows_session(inputs, journal, installed, &root, utc, pending)?;
+                #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                let session = runtime::apple_session::AppleVmSession::launch_retaining(
+                    resources, journal, installed, utc, pending,
+                )?;
+                #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                let native = NativeSession(session, installation);
+                wait_for_infrastructure(Box::new(native), closed, runtime)
+            })?
         }))
     }
 }
@@ -457,6 +465,7 @@ fn start_windows_session(
             failure.stage(),
             error,
             failure.stderr(),
+            failure.operation(),
         )),
     }
 }
@@ -540,7 +549,13 @@ impl LocalSession for NativeSession {
                     .diagnostics()
                     .map(|diagnostics| diagnostics.stderr)
                     .map_err(|error| std::io::Error::other(error.to_string()));
-                retain_start_failure(&self.root, "Shut down guest", error, stderr)
+                retain_start_failure(
+                    &self.root,
+                    "Shut down guest",
+                    error,
+                    stderr,
+                    WorkspaceOperation::Stop,
+                )
             })
         }
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]

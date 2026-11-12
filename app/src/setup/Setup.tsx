@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Chip } from '../components/DesignSystem';
 import Model, { type ModelState } from './Model';
+import Preflight from './Preflight';
 import { type LocalVmState, type SetupStatus, cancelLocal, changeLocal, selectLocal, setupStatus } from './state';
 import Steps, { Meet, type CheckStepState } from './Steps';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
@@ -8,6 +9,7 @@ import { formatSize, workspaceRequirements, type WorkspaceRequirements } from '.
 import ClusterCard from '../clusters/ClusterCard';
 import type { SelectedPlace } from '../clusters/api';
 import './welcome.css';
+import { workspaceRecovery } from './recovery-info';
 
 const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting', 'closing'].includes(state);
 const runtimeCopy = {
@@ -40,6 +42,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   const [inside, setInside] = useState(false);
   const [cluster, setCluster] = useState(false);
   const [requirements, setRequirements] = useState<WorkspaceRequirements | null>();
+  const [preflightBlocked, setPreflightBlocked] = useState(true);
   const epoch = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -126,7 +129,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   const selected = !cluster && status?.selected === 'localVm';
   return <>
     <div className="workspace-heading">
-      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? status?.localVm === 'ready' ? 'Choose the AI your agent uses' : status?.localVm === 'failed' ? "Your workspace couldn't start" : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
+      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? status?.localVm === 'ready' ? 'Choose the AI your agent uses' : status?.localVm === 'failed' ? workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
       {selected && !['ready', 'failed', 'notIntegrated'].includes(status?.localVm ?? '') && <p className="muted">Meanwhile, meet the agent you'll test first.</p>}
       {!selected && <p className="muted">You can add more places later.</p>}
     </div>
@@ -142,6 +145,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
               {requirements && <p>The data disk can grow to {formatSize(requirements.stateDiskBytes)}, in addition to the image.</p>}
               {requirements === undefined && <p>Reading this build's workspace size…</p>}
               {requirements === null && status?.localVm !== 'notIntegrated' && <p>Workspace size information is unavailable in this build.</p>}
+              {!cluster && !error && status && requirements && status.localVm !== 'notIntegrated' && <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} />}
               <button className="workspace-disclosure" type="button" aria-expanded={inside} aria-controls="workspace-inside" onClick={() => setInside(value => !value)}>
                 <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d={inside ? 'm6 15 6-6 6 6' : 'm6 9 6 6 6-6'} /></svg>What's inside
               </button>
@@ -156,12 +160,12 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
           </div>
         </fieldset>
         {!cluster && <div className="workspace-choice-footer"><span className="muted">Step 1 of 4</span>
-          <button type="button" className="workspace-primary" disabled={busy || !status || !!error} onClick={() => { void chooseLocal(); }}>Continue</button>
+          <button type="button" className="workspace-primary" disabled={busy || !status || !!error || (status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { void chooseLocal(); }}>Continue</button>
         </div>}
         {!cluster && status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
       </>}
       {selected && status && <>
-        <div><Steps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={chooseCluster} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample} />
+        <div><Steps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelState} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={chooseCluster} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample} />
           {confirmChange && <section className="workspace-change" aria-label="Change where agents run">
             <button type="button" className="workspace-link" disabled={sending} onClick={chooseCluster}>Use a cluster you already have instead</button>
             <h2>Stop this workspace?</h2><p>Changing where agents run stops the workspace on this computer. Your files are kept.</p>

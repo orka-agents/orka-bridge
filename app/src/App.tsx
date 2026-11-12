@@ -7,6 +7,7 @@ import type { SetupStatus, ExamplePair } from './setup/state';
 import type { SelectedPlace } from './clusters/api';
 import type { ModelState } from './setup/Model';
 import { workspaceRecovery } from './setup/recovery-info';
+import { preflightRecovery } from './setup/preflight-state';
 import { sampleRun, type RunSnapshot } from './designer/run-api';
 import { agentInfo, type SaveState } from './designer/agent-api';
 
@@ -48,7 +49,7 @@ const workspaceCopy = {
   installing: ['Setting up, step 2 of 4', 'Getting workspace ready', 'busy'],
   starting: ['Setting up, step 2 of 4', 'Starting workspace', 'busy'],
   ready: ['Setting up, step 3 of 4', 'Choose the AI', 'ready'],
-  failed: ['Setup paused', 'Workspace needs attention', 'bad'],
+  failed: ['Setup failed', 'Workspace needs attention', 'bad'],
   closing: ['Stopping workspace', 'Stopping workspace', 'busy'],
   closed: ['Workspace stopped', 'Workspace stopped', 'wait'],
   cancelled: ['Setup paused', 'What has arrived is kept', 'wait'],
@@ -122,8 +123,10 @@ export default function App() {
   const modelDetail = setup?.model === 'locked' ? 'AI connection unavailable'
     : model === 'connecting' ? 'Connecting the AI…' : model === 'connected' ? 'AI connected'
     : model === 'failed' ? 'AI connection needs attention' : detail;
-  const workspaceDetail = setup?.localVm === 'failed' ? workspaceRecovery(setup.localVmError).summary : detail;
+  const workspaceDetail = setup?.localVm === 'failed'
+    ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
   const hostDetail = workspaceReady ? modelDetail : workspaceDetail;
+  const hostTone = workspaceReady && model === 'failed' ? 'bad' : tone;
   const cases = run?.report?.cases;
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
   const localChecks = checksStale ? 'Checks not run since your change' : runUnavailable ? 'Check status unavailable' : run?.state === 'unknown' ? 'Check result unknown'
@@ -145,7 +148,7 @@ export default function App() {
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
       : model === 'connected' ? sample?.state === 'complete' ? 'This computer ready' : 'AI connected'
-      : model === 'idle' ? setupLine : modelDetail,
+      : model === 'failed' ? 'AI needs attention' : model === 'idle' ? setupLine : modelDetail,
   };
   const tabTone = remote || exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const copy = emptyCopy[page];
@@ -171,7 +174,7 @@ export default function App() {
           ))}
         </nav>
         <div className="chrome-tools">
-          <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : tone}`} aria-hidden="true" /><span className="host-label">{placeName}</span><span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
+          <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span><span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
         </div>
       </header>
       <main ref={content} className="page-content" aria-labelledby="page-title">
@@ -203,7 +206,7 @@ export default function App() {
         {page === 'Clusters' && <details className="engine-diagnostics"><summary>Engine diagnostics</summary><EngineStatus key={String(engineReady)} /></details>}
       </main>
       <footer className="status-bar">
-        <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : tone}`} aria-hidden="true" />
+        <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" />
         <span>{remote ? place.target ? `${placeName} · Access confirmed` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : workspaceReady ? 'This computer ready' : setupLine}</span>
         {!remote && !welcome && (detail !== setupLine || workspaceReady) ? <><span aria-hidden="true">·</span><span>{workspaceReady ? modelDetail : workspaceDetail}</span></> : null}
         {exampleState === 'loaded' && !exampleReadOnly && <><span aria-hidden="true">·</span><span aria-live="polite" aria-atomic="true">{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}

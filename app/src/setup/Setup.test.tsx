@@ -72,7 +72,7 @@ test('failed Connect refreshes retained guest details without locking the runnin
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(await screen.findByText(detail)).toBeTruthy();
   expect(screen.getByText('Your workspace is running on this computer.')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Use GitHub sign-in' }).matches(':disabled')).toBe(false);
+  expect(screen.getByRole('button', { name: 'Check again' }).matches(':disabled')).toBe(false);
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toHaveLength(1);
 });
@@ -169,7 +169,7 @@ test.each([
   native(); mockIPC(command => command === 'setup_status'
     ? { ...status('localVm'), localVm: 'failed', localVmError } : Promise.reject({ kind: 'unavailable' }));
   const user = userEvent.setup(); render(<App />);
-  expect((await screen.findByRole('alert')).textContent).toContain('What you downloaded is kept.');
+  expect((await screen.findByRole('alert')).textContent).toContain('Your workspace and agent files are kept.');
   expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
   expect(screen.queryByText(localVmError)).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));

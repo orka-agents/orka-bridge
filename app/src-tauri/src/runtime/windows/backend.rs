@@ -56,8 +56,20 @@ mod native {
     pub struct FailureDiagnostics {
         capture: Arc<Mutex<Option<crate::runtime::windows::qmp_io::StderrCapture>>>,
         stage: Arc<Mutex<&'static str>>,
+        operation: Arc<Mutex<Option<WorkspaceOperation>>>,
     }
     impl FailureDiagnostics {
+        pub fn operation(&self) -> WorkspaceOperation {
+            self.operation
+                .lock()
+                .ok()
+                .and_then(|operation| *operation)
+                .unwrap_or(WorkspaceOperation::Start)
+        }
+        fn begin(&self, operation: WorkspaceOperation) -> Result<(), RuntimeError> {
+            *self.operation.lock().map_err(|_| RuntimeError::Closed)? = Some(operation);
+            Ok(())
+        }
         pub fn stage(&self) -> &'static str {
             self.stage
                 .lock()
@@ -353,6 +365,7 @@ mod native {
     }
     impl VmBackend for WindowsBackend {
         fn create_state(&mut self, spec: &LaunchSpec) -> Result<(), RuntimeError> {
+            self.diagnostics.begin(WorkspaceOperation::Prepare)?;
             if self.failed || spec.backend != BackendKind::Qemu {
                 return Err(RuntimeError::Unavailable);
             }
@@ -398,6 +411,7 @@ mod native {
             result
         }
         fn start(&mut self, spec: &LaunchSpec) -> Result<BackendHandle, RuntimeError> {
+            self.diagnostics.begin(WorkspaceOperation::Start)?;
             if self.failed {
                 return Err(RuntimeError::Unavailable);
             }

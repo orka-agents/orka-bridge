@@ -1,7 +1,10 @@
 //! App-level custody of one delivered native session; not a second VM lifecycle.
 use crate::{
     engine::{types::*, EngineTransport, TransportFuture},
-    runtime::{client::VmClient, types::RuntimeError},
+    runtime::{
+        client::VmClient,
+        types::{RuntimeError, WorkspaceFailure, WorkspaceOperation},
+    },
 };
 use serde::Serialize;
 use std::{
@@ -112,11 +115,14 @@ impl LocalVmStatus {
 }
 fn failure_reason(error: &RuntimeError) -> String {
     match error {
+        RuntimeError::Preflight(failure) => failure.summary().to_owned(),
         RuntimeError::Io(error) if error.kind() == std::io::ErrorKind::StorageFull => {
             format!("NoSpace: {error}")
         }
         RuntimeError::Io(error) => error.to_string(),
         RuntimeError::StopUnconfirmed(detail) => format!("startupStopFailed: {detail}"),
+        // Already formatted when retained, including any NoSpace prefix.
+        RuntimeError::Startup(context) => context.diagnostic.clone(),
         _ => error.to_string(),
     }
 }
@@ -154,6 +160,10 @@ struct State {
     phase: LocalVmStatus,
     model_connected: bool,
     failure: Option<String>,
+    preflight_failure: Option<crate::setup::preflight::Failure>,
+    workspace_failure: Option<WorkspaceFailure>,
+    /// Latest typed progress, captured before failure clears the progress clock.
+    operation: WorkspaceOperation,
     closing: bool,
     close_started: bool,
     stopped: Option<bool>,
@@ -343,6 +353,11 @@ impl Inner {
         match progress {
             LocalProgress::Status(phase) => {
                 state.phase = phase;
+                match phase {
+                    LocalVmStatus::Installing => state.operation = WorkspaceOperation::Prepare,
+                    LocalVmStatus::Starting => state.operation = WorkspaceOperation::Start,
+                    _ => {}
+                }
                 if phase == LocalVmStatus::Starting {
                     state.progress = Some(ProgressClock {
                         started: std::time::Instant::now(),
@@ -367,6 +382,10 @@ impl Inner {
                     }
                     _ => return,
                 };
+                state.operation = match phase {
+                    WorkspacePhase::Verifying => WorkspaceOperation::Verify,
+                    _ => WorkspaceOperation::Prepare,
+                };
                 let now = std::time::Instant::now();
                 let clock = state.progress.get_or_insert(ProgressClock {
                     started: now,
@@ -387,9 +406,20 @@ impl Inner {
             }
         }
     }
-    fn fail(&self, reason: String, stop_unconfirmed: bool) {
+    fn fail(
+        &self,
+        reason: String,
+        error: &RuntimeError,
+        operation: WorkspaceOperation,
+        stop_unconfirmed: bool,
+    ) {
         let mut state = self.state.lock().unwrap();
         state.failure = Some(reason);
+        state.preflight_failure = match error {
+            RuntimeError::Preflight(failure) => Some(*failure),
+            _ => None,
+        };
+        state.workspace_failure = Some(WorkspaceFailure::from_error(error, operation));
         state.progress = None;
         if !state.closing {
             state.phase = LocalVmStatus::Failed;
@@ -420,6 +450,9 @@ impl LocalVm {
                     },
                     model_connected: false,
                     failure: None,
+                    preflight_failure: None,
+                    workspace_failure: None,
+                    operation: WorkspaceOperation::Verify,
                     closing: false,
                     close_started: false,
                     stopped: None,
@@ -456,6 +489,16 @@ impl LocalVm {
     fn snapshot(&self, mut snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
         let state = self.inner.state.lock().unwrap();
         snapshot.workspace_progress = state.progress.as_ref().map(ProgressClock::snapshot);
+        snapshot.preflight_failure = if state.phase == LocalVmStatus::Failed {
+            state.preflight_failure
+        } else {
+            None
+        };
+        snapshot.workspace_failure = if state.phase == LocalVmStatus::Failed {
+            state.workspace_failure.clone()
+        } else {
+            None
+        };
         // Publish phase, failure text and model availability from the same observation.
         snapshot
             .with_local_vm(state.phase.as_str(), state.failure.clone())
@@ -484,6 +527,9 @@ impl LocalVm {
         state.phase = LocalVmStatus::Preparing;
         state.model_connected = false;
         state.failure = None;
+        state.preflight_failure = None;
+        state.workspace_failure = None;
+        state.operation = WorkspaceOperation::Verify;
         state.close_started = false;
         state.stopped = None;
         state.progress = None;
@@ -505,7 +551,10 @@ impl LocalVm {
                     Err(RuntimeError::Closed
                         | RuntimeError::Image(crate::runtime::image_types::ImageError::Cancelled))
                 );
-            let successful = result.is_ok() || cancelled_error;
+            // Preflight refused before image/session work, so there is nothing to stop.
+            let successful = result.is_ok()
+                || cancelled_error
+                || matches!(&result, Err(RuntimeError::Preflight(_)));
             let mut session = inner.session.lock().await;
             match result {
                 Ok(live) => {
@@ -516,10 +565,15 @@ impl LocalVm {
                     RuntimeError::Closed
                     | RuntimeError::Image(crate::runtime::image_types::ImageError::Cancelled),
                 ) if cancelled_error => {}
-                Err(error) => inner.fail(
-                    format!("Starting the local VM failed: {}", failure_reason(&error)),
-                    matches!(error, RuntimeError::StopUnconfirmed(_)),
-                ),
+                Err(error) => {
+                    let operation = inner.state.lock().unwrap().operation;
+                    inner.fail(
+                        format!("Starting the local VM failed: {}", failure_reason(&error)),
+                        &error,
+                        operation,
+                        matches!(error, RuntimeError::StopUnconfirmed(_)),
+                    )
+                }
             }
             successful
         }));
@@ -663,6 +717,8 @@ impl LocalVm {
                                         "Stopping the local VM failed: {}",
                                         failure_reason(&error)
                                     ),
+                                    &error,
+                                    WorkspaceOperation::Stop,
                                     true,
                                 );
                                 false

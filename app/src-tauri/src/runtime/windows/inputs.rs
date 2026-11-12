@@ -324,15 +324,15 @@ fn startup_prerequisites(
     hypervisor: Observation,
     firmware: Observation,
     feature: Observation,
-) -> Result<(), super::super::types::RuntimeError> {
+) -> super::super::types::HostVirtualization {
+    use super::super::types::HostVirtualization as Virtualization;
     use Observation::*;
-    let label = match (hypervisor, firmware, feature) {
-        (Yes, _, _) => return Ok(()), // Firmware bit may be hidden by a running hypervisor.
-        (No, No, _) => "virtualizationDisabled",
-        (No, Yes, _) | (Unknown, Yes, No) => "hypervisorUnavailable",
-        _ => return Ok(()), // Unknown observations defer to the backend's real launch result.
-    };
-    Err(std::io::Error::other(label).into())
+    match (hypervisor, firmware, feature) {
+        (Yes, _, _) => Virtualization::Ready, // A running hypervisor may hide the firmware bit.
+        (No, No, _) => Virtualization::Disabled,
+        (No, Yes, _) | (Unknown, Yes, No) => Virtualization::HypervisorUnavailable,
+        _ => Virtualization::Unknown, // Defer to real launch without claiming readiness.
+    }
 }
 #[cfg(any(test, all(debug_assertions, windows)))]
 type GetCapability = unsafe extern "system" fn(u32, *mut std::ffi::c_void, u32, *mut u32) -> i32;
@@ -354,7 +354,7 @@ fn observe_hypervisor(get: GetCapability) -> Observation {
 }
 /// Observe WHP itself; feature flags alone do not prove a running hypervisor.
 #[cfg(all(debug_assertions, windows))]
-pub(crate) fn probe_startup_prerequisites() -> Result<(), super::super::types::RuntimeError> {
+pub(crate) fn observe_startup_prerequisites() -> super::super::types::HostVirtualization {
     use std::ffi::c_void;
     use windows_sys::Win32::{
         Foundation::{FreeLibrary, GetLastError},
@@ -430,25 +430,20 @@ mod prerequisite_tests {
     }
     #[test]
     fn startup_diagnosis_never_calls_running_hypervisor_firmware_disabled() {
+        use super::super::super::types::HostVirtualization as V;
         use Observation::*;
         for (hypervisor, firmware, feature, expected) in [
-            (Yes, No, Yes, None),
-            (Yes, Unknown, Yes, None),
-            (No, No, Yes, Some("virtualizationDisabled")),
-            (No, Yes, Yes, Some("hypervisorUnavailable")),
-            (Unknown, Yes, No, Some("hypervisorUnavailable")),
-            (Unknown, No, No, None),
-            (Unknown, Yes, Yes, None),
-            (No, Unknown, Yes, None),
+            (Yes, No, Yes, V::Ready),
+            (Yes, Unknown, Yes, V::Ready),
+            (No, No, Yes, V::Disabled),
+            (No, Yes, Yes, V::HypervisorUnavailable),
+            (Unknown, Yes, No, V::HypervisorUnavailable),
+            (Unknown, No, No, V::Unknown),
+            (Unknown, Yes, Yes, V::Unknown),
+            (No, Unknown, Yes, V::Unknown),
         ] {
-            let actual = startup_prerequisites(hypervisor, firmware, feature)
-                .err()
-                .map(|error| match error {
-                    super::super::super::types::RuntimeError::Io(error) => error.to_string(),
-                    other => panic!("expected fixed diagnostic, got {other:?}"),
-                });
             assert_eq!(
-                actual.as_deref(),
+                startup_prerequisites(hypervisor, firmware, feature),
                 expected,
                 "{hypervisor:?} / {firmware:?} / {feature:?}"
             );

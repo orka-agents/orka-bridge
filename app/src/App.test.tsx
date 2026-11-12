@@ -76,7 +76,7 @@ test.each([
   ['installing', 'localVm', 'Getting workspace ready', 'Setting up, step 2 of 4'],
   ['starting', 'localVm', 'Starting workspace', 'Setting up, step 2 of 4'],
   ['ready', 'localVm', 'AI connection unavailable', 'AI unavailable'],
-  ['failed', 'localVm', "The workspace couldn't start.", 'Setup paused'],
+  ['failed', 'localVm', "Bridge couldn't establish why the workspace failed.", 'Setup failed'],
   ['closed', 'localVm', 'Workspace stopped', 'Workspace stopped'],
   ['notIntegrated', null, 'Workspace unavailable', 'Workspace unavailable'],
 ])('chrome reflects %s without invented readiness', async (localVm, selected, detail, tabLine) => {
@@ -110,7 +110,7 @@ test('setup refreshes while another page is open', async () => {
   await within(screen.getByRole('contentinfo')).findByText('Choose the AI');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   localVm = 'failed';
-  expect(await within(screen.getByRole('navigation')).findByText('Setup paused', {}, { timeout: 2000 })).toBeTruthy();
+  expect(await within(screen.getByRole('navigation')).findByText('Setup failed', {}, { timeout: 2000 })).toBeTruthy();
   expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
 });
 

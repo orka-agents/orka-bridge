@@ -13,8 +13,8 @@ function PhaseIcon({ phase }: { phase: 'done' | 'current' | 'waiting' | 'failed'
   const state: Status = phase === 'done' ? 'passed' : phase === 'failed' ? 'failed' : phase === 'current' ? 'running' : 'not-started';
   return <StatusIcon state={state} />;
 }
-export default function Steps({ status, busy, stopping, error, modelConnected, firstCheck, onCancel, onRestart, onCluster, onChange, onOpenExample }: {
-  status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean; firstCheck?: CheckStepState;
+export default function Steps({ status, busy, stopping, error, modelConnected, modelState, firstCheck, onCancel, onRestart, onCluster, onChange, onOpenExample }: {
+  status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean; modelState?: 'idle' | 'connecting' | 'connected' | 'failed'; firstCheck?: CheckStepState;
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onChange: (button: HTMLButtonElement) => void; onOpenExample: () => void;
 }) {
   const [details, setDetails] = useState(false);
@@ -39,7 +39,7 @@ export default function Steps({ status, busy, stopping, error, modelConnected, f
       <li className={`step-${phase}`} aria-current={phase === 'current' ? 'step' : undefined}>
         <PhaseIcon phase={phase} /><b>Get your workspace ready</b><span className="step-result">{ready ? 'Ready' : paused ? 'Paused' : failed ? 'Needs attention' : eta}</span>
         <div className="step-more">
-          {failed ? <Recovery key={status.localVmError} detail={status.localVmError} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /> : <p role="status">{stateLine}</p>}
+          {failed ? <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /> : <p role="status">{stateLine}</p>}
           {!stopping && status.localVm === 'starting' && <><div className="workspace-indeterminate" role="progressbar" aria-label="Workspace startup" /><p className="muted">{progress?.phase === 'starting' ? `${Math.floor(progress.elapsedMs / 1000)} seconds elapsed` : 'Getting the workspace ready…'}</p></>}
           {numbers && <><progress aria-label="Workspace installation" value={progress.bytes!} max={progress.totalBytes!} />
             <p className="muted">Installing, {formatSize(progress.bytes!)} of {formatSize(progress.totalBytes!)}</p></>}
@@ -53,7 +53,7 @@ export default function Steps({ status, busy, stopping, error, modelConnected, f
           </div>}</>}
         </div>
       </li>
-      <li className={modelConnected ? 'step-done' : ready ? 'step-current' : 'step-waiting'}><StatusIcon state={modelConnected ? 'passed' : ready ? 'needs-you' : 'not-started'} /><b>Choose the AI your agent uses</b><span className="step-result">{modelConnected ? 'Connected' : ready ? 'Needs you' : 'Waiting'}</span></li>
+      <li className={modelState === 'failed' ? 'step-failed' : modelConnected ? 'step-done' : ready ? 'step-current' : 'step-waiting'}><StatusIcon state={modelState === 'failed' ? 'failed' : modelState === 'connecting' ? 'running' : modelConnected ? 'passed' : ready ? 'needs-you' : 'not-started'} /><b>Choose the AI your agent uses</b><span className="step-result">{modelState === 'failed' ? 'Needs attention' : modelConnected ? 'Connected' : modelState === 'connecting' ? 'Connecting' : ready ? 'Needs you' : 'Waiting'}</span></li>
       <li className={`step-${checkPhase}`}><StatusIcon state={firstCheck === 'stale' ? 'stale' : firstCheck === 'running' ? 'running' : modelConnected && !firstCheck ? 'needs-you' : checkPhase === 'done' ? 'passed' : checkPhase === 'failed' ? 'failed' : 'not-started'} /><b>Run your first test</b><span className="step-result">{checkLabel}</span></li>
     </ol>
     <div className="workspace-step-actions">

@@ -116,7 +116,7 @@ test('an established Designer stays editable when a running workspace later fail
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'File' }));
   const editor = screen.getByRole('textbox', { name: 'Agent file' }); fail();
-  await within(screen.getByRole('contentinfo')).findByText('Setup paused', {}, { timeout: 2000 });
+  await within(screen.getByRole('contentinfo')).findByText('Setup failed', {}, { timeout: 2000 });
   expect(screen.getByRole('textbox', { name: 'Agent file' })).toBe(editor);
   expect((editor as HTMLTextAreaElement).readOnly).toBe(false);
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
@@ -125,8 +125,8 @@ test('an established Designer stays editable when a running workspace later fail
 test('failure is one plain red step, native details stay behind disclosure', async () => {
   native('failed'); const user = userEvent.setup(); render(<App />);
   const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toContain("The workspace couldn't start.");
-  expect(alert.textContent).toContain('What you downloaded is kept.');
+  expect(alert.textContent).toContain("Bridge couldn't establish why the workspace failed.");
+  expect(alert.textContent).toContain('Your workspace and agent files are kept.');
   expect(alert.closest('li')?.classList.contains('step-failed')).toBe(true);
   expect(screen.queryByText('PRIVATE_NATIVE_DETAIL')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));
@@ -199,7 +199,7 @@ test('the AI step resets after a connected workspace leaves ready', async () => 
   const { fail } = native('ready'); const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
   await screen.findByText('Model connected: copilot / gpt-5.6-terra.'); fail();
-  await within(screen.getByRole('contentinfo')).findByText('Setup paused', {}, { timeout: 2000 });
+  await within(screen.getByRole('contentinfo')).findByText('Setup failed', {}, { timeout: 2000 });
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[2].textContent).not.toContain('Connected'));
 });
 

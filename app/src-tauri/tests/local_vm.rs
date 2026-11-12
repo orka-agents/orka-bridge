@@ -171,8 +171,19 @@ async fn cancelled_failed_stop_quarantines_late_session_and_keeps_selection() {
     assert!(changing.await.unwrap().is_err());
     assert_eq!(vm.status(), LocalVmStatus::Failed);
     assert!(store.status().unwrap().selected.is_some());
+    let failed =
+        serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap()).unwrap();
+    assert_eq!(
+        failed["workspaceFailure"],
+        serde_json::json!({"operation": "stop", "cause": "stopUnconfirmed", "codes": []})
+    );
     vm.start();
     assert_eq!(p.starts.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap()).unwrap()
+            ["workspaceFailure"]["cause"],
+        "stopUnconfirmed"
+    );
     assert!(vm.execute(request()).await.is_err());
 }
 struct CooperativeFactory;
@@ -542,6 +553,191 @@ async fn native_resume_starts_only_a_saved_choice_without_resaving_it() {
     p.launch.notify_one();
     phase(&vm, LocalVmStatus::Ready).await;
     vm.shutdown().await.unwrap();
+}
+#[tokio::test]
+async fn preflight_failure_survives_direct_selection_and_reopen_without_image_progress() {
+    use bridge_engine::{
+        local_vm,
+        setup::{preflight::Failure, SetupStore},
+    };
+    struct Refused;
+    impl LocalFactory for Refused {
+        fn launch(
+            &self,
+            _: watch::Receiver<bool>,
+            _: Arc<dyn Fn(local_vm::LocalProgress) + Send + Sync>,
+        ) -> StartFuture<'_> {
+            Box::pin(async { Err(RuntimeError::Preflight(Failure::InsufficientMemory)) })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(SetupStore::new(Some(temp.path().to_owned())));
+    for reopen in [false, true] {
+        let vm = LocalVm::new(Arc::new(Refused));
+        if reopen {
+            local_vm::resume_selected(store.clone(), &vm).await.unwrap();
+        } else {
+            local_vm::select_local(store.clone(), &vm).await.unwrap();
+        }
+        phase(&vm, LocalVmStatus::Failed).await;
+        let value = serde_json::to_value(local_vm::setup_status(store.clone(), &vm).await.unwrap())
+            .unwrap();
+        assert_eq!(value["preflightFailure"], "insufficientMemory");
+        assert_eq!(value["selected"], "localVm");
+        assert!(value["workspaceProgress"].is_null());
+        assert!(!value["localVmError"]
+            .as_str()
+            .unwrap()
+            .contains("Preflight("));
+        let changed =
+            serde_json::to_value(local_vm::change_local(store.clone(), &vm).await.unwrap())
+                .unwrap();
+        assert!(changed.get("preflightFailure").is_none());
+        assert!(store.status().unwrap().selected.is_none());
+        if !reopen {
+            store.select_local().unwrap();
+        }
+        vm.shutdown().await.unwrap();
+    }
+}
+/// Emits the scripted progress, then fails with the scripted typed error.
+struct Scripted(
+    Vec<bridge_engine::local_vm::LocalProgress>,
+    Mutex<Option<RuntimeError>>,
+);
+impl LocalFactory for Scripted {
+    fn launch(
+        &self,
+        _: watch::Receiver<bool>,
+        progress: Arc<dyn Fn(bridge_engine::local_vm::LocalProgress) + Send + Sync>,
+    ) -> StartFuture<'_> {
+        for event in &self.0 {
+            progress(*event);
+        }
+        let error = self.1.lock().unwrap().take();
+        Box::pin(async move { Err(error.expect("one scripted failure")) })
+    }
+}
+async fn scripted_failure(
+    events: Vec<bridge_engine::local_vm::LocalProgress>,
+    error: RuntimeError,
+) -> serde_json::Value {
+    let vm = LocalVm::new(Arc::new(Scripted(events, Mutex::new(Some(error)))));
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(bridge_engine::setup::SetupStore::new(Some(
+        temp.path().to_owned(),
+    )));
+    vm.start();
+    phase(&vm, LocalVmStatus::Failed).await;
+    serde_json::to_value(
+        bridge_engine::local_vm::setup_status(store, &vm)
+            .await
+            .unwrap(),
+    )
+    .unwrap()
+}
+#[tokio::test]
+async fn failed_phase_reports_typed_metadata_from_the_latest_operation_not_text() {
+    use bridge_engine::{
+        local_vm::LocalProgress as P,
+        runtime::image_types::{ImageError, ImageProgress as Image},
+        setup::preflight::Failure,
+    };
+    use std::io::{Error, ErrorKind};
+    let verifying = vec![P::Image(Image::Verifying)];
+    let preparing = vec![
+        P::Image(Image::Verifying),
+        P::Status(LocalVmStatus::Installing),
+        P::Image(Image::Materializing { bytes: 1, total: 9 }),
+    ];
+    let starting = vec![P::Status(LocalVmStatus::Starting)];
+    let noisy = "NoSpace StorageFull code: 5 (os error 28) token=ghp_secret C:\\Users\\x";
+    let denied_code = if cfg!(windows) { 5 } else { 13 };
+    let cases = [
+        (
+            verifying.clone(),
+            RuntimeError::Image(ImageError::Integrity),
+            ("verify", "integrity", vec![]),
+        ),
+        (
+            preparing.clone(),
+            RuntimeError::Io(Error::from_raw_os_error(denied_code)),
+            ("prepare", "permission", vec![denied_code]),
+        ),
+        // A cleared progress clock must not turn a download failure into startup.
+        (
+            preparing.clone(),
+            RuntimeError::Image(ImageError::Network("transport")),
+            ("download", "network", vec![]),
+        ),
+        (
+            starting.clone(),
+            RuntimeError::Io(Error::from(ErrorKind::PermissionDenied)),
+            ("start", "permission", vec![]),
+        ),
+        (
+            starting.clone(),
+            RuntimeError::Io(Error::other(noisy)),
+            ("start", "unknown", vec![]),
+        ),
+        (
+            starting.clone(),
+            RuntimeError::Infrastructure(noisy.into()),
+            ("services", "services", vec![]),
+        ),
+        (
+            starting,
+            RuntimeError::StopUnconfirmed(noisy.into()),
+            ("stop", "stopUnconfirmed", vec![]),
+        ),
+        (
+            verifying,
+            RuntimeError::Preflight(Failure::VirtualizationDisabled),
+            ("requirements", "unknown", vec![]),
+        ),
+    ];
+    for (events, error, (operation, cause, codes)) in cases {
+        let label = format!("{error:?}");
+        let value = scripted_failure(events, error).await;
+        assert_eq!(
+            value["workspaceFailure"],
+            serde_json::json!({"operation": operation, "cause": cause, "codes": codes}),
+            "{label}"
+        );
+        // The private diagnostic stays separate from every finite field.
+        let metadata = value["workspaceFailure"].to_string();
+        assert!(
+            !metadata.contains("ghp_") && !metadata.contains("Users"),
+            "{metadata}"
+        );
+    }
+}
+#[tokio::test]
+async fn metadata_is_only_serialized_while_failed_and_clears_on_retry() {
+    let vm = LocalVm::new(Arc::new(Scripted(
+        vec![],
+        Mutex::new(Some(RuntimeError::Busy)),
+    )));
+    let temp = tempfile::tempdir().unwrap();
+    let store = Arc::new(bridge_engine::setup::SetupStore::new(Some(
+        temp.path().to_owned(),
+    )));
+    let status = || async {
+        serde_json::to_value(
+            bridge_engine::local_vm::setup_status(store.clone(), &vm)
+                .await
+                .unwrap(),
+        )
+        .unwrap()
+    };
+    assert!(status().await.get("workspaceFailure").is_none());
+    vm.start();
+    phase(&vm, LocalVmStatus::Failed).await;
+    assert_eq!(status().await["workspaceFailure"]["cause"], "inUse");
+    // The factory has no second scripted failure and panics inside its task,
+    // but admission has already cleared the old metadata.
+    vm.start();
+    assert!(status().await.get("workspaceFailure").is_none());
 }
 #[test]
 fn fixed_example_is_the_exact_public_pair_not_an_edit_or_run_operation() {
