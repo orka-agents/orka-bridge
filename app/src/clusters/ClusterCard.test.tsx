@@ -112,12 +112,12 @@ test('local model acknowledgement survives a cluster round trip', async () => {
   });
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
-  await screen.findByRole('button', { name: 'Model connected' });
+  await screen.findByText(/Model connected:/);
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
   await user.click(screen.getByRole('radio', { name: 'On this computer' }));
-  expect(await screen.findByRole('button', { name: 'Model connected' })).toBeTruthy();
+  expect(await screen.findByText(/Model connected:/)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Use GitHub sign-in' })).toBeNull();
 });
 

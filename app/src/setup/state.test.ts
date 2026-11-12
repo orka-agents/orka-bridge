@@ -44,6 +44,19 @@ test.each([false, true])('model availability requires the selected running sessi
     expect((await setupStatus()).ok).toBe(false);
   }
 });
+test.each([true, false])('preserves native model support %j on reads and selection', async modelSupported => {
+  vi.stubGlobal('isTauri', true);
+  const value = { selected: 'localVm', localVm: 'installing', model: 'locked', modelSupported };
+  mockIPC(() => value);
+  expect(await setupStatus()).toEqual({ ok: true, status: value });
+  expect(await selectLocal()).toEqual({ ok: true, status: value });
+});
+test.each(['true', 1, null, {}])('rejects malformed native model support %j', async modelSupported => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => ({ ...snapshot, selected: 'localVm', modelSupported }));
+  expect((await setupStatus()).ok).toBe(false);
+  expect((await selectLocal()).ok).toBe(false);
+});
 test('no-argument selection requires an acknowledgement of that selection', async () => {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn(() => snapshot); mockIPC(ipc);
