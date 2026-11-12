@@ -163,6 +163,7 @@ impl AccessOutcome {
 pub enum OrkaResource {
     WhoAmI,
     Agents,
+    AgentInventory,
     Providers,
     Tools,
 }
@@ -171,7 +172,7 @@ impl OrkaResource {
         match self {
             Self::WhoAmI => Check::OrkaIdentity,
             // Tools are read only by Send, whose callers keep the broad category.
-            Self::Agents | Self::Tools => Check::Agents,
+            Self::Agents | Self::AgentInventory | Self::Tools => Check::Agents,
             Self::Providers => Check::Providers,
         }
     }

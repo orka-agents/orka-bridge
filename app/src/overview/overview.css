@@ -3,6 +3,16 @@
 .overview-place h2 { font: var(--type-card); margin: 0; }
 .overview-place p { color: var(--color-text-secondary); }
 .overview-counts { margin-block: 0 var(--space-6); }
+.overview-actions, .overview-grouping { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.overview-grouping { border: 0; padding: 0; margin: 0; min-width: 0; }
+.overview-grouping button[aria-pressed="true"] { background: var(--color-chrome); border-color: var(--color-text-secondary); color: var(--color-text); }
+.overview-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr)); gap: var(--space-8); align-items: start; }
+.overview-place-section { min-width: 0; margin-block-end: var(--space-8); }
+.overview-place-section > .card-details { margin-block-end: var(--space-6); }
+.overview-place-section h2, .overview-place-section > p, .overview-card-place { overflow-wrap: anywhere; }
+.overview-card-place { font-weight: 600; margin-block: 0 var(--space-3); }
+.overview-attempts { margin-block: var(--space-8); }
+.overview-attempts > .card-details { margin-block: var(--space-4); }
 .overview-cards { display: grid; gap: var(--space-6); }
 .overview-cards .long-card { min-width: 0; }
 .overview-cards p, .overview-cards h3, .overview-identity dd { overflow-wrap: anywhere; }

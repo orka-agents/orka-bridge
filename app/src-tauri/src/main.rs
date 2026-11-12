@@ -104,6 +104,18 @@ async fn overview_agents(
     Ok(bridge_engine::overview::live_agents(vm.inner().clone(), run.inner().clone()).await)
 }
 #[tauri::command]
+async fn overview_places(
+    session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+    send: tauri::State<'_, Arc<SendOwner>>,
+) -> Result<bridge_engine::overview_places::Places, &'static str> {
+    let send = send.inner().clone();
+    let history = tauri::async_runtime::spawn_blocking(move || send.history())
+        .await
+        .ok()
+        .and_then(Result::ok);
+    Ok(bridge_engine::overview_places::list(session.inner(), history).await)
+}
+#[tauri::command]
 async fn agents_list(
     state: tauri::State<'_, Arc<Agents>>,
 ) -> Result<Vec<bridge_engine::agents::AgentEntry>, &'static str> {
@@ -342,6 +354,7 @@ fn main() {
             agents_list,
             overview_files,
             overview_agents,
+            overview_places,
             agent_selected,
             agent_open,
             agent_save,

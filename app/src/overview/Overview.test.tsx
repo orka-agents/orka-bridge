@@ -37,7 +37,7 @@ test('counts keep files separate from Agents and external metadata is escaped', 
   expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy();
   expect(document.querySelector('img')).toBeNull();
   expect(screen.getByText(/Model declared in file: gpt-test/)).toBeTruthy();
-  expect(counts).toHaveBeenLastCalledWith('1 saved file · 1 Agent');
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 saved file · 1 Agent'));
 });
 
 test('both empty offers the existing example, unavailable is not empty', async () => {
@@ -103,18 +103,18 @@ test('unassociated Open expands read-only identity details without navigation', 
 
 test('visible Run defers live requests and repeated Refresh coalesces after release, not report arrival', async () => {
   let calls = 0;
-  mockIPC(command => { if (command === 'overview_files') return { ...files, runActive: true }; calls++; return live; });
+  mockIPC(command => { if (command === 'overview_files') return { ...files, runActive: true }; if (command === 'overview_agents') calls++; return live; });
   const view = render(<Overview {...props} runBusy />);
   await screen.findByRole('heading', { name: 'reader' });
   const user = userEvent.setup(); await user.click(screen.getByRole('button', { name: 'Refresh' })); await user.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(calls).toBe(0); expect(screen.getByText('Refresh pending until checks finish')).toBeTruthy();
-  mockIPC(command => { if (command === 'overview_files') return files; calls++; return live; });
+  mockIPC(command => { if (command === 'overview_files') return files; if (command === 'overview_agents') calls++; return live; });
   view.rerender(<Overview {...props} />);
   expect(await screen.findByRole('heading', { name: agent.name })).toBeTruthy(); expect(calls).toBe(1);
 });
 
 test('hidden post-Run completion does not read live, returning does', async () => {
-  let calls = 0; mockIPC(command => command === 'overview_files' ? files : (calls++, live));
+  let calls = 0; mockIPC(command => command === 'overview_files' ? files : (command === 'overview_agents' && calls++, live));
   const view = render(<Overview {...props} active={false} runBusy />);
   view.rerender(<Overview {...props} active={false} />); await act(async () => {}); expect(calls).toBe(0);
   view.rerender(<Overview {...props} />); await screen.findByRole('heading', { name: agent.name }); expect(calls).toBe(1);
