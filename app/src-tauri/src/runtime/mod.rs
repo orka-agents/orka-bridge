@@ -65,10 +65,8 @@ impl RuntimeWorker {
     }
     #[cfg(any(
         test,
-        all(
-            debug_assertions,
-            any(windows, all(target_os = "macos", target_arch = "aarch64"))
-        )
+        all(windows, target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
     ))]
     // Protocol integration tests import this module without the native app owner.
     #[cfg_attr(test, allow(dead_code))]

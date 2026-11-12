@@ -139,6 +139,29 @@ pub struct InstalledImageSet {
     identity: ImageIdentity,
 }
 impl InstalledImageSet {
+    /// Binding self-consistency does not authenticate its claims. Reuse the
+    /// app-selected manifest for immutable boot facts, not the writable OS bytes.
+    #[cfg_attr(test, allow(dead_code))] // Some protocol harnesses omit the native caller.
+    pub(crate) fn validate_pinned(&self, image: &ResolvedImage) -> Result<(), ImageError> {
+        let manifest: serde_json::Value =
+            serde_json::from_slice(image.manifest_bytes()).map_err(|_| ImageError::Integrity)?;
+        let boot: Boot = serde_json::from_value(manifest["directBoot"].clone())
+            .map_err(|_| ImageError::Integrity)?;
+        let identity = image.identity();
+        if self.identity.manifest_sha256 != identity.manifest_sha256
+            || self.identity.image_id != identity.image_id
+            || self.identity.state_compatibility_id != identity.state_compatibility_id
+            || self.identity.build_source_commit != identity.build_source_commit
+            || self.target() != image.target()
+            || self.launch_mode() != image.launch_mode()
+            || self.binding.boot != boot
+            || self.binding.os.initial_bytes != image.disk_bytes()
+            || self.binding.os.initial_sha256 != image.disk_sha256()
+        {
+            return Err(ImageError::Integrity);
+        }
+        Ok(())
+    }
     pub fn installation_id(&self) -> Uuid {
         self.binding.installation_id
     }
