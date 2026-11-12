@@ -4,14 +4,44 @@ import ApplicationServices
 import Vision
 import ImageIO
 
+let display = CGMainDisplayID()
+var previousDisplayMode: CGDisplayMode?
+func restoreDisplay() {
+    if let previous = previousDisplayMode {
+        previousDisplayMode = nil
+        if CGDisplaySetDisplayMode(display, previous, nil) != .success {
+            fputs("Cannot restore CI display mode\n", stderr)
+        }
+    }
+}
 func require(_ condition: Bool, _ message: String) {
-    if !condition { fputs("\(message)\n", stderr); exit(1) }
+    if !condition { fputs("\(message)\n", stderr); restoreDisplay(); exit(1) }
 }
 let output = CommandLine.arguments[1]
 let theme = CommandLine.arguments[3]
 require(["light", "dark"].contains(theme), "Expected light or dark theme")
 require(NSRunningApplication.runningApplications(withBundleIdentifier: "ai.orka.bridge").isEmpty,
         "Quit running Bridge before running the native walk")
+// Hosted Macs default to 1024x768, which constrains a 900pt content window.
+// Only reconfigure the disposable CI display, never an operator's desktop.
+if CGDisplayBounds(display).width < 1280 || CGDisplayBounds(display).height < 1080 {
+    require(ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
+            "The native walk needs a display of at least 1280x1080 logical points")
+    let options = [kCGDisplayShowDuplicateLowResolutionModes: kCFBooleanTrue] as CFDictionary
+    let modes = CGDisplayCopyAllDisplayModes(display, options) as? [CGDisplayMode] ?? []
+    print("CI display modes: \(modes.map { "\($0.width)x\($0.height)" })")
+    guard let previous = CGDisplayCopyDisplayMode(display),
+        let larger = modes.filter({ $0.isUsableForDesktopGUI() && $0.width >= 1280 && $0.height >= 1080 })
+            .min(by: { $0.width * $0.height < $1.width * $1.height }) else {
+        fatalError("No CI display mode can fit the required native window")
+    }
+    previousDisplayMode = previous
+    require(CGDisplaySetDisplayMode(display, larger, nil) == .success, "Cannot enlarge CI display")
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 1))
+    require(CGDisplayBounds(display).width >= 1280 && CGDisplayBounds(display).height >= 1080,
+            "CI display mode did not take effect: \(CGDisplayBounds(display))")
+}
+defer { restoreDisplay() }
 func launch() throws -> NSRunningApplication {
 let opened = Process()
 opened.executableURL = URL(fileURLWithPath: "/usr/bin/open")
