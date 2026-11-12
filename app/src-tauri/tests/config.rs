@@ -91,6 +91,7 @@ fn agent_commands_are_granted_only_to_local_main_window() {
         "agent_selected",
         "agent_open",
         "agent_save",
+        "agent_reveal",
         "setup_cancel_local",
         "setup_change_local",
         "setup_open_help",

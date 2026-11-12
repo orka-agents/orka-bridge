@@ -388,15 +388,17 @@ impl AgentFolder {
         };
         operation().map_err(|_| "The local agent folder could not be read or saved. Check that it is a Bridge-managed folder with regular files, then retry.")
     }
-    pub(crate) fn display_path(&self) -> Option<String> {
-        self.home.as_ref().and_then(|home| {
+    pub(crate) fn file_path(&self) -> Option<PathBuf> {
+        self.home.as_ref().map(|home| {
             home.join("Orka")
                 .join("agents")
                 .join(&self.name)
                 .join(&self.agent)
-                .to_str()
-                .map(str::to_owned)
         })
+    }
+    pub(crate) fn display_path(&self) -> Option<String> {
+        self.file_path()
+            .and_then(|path| path.into_os_string().into_string().ok())
     }
     fn pair(&self, root: &Dir) -> io::Result<AgentPair> {
         let agent = String::from_utf8(read(root, &self.agent, MAX_FILE)?).map_err(|_| invalid())?;
