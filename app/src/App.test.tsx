@@ -291,7 +291,7 @@ test('a transient setup read failure does not invalidate an admitted model conne
 
 test('local Open clears shared cluster selection; remembered cluster needs a fresh successful Use before preflight', async () => {
   vi.stubGlobal('isTauri', true);
-  const id = '9b2b93c4-375c-4815-9717-39852a96e411';
+  const id = '12345678-1234-1234-1234-123456789abc';
   const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' };
   const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name, service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka:0.9.4' };
   const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-model', ready: true };
@@ -335,6 +335,70 @@ test('local Open clears shared cluster selection; remembered cluster needs a fre
   await act(async () => {});
   expect(calls.filter(c => c === 'send_preflight')).toHaveLength(1);
   expect(calls).not.toContain('send_start');
+  await user.click(screen.getByRole('button', { name: 'Open your agent' }));
+  expect(await screen.findByRole('heading', { name: 'reader', level: 1 })).toBeTruthy();
+});
+
+test('setup Open example restores the sample after Overview opened another document', async () => {
+  vi.stubGlobal('isTauri', true);
+  const sample = '9b2b93c4-375c-4815-9717-39852a96e411'; const other = '12345678-1234-1234-1234-123456789abc';
+  mockIPC((command, args) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
+    if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: other, name: 'other', state: 'readable', source: null, summary: null, reason: null }] };
+    if (command === 'agent_open') { const id = (args as { documentId: string }).documentId; const name = id === sample ? 'sample' : 'other'; return { documentId: id, name, agent: `---\nname: ${name}\n---\nRead.`, tests: 'Checks' }; }
+    if (command === 'agent_run_status') return { documentId: (args as { documentId: string }).documentId, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open other' }));
+  await screen.findByRole('heading', { name: 'other', level: 1 });
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Open example' }));
+  expect(await screen.findByRole('heading', { name: 'sample', level: 1 })).toBeTruthy();
+});
+
+test('Overview Open retries a transient failure for the same document', async () => {
+  vi.stubGlobal('isTauri', true); let opens = 0;
+  const id = '9b2b93c4-375c-4815-9717-39852a96e411';
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
+    if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'reader', source: null, state: 'readable', summary: null, reason: null }] };
+    if (command === 'agent_open') { if (++opens === 1) throw Error('Temporary read failure'); return { documentId: id, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks' }; }
+    if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open reader' }));
+  await within(screen.getByRole('navigation')).findByText('Example unavailable');
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open reader' }));
+  expect(await screen.findByRole('heading', { name: 'reader', level: 1 })).toBeTruthy(); expect(opens).toBe(2);
+});
+
+test('opening the already-local file does not acquire another VM catalog session', async () => {
+  vi.stubGlobal('isTauri', true); let catalogs = 0;
+  const id = '9b2b93c4-375c-4815-9717-39852a96e411';
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_connect_model') return { ready: true };
+    if (command === 'workspace_catalog') { catalogs++; return null; }
+    if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'reader', source: null, state: 'readable', summary: null, reason: null }] };
+    if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
+    if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks' };
+    if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await screen.findByRole('button', { name: 'Refresh catalog' });
+  const before = catalogs;
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open reader' }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 });
+  expect(catalogs).toBe(before);
 });
 
 test('Overview waits for native busy release even when the report is already complete', async () => {

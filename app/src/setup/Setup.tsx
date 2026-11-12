@@ -15,8 +15,8 @@ const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting',
 const runtimeCopy = {
   notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
 };
-export default function Setup({ onOpenExample, onReady, onStatus, onModelState, onWelcome, onExampleName, firstCheck, onStarting, onWorkspaceAction, onPlace, place, active = true }: {
-  onOpenExample: () => void; onReady: () => void; active?: boolean;
+export default function Setup({ onOpenExample, onOpenAgent, onReady, onStatus, onModelState, onWelcome, onExampleName, firstCheck, onStarting, onWorkspaceAction, onPlace, place, active = true }: {
+  onOpenExample: () => void; onOpenAgent?: () => void; onReady: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
   onModelState?: (state: ModelState) => void;
   onWelcome?: (visible: boolean) => void;
@@ -180,7 +180,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
       </>}
       {/* Keep configuration mounted when local setup replaces the chooser. */}
       {usedCluster && <div className={`workspace-option${cluster ? ' workspace-selected' : ''}`} hidden={!cluster}>
-        <ClusterCard active={cluster} onPlace={place => onPlace?.(place)} onOpenAgent={onOpenExample} />
+        <ClusterCard active={cluster} onPlace={place => onPlace?.(place)} onOpenAgent={onOpenAgent ?? onOpenExample} />
       </div>}
       {status?.selected === 'localVm' && status.localVm === 'ready' && <div hidden={cluster}><Model enabled={status.model === 'available'} paused={!!error || sending} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
       {!cluster && error && <div role="alert"><p>{error}</p>

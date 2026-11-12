@@ -140,14 +140,20 @@ fn projection_excludes_paths_source_bytes_and_diagnostics() {
         .save(format!("{}\nPRIVATE PROMPT BODY", pair.agent))
         .unwrap();
     let value = serde_json::to_string(&saved_files(&agents, false)).unwrap();
-    for secret in [
+    for (index, forbidden) in [
         "PRIVATE PROMPT BODY",
         "path",
         home.path().to_str().unwrap(),
         "schemaVersion",
         "agent-test",
-    ] {
-        assert!(!value.contains(secret), "{secret}");
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            !value.contains(forbidden),
+            "Forbidden Overview field {index}"
+        );
     }
 }
 #[test]

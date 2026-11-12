@@ -56,6 +56,7 @@ test.each(['stopped', 'image', 'read'])('files remain openable when live list is
   await userEvent.click(await screen.findByRole('button', { name: 'Open reader' })); expect(open).toHaveBeenCalledWith(id);
   expect(screen.getByText(reason === 'image' ? 'Agent list unavailable with this Mac image' : reason === 'stopped' ? 'Workspace stopped' : 'Could not read agents')).toBeTruthy();
   expect(screen.queryByText('0 Agents')).toBeNull();
+  expect(screen.getByText('Check result unavailable for this saved version')).toBeTruthy();
 });
 
 test('exact native identity attaches checks and suppresses only that current file', async () => {

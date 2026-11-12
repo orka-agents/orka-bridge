@@ -79,7 +79,7 @@ export default function Overview({ active, runBusy, workspaceKey, onOpenDocument
         action={file.state === 'readable' ? <button type="button" className="workspace-secondary" aria-label={`Open ${file.name}`} onClick={() => onOpenDocument(file.documentId)}>Open</button> : undefined}
         summary={file.summary?.description ?? (file.state === 'unreadable' ? 'Saved files unavailable' : 'Agent definition on this computer')}>
         <CardSection title="File declarations">{declarations(file)}</CardSection>
-        <CardSection title="Checks"><p>Not run in this session for this saved version</p></CardSection>
+        <CardSection title="Checks"><p>Check result unavailable for this saved version</p></CardSection>
         {file.source && <Details hint="Saved file hashes"><GeneratedValue label="Agent file hash" value={file.source.agent} /><GeneratedValue label="Check file hash" value={file.source.tests} /></Details>}
       </LongCard>)}
       {observed?.agents.map(agent => {

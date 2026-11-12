@@ -19,13 +19,18 @@ export default function ClusterCard({ active = true, onPlace, onOpenAgent }: { a
   const [notice, setNotice] = useState('');
   const [details, setDetails] = useState(false);
   const epoch = useRef(0); const admitted = useRef(false); const reloadActive = useRef(false);
+  const reloadInterrupted = useRef(false); const initialLoaded = useRef(false); const wasActive = useRef(active);
+  const providerName = useRef('');
   const accountField = useRef<HTMLInputElement>(null);
   const providerField = useRef<HTMLSelectElement>(null);
+  function readContexts() {
+    const request = ++epoch.current; setBusy(true);
+    void contexts().then(v => { if (request === epoch.current) { setChoices(v); initialLoaded.current = true; } }, error => {
+      if (request === epoch.current) { setError({ failure: failedCheck(error, 'configuration'), operation: 'Read kubeconfig' }); initialLoaded.current = true; }
+    }).finally(() => { if (request === epoch.current) setBusy(false); });
+  }
   useEffect(() => {
-    const request = ++epoch.current;
-    void contexts().then(v => { if (request === epoch.current) { setChoices(v); setBusy(false); } }, error => {
-      if (request === epoch.current) { setError({ failure: failedCheck(error, 'configuration'), operation: 'Read kubeconfig' }); setBusy(false); }
-    });
+    readContexts();
     return () => { epoch.current++; };
   }, []);
   useEffect(() => {
@@ -33,10 +38,19 @@ export default function ClusterCard({ active = true, onPlace, onOpenAgent }: { a
     if (access?.status === 'connected') providerField.current?.focus();
   }, [access]);
   useEffect(() => {
-    if (active) return;
-    // Retain configuration, not active confirmation; late replies cannot reselect it.
-    epoch.current++; admitted.current = false; reloadActive.current = false;
-    setBusy(false); setReloading(false); setAccess(undefined);
+    const was = wasActive.current; wasActive.current = active;
+    if (!active) {
+      // Retain configuration, not active confirmation; late replies cannot reselect it.
+      if (reloadActive.current) reloadInterrupted.current = true;
+      epoch.current++; admitted.current = false; reloadActive.current = false;
+      setBusy(false); setReloading(false); setAccess(undefined);
+      return;
+    }
+    // Resume a configuration read interrupted by deactivation; a completed read (success,
+    // failure, or one already loaded) is left alone, and late replies to the interrupted
+    // request stay discarded by the epoch check above.
+    if (!was && reloadInterrupted.current) { reloadInterrupted.current = false; void reload(); }
+    else if (!was && !initialLoaded.current) readContexts();
   }, [active]);
   const target = targets?.find(t => t.id === targetId);
   const recovery = error && clusterRecovery(error.failure);
@@ -44,7 +58,7 @@ export default function ClusterCard({ active = true, onPlace, onOpenAgent }: { a
     if (!active || reloadActive.current) return;
     reloadActive.current = true; admitted.current = false; const request = ++epoch.current;
     setReloading(true); setBusy(true); setChoices([]); setContextId(''); setTargets(undefined); setTargetId('');
-    setAccess(undefined); setProviderId(''); setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
+    setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
     onPlace({ kind: 'cluster' });
     try { const value = await reloadContexts(); if (request === epoch.current) setChoices(value); }
     catch (error) { if (request === epoch.current) setError({ failure: failedCheck(error, 'configuration'), operation: 'Reload kubeconfig' }); }
@@ -58,7 +72,7 @@ export default function ClusterCard({ active = true, onPlace, onOpenAgent }: { a
   async function check(id: string) {
     if (!active) return;
     const request = ++epoch.current;
-    setContextId(id); setTargets(undefined); setTargetId(''); setAccess(undefined); setProviderId(''); setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
+    setContextId(id); setTargets(undefined); setTargetId(''); setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
     onPlace({ kind: 'cluster' });
     if (!id) { setBusy(false); return; }
     setBusy(true);
@@ -78,9 +92,14 @@ export default function ClusterCard({ active = true, onPlace, onOpenAgent }: { a
       setAccess(value);
       if (value.failure) setError({ failure: value.failure, operation: 'Use cluster' });
       if (value.status === 'needServiceAccount') setNeedsAccount(true);
-      // A remembered provider still offered by the fresh reply is kept rather than discarded.
-      const selectedProvider = providerId && value.providers.some(p => p.id === providerId) ? providerId
+      // Every successful connect mints fresh opaque provider IDs, so a remembered selection is
+      // matched by name against the fresh reply rather than by the now-stale ID.
+      const remembered = providerName.current;
+      const byName = remembered ? value.providers.find(p => p.name === remembered) : undefined;
+      const selectedProvider = byName ? byName.id
+        : providerId && value.providers.some(p => p.id === providerId) ? providerId
         : value.providers.length === 1 ? value.providers[0].id : '';
+      providerName.current = value.providers.find(p => p.id === selectedProvider)?.name ?? remembered;
       setProviderId(selectedProvider);
       onPlace(value.status === 'connected' ? { kind: 'cluster', target, providers: value.providers, providerId: selectedProvider } : { kind: 'cluster' });
     } catch (error) { if (request === epoch.current) setError({ failure: failedCheck(error, 'orkaConnection'), operation: 'Use cluster' }); }
@@ -95,7 +114,7 @@ export default function ClusterCard({ active = true, onPlace, onOpenAgent }: { a
     {busy && <p role="status">{reloading ? 'Reload pending. Waiting for any current cluster check, then reading kubeconfig…' : !choices.length ? 'Reading kubectl contexts…' : targets ? 'Confirming access…' : 'Checking for Orka…'}</p>}
     {targets?.length === 0 && <p role="status">No Orka was found on this context.</p>}
     {targets && targets.length > 1 && <><label htmlFor="cluster-installation">Orka installation</label>
-      <select id="cluster-installation" disabled={busy} value={targetId} onChange={e => { setTargetId(e.target.value); setAccess(undefined); setProviderId(''); setAccount(''); setNeedsAccount(false); setError(undefined); setNotice(''); onPlace({ kind: 'cluster' }); }}>
+      <select id="cluster-installation" disabled={busy} value={targetId} onChange={e => { setTargetId(e.target.value); setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setNotice(''); onPlace({ kind: 'cluster' }); }}>
         <option value="">Choose an installation</option>{targets.map(t => <option key={t.id} value={t.id}>{t.service_namespace} / {t.service_name} · {t.watched_namespace}</option>)}
       </select></>}
     {target && <>
@@ -109,7 +128,7 @@ export default function ClusterCard({ active = true, onPlace, onOpenAgent }: { a
       {details && <dl id="cluster-details" className="cluster-details"><div><dt>Context</dt><dd>{target.context_name}</dd></div><div><dt>Service</dt><dd>{target.service_namespace} / {target.service_name}</dd></div><div><dt>Watched namespace</dt><dd>{target.watched_namespace}</dd></div><div><dt>Orka image</dt><dd>{target.image}</dd></div>
         {access?.providers.map(p => <div key={p.id}><dt>Provider</dt><dd>{p.name} <span className="muted">{p.ready ? 'Ready' : 'Not ready'}</span></dd></div>)}</dl>}
       {access?.status === 'connected' && <><label htmlFor="send-provider">Provider</label>
-        <select ref={providerField} id="send-provider" value={providerId} onChange={event => { setProviderId(event.target.value); onPlace({ kind: 'cluster', target, providers: access.providers, providerId: event.target.value }); }}>
+        <select ref={providerField} id="send-provider" value={providerId} onChange={event => { const next = event.target.value; setProviderId(next); providerName.current = access.providers.find(p => p.id === next)?.name ?? ''; onPlace({ kind: 'cluster', target, providers: access.providers, providerId: next }); }}>
           <option value="">Choose a Provider</option>{access.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.ready ? 'Ready' : 'Not ready'}</option>)}
         </select><p className="muted">The agent keeps the model named in its file. The checks test whether this Provider can serve it.</p>
         <button type="button" className="workspace-primary" disabled={!providerId} title={!providerId ? 'Choose a Provider first' : undefined} onClick={onOpenAgent}>Open your agent</button></>}

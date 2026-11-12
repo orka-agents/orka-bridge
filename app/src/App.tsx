@@ -156,6 +156,10 @@ export default function App() {
   };
   const tabTone = remote || exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const copy = emptyCopy[page];
+  const openDesigner = (id = documentId) => {
+    if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
+    setDocumentId(id); setExampleOpen(true); setPage('Designer');
+  };
   return (
     <div className="app-shell">
       <header className="tab-bar">
@@ -166,11 +170,8 @@ export default function App() {
               aria-label={name} aria-describedby={`tab-status-${name}`}
               aria-current={page === name ? 'page' : undefined}
               onClick={() => {
-                if (name === 'Designer') {
-                  if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
-                  setExampleOpen(true);
-                }
-                setPage(name);
+                if (name === 'Designer') openDesigner();
+                else setPage(name);
               }}>
               <span className={`icon-tile tile-${name.toLowerCase()}`}><PageIcon page={name} /></span>
               <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{name === 'Designer' && agentName ? <>{agentName}, <span className={`tab-status-word status-${tabTone}`}>{tabStatus[name].slice(agentName.length + 2)}</span></> : tabStatus[name]}</small></span>
@@ -191,17 +192,14 @@ export default function App() {
         </div>}
         <div hidden={page !== 'Clusters'}>
           <Setup place={place} onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
-            onOpenExample={() => {
-              if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
-              setExampleOpen(true); setPage('Designer');
-            }} />
+            onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
         {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} documentId={documentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
         </>} /></div>}
         <Overview active={page === 'Overview'} runBusy={!!run?.busy} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} onCounts={setOverviewCounts}
-          onOpenDocument={id => { choosePlace({ kind: 'thisComputer' }); setDocumentId(id); setExampleOpen(true); setPage('Designer'); }}
-          onOpenExample={() => { choosePlace({ kind: 'thisComputer' }); setDocumentId(SAMPLE_DOCUMENT_ID); setExampleOpen(true); setPage('Designer'); }}
+          onOpenDocument={id => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(id); }}
+          onOpenExample={() => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(SAMPLE_DOCUMENT_ID); }}
           onChooseWorkspace={() => setPage('Clusters')} />
         {page === 'Designer' && !exampleOpen && <section className="card empty-state">
           <span className="icon-tile empty-icon"><PageIcon page={page} /></span>

@@ -2,8 +2,8 @@
 use crate::engine::run::Verdict;
 use crate::example_run::RunState;
 use crate::{
-    agent_folder::{AgentFolder, DocumentId},
-    agents::Agents,
+    agent_folder::DocumentId,
+    agents::{Agents, InspectedFile},
     engine::{
         self,
         run::ParsedPair,
@@ -64,14 +64,14 @@ pub struct DeclaredSummary {
     pub model: String,
     pub tools: Vec<String>,
 }
-pub(crate) fn inspect(folder: &AgentFolder, omit_absent: bool) -> Option<SavedFile> {
-    let pair = folder.inspect();
-    if omit_absent && matches!(pair, Ok(None)) {
+fn summarize(inspection: InspectedFile) -> Option<SavedFile> {
+    let pair = inspection.pair;
+    if inspection.document.document_id == DocumentId::SAMPLE && matches!(pair, Ok(None)) {
         return None;
     }
     let mut file = SavedFile {
-        document_id: folder.document_id(),
-        name: folder.name().into(),
+        document_id: inspection.document.document_id,
+        name: inspection.document.name,
         state: "unreadable",
         source: None,
         summary: None,
@@ -96,10 +96,10 @@ pub(crate) fn inspect(folder: &AgentFolder, omit_absent: bool) -> Option<SavedFi
     Some(file)
 }
 pub fn saved_files(agents: &Agents, run_active: bool) -> SavedFiles {
-    match agents.overview_files() {
+    match agents.inspect_files() {
         Ok(files) => SavedFiles {
             state: "complete",
-            files,
+            files: files.into_iter().filter_map(summarize).collect(),
             run_active,
         },
         Err(_) => SavedFiles {
@@ -222,6 +222,7 @@ fn failure(error: RuntimeError, run_active: bool) -> LiveAgents {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_folder::AgentFolder;
     use serde_json::json;
     fn output(metadata: serde_json::Value) -> EngineOutput {
         EngineOutput { exit: 0, stdout: serde_json::to_vec(&json!({"apiVersion":"v1","kind":"List","metadata":metadata,"items":[{"apiVersion":"core.orka.ai/v1alpha1","kind":"Agent","metadata":{"name":"same-name","namespace":NAMESPACE,"uid":"observed-uid"},"spec":{"secret":"not projected"}}]})).unwrap(), stderr: b"PRIVATE DIAGNOSTIC".to_vec() }
