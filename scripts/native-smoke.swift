@@ -88,12 +88,23 @@ func window() -> (CGWindowID, CGRect)? {
     return (id, rect)
 }
 var found = false
-for _ in 0..<30 {
-    if window() != nil { found = true; break }
-    Thread.sleep(forTimeInterval: 1)
+let rendererDeadline = Date(timeIntervalSinceNow: 30)
+while Date() < rendererDeadline {
+    if let (_, frame) = window() {
+        let buttons = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXButton"
+                && attribute(element, "AXEnabled") as? Bool == true
+                && nativeBounds(element).map { frame.contains($0) } == true
+        }
+        let names = Set(buttons.flatMap { element in
+            ["AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+        })
+        let bodyReady = buttons.contains { nativeBounds($0).map { $0.minY > frame.minY + 110 } == true }
+        if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names) && bodyReady { found = true; break }
+    }
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 }
-require(found, "Bridge native window did not appear")
-Thread.sleep(forTimeInterval: 2)
+require(found, "Bridge native window, rendered navigation and page controls did not appear within the startup budget")
 func mouse(_ type: CGEventType, _ point: CGPoint) {
     CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
 }
@@ -759,14 +770,20 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         let point = CGPoint(x: disclosure.midX, y: disclosure.midY)
         mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
         Thread.sleep(forTimeInterval: 0.5)
+        guard let currentAnchor = visibleTextBounds(checks).first,
+            let identity = visibleTextBounds("Observed identity").filter({ $0.minY > currentAnchor.minY }).min(by: { $0.minY < $1.minY }) else {
+            fail("Selected identity moved out of view below \(checks)")
+        }
+        // Earlier cards can retain open identities. Scope the UID to the
+        // disclosure below this card's check result, not the whole window.
         let uids = Set(nativeElements().compactMap { element -> String? in
             guard attribute(element, "AXRole") as? String == "AXStaticText",
                 let value = attribute(element, "AXValue") as? String, value.hasPrefix("uid-bridge-run-"),
-                let bounds = nativeBounds(element), window()!.1.contains(bounds) else { return nil }
+                let bounds = nativeBounds(element), bounds.minY > identity.maxY, window()!.1.contains(bounds) else { return nil }
             return value
         })
         require(uids.count == 1 && nativeTextIsVisible(checks) && nativeTextIsVisible("fixture-cluster · agents"),
-                "Expected one visible retained Agent UID, place and \(checks), found \(uids)")
+                "Expected one visible retained Agent UID below selected identity, place and \(checks), found \(uids)")
         try capture(name, "Overview")
         print("PASS \(name): \(checks), retained \(uids.first!)")
         return uids.first!

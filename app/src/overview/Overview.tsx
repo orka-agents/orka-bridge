@@ -68,7 +68,7 @@ export default function Overview({ active, runBusy, workspaceKey, onOpenDocument
   const fileLabel = files?.state === 'complete' ? `${files.files.length} saved ${files.files.length === 1 ? 'file' : 'files'}` : 'Saved files unavailable';
   const agentLabel = live?.state === 'complete' && !pending ? `${live.agents.length} ${live.agents.length === 1 ? 'Agent' : 'Agents'}` : 'Agent count unavailable';
   const clusterCount = places?.places.reduce((sum, p) => sum + p.agents.length, 0) ?? 0;
-  const clusterCounts = places?.places.length ? ` · ${clusterCount} cluster ${clusterCount === 1 ? 'Agent' : 'Agents'}${places.places.some(p => p.stale) ? ' (last seen)' : ''}` : '';
+  const clusterCounts = places?.places.length ? places.places.some(p => p.observedAt === null) ? ' · Cluster Agent count unavailable' : ` · ${clusterCount} cluster ${clusterCount === 1 ? 'Agent' : 'Agents'}${places.places.some(p => p.stale) ? ' (last seen)' : ''}` : '';
   const counts = files ? `${fileLabel} · ${agentLabel}${clusterCounts}` : 'Reading saved files…';
   useEffect(() => { if (active) onCounts?.(counts); }, [active, counts, onCounts]);
   const saved = files?.files ?? [];

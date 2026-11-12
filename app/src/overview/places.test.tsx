@@ -95,6 +95,14 @@ test('offline last-seen cards never present a current green pass and recover onl
   expect(within(remote).getByText('Checks passed here')).toBeTruthy();
 });
 
+test('a place with no successful observation never contributes an invented zero Agent total', async () => {
+  ipc({ ...places, places: [{ ...second, observedAt: null, stale: true, agents: [] }] });
+  const counts = vi.fn(); render(<Overview {...props} onCounts={counts} />);
+  expect(await screen.findByText('No Agent observation yet. Refresh or check access in Clusters.')).toBeTruthy();
+  expect(counts).toHaveBeenLastCalledWith(expect.stringContaining('Cluster Agent count unavailable'));
+  expect(screen.queryByText(/0 cluster Agents/)).toBeNull();
+});
+
 test('unknown without UID is an attempt, not a counted Agent or association; history failure is visible', async () => {
   ipc({ places: [], historyState: 'complete', unobserved: [{ ...record, agentUid: null, verdict: 'unknown' }] });
   render(<Overview {...props} />);
