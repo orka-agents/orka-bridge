@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Overview from './Overview';
@@ -122,6 +122,6 @@ test('cluster inventory refresh works while the local VM is busy and ignores rep
   await screen.findByRole('heading', { name: 'reader' });
   expect(resolve).toBeTypeOf('function');
   view.rerender(<Overview {...props} active={false} runBusy />);
-  resolve(places); await Promise.resolve();
-  expect(screen.queryByRole('region', { name: 'team-one · agents · control/orka' })).toBeNull();
+  await act(async () => { resolve(places); await Promise.resolve(); });
+  expect(view.container.querySelector('section[aria-label="team-one · agents · control/orka"]')).toBeNull();
 });

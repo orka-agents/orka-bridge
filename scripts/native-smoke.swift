@@ -170,13 +170,24 @@ func clickDesignerView(_ name: String) {
 }
 func nativeTextBounds(_ expected: String) -> [CGRect] {
     guard let rect = window()?.1 else { return [] }
+    // Destination chips and footer mirrors are not evidence of a visible card.
+    let body = CGRect(x: rect.minX, y: rect.minY + 110, width: rect.width, height: max(0, rect.height - 142))
     return nativeElements().filter { element in
         guard let role = attribute(element, "AXRole") as? String,
-            ["AXStaticText", "AXHeading"].contains(role) else { return false }
-        return ["AXValue", "AXTitle", "AXDescription"].contains {
-            (attribute(element, $0) as? String)?.contains(expected) == true
+            ["AXStaticText", "AXHeading", "AXGroup", "AXDisclosureTriangle"].contains(role) else { return false }
+        var values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+        if role == "AXGroup", let children = attribute(element, "AXChildren") as? [AXUIElement],
+            !children.isEmpty && children.allSatisfy({ attribute($0, "AXRole") as? String == "AXStaticText" }) {
+            // WebKit splits JSX label/value text into adjacent native nodes.
+            // Join only one text-only row, never different cards or lines.
+            let bounds = children.compactMap { nativeBounds($0) }
+            if bounds.count == children.count, let first = bounds.first,
+                bounds.allSatisfy({ abs($0.midY - first.midY) <= 2 && body.contains($0) }) {
+                values.append(children.compactMap { attribute($0, "AXValue") as? String }.joined())
+            }
         }
-    }.compactMap { nativeBounds($0) }.filter { rect.contains($0) }
+        return values.contains { $0.contains(expected) }
+    }.compactMap { nativeBounds($0) }.filter { body.contains($0) }
 }
 func nativeTextIsVisible(_ expected: String) -> Bool { !nativeTextBounds(expected).isEmpty }
 @discardableResult
@@ -831,7 +842,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try overviewShot("overview-fixture-unknown-attempt", ["Agent creation not confirmed", "Checks unknown", "Planned name: bridge-run-"])
     scrollMain(12000)
     clickText("By agent", in: try capture("overview-probe", "Overview"))
-    try overviewShot("overview-fixture-multiple-places-by-agent", ["Checks unknown", "Also observed on fixture-secondary · agents"])
+    try overviewShot("overview-fixture-multiple-places-by-agent", ["recorded revision", "Also observed on fixture-secondary · agents"])
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": true])
     defer { try? fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false]) }
     scrollMain(12000)
