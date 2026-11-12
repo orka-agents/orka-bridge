@@ -41,6 +41,9 @@ pub struct SetupSnapshot {
     pub workspace_progress: Option<WorkspaceProgress>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub preflight_failure: Option<preflight::Failure>,
+    /// Present only while the local workspace is failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace_failure: Option<crate::runtime::types::WorkspaceFailure>,
 }
 
 impl SetupSnapshot {
@@ -293,6 +296,7 @@ fn snapshot(root: &Path) -> Result<SetupSnapshot, SetupError> {
         model: "locked",
         workspace_progress: None,
         preflight_failure: None,
+        workspace_failure: None,
     })
 }
 

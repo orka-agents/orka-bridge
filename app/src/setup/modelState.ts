@@ -1,6 +1,7 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { isOsCode } from './recovery-info';
 
-const errors: Record<string, string> = {
+const errors = {
   modelCaptureUnavailable: 'Install GitHub CLI and sign in to github.com before connecting.',
   modelCaptureFailed: 'The stored GitHub sign-in could not be read. Check your GitHub CLI sign-in.',
   modelCaptureInvalid: 'The stored GitHub sign-in returned invalid credential data.',
@@ -14,11 +15,12 @@ const errors: Record<string, string> = {
   modelUnavailable: 'The stored model connection is unavailable or its completion is unknown.',
   modelReconnect: 'Bridge could not clean up the previous model connection. This workspace may need a newer image. The saved sign-in was kept.',
 };
-type ModelResult = { ok: true } | { ok: false; message: string };
+export type ModelFailure = { message: string; category: keyof typeof errors | 'unknown'; codes: number[] };
+export type ModelResult = { ok: true } | ({ ok: false } & ModelFailure);
 export const connectModel = () => call('setup_connect_model', true, 'The model connection could not be completed.');
-export const removeModel = () => call('setup_remove_model', false, 'The saved sign-in could not be removed. It has been kept for another attempt.');
+export const removeModel = () => call('setup_remove_model', false, 'Bridge could not confirm sign-in removal. Try Remove sign-in again.');
 async function call(command: string, ready: boolean, fallback: string): Promise<ModelResult> {
-  if (!isTauri()) return { ok: false, message: 'Native model setup is not available in this preview.' };
+  if (!isTauri()) return { ok: false, category: 'unknown', codes: [], message: 'Native model setup is not available in this preview.' };
   try {
     const value = await invoke<unknown>(command);
     if (typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -29,21 +31,21 @@ async function call(command: string, ready: boolean, fallback: string): Promise<
     // Only a native finite category selects text. Never render a supplied message.
     if (typeof error === 'object' && error !== null && 'kind' in error
       && typeof error.kind === 'string' && Object.hasOwn(errors, error.kind)) {
-      if (error.kind === 'modelStore' && 'native' in error) {
+      const category = error.kind as keyof typeof errors;
+      if (category === 'modelStore' && 'native' in error) {
         const detail = error.native;
         if (typeof detail === 'object' && detail !== null && 'call' in detail && 'code' in detail
           && (detail.call === 'CredWriteW' || detail.call === 'CredReadW' || detail.call === 'CredDeleteW')
-          && typeof detail.code === 'number' && Number.isInteger(detail.code)
-          && detail.code >= 0 && detail.code <= 0xffffffff) {
+          && isOsCode(detail.code)) {
           const operation = detail.call === 'CredWriteW' ? 'save' : detail.call === 'CredReadW' ? 'load' : 'remove';
           const reason = detail.call === 'CredWriteW' && detail.code === 8
             ? "Windows couldn't save the sign-in. Windows Credential Manager is full"
             : `Windows couldn't ${operation} the sign-in`;
-          return { ok: false, message: `${reason} (${detail.call}, error ${detail.code}).` };
+          return { ok: false, category, codes: [detail.code], message: `${reason} (${detail.call}, error ${detail.code}).` };
         }
       }
-      return { ok: false, message: errors[error.kind] };
+      return { ok: false, category, codes: [], message: errors[category] };
     }
   }
-  return { ok: false, message: fallback };
+  return { ok: false, category: 'unknown', codes: [], message: fallback };
 }

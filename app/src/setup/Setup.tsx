@@ -8,6 +8,7 @@ import { formatSize, workspaceRequirements, type WorkspaceRequirements } from '.
 import ClusterCard from '../clusters/ClusterCard';
 import type { SelectedPlace } from '../clusters/api';
 import './welcome.css';
+import { workspaceRecovery } from './recovery-info';
 
 const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting', 'closing'].includes(state);
 const runtimeCopy = {
@@ -127,7 +128,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   const selected = !cluster && status?.selected === 'localVm';
   return <>
     <div className="workspace-heading">
-      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? status?.localVm === 'ready' ? 'Choose the AI your agent uses' : status?.localVm === 'failed' ? "Your workspace couldn't start" : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
+      <h1 ref={heading} tabIndex={-1} id={titleId}>{selected ? status?.localVm === 'ready' ? 'Choose the AI your agent uses' : status?.localVm === 'failed' ? workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
       {selected && !['ready', 'failed', 'notIntegrated'].includes(status?.localVm ?? '') && <p className="muted">Meanwhile, meet the agent you'll test first.</p>}
       {!selected && <p className="muted">You can add more places later.</p>}
     </div>
@@ -163,7 +164,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
         {!cluster && status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
       </>}
       {selected && status && <>
-        <div><Steps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={chooseCluster} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample} />
+        <div><Steps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelState} modelConnected={modelState === 'connected'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={chooseCluster} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample} />
           {confirmChange && <section className="workspace-change" aria-label="Change where agents run">
             <button type="button" className="workspace-link" disabled={sending} onClick={chooseCluster}>Use a cluster you already have instead</button>
             <h2>Stop this workspace?</h2><p>Changing where agents run stops the workspace on this computer. Your files are kept.</p>
