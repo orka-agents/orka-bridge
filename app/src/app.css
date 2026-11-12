@@ -130,7 +130,19 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .file-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .file-toolbar h2 { overflow-wrap: anywhere; }
 .designer-file p { max-width: 70ch; }
-.agent-editor { display: block; width: 100%; min-height: 23rem; resize: vertical; padding: 16px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-page); color: var(--color-text); font: 400 13px/18px var(--font-mono); tab-size: 2; }
+.file-editor { position: relative; min-width: 0; background: var(--color-page); border-radius: var(--radius-control); }
+.agent-editor, .file-highlight { width: 100%; min-height: 23rem; padding: 16px 16px 16px 52px; border: 1px solid transparent; margin: 0; font: 400 13px/18px var(--font-mono); font-variant-ligatures: none; tab-size: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.agent-editor { position: relative; display: block; resize: none; overflow: hidden; border-color: var(--color-border-strong); border-radius: var(--radius-control); background: transparent; color: transparent; caret-color: var(--color-text); }
+.agent-editor.file-plain { color: var(--color-text); }
+.file-highlight { position: absolute; inset: 0; pointer-events: none; color: var(--color-text); }
+.file-line { display: block; position: relative; min-height: 18px; }
+.file-line::before { content: attr(data-line); position: absolute; right: calc(100% + 12px); width: 28px; text-align: right; color: var(--color-text-secondary); }
+.file-key, .file-delimiter { color: var(--color-action); }
+.file-comment { color: var(--color-text-secondary); }
+.file-location { display: grid; gap: var(--space-2); min-width: 0; }
+.skeleton-field { height: 40px; margin-block: 16px; border-radius: var(--radius-control); background: var(--color-hover); }
+.skeleton-prompt { height: 140px; }
+@media (forced-colors: active) { .file-highlight { display: none; } .agent-editor { color: CanvasText; background: Canvas; caret-color: auto; } }
 .agent-parts { display: grid; gap: 24px; }
 .agent-part { display: grid; gap: 8px; min-width: 0; }
 .agent-part label, .agent-part h3 { font-size: var(--size-reading); font-weight: 600; margin: 0; }
