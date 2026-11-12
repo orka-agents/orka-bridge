@@ -17,6 +17,32 @@ use std::{
 mod forward;
 
 #[tokio::test]
+async fn overview_bound_watched_namespace_must_still_be_explicit() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let (session, _) = reading_session(
+        config(&api.start(), json!({"token":"static-fixture"})),
+        &orka,
+    );
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    let first = reply(session.overview().await);
+    for missing in [true, false] {
+        *api.no_watch.lock().unwrap() = missing;
+        *api.changed_watch.lock().unwrap() = !missing;
+        orka.calls.lock().unwrap().clear();
+        let changed = reply(session.overview().await);
+        assert_eq!(changed[0]["stale"], true);
+        assert_eq!(changed[0]["observedAt"], first[0]["observedAt"]);
+        assert!(orka.calls.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn overview_recreated_deployment_behind_retained_service_stays_stale() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());
@@ -413,6 +439,7 @@ struct ApiFixture {
     deployment_replacement: Mutex<bool>,
     queries: Mutex<Vec<String>>,
     no_watch: Mutex<bool>,
+    changed_watch: Mutex<bool>,
     unrelated_api: Mutex<bool>,
     override_response: Mutex<Option<(String, u16, Value)>>,
     // Hold an individual check open to exercise lock queuing and deadline labels.
@@ -562,6 +589,8 @@ impl ApiFixture {
         if path.ends_with("/deployments") {
             let args = if *self.no_watch.lock().unwrap() {
                 json!(["--api-port=8080"])
+            } else if *self.changed_watch.lock().unwrap() {
+                json!(["--api-port=8080", "--watch-namespace=other-agents"])
             } else {
                 json!(["--api-port=8080", "--watch-namespace=agents"])
             };

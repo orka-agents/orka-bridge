@@ -353,6 +353,9 @@ impl RemoteAccess {
             {
                 return Err(ClusterError::Unavailable);
             }
+            if !deployment_watches(&listed.items[0], &self.binding.watched_namespace) {
+                return Err(ClusterError::Unavailable);
+            }
             let mut agents = Vec::new();
             let mut after = None;
             let mut cursors = HashSet::new();
@@ -546,6 +549,77 @@ impl RemoteAccess {
         Ok(())
     }
 }
+fn deployment_watches(deployment: &Deployment, namespace: &str) -> bool {
+    let Some(template) = deployment.spec.as_ref().map(|s| &s.template) else {
+        return false;
+    };
+    let Some(spec) = template.spec.as_ref() else {
+        return false;
+    };
+    let labels = template
+        .metadata
+        .as_ref()
+        .and_then(|m| m.labels.as_ref())
+        .cloned()
+        .unwrap_or_default();
+    let mut found = false;
+    for container in &spec.containers {
+        if is_orka(container, &labels) {
+            found = true;
+            if watched_namespace(container.args.as_deref().unwrap_or_default()).ok()
+                != Some(namespace)
+            {
+                return false;
+            }
+        }
+    }
+    found
+}
+fn is_orka(
+    container: &k8s_openapi::api::core::v1::Container,
+    labels: &std::collections::BTreeMap<String, String>,
+) -> bool {
+    let args = container.args.as_deref().unwrap_or_default();
+    // A generic API port is not Orka evidence; unrelated controllers use it too.
+    let serves_api = args
+        .iter()
+        .any(|a| a.starts_with("--api-port=") || a == "--api-port")
+        || container
+            .ports
+            .as_ref()
+            .is_some_and(|ports| ports.iter().any(|p| p.name.as_deref() == Some("api")));
+    let orka_label = serves_api
+        && labels
+            .get("app.kubernetes.io/name")
+            .is_some_and(|n| n == "orka");
+    let orka_image = container.image.as_deref().is_some_and(|image| {
+        image
+            .split('@')
+            .next()
+            .and_then(|i| i.rsplit('/').next())
+            .and_then(|i| i.split(':').next())
+            == Some("orka")
+    });
+    orka_label || orka_image
+}
+fn watched_namespace(args: &[String]) -> Result<&str, AccessOutcome> {
+    let mut watched = args.iter().enumerate().filter_map(|(i, a)| {
+        a.strip_prefix("--watch-namespace=").or_else(|| {
+            (a == "--watch-namespace")
+                .then(|| args.get(i + 1).map(String::as_str))
+                .flatten()
+        })
+    });
+    let incompatible = Check::Compatibility.fail(CheckResult::Incompatible);
+    let namespace = watched
+        .next()
+        .filter(|s| dns_label(s))
+        .ok_or(incompatible)?;
+    if watched.next().is_some() {
+        return Err(incompatible);
+    }
+    Ok(namespace)
+}
 async fn installations(
     client: Client,
     context_id: ContextId,
@@ -600,43 +674,10 @@ async fn installations(
             };
             for container in containers {
                 let args = container.args.as_deref().unwrap_or_default();
-                // A generic API port is not Orka evidence; unrelated controllers use it too.
-                let serves_api = args
-                    .iter()
-                    .any(|a| a.starts_with("--api-port=") || a == "--api-port")
-                    || container.ports.as_ref().is_some_and(|ports| {
-                        ports.iter().any(|p| p.name.as_deref() == Some("api"))
-                    });
-                let orka_label = serves_api
-                    && labels
-                        .get("app.kubernetes.io/name")
-                        .is_some_and(|n| n == "orka");
-                let orka_image = container.image.as_deref().is_some_and(|image| {
-                    image
-                        .split('@')
-                        .next()
-                        .and_then(|i| i.rsplit('/').next())
-                        .and_then(|i| i.split(':').next())
-                        == Some("orka")
-                });
-                if !orka_label && !orka_image {
+                if !is_orka(container, labels) {
                     continue;
                 }
-                let mut watched = args.iter().enumerate().filter_map(|(i, a)| {
-                    a.strip_prefix("--watch-namespace=").or_else(|| {
-                        (a == "--watch-namespace")
-                            .then(|| args.get(i + 1).map(String::as_str))
-                            .flatten()
-                    })
-                });
-                let incompatible = Check::Compatibility.fail(CheckResult::Incompatible);
-                let namespace = watched
-                    .next()
-                    .filter(|s| dns_label(s))
-                    .ok_or(incompatible)?;
-                if watched.next().is_some() {
-                    return Err(incompatible);
-                }
+                let namespace = watched_namespace(args)?;
                 let target_port = match &port.target_port {
                     Some(IntOrString::Int(n)) => *n,
                     Some(IntOrString::String(name)) => container
