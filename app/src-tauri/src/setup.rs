@@ -37,6 +37,8 @@ pub struct SetupSnapshot {
     local_vm: &'static str,
     local_vm_error: Option<String>,
     model: &'static str,
+    /// Whether this build ships a model-capable image; fixed per platform, not readiness.
+    model_supported: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_progress: Option<WorkspaceProgress>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -294,6 +296,7 @@ fn snapshot(root: &Path) -> Result<SetupSnapshot, SetupError> {
         local_vm: "notIntegrated",
         local_vm_error: None,
         model: "locked",
+        model_supported: crate::local_vm::MODEL_IMAGE_AVAILABLE,
         workspace_progress: None,
         preflight_failure: None,
         workspace_failure: None,

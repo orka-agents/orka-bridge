@@ -158,12 +158,14 @@ try {
     ['setup-transfer-queued', 'installing', transfer, true, 'Connects automatically when Orka is ready.'],
     // A valid first observation, then every later read fails: the card must say unavailable, not keep the old bar.
     ['setup-unavailable', 'installing', transfer, false, 'Workspace status is unavailable.', true],
+    // A platform without native model support (reported by the snapshot) offers no early choice: a Waiting row, no action.
+    ['setup-transfer-unsupported', 'installing', transfer, false, 'Installing, 1.1 GiB of 2.8 GiB', false, false],
     ['setup-startup', 'starting', startup(12000), false, 'Rough estimate, not a measurement'],
     ['setup-startup-slow', 'starting', startup(45000), false, 'Taking longer than the rough 30-second estimate'],
     ['setup-ready', 'ready', null, false, 'Your workspace is running on this computer.'],
   ];
   const pair = { agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\n---\nFetch before answering.', tests: 'The checksum check.' };
-  async function captureSetup(theme, size, [name, localVm, progress, queue, expected, failLater]) {
+  async function captureSetup(theme, size, [name, localVm, progress, queue, expected, failLater, modelSupported = true]) {
     ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `setup-${theme}-${size}-${name}` }));
     await evaluate(`(() => {
       const pair = ${JSON.stringify(pair)};
@@ -172,7 +174,7 @@ try {
       window.isTauri = true;
       window.__TAURI_INTERNALS__ = { invoke: async command => {
         if (command === 'setup_status' && ${JSON.stringify(!!failLater)} && reads++ > 0) throw Error('Fixture status unreadable');
-        if (command === 'setup_status') return { selected: 'localVm', localVm: ${JSON.stringify(localVm)}, model: ${JSON.stringify(localVm === 'ready' ? 'available' : 'locked')}, workspaceProgress: ${JSON.stringify(progress)}, localVmError: null };
+        if (command === 'setup_status') return { selected: 'localVm', localVm: ${JSON.stringify(localVm)}, model: ${JSON.stringify(localVm === 'ready' ? 'available' : 'locked')}, modelSupported: ${JSON.stringify(modelSupported)}, workspaceProgress: ${JSON.stringify(progress)}, localVmError: null };
         if (command === 'setup_example') return pair;
         if (command === 'setup_requirements') return null;
         if (command === 'engine_call') throw { kind: 'unavailable' };
@@ -187,6 +189,9 @@ try {
     }
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && !!document.querySelector('.setup-progress')`), `${name} setup progress`);
     await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+    if (!modelSupported && !await evaluate(`document.body.textContent.includes('Waiting') && !document.body.textContent.includes('Queued') && ![...document.querySelectorAll('button')].some(button => button.textContent === 'Use GitHub sign-in')`)) {
+      throw new Error(`${name}: an unsupported platform must show Waiting with no model action`);
+    }
     const shoot = async suffix => {
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-${name}${suffix}.png`), Buffer.from(image.data, 'base64'));

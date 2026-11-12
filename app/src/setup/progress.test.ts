@@ -4,7 +4,7 @@ import type { CheckStepState } from './Steps';
 import type { SetupStatus, WorkspaceProgress } from './state';
 
 const status = (localVm: SetupStatus['localVm'], extra: Partial<SetupStatus> = {}): SetupStatus =>
-  ({ selected: 'localVm', localVm, model: localVm === 'ready' ? 'available' : 'locked', ...extra });
+  ({ selected: 'localVm', localVm, model: localVm === 'ready' ? 'available' : 'locked', modelSupported: true, ...extra });
 const transfer = (bytes: number | null, totalBytes: number | null, remainingMs: number | null = null): WorkspaceProgress =>
   ({ phase: 'materializing', bytes, totalBytes, elapsedMs: 1000, remainingMs });
 const starting = (elapsedMs: number): WorkspaceProgress => ({ phase: 'starting', bytes: null, totalBytes: null, elapsedMs, remainingMs: null });
@@ -59,6 +59,9 @@ test('only an unfinished local attempt can queue a model choice', () => {
   for (const state of ['preparing', 'installing', 'starting'] as const) expect(canQueueModel(status(state))).toBe(true);
   for (const state of ['idle', 'ready', 'failed', 'cancelled', 'closed', 'closing', 'notIntegrated'] as const) expect(canQueueModel(status(state))).toBe(false);
   expect(canQueueModel(status('installing', { selected: null }))).toBe(false);
+  // Native support must be affirmed; an unsupported or unknown platform never offers the early choice.
+  expect(canQueueModel(status('installing', { modelSupported: false }))).toBe(false);
+  expect(canQueueModel(status('installing', { modelSupported: undefined }))).toBe(false);
   expect(canQueueModel(undefined)).toBe(false);
 });
 

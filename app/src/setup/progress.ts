@@ -17,8 +17,9 @@ export type Tone = 'wait' | 'busy' | 'needs-you' | 'ready' | 'bad';
 export type SetupView = { place: 'checking' | 'unavailable' | 'none' | 'local'; step: number; done: boolean; line: string; detail: string; tone: Tone };
 
 export const plural = (count: number, unit: string) => `${count} ${unit}${count === 1 ? '' : 's'}`;
+// Native support must be affirmed: an unsupported platform or an older snapshot never offers the early choice.
 export const canQueueModel = (status: SetupStatus | undefined) =>
-  status?.selected === 'localVm' && ['preparing', 'installing', 'starting'].includes(status.localVm);
+  status?.modelSupported === true && status.selected === 'localVm' && ['preparing', 'installing', 'starting'].includes(status.localVm);
 // Failures before the VM starts belong to stage 1; an unspecified failure matches the recovery default.
 export function failedStep(status: SetupStatus): 1 | 2 {
   if (status.preflightFailure) return 1;

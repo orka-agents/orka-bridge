@@ -6,15 +6,15 @@ import App from '../App';
 
 const pair = { agent: '---\nname: web-reader\ndescription: Reads a page\n---\nFetch before answering.', tests: 'The checksum check.' };
 const doc = '9b2b93c4-375c-4815-9717-39852a96e411';
-type Sim = { selected: 'localVm' | null; localVm: string; model: 'locked' | 'available'; unreadable: boolean; connect: 'ok' | 'fail' | 'hang'; remove: 'ok' | 'fail' | 'hang' };
+type Sim = { selected: 'localVm' | null; localVm: string; model: 'locked' | 'available'; modelSupported: boolean | undefined; unreadable: boolean; connect: 'ok' | 'fail' | 'hang'; remove: 'ok' | 'fail' | 'hang' };
 // A mutable native stand-in. Tests flip its status the way a real download and startup would.
 function native(localVm = 'installing', extra: Partial<Sim> = {}) {
   vi.stubGlobal('isTauri', true);
-  const sim: Sim = { selected: 'localVm', localVm, model: 'locked', unreadable: false, connect: 'ok', remove: 'ok', ...extra };
+  const sim: Sim = { selected: 'localVm', localVm, model: 'locked', modelSupported: true, unreadable: false, connect: 'ok', remove: 'ok', ...extra };
   const ipc = vi.fn((command: string) => {
     switch (command) {
       case 'setup_status': if (sim.unreadable) throw Error('unreadable');
-        return { selected: sim.selected, localVm: sim.localVm, model: sim.model, workspaceProgress: sim.localVm === 'installing'
+        return { selected: sim.selected, localVm: sim.localVm, model: sim.model, ...(sim.modelSupported === undefined ? {} : { modelSupported: sim.modelSupported }), workspaceProgress: sim.localVm === 'installing'
           ? { phase: 'materializing', bytes: 1000, totalBytes: 4000, elapsedMs: 1000, remainingMs: 5000 } : null };
       case 'setup_cancel_local': sim.localVm = 'cancelled'; return { selected: sim.selected, localVm: sim.localVm, model: 'locked' };
       case 'setup_select_local': sim.selected = 'localVm'; sim.localVm = 'installing'; return { selected: 'localVm', localVm: 'installing', model: 'locked' };
@@ -69,6 +69,17 @@ test('a choice during transfer connects exactly once at readiness, with no secon
   expect(connects()).toBe(1);
   expect(within(screen.getByRole('contentinfo')).getByText('AI connected')).toBeTruthy();
   expect(screen.getAllByRole('button').filter(button => button.hasAttribute('disabled') && /connect|queued|removing/i.test(button.textContent ?? ''))).toEqual([]);
+});
+
+test.each([false, undefined])('a platform without native model support (%s) offers no early choice and never reaches for credentials', async modelSupported => {
+  const { ipc, sim, connects } = native('installing', { modelSupported }); render(<App />);
+  await screen.findAllByText('Setting up, step 1 of 5', {}, wait);
+  expect(screen.queryByRole('button', { name: 'Use GitHub sign-in' })).toBeNull();
+  expect(screen.getAllByText('Waiting').length).toBeGreaterThan(0);
+  expect(screen.queryByText('Pick any time')).toBeNull();
+  sim.localVm = 'ready'; await observe(ipc);
+  expect(screen.queryByRole('button', { name: 'Use GitHub sign-in' })).toBeNull();
+  await settle(); expect(connects()).toBe(0);
 });
 
 test('readiness with an unlocked model connects once immediately', async () => {

@@ -10,7 +10,7 @@ const progress = { phase: 'materializing', bytes: 1200000000, totalBytes: 300000
 function native(initial = 'installing', numbers: { phase: string; bytes: number | null; totalBytes: number | null; elapsedMs: number; remainingMs: number | null } | null = progress) {
   vi.stubGlobal('isTauri', true);
   let localVm = initial; let selected: 'localVm' | null = 'localVm'; let unavailable = false;
-  const status = () => ({ selected, localVm, model: localVm === 'ready' ? 'available' : 'locked', workspaceProgress: ['installing', 'starting'].includes(localVm) ? numbers : null, localVmError: localVm === 'failed' ? 'PRIVATE_NATIVE_DETAIL' : null });
+  const status = () => ({ selected, localVm, model: localVm === 'ready' ? 'available' : 'locked', modelSupported: true, workspaceProgress: ['installing', 'starting'].includes(localVm) ? numbers : null, localVmError: localVm === 'failed' ? 'PRIVATE_NATIVE_DETAIL' : null });
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_status') { if (unavailable) throw Error('unreadable'); return status(); }
     if (command === 'setup_cancel_local') { localVm = 'cancelled'; return status(); }
