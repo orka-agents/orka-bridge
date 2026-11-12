@@ -15,7 +15,7 @@ const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting',
 const runtimeCopy = {
   notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
 };
-export default function Setup({ onOpenExample, onReady, onStatus, onModelState, onWelcome, onExampleName, firstCheck, onStarting, onWorkspaceAction, onPlace, active = true }: {
+export default function Setup({ onOpenExample, onReady, onStatus, onModelState, onWelcome, onExampleName, firstCheck, onStarting, onWorkspaceAction, onPlace, place, active = true }: {
   onOpenExample: () => void; onReady: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
   onModelState?: (state: ModelState) => void;
@@ -25,6 +25,7 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   onStarting?: () => void;
   onWorkspaceAction?: (pending: boolean) => void;
   onPlace?: (place: SelectedPlace) => void;
+  place?: SelectedPlace;
 }) {
   const [status, setStatus] = useState<SetupStatus>();
   const [error, setError] = useState<string>();
@@ -40,7 +41,11 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
   const [check, setCheck] = useState(0);
   const [seen, setSeen] = useState(hasSeenWelcome);
   const [inside, setInside] = useState(false);
-  const [cluster, setCluster] = useState(false);
+  // Standalone callers may omit place; App supplies the shared destination.
+  const [ownCluster, setOwnCluster] = useState(false);
+  const cluster = place ? place.kind === 'cluster' : ownCluster;
+  const [usedCluster, setUsedCluster] = useState(false);
+  useEffect(() => { if (cluster) setUsedCluster(true); }, [cluster]);
   const [requirements, setRequirements] = useState<WorkspaceRequirements | null>();
   const [preflightBlocked, setPreflightBlocked] = useState(true);
   const epoch = useRef(0);
@@ -95,10 +100,10 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
     setSeen(true);
   }
   function chooseCluster() {
-    start(); setCluster(true); setConfirmChange(false); onPlace?.({ kind: 'cluster' });
+    start(); setOwnCluster(true); setConfirmChange(false); onPlace?.({ kind: 'cluster' });
   }
   function chooseComputer() {
-    focusChoice.current = true; setCluster(false); onPlace?.({ kind: 'thisComputer' });
+    focusChoice.current = true; setOwnCluster(false); onPlace?.({ kind: 'thisComputer' });
   }
   async function chooseLocal(action: 'start' | 'cancel' | 'change' = 'start') {
     if (mutation.current || !status || (action !== 'cancel' && busy)) return;
@@ -156,7 +161,6 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
             <input id="workspace-cluster" type="radio" name="workspace" aria-label="On a cluster you already have" checked={cluster} onChange={chooseCluster} />
             <label htmlFor="workspace-cluster">On a cluster you already have</label><Chip>for Kubernetes users</Chip>
             <p className="workspace-option-detail">Pick a kubectl context and Bridge uses the Orka on that cluster.</p>
-            {cluster && <ClusterCard onPlace={place => onPlace?.(place)} onOpenAgent={onOpenExample} />}
           </div>
         </fieldset>
         {!cluster && <div className="workspace-choice-footer"><span className="muted">Step 1 of 4</span>
@@ -174,6 +178,10 @@ export default function Setup({ onOpenExample, onReady, onStatus, onModelState, 
         </div>
         {status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={onOpenExample} onName={onExampleName} />}
       </>}
+      {/* Keep configuration mounted when local setup replaces the chooser. */}
+      {usedCluster && <div className={`workspace-option${cluster ? ' workspace-selected' : ''}`} hidden={!cluster}>
+        <ClusterCard active={cluster} onPlace={place => onPlace?.(place)} onOpenAgent={onOpenExample} />
+      </div>}
       {status?.selected === 'localVm' && status.localVm === 'ready' && <div hidden={cluster}><Model enabled={status.model === 'available'} paused={!!error || sending} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
       {!cluster && error && <div role="alert"><p>{error}</p>
         <button type="button" className="setup-button" disabled={busy}

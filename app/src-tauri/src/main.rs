@@ -84,6 +84,30 @@ async fn document_folder(
         .map_err(|_| "The agent is unavailable.")?
 }
 #[tauri::command]
+async fn overview_files(
+    state: tauri::State<'_, Arc<Agents>>,
+    run: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
+) -> bridge_engine::overview::SavedFiles {
+    let agents = state.inner().clone();
+    let run = run.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        bridge_engine::overview::saved_files(&agents, run.is_active())
+    })
+    .await
+    .unwrap_or_else(|_| bridge_engine::overview::SavedFiles {
+        state: "unavailable",
+        files: Vec::new(),
+        run_active: false,
+    })
+}
+#[tauri::command]
+async fn overview_agents(
+    vm: tauri::State<'_, Arc<LocalVm>>,
+    run: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
+) -> bridge_engine::overview::LiveAgents {
+    bridge_engine::overview::live_agents(vm.inner().clone(), run.inner().clone()).await
+}
+#[tauri::command]
 async fn agents_list(
     state: tauri::State<'_, Arc<Agents>>,
 ) -> Result<Vec<bridge_engine::agents::AgentEntry>, &'static str> {
@@ -307,6 +331,8 @@ fn main() {
             agent_run_status,
             agent_run,
             agents_list,
+            overview_files,
+            overview_agents,
             agent_selected,
             agent_open,
             agent_save,

@@ -3,6 +3,8 @@ import mark from './assets/orka-mark.svg';
 import EngineStatus from './components/EngineStatus';
 import Setup from './setup/Setup';
 import Example from './designer/Example';
+import Overview from './overview/Overview';
+import { SAMPLE_DOCUMENT_ID } from './designer/agent-api';
 import type { SetupStatus, ExamplePair } from './setup/state';
 import type { SelectedPlace } from './clusters/api';
 import type { ModelState } from './setup/Model';
@@ -72,6 +74,8 @@ export default function App() {
   const content = useRef<HTMLElement>(null);
   useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);
+  const [documentId, setDocumentId] = useState(SAMPLE_DOCUMENT_ID);
+  const [overviewCounts, setOverviewCounts] = useState('Saved files and local Agents');
   const [exampleAttempt, setExampleAttempt] = useState(0);
   const [engineReady, setEngineReady] = useState(false);
   const ready = useCallback(() => setEngineReady(true), []);
@@ -143,7 +147,7 @@ export default function App() {
     : cases?.some(check => check.verdict === 'unknown') ? 'check result unknown'
     : cases ? 'checks passing' : 'ready to edit';
   const tabStatus: Record<Page, string> = {
-    Overview: checks ?? 'No agents yet',
+    Overview: overviewCounts,
     Designer: agentName ? `${agentName}, ${exampleReadOnly ? 'ready to read' : remote ? 'checks on your cluster' : agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : !workspaceReady ? setupLine : setup?.model === 'locked' ? 'AI unavailable'
@@ -178,7 +182,7 @@ export default function App() {
         </div>
       </header>
       <main ref={content} className="page-content" aria-labelledby="page-title">
-        {page !== 'Clusters' && !(page === 'Designer' && exampleOpen) && <div className="page-heading">
+        {page === 'Designer' && !exampleOpen && <div className="page-heading">
           <h1 id="page-title">{page}</h1>
           {page === 'Designer' && <div className="heading-actions">
             <ComingButton label="New agent" reason="Creating agents is coming" />
@@ -186,16 +190,20 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
+          <Setup place={place} onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
             onOpenExample={() => {
               if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
               setExampleOpen(true); setPage('Designer');
             }} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} documentId={documentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
         </>} /></div>}
-        {page !== 'Clusters' && !(page === 'Designer' && exampleOpen) && <section className="card empty-state">
+        <Overview active={page === 'Overview'} runBusy={!!run?.busy} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} onCounts={setOverviewCounts}
+          onOpenDocument={id => { choosePlace({ kind: 'thisComputer' }); setDocumentId(id); setExampleOpen(true); setPage('Designer'); }}
+          onOpenExample={() => { choosePlace({ kind: 'thisComputer' }); setDocumentId(SAMPLE_DOCUMENT_ID); setExampleOpen(true); setPage('Designer'); }}
+          onChooseWorkspace={() => setPage('Clusters')} />
+        {page === 'Designer' && !exampleOpen && <section className="card empty-state">
           <span className="icon-tile empty-icon"><PageIcon page={page} /></span>
           <div>
             <h2>{copy.title}</h2>

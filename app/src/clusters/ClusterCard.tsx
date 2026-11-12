@@ -4,7 +4,7 @@ import { clusterDetails, clusterRecovery } from './recovery';
 import './clusters.css';
 
 type Failure = { failure: ClusterFailure; operation: 'Read kubeconfig' | 'Reload kubeconfig' | 'Discover Orka' | 'Use cluster' };
-export default function ClusterCard({ onPlace, onOpenAgent }: { onPlace: (place: SelectedPlace) => void; onOpenAgent: () => void }) {
+export default function ClusterCard({ active = true, onPlace, onOpenAgent }: { active?: boolean; onPlace: (place: SelectedPlace) => void; onOpenAgent: () => void }) {
   const [choices, setChoices] = useState<ContextView[]>([]);
   const [contextId, setContextId] = useState('');
   const [targets, setTargets] = useState<TargetView[]>();
@@ -32,10 +32,16 @@ export default function ClusterCard({ onPlace, onOpenAgent }: { onPlace: (place:
     if (access?.status === 'needServiceAccount') accountField.current?.focus();
     if (access?.status === 'connected') providerField.current?.focus();
   }, [access]);
+  useEffect(() => {
+    if (active) return;
+    // Retain configuration, not active confirmation; late replies cannot reselect it.
+    epoch.current++; admitted.current = false; reloadActive.current = false;
+    setBusy(false); setReloading(false); setAccess(undefined);
+  }, [active]);
   const target = targets?.find(t => t.id === targetId);
   const recovery = error && clusterRecovery(error.failure);
   async function reload() {
-    if (reloadActive.current) return;
+    if (!active || reloadActive.current) return;
     reloadActive.current = true; admitted.current = false; const request = ++epoch.current;
     setReloading(true); setBusy(true); setChoices([]); setContextId(''); setTargets(undefined); setTargetId('');
     setAccess(undefined); setProviderId(''); setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
@@ -50,6 +56,7 @@ export default function ClusterCard({ onPlace, onOpenAgent }: { onPlace: (place:
     catch { setNotice("Couldn't copy. Share the visible error message for help."); }
   }
   async function check(id: string) {
+    if (!active) return;
     const request = ++epoch.current;
     setContextId(id); setTargets(undefined); setTargetId(''); setAccess(undefined); setProviderId(''); setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
     onPlace({ kind: 'cluster' });
@@ -63,7 +70,7 @@ export default function ClusterCard({ onPlace, onOpenAgent }: { onPlace: (place:
     finally { if (request === epoch.current) setBusy(false); }
   }
   async function confirm() {
-    if (!target || busy || admitted.current) return;
+    if (!active || !target || busy || admitted.current) return;
     admitted.current = true; const request = ++epoch.current; setBusy(true); setError(undefined); setNotice('');
     try {
       const value = await connectCluster(target.id, needsAccount ? account.trim() : null);
@@ -71,13 +78,15 @@ export default function ClusterCard({ onPlace, onOpenAgent }: { onPlace: (place:
       setAccess(value);
       if (value.failure) setError({ failure: value.failure, operation: 'Use cluster' });
       if (value.status === 'needServiceAccount') setNeedsAccount(true);
-      const selectedProvider = value.providers.length === 1 ? value.providers[0].id : '';
+      // A remembered provider still offered by the fresh reply is kept rather than discarded.
+      const selectedProvider = providerId && value.providers.some(p => p.id === providerId) ? providerId
+        : value.providers.length === 1 ? value.providers[0].id : '';
       setProviderId(selectedProvider);
       onPlace(value.status === 'connected' ? { kind: 'cluster', target, providers: value.providers, providerId: selectedProvider } : { kind: 'cluster' });
     } catch (error) { if (request === epoch.current) setError({ failure: failedCheck(error, 'orkaConnection'), operation: 'Use cluster' }); }
     finally { if (request === epoch.current) { admitted.current = false; setBusy(false); } }
   }
-  return <section className="cluster-card" aria-label="Connect an existing cluster" aria-busy={busy}>
+  return <section className="cluster-card" aria-label="Connect an existing cluster" aria-busy={busy} hidden={!active}>
     <label htmlFor="cluster-context">kubectl context</label>
     <select id="cluster-context" value={contextId} disabled={busy} onChange={event => { void check(event.target.value); }}>
       <option value="">Choose a context</option>{choices.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}

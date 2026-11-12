@@ -23,7 +23,7 @@ test('selected_heading', async () => {
   for (const name of ['Designer', 'Clusters', 'Overview']) {
     await user.click(screen.getByRole('button', { name }));
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
-    expect(await screen.findByRole('main', { name: name === 'Clusters' ? 'Where should your agents run?' : name })).toBeTruthy();
+    expect(await screen.findByRole('main', { name: name === 'Clusters' ? 'Where should your agents run?' : name === 'Overview' ? 'Your agents' : name })).toBeTruthy();
     const selected = screen.getAllByRole('button').filter(button => button.getAttribute('aria-current') === 'page');
     expect(selected).toEqual([screen.getByRole('button', { name })]);
   }
@@ -50,10 +50,29 @@ test('navigation starts at the page heading after scrolling another page', async
   expect(main.scrollTop).toBe(0);
 });
 
-test('Overview stays empty until an agent catalog exists', async () => {
+test('Overview reads saved documents without opening, setup or VM commands; Open uses document identity', async () => {
+  vi.stubGlobal('isTauri', true);
+  const id = '12345678-1234-1234-1234-123456789abc'; const calls: string[] = [];
+  mockIPC((command, args) => {
+    calls.push(command);
+    if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
+    if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'second', state: 'readable', source: null, summary: null, reason: 'Declarations unavailable' }] };
+    if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
+    if (command === 'agent_open') { expect(args).toEqual({ documentId: id }); return { documentId: id, name: 'second', agent: '---\nname: second\n---\nRead.', tests: 'Checks' }; }
+    if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  expect(within(screen.getByRole('main', { name: 'Overview' })).getByText('Nothing is connected yet.')).toBeTruthy();
+  await screen.findByRole('heading', { name: 'second' });
+  expect(calls).not.toContain('agent_open');
+  expect(calls.some(c => /setup_select|agent_run$|send_start/.test(c))).toBe(false);
+  await user.click(screen.getByRole('button', { name: 'Open second' }));
+  expect(await screen.findByRole('heading', { name: 'second', level: 1 })).toBeTruthy();
+  expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open second' }));
+  expect(calls.filter(c => c === 'agent_open')).toHaveLength(1);
 });
 
 test('Designer opens the owned agent without workspace setup and shares its saved state', async () => {
@@ -99,7 +118,7 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
     expect(button.getAttribute('title')).toMatch(/coming/i);
   }
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/agent folder|Reopen your agent/);
-  expect(screen.getByText('This computer')).toBeTruthy();
+  expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');
 });
 
 test('setup refreshes while another page is open', async () => {
@@ -132,8 +151,8 @@ test('model acknowledgment and observed check counts survive navigation', async 
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('AI connected')).toBeTruthy();
-  expect(screen.getByText('This computer').closest('.host-chip')?.getAttribute('title')).toBe('AI connected');
-  expect(screen.getByText('This computer').closest('.host-chip')?.textContent).toBe('This computer: AI connected');
+  expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('AI connected');
+  expect(document.querySelector('.host-chip')?.textContent).toBe('This computer: AI connected');
   await user.click(screen.getByRole('button', { name: 'Open example' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 checks passing')).toBeTruthy();
   expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
@@ -268,6 +287,78 @@ test('a transient setup read failure does not invalidate an admitted model conne
   fail = false;
   expect(await within(screen.getByRole('contentinfo')).findByText('AI connected', {}, { timeout: 2000 })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Model connected' }).matches(':disabled')).toBe(true);
+});
+
+test('local Open clears shared cluster selection; remembered cluster needs a fresh successful Use before preflight', async () => {
+  vi.stubGlobal('isTauri', true);
+  const id = '9b2b93c4-375c-4815-9717-39852a96e411';
+  const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' };
+  const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name, service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka:0.9.4' };
+  const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-model', ready: true };
+  const connected = { status: 'connected', providers: [provider], failure: null };
+  const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
+  const calls: string[] = []; let uses = 0; let finish!: (value: unknown) => void;
+  mockIPC(command => {
+    calls.push(command);
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
+    if (command === 'cluster_contexts') return [context];
+    if (command === 'cluster_discover') return [target];
+    if (command === 'cluster_use') return ++uses === 1 ? connected : new Promise(resolve => { finish = resolve; });
+    if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'reader', source, state: 'readable', summary: null, reason: null }] };
+    if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
+    if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\nmodel: literal-model\n---\nRead.', tests: 'Checks', source };
+    if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'send_status') return { documentId: id, view: null, busy: null };
+    if (command === 'send_history') return [];
+    if (command === 'engine_call') return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+    return null;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
+  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
+  await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
+  await screen.findByRole('button', { name: 'Open your agent' });
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open reader' }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 });
+  expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
+  await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
+  expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe(context.id);
+  expect(uses).toBe(1); expect(calls).not.toContain('send_preflight'); expect(calls).not.toContain('send_start');
+  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
+  expect(calls).not.toContain('send_preflight');
+  await act(async () => { finish(connected); });
+  await screen.findByRole('button', { name: 'Open your agent' });
+  await act(async () => {});
+  expect(calls.filter(c => c === 'send_preflight')).toHaveLength(1);
+  expect(calls).not.toContain('send_start');
+});
+
+test('Overview waits for native busy release even when the report is already complete', async () => {
+  vi.stubGlobal('isTauri', true);
+  const id = '9b2b93c4-375c-4815-9717-39852a96e411';
+  let busy = true; let lists = 0;
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
+    if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks' };
+    if (command === 'agent_run_status') return { documentId: id, busy: busy ? { documentId: id, name: 'reader' } : null, state: 'complete', canRun: false, report: { verdict: 'passed', cases: [{ id: 'a', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null };
+    if (command === 'overview_files') return { state: 'complete', files: [], runActive: busy };
+    if (command === 'overview_agents') { lists++; return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' }; }
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await within(screen.getByRole('contentinfo')).findByText('1 of 1 checks passing');
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await screen.findByText('Refresh pending until checks finish');
+  await user.click(screen.getByRole('button', { name: 'Refresh' }));
+  expect(lists).toBe(0);
+  busy = false;
+  await within(screen.getByRole('region', { name: 'Agents on this computer' })).findByText('Workspace stopped', {}, { timeout: 2000 });
+  expect(lists).toBe(1);
 });
 
 test('Clusters reads setup and version without fetch or legacy IPC', async () => {

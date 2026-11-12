@@ -184,6 +184,20 @@ impl Agents {
         replace(&root, "registry.json", &bytes).map_err(|_| ERROR)?;
         Ok(result)
     }
+    /// One registry snapshot and one inspection per owned folder; no selection writes.
+    pub fn overview_files(&self) -> Result<Vec<crate::overview::SavedFile>> {
+        let _access = self.access.lock().map_err(|_| ERROR)?;
+        let registry = self.registry()?;
+        let mut files = Vec::new();
+        if let Some(file) = crate::overview::inspect(&self.sample, true) {
+            files.push(file);
+        }
+        for entry in registry.agents {
+            let folder = AgentFolder::created(self.home.clone(), &entry.name, entry.id)?;
+            files.push(crate::overview::inspect(&folder, false).unwrap());
+        }
+        Ok(files)
+    }
     pub fn list(&self) -> Result<Vec<AgentEntry>> {
         let _access = self.access.lock().map_err(|_| ERROR)?;
         let registry = self.registry()?;
