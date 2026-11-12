@@ -3,12 +3,15 @@ import { addTool, changeDescription, changeInstructions, changeModel, changeSoul
 import { builtInTools, builtInToolDescriptions } from './built-in-tools';
 import FileLocation from './FileLocation';
 import { SAMPLE_DOCUMENT_ID } from './agent-api';
-import type { WorkspaceCatalogReply } from '../catalog';
+import type { CatalogTool, WorkspaceCatalogReply } from '../catalog';
 
 function Unavailable({ label, reason, children, focusRef }: { label: string; reason: string; children: ReactNode; focusRef?: Ref<HTMLSpanElement> }) {
   return <span ref={focusRef} className="coming-control" tabIndex={0} role="group" aria-label={`${label}: ${reason}`} title={reason}>
     {children}<span className="control-tip" aria-hidden="true">{reason}</span>
   </span>;
+}
+function toolDescription(tool: CatalogTool): string {
+  return tool.kind === 'builtin' && Object.hasOwn(builtInToolDescriptions, tool.name) ? builtInToolDescriptions[tool.name] : tool.description;
 }
 export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_ID, readOnly, setupPending = false, catalog, catalogLoading = false, onPendingEdit, onChange }: {
   source: string; path?: string; documentId?: string; readOnly: boolean; setupPending?: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; onPendingEdit?: (pending: boolean) => void; onChange: (source: string) => void;
@@ -54,7 +57,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
   const builtins = new Set(tools?.filter(tool => tool.kind === 'builtin').map(tool => tool.name));
   const choices = tools?.filter(tool => !form.tools.some(selected => selected.name === tool.name)
     && !(tool.kind === 'tool' && builtins.has(tool.name))
-    && `${tool.name} ${tool.description} ${tool.kind === 'builtin' ? builtInTools[tool.name] ?? '' : ''}`.toLowerCase().includes(query.toLowerCase()));
+    && `${tool.name} ${toolDescription(tool)} ${tool.description} ${tool.kind === 'builtin' ? builtInTools[tool.name] ?? '' : ''}`.toLowerCase().includes(query.toLowerCase()));
   const models = catalog?.models.state === 'ready' ? catalog.models.items.filter(model => model.pickerEnabled !== false && model.chatSupported !== false) : undefined;
   const listed = models?.some(model => model.id === form.model);
   const knownModel = catalog?.models.state === 'ready' && catalog.models.items.some(model => model.id === form.model);
@@ -111,7 +114,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
         <ul aria-label="Workspace tools">{choices?.map(tool => <li key={`${tool.kind}:${tool.name}`}><button type="button" onClick={() => { change(addTool(source, tool.name, tool.kind)); close(); }}>
           <span>{tool.kind === 'builtin' ? labelFor(tool.name) : tool.name}</span><code>{tool.name}</code>
           <span className="muted">{tool.kind === 'builtin' ? 'Built-in' : 'Workspace tool'}</span>
-          <span className="tool-description">{tool.kind === 'builtin' && Object.hasOwn(builtInToolDescriptions, tool.name) ? builtInToolDescriptions[tool.name] : tool.description}</span>
+          <span className="tool-description">{toolDescription(tool)}</span>
           {tool.available === false && <span className="muted">Observed unavailable</span>}
         </button></li>)}</ul>
         {!choices?.length && <p className="muted">{tools?.length ? 'No matching tools to add.' : 'No tools listed by this workspace.'}</p>}

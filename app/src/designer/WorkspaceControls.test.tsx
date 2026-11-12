@@ -57,6 +57,12 @@ test.each(['__proto__', 'constructor', 'toString'])('unknown built-in %s renders
   await user.click(screen.getByRole('button', { name: new RegExp(name) }));
   expect(readForm(changed.mock.calls[0][0]).tools[0]).toMatchObject({ name, kind: 'builtin' });
 });
+test('tool search includes the friendly description shown in the picker', async () => {
+  const user = userEvent.setup(); render(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={() => {}} />);
+  await user.click(screen.getByRole('button', { name: 'Add a tool' }));
+  await user.type(screen.getByRole('searchbox'), 'contents');
+  expect(screen.getByRole('button', { name: /Read a web page/ })).toBeTruthy();
+});
 test('a restored catalog never reopens a picker dismissed by unavailability', async () => {
   const user = userEvent.setup();
   const view = render(<AgentParts source={source} readOnly={false} catalog={catalog} onChange={() => {}} />);

@@ -2,6 +2,15 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import FileEditor from './FileEditor';
 afterEach(cleanup);
+test('large supported files stay editable without building a node for every line', () => {
+  const source = '\n'.repeat(5000); const changed = vi.fn();
+  render(<FileEditor value={source} onChange={changed} onSave={() => {}} />);
+  expect(document.querySelector('.file-highlight')).toBeNull();
+  const field = screen.getByRole('textbox') as HTMLTextAreaElement;
+  expect(field.value).toBe(source); expect(field.classList.contains('file-plain')).toBe(true);
+  fireEvent.change(field, { target: { value: source + 'Kept' } });
+  expect(changed).toHaveBeenLastCalledWith(source + 'Kept');
+});
 test('lone carriage returns use the same lines as the native textarea', () => {
   render(<FileEditor value={'one\rtwo\r'} onChange={() => {}} onSave={() => {}} />);
   expect((screen.getByRole('textbox') as HTMLTextAreaElement).value).toBe('one\ntwo\n');

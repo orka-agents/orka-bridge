@@ -339,8 +339,9 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
 }
 func scrollMain(_ pixels: Int32) {
     let rect = window()!.1
-    mouse(.mouseMoved, CGPoint(x: rect.maxX - 20, y: rect.midY))
-    CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
+    let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)
+    scroll?.location = CGPoint(x: rect.maxX - 20, y: rect.midY)
+    scroll?.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: 0.3)
 }
 func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
