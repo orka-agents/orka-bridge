@@ -9,6 +9,7 @@ pub mod dev_image;
 pub mod engine;
 pub mod example_run;
 pub mod local_vm;
+pub mod overview;
 pub mod pair_source;
 pub mod runtime;
 pub mod send;

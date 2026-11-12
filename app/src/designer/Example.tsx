@@ -84,7 +84,8 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   }, [onPair, boundDocument]);
   useEffect(() => () => { clearTimeout(timer.current); reloadEpoch.current++; }, []);
   useEffect(() => {
-    if (documentId === boundDocument || busy.current || pendingSoul || saveState === 'saving' || saveState === 'error') return;
+    if (documentId === boundDocument) return;
+    if (busy.current || pendingSoul || saveState === 'saving' || saveState === 'error') return;
     if (saveState === 'dirty') { void flush(); return; }
     reloadEpoch.current++; reloadAdmitted.current = false; setReloading(false);
     setPair(undefined); setDraft(''); latest.current = saved.current = '';

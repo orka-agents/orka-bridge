@@ -25,6 +25,8 @@ fn main() {
             "agent_run",
             "agent_run_status",
             "agents_list",
+            "overview_files",
+            "overview_agents",
             "agent_selected",
             "agent_open",
             "agent_save",
