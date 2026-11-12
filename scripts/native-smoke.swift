@@ -146,6 +146,17 @@ func nativeBounds(_ element: AXUIElement) -> CGRect? {
         AXValueGetValue(size as! AXValue, .cgSize, &extent), extent.width > 0, extent.height > 0 else { return nil }
     return CGRect(origin: point, size: extent)
 }
+func clickDesignerView(_ name: String) {
+    let matches = nativeElements().filter { element in
+        ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == name }
+            && attribute(element, "AXEnabled") as? Bool == true
+            && (attribute(element, "AXRole") as? String == "AXCheckBox" || attribute(element, "AXRole") as? String == "AXButton")
+    }.compactMap { nativeBounds($0) }.filter { window()!.1.contains($0) }
+    require(matches.count == 1, "Cannot identify the visible Designer \(name) control")
+    let point = CGPoint(x: matches[0].midX, y: matches[0].midY)
+    mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+    Thread.sleep(forTimeInterval: 0.3)
+}
 func nativeTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
@@ -508,7 +519,7 @@ require(savedFooter.range(of: "\\bSaved\\b", options: .regularExpression) != nil
 print("PASS owned setup editor: native keyboard append persisted exact bytes, without a ready VM")
 // Exercise the real settings disclosure; reveal controls are observed, not
 // activated, so the walk never opens Finder or touches the clipboard.
-clickText("Agent", in: editedFile)
+clickDesignerView("Agent")
 scrollMain(-400)
 let beforeSettings = try capture("before-settings", "Designer")
 clickText("More settings", in: beforeSettings)
@@ -553,8 +564,10 @@ require(abs(window()!.1.width - compactSize.width) < 3 && abs(window()!.1.height
         "Native 540x900 content area not verified: \(window()!.1)")
 let compactClusters = try capture("clusters-compact", "Clusters")
 clickTab("Designer", compactClusters)
-let compactDesigner = try capture("designer-compact", "Designer")
-clickText("File", in: compactDesigner)
+try capture("designer-compact", "Designer")
+clickDesignerView("File")
+require(nativeElements().contains { attribute($0, "AXRole") as? String == "AXTextArea"
+    && attribute($0, "AXTitle") as? String == "Agent file" }, "Compact File editor did not open")
 let compactFile = try capture("file-compact", "Designer")
 clickTab("Clusters", compactFile)
 print("PASS native walk: pointer, Shift-Tab/Tab, Space, Enter and minimum window")
