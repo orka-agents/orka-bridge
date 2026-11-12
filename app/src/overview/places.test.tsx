@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Overview from './Overview';
@@ -99,7 +99,7 @@ test('a place with no successful observation never contributes an invented zero 
   ipc({ ...places, places: [{ ...second, observedAt: null, stale: true, agents: [] }] });
   const counts = vi.fn(); render(<Overview {...props} onCounts={counts} />);
   expect(await screen.findByText('No Agent observation yet. Refresh or check access in Clusters.')).toBeTruthy();
-  expect(counts).toHaveBeenLastCalledWith(expect.stringContaining('Cluster Agent count unavailable'));
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith(expect.stringContaining('Cluster Agent count unavailable')));
   expect(screen.queryByText(/0 cluster Agents/)).toBeNull();
 });
 

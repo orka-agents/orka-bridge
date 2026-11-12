@@ -37,7 +37,7 @@ test('counts keep files separate from Agents and external metadata is escaped', 
   expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy();
   expect(document.querySelector('img')).toBeNull();
   expect(screen.getByText(/Model declared in file: gpt-test/)).toBeTruthy();
-  expect(counts).toHaveBeenLastCalledWith('1 saved file · 1 Agent');
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 saved file · 1 Agent'));
 });
 
 test('both empty offers the existing example, unavailable is not empty', async () => {

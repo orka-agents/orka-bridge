@@ -168,14 +168,17 @@ func clickDesignerView(_ name: String) {
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.3)
 }
-func nativeTextIsVisible(_ expected: String) -> Bool {
-    nativeElements().contains { element in
-        guard attribute(element, "AXRole") as? String == "AXStaticText",
-            (attribute(element, "AXValue") as? String)?.contains(expected) == true,
-            let bounds = nativeBounds(element), let rect = window()?.1 else { return false }
-        return rect.contains(bounds)
-    }
+func nativeTextBounds(_ expected: String) -> [CGRect] {
+    guard let rect = window()?.1 else { return [] }
+    return nativeElements().filter { element in
+        guard let role = attribute(element, "AXRole") as? String,
+            ["AXStaticText", "AXHeading"].contains(role) else { return false }
+        return ["AXValue", "AXTitle", "AXDescription"].contains {
+            (attribute(element, $0) as? String)?.contains(expected) == true
+        }
+    }.compactMap { nativeBounds($0) }.filter { rect.contains($0) }
 }
+func nativeTextIsVisible(_ expected: String) -> Bool { !nativeTextBounds(expected).isEmpty }
 @discardableResult
 func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> AXUIElement {
     // Small Inter labels can be grouped with subtitles by Vision. Identify the
@@ -739,12 +742,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 0.5)
     require(abs(window()!.1.width - overviewSize.width) < 3 && abs(window()!.1.height - overviewSize.height) < 3,
             "Native Overview size not verified")
-    func visibleTextBounds(_ text: String) -> [CGRect] {
-        nativeElements().filter {
-            attribute($0, "AXRole") as? String == "AXStaticText"
-                && (attribute($0, "AXValue") as? String)?.contains(text) == true
-        }.compactMap { nativeBounds($0) }.filter { window()!.1.contains($0) }
-    }
+    func visibleTextBounds(_ text: String) -> [CGRect] { nativeTextBounds(text) }
     @discardableResult
     func overviewShot(_ name: String, _ required: [String]) throws -> [VNRecognizedTextObservation] {
         scrollMain(12000)
@@ -758,6 +756,16 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
                 return seen
             }
             scrollMain(-180)
+        }
+        let diagnostic = Process()
+        diagnostic.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        diagnostic.arguments = ["-x", "-o", "-l", String(window()!.0), "\(output)/\(name)-failed.png"]
+        try diagnostic.run(); diagnostic.waitUntilExit()
+        for element in nativeElements() {
+            guard let bounds = nativeBounds(element), window()!.1.contains(bounds) else { continue }
+            let values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+            let role = attribute(element, "AXRole") as? String ?? "unknown"
+            if !values.isEmpty { print("VISIBLE AX \(role): \(values) \(bounds)") }
         }
         fail("Overview state not visible for \(name): \(required)")
     }
