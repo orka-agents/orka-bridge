@@ -56,6 +56,7 @@ impl OrkaRead for PodOrkaRead {
                     after,
                     None,
                     deadline,
+                    resource == OrkaResource::AgentInventory,
                 )
                 .await;
             connection.close().await;
@@ -66,7 +67,7 @@ impl OrkaRead for PodOrkaRead {
 fn path(resource: OrkaResource) -> &'static str {
     match resource {
         OrkaResource::WhoAmI => "auth/whoami",
-        OrkaResource::Agents => "agents",
+        OrkaResource::Agents | OrkaResource::AgentInventory => "agents",
         OrkaResource::Providers => "providers",
         OrkaResource::Tools => "tools",
     }
@@ -93,6 +94,7 @@ impl OrkaRead for OrkaStreamTransport {
                     after,
                     None,
                     deadline,
+                    resource == OrkaResource::AgentInventory,
                 )
                 .await
                 .map_err(|e| orka_error(resource.check(), e))
@@ -205,6 +207,7 @@ impl RunTransport for OrkaStreamTransport {
                     after.as_deref(),
                     body,
                     deadline,
+                    false,
                 )
                 .await
         })
@@ -312,6 +315,7 @@ impl Connection {
         after: Option<&str>,
         body: Option<&Value>,
         deadline: Instant,
+        inventory: bool,
     ) -> Result<Value, ErrorKind> {
         let deadline = deadline.min(Instant::now() + REQUEST_TIMEOUT);
         let mut fully_read = false;
@@ -324,8 +328,8 @@ impl Connection {
             url.set_path(&format!("/api/v1/{path}"));
             url.query_pairs_mut().append_pair("namespace", namespace);
             if path == "agents" && body.is_none() {
-                // This is an access probe, not an inventory of full Agent specs.
-                url.query_pairs_mut().append_pair("limit", "1");
+                url.query_pairs_mut()
+                    .append_pair("limit", if inventory { "10" } else { "1" });
             }
             if let Some(after) = after {
                 let key = if path.ends_with("/events") {
@@ -333,9 +337,10 @@ impl Connection {
                 } else {
                     "continue"
                 };
-                url.query_pairs_mut()
-                    .append_pair(key, after)
-                    .append_pair("limit", "1000");
+                url.query_pairs_mut().append_pair(key, after);
+                if path != "agents" {
+                    url.query_pairs_mut().append_pair("limit", "1000");
+                }
             }
             let uri = format!("{}?{}", url.path(), url.query().unwrap());
             let mut authorization = HeaderValue::from_str(&format!("Bearer {bearer}"))
@@ -543,6 +548,7 @@ mod tests {
             None,
             None,
             Instant::now() + Duration::from_secs(2),
+            false,
         ));
         std::future::poll_fn(|cx| {
             assert!(next.as_mut().poll(cx).is_pending());

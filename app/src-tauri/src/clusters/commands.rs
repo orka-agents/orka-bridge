@@ -111,6 +111,7 @@ pub struct ClusterSession(
     // Memory-only admission snapshot, independent of bounded discovery/Use waits.
     Arc<std::sync::Mutex<ConfirmedAccess>>,
     Arc<AtomicBool>,
+    Arc<crate::overview_places::Inventory>,
 );
 impl Default for ClusterSession {
     fn default() -> Self {
@@ -119,6 +120,7 @@ impl Default for ClusterSession {
             Arc::new(read_kubeconfig),
             ExecOwner::default(),
             Arc::new(PodOrkaRead),
+            Arc::default(),
             Arc::default(),
             Arc::default(),
         )
@@ -142,11 +144,16 @@ impl ClusterSession {
             orka,
             Arc::default(),
             Arc::default(),
+            Arc::default(),
         )
     }
     /// Independent of the discovery/Use lock, so close can interrupt a running plugin.
     pub async fn shutdown(&self) {
+        self.6.invalidate(None);
         self.2.shutdown().await;
+    }
+    pub async fn overview(&self) -> Vec<crate::overview_places::Place> {
+        self.6.refresh().await
     }
     /// Memory-only lookup; the caller rechecks a fresh kubeconfig before writing.
     pub(crate) fn send_access(&self, target: &str) -> SendAccess {
@@ -171,6 +178,7 @@ impl ClusterSession {
     pub async fn reload(&self) -> Result<Vec<ContextView>, ClusterFailure> {
         let mut session = self.0.lock().await;
         *session = Session::default();
+        self.6.invalidate(None);
         *self.4.lock().unwrap() = None;
         session
             .client(self)
@@ -197,6 +205,9 @@ impl ClusterSession {
         let result = async {
             let client = session.client(self).await.map_err(AccessOutcome::Failed)?;
             let id = id.ok_or(AccessOutcome::Failed(UNKNOWN_CONFIGURATION))?;
+            if let Some(binding) = client.target_binding(id) {
+                self.6.invalidate(Some(binding));
+            }
             client.connect(id, sa_name).await
         }
         .await;
@@ -207,7 +218,9 @@ impl ClusterSession {
                     providers: access.providers().to_vec(),
                     failure: None,
                 };
-                *self.4.lock().unwrap() = id.map(|id| (id, Arc::new(access)));
+                let access = Arc::new(access);
+                self.6.remember(access.clone());
+                *self.4.lock().unwrap() = id.map(|id| (id, access));
                 view
             }
             Err(outcome) => outcome.into(),

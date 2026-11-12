@@ -1,6 +1,6 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { afterEach, expect, test, vi } from 'vitest';
-import { isLiveAgents, isSavedFiles, readAgents, readFiles } from './api';
+import { isLiveAgents, isPlaces, isSavedFiles, readAgents, readFiles, readPlaces } from './api';
 const installation = '12345678-1234-1234-1234-123456789abc';
 const complete = { state: 'complete', installation, agents: [], observedAt: 123, observation: null, runActive: false, reason: null };
 afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
@@ -25,6 +25,21 @@ test('supported long declarations, empty optional metadata and large registries 
   expect(isSavedFiles({ state: 'complete', runActive: false, files: [file] })).toBe(true);
   expect(isSavedFiles({ state: 'complete', runActive: false, files: Array(1025).fill(file) })).toBe(true);
   expect(isLiveAgents({ ...complete, agents: Array(1025).fill({ name: 'agent', namespace: 'ns', uid: 'uid' }) })).toBe(true);
+});
+test('places require coherent scoped identity and complete summary schema', async () => {
+  const agent = { name: 'reader', namespace: 'agents', uid: 'uid', agentType: null, model: null, tools: null, record: null };
+  const place = { key: 'key', context: 'team', service: 'control/orka', namespace: 'agents', stale: false, observedAt: 123, agents: [agent] };
+  const valid = { places: [place], historyState: 'complete', unobserved: [] };
+  expect(isPlaces(valid)).toBe(true);
+  expect(isPlaces({ ...valid, places: [{ ...place, observedAt: null }] })).toBe(false);
+  expect(isPlaces({ ...valid, places: [{ ...place, agents: [{ ...agent, namespace: 'elsewhere' }] }] })).toBe(false);
+  expect(isPlaces({ ...valid, places: [{ ...place, agents: [{ ...agent, tools: [1] }] }] })).toBe(false);
+  expect(isPlaces({ ...valid, places: [place, place] })).toBe(false);
+  expect(isPlaces({ ...valid, unobserved: [{ agentUid: null, verdict: 'passed' }] })).toBe(false);
+  vi.stubGlobal('isTauri', true); mockIPC((command, args) => { expect(command).toBe('overview_places'); expect(args).toEqual({}); return valid; });
+  expect(await readPlaces()).toEqual(valid);
+  mockIPC(() => ({ ...valid, historyState: 'invented' }));
+  expect(await readPlaces()).toBeUndefined();
 });
 test('native rejection and browser preview never expose diagnostics', async () => {
   vi.stubGlobal('isTauri', true); mockIPC(() => { throw Error('/private/path with credential'); });

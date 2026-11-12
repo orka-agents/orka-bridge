@@ -83,6 +83,9 @@ impl ClusterClient {
         self.exec = exec;
         self
     }
+    pub(crate) fn target_binding(&self, id: TargetId) -> Option<&TargetBinding> {
+        self.targets.get(&id)
+    }
     pub fn contexts(&self) -> Result<Vec<ContextView>, ClusterError> {
         Ok(self.contexts.clone())
     }
@@ -314,6 +317,81 @@ impl ClusterClient {
     }
 }
 impl RemoteAccess {
+    /// A complete bounded GET-only inventory using already confirmed access.
+    pub async fn inventory(
+        &self,
+    ) -> Result<Vec<crate::overview_places::RemoteAgent>, ClusterError> {
+        if self
+            .expiry
+            .as_ref()
+            .is_some_and(|t| t.0 <= k8s_openapi::jiff::Timestamp::now())
+        {
+            return Err(ClusterError::Denied);
+        }
+        tokio::time::timeout(OPERATION_LIMIT, async {
+            // A retained Service may now route to a recreated controller. Reuse
+            // discovery's list permission, scoped to the one recorded Deployment.
+            let deployments: Api<Deployment> =
+                Api::namespaced(self.creator.clone(), &self.binding.deployment_namespace);
+            let params = ListParams::default()
+                .fields(&format!("metadata.name={}", self.binding.deployment_name))
+                .limit(1);
+            let listed = tokio::time::timeout(REQUEST_TIMEOUT, deployments.list(&params))
+                .await
+                .map_err(|_| ClusterError::Unavailable)?
+                .map_err(|error| cluster_error(kube_error(Check::ClusterApi, error)))?;
+            if listed
+                .metadata
+                .continue_
+                .as_ref()
+                .is_some_and(|s| !s.is_empty())
+                || listed.items.len() != 1
+                || listed.items[0].metadata.uid.as_deref() != Some(&self.binding.deployment_uid)
+                || listed.items[0].metadata.name.as_deref() != Some(&self.binding.deployment_name)
+                || listed.items[0].metadata.namespace.as_deref()
+                    != Some(&self.binding.deployment_namespace)
+            {
+                return Err(ClusterError::Unavailable);
+            }
+            if !deployment_watches(&listed.items[0], &self.binding.watched_namespace) {
+                return Err(ClusterError::Unavailable);
+            }
+            let mut agents = Vec::new();
+            let mut after = None;
+            let mut cursors = HashSet::new();
+            let mut uids = HashSet::new();
+            let mut bytes = 0;
+            loop {
+                let page = self
+                    .read(OrkaResource::AgentInventory, after.as_deref())
+                    .await
+                    .map_err(cluster_error)?;
+                bytes += serde_json::to_vec(&page)
+                    .map_err(|_| ClusterError::Unavailable)?
+                    .len();
+                if bytes > 16 * 1024 * 1024 {
+                    return Err(ClusterError::Unavailable);
+                }
+                for item in items(&page).map_err(cluster_error)? {
+                    let agent =
+                        crate::overview_places::agent(item, &self.binding.watched_namespace)?;
+                    if !uids.insert(agent.uid.clone()) || agents.len() >= 4096 {
+                        return Err(ClusterError::Unavailable);
+                    }
+                    agents.push(agent);
+                }
+                after = continuation(&page).map_err(cluster_error)?;
+                if after.is_none() {
+                    return Ok(agents);
+                }
+                if !cursors.insert(after.clone()) {
+                    return Err(ClusterError::Unavailable);
+                }
+            }
+        })
+        .await
+        .unwrap_or(Err(ClusterError::Unavailable))
+    }
     pub fn binding(&self) -> &TargetBinding {
         &self.binding
     }
@@ -471,6 +549,77 @@ impl RemoteAccess {
         Ok(())
     }
 }
+fn deployment_watches(deployment: &Deployment, namespace: &str) -> bool {
+    let Some(template) = deployment.spec.as_ref().map(|s| &s.template) else {
+        return false;
+    };
+    let Some(spec) = template.spec.as_ref() else {
+        return false;
+    };
+    let labels = template
+        .metadata
+        .as_ref()
+        .and_then(|m| m.labels.as_ref())
+        .cloned()
+        .unwrap_or_default();
+    let mut found = false;
+    for container in &spec.containers {
+        if is_orka(container, &labels) {
+            found = true;
+            if watched_namespace(container.args.as_deref().unwrap_or_default()).ok()
+                != Some(namespace)
+            {
+                return false;
+            }
+        }
+    }
+    found
+}
+fn is_orka(
+    container: &k8s_openapi::api::core::v1::Container,
+    labels: &std::collections::BTreeMap<String, String>,
+) -> bool {
+    let args = container.args.as_deref().unwrap_or_default();
+    // A generic API port is not Orka evidence; unrelated controllers use it too.
+    let serves_api = args
+        .iter()
+        .any(|a| a.starts_with("--api-port=") || a == "--api-port")
+        || container
+            .ports
+            .as_ref()
+            .is_some_and(|ports| ports.iter().any(|p| p.name.as_deref() == Some("api")));
+    let orka_label = serves_api
+        && labels
+            .get("app.kubernetes.io/name")
+            .is_some_and(|n| n == "orka");
+    let orka_image = container.image.as_deref().is_some_and(|image| {
+        image
+            .split('@')
+            .next()
+            .and_then(|i| i.rsplit('/').next())
+            .and_then(|i| i.split(':').next())
+            == Some("orka")
+    });
+    orka_label || orka_image
+}
+fn watched_namespace(args: &[String]) -> Result<&str, AccessOutcome> {
+    let mut watched = args.iter().enumerate().filter_map(|(i, a)| {
+        a.strip_prefix("--watch-namespace=").or_else(|| {
+            (a == "--watch-namespace")
+                .then(|| args.get(i + 1).map(String::as_str))
+                .flatten()
+        })
+    });
+    let incompatible = Check::Compatibility.fail(CheckResult::Incompatible);
+    let namespace = watched
+        .next()
+        .filter(|s| dns_label(s))
+        .ok_or(incompatible)?;
+    if watched.next().is_some() {
+        return Err(incompatible);
+    }
+    Ok(namespace)
+}
 async fn installations(
     client: Client,
     context_id: ContextId,
@@ -525,43 +674,10 @@ async fn installations(
             };
             for container in containers {
                 let args = container.args.as_deref().unwrap_or_default();
-                // A generic API port is not Orka evidence; unrelated controllers use it too.
-                let serves_api = args
-                    .iter()
-                    .any(|a| a.starts_with("--api-port=") || a == "--api-port")
-                    || container.ports.as_ref().is_some_and(|ports| {
-                        ports.iter().any(|p| p.name.as_deref() == Some("api"))
-                    });
-                let orka_label = serves_api
-                    && labels
-                        .get("app.kubernetes.io/name")
-                        .is_some_and(|n| n == "orka");
-                let orka_image = container.image.as_deref().is_some_and(|image| {
-                    image
-                        .split('@')
-                        .next()
-                        .and_then(|i| i.rsplit('/').next())
-                        .and_then(|i| i.split(':').next())
-                        == Some("orka")
-                });
-                if !orka_label && !orka_image {
+                if !is_orka(container, labels) {
                     continue;
                 }
-                let mut watched = args.iter().enumerate().filter_map(|(i, a)| {
-                    a.strip_prefix("--watch-namespace=").or_else(|| {
-                        (a == "--watch-namespace")
-                            .then(|| args.get(i + 1).map(String::as_str))
-                            .flatten()
-                    })
-                });
-                let incompatible = Check::Compatibility.fail(CheckResult::Incompatible);
-                let namespace = watched
-                    .next()
-                    .filter(|s| dns_label(s))
-                    .ok_or(incompatible)?;
-                if watched.next().is_some() {
-                    return Err(incompatible);
-                }
+                let namespace = watched_namespace(args)?;
                 let target_port = match &port.target_port {
                     Some(IntOrString::Int(n)) => *n,
                     Some(IntOrString::String(name)) => container
