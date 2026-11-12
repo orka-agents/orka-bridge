@@ -1,6 +1,6 @@
 # Setup progress
 
-Captured from source `0102a673584ebaca541c8688af235dbdb5c078a7` in the native Windows and Mac builds from [App run 43270037954](https://github.com/orka-agents/orka-bridge/actions/runs/43270037954).
+Captured from source `75caa94fe164fe8a93347ccfbe0717b409998ed8` in the native Windows and Mac builds from [App run 43285931250](https://github.com/orka-agents/orka-bridge/actions/runs/43285931250).
 
 Windows images use the compiled frontend in the app's WebView2 with synthetic IPC. Light and dark use renderer media emulation. Compact captures use an actual native-window resize: client 540×900, WebView 540×900 CSS pixels, device-pixel ratio 1. “History” shows the same compact page scrolled down, not another layout.
 
