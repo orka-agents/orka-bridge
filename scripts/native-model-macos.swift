@@ -83,7 +83,11 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
             $0.boundingBox.maxY <= panel.boundingBox.maxY + 0.01
         }.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
-    for value in expected { require(visible.contains(value), "Missing \(value) in \(name): \(text)") }
+    for value in expected {
+        let found = visible.contains(value)
+        let nativeFailure = !found && name.hasPrefix("local-") && nativeFailureTextIsVisible(value)
+        require(found || nativeFailure, "Missing \(value) in \(name): \(text)")
+    }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
         else { fatalError("Cannot sample native theme") }
@@ -158,18 +162,38 @@ func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
     var value: CFTypeRef?
     return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
 }
-var elements = [AXUIElementCreateApplication(child.processIdentifier)]
-var index = 0
-while index < elements.count && elements.count < 4000 {
-    let element = elements[index]; index += 1
-    for key in ["AXChildren", "AXWindows"] {
-        for item in attribute(element, key) as? [AXUIElement] ?? []
-            where !elements.contains(where: { CFEqual($0, item) }) { elements.append(item) }
+func nativeElements() -> [AXUIElement] {
+    var elements = [AXUIElementCreateApplication(child.processIdentifier)]
+    var index = 0
+    while index < elements.count && elements.count < 4000 {
+        let element = elements[index]; index += 1
+        for key in ["AXChildren", "AXWindows"] {
+            for item in attribute(element, key) as? [AXUIElement] ?? []
+                where !elements.contains(where: { CFEqual($0, item) }) { elements.append(item) }
+        }
+    }
+    return elements
+}
+// Vision can read 2099 as 9099 in small Inter text. Require the exact rendered
+// failure text through native accessibility, fully within this window, instead
+// of accepting either number or weakening the expected value.
+func nativeFailureTextIsVisible(_ expected: String) -> Bool {
+    nativeElements().contains { element in
+        guard attribute(element, "AXRole") as? String == "AXStaticText",
+            let text = attribute(element, "AXValue") as? String,
+            text.hasPrefix("The answer did not include"), text.contains(expected),
+            let position = attribute(element, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
+            let size = attribute(element, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else { return false }
+        var origin = CGPoint.zero; var extent = CGSize.zero
+        return AXValueGetValue(position as! AXValue, .cgPoint, &origin)
+            && AXValueGetValue(size as! AXValue, .cgSize, &extent)
+            && extent.width > 0 && extent.height > 0
+            && window()!.1.contains(CGRect(origin: origin, size: extent))
     }
 }
 // Match the fixture's known Instructions value, not a label plus a guessed
 // offset which can land outside the editor after responsive reflow.
-let editors = elements.filter {
+let editors = nativeElements().filter {
     attribute($0, "AXRole") as? String == "AXTextArea"
         && (attribute($0, "AXValue") as? String)?.hasPrefix("Answer from the web page named in the request.") == true
 }
