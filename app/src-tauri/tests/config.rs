@@ -80,6 +80,7 @@ fn agent_commands_are_granted_only_to_local_main_window() {
         "send_preflight",
         "send_start",
         "send_status",
+        "send_history",
         "send_stop",
         "agent_run",
         "agent_run_status",

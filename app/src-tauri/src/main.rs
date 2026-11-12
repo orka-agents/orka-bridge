@@ -202,6 +202,14 @@ fn send_status(document_id: DocumentId, state: tauri::State<'_, Arc<SendOwner>>)
     state.status_document(document_id)
 }
 #[tauri::command]
+fn send_history(
+    state: tauri::State<'_, Arc<SendOwner>>,
+) -> Result<Vec<bridge_engine::send_summary::AttemptSummary>, &'static str> {
+    state.history().map_err(|_| {
+        "Saved Send summaries could not be read. They are unavailable, not passing results."
+    })
+}
+#[tauri::command]
 async fn send_stop(
     document_id: DocumentId,
     send_id: String,
@@ -235,7 +243,11 @@ fn main() {
             let agents = Agents::new(app.path().home_dir().ok(), app.path().app_data_dir().ok());
             let folder = agents.sample();
             app.manage(Arc::new(agents));
-            app.manage(SendOwner::new(folder.clone(), session));
+            app.manage(SendOwner::with_history_root(
+                folder.clone(),
+                session,
+                app.path().app_local_data_dir().ok(),
+            ));
             app.manage(bridge_engine::example_run::ExampleRun::new(
                 tauri::async_runtime::handle().inner().clone(),
                 bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE,
@@ -276,6 +288,7 @@ fn main() {
             send_preflight,
             send_start,
             send_status,
+            send_history,
             send_stop
         ])
         .build(tauri::generate_context!())

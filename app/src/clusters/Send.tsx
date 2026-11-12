@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { SAMPLE_DOCUMENT_ID, type SourceId, sameSource } from '../designer/agent-api';
 import type { RunSnapshot } from '../designer/run-api';
 import type { SelectedPlace } from './api';
-import { type SendCheck, type SendStatus, sendCall, sendErrors, sendPreflight } from './send-api';
+import { type AttemptSummary, type SendCheck, type SendStatus, sendCall, sendErrors, sendHistory, sendPreflight } from './send-api';
 import './clusters.css';
 import { CardSection, Details, Elapsed, GeneratedValue, LongCard, StatusIcon, StatusPill, type Status } from '../components/DesignSystem';
 
@@ -17,6 +17,32 @@ export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failing
   </div>;
 }
 const words = { passed: 'pass', failed: 'fail', unknown: 'unknown' } as const;
+export function SendHistory({ revision }: { revision: string }) {
+  const [history, setHistory] = useState<AttemptSummary[]>();
+  const [error, setError] = useState<string>();
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    let mounted = true;
+    void sendHistory().then(value => {
+      if (mounted) { setHistory(value); setError(undefined); }
+    }, (failure: Error) => { if (mounted) setError(failure.message); });
+    return () => { mounted = false; };
+  }, [revision, retry]);
+  return <section className="send-history" aria-label="Past Sends">
+    <h4>Past Sends</h4>
+    <p>Recent summaries saved on this computer (up to 256, within a size limit). Interrupted Sends are unknown and are not resumed. Send again to create a new Agent; earlier work may still run on the cluster.</p>
+    {error ? <><p role="alert">{error}</p><button type="button" className="workspace-secondary" onClick={() => setRetry(v => v + 1)}>Retry saved Sends</button></>
+      : history ? history.length ? <ol>{history.map(attempt => <li key={attempt.id}>
+        <div className="send-history-heading"><strong>{attempt.plannedAgentName}</strong><span>Saved checks: {attempt.verdict === 'running' ? 'running' : words[attempt.verdict]}</span></div>
+        <p>{attempt.targetDisplay}</p><p>Provider: {attempt.provider} · <time dateTime={new Date(attempt.time * 1000).toISOString()}>{new Date(attempt.time * 1000).toLocaleString()}</time></p>
+        <details><summary>Show saved details</summary><dl className="cluster-details">
+          <div><dt>Agent UID</dt><dd>{attempt.agentUid ?? 'Not confirmed'}</dd></div>
+          <div><dt>Agent file hash</dt><dd>{attempt.source.agent}</dd></div>
+          <div><dt>Check file hash</dt><dd>{attempt.source.tests}</dd></div>
+        </dl></details>
+      </li>)}</ol> : <p>No saved Sends yet.</p> : <p role="status">Reading saved Sends…</p>}
+  </section>;
+}
 export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, model, local, stale, blocked, visible, remote, onChooseCluster, onReloadSource }: {
   documentId?: string; place: SelectedPlace; source?: SourceId; model?: string; local?: RunSnapshot; stale: boolean;
   blocked?: string; visible: boolean; remote: boolean; onChooseCluster?: () => void; onReloadSource?: () => Promise<void>;
@@ -89,7 +115,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   const outdated = !!snapshot && (!samePlace || (!!snapshot.source && !current));
   const uncertain = snapshot?.state === 'unknown' || snapshot?.report?.verdict === 'unknown';
   const resultState: Status = outdated ? 'stale' : running || busy || (checkingEnabled && !checked) ? 'running' : uncertain ? 'not-started' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' || snapshot?.error ? 'failed' : reason ? 'needs-you' : 'not-started';
-  return <section tabIndex={-1} className="send-panel" aria-label="Send and cluster checks" hidden={!visible && !remote && !running}>
+  return <><section tabIndex={-1} className="send-panel" aria-label="Send and cluster checks" hidden={!visible && !remote && !running}>
     <LongCard title={visible ? 'Send your agent' : 'Checks on your cluster'} status={<StatusPill state={resultState}>{resultState === 'not-started' && uncertain ? snapshot?.stage === 'stopped' ? 'Stopped watching' : 'Result unknown' : undefined}</StatusPill>} summary="The saved agent and check files go together. Each Send creates a new Agent, kept on the cluster even if a check fails."
       action={<div className="workspace-step-actions"><button type="button" className="setup-button" disabled={!!reason || busy || running || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run checks' : 'Run all checks'}</button>
       {running && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void mutate('send_stop'); }}>Stop</button>}
@@ -119,6 +145,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
     <CardSection title="What happened">
     {foreignBusy && <p role="status">{foreignBusy.name} is sending checks.</p>}
     {message && <p role="alert">{message}</p>}
+    {snapshot?.storageError && snapshot.error !== 'storage' && <p role="alert">Bridge could not save this Send. Its saved summary may be missing or unknown.</p>}
     {running && <><p role="status">Running checks on {targetName ?? 'the cluster'}…</p><Elapsed /></>}
     {snapshot?.stage === 'stopped' && <p role="status">Stopped watching. The cluster may still be running checks.</p>}
     {snapshot?.error && snapshot.stage !== 'stopped' && <p role="alert">{sendErrors[snapshot.error as keyof typeof sendErrors]}</p>}
@@ -140,8 +167,8 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
       {snapshot.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Check file hash" value={snapshot.source.tests} /></>}
       {snapshot.acknowledged.map(r => <GeneratedValue key={`${r.kind}-${r.uid}`} label={r.kind} value={r.name} />)}
       {snapshot.pending && <GeneratedValue label={`Possibly created ${snapshot.pending.kind}`} value={snapshot.pending.name} />}
-      <p>Results are kept only while Bridge is open. Stop ends watching and prevents further submissions; it does not cancel checks already sent.</p>
+      <p>Detailed answers are kept only while Bridge is open. Small Send summaries remain on this computer. Stop ends watching and prevents further submissions; it does not cancel checks already sent.</p>
     </Details>}
     </LongCard>
-  </section>;
+  </section><SendHistory revision={`${documentId}:${status?.busy?.documentId ?? ''}:${snapshot?.id ?? ''}:${snapshot?.state ?? ''}:${snapshot?.stage ?? ''}:${snapshot?.storageError ?? false}`} /></>;
 }
