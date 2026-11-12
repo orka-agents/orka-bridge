@@ -3,6 +3,8 @@ import mark from './assets/orka-mark.svg';
 import EngineStatus from './components/EngineStatus';
 import Setup from './setup/Setup';
 import Example from './designer/Example';
+import Overview from './overview/Overview';
+import { SAMPLE_DOCUMENT_ID } from './designer/agent-api';
 import type { SetupStatus, ExamplePair } from './setup/state';
 import type { SelectedPlace } from './clusters/api';
 import type { ModelState } from './setup/Model';
@@ -59,6 +61,8 @@ export default function App() {
   const content = useRef<HTMLElement>(null);
   useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);
+  const [documentId, setDocumentId] = useState(SAMPLE_DOCUMENT_ID);
+  const [overviewCounts, setOverviewCounts] = useState('Saved files and local Agents');
   const [exampleAttempt, setExampleAttempt] = useState(0);
   const [engineReady, setEngineReady] = useState(false);
   const ready = useCallback(() => setEngineReady(true), []);
@@ -93,7 +97,7 @@ export default function App() {
     setSetup(status); setChecking(false);
     const context = `${status?.selected}/${status?.localVm}/${status?.model}`;
     if (context !== catalogContext.current) { catalogContext.current = context; setCatalogEpoch(epoch => epoch + 1); }
-    // An unavailable poll must not turn a setup preview into an editable agent.
+    // An unavailable poll must not admit discovery or Run during initial setup.
     if (status) {
       if (!status.selected) workspaceAdmitted.current = false;
       if (status.localVm === 'ready') workspaceAdmitted.current = true;
@@ -127,13 +131,17 @@ export default function App() {
     : cases?.some(check => check.verdict === 'unknown') ? 'check result unknown'
     : cases ? 'checks passing' : 'ready to edit';
   const tabStatus: Record<Page, string> = {
-    Overview: checks ?? 'No agents yet',
-    Designer: agentName ? `${agentName}, ${exampleReadOnly ? 'read-only during setup' : remote ? 'checks on your cluster' : agentStatus}` : !exampleOpen ? 'No agent open'
+    Overview: overviewCounts,
+    Designer: agentName ? `${agentName}, ${remote ? 'checks on your cluster' : agentStatus}` : !exampleOpen ? 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
     Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : setupLine,
   };
   const tabTone = remote || exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const copy = emptyCopy[page];
+  const openDesigner = (id = documentId) => {
+    if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
+    setDocumentId(id); setExampleOpen(true); setPage('Designer');
+  };
   return (
     <div className="app-shell">
       <header className="tab-bar">
@@ -144,14 +152,11 @@ export default function App() {
               aria-label={name} aria-describedby={`tab-status-${name}`}
               aria-current={page === name ? 'page' : undefined}
               onClick={() => {
-                if (name === 'Designer') {
-                  if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
-                  setExampleOpen(true);
-                }
-                setPage(name);
+                if (name === 'Designer') openDesigner();
+                else setPage(name);
               }}>
               <span className={`icon-tile tile-${name.toLowerCase()}`}><PageIcon page={name} /></span>
-              <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{name === 'Designer' && agentName ? <>{agentName}, <span className={`tab-status-word status-${tabTone}`}>{tabStatus[name].slice(agentName.length + 2)}</span></> : tabStatus[name]}</small></span>
+              <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{name === 'Designer' && agentName ? <><span className="tab-agent-name">{agentName}, </span><span className={`tab-status-word status-${tabTone}`}>{tabStatus[name].slice(agentName.length + 2)}</span></> : tabStatus[name]}</small></span>
             </button>
           ))}
         </nav>
@@ -160,7 +165,7 @@ export default function App() {
         </div>
       </header>
       <main ref={content} className="page-content" aria-labelledby="page-title">
-        {page !== 'Clusters' && !(page === 'Designer' && exampleOpen) && <div className="page-heading">
+        {page === 'Designer' && !exampleOpen && <div className="page-heading">
           <h1 id="page-title">{page}</h1>
           {page === 'Designer' && <div className="heading-actions">
             <ComingButton label="New agent" reason="Creating agents is coming" />
@@ -168,16 +173,17 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onExampleName={exampleReadOnly ? setAgentName : undefined}
-            onOpenExample={() => {
-              if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
-              setExampleOpen(true); setPage('Designer');
-            }} />
+          <Setup place={place} onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onReady={ready} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
+            onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={`${exampleAttempt}-${exampleReadOnly}`} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} readOnly={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} documentId={documentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
         </>} /></div>}
-        {page !== 'Clusters' && !(page === 'Designer' && exampleOpen) && <section className="card empty-state">
+        <Overview active={page === 'Overview'} runBusy={!!run?.busy} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} onCounts={setOverviewCounts}
+          onOpenDocument={id => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(id); }}
+          onOpenExample={() => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(SAMPLE_DOCUMENT_ID); }}
+          onChooseWorkspace={() => setPage('Clusters')} />
+        {page === 'Designer' && !exampleOpen && <section className="card empty-state">
           <span className="icon-tile empty-icon"><PageIcon page={page} /></span>
           <div>
             <h2>{copy.title}</h2>
@@ -191,7 +197,7 @@ export default function App() {
         <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" />
         <span>{remote ? place.target ? `${placeName} · Access confirmed` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : setupLine}</span>
         {!remote && !welcome && hostDetail !== setupLine ? <><span aria-hidden="true">·</span><span>{hostDetail}</span></> : null}
-        {exampleState === 'loaded' && !exampleReadOnly && <><span aria-hidden="true">·</span><span aria-live="polite" aria-atomic="true">{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
+        {exampleState === 'loaded' && <><span aria-hidden="true">·</span><span aria-live="polite" aria-atomic="true">{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
           page !== 'Clusters' ? (remote ? placeName : hostDetail === setupLine ? setupLine : `${setupLine} · ${hostDetail}`) : undefined,

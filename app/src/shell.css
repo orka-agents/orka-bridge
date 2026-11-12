@@ -10,11 +10,13 @@
 .tile-overview { color: var(--color-violet); background: var(--color-violet-tint); }
 .tile-designer { color: var(--color-status-running); background: var(--color-tint-running); }
 .tile-clusters { color: var(--color-action); background: var(--color-action-tint); }
-.tab-copy { display: block; min-width: 0; }
+.tab-copy { display: block; min-width: 0; flex: 1; }
 .tab-copy b { display: block; font-size: var(--size-body); line-height: 18px; font-weight: 500; }
 .page-tab[aria-current="page"] b { font-weight: 600; }
 .tab-copy small { display: block; color: var(--color-text-secondary); font: var(--type-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tab-status-word { color: var(--status); }
+.tab-copy small:has(.tab-agent-name) { display: flex; }
+.tab-agent-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; white-space: pre; }
+.tab-status-word { color: var(--status); flex-shrink: 0; }
 /* Small green text lacks contrast on the darker inactive light chrome. */
 .page-tab:not([aria-current]) .tab-status-word.status-passed { color: var(--color-text-secondary); }
 .chrome-tools { display: flex; align-items: center; margin-left: auto; min-width: 0; }
@@ -45,7 +47,7 @@
 @media (max-width: 820px) {
   .page-nav { flex: 1; }
   .page-tab { width: auto; }
-  .tab-copy small { display: none; }
+  .tab-copy small, .tab-copy small:has(.tab-agent-name) { display: none; }
   .host-chip { max-width: 140px; }
 }
 @media (max-width: 600px) {

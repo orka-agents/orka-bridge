@@ -1,4 +1,5 @@
 pub mod agent_folder;
+pub mod agent_reveal;
 pub mod agents;
 pub mod catalog;
 pub mod clusters;
@@ -8,6 +9,7 @@ pub mod dev_image;
 pub mod engine;
 pub mod example_run;
 pub mod local_vm;
+pub mod overview;
 pub mod pair_source;
 pub mod runtime;
 pub mod send;

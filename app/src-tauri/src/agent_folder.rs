@@ -265,6 +265,31 @@ impl AgentFolder {
             .open_dir_nofollow("agents")?
             .open_dir_nofollow(name)
     }
+    /// Observe the owned pair without seeding, reconciling or committing it.
+    pub fn inspect(&self) -> Result<Option<AgentPair>> {
+        let _guard = self
+            .lock
+            .lock()
+            .map_err(|_| "The saved file is unreadable.")?;
+        let root = match self.root() {
+            Ok(root) => root,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(_) => return Err("The saved file is unreadable."),
+        };
+        (|| -> io::Result<AgentPair> {
+            let mut marker = shared_marker(&root)?;
+            let mut ownership = Vec::new();
+            (&mut marker).take(129).read_to_end(&mut ownership)?;
+            if ownership != self.owner {
+                return Err(invalid());
+            }
+            let pair = self.pair(&root)?;
+            git::inspect(&root)?;
+            Ok(pair)
+        })()
+        .map(Some)
+        .map_err(|_| "The saved file is unreadable.")
+    }
     pub(crate) fn available(&self) -> bool {
         (|| -> io::Result<()> {
             let root = self.root()?;
@@ -363,15 +388,17 @@ impl AgentFolder {
         };
         operation().map_err(|_| "The local agent folder could not be read or saved. Check that it is a Bridge-managed folder with regular files, then retry.")
     }
-    pub(crate) fn display_path(&self) -> Option<String> {
-        self.home.as_ref().and_then(|home| {
+    pub(crate) fn file_path(&self) -> Option<PathBuf> {
+        self.home.as_ref().map(|home| {
             home.join("Orka")
                 .join("agents")
                 .join(&self.name)
                 .join(&self.agent)
-                .to_str()
-                .map(str::to_owned)
         })
+    }
+    pub(crate) fn display_path(&self) -> Option<String> {
+        self.file_path()
+            .and_then(|path| path.into_os_string().into_string().ok())
     }
     fn pair(&self, root: &Dir) -> io::Result<AgentPair> {
         let agent = String::from_utf8(read(root, &self.agent, MAX_FILE)?).map_err(|_| invalid())?;

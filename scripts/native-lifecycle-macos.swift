@@ -143,6 +143,17 @@ func windowInfo() -> (CGWindowID, CGRect)? {
     return (id, rect)
 }
 func capture(_ name: String, menu: Bool = false) throws {
+    if !menu, let rect = windowInfo()?.1 {
+        // File view now grows with its content. Restore the page heading after
+        // end-of-file typing before testing its visible title in the capture.
+        let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1,
+            wheel1: 1000, wheel2: 0, wheel3: 0)
+        // A posted mouse move is asynchronous; bind the wheel to the page gutter
+        // instead of letting it inherit the previous position inside the textarea.
+        scroll?.location = CGPoint(x: rect.maxX - 20, y: rect.midY)
+        scroll?.post(tap: .cghidEventTap)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+    }
     let file = "\(output)/\(name).png"
     let options = menu ? ["-x", file] : ["-x", "-o", "-l", String(windowInfo()!.0), file]
     try command("/usr/sbin/screencapture", options)

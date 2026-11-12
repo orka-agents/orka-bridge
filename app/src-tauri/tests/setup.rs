@@ -10,7 +10,7 @@ fn reading_absent_selection_has_no_filesystem_or_runtime_effects() {
         serde_json::to_value(status).unwrap(),
         serde_json::json!({
             "selected": null, "localVm": "notIntegrated", "localVmError": null, "model": "locked",
-            "modelSupported": bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE
+            "modelSupported": false
         })
     );
     assert!(!root.exists());
@@ -35,7 +35,7 @@ fn only_the_local_preference_survives_a_new_store_not_readiness() {
         serde_json::to_value(retained).unwrap(),
         serde_json::json!({
             "selected": "localVm", "localVm": "notIntegrated", "localVmError": null, "model": "locked",
-            "modelSupported": bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE
+            "modelSupported": false
         })
     );
     let files: Vec<_> = fs::read_dir(tmp.path().join("setup-v1")).unwrap().collect();

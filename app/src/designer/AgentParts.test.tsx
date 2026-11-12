@@ -23,6 +23,14 @@ function native(source = agent) {
   });
   return writes;
 }
+test('explains personality separately from instructions and offers a description hint', async () => {
+  native(); const user = userEvent.setup(); render(<Example catalogKey={1} />);
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  await user.click(screen.getByText('More settings'));
+  expect(screen.getByRole('textbox', { name: 'Personality' }).getAttribute('aria-describedby')).toBeTruthy();
+  expect(screen.getByPlaceholderText(/short summary/i)).toBeTruthy();
+  expect(screen.getByText(/Tone and style to keep across tasks/)).toBeTruthy();
+});
 test('Instructions autosave through the existing writer without changing metadata', async () => {
   const writes = native(); render(<Example />);
   const field = await screen.findByRole('textbox', { name: 'Instructions' });
@@ -58,7 +66,7 @@ test('removing the separator in File view does not hide a later Agent-view newli
 test('a no-op visit, disclosure and switches never write the file', async () => {
   const writes = native(agent.replaceAll('\n', '\r\n')); const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('textbox', { name: 'Instructions' }));
-  await user.click(screen.getByText('More settings: description, personality (soul), file'));
+  await user.click(screen.getByText('More settings'));
   fireEvent.blur(screen.getByRole('textbox', { name: 'Description' }));
   await user.click(screen.getByRole('button', { name: 'File' }));
   await user.click(screen.getByRole('button', { name: 'Agent' }));
@@ -85,11 +93,11 @@ test('catalog unavailable preserves model while soul remains editable without ca
   native(); const user = userEvent.setup(); render(<Example />);
   await screen.findByRole('textbox', { name: 'Instructions' });
   expect(screen.getByRole('combobox', { name: 'It thinks with' }).matches(':disabled')).toBe(true);
-  expect(screen.getByRole('option', { name: 'file-model' })).toBeTruthy(); expect(screen.getByText(/Model catalog unavailable/)).toBeTruthy();
+  expect(screen.getByRole('option', { name: 'file-model' })).toBeTruthy(); expect(screen.getByText(/Models unavailable/)).toBeTruthy();
   expect(screen.queryByText('through GitHub Copilot')).toBeNull();
   expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(true);
-  await user.click(screen.getByText('More settings: description, personality (soul), file'));
-  expect((screen.getByRole('textbox', { name: 'Personality (soul)' }) as HTMLTextAreaElement).readOnly).toBe(false);
+  await user.click(screen.getByText('More settings'));
+  expect((screen.getByRole('textbox', { name: 'Personality' }) as HTMLTextAreaElement).readOnly).toBe(false);
   expect(screen.getByText(path)).toBeTruthy();
   fireEvent.change(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'A new description' } });
   await screen.findByRole('heading', { name: 'reader' });
@@ -114,17 +122,21 @@ test('unknown built-in names cannot resolve inherited map properties', async () 
 test('editing a commented description keeps it in the heading', async () => {
   native(agent.replace('description: "Reads a page"', 'description: Original # keep')); const user = userEvent.setup(); render(<Example />);
   await screen.findByRole('textbox', { name: 'Instructions' });
-  await user.click(screen.getByText('More settings: description, personality (soul), file'));
+  await user.click(screen.getByText('More settings'));
   fireEvent.change(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Edited' } });
   expect(screen.getByText('Edited', { selector: 'p' })).toBeTruthy();
 });
-test('setup preview exposes the form read-only with no owned path or writes', async () => {
-  const writes = native(); const user = userEvent.setup(); render(<Example readOnly />);
+test('setup opens the owned document for editing but keeps discovery and Run gated', async () => {
+  const writes = native(); const user = userEvent.setup(); render(<Example setupPending catalogKey={1} />);
   const instructions = await screen.findByRole('textbox', { name: 'Instructions' });
-  expect((instructions as HTMLTextAreaElement).readOnly).toBe(true);
+  expect((instructions as HTMLTextAreaElement).readOnly).toBe(false);
   expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(true);
-  await user.click(screen.getByText('More settings: description, personality (soul), file'));
-  expect(screen.queryByText(path)).toBeNull(); expect(writes).toEqual([]);
+  expect(screen.getByRole('combobox').matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
+  await user.click(screen.getByText('More settings'));
+  expect(screen.getByText(path)).toBeTruthy();
+  fireEvent.change(instructions, { target: { value: 'Edited during setup.' } }); fireEvent.blur(instructions);
+  await waitFor(() => expect(writes).toEqual([agent.replace('Read a page.\n', 'Edited during setup.')]));
 });
 test.each([42, '', 'bad\0path', 'x'.repeat(32769)])('rejects malformed outbound display paths (%j)', async path => {
   vi.stubGlobal('isTauri', true); mockIPC(() => ({ agent, tests: 'Checks', path }));
@@ -133,7 +145,7 @@ test.each([42, '', 'bad\0path', 'x'.repeat(32769)])('rejects malformed outbound 
 test('form edits preserve mixed line endings outside the edited body', async () => {
   const mixed = agent.replace('description:', '\r\ndescription:'); const writes = native(mixed); const user = userEvent.setup(); render(<Example />);
   await screen.findByRole('textbox', { name: 'Instructions' });
-  await user.click(screen.getByText('More settings: description, personality (soul), file'));
+  await user.click(screen.getByText('More settings'));
   fireEvent.change(screen.getByRole('textbox', { name: 'Description' }), { target: { value: 'Changed' } });
   await waitFor(() => expect(writes).toEqual([mixed.replace('"Reads a page"', '"Changed"')]));
 });

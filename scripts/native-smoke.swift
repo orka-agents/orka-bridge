@@ -146,6 +146,17 @@ func nativeBounds(_ element: AXUIElement) -> CGRect? {
         AXValueGetValue(size as! AXValue, .cgSize, &extent), extent.width > 0, extent.height > 0 else { return nil }
     return CGRect(origin: point, size: extent)
 }
+func clickDesignerView(_ name: String) {
+    let matches = nativeElements().filter { element in
+        ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == name }
+            && attribute(element, "AXEnabled") as? Bool == true
+            && (attribute(element, "AXRole") as? String == "AXCheckBox" || attribute(element, "AXRole") as? String == "AXButton")
+    }.compactMap { nativeBounds($0) }.filter { window()!.1.contains($0) }
+    require(matches.count == 1, "Cannot identify the visible Designer \(name) control")
+    let point = CGPoint(x: matches[0].midX, y: matches[0].midY)
+    mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+    Thread.sleep(forTimeInterval: 0.3)
+}
 func nativeTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
@@ -230,6 +241,14 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     }.joined(separator: "\n")
     try recognized.write(toFile: "\(output)/\(name).ocr.txt", atomically: true, encoding: .utf8)
     if name == "send-probe" || name == "cluster-probe" { return observations }
+    if name == "before-settings" || name == "designer-settings" {
+        // These captures intentionally scroll the page heading out of view.
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(name == "before-settings" ? text.contains("More settings") : text.contains("Personality") && text.contains("Description"),
+                "Designer settings section is not visible: \(text)")
+        print("PASS \(name): native Designer settings section observed")
+        return observations
+    }
     if name.hasPrefix("cluster-reload") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         if name == "cluster-reload-failed" {
@@ -312,7 +331,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): native workspace screen observed")
         return observations
     }
-    let pages = ["Overview", "Designer", "Clusters", "web-reader"]
+    let pages = ["Your agents", "Designer", "Clusters", "web-reader"]
     let headings = Set(observations.compactMap { observation -> String? in
         let top = 1 - observation.boundingBox.maxY
         guard top > 0.10 && top < 0.25,
@@ -321,18 +340,19 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         return text
     })
     // Negative control: persistent nav labels must not qualify as page headings.
-    for wrong in pages where wrong != page && !(page == "Designer" && wrong == "web-reader") {
+    let expectedHeading = page == "Designer" ? "web-reader" : page == "Overview" ? "Your agents" : page
+    for wrong in pages where wrong != expectedHeading && !(page == "Designer" && wrong == "Designer") {
         require(!headings.contains(wrong), "Unexpected \(wrong) page heading; expected \(page)")
     }
-    let expectedHeading = page == "Designer" ? "web-reader" : page
     require(headings == Set([expectedHeading]), "Native screenshot does not show the expected \(expectedHeading) page heading; observed \(headings)")
     print("PASS \(name): native \(page) heading observed")
     return observations
 }
 func scrollMain(_ pixels: Int32) {
     let rect = window()!.1
-    mouse(.mouseMoved, CGPoint(x: rect.maxX - 20, y: rect.midY))
-    CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)?.post(tap: .cghidEventTap)
+    let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)
+    scroll?.location = CGPoint(x: rect.maxX - 20, y: rect.midY)
+    scroll?.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: 0.3)
 }
 func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
@@ -363,21 +383,20 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" 
 }
 if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) {
     // The owned form works before any workspace exists. Exercise its real writer,
-    // not injected renderer data; the later setup preview must remain read-only.
+    // not injected renderer data; editing remains owned during setup too.
     // Welcome focuses the choice heading. Clusters and Designer precede it.
     key(48, shift: true); key(48, shift: true); key(49)
-    let form = try capture("agent-form", "Designer")
-    guard let label = form.first(where: {
-        let text = $0.topCandidates(1).first?.string ?? ""
-        return text == "Instructions" || (text.hasPrefix("Instructions ") && text.contains("What the agent"))
-    }) else {
-        fail("Instructions field is not visible")
-    }
+    try capture("agent-form", "Designer")
+    let instructions = nativeElements().filter { attribute($0, "AXRole") as? String == "AXTextArea"
+        && ((attribute($0, "AXTitle") as? String == "Instructions") || (attribute($0, "AXDescription") as? String == "Instructions")) }
+    require(instructions.count == 1, "Cannot identify the owned Instructions field")
+    guard let fieldBounds = nativeBounds(instructions[0]) else { fail("Instructions field bounds missing") }
+    let rect = window()!.1
+    let visibleField = fieldBounds.intersection(rect)
+    require(!visibleField.isEmpty && !visibleField.isNull, "Instructions field is not visible")
     let owned = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
     let before = try String(contentsOf: owned, encoding: .utf8)
-    let rect = window()!.1
-    let fieldPoint = CGPoint(x: rect.midX,
-        y: rect.minY + (1 - label.boundingBox.midY) * rect.height + 70)
+    let fieldPoint = CGPoint(x: visibleField.midX, y: visibleField.midY)
     mouse(.leftMouseDown, fieldPoint); mouse(.leftMouseUp, fieldPoint)
     for down in [true, false] {
         let event = CGEvent(keyboardEventSource: nil, virtualKey: 125, keyDown: down)!
@@ -429,6 +448,10 @@ Thread.sleep(forTimeInterval: 2)
 let retained = try capture("choice-retained", "Clusters")
 clickTab("Overview", retained)
 let overview = try capture("overview", "Overview")
+require(nativeTextIsVisible("Agent list unavailable with this Mac image"),
+        "Overview must explain the source-inferred old Mac image limit")
+require(nativeTextIsVisible("Saved file") && nativeTextIsVisible("web-reader"),
+        "Overview must show the saved file opened through the native Designer")
 clickTab("Designer", overview)
 let designer = try capture("designer-pointer", "Designer")
 let clustersTab = clickTab("Clusters", designer)
@@ -445,7 +468,7 @@ key(48, shift: true); key(48, shift: true); key(49)
 try capture("overview-keyboard", "Overview")
 key(48); key(49); try capture("designer-keyboard", "Designer")
 key(48); key(36); try capture("clusters-keyboard", "Clusters")
-// Setup previews must remain read-only, including native keyboard editing attempts.
+// The same owned file stays editable during selected-local setup.
 let clusters = try capture("before-file", "Clusters")
 clickTab("Designer", clusters)
 let agent = try capture("agent-view", "Designer")
@@ -458,46 +481,56 @@ let filePoint = CGPoint(x: fileRect.minX + fileButton.boundingBox.midX * fileRec
 mouse(.leftMouseDown, filePoint); mouse(.leftMouseUp, filePoint)
 Thread.sleep(forTimeInterval: 0.5)
 let fileView = try capture("file-view", "Designer")
-require(fileView.contains { $0.topCandidates(1).first?.string == "Read-only during setup" },
-        "Native setup preview is not labelled read-only")
+require(!fileView.contains { $0.topCandidates(1).first?.string == "Read-only during setup" },
+        "Owned File view is still labelled read-only")
 let ownedFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.md")
-let existedBeforeEdit = FileManager.default.fileExists(atPath: ownedFile.path)
-let bytesBeforeEdit = existedBeforeEdit ? try Data(contentsOf: ownedFile) : nil
-// A pointer-activated button need not receive focus in the native webview.
-// Establish editor focus, then verify keyboard exit/re-entry before typing.
-let editorPoint = CGPoint(x: fileRect.midX, y: fileRect.minY + fileRect.height * 0.6)
+let bytesBeforeEdit = try String(contentsOf: ownedFile, encoding: .utf8)
+let editors = nativeElements().filter { attribute($0, "AXRole") as? String == "AXTextArea"
+    && ((attribute($0, "AXTitle") as? String == "Agent file") || (attribute($0, "AXDescription") as? String == "Agent file")) }
+require(editors.count == 1, "Cannot identify the owned native File editor")
+guard let editorBounds = nativeBounds(editors[0]) else { fail("Native File editor bounds missing") }
+let visibleEditor = editorBounds.intersection(fileRect)
+require(!visibleEditor.isEmpty && !visibleEditor.isNull, "Native File editor is offscreen")
+let editorPoint = CGPoint(x: visibleEditor.midX, y: visibleEditor.midY)
 mouse(.leftMouseDown, editorPoint); mouse(.leftMouseUp, editorPoint)
-key(48, shift: true); key(48)
-// Unlike the owned-editor append probe, a read-only edit attempt needs no
-// end-of-file navigation: Command-Down can scroll the page heading out of view.
-let marker = "\n\nNative read-only edit probe \(UUID().uuidString)."
-// Return is an editing command, not part of a multi-character Unicode event.
+Thread.sleep(forTimeInterval: 0.2)
+require(attribute(editors[0], "AXFocused") as? Bool == true, "Native File editor did not receive focus")
+for down in [true, false] {
+    let event = CGEvent(keyboardEventSource: nil, virtualKey: 125, keyDown: down)!
+    event.flags = .maskCommand; event.post(tap: .cghidEventTap)
+}
+let marker = " Native setup edit probe \(UUID().uuidString)."
 for character in marker.utf16 {
-    if character == 10 { key(36); continue }
     var unit = character
     for down in [true, false] {
         let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
         event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
-        event.post(tap: .cghidEventTap)
+        event.flags = []; event.post(tap: .cghidEventTap)
     }
 }
-Thread.sleep(forTimeInterval: 1)
-// Keyboard traversal can scroll the outer page to newly added controls below
-// the read-only editor. Restore its heading before the visual assertion; the
-// exact owned-file byte comparison below still detects any persisted edit.
-scrollMain(1000)
-try capture("file-edited", "Designer")
-let existsAfterEdit = FileManager.default.fileExists(atPath: ownedFile.path)
-require(existsAfterEdit == existedBeforeEdit, "Setup preview changed owned-file existence")
-if let bytesBeforeEdit {
-    require(try Data(contentsOf: ownedFile) == bytesBeforeEdit,
-            "Setup preview persisted a native keyboard edit")
+var editSaved = false
+for _ in 0..<20 {
+    if (try String(contentsOf: ownedFile, encoding: .utf8)) == bytesBeforeEdit + marker { editSaved = true; break }
+    Thread.sleep(forTimeInterval: 0.1)
 }
-let readOnlyFile = try capture("file-read-only", "Designer")
-require(readOnlyFile.contains { $0.topCandidates(1).first?.string == "Read-only during setup" },
-        "Native setup preview lost its read-only state after the edit attempt")
-print("PASS read-only preview: keyboard edit attempted; owned file unchanged or still absent")
-clickTab("Clusters", readOnlyFile)
+require(editSaved, "Setup edit did not append the exact bytes to the owned file")
+scrollMain(1000)
+let editedFile = try capture("file-edited", "Designer")
+let savedFooter = editedFile.filter { $0.boundingBox.maxY < 0.1 }
+    .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+require(savedFooter.range(of: "\\bSaved\\b", options: .regularExpression) != nil
+    && !savedFooter.localizedCaseInsensitiveContains("not saved"), "Setup file save not acknowledged: \(savedFooter)")
+print("PASS owned setup editor: native keyboard append persisted exact bytes, without a ready VM")
+// Exercise the real settings disclosure; reveal controls are observed, not
+// activated, so the walk never opens Finder or touches the clipboard.
+clickDesignerView("Agent")
+scrollMain(-400)
+let beforeSettings = try capture("before-settings", "Designer")
+clickText("More settings", in: beforeSettings)
+try capture("designer-settings", "Designer")
+scrollMain(1000)
+let settingsTop = try capture("designer-settings-top", "Designer")
+clickTab("Clusters", settingsTop)
 // Resize this CI-owned window using its native bottom-right handle.
 let rect = window()!.1
 // The display may constrain the initial size. Derive the minimum frame from
@@ -535,8 +568,12 @@ require(abs(window()!.1.width - compactSize.width) < 3 && abs(window()!.1.height
         "Native 540x900 content area not verified: \(window()!.1)")
 let compactClusters = try capture("clusters-compact", "Clusters")
 clickTab("Designer", compactClusters)
-let compactDesigner = try capture("designer-compact", "Designer")
-clickTab("Clusters", compactDesigner)
+try capture("designer-compact", "Designer")
+clickDesignerView("File")
+require(nativeElements().contains { attribute($0, "AXRole") as? String == "AXTextArea"
+    && attribute($0, "AXTitle") as? String == "Agent file" }, "Compact File editor did not open")
+let compactFile = try capture("file-compact", "Designer")
+clickTab("Clusters", compactFile)
 print("PASS native walk: pointer, Shift-Tab/Tab, Space, Enter and minimum window")
 if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let local = try capture("before-cluster", "Clusters")

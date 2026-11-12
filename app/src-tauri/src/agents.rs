@@ -1,7 +1,8 @@
 //! Native document identity and registration. Paths are derived, never imported.
 pub use crate::agent_folder::DocumentId;
 use crate::agent_folder::{
-    child, invalid, options, regular, regular_links, replace, valid_name, AgentFolder,
+    child, invalid, options, regular, regular_links, replace, valid_name, AgentFolder, AgentPair,
+    DocumentRef,
 };
 use bridge_runtime_protocol::MAX_FILE;
 use cap_fs_ext::DirExt;
@@ -40,6 +41,12 @@ fn registry_bytes(file: cap_std::fs::File) -> io::Result<Vec<u8>> {
 
 type Result<T> = std::result::Result<T, &'static str>;
 const ERROR: &str = "The agent registrations could not be read or saved.";
+
+/// Native-only observation; pair bytes never cross the Overview IPC boundary.
+pub struct InspectedFile {
+    pub document: DocumentRef,
+    pub pair: Result<Option<AgentPair>>,
+}
 
 #[derive(Debug, Serialize)]
 pub struct AgentEntry {
@@ -183,6 +190,30 @@ impl Agents {
         }
         replace(&root, "registry.json", &bytes).map_err(|_| ERROR)?;
         Ok(result)
+    }
+    /// One registry snapshot and one inspection per owned folder; no selection writes.
+    pub fn inspect_files<T>(
+        &self,
+        mut project: impl FnMut(InspectedFile) -> Option<T>,
+    ) -> Result<Vec<T>> {
+        let _access = self.access.lock().map_err(|_| ERROR)?;
+        let registry = self.registry()?;
+        let mut files = Vec::new();
+        // Project before reading the next pair so prompt/test bodies are not accumulated.
+        let mut observe = |folder: &AgentFolder| {
+            if let Some(file) = project(InspectedFile {
+                document: folder.document(),
+                pair: folder.inspect(),
+            }) {
+                files.push(file);
+            }
+        };
+        observe(&self.sample);
+        for entry in registry.agents {
+            let folder = AgentFolder::created(self.home.clone(), &entry.name, entry.id)?;
+            observe(&folder);
+        }
+        Ok(files)
     }
     pub fn list(&self) -> Result<Vec<AgentEntry>> {
         let _access = self.access.lock().map_err(|_| ERROR)?;

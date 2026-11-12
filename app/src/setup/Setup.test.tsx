@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
+import Setup from './Setup';
 
 const status = (selected: 'localVm' | null = null) => ({ selected, localVm: 'notIntegrated', model: 'locked' });
 const unavailable = 'Workspace setup is not included in this build. Nothing will be downloaded or started.';
@@ -197,4 +198,108 @@ test('a delayed Continue reply stays pending across repeat activation and naviga
   expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
   expect(ipc.mock.calls.some(([command]) => command === 'setup_connect_model')).toBe(false);
+});
+
+function nativeDirect() {
+  vi.stubGlobal('isTauri', true);
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
+    if (command === 'setup_requirements') return null;
+    if (command === 'cluster_contexts') return [{ id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' }];
+    throw Error('Unsupported');
+  });
+  mockIPC(ipc);
+  return ipc;
+}
+
+test('without a place prop Setup keeps its own local/cluster toggle (compatibility default)', async () => {
+  const ipc = nativeDirect(); const user = userEvent.setup();
+  render(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} />);
+  await screen.findByRole('radio', { name: 'On this computer' });
+  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_contexts');
+  await user.click(screen.getByRole('radio', { name: 'On a cluster you already have' }));
+  expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
+  await user.click(screen.getByRole('radio', { name: 'On this computer' }));
+  expect(screen.queryByRole('combobox', { name: 'kubectl context' })).toBeNull();
+});
+
+test('a place prop derives the radio selection and keeps ClusterCard mounted hidden, not refetched, after first use', async () => {
+  const ipc = nativeDirect();
+  const onPlace = vi.fn();
+  const view = render(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
+  await screen.findByRole('radio', { name: 'On this computer' });
+  expect(screen.getByRole('radio', { name: 'On this computer' }).matches(':checked')).toBe(true);
+  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_contexts');
+
+  view.rerender(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'cluster' }} onPlace={onPlace} />);
+  expect(screen.getByRole('radio', { name: 'On a cluster you already have' }).matches(':checked')).toBe(true);
+  expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
+  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_contexts')).toHaveLength(1);
+
+  view.rerender(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
+  expect(screen.getByRole('radio', { name: 'On this computer' }).matches(':checked')).toBe(true);
+  expect(screen.queryByRole('combobox', { name: 'kubectl context' })).toBeNull();
+
+  view.rerender(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'cluster' }} onPlace={onPlace} />);
+  expect(screen.getByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
+  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_contexts')).toHaveLength(1);
+});
+
+test('a shared place change alone never admits setup or starts the workspace', async () => {
+  const ipc = nativeDirect();
+  const view = render(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={vi.fn()} />);
+  await screen.findByRole('radio', { name: 'On this computer' });
+  view.rerender(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'cluster' }} onPlace={vi.fn()} />);
+  await screen.findByRole('combobox', { name: 'kubectl context' });
+  view.rerender(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={vi.fn()} />);
+  await screen.findByRole('radio', { name: 'On this computer' });
+  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
+  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_change_local');
+  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_cancel_local');
+  expect(ipc.mock.calls.every(([c]) => ['setup_status', 'setup_requirements', 'cluster_contexts'].includes(c))).toBe(true);
+});
+
+test('cluster configuration survives returning to an already-selected local workspace and back, without auto-using the cluster again', async () => {
+  vi.stubGlobal('isTauri', true);
+  const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' };
+  const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name,
+    service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka:0.9.4' };
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_requirements') return null;
+    if (command === 'cluster_contexts') return [context];
+    if (command === 'cluster_discover') return [target];
+    if (command === 'cluster_use') return { status: 'needServiceAccount', providers: [], failure: null };
+    throw Error('Unsupported');
+  });
+  mockIPC(ipc);
+  const user = userEvent.setup();
+  const view = render(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={vi.fn()} />);
+  // Already selected and running locally: Setup shows the workspace-setup-grid, not the chooser.
+  await screen.findByText('Your workspace is running on this computer.');
+
+  view.rerender(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'cluster' }} onPlace={vi.fn()} />);
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
+  await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
+  await screen.findByText('Orka found');
+  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
+  const account = await screen.findByRole('textbox', { name: 'ServiceAccount name' });
+  await user.type(account, 'remembered-account');
+  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toHaveLength(1);
+
+  // Back to the already-selected local workspace: Setup returns to the setup-grid view. ClusterCard
+  // must stay mounted (hidden), not be torn down and lose its context/target/account.
+  view.rerender(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={vi.fn()} />);
+  await screen.findByText('Your workspace is running on this computer.');
+  expect(screen.queryByRole('combobox', { name: 'kubectl context' })).toBeNull();
+
+  view.rerender(<Setup onOpenExample={vi.fn()} onReady={vi.fn()} place={{ kind: 'cluster' }} onPlace={vi.fn()} />);
+  expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe(context.id);
+  expect(screen.getByText('Orka found')).toBeTruthy();
+  const reenteredAccount = screen.getByRole('textbox', { name: 'ServiceAccount name' }) as HTMLInputElement;
+  expect(reenteredAccount.value).toBe('remembered-account');
+  // No auto re-Use: the remembered access confirmation is gone and no extra cluster_use fired.
+  expect(screen.queryByText('Access confirmed')).toBeNull();
+  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toHaveLength(1);
+  expect(screen.getByRole('button', { name: 'Use this cluster' })).toBeTruthy();
 });
