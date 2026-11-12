@@ -108,6 +108,11 @@ impl VmClient {
         }
         Ok(state)
     }
+    pub fn disconnect_retained_model(&mut self, connection: &ModelConnection) -> io::Result<()> {
+        self.ready_call(RequestBody::ModelDisconnectRetained {
+            connection: connection.clone(),
+        })
+    }
     pub fn disconnect_model(&mut self, connection: &ModelConnection) -> io::Result<ModelState> {
         let state = self.model_call(RequestBody::ModelDisconnect {
             connection: connection.id,

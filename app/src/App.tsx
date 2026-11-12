@@ -121,7 +121,7 @@ export default function App() {
     : checking ? ['Checking workspace…', 'Checking workspace…', 'wait'] : ['Workspace unavailable', 'Workspace unavailable', 'wait'];
   const workspaceReady = setup?.localVm === 'ready';
   const modelDetail = setup?.model === 'locked' ? 'AI connection unavailable'
-    : model === 'connecting' ? 'Connecting the AI…' : model === 'connected' ? 'AI connected'
+    : model === 'removing' ? 'Removing the AI sign-in…' : model === 'connecting' ? 'Connecting the AI…' : model === 'connected' ? 'AI connected'
     : model === 'failed' ? 'AI connection needs attention' : detail;
   const workspaceDetail = setup?.localVm === 'failed'
     ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;

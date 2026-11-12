@@ -14,7 +14,7 @@ function PhaseIcon({ phase }: { phase: 'done' | 'current' | 'waiting' | 'failed'
   return <StatusIcon state={state} />;
 }
 export default function Steps({ status, busy, stopping, error, modelConnected, modelState, firstCheck, onCancel, onRestart, onCluster, onChange, onOpenExample }: {
-  status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean; modelState?: 'idle' | 'connecting' | 'connected' | 'failed'; firstCheck?: CheckStepState;
+  status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelConnected: boolean; modelState?: 'idle' | 'connecting' | 'removing' | 'connected' | 'failed'; firstCheck?: CheckStepState;
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onChange: (button: HTMLButtonElement) => void; onOpenExample: () => void;
 }) {
   const [details, setDetails] = useState(false);
@@ -53,7 +53,7 @@ export default function Steps({ status, busy, stopping, error, modelConnected, m
           </div>}</>}
         </div>
       </li>
-      <li className={modelState === 'failed' ? 'step-failed' : modelConnected ? 'step-done' : ready ? 'step-current' : 'step-waiting'}><StatusIcon state={modelState === 'failed' ? 'failed' : modelState === 'connecting' ? 'running' : modelConnected ? 'passed' : ready ? 'needs-you' : 'not-started'} /><b>Choose the AI your agent uses</b><span className="step-result">{modelState === 'failed' ? 'Needs attention' : modelConnected ? 'Connected' : modelState === 'connecting' ? 'Connecting' : ready ? 'Needs you' : 'Waiting'}</span></li>
+      <li className={modelState === 'failed' ? 'step-failed' : modelConnected ? 'step-done' : ready ? 'step-current' : 'step-waiting'}><StatusIcon state={modelState === 'failed' ? 'failed' : modelState === 'connecting' || modelState === 'removing' ? 'running' : modelConnected ? 'passed' : ready ? 'needs-you' : 'not-started'} /><b>Choose the AI your agent uses</b><span className="step-result">{modelState === 'failed' ? 'Needs attention' : modelConnected ? 'Connected' : modelState === 'connecting' ? 'Connecting' : modelState === 'removing' ? 'Removing sign-in' : ready ? 'Needs you' : 'Waiting'}</span></li>
       <li className={`step-${checkPhase}`}><StatusIcon state={firstCheck === 'stale' ? 'stale' : firstCheck === 'running' ? 'running' : modelConnected && !firstCheck ? 'needs-you' : checkPhase === 'done' ? 'passed' : checkPhase === 'failed' ? 'failed' : 'not-started'} /><b>Run your first test</b><span className="step-result">{checkLabel}</span></li>
     </ol>
     <div className="workspace-step-actions">

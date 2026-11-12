@@ -112,6 +112,18 @@ test('typed unconfirmed stop cannot admit a second workspace', async () => {
   expect(screen.getByRole('button', { name: 'Try again' }).matches(':disabled')).toBe(true);
 });
 
+test('sign-in removal stays in progress in the setup step and shell', async () => {
+  const { ipc, ready } = native(); ready();
+  const original = ipc.getMockImplementation()!;
+  mockIPC(command => command === 'setup_remove_model' ? new Promise(() => {}) : original(command));
+  const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Remove sign-in' }));
+  const step = within(screen.getByRole('list', { name: 'Setup steps' })).getByText('Choose the AI your agent uses').closest('li')!;
+  expect(step.textContent).toContain('Removing sign-in');
+  expect(step.querySelector('.status-running')).toBeTruthy();
+  expect(screen.getByRole('contentinfo').textContent).toContain('Removing the AI sign-in');
+});
+
 test('AI failure marks its setup step and every shell status without losing the running workspace', async () => {
   const { ready } = native(); ready();
   const user = userEvent.setup(); render(<App />);
