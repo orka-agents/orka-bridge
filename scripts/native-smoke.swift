@@ -172,23 +172,36 @@ func nativeTextBounds(_ expected: String, heading: Bool = false) -> [CGRect] {
     guard let rect = window()?.1 else { return [] }
     // Destination chips and footer mirrors are not evidence of a visible card.
     let body = CGRect(x: rect.minX, y: rect.minY + 110, width: rect.width, height: max(0, rect.height - 142))
-    return nativeElements().filter { element in
-        guard let role = attribute(element, "AXRole") as? String,
-            ["AXStaticText", "AXHeading", "AXGroup", "AXDisclosureTriangle"].contains(role) else { return false }
-        if heading && role != "AXHeading" { return false }
-        var values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
-        if role == "AXGroup", let children = attribute(element, "AXChildren") as? [AXUIElement],
-            !children.isEmpty && children.allSatisfy({ attribute($0, "AXRole") as? String == "AXStaticText" }) {
-            // WebKit splits JSX label/value text into adjacent native nodes.
-            // Join only one text-only row, never different cards or lines.
-            let bounds = children.compactMap { nativeBounds($0) }
-            if bounds.count == children.count, let first = bounds.first,
-                bounds.allSatisfy({ abs($0.midY - first.midY) <= 2 && body.contains($0) }) {
-                values.append(children.compactMap { attribute($0, "AXValue") as? String }.joined())
-            }
+    var matches: [CGRect] = []
+    for element in nativeElements() {
+        guard let role = attribute(element, "AXRole") as? String else { continue }
+        if ["AXStaticText", "AXHeading", "AXDisclosureTriangle"].contains(role) && (!heading || role == "AXHeading") {
+            let values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+            if values.contains(where: { heading ? $0 == expected : $0.contains(expected) }),
+                let bounds = nativeBounds(element), body.contains(bounds) { matches.append(bounds) }
         }
-        return values.contains { heading ? $0 == expected : $0.contains(expected) }
-    }.compactMap { nativeBounds($0) }.filter { body.contains($0) }
+        guard !heading, role == "AXGroup",
+            let children = attribute(element, "AXChildren") as? [AXUIElement] else { continue }
+        // WebKit can flatten an inline badge into its surrounding group.
+        // Join adjacent text siblings only on one visible, touching line.
+        var text = ""
+        var line: CGRect?
+        func finishLine() {
+            if let bounds = line, text.contains(expected) { matches.append(bounds) }
+            text = ""; line = nil
+        }
+        for child in children {
+            guard attribute(child, "AXRole") as? String == "AXStaticText",
+                let value = attribute(child, "AXValue") as? String,
+                let bounds = nativeBounds(child), body.contains(bounds) else { finishLine(); continue }
+            if let prior = line, abs(prior.midY - bounds.midY) > 2
+                || bounds.minX < prior.maxX - 2 || bounds.minX > prior.maxX + 4 { finishLine() }
+            text += value
+            line = line.map { $0.union(bounds) } ?? bounds
+        }
+        finishLine()
+    }
+    return matches
 }
 func nativeTextIsVisible(_ expected: String) -> Bool { !nativeTextBounds(expected).isEmpty }
 @discardableResult
