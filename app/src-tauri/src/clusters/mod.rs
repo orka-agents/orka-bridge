@@ -100,7 +100,16 @@ pub struct ClusterFailure {
     pub check: Check,
     pub result: CheckResult,
 }
+// Use stays in one task. Share its active check through nested read/operation
+// timeouts so cancellation cannot erase whether a stream had opened yet.
+tokio::task_local! { static ACTIVE_CHECK: std::cell::Cell<Check>; }
 impl Check {
+    pub(crate) fn begin(self) {
+        let _ = ACTIVE_CHECK.try_with(|active| active.set(self));
+    }
+    pub(crate) fn current(self) -> Self {
+        ACTIVE_CHECK.try_with(std::cell::Cell::get).unwrap_or(self)
+    }
     pub(crate) fn fail(self, result: CheckResult) -> AccessOutcome {
         AccessOutcome::Failed(ClusterFailure {
             check: self,

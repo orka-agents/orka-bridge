@@ -1416,6 +1416,40 @@ async fn discovery_deadline_keeps_the_compatibility_check_in_progress() {
     );
 }
 
+#[tokio::test]
+async fn use_deadline_during_pod_opening_keeps_the_connection_stage() {
+    let api = Arc::new(ApiFixture::default());
+    let mut client = ClusterClient::new(
+        config(&api.start(), json!({"token":"static-fixture"})),
+        Arc::new(PodOrkaRead),
+    );
+    let target = target(&mut client).await;
+    let (steps, received) = std::sync::mpsc::channel();
+    *api.step_gate.lock().unwrap() = Some(steps);
+    tokio::time::pause();
+    let task = tokio::spawn(async move { client.connect(target, None).await.err() });
+    let last_release = loop {
+        let (path, release) = loop {
+            if let Ok(step) = received.try_recv() {
+                break step;
+            }
+            tokio::task::yield_now().await;
+        };
+        if path.ends_with("/pods") {
+            tokio::time::advance(std::time::Duration::from_millis(5600)).await;
+            break release;
+        }
+        tokio::time::advance(std::time::Duration::from_millis(3500)).await;
+        let _ = release.send(());
+    };
+    let result = task.await.unwrap();
+    let _ = last_release.send(());
+    assert_eq!(
+        result,
+        Some(failed(Check::OrkaConnection, CheckResult::Unknown))
+    );
+}
+
 type Arrange = fn(&ApiFixture, &OrkaFixture);
 #[tokio::test]
 async fn use_keeps_kubernetes_permission_apart_from_orka_identity() {

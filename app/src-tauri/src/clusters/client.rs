@@ -194,6 +194,18 @@ impl ClusterClient {
         id: TargetId,
         sa_name: Option<String>,
     ) -> Result<RemoteAccess, AccessOutcome> {
+        ACTIVE_CHECK
+            .scope(
+                std::cell::Cell::new(Check::Configuration),
+                self.connect_checked(id, sa_name),
+            )
+            .await
+    }
+    async fn connect_checked(
+        &self,
+        id: TargetId,
+        sa_name: Option<String>,
+    ) -> Result<RemoteAccess, AccessOutcome> {
         use Check::{Agents, Configuration, Credentials, OrkaIdentity, Permissions, Providers};
         let deadline = Instant::now() + OPERATION_LIMIT;
         if sa_name.as_ref().is_some_and(|s| !dns_subdomain(s)) {
@@ -334,7 +346,7 @@ impl RemoteAccess {
             ),
         )
         .await
-        .map_err(|_| check.unknown())?
+        .map_err(|_| check.current().unknown())?
         .map_err(|e| e.at(check))?;
         if serde_json::to_vec(&value).map_or(true, |v| v.len() > 1024 * 1024)
             || echoed(&value, &self.bearer)
@@ -698,9 +710,10 @@ async fn within<T>(
     check: Check,
     work: impl std::future::Future<Output = Result<T, AccessOutcome>>,
 ) -> Result<T, AccessOutcome> {
+    check.begin();
     timeout_at(deadline, work)
         .await
-        .unwrap_or(Err(check.unknown()))
+        .unwrap_or_else(|_| Err(check.current().unknown()))
         .map_err(|e| e.at(check))
 }
 fn kube_error(check: Check, error: kube::Error) -> AccessOutcome {

@@ -17,7 +17,7 @@ export function clusterRecovery(failure: ClusterFailure) {
   const next = check === 'configuration' ? 'Correct your kubeconfig, then press Reload kubeconfig.'
     : check === 'credentials' || result === 'unsupportedCredential' ? 'Check its sign-in method and credential plugin outside Bridge, then check again.'
     : result === 'connectionFailed' ? 'Check connectivity and any VPN you use, then check again.'
-    : result === 'authenticationRejected' ? 'Refresh the sign-in for this connection outside Bridge, then check again.'
+    : result === 'authenticationRejected' ? 'Refresh the sign-in outside Bridge, then press Reload kubeconfig, select the context and use the cluster again.'
     : result === 'permissionDenied' ? 'Ask your cluster administrator to check access for this check, then check again.'
     : check === 'compatibility' ? 'Ask your cluster administrator to check the Orka schema and watched namespace, then check again.'
     : check === 'serviceAccount' ? 'Check the existing ServiceAccount name and token-request access with your cluster administrator, then check again.'

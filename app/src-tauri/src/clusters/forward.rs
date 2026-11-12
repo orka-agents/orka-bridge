@@ -42,9 +42,11 @@ impl OrkaRead for PodOrkaRead {
     ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>> {
         Box::pin(async move {
             let deadline = Instant::now() + REQUEST_TIMEOUT;
+            Check::OrkaConnection.begin();
             let connection = Connection::open(creator, binding, deadline)
                 .await
                 .map_err(|e| orka_error(Check::OrkaConnection, e))?;
+            resource.check().begin();
             let result = connection
                 .request(
                     path(resource),
