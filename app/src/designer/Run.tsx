@@ -40,7 +40,7 @@ export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, block
   return <section className="example-run" aria-label="Tests on local">
     <LongCard title="Tests on local" status={<StatusPill state={state}>{outdated || running ? undefined : uncertain ? 'Result unknown' : resultLabel(snapshot?.report)}</StatusPill>} summary={<>On this computer{snapshot?.model && <> · <code>{snapshot.model}</code></>}.{snapshot?.modelConnected === false && ' Connect the model in Clusters first.'}</>}
       action={!running && <button type="button" className="setup-button" disabled={blocked || !snapshot?.canRun} title={blocked ? 'Save your changes before running the test' : !snapshot?.canRun ? 'Connect your workspace and AI in Clusters first' : undefined} onClick={() => { void start(); }}>Run tests</button>}>
-      <p className="sr-only" role="status" aria-live="polite" aria-atomic="true">{!running && !outdated ? resultAnnouncement(snapshot?.report) : undefined}</p>
+      <p className="sr-only test-announcement" role="status" aria-live="polite" aria-atomic="true">{!running && !outdated ? resultAnnouncement(snapshot?.report) : undefined}</p>
       <CardSection title="What happened">
         {snapshot?.busy && snapshot.busy.documentId !== documentId && <p role="status">{snapshot.busy.name} is running a test.</p>}
         {outdated && <p role="status">{changedFiles(source, snapshot?.source, stale)}</p>}

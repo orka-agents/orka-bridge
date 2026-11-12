@@ -1,3 +1,5 @@
+/* A static absolute position below the scrollport would grow the outer page. */
+.test-announcement { top: 0; left: 0; }
 .test-progress { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding-block: var(--space-2); }
 .test-progress small { margin-left: auto; }
 .test-result { border-top: 1px solid var(--color-border); padding-block: var(--space-2); }
