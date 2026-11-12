@@ -1,6 +1,6 @@
 // Hosted-CI renderer fixtures in the real app's WebView2, not native IPC proofs.
 // CDP is exposed only on loopback for this child process; no product test hooks.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -148,7 +148,105 @@ try {
       console.log(`Captured native WebView2 renderer fixture: ${theme}/${name}`);
     }
   }
-  await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
+  // Setup-progress states: renderer fixtures for transfer, startup, ready and a queued model choice.
+  // Fixture IPC only: nothing here exercises real downloads, the VM or credentials.
+  const GiB = 1024 ** 3;
+  const transfer = { phase: 'materializing', bytes: Math.round(1.1 * GiB), totalBytes: Math.round(2.8 * GiB), elapsedMs: 20000, remainingMs: 30000 };
+  const startup = elapsedMs => ({ phase: 'starting', bytes: null, totalBytes: null, elapsedMs, remainingMs: null });
+  const setupFixtures = [
+    ['setup-transfer', 'installing', transfer, false, 'Installing, 1.1 GiB of 2.8 GiB'],
+    ['setup-transfer-queued', 'installing', transfer, true, 'Connects automatically when Orka is ready.'],
+    ['setup-startup', 'starting', startup(12000), false, 'Rough estimate, not a measurement'],
+    ['setup-startup-slow', 'starting', startup(45000), false, 'Taking longer than the rough 30-second estimate'],
+    ['setup-ready', 'ready', null, false, 'Your workspace is running on this computer.'],
+  ];
+  const pair = { agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\n---\nFetch before answering.', tests: 'The checksum check.' };
+  async function captureSetup(theme, size, [name, localVm, progress, queue, expected]) {
+    ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `setup-${theme}-${size}-${name}` }));
+    await evaluate(`(() => {
+      const pair = ${JSON.stringify(pair)};
+      localStorage.setItem('bridge.welcomeSeen.v1', '1');
+      window.isTauri = true;
+      window.__TAURI_INTERNALS__ = { invoke: async command => {
+        if (command === 'setup_status') return { selected: 'localVm', localVm: ${JSON.stringify(localVm)}, model: ${JSON.stringify(localVm === 'ready' ? 'available' : 'locked')}, workspaceProgress: ${JSON.stringify(progress)}, localVmError: null };
+        if (command === 'setup_example') return pair;
+        if (command === 'setup_requirements') return null;
+        if (command === 'engine_call') throw { kind: 'unavailable' };
+        throw Error('Unmocked fixture command: ' + command);
+      } };
+      document.getElementById('root').replaceWith(Object.assign(document.createElement('div'), { id: 'root' }));
+    })()`);
+    await evaluate(bundle);
+    if (queue) {
+      await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Use GitHub sign-in')`), 'queueable model action');
+      await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Use GitHub sign-in').click()`);
+    }
+    await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && !!document.querySelector('.setup-progress')`), `${name} setup progress`);
+    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+    const shoot = async suffix => {
+      const image = await call('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(output, `${theme}-${size}-${name}${suffix}.png`), Buffer.from(image.data, 'base64'));
+      console.log(`Captured native WebView2 renderer fixture: ${theme}/${size}/${name}${suffix}`);
+    };
+    await shoot('');
+    if (size === 'compact') { // The long step history sits below the model action; show it too.
+      await evaluate(`document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight`);
+      await shoot('-end');
+    }
+  }
+  const notes = [];
+  for (const theme of ['light', 'dark']) {
+    await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
+    for (const fixture of setupFixtures) await captureSetup(theme, 'wide', fixture);
+  }
+  // Resize the real native window so its client area is 540x900, as a user would. Win32 SetWindowPos through
+  // PowerShell, then verify what the embedded WebView actually reports; never assume the resize worked.
+  const target = { width: 540, height: 900 };
+  const resizeScript = `
+$ErrorActionPreference = 'Stop'
+Add-Type @'
+using System; using System.Runtime.InteropServices;
+public struct WinRect { public int L, T, R, B; }
+public static class WinSize {
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out WinRect r);
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out WinRect r);
+  [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int h2, uint flags);
+}
+'@
+$h = (Get-Process -Id ${child.pid}).MainWindowHandle
+if ($h -eq [IntPtr]::Zero) { throw 'No native main window handle' }
+for ($i = 0; $i -lt 4; $i++) {
+  $w = New-Object WinRect; $c = New-Object WinRect
+  [void][WinSize]::GetWindowRect($h, [ref]$w); [void][WinSize]::GetClientRect($h, [ref]$c)
+  $dw = ${target.width} - ($c.R - $c.L); $dh = ${target.height} - ($c.B - $c.T)
+  if ($dw -eq 0 -and $dh -eq 0) { break }
+  [void][WinSize]::SetWindowPos($h, [IntPtr]::Zero, $w.L, $w.T, ($w.R - $w.L) + $dw, ($w.B - $w.T) + $dh, 0x0014)
+  Start-Sleep -Milliseconds 300
+}
+$c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
+"client=$($c.R - $c.L)x$($c.B - $c.T)"`;
+  // EncodedCommand avoids any argument-quoting ambiguity for the embedded C#.
+  const resized = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(resizeScript, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 20000 });
+  let mode = 'native-window-resize';
+  const viewport = async () => evaluate('({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })');
+  ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'viewport-probe' }));
+  await delay(500);
+  let reported = await viewport();
+  const close = (a, b) => Math.abs(a - b) <= 2;
+  if (resized.status !== 0 || !close(reported.width * reported.dpr, target.width) || !close(reported.height * reported.dpr, target.height)) {
+    // Limitation, reported honestly: the window could not be resized, so use renderer viewport emulation.
+    console.warn(`Native window resize unverified (exit ${resized.status}); using renderer viewport emulation. ${resized.stderr ?? ''}`);
+    mode = 'renderer-viewport-emulation';
+    await call('Emulation.setDeviceMetricsOverride', { width: target.width, height: target.height, deviceScaleFactor: 1, mobile: false });
+    reported = await viewport();
+  }
+  notes.push(`Compact captures: ${mode}. Requested content area ${target.width}x${target.height}; WebView reported ${reported.width}x${reported.height} CSS px at devicePixelRatio ${reported.dpr}. ${resized.stdout.trim()}`);
+  for (const theme of ['light', 'dark']) {
+    await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
+    for (const fixture of setupFixtures) await captureSetup(theme, 'compact', fixture);
+  }
+  await writeFile(join(output, 'compact-window.txt'), notes.join('\n') + '\n');
+  await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*) use the same fixtures; compact-window.txt says whether 540x900 was a real native window resize or renderer viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
   // Keep the source identity next to images without inferring it from branch names.
   await writeFile(join(output, 'head.txt'), await readFile(join(output, '..', 'native-lifecycle', 'head.txt')));
 } finally {
