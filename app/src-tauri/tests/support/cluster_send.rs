@@ -668,6 +668,22 @@ async fn reload_during_send_keeps_its_frozen_target_and_requires_use_again() {
 }
 
 #[tokio::test]
+async fn reload_immediately_after_running_admission_keeps_its_access() {
+    let s = setup().await;
+    let started = s.start().await;
+    assert_eq!(started["state"], "running");
+    assert_eq!(started["stage"], "capture");
+    s.session.reload().await.unwrap();
+    let done = s.finish(&id(&started)).await;
+    assert_eq!(done["report"]["verdict"], "passed", "{done}");
+    assert_eq!(s.agent_posts().len(), 1);
+    s.idle_forwards().await;
+    let next = s.start().await;
+    assert_eq!(s.finish(&id(&next)).await["error"], "access");
+    assert_eq!(s.agent_posts().len(), 1);
+}
+
+#[tokio::test]
 async fn admission_does_not_wait_for_discovery_lock() {
     let s = setup().await;
     let (release, gate) = std::sync::mpsc::channel();

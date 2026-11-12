@@ -47,8 +47,6 @@ impl From<AccessOutcome> for AccessView {
 #[derive(Default)]
 struct Session {
     client: Option<ClusterClient>,
-    // Send shares this frozen access; a later Use replaces it without switching a running attempt.
-    access: Option<(TargetId, Arc<RemoteAccess>)>,
 }
 impl Session {
     /// Lazily reads configuration off the executor. A read that misses its budget is dropped,
@@ -76,12 +74,16 @@ impl Session {
 }
 /// Reads the current kubeconfig for each Send; tests inject fixtures here.
 pub type KubeconfigReader = Arc<dyn Fn() -> Result<Kubeconfig, ClusterError> + Send + Sync>;
+type ConfirmedAccess = Option<(TargetId, Arc<RemoteAccess>)>;
+pub(crate) type SendAccess = (Option<Arc<RemoteAccess>>, KubeconfigReader);
 #[derive(Clone)]
 pub struct ClusterSession(
     Arc<Mutex<Session>>,
     KubeconfigReader,
     ExecOwner,
     Arc<dyn OrkaRead>,
+    // Memory-only admission snapshot, independent of bounded discovery/Use waits.
+    Arc<std::sync::Mutex<ConfirmedAccess>>,
 );
 impl Default for ClusterSession {
     fn default() -> Self {
@@ -90,6 +92,7 @@ impl Default for ClusterSession {
             Arc::new(read_kubeconfig),
             ExecOwner::default(),
             Arc::new(PodOrkaRead),
+            Arc::default(),
         )
     }
 }
@@ -105,11 +108,11 @@ impl ClusterSession {
         Self(
             Arc::new(Mutex::new(Session {
                 client: Some(client),
-                access: None,
             })),
             reader,
             exec,
             orka,
+            Arc::default(),
         )
     }
     /// Independent of the discovery/Use lock, so close can interrupt a running plugin.
@@ -117,15 +120,11 @@ impl ClusterSession {
         self.2.shutdown().await;
     }
     /// Memory-only lookup; the caller rechecks a fresh kubeconfig before writing.
-    pub(crate) async fn send_access(
-        &self,
-        target: &str,
-    ) -> (Option<Arc<RemoteAccess>>, KubeconfigReader) {
+    pub(crate) fn send_access(&self, target: &str) -> SendAccess {
         let access = self
-            .0
+            .4
             .lock()
-            .await
-            .access
+            .unwrap()
             .as_ref()
             .and_then(|(id, access)| (id.0.to_string() == target).then(|| access.clone()));
         (access, self.1.clone())
@@ -143,6 +142,7 @@ impl ClusterSession {
     pub async fn reload(&self) -> Result<Vec<ContextView>, ClusterFailure> {
         let mut session = self.0.lock().await;
         *session = Session::default();
+        *self.4.lock().unwrap() = None;
         session
             .client(self)
             .await?
@@ -151,7 +151,7 @@ impl ClusterSession {
     }
     pub async fn discover(&self, context_id: &str) -> Result<Vec<TargetView>, ClusterFailure> {
         let mut session = self.0.lock().await;
-        session.access = None;
+        *self.4.lock().unwrap() = None;
         let client = session.client(self).await?;
         let context = client
             .contexts()
@@ -163,7 +163,7 @@ impl ClusterSession {
     }
     pub async fn use_target(&self, target_id: &str, sa_name: Option<String>) -> AccessView {
         let mut session = self.0.lock().await;
-        session.access = None;
+        *self.4.lock().unwrap() = None;
         let id = Uuid::parse_str(target_id).ok().map(TargetId);
         let result = async {
             let client = session.client(self).await.map_err(AccessOutcome::Failed)?;
@@ -178,7 +178,7 @@ impl ClusterSession {
                     providers: access.providers().to_vec(),
                     failure: None,
                 };
-                session.access = id.map(|id| (id, Arc::new(access)));
+                *self.4.lock().unwrap() = id.map(|id| (id, Arc::new(access)));
                 view
             }
             Err(outcome) => outcome.into(),

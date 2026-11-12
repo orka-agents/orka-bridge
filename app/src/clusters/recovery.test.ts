@@ -22,8 +22,11 @@ test.each([
   const recovery = clusterRecovery({ check: 'orkaIdentity', result });
   expect(recovery.cause).toMatch(cause); expect(recovery.next).toMatch(next);
 });
-test('refreshing a rejected sign-in rereads embedded kubeconfig tokens before retry', () => {
-  expect(clusterRecovery({ check: 'clusterApi', result: 'authenticationRejected' }).next).toContain('Reload kubeconfig');
+test.each([
+  { check: 'clusterApi', result: 'authenticationRejected' },
+  { check: 'credentials', result: 'unsupportedCredential' },
+] as const)('kubeconfig-changing recovery for $result explains reload before retry', failure => {
+  expect(clusterRecovery(failure).next).toContain('Reload kubeconfig');
 });
 test('no Providers is distinct from an unknown Provider read', () => {
   expect(clusterRecovery({ check: 'providers', result: 'noProviders' }).cause).toContain('No Providers are configured');

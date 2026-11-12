@@ -5,7 +5,7 @@ pub use crate::clusters::preflight::SendCheck;
 use crate::{
     agent_folder::{AgentFolder, DocumentId, DocumentRef},
     clusters::{
-        commands::ClusterSession,
+        commands::{ClusterSession, SendAccess},
         preflight::{CheckRow, CheckStatus},
         ProviderId,
     },
@@ -222,7 +222,7 @@ impl SendOwner {
             "The current agent and companion tests were captured.",
         ));
         let rows = async {
-            let (access, reader) = self.session.send_access(&target).await;
+            let (access, reader) = self.session.send_access(&target);
             let access = access.ok_or_else(|| {
                 CheckRow::new(
                     "Access",
@@ -275,7 +275,7 @@ impl SendOwner {
         check.finish()
     }
     /// Admits one job, or observes the running one, without waiting on the
-    /// cluster session; capture, access and all rechecks happen inside the job.
+    /// cluster session; access is frozen before Running, capture and rechecks stay inside the job.
     pub async fn start(
         self: &Arc<Self>,
         target_id: &str,
@@ -334,6 +334,7 @@ impl SendOwner {
             inner.views.insert(id, view.clone());
             return view;
         }
+        let admission = self.session.send_access(&target);
         let (stop, mut stop_rx) = watch::channel(false);
         let (done_tx, done) = watch::channel(false);
         inner.views.insert(id, view.clone());
@@ -350,7 +351,7 @@ impl SendOwner {
                 .drive(
                     id,
                     folder,
-                    &target,
+                    admission,
                     provider,
                     &expected_source,
                     &mut stop_rx,
@@ -454,7 +455,7 @@ impl SendOwner {
         &self,
         id: SendId,
         folder: Arc<AgentFolder>,
-        target: &str,
+        admission: SendAccess,
         provider: Option<ProviderId>,
         expected_source: &SnapshotId,
         stop: &mut watch::Receiver<bool>,
@@ -474,11 +475,8 @@ impl SendOwner {
             v.model = Some(pair.model().into());
             v.stage = Stage::Access;
         });
-        // Shares the frozen access under a short session lock; never held for the run.
-        let (access, reader) = until_stop(stop, Stage::Access, async {
-            Ok::<_, ()>(self.session.send_access(target).await)
-        })
-        .await?;
+        // Admission already froze this access before the first Running response.
+        let (access, reader) = admission;
         if let Some(access) = &access {
             self.update(id, |v| {
                 v.target_name = Some(access.binding().context_name.clone())
