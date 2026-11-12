@@ -36,7 +36,7 @@ def load_policy():
 
 def validate_tag(tag):
     require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", tag) is not None
-            and ".." not in tag, "invalid app release tag")
+            and ".." not in tag and not tag.endswith((".", ".lock")), "invalid app release tag")
 
 
 def gh(endpoint, *, paginate=False, download=None):

@@ -178,7 +178,7 @@ class Delivery(unittest.TestCase):
         self.assertFalse(self.out.exists())
 
     def test_unsafe_tag_existing_output_and_corrupt_inputs(self):
-        for tag in ("../bad", "x/y", "$(bad)", "", "x\n"):
+        for tag in ("../bad", "x/y", "$(bad)", "", "x\n", "preview.", "preview.lock"):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 delivery.validate_tag(tag)
         self.out.mkdir()
