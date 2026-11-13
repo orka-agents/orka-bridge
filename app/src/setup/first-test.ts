@@ -39,14 +39,17 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
       setCheck(snapshot?.state === 'complete' ? snapshot.report?.verdict ?? 'unknown' : 'unknown');
       if (latest.current.ready && latest.current.canOpen) latest.current.onOpen();
     };
-    const observe = async (snapshot: RunSnapshot) => {
+    const poll = () => {
+      timer.current = setTimeout(() => { void runCall('agent_run_status').then(result => {
+        if (cancelled || !mounted.current) return;
+        if (result.ok) void observe(result.snapshot); else poll();
+      }); }, 500);
+    };
+    const observe = (snapshot: RunSnapshot) => {
       if (cancelled || !mounted.current) return;
       if (snapshot.state !== 'running' && snapshot.busy?.documentId !== SAMPLE_DOCUMENT_ID) { finish(snapshot); return; }
       setCheck('running');
-      timer.current = setTimeout(() => { void runCall('agent_run_status').then(result => {
-        if (cancelled || !mounted.current) return;
-        if (result.ok) void observe(result.snapshot); else finish();
-      }); }, 500);
+      poll();
     };
     void Promise.all([loadExample(), agentCall('agent_open', undefined, SAMPLE_DOCUMENT_ID), runCall('agent_run_status')]).then(async ([bundled, saved, status]) => {
       // StrictMode's abandoned effect must not consume the durable one-shot.

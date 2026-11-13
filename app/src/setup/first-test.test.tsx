@@ -101,6 +101,26 @@ test.each([true, false])('an admitted test remains observed through unavailable 
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
 });
 
+test('an unreadable status poll keeps watching admission without opening or resubmitting', async () => {
+  const { ipc, finish } = native(); const onOpen = vi.fn(); armFirstTest();
+  let unreadable = false;
+  const reply = ipc.getMockImplementation()!;
+  ipc.mockImplementation((command, args) => {
+    if (command === 'agent_run_status' && unreadable) throw Error('Lost status');
+    return reply(command, args);
+  });
+  const view = renderHook(() => useFirstTest({ ready: true, canOpen: true, sampleDirty: false, onOpen }));
+  await waitFor(() => expect(view.result.current).toBe('running'));
+  const reads = ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length;
+  unreadable = true; finish();
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length).toBeGreaterThan(reads));
+  expect(onOpen).not.toHaveBeenCalled();
+  expect(view.result.current).toBe('running');
+  unreadable = false;
+  await waitFor(() => { expect(onOpen).toHaveBeenCalledOnce(); expect(view.result.current).toBe('unknown'); });
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
+});
+
 test('unsaved sample edits hold the automatic action and storage failure never admits submission', async () => {
   const { ipc } = native(); armFirstTest();
   const view = renderHook(() => useFirstTest({ ready: true, canOpen: true, sampleDirty: true, onOpen: vi.fn() }));
