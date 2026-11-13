@@ -152,18 +152,19 @@ test('a queued connection that fails is not retried without an explicit action',
 });
 
 test('choosing a cluster clears the held intent even though the view stays mounted', async () => {
-  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  const { ipc, sim, connects } = native(); const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   sim.localVm = 'ready';
-  await within(screen.getByRole('navigation')).findByText('AI unavailable', {}, wait);
+  await observe(ipc);
+  expect(within(screen.getByRole('navigation')).getByText('AI unavailable')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
   await screen.findByRole('radio', { name: 'On a cluster you already have' });
   sim.model = 'available';
-  await settle(); expect(connects()).toBe(0);
+  await observe(ipc); expect(connects()).toBe(0);
   await user.click(screen.getByRole('radio', { name: 'On this computer' }));
   expect(await screen.findByRole('button', { name: 'Connect the AI' })).toBeTruthy();
-  await settle(); expect(connects()).toBe(0);
+  await observe(ipc); expect(connects()).toBe(0);
 });
 
 test.each(['notIntegrated', 'cancelled', 'closed', 'closing', 'idle'])('nothing can be queued while the workspace is %s', async localVm => {
