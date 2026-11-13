@@ -58,9 +58,16 @@ jobs:
             artifact: macos-arm64
             suite: checks
             rust-cache: app-macos-15-rust-1.98.1
+          # Each GUI theme has its own existing 30m job budget.
           - os: macos-15
-            artifact: macos-arm64
+            artifact: macos-arm64-light
             suite: bundle
+            theme: light
+            rust-cache: app-macos-15-bundle-rust-1.98.1
+          - os: macos-15
+            artifact: macos-arm64-dark
+            suite: bundle
+            theme: dark
             rust-cache: app-macos-15-bundle-rust-1.98.1
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
@@ -200,12 +207,11 @@ jobs:
           trap restore_lifecycle_theme EXIT
           mkdir -p native-lifecycle
           git rev-parse HEAD > native-lifecycle/head.txt
-          for theme in light dark; do
-            if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
-            osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
-            test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
-            swift ../scripts/native-lifecycle-macos.swift "native-lifecycle/$theme" "$bundle" "$theme"
-          done
+          theme="${{ matrix.theme }}"
+          if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
+          osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
+          test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
+          swift ../scripts/native-lifecycle-macos.swift "native-lifecycle/$theme" "$bundle" "$theme"
       - name: Mac app bundle and native walk
         if: runner.os == 'macOS' && matrix.suite == 'bundle'
         run: |
@@ -221,7 +227,7 @@ jobs:
           bash ../scripts/check-vm-helper-bundle-macos.sh smoke-app/Bridge.app
           cmp "$bundle/Contents/MacOS/orka-bridge" smoke-app/Bridge.app/Contents/MacOS/orka-bridge
           for notice in public/licenses/*.txt; do cmp "$notice" "smoke-app/Bridge.app/Contents/Resources/licenses/${notice##*/}"; done
-          # Test both system themes and keyboard navigation; restore runner preferences.
+          # The matrix covers both themes and keyboard navigation; restore preferences.
           prior_dark="$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')"
           prior_style="$(defaults read -g AppleInterfaceStyle 2>/dev/null || true)"
           prior_auto="$(defaults read -g AppleInterfaceStyleSwitchesAutomatically 2>/dev/null || true)"
@@ -249,13 +255,12 @@ jobs:
           defaults write -g AppleKeyboardUIMode -int 3
           mkdir -p native-model
           git rev-parse HEAD > native-model/head.txt
-          for theme in light dark; do
-            if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
-            osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
-            test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
-            swift ../scripts/native-smoke.swift "native-walk/$theme" "$PWD/smoke-app/Bridge.app" "$theme"
-            swift ../scripts/native-model-macos.swift "native-model/$theme" "$PWD/src-tauri/target/debug/examples/model_walk" "$theme"
-          done
+          theme="${{ matrix.theme }}"
+          if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
+          osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
+          test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
+          swift ../scripts/native-smoke.swift "native-walk/$theme" "$PWD/smoke-app/Bridge.app" "$theme"
+          swift ../scripts/native-model-macos.swift "native-model/$theme" "$PWD/src-tauri/target/debug/examples/model_walk" "$theme"
       - name: Preserve Mac bundle cache
         if: matrix.suite == 'bundle' && steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
