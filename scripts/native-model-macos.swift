@@ -235,6 +235,8 @@ for character in "Changed fixture instructions.".utf16 {
 }
 Thread.sleep(forTimeInterval: 1)
 require((attribute(editor, "AXValue") as? String)?.contains("Changed fixture instructions.") == true, "Native keystrokes did not edit Instructions")
+// Focusing Instructions scrolls below the compact test card; return to its start.
+scroll(4000)
 _ = try seek("Not run since your edit", -250)
 _ = try capture("local-stale", ["Not run since your edit"])
 rows = try seek("Run tests", -150)
