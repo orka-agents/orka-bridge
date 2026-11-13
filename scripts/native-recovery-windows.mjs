@@ -249,7 +249,10 @@ try {
     await evaluate(bundle);
     if (first) await clickAction('Continue');
     if (first || name === 'ai-connecting' || name === 'ai-connected') await clickAction('Connect the AI');
-    if (name === 'change') await clickAction('Change where agents run');
+    if (name === 'change') {
+      await clickAction('Change where agents run');
+      await until(() => evaluate(`(() => { const primary = [...document.querySelectorAll('button.workspace-primary')].filter(button => button.getClientRects().length); return primary.length === 1 && primary[0].textContent === 'Keep workspace running'; })()`), 'Keep as the only primary action');
+    }
     if (name === 'designer') await clickAction('Read its instructions');
     const expected = { chooser: 'Where should your agents run?', 'ai-idle': 'GitHub CLI installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected with GitHub Copilot', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', change: 'Keep this workspace running?', designer: 'Instructions and settings' };
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])})`), `${name} action state`);

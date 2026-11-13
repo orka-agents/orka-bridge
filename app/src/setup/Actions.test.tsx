@@ -44,9 +44,11 @@ test('Change focuses its explanation, makes Keep primary and restores focus with
   expect(within(panel).getByText(/downloaded workspace files and agent files are kept/)).toBeTruthy();
   const keep = within(panel).getByRole('button', { name: 'Keep workspace running' });
   expect(keep.className).toBe('workspace-primary');
+  expect(screen.getByRole('button', { name: 'Connect the AI' }).className).toBe('workspace-secondary');
   expect(within(panel).getByRole('button', { name: 'Stop workspace and choose a place' }).className).toBe('workspace-secondary');
   await user.click(keep);
   expect(document.activeElement).toBe(change);
+  expect(screen.getByRole('button', { name: 'Connect the AI' }).className).toBe('workspace-primary');
   expect(ipc.mock.calls.some(([command]) => command === 'setup_change_local')).toBe(false);
 });
 

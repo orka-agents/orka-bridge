@@ -7,8 +7,8 @@ import type { HelpTopic } from './recovery-info';
 export type ModelState = 'idle' | 'queued' | 'connecting' | 'removing' | 'connected' | 'failed';
 // `enabled` is native permission to touch credentials. `queueable` only permits remembering the
 // creator's choice while the workspace is still arriving. `away` means another place was chosen.
-export default function Model({ enabled, queueable = false, paused = false, away = false, onState, onSettled }: {
-  enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void;
+export default function Model({ enabled, queueable = false, paused = false, away = false, primary = true, onState, onSettled }: {
+  enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; primary?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void;
 }) {
   // In-memory consent only. It never carries a credential and is consumed once.
   const [queued, setQueued] = useState(false);
@@ -109,7 +109,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
             {queued && <><span className="muted">Connects automatically when Orka is ready.</span>
               <button type="button" className="workspace-link" onClick={() => setQueued(false)}>Cancel queued connection</button></>}
           </div>
-          : <button key="model-connect" ref={retry} type="button" className="workspace-primary" disabled={(!enabled && !queueable) || paused || !!busy} onClick={choose}>
+          : <button key="model-connect" ref={retry} type="button" className={primary ? 'workspace-primary' : 'workspace-secondary'} disabled={(!enabled && !queueable) || paused || !!busy} onClick={choose}>
             {error && failedAction === 'connect' ? 'Check again' : 'Connect the AI'}
           </button>}
           {busy !== 'remove' && <button ref={removal} type="button" className="workspace-link" disabled={!enabled || paused || !!busy}

@@ -184,7 +184,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelSta
           <div className="workspace-step-actions"><button type="button" className="workspace-primary" disabled={sending} onClick={() => { setConfirmChange(false); changeInvoker.current?.focus(); }}>Keep workspace running</button><button type="button" className="workspace-secondary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and choose a place</button></div>
           <button type="button" className="workspace-link" disabled={sending} onClick={chooseCluster}>Choose a cluster, keep this workspace running</button>
         </section>} />}
-      {status && modelMounted && <div className="setup-model-slot" hidden={cluster}><Model enabled={status.model === 'available'} queueable={canQueueModel(status)} paused={!!error || sending} away={cluster} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
+      {status && modelMounted && <div className="setup-model-slot" hidden={cluster}><Model enabled={status.model === 'available'} queueable={canQueueModel(status)} paused={!!error || sending} away={cluster} primary={!confirmChange} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
       {selected && status && <SetupSteps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onRestart={() => { void chooseLocal(); }} onCluster={chooseCluster} />}
       {selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={onOpenExample} onName={onExampleName} />}
       {/* Keep configuration mounted when local setup replaces the chooser. */}
