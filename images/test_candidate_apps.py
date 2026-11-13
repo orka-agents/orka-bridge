@@ -134,7 +134,7 @@ class Apps(unittest.TestCase):
         pins = json.loads(self.uploads["image-pins.json"])
         self.assertEqual(len(pins["assets"]), 11)
         self.assertEqual(pins["images"], self.policy["images"])
-        self.assertIn("/bridge-images-preview-7ce86e7a/", pins["assetBase"])
+        self.assertIn("/bridge-images-preview-181d7f64/", pins["assetBase"])
         self.assertEqual(len(json.loads(self.uploads["size-space.json"])["observations"]), 4)
         self.assertFalse(any(n.endswith((".kernel", ".initrd")) or ".part-" in n for n in self.uploads))
 

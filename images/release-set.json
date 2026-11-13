@@ -1,20 +1,20 @@
 {
   "schemaVersion": "bridge-release-set/v1",
   "imageRelease": {
-    "tag": "bridge-images-preview-7ce86e7a",
-    "title": "Bridge VM images — preview-7ce86e7a",
-    "sourceCommit": "7ce86e7a8ede790f9ff6304213f0cd792c6d3334"
+    "tag": "bridge-images-preview-181d7f64",
+    "title": "Bridge VM images — preview-181d7f64",
+    "sourceCommit": "181d7f64ac99a0bb25df3a0a645d5de84f84d0a6"
   },
   "images": {
     "macos-arm64": {
       "profile": "preview-macos-arm64",
       "manifestName": "manifest-macos-arm64.json",
-      "manifestSha256": "5aca49931f8672f8446a88751fad32398f98fba983ccad3d8adc200738d01e8c"
+      "manifestSha256": "04ad8d90419e05d3d2d7d941c9ce1f0d2f85074d82fd9fe62a0822547248e757"
     },
     "windows-amd64": {
       "profile": "preview-windows-amd64",
       "manifestName": "manifest-windows-amd64.json",
-      "manifestSha256": "1ae27e06f8e830a8a64e864380885f234fafa2391e18dc75e6342fc89e65248d"
+      "manifestSha256": "a6f998fc68522287a3d391fcbd549c0d58a7f7de861a7764c1c98a7afc19051f"
     }
   },
   "appCandidates": {}

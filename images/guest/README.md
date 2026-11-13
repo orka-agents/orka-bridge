@@ -42,7 +42,7 @@ from [the restricted-worker build](https://github.com/orka-agents/orka/actions/r
 whose `sourceSHA` matches `versions.json`. It records the controller, AI worker,
 general-worker and publisher indexes for both architectures; select their
 platform children and record the actual byte hashes. Restore the exact pinned
-staged chart using [kmx's retained-chart extraction instructions](https://github.com/kaimahi-agents/kaimahi/blob/f9dcb65001b8c424cbc51b976339b57f40c71c22/docs/kmx.md#source-packaged-restricted-profile),
+staged chart using [kmx's retained-chart extraction instructions](https://github.com/kaimahi-agents/kaimahi/blob/e58f763cdda79ac41c81a1a695559c7aabfe4dc0/docs/kmx.md#source-packaged-restricted-profile),
 not a fresh Helm package or the older checked-in release chart. A local rebuild
 instead requires approved **native builders for each architecture**; no builder
 is provisioned here. Obtain the session loader, node,
@@ -315,7 +315,7 @@ To enable the native six-role profile, select additional hash-locked tools `kmx`
 original supported `kmx-offline/v1` install.json, selected by hash, not another
 Bridge schema. Its source, platform, complete profile, chart, descriptor, tool and
 six image identities must agree with the input lock. Source bundles use the
-`versions.json` pins: kmx `f9dcb65001b8c424cbc51b976339b57f40c71c22`, Orka
+`versions.json` pins: kmx `e58f763cdda79ac41c81a1a695559c7aabfe4dc0`, Orka
 `7916cd1c8c083ade6b10df6ba408f854d930190c` and profile
 `orka-7916cd1c-native/v1`. The profile selects restricted AI-worker RBAC and
 controller context-token enforcement. This does not approve a production release.
@@ -345,6 +345,7 @@ reported Ready after the node container last started, and Orka's API answers
 reason and the journal stays at orka-ready. On a slow first boot the unit's 900 s start
 timeout can stop the run before that refusal; the journal still stays at orka-ready.
 The unit does not retry, and the next run, such as the next boot, repeats every check.
+A kmx refusal keeps kmx's last three lines, without terminal escapes or its confirmation box and bounded to 512 characters, in the lifecycle's error; other commands keep only their fixed name. The unit sends that error to the journal and the serial console.
 Freshness compares kubelet and Docker timestamps, so it relies on the guest clock the
 early endpoint sets from the host.
 This marker is not authority: every resume rechecks ownership, caches and kmx.

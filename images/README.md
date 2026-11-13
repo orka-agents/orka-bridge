@@ -195,7 +195,7 @@ After merge, an authorized operator runs these commands in order, not together:
 gh workflow run images.yml -R orka-agents/orka-bridge --ref main -f stage=images
 # Inspect the successful image-only draft, receipts and exact eleven assets.
 # Only an authorized publisher, after a separate publication decision:
-gh release edit bridge-images-preview-7ce86e7a -R orka-agents/orka-bridge --draft=false --prerelease --latest=false
+gh release edit bridge-images-preview-181d7f64 -R orka-agents/orka-bridge --draft=false --prerelease --latest=false
 TAG=YOUR_APP_TAG
 gh workflow run images.yml -R orka-agents/orka-bridge --ref main -f stage=build-candidate -f candidate_tag="$TAG"
 gh run list -R orka-agents/orka-bridge --workflow images.yml --event workflow_dispatch --branch main --json databaseId,headSha,status,conclusion

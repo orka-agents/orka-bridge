@@ -3,106 +3,106 @@
   "acceptedSchemaSha256": "80a867ef73ef29685f3d7e7d4d72365ca823cc9a56ce6e0ea9e1ee3e39b92d21",
   "sourcePreviews": {
     "7916cd1c8c083ade6b10df6ba408f854d930190c": {
-      "arm64": "b05fd47e722524bf1c270f33b4e85e23ba19fb4ac3e320ebfb3a46f25dbad04a",
-      "amd64": "79fa6b3e83e8d54465fa24ed6b4794010d3f84bcad46278a8e02c3cb0ad3c9c7"
+      "arm64": "e5c7b019e3caceee6c629b3b1a68b8da04b2b1f2dcabf5241c91062a35ae1cb9",
+      "amd64": "a1f76b646e93cc13bf7d4edc73146f06544b5f456e925307fa1a547da3305e07"
     }
   },
   "profiles": {
     "preview-macos-arm64": {
       "architecture": "arm64",
-      "artifactId": 13946658946,
-      "artifactSha256": "4a8e9228a8be9aef9fe5925e7777fc938bf828622cfb28383d15295b5fcd95aa",
+      "artifactId": 14048363179,
+      "artifactSha256": "48498377c6c01f52604e6772af8bbbb3764adc9bd96b18b360697a1f11358d30",
       "bootReceiptPath": "boot-assets.json",
-      "bootReceiptSha256": "2c589a7ea777cd353e5a7664f04a6ab4e332d4e174732bf43f69f08f3fd6f403",
+      "bootReceiptSha256": "3f0108d781819ee10cddf4836890c46dfb222b9fb44660b7f04ef84a1f9de724",
       "buildReceiptPath": "build.json",
-      "buildReceiptSha256": "8d4fe47ce6377cc4a8a2c0203a074abb9837f1fd90d45bcb11cb3b1f9a909f6f",
-      "imageId": "preview-7ce86e7a",
-      "initrdBytes": 35859124,
+      "buildReceiptSha256": "bc4d2e750a30063f531752c1ae34b4339c9317b97c7477074af41257ea0e32f2",
+      "imageId": "preview-181d7f64",
+      "initrdBytes": 35859166,
       "initrdPath": "os.initrd",
-      "initrdSha256": "1e0129f4ad2349e39e1bef65f6d7590f74294b0f1557257c6b2de41b15a112f6",
+      "initrdSha256": "e78ca98b09c444d2d6ba2c73ae650c98ab49cf8e4d7319de5700066d324e7f41",
       "inputDraft": {
-        "archiveBytes": 2366310051,
-        "archiveSha256": "37bbb04d2ec9751677ee5d02bb5c2b545f9b68f47ec2b384551116a0cb0f6877",
+        "archiveBytes": 2366353977,
+        "archiveSha256": "1de6112db83db15caff816e9ff9cbc303ac01160d5f9f0261190356bb4972722",
         "parts": [
           {
             "bytes": 1073741824,
             "name": "archive.zip.part-000000",
-            "sha256": "b6ea6a49457d7f6ca6356cf95790cbc9f858f0e41808de864c71d71aa136e4a6"
+            "sha256": "17d37941e5f5e6694249171d8fbd1f400bc72619113a12b9f1964c00bbf1feb3"
           },
           {
             "bytes": 1073741824,
             "name": "archive.zip.part-000001",
-            "sha256": "54003f57a85c8ab2b4cfcc0a956228bde7a672b477246e6cbc91157f89737f8c"
+            "sha256": "ac3a6aee438bfb1d0426f380f1c2a27b811d070fbda8c15344d7952eac0dc1c9"
           },
           {
-            "bytes": 218826403,
+            "bytes": 218870329,
             "name": "archive.zip.part-000002",
-            "sha256": "45ab49075a89d0d3e85502e0d7bee4b72ca05c253e2d50b120be46ad208d7968"
+            "sha256": "658b7e3cd27f2d7613dda864d5f4c7450b5f8f54def00dd4cb3793db4ac1e632"
           }
         ],
-        "releaseId": 443526403,
-        "tag": "bridge-image-inputs-arm64-37bbb04d2ec9751677ee5d02bb5c2b545f9b68f47ec2b384551116a0cb0f6877"
+        "releaseId": 444508083,
+        "tag": "bridge-image-inputs-arm64-1de6112db83db15caff816e9ff9cbc303ac01160d5f9f0261190356bb4972722"
       },
-      "inputIdentity": "b05fd47e722524bf1c270f33b4e85e23ba19fb4ac3e320ebfb3a46f25dbad04a",
+      "inputIdentity": "e5c7b019e3caceee6c629b3b1a68b8da04b2b1f2dcabf5241c91062a35ae1cb9",
       "kernelBytes": 44158912,
       "kernelPath": "os.kernel",
       "kernelSha256": "27f833e233753a0a601f3a6792dcd73e2f2c7c8bd30e00b837315c71c5996dcb",
       "metadataPath": "metadata.json",
-      "metadataSha256": "b6ed372c529fc06be4891d05391a7feb159dc6a30f0af16c91c079dc700e1d9d",
-      "nativeReceiptSha256": "2c6ecd7f31b498d863fc3e30ef71ebb39a19b56645383aa7722690b2266b8681",
+      "metadataSha256": "954f0ef8a6cad38567977d3e79c03104d0a52a82fab0ef9fe7ceff4ccb1b145f",
+      "nativeReceiptSha256": "2809e04ceb376c20e3ae056123ca6f3e613ab240deabec544075e582b947caa7",
       "payloadPath": "os.raw",
-      "payloadSha256": "4647c7068e7f3daeae282b0fc36921142522683482885eb679334752d71172dc",
+      "payloadSha256": "c825114be1778ba341ef0680aabd8478745b228e2fc3e71ee1bd2b256e9831ff",
       "platform": "macos",
       "repository": "orka-agents/orka-bridge",
       "repositoryId": 1444972279,
-      "runId": 43225784039,
-      "sourceCommit": "7ce86e7a8ede790f9ff6304213f0cd792c6d3334",
+      "runId": 43448240567,
+      "sourceCommit": "181d7f64ac99a0bb25df3a0a645d5de84f84d0a6",
       "workflowId": 406606708
     },
     "preview-windows-amd64": {
       "architecture": "amd64",
-      "artifactId": 13948061626,
-      "artifactSha256": "347aaa398d931ee41d1aceb8e8ac58d0bdf16d06b32b8c9d76d26bffdf94cb03",
+      "artifactId": 14048094922,
+      "artifactSha256": "f9ae51f19d5240452ad70d4cea1781e113daf16ff98fe24ed06d2e64eb9eb78f",
       "bootReceiptPath": "boot-assets.json",
-      "bootReceiptSha256": "c18e950cfe3fde37e0dd31bbdc629aa06e369a3b800374273e185133ccb209dc",
+      "bootReceiptSha256": "270e3a180ce55270b6e1b1ea5a7cdc09cccd2d8406aab07f4d9609112fcdc7db",
       "buildReceiptPath": "build.json",
-      "buildReceiptSha256": "fa423b1a0b5306fe80ca040b0133cefaaa3409d1259ab3fb9682e34fea8a5ec8",
-      "imageId": "preview-7ce86e7a",
-      "initrdBytes": 16993032,
+      "buildReceiptSha256": "d2a210c07793f9199a9e049139784f196a8a9a4fb726fa9e9fce79c50c83d3c5",
+      "imageId": "preview-181d7f64",
+      "initrdBytes": 16994039,
       "initrdPath": "os.initrd",
-      "initrdSha256": "9e79b76a9a4174c0638e199dc6e477971f06091526b62e118cc9058fd95f3588",
+      "initrdSha256": "4febfbd8d144e84ce1526a3fcde2130c701a68fdffcc366b3663d0bb2c28797f",
       "inputDraft": {
-        "archiveBytes": 1981793244,
-        "archiveSha256": "88ec1725545f441e8dc241c0762bdf8a7656d3922dd14d63b11d1c7d00821463",
+        "archiveBytes": 1981873718,
+        "archiveSha256": "d4188c3adfca6dae1347e19450cac7ca9d4b80457c81d338d6ca371e0ade9870",
         "parts": [
           {
             "bytes": 1073741824,
             "name": "archive.zip.part-000000",
-            "sha256": "447eb363dc430573b9fe373c198050c68bcf72aec5061e260f41c27680e579fa"
+            "sha256": "e705eb22341a499eebc524229216c02e334aa9a40b46681887d6336be7afb637"
           },
           {
-            "bytes": 908051420,
+            "bytes": 908131894,
             "name": "archive.zip.part-000001",
-            "sha256": "a15bd333764ba2837fae08efcada86015935e84f5ef12b27c0fb6948869a6504"
+            "sha256": "4118216ba88c6bb4554eda665a4078dfb6741fa838bfec9816c14bf4fbf40ca4"
           }
         ],
-        "releaseId": 443484396,
-        "tag": "bridge-image-inputs-amd64-88ec1725545f441e8dc241c0762bdf8a7656d3922dd14d63b11d1c7d00821463"
+        "releaseId": 444411440,
+        "tag": "bridge-image-inputs-amd64-d4188c3adfca6dae1347e19450cac7ca9d4b80457c81d338d6ca371e0ade9870"
       },
-      "inputIdentity": "79fa6b3e83e8d54465fa24ed6b4794010d3f84bcad46278a8e02c3cb0ad3c9c7",
+      "inputIdentity": "a1f76b646e93cc13bf7d4edc73146f06544b5f456e925307fa1a547da3305e07",
       "kernelBytes": 14170048,
       "kernelPath": "os.kernel",
       "kernelSha256": "4a44487bb3cfdc2be1d7697b8c71c97733d6ab2db62e6e6e8f1c6af9431ffd2e",
       "metadataPath": "metadata.json",
-      "metadataSha256": "60ea2152da9a8c92a13c233e6480a8e01284fd99a652e200d0279ed7a14bd599",
-      "nativeReceiptSha256": "8597f777a53bf8ab53751ade7a134e340833579bf0c7f4fdd077b0e892e9c2ce",
+      "metadataSha256": "28549f4eec08db38f908e245a5f3732a6c8dcf42af0cbf51eb09b5d999f03428",
+      "nativeReceiptSha256": "f6c7ea70504502ac2b3a0a9378d0d67ea86b9f93505cbacd629e078e4b76db06",
       "payloadPath": "os.qcow2",
-      "payloadSha256": "069e00084af957b1068f7cf38869ba5b87f867a6986bc8dcab922f66cab04c9b",
+      "payloadSha256": "602f3a9f7871f590d44d277c1ffb294d8e931d47c655ace1796758b7f8520c3c",
       "platform": "windows",
       "repository": "orka-agents/orka-bridge",
       "repositoryId": 1444972279,
-      "runId": 43225784039,
-      "sourceCommit": "7ce86e7a8ede790f9ff6304213f0cd792c6d3334",
+      "runId": 43448240567,
+      "sourceCommit": "181d7f64ac99a0bb25df3a0a645d5de84f84d0a6",
       "workflowId": 406606708
     }
   }

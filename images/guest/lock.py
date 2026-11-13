@@ -13,7 +13,7 @@ MODEL_ROLES = ("vekil", "model-launcher")
 # The selected kmx copilot-v1 profile consumes these platform manifests with Never.
 # Its launcher is independent of the session-loader image in the core manifest.
 MODEL_IMAGES = {
-    "f9dcb65001b8c424cbc51b976339b57f40c71c22": {
+    "e58f763cdda79ac41c81a1a695559c7aabfe4dc0": {
         "vekil": {
             "repository": "ghcr.io/sozercan/vekil",
             "amd64": "sha256:b885b08ca26abb6362fee830cc683c255ec740da28ffcb48b711232ffebf2040",
