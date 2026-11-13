@@ -754,28 +754,99 @@ mod release_image_tests {
     #[test]
     fn release_selection_never_uses_development_paths() {
         for target in [ImageTarget::WindowsAmd64, ImageTarget::MacosArm64] {
-            // Neither a development override nor a retained root can turn an
-            // unpinned release into a configured workspace.
-            assert!(select_source(
-                false,
-                true,
-                true,
-                shipping_image(target).map(|p| (
-                    p,
-                    HostTarget {
-                        target,
-                        host_version: "13.0".into(),
-                        app_version: "1.0.0".into(),
-                    }
-                ))
-            )
-            .is_none());
+            // Release selection stays pinned despite a development override or retained root.
+            assert!(matches!(
+                select_source(
+                    false,
+                    true,
+                    true,
+                    shipping_image(target).map(|p| (
+                        p,
+                        HostTarget {
+                            target,
+                            host_version: "13.0".into(),
+                            app_version: "1.0.0".into(),
+                        }
+                    ))
+                ),
+                Some(ImageSource::Pinned { .. })
+            ));
         }
         #[cfg(debug_assertions)]
         assert!(matches!(
             select_source(true, true, false, None),
             Some(ImageSource::Development)
         ));
+    }
+
+    #[test]
+    fn shipping_profiles_resolve_the_exact_paired_images() {
+        for (target, digest, disk_bytes) in [
+            (
+                ImageTarget::MacosArm64,
+                "5aca49931f8672f8446a88751fad32398f98fba983ccad3d8adc200738d01e8c",
+                17179869184,
+            ),
+            (
+                ImageTarget::WindowsAmd64,
+                "1ae27e06f8e830a8a64e864380885f234fafa2391e18dc75e6342fc89e65248d",
+                3780575232,
+            ),
+        ] {
+            let profile = shipping_image(target).expect("approved platform image");
+            assert_eq!(profile.pin.manifest_sha256, digest);
+            assert_eq!(format!("{:x}", Sha256::digest(&profile.manifest)), digest);
+            assert_eq!(profile.pin.limits.disk_bytes, disk_bytes);
+            if (target == ImageTarget::MacosArm64
+                && cfg!(all(target_os = "macos", target_arch = "aarch64")))
+                || (target == ImageTarget::WindowsAmd64
+                    && cfg!(all(windows, target_arch = "x86_64")))
+            {
+                assert_eq!(crate::catalog::IMAGE_BYTES, Some(disk_bytes));
+            }
+            let resolved = crate::runtime::manifest::resolve_image(
+                &profile.pin,
+                &profile.manifest,
+                &HostTarget {
+                    target,
+                    host_version: "100.0".into(),
+                    app_version: "1.0.0".into(),
+                },
+            )
+            .unwrap();
+            profile.validate(resolved.identity(), target).unwrap();
+            let policy: serde_json::Value =
+                serde_json::from_slice(include_bytes!("../../../images/release-set.json")).unwrap();
+            let tag = policy["imageRelease"]["tag"].as_str().unwrap();
+            let base =
+                format!("https://github.com/orka-agents/orka-bridge/releases/download/{tag}/");
+            assert_eq!(profile.pin.release_id, tag);
+            assert_eq!(profile.pin.asset_base, base);
+            let platform = if target == ImageTarget::MacosArm64 {
+                "macos-arm64"
+            } else {
+                "windows-amd64"
+            };
+            assert_eq!(
+                profile.pin.manifest_url,
+                format!(
+                    "{}{}",
+                    base,
+                    policy["images"][platform]["manifestName"].as_str().unwrap()
+                )
+            );
+            assert_eq!(
+                profile.pin.redirect_origins,
+                ["https://release-assets.githubusercontent.com"]
+            );
+            assert_eq!(
+                resolved.identity().state_compatibility_id,
+                "engineering-7ce86e7a"
+            );
+            let mut other = resolved.identity().clone();
+            other.manifest_sha256 = "f".repeat(64);
+            assert_eq!(profile.validate(&other, target), Err(ImageError::Integrity));
+        }
     }
 
     #[test]
@@ -905,7 +976,15 @@ mod release_image_tests {
             .unwrap();
         drop((verified, journal));
         fs::remove_dir_all(temp.path().join("cache")).unwrap();
-        let (_release_fixture, profile, _) = profile();
+        let (_release_fixture, mut profile, _) = profile();
+        // Both actual paired profiles use this same compatibility ID. It alone
+        // must not turn a verified development binding into a release binding.
+        profile.state_compatibility_id = crate::dev_image::STATE_COMPATIBILITY_ID.into();
+        let mut manifest: serde_json::Value = serde_json::from_slice(&profile.manifest).unwrap();
+        manifest["stateCompatibilityId"] = profile.state_compatibility_id.clone().into();
+        manifest["target"]["minimumHostVersion"] = "12.0".into();
+        profile.manifest = serde_json::to_vec(&manifest).unwrap();
+        profile.pin.manifest_sha256 = format!("{:x}", Sha256::digest(&profile.manifest));
         let mut custody = JournalCustody(None);
         let image = prepare_installation(
             &source(profile),
@@ -1261,7 +1340,11 @@ fn release_factory_does_not_activate_from_existing_state() {
     fs::write(root.join("record.json"), b"not an approved image").unwrap();
     assert_eq!(
         configured(Some(data.path().into()), Some(data.path().into())).status(),
-        LocalVmStatus::NotIntegrated
+        if crate::catalog::IMAGE_AVAILABLE {
+            LocalVmStatus::Idle
+        } else {
+            LocalVmStatus::NotIntegrated
+        }
     );
     assert_eq!(
         fs::read(root.join("record.json")).unwrap(),

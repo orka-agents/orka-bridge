@@ -186,8 +186,7 @@ fn retain_start_failure(
     }
 }
 
-/// Native selection is Rust-owned. Release remains unavailable until an approved
-/// image pin exists; only debug builds may select development paths.
+/// Native selection is Rust-owned; only debug builds may select development paths.
 pub fn configured(resources: Option<PathBuf>, data: Option<PathBuf>) -> Arc<LocalVm> {
     #[cfg(any(
         all(windows, target_arch = "x86_64"),

@@ -208,12 +208,11 @@ class Workflow(unittest.TestCase):
             block = workflow.split("\n  " + job + ":\n", 1)[1]
             condition = block.split("\n", 1)[0] if block.startswith("    if:") else ""
             for clause in ("github.event_name == 'workflow_dispatch'", "github.ref == 'refs/heads/main'",
-                           "github.repository == 'orka-agents/orka-bridge'", "inputs.windows_candidate_tag != ''"):
+                           "github.repository == 'orka-agents/orka-bridge'", "inputs.stage == 'build-candidate'"):
                 self.assertIn(clause, condition)
         for job in ("prepare", "draft"):
-            condition = workflow.split("\n  " + job + ":\n", 1)[1].split("\n", 1)[0]
-            self.assertIn("inputs.windows_candidate_tag == ''", condition)
-        candidate = workflow.split("\n  windows-candidate:\n", 1)[1]
+            self.assertNotIn("\n  " + job + ":\n", workflow)
+        candidate = workflow.split("\n  windows-candidate:\n", 1)[1].split("\n  macos-candidate:\n", 1)[0]
         self.assertIn("GIT_CONFIG_KEY_0: core.autocrlf", candidate)
         self.assertIn("GIT_CONFIG_VALUE_0: 'false'", candidate)
         self.assertIn("contents: read", candidate)
@@ -223,9 +222,9 @@ class Workflow(unittest.TestCase):
         self.assertIn("inspect-delivery.ps1", candidate)
         fetch = workflow.split("\n  qemu-inputs:\n", 1)[1].split("\n  windows-candidate:", 1)[0]
         self.assertIn("contents: write", fetch)
-        self.assertIn("retention-days: 1", fetch)
+        self.assertIn("retention-days: 14", fetch)
         self.assertIn("compression-level: 0", fetch)
-        self.assertNotIn("${{ inputs.windows_candidate_tag }}", "\n".join(
+        self.assertNotIn("${{ inputs.candidate_tag }}", "\n".join(
             line for line in fetch.splitlines() if "CANDIDATE_TAG:" not in line))
         for line in fetch.splitlines():
             if "uses:" in line:
