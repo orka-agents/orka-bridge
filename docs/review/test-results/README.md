@@ -1,6 +1,8 @@
 # Test result screens
 
-Native macOS captures for PR #145 at `0aafb44f7abc65e61c1a259399478a6d31298700`, from [the successful native build and walk](https://github.com/orka-agents/orka-bridge/actions/runs/43321744098). Wide captures are 1280 pixels across (800 or 828 pixels high, depending on the native titlebar). Compact views use 540×900 content, captured with their titlebars. Click an image for its full size.
+Native macOS captures for PR #145 at `172e8b1784aa478b6bddc59f9365184068f7a6f6`, from [the successful native build and walks](https://github.com/orka-agents/orka-bridge/actions/runs/43345318709). Wide captures are 1280 pixels across (800 or 828 pixels high, depending on the native titlebar). Compact views use 540×900 content, captured with their titlebars. Click an image for its full size.
+
+Light and dark run in separate bounded CI jobs, with the same assertions and 30-minute cap. Each verifies a fresh profile and retained choice after its own restart.
 
 The local screens embed the real compiled frontend in the separate synthetic-IPC native fixture, without a VM or credentials. Its catalog is intentionally unavailable. The Send screens use the main desktop app and native IPC against loopback Kubernetes/Orka fixtures. Neither walk proves real inference, website fetching, or execution cancellation. Existing cluster Stop stops watching; no local Stop was added.
 
