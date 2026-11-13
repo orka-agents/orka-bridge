@@ -52,7 +52,8 @@ test('repeated calls to one tool render without duplicate keys', () => {
 });
 test('stages and stale file differences report only known facts', () => {
   render(<TestProgress stage="Waiting for answers and evaluating tests" />);
-  expect(screen.getByRole('status').textContent).toContain('Waiting for answers and evaluating tests');
+  expect(screen.getByRole('status').textContent).toBe('Waiting for answers and evaluating tests');
+  expect(screen.getByText('Observed for 0s').closest('[role="status"]')).toBeNull();
   expect(screen.getByText('Observed for 0s')).toBeTruthy();
   expect(changedFiles({ agent: 'b', tests: 'c' }, { agent: 'a', tests: 'c' }, false)).toBe('Agent file changed since this run.');
   expect(changedFiles({ agent: 'b', tests: 'd' }, { agent: 'a', tests: 'c' }, true)).toBe('Agent and test files changed since this run.');

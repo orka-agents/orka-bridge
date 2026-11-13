@@ -23,7 +23,7 @@ export function changedFiles(current: SourceId | undefined, captured: SourceId |
   return unsaved ? 'Your agent has unsaved edits.' : 'The current file revision is not confirmed.';
 }
 export function TestProgress({ stage }: { stage: string }) {
-  return <div className="test-progress" role="status"><StatusIcon state="running" /><span>{stage}</span><Elapsed /></div>;
+  return <div className="test-progress"><StatusIcon state="running" /><span role="status">{stage}</span><Elapsed /></div>;
 }
 function reason(c: Case) {
   if (c.phase === 'Failed') return 'The agent could not finish this test. Try running it again.';
