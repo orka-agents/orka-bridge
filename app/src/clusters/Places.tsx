@@ -13,7 +13,7 @@ export default function Places({ snapshot, unavailable, status, model, place, on
   const started = status?.selected === 'localVm';
   const busy = ['preparing', 'installing', 'starting', 'closing'].includes(status?.localVm ?? '');
   const localLabel = !status ? 'Status unavailable' : ready ? 'Running' : status?.localVm === 'failed' ? 'Needs you' : status?.localVm === 'closed' ? 'Workspace stopped' : status?.localVm === 'cancelled' ? 'Setup paused' : status?.localVm === 'notIntegrated' ? 'Workspace unavailable' : busy ? status?.localVm === 'closing' ? 'Stopping workspace' : 'Setup in progress' : 'Not set up';
-  const action = !status ? 'Check status' : ready ? 'Manage' : started ? 'Continue setup' : 'Set up';
+  const action = !status ? 'View details' : ready ? 'Manage' : started ? 'Continue setup' : 'Set up';
   return <div className="places-list">
     <section className="card place-row" aria-label="This computer">
       <span className="icon-tile" aria-hidden="true"><svg className="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></svg></span>

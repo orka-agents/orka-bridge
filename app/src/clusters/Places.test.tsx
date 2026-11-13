@@ -64,7 +64,7 @@ test('an unreadable workspace status stays unknown while retained places remain 
   expect(local.queryByText('Not set up')).toBeNull();
   expect(local.queryByText('AI not connected')).toBeNull();
   expect(local.getByText('Status unavailable')).toBeTruthy();
-  expect(local.getByRole('button', { name: 'Check status' })).toBeTruthy();
+  expect(local.getByRole('button', { name: 'View details' })).toBeTruthy();
   expect(await screen.findByRole('region', { name: 'team-other' })).toBeTruthy();
   expect(screen.queryByText('Reading your places…')).toBeNull();
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');

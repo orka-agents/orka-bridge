@@ -542,7 +542,7 @@ func localPreflight(_ name: String) throws {
     clickButton("Set up")
     Thread.sleep(forTimeInterval: 1)
     scrollMain(1000)
-    try capture("\(name)-navigation", "Clusters")
+    try capture("local-probe", "Clusters")
     require(!visibleButtons("Back to places").isEmpty, "Local detail has no visible Back to places control")
     var settled = false
     for _ in 0..<12 {
