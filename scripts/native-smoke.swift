@@ -87,6 +87,7 @@ func window() -> (CGWindowID, CGRect)? {
         let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
     return (id, rect)
 }
+func waitForWorkspaceRenderer() {
 var found = false
 let rendererDeadline = Date(timeIntervalSinceNow: 30)
 while Date() < rendererDeadline {
@@ -108,6 +109,8 @@ while Date() < rendererDeadline {
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 }
 require(found, "Bridge native window, rendered navigation and page controls did not appear within the startup budget")
+}
+waitForWorkspaceRenderer()
 func mouse(_ type: CGEventType, _ point: CGPoint) {
     CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
 }
@@ -907,12 +910,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     require(app.isTerminated, "Bridge did not quit before Send history check")
     app = try launch()
     app.activate(options: [])
-    for _ in 0..<30 {
-        if window() != nil { break }
-        Thread.sleep(forTimeInterval: 1)
-    }
-    require(window() != nil, "Relaunched Bridge window did not appear for Send history")
-    Thread.sleep(forTimeInterval: 2)
+    // A native frame can appear before the relaunched WebView paints anything.
+    // Use the same observed page readiness as the initial launch.
+    waitForWorkspaceRenderer()
     let restarted = try capture("choice-retained", "Clusters")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
