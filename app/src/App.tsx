@@ -246,6 +246,7 @@ export default function App() {
         {exampleState === 'loaded' && <><span aria-hidden="true">·</span><span aria-live="polite" aria-atomic="true">{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
+          page !== 'Clusters' || !localSetupView ? `Local workspace: ${hostDetail === setupLine ? setupLine : `${setupLine} · ${hostDetail}`}` : undefined,
           page !== 'Designer' && checks ? `Checks: ${checks}` : undefined,
         ].filter(Boolean).join(' · ')}</span>
       </footer>

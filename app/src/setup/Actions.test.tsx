@@ -37,13 +37,13 @@ test('AI connection is the only next primary and its prerequisite is visible bef
   expect(ipc.mock.calls.some(([command]) => command === 'engine_call')).toBe(false);
 });
 
-test('a local test rerun selects this computer before its guarded Designer handoff, without starting a VM', async () => {
+test.each(['Run the test again', 'Open your test result'])('%s selects this computer before its guarded local handoff, without starting a VM', async action => {
   const ipc = native(); const user = userEvent.setup(); const calls: string[] = [];
   render(<Setup place={{ kind: 'cluster' }} firstCheck="stale" firstTestResult={{ failed: 0 }}
     onPlace={place => calls.push(place.kind)} onOpenExample={() => calls.push('Designer')} />);
   await openLocalSetup(user);
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  await user.click(await screen.findByRole('button', { name: 'Run the test again' }));
+  await user.click(await screen.findByRole('button', { name: action }));
   expect(calls).toEqual(['thisComputer', 'Designer']);
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
 });

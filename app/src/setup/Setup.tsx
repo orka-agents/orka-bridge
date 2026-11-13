@@ -135,6 +135,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelSta
     setEntry(previous => ({ revision: (previous?.revision ?? 0) + 1, current: selected ? currentPlace : undefined, intent: item?.context }));
   }
   function chooseComputer() { publishPlace({ kind: 'thisComputer' }); }
+  function openExample() { chooseComputer(); onOpenExample(); }
   function back() { focusChoice.current = true; setPanel('places'); }
   function openLocal() { focusChoice.current = true; setPanel('local'); }
   async function chooseLocal(action: 'start' | 'cancel' | 'change' = 'start') {
@@ -200,7 +201,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelSta
           </div>
           {status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
         </>}
-        {selected && status && <SetupProgress status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} onRunFirstTest={() => { chooseComputer(); onOpenExample(); }} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample}
+        {selected && status && <SetupProgress status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={openExample}
           confirm={confirmChange && <section ref={confirmation} tabIndex={-1} className="workspace-change" aria-label="Change where agents run">
             <h2>Keep this workspace running?</h2><p>You can choose a cluster without stopping this workspace, or stop it and return to the places list. Your downloaded workspace files and agent files are kept.</p>
             <div className="workspace-step-actions"><button type="button" className="workspace-primary" disabled={sending} onClick={() => { setConfirmChange(false); changeInvoker.current?.focus(); }}>Keep workspace running</button><button type="button" className="workspace-secondary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and choose a place</button></div>
@@ -208,7 +209,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelSta
           </section>} />}
         {status && modelMounted && <div className="setup-model-slot"><Model enabled={status.model === 'available'} queueable={canQueueModel(status)} paused={!!error || sending} away={cluster} primary={!confirmChange} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
         {selected && status && <SetupSteps status={status} firstCheck={firstCheck} initialAutomatic={initialAutomatic} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} />}
-        {selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={onOpenExample} onName={onExampleName} />}
+        {selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={openExample} onName={onExampleName} />}
       </div>
     </div>
     {entry && <ClusterCard active={active && view === 'cluster'} entry={entry} selection={currentPlace} onPlace={publishPlace} onOpenAgent={onOpenAgent ?? onOpenExample} />}

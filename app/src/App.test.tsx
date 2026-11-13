@@ -207,6 +207,7 @@ test('setup refreshes while another page is open', async () => {
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   localVm = 'failed';
   expect(await within(screen.getByRole('navigation')).findByText('Setup failed', {}, { timeout: 2000 })).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByRole('status').textContent).toContain('Setup failed');
   expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
 });
 
