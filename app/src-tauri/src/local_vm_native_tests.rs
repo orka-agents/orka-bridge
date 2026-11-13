@@ -784,13 +784,13 @@ mod release_image_tests {
         for (target, digest, disk_bytes) in [
             (
                 ImageTarget::MacosArm64,
-                "04ad8d90419e05d3d2d7d941c9ce1f0d2f85074d82fd9fe62a0822547248e757",
+                "60a36d2f38643ab1337f0849dfd3d2db570e445c1a4116612fe25ab7c6d1e144",
                 17179869184,
             ),
             (
                 ImageTarget::WindowsAmd64,
-                "a6f998fc68522287a3d391fcbd549c0d58a7f7de861a7764c1c98a7afc19051f",
-                3780509696,
+                "4d62e8f907b9557a704d14a265cb67de2f9020396ddb1e1a8b1fb938c9fda9ec",
+                3780706304,
             ),
         ] {
             let profile = shipping_image(target).expect("approved platform image");
@@ -841,7 +841,7 @@ mod release_image_tests {
             );
             assert_eq!(
                 resolved.identity().state_compatibility_id,
-                "engineering-181d7f64"
+                "engineering-d86ebac3"
             );
             let mut other = resolved.identity().clone();
             other.manifest_sha256 = "f".repeat(64);
