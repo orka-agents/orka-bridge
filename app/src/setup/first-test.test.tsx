@@ -69,8 +69,8 @@ test('finishing without navigation ownership updates status without pulling the 
   expect(onOpen).not.toHaveBeenCalled();
 });
 
-test.each([{ unreadable: true }, { rejected: true }])('uncertain or rejected submission ends without replay: %j', async options => {
-  const { ipc } = native(options); const onOpen = vi.fn(); armFirstTest();
+test('a readable rejected submission ends without replay', async () => {
+  const { ipc } = native({ rejected: true }); const onOpen = vi.fn(); armFirstTest();
   const view = renderHook(() => useFirstTest({ ready: true, canOpen: true, sampleDirty: false, onOpen }));
   await waitFor(() => expect(onOpen).toHaveBeenCalledOnce());
   view.unmount();
@@ -101,8 +101,8 @@ test.each([true, false])('an admitted test remains observed through unavailable 
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
 });
 
-test('an unreadable status poll keeps watching admission without opening or resubmitting', async () => {
-  const { ipc, finish } = native(); const onOpen = vi.fn(); armFirstTest();
+test.each([false, true])('unreadable replies keep watching until sample busy ownership is released (lost submission: %s)', async unreadableSubmission => {
+  const { ipc, finish } = native({ unreadable: unreadableSubmission }); const onOpen = vi.fn(); armFirstTest();
   let unreadable = false;
   const reply = ipc.getMockImplementation()!;
   ipc.mockImplementation((command, args) => {
@@ -112,12 +112,20 @@ test('an unreadable status poll keeps watching admission without opening or resu
   const view = renderHook(() => useFirstTest({ ready: true, canOpen: true, sampleDirty: false, onOpen }));
   await waitFor(() => expect(view.result.current).toBe('running'));
   const reads = ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length;
-  unreadable = true; finish();
+  unreadable = true; finish(true);
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length).toBeGreaterThan(reads));
   expect(onOpen).not.toHaveBeenCalled();
   expect(view.result.current).toBe('running');
   unreadable = false;
+  const beforeRelease = ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length;
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length).toBeGreaterThan(beforeRelease));
+  expect(onOpen).not.toHaveBeenCalled();
+  expect(view.result.current).toBe('running');
+  finish();
   await waitFor(() => { expect(onOpen).toHaveBeenCalledOnce(); expect(view.result.current).toBe('unknown'); });
+  view.unmount();
+  renderHook(() => useFirstTest({ ready: true, canOpen: true, sampleDirty: false, onOpen }));
+  await act(async () => {});
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
 });
 

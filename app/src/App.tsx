@@ -11,7 +11,7 @@ import type { ModelState } from './setup/Model';
 import { workspaceRecovery } from './setup/recovery-info';
 import { preflightRecovery } from './setup/preflight-state';
 import { setupView } from './setup/progress';
-import { sampleRun, type RunSnapshot } from './designer/run-api';
+import type { RunSnapshot } from './designer/run-api';
 import { agentInfo, type SaveState } from './designer/agent-api';
 
 const pages = ['Overview', 'Designer', 'Clusters'] as const;
@@ -90,7 +90,22 @@ export default function App() {
   const [exampleState, setExampleState] = useState<'loading' | 'loaded' | 'failed'>('loading');
   const [run, setRun] = useState<RunSnapshot>();
   const [runUnavailable, setRunUnavailable] = useState(false);
-  const observeRun = useCallback((snapshot: RunSnapshot | undefined) => { setRun(snapshot); setRunUnavailable(!snapshot); }, []);
+  // Setup keeps the sample's latest evidence even while Designer shows another document.
+  const [sampleResult, setSampleResult] = useState<{ snapshot?: RunSnapshot }>();
+  const [sampleStale, setSampleStale] = useState(false);
+  const [sampleDirty, setSampleDirty] = useState(false);
+  const observeRun = useCallback((snapshot: RunSnapshot | undefined, id: string) => {
+    setRun(snapshot); setRunUnavailable(!snapshot);
+    if (id === SAMPLE_DOCUMENT_ID) setSampleResult({ snapshot });
+  }, []);
+  const observeStale = useCallback((value: boolean, id: string) => {
+    setStale(value);
+    if (id === SAMPLE_DOCUMENT_ID) setSampleStale(value);
+  }, []);
+  const observeSave = useCallback((value: SaveState, id: string) => {
+    setSaveState(value);
+    if (id === SAMPLE_DOCUMENT_ID) setSampleDirty(value !== 'saved');
+  }, []);
   const observeSetup = useCallback((status: SetupStatus | undefined) => {
     setSetup(status); setChecking(false);
     const context = `${status?.selected}/${status?.localVm}/${status?.model}`;
@@ -112,15 +127,16 @@ export default function App() {
     : run?.state === 'running' ? 'Running tests…' : cases
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} tests passing` : undefined;
   const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
-  const sample = sampleRun(run);
   const firstTest = useFirstTest({
     ready: setup?.selected === 'localVm' && setup.localVm === 'ready' && model === 'connected' && !workspaceBusy && !remote,
     canOpen: page === 'Clusters' && setup?.localVm === 'ready' && !workspaceBusy && !remote,
-    sampleDirty: documentId === SAMPLE_DOCUMENT_ID && saveState !== 'saved',
+    sampleDirty,
     onOpen: () => openDesigner(SAMPLE_DOCUMENT_ID),
   });
-  const firstCheck = firstTest && !sample ? firstTest : run && !sample ? undefined : checksStale ? 'stale' : runUnavailable || run?.state === 'unknown' ? 'unknown'
-    : run?.state === 'running' ? 'running' : run?.state === 'complete' ? run.report?.verdict : undefined;
+  const sample = sampleResult?.snapshot;
+  const firstCheck = sampleResult ? sampleStale || (sample?.sourceCurrent === false && !!sample.report) ? 'stale'
+    : !sample || sample.state === 'unknown' ? 'unknown' : sample.state === 'running' ? 'running' : sample.state === 'complete' ? sample.report?.verdict : undefined
+    : firstTest;
   // Tab, footer and the Setup card share this derivation. Native selection, not the default radio, names the host.
   const view = setupView(setup, { checking, model, check: firstCheck });
   const { line: setupLine, detail, tone: hostTone } = view;
@@ -180,7 +196,7 @@ export default function App() {
           <Setup place={place} onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} documentId={documentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} documentId={documentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
         </>} /></div>}
         <Overview active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} onCounts={setOverviewCounts}

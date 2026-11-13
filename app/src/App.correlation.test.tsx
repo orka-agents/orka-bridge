@@ -8,8 +8,8 @@ import App from './App';
 
 const result = vi.hoisted(() => ({ snapshot: undefined as RunSnapshot | undefined }));
 // Inject the Designer callback boundary; exercise App, Setup and Steps together.
-vi.mock('./designer/Example', () => ({ default: function Example({ onRun }: { onRun: (value: RunSnapshot | undefined) => void }) {
-  useEffect(() => { onRun(result.snapshot); }, [onRun]);
+vi.mock('./designer/Example', () => ({ default: function Example({ onRun }: { onRun: (value: RunSnapshot | undefined, documentId: string) => void }) {
+  useEffect(() => { onRun(result.snapshot, result.snapshot?.documentId ?? '9b2b93c4-375c-4815-9717-39852a96e411'); }, [onRun]);
   return <h1>Agent</h1>;
 } }));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
