@@ -174,40 +174,108 @@ private temporary space as each is joined; original receipts remain unchanged.
 The historical `nativeReceiptSha256` field pins supporting verification evidence;
 it is not interpreted by this tool and does not establish a native app walk.
 
-The manually selected profile is checked on trusted `main`. The existing Actions
-prepare job has read permissions only. Input drafts require push-capable GitHub
-authentication; these profiles are exercised with local `prepare`, not claimed to
-work in that read-only job. Workflow input acquisition is a separate integration
-step; no permission expansion is implicit in these profiles. It first requires the builder commit's checked-in guest version
-policy to match the publisher's exact policy bytes, so policy-declared Kubernetes
-cannot silently refer to a different build policy. It validates run and artifact
-identities, cross-binds metadata
-to the same source and target, validates all selected member hashes and boot
-sizes, and supplies the selected receipts and boot files to packaging. ZIP path,
-duplicate and regular-file safety checks apply to every member, not only selected
-files. Only receipts and boot assets are materialized in private temporary space;
-the selected disk remains streamed. It never extracts a raw disk or runs downloaded code. Plan for
-ZIP plus compressed-package space; the draft roundtrip needs two compressed
-package copies. Available space and real input sizes must be checked before
-using a qualified runner; a standard runner is not promised to fit every image.
+`qualify.prepare` checks the builder's exact version policy, run/artifact and
+source/target bindings, six member hashes and boot sizes. It streams the disk;
+only receipts and boot assets are extracted privately. It never runs downloaded
+code. Plan for input ZIP plus compressed packages, then full compressed readback
+plus 1 GiB headroom. Sampled free space is not a measured peak.
 
-Only the separate draft job has release-write permission. It requalifies the
-same bytes against prepare's manifest hash, serializes the image's derived tag,
-rejects existing tags and all matching releases including drafts, and checks its
-new draft is unique. Any tag appearing during the operation must point directly
-to the qualified source commit; other tag identities fail closed. Uploads never
-clobber. It redownloads through authenticated
-asset IDs and verifies the exact kernel/initrd/chunks/manifest list and every
-file's bytes and hashes against the original manifest. The CLI always reruns
-prepare with the approved profile before draft and compares the regenerated
-manifest to prepare's externally pinned hash before any release creation. The
-internal draft preflight also compares payload/build/boot hashes and both boot
-assets' hashes and sizes to the selected profile. No extra public profile
-attestation field is added. Failure leaves the
-draft for operator inspection, never silently retries or publishes it. An input
-draft must never be published. An output draft is not release approval: native
-walks and a separate publication decision remain required. Schema acceptance does
-not authorize dispatch or publication.
+## Paired candidate operations (operator only)
+
+The **Image assets** workflow (`images.yml`) has explicit `stage` choices:
+`images`, `build-candidate`, `app-draft`; the latter two require `candidate_tag`.
+Only same-repository trusted-main manual dispatch can acquire drafts or create
+candidates. PR/push tests use fixtures without network. Native builds are
+read-only, check out the same dispatch SHA, and receive no publisher token.
+The isolated QEMU writer only fetches/verifies fixed inputs, never builds.
+
+After merge, an authorized operator runs these commands in order, not together:
+
+```sh
+gh workflow run images.yml -R orka-agents/orka-bridge --ref main -f stage=images
+# Inspect the successful image-only draft, receipts and exact eleven assets.
+# Only an authorized publisher, after a separate publication decision:
+gh release edit bridge-images-preview-7ce86e7a -R orka-agents/orka-bridge --draft=false --prerelease --latest=false
+TAG=YOUR_APP_TAG
+gh workflow run images.yml -R orka-agents/orka-bridge --ref main -f stage=build-candidate -f candidate_tag="$TAG"
+gh run list -R orka-agents/orka-bridge --workflow images.yml --event workflow_dispatch --branch main --json databaseId,headSha,status,conclusion
+```
+
+Build first roundtrips both complete public images anonymously; missing assets
+fail with no credential fallback. Windows independently verifies transferred QEMU
+inputs and inspects native portable extraction; its source notice uses `TAG`.
+Mac uploads the true arm64 `Bridge.app` tarball with bundled helper and notices.
+Final artifacts and QEMU transfer artifacts retain 14 days. Each native artifact
+includes before/after JSON observations of free bytes and final asset sizes, not
+an inferred peak. Builds never populate `appCandidates` or write a release.
+
+Select the successful final build run above. From this checkout, this read-only
+recipe proposes the exact approval schema in a local file; it does not approve,
+edit policy, execute artifact contents, or write a release. Only run/tag values
+are supplied. It selects artifact IDs **within that run**, never latest-by-name:
+
+```sh
+export TAG
+export RUN=YOUR_BUILD_RUN_ID
+python3 - <<'PY' > "$HOME/bridge-app-approval.json"
+import hashlib, json, os, stat, tempfile, zipfile
+from pathlib import Path
+from images import candidate as c
+r = c.q.gh(c.BASE + '/actions/runs/' + os.environ['RUN'])
+assert r['status'] == 'completed' and r['conclusion'] == 'success'
+assert r['event'] == 'workflow_dispatch' and r['head_branch'] == 'main'
+assert r['path'] == '.github/workflows/images.yml'
+assert all(r[k]['full_name'] == c.q.REPOSITORY for k in ('repository', 'head_repository'))
+a = dict(runId=r['id'], workflowId=r['workflow_id'], runAttempt=r['run_attempt'], buildCommit=r['head_sha'], artifacts={})
+rows = [v for page in c.q.gh(c.BASE + '/actions/runs/' + str(r['id']) + '/artifacts?per_page=100', paginate=True) for v in page['artifacts']]
+with tempfile.TemporaryDirectory() as tmp:
+    for name, members in c.APP_FILES.items():
+        selected = [v for v in rows if v['name'] == name]
+        assert len(selected) == 1 and selected[0]['expired'] is False
+        v = selected[0]; archive = Path(tmp) / str(v['id'])
+        c.q.gh(c.BASE + '/actions/artifacts/' + str(v['id']) + '/zip', download=archive)
+        digest = c.q.file_hash(archive)
+        assert v['digest'] == 'sha256:' + digest
+        with zipfile.ZipFile(archive) as z:
+            entries = z.infolist()
+            assert len(entries) == len(members) and {i.filename for i in entries} == members
+            files = {}
+            for i in entries:
+                assert not i.is_dir() and stat.S_IFMT(i.external_attr >> 16) in (0, stat.S_IFREG)
+                with z.open(i) as stream:
+                    files[i.filename] = dict(bytes=i.file_size, sha256=hashlib.file_digest(stream, 'sha256').hexdigest())
+        a['artifacts'][name] = dict(id=v['id'], sha256=digest, files=files)
+p = c.load_policy(); p['appCandidates'][os.environ['TAG']] = a
+c.app_approval(p, os.environ['TAG'])
+print(json.dumps({os.environ['TAG']: a}, indent=2))
+PY
+```
+
+Review the proposed run/attempt, build commit, both artifact IDs/ZIP SHA256s,
+final names/bytes/SHA256s, receipts, and Windows source against runtime policy.
+The draft operation compares image policy, manifest bytes and the native image
+selector with the build commit before admitting its assets. In a
+**later PR**, add the proposed tag entry under `appCandidates` in
+`release-set.json`; leave existing image bytes/pins unchanged. Merge that approval
+before the next command. Approval/build SHAs must differ; no entries are seeded
+by this change. Expired artifacts, wrong run/workflow/repository, unsafe ZIPs or
+extra/missing members fail before any draft mutation.
+
+```sh
+gh workflow run images.yml -R orka-agents/orka-bridge --ref main -f stage=app-draft -f candidate_tag="$TAG"
+```
+
+The app draft targets `buildCommit`, not the later approval SHA. Its exact eleven
+assets are two apps, separate QEMU source, four build receipts, both immutable
+manifests, generated `image-pins.json` (stable URLs and exact eleven-image-asset
+inventory), and `size-space.json` (measured files and boundary observations).
+There are no image chunks or boot files. Both draft operations enforce asset
+limits, refuse existing tags/releases, never clobber, and verify every asset by
+ID readback plus the complete list. A failed draft remains visible: use a new
+tag and repin/rebuild/approve; never delete, reuse or silently retry its tag.
+Changed image-release tags require an image/app repin PR before new builds;
+changed image bytes also require new walks. Input drafts are never published.
+The native walks and separate unchanged-app publication remain later manual steps.
 
 ## Tests
 

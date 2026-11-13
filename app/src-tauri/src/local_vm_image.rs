@@ -33,9 +33,44 @@ impl ReleaseImage {
     }
 }
 
-/// No image is approved yet. Wiring startup must not fabricate a shipping pin.
-pub(super) fn shipping_image(_target: ImageTarget) -> Option<ReleaseImage> {
-    None
+/// The URLs stay fixed across the draft walks and app publication. Missing
+/// public images are a download error, never a request for operator credentials.
+pub(super) fn shipping_image(target: ImageTarget) -> Option<ReleaseImage> {
+    let (platform, manifest, digest) = match target {
+        ImageTarget::MacosArm64 => (
+            "macos-arm64",
+            include_bytes!("../../../images/release/macos-arm64.json").as_slice(),
+            "5aca49931f8672f8446a88751fad32398f98fba983ccad3d8adc200738d01e8c",
+        ),
+        ImageTarget::WindowsAmd64 => (
+            "windows-amd64",
+            include_bytes!("../../../images/release/windows-amd64.json").as_slice(),
+            "1ae27e06f8e830a8a64e864380885f234fafa2391e18dc75e6342fc89e65248d",
+        ),
+    };
+    let value: serde_json::Value = serde_json::from_slice(manifest).ok()?;
+    let base = "https://github.com/orka-agents/orka-bridge/releases/download/bridge-images-preview-7ce86e7a/";
+    Some(ReleaseImage {
+        pin: ImagePin {
+            release_id: "bridge-images-preview-7ce86e7a".into(),
+            manifest_url: format!("{base}manifest-{platform}.json"),
+            manifest_sha256: digest.into(),
+            accepted_schema_sha256:
+                "80a867ef73ef29685f3d7e7d4d72365ca823cc9a56ce6e0ea9e1ee3e39b92d21".into(),
+            target,
+            asset_base: base.into(),
+            redirect_origins: vec!["https://release-assets.githubusercontent.com".into()],
+            limits: TransferLimits {
+                compressed_bytes: value["artifact"]["compressedBytes"].as_u64()?,
+                disk_bytes: value["artifact"]["uncompressedBytes"].as_u64()?,
+                kernel_bytes: value["directBoot"]["kernel"]["bytes"].as_u64()?,
+                initrd_bytes: value["directBoot"]["initrd"]["bytes"].as_u64()?,
+            },
+        },
+        manifest: manifest.to_vec(),
+        image_id: value["imageId"].as_str()?.into(),
+        state_compatibility_id: value["stateCompatibilityId"].as_str()?.into(),
+    })
 }
 
 #[derive(Clone)]
@@ -96,15 +131,27 @@ pub(super) fn open_selected(
     let opened = open_installed_image(&journal.image_target(source.compatibility())?);
     #[cfg(debug_assertions)]
     if matches!(source, ImageSource::Pinned { .. })
-        && matches!(opened, Err(ImageError::RetainedImage))
+        && (matches!(opened, Err(ImageError::RetainedImage))
+            || opened.as_ref().is_ok_and(|image| {
+                image.identity().state_compatibility_id == crate::dev_image::STATE_COMPATIBILITY_ID
+                    && matches!(source, ImageSource::Pinned { profile, .. }
+                        if image.identity().manifest_sha256 != profile.pin.manifest_sha256)
+            }))
     {
-        // A root's existence does not identify its source. Preserve committed
-        // development reopen only when its verified binding has that identity.
+        // Preserve debug reopen through the verified development binding, even
+        // when release and development share a state ID but not a manifest hash.
+        // This branch is absent from release builds.
         if let Ok(image) =
             open_installed_image(&journal.image_target(crate::dev_image::STATE_COMPATIBILITY_ID)?)
         {
-            *source = ImageSource::Development;
-            return Ok(std::sync::Arc::new(image));
+            let engineering = match image.target() {
+                ImageTarget::MacosArm64 => "engineering-macos-arm64",
+                ImageTarget::WindowsAmd64 => "engineering-windows-amd64",
+            };
+            if image.identity().image_id == engineering {
+                *source = ImageSource::Development;
+                return Ok(std::sync::Arc::new(image));
+            }
         }
     }
     opened.map(std::sync::Arc::new).map_err(Into::into)
