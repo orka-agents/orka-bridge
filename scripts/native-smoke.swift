@@ -30,6 +30,14 @@ let theme = CommandLine.arguments[3]
 require(["light", "dark"].contains(theme), "Expected light or dark theme")
 require(NSRunningApplication.runningApplications(withBundleIdentifier: "ai.orka.bridge").isEmpty,
         "Quit running Bridge before running the native walk")
+let workspaceData = FileManager.default.homeDirectoryForCurrentUser
+    .appendingPathComponent("Library/Application Support/ai.orka.bridge")
+func requireNoLocalWorkspace() {
+    for path in ["setup-v1/local-vm", "local-vm-v1", "image-cache-v1"] {
+        require(!FileManager.default.fileExists(atPath: workspaceData.appendingPathComponent(path).path),
+                "Native smoke must not select, download or start a local workspace: \(path)")
+    }
+}
 // Hosted Macs default to 1024x768, which constrains a 900pt content window.
 // Only reconfigure the disposable CI display, never an operator's desktop.
 if CGDisplayBounds(display).width < 1280 || CGDisplayBounds(display).height < 1080 {
@@ -51,6 +59,7 @@ if CGDisplayBounds(display).width < 1280 || CGDisplayBounds(display).height < 10
 }
 defer { restoreDisplay() }
 func launch() throws -> NSRunningApplication {
+requireNoLocalWorkspace()
 let opened = Process()
 opened.executableURL = URL(fileURLWithPath: "/usr/bin/open")
 var arguments = [CommandLine.arguments[2]]
@@ -106,7 +115,7 @@ while Date() < rendererDeadline {
         // Navigation/footer controls can render before setup_status settles.
         // Observe the welcome or the actual release setup result, not a button
         // that merely happens to be below the header.
-        let bodyReady = names.contains("Get started") || nativeTextIsVisible("Workspace setup is not included in this build. Nothing will be downloaded or started.")
+        let bodyReady = names.contains("Get started") || nativeTextIsVisible("Where should your agents run?")
         if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names) && bodyReady { found = true; break }
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
@@ -365,19 +374,13 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         let selected = text.contains("Install your workspace files")
         require(welcome || choice || selected, "Workspace heading not visible; observed: \(text)")
         if !welcome {
-            require(nativeTextIsVisible("Workspace setup is not included in this build. Nothing will be downloaded or started."),
-                    "Release setup IPC did not visibly report its real integration state")
+            require(!nativeTextIsVisible("Workspace setup is not included in this build. Nothing will be downloaded or started."),
+                    "Supported release still reports setup unavailable")
         }
-        if ["local-selected", "choice-retained"].contains(name) {
-            require(selected && !welcome && !choice, "Native preference was not acknowledged or retained")
-            let modelRow = observations.first {
-                let label = $0.topCandidates(1).first?.string ?? ""
-                return label.contains("Choose the") && label.contains("your agent uses")
-            }
-            require(modelRow != nil && observations.contains {
-                $0.topCandidates(1).first?.string == "Waiting" &&
-                    abs($0.boundingBox.midY - modelRow!.boundingBox.midY) < 0.02
-            }, "The AI setup step is not waiting")
+        if ["local-choice", "chooser-retained"].contains(name) {
+            require(choice && !welcome && !selected && nativeTextIsVisible("On this computer"),
+                    "Idle workspace chooser was not retained")
+            requireNoLocalWorkspace()
             require(!observations.contains {
                 ["Connect model", "Use GitHub sign-in", "Connect a model"].contains($0.topCandidates(1).first?.string ?? "")
             }, "Model connection is exposed before workspace readiness")
@@ -489,10 +492,10 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) 
         "Form save was not acknowledged in footer: \(savedFooter)")
     clickTab("Clusters", savedForm)
     initial = try capture("chooser-after-form", "Clusters")
-    // Selecting the default radio does not start anything; Continue is explicit.
-    clickText("Continue", in: initial)
+    // This is a real release with an active image pin. Leave Continue untouched;
+    // native lifecycle/model fixtures cover setup without a VM separately.
 }
-try capture("local-selected", "Clusters")
+try capture("local-choice", "Clusters")
 app.terminate()
 for _ in 0..<30 {
     if app.isTerminated { break }
@@ -502,9 +505,9 @@ require(app.isTerminated, "Bridge did not quit before preference check")
 app = try launch()
 app.activate(options: [])
 waitForWorkspaceRenderer()
-let retained = try capture("choice-retained", "Clusters")
+let retained = try capture("chooser-retained", "Clusters")
 require(!retained.contains { $0.topCandidates(1).first?.string == "Get started" },
-        "Restart must retain this theme's saved native choice")
+        "Restart must retain welcome dismissal without starting a workspace")
 clickTab("Overview", retained)
 let overview = try capture("overview", "Overview")
 require(nativeTextIsVisible("Agent list unavailable with this Mac image"),
@@ -527,7 +530,7 @@ key(48, shift: true); key(48, shift: true); key(49)
 try capture("overview-keyboard", "Overview")
 key(48); key(49); try capture("designer-keyboard", "Designer")
 key(48); key(36); try capture("clusters-keyboard", "Clusters")
-// The same owned file stays editable during selected-local setup.
+// The same owned file stays editable before workspace startup.
 let clusters = try capture("before-file", "Clusters")
 clickTab("Designer", clusters)
 let agent = try capture("agent-view", "Designer")
@@ -1048,3 +1051,4 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     require(savedPass, "Earlier saved pass was not reachable after restart")
 }
+requireNoLocalWorkspace()
