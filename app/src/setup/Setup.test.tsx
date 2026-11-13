@@ -100,6 +100,32 @@ test('remount observes the native choice without inventing workspace or model re
   expect(ipc.mock.calls.filter(call => call[0] === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
 });
 
+test.each([null, 'attempted'])('a lost selection reply preserves durable intent (%s) and resumes only observation across remount', async previous => {
+  vi.stubGlobal('isTauri', true);
+  if (previous) localStorage.setItem('bridge.firstTest.v1', previous);
+  let selected = false; let reads = 0; let loseReply!: () => void;
+  let intentAtSelection: string | null = null;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_status') return { selected: selected ? 'localVm' : null, localVm: !selected ? 'idle' : ++reads === 1 ? 'starting' : 'ready', model: selected && reads > 1 ? 'available' : 'locked' };
+    if (command === 'setup_requirements') return null;
+    if (command === 'setup_select_local') {
+      intentAtSelection = localStorage.getItem('bridge.firstTest.v1'); selected = true;
+      return new Promise((_, reject) => { loseReply = () => reject(Error('Lost reply')); });
+    }
+    throw Error('Forbidden command: ' + command);
+  });
+  mockIPC(ipc); const user = userEvent.setup(); const view = render(<Setup onOpenExample={vi.fn()} />);
+  await user.click(await screen.findByRole('button', { name: 'Continue' }));
+  expect(intentAtSelection).toBe(previous ?? 'pending');
+  await act(async () => { loseReply(); });
+  await screen.findByText('Your workspace is running on this computer.', {}, { timeout: 2000 });
+  view.unmount(); render(<Setup onOpenExample={vi.fn()} />);
+  await screen.findByText('Your workspace is running on this computer.');
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe(previous ?? 'pending');
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toHaveLength(1);
+  expect(ipc.mock.calls.every(([command]) => ['setup_status', 'setup_requirements', 'setup_example', 'setup_select_local'].includes(command))).toBe(true);
+});
+
 test('browser preview never pretends that native persistence or integration works', async () => {
   vi.stubGlobal('isTauri', false); const ipc = vi.fn(); mockIPC(ipc); render(<App />);
   expect(await screen.findByText('Workspace setup is not available in this preview.')).toBeTruthy();

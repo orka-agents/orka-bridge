@@ -204,7 +204,7 @@ try {
     }
   }
   // Setup actions and the first test use the compiled app and synthetic IPC only.
-  const actionFixtures = ['chooser', 'ai-idle', 'ai-connecting', 'ai-connected', 'first-test-running', 'first-test-result', 'change', 'designer'];
+  const actionFixtures = ['chooser', 'ai-idle', 'ai-connecting', 'ai-connected', 'first-test-running', 'first-test-result', 'first-test-badges', 'change', 'designer'];
   async function clickAction(label) {
     await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(label)} && !button.disabled)`), label);
     await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(label)} && !button.disabled).click()`);
@@ -219,12 +219,19 @@ try {
       let selected = ${JSON.stringify(!first && name !== 'chooser')};
       let connected = false;
       let submitted = false;
+      window.__bridgeBadgeState = 'passed';
+      const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
       const status = () => ({ selected: selected ? 'localVm' : null, localVm: selected ? 'ready' : 'idle', model: selected ? 'available' : 'locked' });
       const report = { verdict: 'failed', cases: [{ id: 'page-checksum', question: 'What checksum does the page show?', phase: 'Succeeded', answer: 'No checksum was given.', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', expected: 'fixture-checksum', verdict: 'failed' }], verdict: 'failed' }] };
       const snapshot = () => {
         const running = submitted && name === 'first-test-running';
-        const complete = submitted && name === 'first-test-result';
-        return { documentId, busy: running ? { documentId, name: 'web-reader' } : null, state: running ? 'running' : complete ? 'complete' : 'idle', canRun: !running, modelConnected: connected, stage: running ? 'observe' : complete ? 'done' : null, model: connected ? 'fixture-model' : null, report: complete ? report : null, acknowledged: [], pending: null, error: null };
+        const complete = submitted && (name === 'first-test-result' || name === 'first-test-badges');
+        const badge = window.__bridgeBadgeState;
+        if (name === 'first-test-badges') {
+          report.verdict = report.cases[0].verdict = report.cases[0].assertions[0].verdict = badge === 'failed' ? 'failed' : 'passed';
+          if (submitted && badge === 'unknown') throw Error('Lost sample status');
+        }
+        return { documentId, ...(name === 'first-test-badges' ? { source: badge === 'stale' ? { ...source, agent: 'c'.repeat(64) } : source } : {}), busy: running ? { documentId, name: 'web-reader' } : null, state: running ? 'running' : complete ? 'complete' : 'idle', canRun: !running, modelConnected: connected, stage: running ? 'observe' : complete ? 'done' : null, model: connected ? 'fixture-model' : null, report: complete ? report : null, acknowledged: [], pending: null, error: null };
       };
       localStorage.setItem('bridge.welcomeSeen.v1', '1');
       localStorage.removeItem('bridge.firstTest.v1');
@@ -238,7 +245,7 @@ try {
           if (name === 'ai-connecting') return new Promise(() => {});
           connected = true; return { ready: true };
         }
-        if (command === 'agent_open') return { ...pair, documentId, name: 'web-reader' };
+        if (command === 'agent_open') return { ...pair, documentId, name: 'web-reader', ...(name === 'first-test-badges' ? { source } : {}) };
         if (command === 'agent_run') { if (args?.bundledExample !== true) throw Error('Fixture automatic test requires native source guard'); if (submitted) throw Error('Fixture automatic test replayed'); submitted = true; return snapshot(); }
         if (command === 'agent_run_status') return snapshot();
         if (command === 'send_history' || command === 'cluster_contexts') return [];
@@ -254,6 +261,19 @@ try {
       await until(() => evaluate(`(() => { const primary = [...document.querySelectorAll('button.workspace-primary')].filter(button => button.getClientRects().length); return primary.length === 1 && primary[0].textContent === 'Keep workspace running'; })()`), 'Keep as the only primary action');
     }
     if (name === 'designer') await clickAction('Read its instructions');
+    if (name === 'first-test-badges') {
+      await until(() => evaluate(`!!document.querySelector('.designer-work')`), 'sample result before badge recovery');
+      await evaluate(`document.querySelector('button[aria-label="Clusters"]').click()`);
+      for (const [state, label] of [['passed', 'Passed'], ['failed', 'Failed'], ['stale', 'Needs running'], ['unknown', 'Result unknown']]) {
+        await evaluate(`window.__bridgeBadgeState = ${JSON.stringify(state)}`);
+        await until(() => evaluate(`document.querySelector('[aria-label="Setup steps"] li:last-child .step-result')?.textContent === ${JSON.stringify(label)}`), `sample badge ${state}`);
+        await evaluate(`document.querySelector('[aria-label="Setup steps"] li:last-child').scrollIntoView({ block: 'center' })`);
+        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+        const image = await call('Page.captureScreenshot', { format: 'png' });
+        await writeFile(join(output, `${theme}-${size}-sample-${state}.png`), Buffer.from(image.data, 'base64'));
+      }
+      return;
+    }
     const expected = { chooser: 'Where should your agents run?', 'ai-idle': 'GitHub CLI installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected with GitHub Copilot', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', change: 'Keep this workspace running?', designer: 'Instructions and settings' };
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])})`), `${name} action state`);
     if (name === 'first-test-result' || name === 'designer') {

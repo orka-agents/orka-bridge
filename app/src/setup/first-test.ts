@@ -20,7 +20,7 @@ function claim() {
 }
 const text = (value: string) => value.replaceAll('\r\n', '\n');
 
-export function useFirstTest(options: { ready: boolean; canOpen: boolean; sampleDirty: boolean; onOpen: () => void }): CheckStepState | undefined {
+export function useFirstTest(options: { ready: boolean; canOpen: boolean; sampleDirty: boolean; onOpen: () => void; onSnapshot?: (snapshot: RunSnapshot | undefined) => void }): CheckStepState | undefined {
   const latest = useRef(options);
   useEffect(() => { latest.current = options; });
   const [check, setCheck] = useState<CheckStepState>();
@@ -36,6 +36,7 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
     let claimed = false;
     const finish = (snapshot?: RunSnapshot) => {
       if (cancelled || !mounted.current) return;
+      latest.current.onSnapshot?.(snapshot);
       setCheck(snapshot?.state === 'complete' ? snapshot.report?.verdict ?? 'unknown' : 'unknown');
       if (latest.current.ready && latest.current.canOpen) latest.current.onOpen();
     };
@@ -48,6 +49,7 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
     const observe = (snapshot: RunSnapshot) => {
       if (cancelled || !mounted.current) return;
       if (snapshot.state !== 'running' && snapshot.busy?.documentId !== SAMPLE_DOCUMENT_ID) { finish(snapshot); return; }
+      latest.current.onSnapshot?.(snapshot);
       setCheck('running');
       poll();
     };
@@ -59,9 +61,11 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
       if (status.snapshot.state !== 'idle') { void observe(status.snapshot); return; }
       if (!status.snapshot.canRun || status.snapshot.busy) { finish(); return; }
       // Claim is persisted before submission: an interrupted/unknown attempt is never replayed.
+      setCheck('running');
       const result = await runCall('agent_run', SAMPLE_DOCUMENT_ID, true);
       if (cancelled || !mounted.current) return;
-      if (result.ok) void observe(result.snapshot); else finish();
+      // A lost reply may still own native busy; reconcile read-only until release.
+      if (result.ok) void observe(result.snapshot); else poll();
     }).catch(() => { if (!cancelled && mounted.current && claim()) finish(); });
     // Eligibility gates submission, not observation of an already claimed attempt.
     // A transient setup poll failure must not orphan native busy ownership.
