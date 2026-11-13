@@ -1,13 +1,18 @@
 use bridge_runtime_protocol::WorkspaceCatalog;
 use serde::Serialize;
 
-// Only the new Windows development image carries the catalog guest and Role.
-// Mac's unchanged guest rejects unknown operations; release has no approved image.
-pub const IMAGE_AVAILABLE: bool = cfg!(all(
-    debug_assertions,
-    target_os = "windows",
-    target_arch = "x86_64"
+// Both pinned images carry the model/catalog guest and Role.
+pub const IMAGE_AVAILABLE: bool = cfg!(any(
+    all(target_os = "windows", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64")
 ));
+pub const IMAGE_BYTES: Option<u64> = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+    Some(17179869184)
+} else if cfg!(all(windows, target_arch = "x86_64")) {
+    Some(3780575232)
+} else {
+    None
+};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

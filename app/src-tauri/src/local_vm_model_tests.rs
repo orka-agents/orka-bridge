@@ -60,10 +60,9 @@ async fn catalog_does_not_probe_unsupported_or_disconnected_workspaces() {
     let setup = Arc::new(SetupStore::new(Some(dir.path().into())));
     let vm = LocalVm::unavailable();
     vm.inner.state.lock().unwrap().phase = LocalVmStatus::Ready;
-    let supported = cfg!(all(
-        debug_assertions,
-        target_os = "windows",
-        target_arch = "x86_64"
+    let supported = cfg!(any(
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
     ));
     let connected = !supported;
     vm.inner.state.lock().unwrap().model_connected = connected;

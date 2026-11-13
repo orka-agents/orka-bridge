@@ -17,7 +17,7 @@ pub struct TransferLimits {
     pub kernel_bytes: u64,
     pub initrd_bytes: u64,
 }
-/// Supplied only by trusted Rust selection. No shipping catalog or live pin is provided.
+/// Supplied only by trusted Rust selection, never renderer input.
 #[derive(Clone, Debug)]
 pub struct ImagePin {
     pub release_id: String,

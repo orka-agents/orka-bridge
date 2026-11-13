@@ -535,10 +535,13 @@ async fn setup_selection_persists_then_starts_but_status_never_starts() {
     assert!(value.get("localVmError").unwrap().is_null());
     assert_eq!(
         value["model"],
-        if cfg!(target_os = "macos") {
-            "locked"
-        } else {
+        if cfg!(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(windows, target_arch = "x86_64")
+        )) {
             "available"
+        } else {
+            "locked"
         }
     );
     assert!(

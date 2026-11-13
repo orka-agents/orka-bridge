@@ -28,9 +28,8 @@ pub fn example() -> ExamplePair {
     }
 }
 
-// The pinned Mac guest predates model RPCs; probing it retires its shared channel.
-// Enable Mac model setup only when its matching development image is delivered.
-pub const MODEL_IMAGE_AVAILABLE: bool = !cfg!(target_os = "macos");
+// Both supported platforms now use the paired model-capable guest images.
+pub const MODEL_IMAGE_AVAILABLE: bool = crate::catalog::IMAGE_AVAILABLE;
 
 pub async fn setup_status(
     store: Arc<crate::setup::SetupStore>,

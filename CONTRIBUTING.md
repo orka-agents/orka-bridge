@@ -82,18 +82,19 @@ BRIDGE_DEV_IMAGE_DIR=/path/to/image npm run tauri dev
 
 Mac builds compile and ad-hoc sign the bundled VM helper automatically.
 See [the helper build instructions](app/src-tauri/native/macos/README.md).
-Intel Macs can build the app but cannot run its local VM. The current Mac
-image can boot the VM but cannot connect a model or run the example agent.
+Intel Macs can build the app but cannot run its local VM. Both pinned images
+support model Connect, the workspace catalog and the example agent.
 
 In Clusters, dismiss the one-time welcome with Get started, then press Continue
-for On this computer. On Windows, the running VM
+for On this computer. On Windows and Apple-silicon Mac, the running VM
 unlocks Use GitHub sign-in, which needs GitHub CLI already installed and signed
 in to github.com. Bridge does not install it or open browser sign-in. Starting
 a VM alone does not verify model inference. Local images are debug-only;
-release builds ignore `BRIDGE_DEV_IMAGE_DIR`. Native release startup now shares
-verified image acquisition and installation, but its shipping image catalog is
-still empty. Release builds remain unable to start a workspace until reviewed
-platform pins are added; this is not a downloadable working release.
+release builds ignore `BRIDGE_DEV_IMAGE_DIR`. Supported release builds select
+reviewed hash-pinned images from the image-only prerelease and download them
+anonymously. Before that prerelease is published, startup reports a missing-image
+download error; it never falls back to GitHub credentials. A release candidate
+still needs the [preview walks](docs/preview.md) before app publication.
 
 ## Reopen and remove the saved sign-in
 

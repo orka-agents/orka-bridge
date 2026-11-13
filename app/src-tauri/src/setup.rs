@@ -79,14 +79,14 @@ fn requirements_from(image_bytes: Option<u64>) -> Option<SetupRequirements> {
         state_disk_bytes: bridge_runtime_protocol::STATE_BYTES,
     })
 }
-/// Release builds carry no engineering pins and report none.
+/// Debug overrides retain engineering sizes; release uses the selected platform image.
 #[cfg(debug_assertions)]
 pub fn setup_requirements() -> Option<SetupRequirements> {
     requirements_from(crate::dev_image::pinned_image_bytes())
 }
 #[cfg(not(debug_assertions))]
 pub fn setup_requirements() -> Option<SetupRequirements> {
-    requirements_from(None)
+    requirements_from(crate::catalog::IMAGE_BYTES)
 }
 
 #[cfg(test)]
@@ -107,8 +107,11 @@ mod requirements_tests {
     }
     #[cfg(not(debug_assertions))]
     #[test]
-    fn release_reports_no_requirements() {
-        assert_eq!(setup_requirements(), None);
+    fn release_reports_selected_platform_requirements() {
+        assert_eq!(
+            setup_requirements(),
+            requirements_from(crate::catalog::IMAGE_BYTES)
+        );
     }
     #[cfg(all(
         debug_assertions,
