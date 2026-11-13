@@ -5,17 +5,31 @@ import { readWorkspaceCatalog, type WorkspaceCatalogReply } from '../catalog';
 import AgentParts from './AgentParts';
 import FileEditor from './FileEditor';
 import FileLocation from './FileLocation';
+import NewAgent from './NewAgent';
+import { listDocuments, selectDocument, type AgentEntry } from './documents-api';
 import { readForm } from './agent-form';
 import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
 import Send, { SendEntry, SendHistory } from '../clusters/Send';
 
-export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true, setupPending = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
-  documentId?: string; active?: boolean; setupPending?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
+export default function Example({ documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
+  documentId?: string; persistInitialSelection?: boolean; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: AgentPair | undefined, documentId: string) => void; onRun?: (snapshot: RunSnapshot | undefined, documentId: string) => void;
   onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void;
 }) {
   const [boundDocument, setBoundDocument] = useState(documentId);
+  const [requestedDocument, setRequestedDocument] = useState(documentId);
+  const [selectionNeeded, setSelectionNeeded] = useState(persistInitialSelection);
+  const requestedNow = useRef(documentId);
+  const observedDocument = useRef(documentId);
+  const requestDocument = useCallback((id: string) => { requestedNow.current = id; setRequestedDocument(id); setSelectionNeeded(true); }, []);
+  const [wantsCreate, setWantsCreate] = useState(newAgentRequest > 0);
+  const [creating, setCreating] = useState(false);
+  const [entries, setEntries] = useState<AgentEntry[]>();
+  const [selectionError, setSelectionError] = useState<string>();
+  const [selecting, setSelecting] = useState(false);
+  useEffect(() => { if (observedDocument.current !== documentId) { observedDocument.current = documentId; requestDocument(documentId); } }, [documentId, requestDocument]);
+  useEffect(() => { if (newAgentRequest) setWantsCreate(true); }, [newAgentRequest]);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [catalog, setCatalog] = useState<{ key: number; attempt: number; reply?: WorkspaceCatalogReply }>();
   const catalogEnabled = catalogKey !== undefined && !setupPending && !remote;
@@ -29,6 +43,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   }, [catalogEnabled, catalogKey, catalogAttempt]);
   const currentCatalog = catalogEnabled && catalog?.key === catalogKey && catalog.attempt === catalogAttempt ? catalog : undefined;
   const [pair, setPair] = useState<AgentPair>();
+  useEffect(() => { let mounted = true; void listDocuments().then(value => { if (mounted) setEntries(value); }); return () => { mounted = false; }; }, [boundDocument, creating, pair?.documentId]);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string>();
   const [saveState, setSaveState] = useState<SaveState>('saved');
@@ -65,7 +80,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
 
   const flush = useCallback(async (retry = false) => {
     clearTimeout(timer.current);
-    if (busy.current) return;
+    if (busy.current || pendingSoulCurrent.current) return;
     if (!retry && !needsCommit.current && latest.current === saved.current) { setSaveState('saved'); return; }
     busy.current = true; setSaveState('saving'); setError(undefined);
     try {
@@ -83,15 +98,28 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   }, [onPair, boundDocument]);
   useEffect(() => () => { clearTimeout(timer.current); reloadEpoch.current++; }, []);
   useEffect(() => {
-    if (documentId === boundDocument) return;
-    if (busy.current || pendingSoul || saveState === 'saving' || saveState === 'error') return;
+    if (requestedDocument === boundDocument && !wantsCreate && !selectionNeeded) return;
+    if (busy.current || pendingSoul || saveState === 'saving' || saveState === 'error' || selecting) return;
     if (saveState === 'dirty') { void flush(); return; }
-    reloadEpoch.current++; reloadAdmitted.current = false; setReloading(false);
-    setPair(undefined); setDraft(''); latest.current = saved.current = '';
-    setLocalRun(undefined); setStale(false); setError(undefined); setSendOpen(false);
-    // Clear the destination view, not the previous document's last observed result.
-    onPair?.(undefined, documentId); onRun?.(undefined, documentId); setBoundDocument(documentId);
-  }, [documentId, boundDocument, pendingSoul, saveState, flush, onPair, onRun]);
+    if (wantsCreate) { setCreating(true); setWantsCreate(false); onNewAgentHandled?.(); return; }
+    // Persist only after the current draft is safe. The mounted editor survives failures.
+    const next = requestedDocument;
+    setSelecting(true);
+    void selectDocument(next).then(() => {
+      if (requestedNow.current !== next) return;
+      setSelectionNeeded(false); setSelectionError(undefined);
+      if (next === boundDocument) return;
+      reloadEpoch.current++; reloadAdmitted.current = false; setReloading(false);
+      setPair(undefined); setDraft(''); latest.current = saved.current = '';
+      setLocalRun(undefined); setStale(false); setError(undefined); setSendOpen(false); setSelectionError(undefined);
+      onPair?.(undefined, next); onRun?.(undefined, next); setBoundDocument(next); onDocument?.(next);
+    }, () => {
+      if (requestedNow.current !== next) return;
+      setSelectionError('Your agent selection could not be saved. Try choosing it again.');
+      requestedNow.current = boundDocument; setRequestedDocument(boundDocument); setSelectionNeeded(false);
+    })
+      .finally(() => { setSelecting(false); });
+  }, [requestedDocument, boundDocument, wantsCreate, selectionNeeded, pendingSoul, saveState, selecting, flush, onPair, onRun, onDocument, onNewAgentHandled]);
   const edit = (value: string, rawFile = false) => {
     const content = rawFile ? value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current) : value;
     if (content === latest.current) return;
@@ -120,20 +148,30 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
     : reloading ? 'Wait for your saved files to reload' : setupPending ? 'Wait for your workspace to be ready before sending'
     : saveState !== 'saved' || pendingSoul ? 'Save your changes first' : undefined;
   const testSource = pair && <details className="check-source"><summary>Test file: {pair.name ?? 'web-reader'}.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Test file, read-only">{pair.tests}</pre></details>;
-  return <section className="designer" aria-labelledby={active ? 'page-title' : undefined}>
+  return <>
+    {creating && <NewAgent active={active} model={currentCatalog?.reply?.defaultModel} onCreated={async id => {
+      setCreating(false); requestDocument(id);
+    }} onCancel={() => { setCreating(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.new-agent-entry')?.focus()); }} />}
+    <section className="designer" hidden={creating} aria-labelledby={active && !creating ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
-      <div className="agent-heading-copy"><h1 className="agent-name" id={active ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{info.description && <p className="muted">{info.description}</p>}</div>
+      <div className="agent-heading-copy"><h1 className="agent-name" id={active && !creating ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{info.description && <p className="muted">{info.description}</p>}</div>
       <div className="heading-actions">
         <div className="view-switch" role="group" aria-label="Designer view">
           <button type="button" aria-pressed={view === 'Agent'} onClick={() => setView('Agent')}>Agent</button>
           <span className="coming-control" tabIndex={0} role="group" aria-label="Chat: Chat is coming" title="Chat is coming"><button type="button" disabled title="Chat is coming">Chat</button><span className="control-tip" aria-hidden="true">Chat is coming</span></span>
           <button type="button" aria-pressed={view === 'File'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('File')}>File</button>
         </div>
+        {entries && <label className="agent-selector"><span className="sr-only">Agent</span><select className="part-button" disabled={selecting} value={boundDocument} onChange={event => { setSelectionError(undefined); requestDocument(event.target.value); }}>
+          {!entries.some(entry => entry.id === boundDocument) && <option value={boundDocument}>{pair?.name ?? 'Current agent'}</option>}
+          {entries.map(entry => <option key={entry.id} value={entry.id}>{entry.name}{entry.available ? '' : ' (unavailable)'}</option>)}
+        </select></label>}
+        <button type="button" className="shell-button new-agent-entry" onClick={() => setWantsCreate(true)}>New agent</button>
         {actions}
         <SendEntry blocked={sendBlocked} failingCheck={!stale && localRun?.sourceCurrent !== false ? localRun?.report?.cases.find(c => c.verdict === 'failed')?.id : undefined}
           onProceed={openSend} onFix={() => { setView('Agent'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.instructions-editor')?.focus()); }} />
       </div>
     </div>
+    {selectionError && <p role="alert">{selectionError}</p>}
     {!pair ? error ? <p role="alert">{error}</p> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div className={`designer-work${remote ? ' designer-remote' : ''}`}>
       <div className="designer-tests card" hidden={remote}>
@@ -163,5 +201,5 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
       </div>
     </>}
     {!pair && <div className="designer-checks card"><SendHistory revision={boundDocument} /></div>}
-  </section>;
+  </section></>;
 }

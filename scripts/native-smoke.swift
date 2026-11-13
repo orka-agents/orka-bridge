@@ -342,6 +342,12 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     }.joined(separator: "\n")
     try recognized.write(toFile: "\(output)/\(name).ocr.txt", atomically: true, encoding: .utf8)
     if name == "send-probe" || name == "cluster-probe" || name == "overview-probe" || name.hasPrefix("overview-fixture-") { return observations }
+    if name.hasPrefix("new-agent-") {
+        let expected = name == "new-agent-created" ? "native-helper" : "New agent"
+        require(!nativeTextBounds(expected, heading: true).isEmpty, "Native creation heading is missing \(expected)")
+        print("PASS \(name): native owned-agent creation, no workspace or model")
+        return observations
+    }
     if name == "before-settings" || name == "designer-settings" {
         // These captures intentionally scroll the page heading out of view.
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
@@ -545,6 +551,44 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" 
     initial = try capture("places-empty", "Clusters")
 }
 try localPreflight("local-preflight")
+do {
+    clickTab("Designer", initial)
+    try capture("agent-before-creation", "Designer")
+    clickButton("New agent")
+    Thread.sleep(forTimeInterval: 0.3)
+    for character in "native-helper".utf16 {
+        var unit = character
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
+            event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+            event.flags = []; event.post(tap: .cghidEventTap)
+        }
+    }
+    try capture("new-agent-form", "Designer")
+    clickButton("Create")
+    let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/native-helper")
+    let agent = folder.appendingPathComponent("native-helper.agent.md")
+    let checks = folder.appendingPathComponent("native-helper.agent.test.md")
+    for _ in 0..<50 {
+        if FileManager.default.fileExists(atPath: checks.path) && !nativeTextBounds("native-helper", heading: true).isEmpty { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(try String(contentsOf: agent, encoding: .utf8).contains("name: native-helper"), "Created agent metadata missing")
+    require(try String(contentsOf: checks, encoding: .utf8).contains("web_fetch"), "Created starter lost its tool assertion")
+    let created = try capture("new-agent-created", "Designer")
+    requireNoLocalWorkspace()
+    clickTab("Overview", created)
+    for _ in 0..<30 {
+        if !nativeButtons("Open web-reader").isEmpty { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    clickButton("Open web-reader")
+    for _ in 0..<30 {
+        if !nativeTextBounds("web-reader", heading: true).isEmpty { break }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    try capture("agent-after-creation", "Designer")
+}
 do {
     // The owned form works before any workspace exists. Exercise its real writer,
     // not injected renderer data; editing remains owned during setup too.

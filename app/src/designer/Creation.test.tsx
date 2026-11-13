@@ -1,0 +1,187 @@
+import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { afterEach, expect, test, vi } from 'vitest';
+import { useState } from 'react';
+import Example from './Example';
+import App from '../App';
+import { SAMPLE_DOCUMENT_ID } from './agent-api';
+
+const id = '12345678-1234-4234-8234-123456789abc';
+const pair = { documentId: SAMPLE_DOCUMENT_ID, name: 'web-reader', agent: '---\nname: web-reader\nmodel: shipped\n---\nRead a page.', tests: '# Checks', path: '/home/creator/Orka/agents/web-reader/web-reader.agent.md' };
+const other = { ...pair, documentId: id, name: 'helper', agent: pair.agent.replaceAll('web-reader', 'helper') };
+afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+function native(extra?: (command: string, args: Record<string, unknown>) => unknown) {
+  vi.stubGlobal('isTauri', true);
+  mockIPC((command, value) => {
+    const args = value as Record<string, unknown>;
+    const result = extra?.(command, args);
+    if (result !== undefined) return result;
+    if (command === 'agent_creation_root') return '/home/creator/Orka/agents';
+    if (command === 'agent_selected') return SAMPLE_DOCUMENT_ID;
+    if (command === 'agents_list') return [{ id: SAMPLE_DOCUMENT_ID, name: 'web-reader', path: pair.path, available: true }, { id, name: 'helper', path: '/home/creator/Orka/agents/helper/helper.agent.md', available: true }];
+    if (command === 'agent_open') return args.documentId === id ? other : pair;
+    if (command === 'agent_select') return null;
+    if (command === 'agent_run_status') return { documentId: args.documentId, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'send_status') return { documentId: args.documentId, view: null, busy: null };
+    if (command === 'send_history') return [];
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'starting', model: 'locked' };
+    if (command === 'setup_example') return { agent: pair.agent, tests: pair.tests };
+    throw Error(`Unexpected ${command}`);
+  });
+}
+
+test('creates during setup, previews the native location and both files, and opens without running', async () => {
+  const calls: string[] = [];
+  native((command, args) => { calls.push(command); if (command === 'agent_create') { expect(args).toEqual({ name: 'helper' }); return id; } });
+  const user = userEvent.setup(); render(<Example setupPending />);
+  await user.click(await screen.findByRole('button', { name: 'New agent' }));
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'helper');
+  expect(await screen.findByText('/home/creator/Orka/agents/helper/')).toBeTruthy();
+  expect(screen.getByText('helper.agent.md')).toBeTruthy();
+  expect(screen.getByText('helper.agent.test.md')).toBeTruthy();
+  expect(screen.queryByLabelText('Your own repo')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+  expect(await screen.findByRole('heading', { name: 'helper', level: 1 })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
+  expect(calls).not.toContain('agent_run'); expect(calls).not.toContain('workspace_catalog');
+});
+
+test('cancel preserves the mounted draft and creates nothing', async () => {
+  let creates = 0;
+  native(command => { if (command === 'agent_create') creates++; });
+  const user = userEvent.setup(); render(<Example setupPending />);
+  const editor = await screen.findByRole('textbox', { name: 'Instructions' });
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'helper');
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.getByRole('textbox', { name: 'Instructions' })).toBe(editor);
+  expect(creates).toBe(0);
+});
+
+test('creation failure keeps the name, previous document and safe error for retry', async () => {
+  native(command => { if (command === 'agent_create') throw Error('/private/native/error'); });
+  const user = userEvent.setup(); render(<Example />);
+  await user.click(await screen.findByRole('button', { name: 'New agent' }));
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'helper');
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringMatching(/could not be created/i));
+  expect((screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement).value).toBe('helper');
+  expect(screen.queryByText('/private/native/error')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.getByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
+});
+
+test('New agent waits for the current save and keeps failed draft visible until retry', async () => {
+  let reject!: (reason: Error) => void; let saved = false;
+  native((command, args) => {
+    if (command === 'agent_save') return saved ? { ...pair, agent: args.content } : new Promise((_resolve, fail) => { reject = fail; });
+  });
+  const user = userEvent.setup(); render(<Example />);
+  const editor = await screen.findByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement;
+  fireEvent.change(editor, { target: { value: 'Keep my work.' } });
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  await waitFor(() => expect(reject).toBeDefined());
+  expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
+  await act(async () => reject(Error('disk full')));
+  expect(await screen.findByText('Not saved')).toBeTruthy();
+  expect(editor.value).toBe('Keep my work.');
+  saved = true;
+  await user.click(screen.getByRole('button', { name: 'Try saving again' }));
+  expect(await screen.findByRole('textbox', { name: 'Name' })).toBeTruthy();
+});
+
+test('selector persists identity and opens a different pair', async () => {
+  let selected: unknown;
+  native((command, args) => { if (command === 'agent_select') { selected = args.documentId; return null; } });
+  const user = userEvent.setup(); render(<Example />);
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agent' }), id);
+  expect(await screen.findByRole('heading', { name: 'helper', level: 1 })).toBeTruthy();
+  expect(selected).toBe(id);
+});
+
+test('first Designer open restores even an unavailable selection without opening the sample', async () => {
+  const opened: unknown[] = [];
+  native((command, args) => {
+    if (command === 'agent_selected') return id;
+    if (command === 'agent_open') { opened.push(args.documentId); throw Error('moved'); }
+    if (command === 'agents_list') return [{ id, name: 'helper', path: null, available: false }];
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  expect(await screen.findByText(/could not be opened/)).toBeTruthy();
+  expect(opened).toEqual([id]);
+  expect(screen.getByRole('option', { name: 'helper (unavailable)' })).toBeTruthy();
+});
+
+test('creation uses an already loaded catalog default without inheriting the sample model', async () => {
+  native((command, args) => {
+    if (command === 'workspace_catalog') return { defaultModel: 'workspace-model', models: { state: 'ready', items: [{ id: 'workspace-model' }] }, tools: { state: 'ready', items: [] } };
+    if (command === 'agent_create') { expect(args).toEqual({ name: 'helper', model: 'workspace-model' }); return id; }
+  });
+  const user = userEvent.setup(); render(<Example catalogKey={1} />);
+  await screen.findByText('Workspace default: workspace-model');
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'helper');
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+  expect(await screen.findByRole('heading', { name: 'helper', level: 1 })).toBeTruthy();
+});
+
+test('creation waits for personality digest and saves its text before hiding the editor', async () => {
+  let finish!: (value: ArrayBuffer) => void; const writes: string[] = [];
+  vi.stubGlobal('crypto', { subtle: { digest: () => new Promise(resolve => { finish = resolve; }) } });
+  const agent = '---\nname: web-reader\nmodel: shipped\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  soul:\n    inline: Old personality\n    digest: sha256:old\n---\nRead a page.';
+  native((command, args) => {
+    if (command === 'agent_open') return { ...pair, agent };
+    if (command === 'agent_save') { writes.push(String(args.content)); return { ...pair, agent: args.content }; }
+  });
+  const user = userEvent.setup(); render(<Example />);
+  await user.click(await screen.findByText('More settings'));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Personality' }), { target: { value: 'Keep my personality' } });
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
+  await act(async () => finish(new Uint8Array(32).buffer));
+  expect(await screen.findByRole('textbox', { name: 'Name' })).toBeTruthy();
+  expect(writes).toHaveLength(1); expect(writes[0]).toContain('Keep my personality');
+});
+
+test('the first Overview open is remembered even before Designer has mounted', async () => {
+  let selected: unknown;
+  native((command, args) => {
+    if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'helper', state: 'readable', source: null, summary: null, reason: null }] };
+    if (command === 'agent_select') { selected = args.documentId; return null; }
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open helper' }));
+  await screen.findByRole('heading', { name: 'helper', level: 1 });
+  await waitFor(() => expect(selected).toBe(id));
+});
+
+test('a newer switch request wins over an older selection reply', async () => {
+  let finish!: (value: null) => void; const selected: unknown[] = [];
+  native((command, args) => {
+    if (command === 'agent_select') { selected.push(args.documentId); if (args.documentId === id) return new Promise(resolve => { finish = resolve; }); return null; }
+  });
+  function Switcher() {
+    const [current, setCurrent] = useState(SAMPLE_DOCUMENT_ID);
+    return <><button onClick={() => setCurrent(id)}>Choose helper</button><button onClick={() => setCurrent(SAMPLE_DOCUMENT_ID)}>Choose sample</button><Example documentId={current} onDocument={setCurrent} /></>;
+  }
+  render(<Switcher />);
+  await screen.findByRole('heading', { name: 'web-reader', level: 1 });
+  fireEvent.click(screen.getByRole('button', { name: 'Choose helper' }));
+  await waitFor(() => expect(finish).toBeDefined());
+  fireEvent.click(screen.getByRole('button', { name: 'Choose sample' }));
+  await act(async () => finish(null));
+  await waitFor(() => expect(selected.at(-1)).toBe(SAMPLE_DOCUMENT_ID));
+  expect(screen.getByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
+});
+
+test('Overview offers the same creation form without starting setup', async () => {
+  localStorage.setItem('bridge.welcomeSeen.v1', '1'); native();
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  expect(await screen.findByRole('textbox', { name: 'Name' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page');
+});
