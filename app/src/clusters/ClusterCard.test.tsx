@@ -332,7 +332,7 @@ test('a Reload kubeconfig interrupted by deactivation resumes the reload on reac
   expect(screen.getByRole('option', { name: context.name })).toBeTruthy();
 });
 
-test.each(['interrupted reload', 'failed initial read', 'failed reload'])('a new entry after %s reads contexts again and discards stale replies', async operation => {
+test.each(['interrupted reload', 'failed initial read', 'failed reload'])('returning after %s reads contexts again and discards stale replies and errors', async operation => {
   vi.stubGlobal('isTauri', true);
   const oldReload = deferred<unknown>(); const freshRead = deferred<unknown>(); let reads = 0;
   const failure = { check: 'configuration', result: 'unknown' };
@@ -357,7 +357,7 @@ test.each(['interrupted reload', 'failed initial read', 'failed reload'])('a new
   expect(ipc.mock.calls.filter(([command]) => command === 'cluster_reload')).toHaveLength(operation === 'failed initial read' ? 0 : 1);
 
   view.rerender(<ClusterCard active={false} entry={entry} onPlace={onPlace} onOpenAgent={vi.fn()} />);
-  view.rerender(<ClusterCard active entry={{ revision: 2 }} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  view.rerender(<ClusterCard active entry={operation === 'failed initial read' ? entry : { revision: 2 }} onPlace={onPlace} onOpenAgent={vi.fn()} />);
   expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(true);
 
   await act(async () => oldReload.resolve([{ id: 'stale', name: 'stale-context' }]));
@@ -367,6 +367,7 @@ test.each(['interrupted reload', 'failed initial read', 'failed reload'])('a new
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
   expect(screen.getByRole('option', { name: context.name })).toBeTruthy();
   expect(screen.queryByText(/No kubectl contexts were found/)).toBeNull();
+  expect(screen.queryByRole('alert')).toBeNull();
   expect(onPlace).toHaveBeenCalledTimes(operation === 'failed initial read' ? 0 : 1);
   const completedReads = reads;
   view.rerender(<ClusterCard active entry={{ revision: 3 }} onPlace={onPlace} onOpenAgent={vi.fn()} />);

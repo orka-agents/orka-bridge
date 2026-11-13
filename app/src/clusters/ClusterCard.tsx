@@ -27,7 +27,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   const accountField = useRef<HTMLInputElement>(null);
   const providerField = useRef<HTMLSelectElement>(null);
   function readContexts() {
-    const request = ++epoch.current; setBusy(true);
+    const request = ++epoch.current; setBusy(true); setError(undefined);
     void contexts().then(v => { if (request === epoch.current) { setChoices(v); initialLoaded.current = true; } }, error => {
       if (request === epoch.current) { setError({ failure: failedCheck(error, 'configuration'), operation: 'Read kubeconfig' }); initialLoaded.current = false; }
     }).finally(() => { if (request === epoch.current) setBusy(false); });
