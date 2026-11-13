@@ -1,3 +1,4 @@
+import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -21,7 +22,7 @@ beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 test('AI connection is the only next primary and its prerequisite is visible before clicking', async () => {
-  const ipc = native(); const user = userEvent.setup(); render(<App />);
+  const ipc = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const connect = await screen.findByRole('button', { name: 'Connect the AI' });
   expect(connect.className).toBe('workspace-primary');
   expect(screen.getByText(/GitHub CLI installed and signed in/)).toBeTruthy();
@@ -36,7 +37,7 @@ test('AI connection is the only next primary and its prerequisite is visible bef
 });
 
 test('Change focuses its explanation, makes Keep primary and restores focus without stopping', async () => {
-  const ipc = native(); const user = userEvent.setup(); render(<App />);
+  const ipc = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const change = await screen.findByRole('button', { name: 'Change where agents run' });
   await user.click(change);
   const panel = screen.getByRole('region', { name: 'Change where agents run' });
@@ -53,9 +54,9 @@ test('Change focuses its explanation, makes Keep primary and restores focus with
 });
 
 test('cluster picking is explicitly separate from stopping and does not stop the local workspace', async () => {
-  const ipc = native(); const user = userEvent.setup(); render(<App />);
+  const ipc = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
-  expect(await screen.findByRole('radio', { name: 'On a cluster you already have' })).toBeTruthy();
+  expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_change_local')).toBe(false);
 });

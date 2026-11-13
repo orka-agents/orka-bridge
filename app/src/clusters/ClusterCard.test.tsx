@@ -1,3 +1,4 @@
+import { openLocalSetup } from '../setup/test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -44,10 +45,11 @@ test('local readiness never enables unconfirmed remote checks, and changing plac
     if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
     throw Error('Unsupported');
   });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
-  await screen.findByRole('combobox', { name: 'kubectl context' });
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
+  await screen.findByText('Orka found');
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   const run = await screen.findByRole('button', { name: 'Run all tests' });
   expect(run.matches(':disabled')).toBe(true);
@@ -89,7 +91,7 @@ test('local results remain explicitly local after confirming cluster access', as
     if (command === 'cluster_use') return { status: 'connected', providers: [provider], failure: null };
     throw Error('Unsupported');
   });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByText('1 of 1 tests passing', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
@@ -110,13 +112,14 @@ test('local model acknowledgement survives a cluster round trip', async () => {
     if (command === 'cluster_contexts') return [context];
     throw Error('Unsupported');
   });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await screen.findByText(/Connected with GitHub Copilot/);
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
-  await user.click(screen.getByRole('radio', { name: 'On this computer' }));
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await openLocalSetup(user);
   expect(await screen.findByText(/Connected with GitHub Copilot/)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
 });
@@ -129,15 +132,17 @@ test('local-result observation continues while remote access is unconfirmed', as
     if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
     if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: complete ? 'complete' : 'running', canRun: false, report: complete ? { verdict: 'passed', cases: [{ id: 'check', question: 'What did the page say?', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', expected: 'checksum', verdict: 'passed' }] }] } : null, acknowledged: [], pending: null, error: null };
     if (command === 'cluster_contexts') return [context];
+    if (command === 'cluster_discover') return [target];
     throw Error('Unsupported');
   });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByText('Running tests…', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
-  await screen.findByRole('combobox', { name: 'kubectl context' });
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
+  await screen.findByText('Orka found');
   complete = true;
   expect(await screen.findByText('This computer: 1 of 1 tests passing', { selector: '.checks-status' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
@@ -146,7 +151,7 @@ test('local-result observation continues while remote access is unconfirmed', as
 
 test('expert_skip_selects_cluster_without_vm', async () => {
   const ipc = native(); await open();
-  expect(screen.getByRole('radio', { name: 'On a cluster you already have' }).matches(':checked')).toBe(true);
+  expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
   expect(localStorage.getItem('bridge.welcomeSeen.v1')).toBe('1');
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
 });
@@ -154,13 +159,14 @@ test('v6_cluster_card_keyboard and Use confirms access only after discovery', as
   const ipc = native(); const user = await open();
   const select = screen.getByRole('combobox', { name: 'kubectl context' }); select.focus();
   await user.selectOptions(select, context.id); await screen.findByText('Orka found');
-  expect(screen.getByText('ghcr.io/orka:0.9.4')).toBeTruthy();
+  expect(screen.queryByText('ghcr.io/orka:0.9.4')).toBeNull();
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_use');
   const use = screen.getByRole('button', { name: 'Use this cluster' }); use.focus(); await user.keyboard('{Enter}');
   expect((await screen.findAllByText('Access confirmed')).length).toBeGreaterThan(0);
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toEqual([['cluster_use', { targetId: target.id, saName: null }]]);
   await user.click(screen.getByRole('button', { name: 'Show details' }));
-  expect(screen.getByText('control / orka')).toBeTruthy(); expect(screen.getByText('agents')).toBeTruthy();
+  expect(screen.getByText('ghcr.io/orka:0.9.4')).toBeTruthy();
+  expect(screen.getByText('control / orka', { selector: 'dd' })).toBeTruthy(); expect(screen.getByText('agents', { selector: 'dd' })).toBeTruthy();
   expect(screen.getByText('team-model')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Open your agent' }).matches(':disabled')).toBe(false);
 });
@@ -193,7 +199,8 @@ test('failure alternative does not stop or reset a local VM', async () => {
   await waitFor(() => expect(ipc.mock.calls.some(([c]) => c === 'setup_status')).toBe(true));
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_change_local');
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_cancel_local');
-  await user.click(screen.getByRole('radio', { name: 'On this computer' }));
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await openLocalSetup(user);
   expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
 });
 test('unsupported discovery names the access limitation and keeps the context', async () => {

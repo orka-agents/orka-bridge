@@ -1,3 +1,4 @@
+import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -32,7 +33,7 @@ beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 async function completeSetup() {
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   return user;
@@ -65,12 +66,15 @@ test('Overview refreshes after the automatic test releases native admission with
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
 });
 
-test.each(['Overview', 'Designer', 'cluster', 'Stop', 'workspace lost'])('first-test completion does not interrupt %s', async destination => {
+test.each(['Overview', 'Designer', 'cluster', 'Add', 'Places', 'Stop', 'workspace lost'])('first-test completion does not interrupt %s', async destination => {
   const { ipc, finish, loseWorkspace } = native(); const user = await completeSetup();
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1));
   if (destination === 'Overview' || destination === 'Designer') await user.click(screen.getByRole('button', { name: destination }));
   else if (destination === 'workspace lost') { loseWorkspace(); window.dispatchEvent(new Event('focus')); await screen.findByRole('button', { name: 'Continue' }); }
-  else {
+  else if (destination === 'Add' || destination === 'Places') {
+    await user.click(screen.getByRole('button', { name: 'Back to places' }));
+    if (destination === 'Add') await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  } else {
     await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
     await user.click(screen.getByRole('button', { name: destination === 'cluster' ? 'Choose a cluster, keep this workspace running' : 'Stop workspace and choose a place' }));
   }
@@ -79,4 +83,25 @@ test.each(['Overview', 'Designer', 'cluster', 'Stop', 'workspace lost'])('first-
   const expected = destination === 'Overview' || destination === 'Designer' ? destination : 'Clusters';
   expect(within(screen.getByRole('navigation')).getByRole('button', { name: expected }).getAttribute('aria-current')).toBe('page');
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
+});
+
+test('Add retires an automatic first test awaiting its initial observation without choosing another destination', async () => {
+  const { ipc } = native();
+  let resolve!: (value: unknown) => void; let reads = 0;
+  mockIPC(command => {
+    if (command === 'agent_run_status') { reads++; return new Promise(done => { resolve = done; }); }
+    return ipc(command);
+  });
+  const user = await completeSetup();
+  await waitFor(() => expect(reads).toBe(1));
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('pending');
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
+  expect(document.querySelector('.host-chip .host-label')?.textContent).toBe('This computer');
+  resolve(idle);
+  await new Promise(done => setTimeout(done, 600));
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(0);
+  expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
+  expect(screen.getByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
 });

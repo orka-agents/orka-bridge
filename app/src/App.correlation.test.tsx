@@ -1,3 +1,4 @@
+import { openLocalSetup } from './setup/test-navigation';
 import { useEffect } from 'react';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
@@ -27,7 +28,7 @@ test.each(['unavailable', 'other', 'sample'] as const)('setup keeps %s Run evide
     if (command === 'setup_example') return { agent: '---\nname: web-reader\n---\nRead.', tests: 'Checks' };
     throw Error('unavailable');
   });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
