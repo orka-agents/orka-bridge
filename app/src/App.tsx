@@ -183,7 +183,7 @@ export default function App() {
         {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} documentId={documentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={setSaveState} onStale={setStale} actions={<>
           <ComingButton label="New agent" reason="Creating agents is coming" />
         </>} /></div>}
-        <Overview active={page === 'Overview'} runBusy={!!run?.busy} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} onCounts={setOverviewCounts}
+        <Overview active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} onCounts={setOverviewCounts}
           onOpenDocument={id => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(id); }}
           onOpenExample={() => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(SAMPLE_DOCUMENT_ID); }}
           onChooseWorkspace={() => setPage('Clusters')} />

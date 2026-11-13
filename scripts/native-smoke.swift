@@ -366,7 +366,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
             require(selected && !welcome && !choice, "Native preference was not acknowledged or retained")
             let modelRow = observations.first {
                 let label = $0.topCandidates(1).first?.string ?? ""
-                return label == "Connect the AI" || label == "Connect the Al"
+                return label.hasSuffix("Connect the AI") || label.hasSuffix("Connect the Al")
             }
             require(modelRow != nil && observations.contains {
                 $0.topCandidates(1).first?.string == "Waiting" &&
@@ -374,7 +374,8 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
             }, "The AI setup step is not waiting")
             // Only the waiting step label is visible; no model card or connection button.
             require(observations.filter {
-                ["Connect the AI", "Connect the Al"].contains($0.topCandidates(1).first?.string ?? "")
+                let label = $0.topCandidates(1).first?.string ?? ""
+                return label.hasSuffix("Connect the AI") || label.hasSuffix("Connect the Al")
             }.count == 1, "Model connection is exposed before workspace readiness")
         }
         print("PASS \(name): native workspace screen observed")

@@ -29,7 +29,7 @@ test('AI connection is the only next primary and its prerequisite is visible bef
   expect(screen.getByRole('button', { name: 'Change where agents run' }).className).toBe('workspace-link');
   await user.click(connect);
   expect(await screen.findByText('Connected with GitHub Copilot.')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Run your first test' }).className).toBe('workspace-primary');
+  expect(screen.getByRole('button', { name: 'Open your first test' }).className).toBe('workspace-primary');
   expect(document.body.textContent).not.toMatch(/guest|\bVM\b|inference|gpt-5.6-terra/);
   expect(screen.queryByText('Engine diagnostics')).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'engine_call')).toBe(false);
