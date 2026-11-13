@@ -13,6 +13,14 @@ pub fn verified_with_compatibility(
     target: ImageTarget,
     compatibility: Option<&str>,
 ) -> VerifiedImageSet {
+    verified_with_identity(path, target, compatibility, None)
+}
+pub fn verified_with_identity(
+    path: &Path,
+    target: ImageTarget,
+    compatibility: Option<&str>,
+    image_id: Option<&str>,
+) -> VerifiedImageSet {
     let disk = b"private synthetic disk";
     let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
     encoder.write_all(disk).unwrap();
@@ -33,6 +41,19 @@ pub fn verified_with_compatibility(
     let mut value: serde_json::Value = serde_json::from_slice(raw).unwrap();
     if let Some(compatibility) = compatibility {
         value["stateCompatibilityId"] = compatibility.into();
+    }
+    if let Some(image_id) = image_id {
+        value["imageId"] = image_id.into();
+        let prefix = format!(
+            "{}-{}-{}",
+            image_id,
+            value["target"]["platform"].as_str().unwrap(),
+            value["target"]["architecture"].as_str().unwrap()
+        );
+        value["artifact"]["chunks"][0]["name"] = format!("{prefix}.part-000000").into();
+        for role in ["kernel", "initrd"] {
+            value["directBoot"][role]["name"] = format!("{prefix}.{role}").into();
+        }
     }
     value["artifact"]["uncompressedBytes"] = disk.len().into();
     value["artifact"]["uncompressedSha256"] = hash(disk).into();

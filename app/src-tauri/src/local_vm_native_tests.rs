@@ -953,55 +953,65 @@ mod release_image_tests {
 
     #[cfg(debug_assertions)]
     #[test]
-    fn debug_retained_development_binding_reopens_when_a_pin_is_available() {
-        let temp = tempfile::tempdir().unwrap();
-        let verified = image_fixture::verified_with_compatibility(
-            temp.path(),
-            ImageTarget::WindowsAmd64,
-            Some(crate::dev_image::STATE_COMPATIBILITY_ID),
-        );
-        let root = temp.path().join("install");
-        let journal = Journal::create(&root, BackendKind::Qemu, vec![1]).unwrap();
-        let (_stop, closed) = watch::channel(false);
-        let runtime = runtime();
-        runtime
-            .block_on(crate::runtime::image_install::materialize_image(
-                &verified,
-                &journal
-                    .image_target(crate::dev_image::STATE_COMPATIBILITY_ID)
-                    .unwrap(),
-                closed.clone(),
+    fn debug_reopen_only_accepts_engineering_identity_when_a_pin_is_available() {
+        for engineering in [true, false] {
+            let temp = tempfile::tempdir().unwrap();
+            let verified = image_fixture::verified_with_identity(
+                temp.path(),
+                ImageTarget::WindowsAmd64,
+                Some(crate::dev_image::STATE_COMPATIBILITY_ID),
+                engineering.then_some("engineering-windows-amd64"),
+            );
+            let root = temp.path().join("install");
+            let journal = Journal::create(&root, BackendKind::Qemu, vec![1]).unwrap();
+            let (_stop, closed) = watch::channel(false);
+            let runtime = runtime();
+            runtime
+                .block_on(crate::runtime::image_install::materialize_image(
+                    &verified,
+                    &journal
+                        .image_target(crate::dev_image::STATE_COMPATIBILITY_ID)
+                        .unwrap(),
+                    closed.clone(),
+                    |_| {},
+                ))
+                .unwrap();
+            drop((verified, journal));
+            fs::remove_dir_all(temp.path().join("cache")).unwrap();
+            let (_release_fixture, mut profile, _) = profile();
+            // Both actual paired profiles use this same compatibility ID. It alone
+            // must not turn a verified development binding into a release binding.
+            profile.state_compatibility_id = crate::dev_image::STATE_COMPATIBILITY_ID.into();
+            let mut manifest: serde_json::Value =
+                serde_json::from_slice(&profile.manifest).unwrap();
+            manifest["stateCompatibilityId"] = profile.state_compatibility_id.clone().into();
+            manifest["target"]["minimumHostVersion"] = "12.0".into();
+            profile.manifest = serde_json::to_vec(&manifest).unwrap();
+            profile.pin.manifest_sha256 = format!("{:x}", Sha256::digest(&profile.manifest));
+            let mut custody = JournalCustody(None);
+            let image = prepare_installation(
+                &source(profile),
+                &root,
+                &temp.path().join("cache"),
+                &mut custody,
+                closed,
                 |_| {},
-            ))
-            .unwrap();
-        drop((verified, journal));
-        fs::remove_dir_all(temp.path().join("cache")).unwrap();
-        let (_release_fixture, mut profile, _) = profile();
-        // Both actual paired profiles use this same compatibility ID. It alone
-        // must not turn a verified development binding into a release binding.
-        profile.state_compatibility_id = crate::dev_image::STATE_COMPATIBILITY_ID.into();
-        let mut manifest: serde_json::Value = serde_json::from_slice(&profile.manifest).unwrap();
-        manifest["stateCompatibilityId"] = profile.state_compatibility_id.clone().into();
-        manifest["target"]["minimumHostVersion"] = "12.0".into();
-        profile.manifest = serde_json::to_vec(&manifest).unwrap();
-        profile.pin.manifest_sha256 = format!("{:x}", Sha256::digest(&profile.manifest));
-        let mut custody = JournalCustody(None);
-        let image = prepare_installation(
-            &source(profile),
-            &root,
-            &temp.path().join("cache"),
-            &mut custody,
-            closed,
-            |_| {},
-            || panic!("retained development must not create"),
-            runtime.handle(),
-        )
-        .unwrap();
-        assert_eq!(
-            image.identity().state_compatibility_id,
-            crate::dev_image::STATE_COMPATIBILITY_ID
-        );
-        assert!(!temp.path().join("cache").exists());
+                || panic!("retained identity checks must not create"),
+                runtime.handle(),
+            );
+            if engineering {
+                assert_eq!(
+                    image.unwrap().identity().image_id,
+                    "engineering-windows-amd64"
+                );
+            } else {
+                assert!(matches!(
+                    image,
+                    Err(RuntimeError::Image(ImageError::Integrity))
+                ));
+            }
+            assert!(!temp.path().join("cache").exists());
+        }
     }
 
     #[test]

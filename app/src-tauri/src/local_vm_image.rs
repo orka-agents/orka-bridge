@@ -144,8 +144,14 @@ pub(super) fn open_selected(
         if let Ok(image) =
             open_installed_image(&journal.image_target(crate::dev_image::STATE_COMPATIBILITY_ID)?)
         {
-            *source = ImageSource::Development;
-            return Ok(std::sync::Arc::new(image));
+            let engineering = match image.target() {
+                ImageTarget::MacosArm64 => "engineering-macos-arm64",
+                ImageTarget::WindowsAmd64 => "engineering-windows-amd64",
+            };
+            if image.identity().image_id == engineering {
+                *source = ImageSource::Development;
+                return Ok(std::sync::Arc::new(image));
+            }
         }
     }
     opened.map(std::sync::Arc::new).map_err(Into::into)
