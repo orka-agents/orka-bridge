@@ -430,10 +430,9 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 var initial = try capture("initial", "Clusters")
-// CI's light pass owns a fresh profile; dark reuses the saved native choice.
+// Each theme owns a fresh runner profile; verify retention after its own restart.
 let initiallyWelcome = initial.contains { $0.topCandidates(1).first?.string == "Get started" }
-require(theme == "light" ? initiallyWelcome : !initiallyWelcome,
-        "Expected a first-run welcome in light and a retained choice in dark")
+require(initiallyWelcome, "Expected a first-run welcome in the fresh \(theme) job")
 if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" }) {
     clickText("Get started", in: initial)
     initial = try capture("chooser", "Clusters")
@@ -503,6 +502,8 @@ for _ in 0..<30 {
 require(window() != nil, "Relaunched Bridge window did not appear")
 Thread.sleep(forTimeInterval: 2)
 let retained = try capture("choice-retained", "Clusters")
+require(!retained.contains { $0.topCandidates(1).first?.string == "Get started" },
+        "Restart must retain this theme's saved native choice")
 clickTab("Overview", retained)
 let overview = try capture("overview", "Overview")
 require(nativeTextIsVisible("Agent list unavailable with this Mac image"),
