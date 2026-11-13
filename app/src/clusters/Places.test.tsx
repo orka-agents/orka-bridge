@@ -198,12 +198,16 @@ test('a Use recheck clears the frontend target before native replies and Back ca
 
 test('Back preserves a queued local Model and its one eventual connection while Places is visible', async () => {
   const { ipc, sim } = native(); sim.status = { ...sim.status, selected: 'localVm', localVm: 'installing' };
-  const observe = vi.fn(); const user = userEvent.setup(); render(<Host observe={observe} />);
-  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  const observe = vi.fn(); const user = userEvent.setup(); render(<Host initial={connected} observe={observe} />);
+  await user.click(await screen.findByRole('button', { name: 'Back to places' }));
+  await user.click(within(row('This computer')).getByRole('button', { name: 'Continue setup' }));
+  expect(observe).not.toHaveBeenCalled();
+  await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  expect(observe).toHaveBeenLastCalledWith({ kind: 'thisComputer' });
   expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Back to places' }));
   expect(within(row('This computer')).getByText('AI connection queued')).toBeTruthy();
-  expect(observe).not.toHaveBeenCalled();
+  expect(observe).toHaveBeenCalledTimes(1);
   sim.status = { ...sim.status, localVm: 'ready', model: 'available' };
   await act(async () => window.dispatchEvent(new Event('focus')));
   await within(row('This computer')).findByText('AI connected');

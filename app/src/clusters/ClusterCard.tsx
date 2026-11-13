@@ -39,6 +39,8 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   useEffect(() => {
     if (!entry) return;
     // Entry intent is presentation only. Only Manage receives App's still-current capability.
+    // Reload clears the choices; a new entry must replace an interrupted reload's fenced reply.
+    if (reloadActive.current || reloadInterrupted.current) initialLoaded.current = false;
     epoch.current++; admitted.current = false; reloadActive.current = false; reloadInterrupted.current = false;
     const current = entry.current?.kind === 'cluster' ? entry.current : undefined;
     const target = current?.target;

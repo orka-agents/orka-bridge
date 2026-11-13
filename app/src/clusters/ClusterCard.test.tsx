@@ -332,6 +332,34 @@ test('a Reload kubeconfig interrupted by deactivation resumes the reload on reac
   expect(screen.getByRole('option', { name: context.name })).toBeTruthy();
 });
 
+test('a new entry after an interrupted reload reads contexts again and discards the stale reply', async () => {
+  vi.stubGlobal('isTauri', true);
+  const oldReload = deferred<unknown>(); const freshRead = deferred<unknown>(); let reads = 0;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'cluster_contexts') return ++reads === 1 ? [context] : freshRead.promise;
+    if (command === 'cluster_reload') return oldReload.promise;
+    throw Error('Unsupported');
+  });
+  mockIPC(ipc);
+  const onPlace = vi.fn(); const user = userEvent.setup(); const entry = { revision: 1 };
+  const view = render(<ClusterCard active entry={entry} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  await screen.findByRole('option', { name: context.name });
+  await user.click(screen.getByRole('button', { name: 'Reload kubeconfig' }));
+
+  view.rerender(<ClusterCard active={false} entry={entry} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  view.rerender(<ClusterCard active entry={{ revision: 2 }} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(true);
+
+  await act(async () => oldReload.resolve([{ id: 'stale', name: 'stale-context' }]));
+  expect(screen.queryByText('stale-context')).toBeNull();
+  expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(true);
+  await act(async () => freshRead.resolve([context]));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
+  expect(screen.getByRole('option', { name: context.name })).toBeTruthy();
+  expect(screen.queryByText(/No kubectl contexts were found/)).toBeNull();
+  expect(onPlace).toHaveBeenCalledTimes(1);
+});
+
 test('reactivating after a provider reconnect remaps the remembered provider name to its freshly minted ID', async () => {
   vi.stubGlobal('isTauri', true);
   const providerA = { id: '00000000-0000-4000-8000-000000000010', name: 'team-model', ready: true };

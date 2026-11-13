@@ -43,6 +43,8 @@ test.each(['Run the test again', 'Open your test result'])('%s selects this comp
     onPlace={place => calls.push(place.kind)} onOpenExample={() => calls.push('Designer')} />);
   await openLocalSetup(user);
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  expect(calls).toEqual(['thisComputer']);
+  calls.length = 0;
   await user.click(await screen.findByRole('button', { name: action }));
   expect(calls).toEqual(['thisComputer', 'Designer']);
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
