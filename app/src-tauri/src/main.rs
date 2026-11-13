@@ -219,6 +219,12 @@ async fn agent_run(
 }
 
 #[tauri::command]
+fn cluster_places(
+    state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+) -> bridge_engine::clusters::commands::ClusterPlaceSnapshot {
+    state.places()
+}
+#[tauri::command]
 async fn cluster_contexts(
     state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
 ) -> Result<Vec<bridge_engine::clusters::ContextView>, bridge_engine::clusters::ClusterFailure> {
@@ -364,6 +370,7 @@ fn main() {
             agent_save,
             agent_reveal,
             workspace_catalog,
+            cluster_places,
             cluster_contexts,
             cluster_reload,
             cluster_discover,

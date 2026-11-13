@@ -33,6 +33,12 @@ pub struct AccessView {
     /// Null exactly when connected or a ServiceAccount name is needed.
     pub failure: Option<ClusterFailure>,
 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClusterPlaceSnapshot {
+    pub places: Vec<crate::overview_places::Place>,
+    pub selected_key: Option<String>,
+}
 impl From<AccessOutcome> for AccessView {
     fn from(outcome: AccessOutcome) -> Self {
         // Connect tags every failure at its origin; the fallback check is never reached.
@@ -154,6 +160,20 @@ impl ClusterSession {
     }
     pub async fn overview(&self) -> Vec<crate::overview_places::Place> {
         self.6.refresh().await
+    }
+    /// A display-only snapshot: never reads kubeconfig, refreshes inventory or renews access.
+    pub fn places(&self) -> ClusterPlaceSnapshot {
+        // Do not hold the admission lock while reading the independent inventory.
+        let binding = self
+            .4
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|(_, access)| access.binding().clone());
+        ClusterPlaceSnapshot {
+            places: self.6.snapshot(),
+            selected_key: binding.map(|binding| crate::overview_places::Place::new(binding).key),
+        }
     }
     /// Memory-only lookup; the caller rechecks a fresh kubeconfig before writing.
     pub(crate) fn send_access(&self, target: &str) -> SendAccess {

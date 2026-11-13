@@ -1,9 +1,33 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { afterEach, expect, test, vi } from 'vitest';
-import { contexts, discover, connectCluster, reloadContexts } from './api';
+import { contexts, discover, connectCluster, reloadContexts, clusterPlaces } from './api';
 
 afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
 const id = '00000000-0000-4000-8000-000000000001';
+const place = { key: 'full-installation-key', context: 'team', service: 'control/orka', namespace: 'agents', stale: true, observedAt: null, agents: [] };
+test('places reads only the passive native snapshot and preserves unobserved facts', async () => {
+  vi.stubGlobal('isTauri', true);
+  const value = { places: [place], selectedKey: place.key };
+  const ipc = vi.fn(() => value); mockIPC(ipc);
+  await expect(clusterPlaces()).resolves.toEqual(value);
+  expect(ipc).toHaveBeenCalledExactlyOnceWith('cluster_places', {});
+});
+test.each([
+  null,
+  { places: [place], selectedKey: 'same-name-not-same-installation' },
+  { places: [place, place], selectedKey: null },
+  { places: [{ ...place, observedAt: null, stale: false }], selectedKey: null },
+  { places: [place], selectedKey: null, token: 'SECRET_MARKER' },
+])('invalid places snapshot is not projected: %j', async value => {
+  vi.stubGlobal('isTauri', true); mockIPC(() => value);
+  await expect(clusterPlaces()).resolves.toBeUndefined();
+});
+test('a passive snapshot error or browser preview does not export private diagnostics', async () => {
+  vi.stubGlobal('isTauri', true); const ipc = vi.fn(() => Promise.reject({ message: 'SECRET_MARKER' })); mockIPC(ipc);
+  await expect(clusterPlaces()).resolves.toBeUndefined();
+  vi.stubGlobal('isTauri', false); ipc.mockClear();
+  await expect(clusterPlaces()).resolves.toBeUndefined(); expect(ipc).not.toHaveBeenCalled();
+});
 test.each([null, {}, [{ id, name: 'team', token: 'SECRET_MARKER' }], [{ id: 'endpoint', name: 'team' }], [{ id, name: 'line\nfeed' }]])('invalid context reply is not exported: %j', async value => {
   vi.stubGlobal('isTauri', true); mockIPC(() => value);
   await expect(contexts()).rejects.toThrow('Cluster information could not be read');
