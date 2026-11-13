@@ -201,7 +201,7 @@ test('native selection, not the default radio, names the host, including checkin
 
 test('an edit makes the first-test step and shell status stale immediately, so setup does not claim completion', async () => {
   native('ready', { model: 'available' });
-  const snapshot = { documentId: doc, busy: null, state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'a', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null };
+  const snapshot = { documentId: doc, busy: null, state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'a', question: 'What did the page say?', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', expected: 'ok', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null };
   const user = userEvent.setup();
   mockIPC(command => command === 'agent_run_status' ? snapshot : command === 'setup_status' ? { selected: 'localVm', localVm: 'ready', model: 'available' }
     : command === 'setup_connect_model' ? { ready: true } : command === 'setup_requirements' ? null
@@ -210,15 +210,15 @@ test('an edit makes the first-test step and shell status stale immediately, so s
   render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
   await user.click(await screen.findByRole('button', { name: 'Open example' }));
-  await within(screen.getByRole('contentinfo')).findByText('1 of 1 checks passing');
+  await within(screen.getByRole('contentinfo')).findByText('1 of 1 tests passing');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await waitFor(() => expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy());
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   await user.click(screen.getByRole('button', { name: 'File' }));
   await user.type(screen.getByRole('textbox', { name: 'Agent file' }), ' edit');
   // No wait for a save or poll: the edit callback itself marks every consumer stale.
-  expect(within(screen.getByRole('contentinfo')).getByText('Checks not run since your change')).toBeTruthy();
-  expect(within(screen.getByRole('navigation')).getByText(/checks need running/)).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Tests not run since your edit')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText(/tests need running/)).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(within(screen.getByRole('navigation')).getByText('Setting up, step 5 of 5')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).queryByText('This computer ready')).toBeNull();

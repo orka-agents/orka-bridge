@@ -200,7 +200,7 @@ class Discovery(BaseHTTPRequestHandler):
                     self.agents[place] = self.agents.get(place, 0) + 1
                 value = {"apiVersion": "core.orka.ai/v1alpha1", "kind": kind,
                          "metadata": {"name": body["name"], "namespace": "agents", "uid": "uid-" + body["name"], "generation": 1},
-                         "spec": body["spec"], "status": {"phase": "Succeeded" if self.agents.get(place, 0) % 2 else "Running"}}
+                         "spec": body["spec"], "status": {"phase": "Succeeded" if self.agents.get(place, 0) % 3 else "Running"}}
                 if kind == "Task" and "timeout" in value["spec"]:
                     value["spec"]["timeout"] = "2m0s"
                     value["spec"]["retryPolicy"].pop("maxRetries", None)

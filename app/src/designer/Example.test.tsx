@@ -42,6 +42,12 @@ test('opens the owned pair without a VM and exposes a keyboard File switch', asy
   screen.getByRole('button', { name: 'File' }).focus(); await user.keyboard('{Enter}');
   expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).value).toBe(pair.agent);
 });
+test('local test results lead the card, ahead of past Sends', async () => {
+  native(); render(<Example />);
+  const run = await screen.findByRole('region', { name: 'Tests on local' });
+  const history = screen.getByRole('region', { name: 'Past Sends' });
+  expect(run.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
 test('does not claim Saved or allow Run before the commit reply', async () => {
   let finish!: (value: unknown) => void; let saved = '';
   native(content => { saved = content; return new Promise(resolve => { finish = resolve; }); });
@@ -51,11 +57,11 @@ test('does not claim Saved or allow Run before the commit reply', async () => {
   fireEvent.blur(screen.getByRole('textbox'));
   await screen.findByText('Saving…');
   expect(screen.queryByText('Saved')).toBeNull();
-  expect(screen.getByRole('button', { name: 'Run test' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(true);
   expect(saved).toBe('New instructions');
   await act(async () => finish({ ...pair, agent: saved }));
   await screen.findByText('Saved');
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Run test' }).hasAttribute('disabled')).toBe(false));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(false));
 });
 test('a newer draft survives a late save reply and is committed next', async () => {
   const writes: string[] = []; let finish!: (value: unknown) => void;
@@ -111,38 +117,38 @@ test.each([
   mockIPC((command, args) => command === 'agent_open' ? { ...pair, source } : command === 'agent_save'
     ? { ...pair, agent: (args as { content: string }).content, source: (args as { content: string }).content === pair.agent ? source : { ...source, agent: 'd'.repeat(64) } } : {
     ...idle, state: 'complete', source: older ? { ...source, agent: 'b'.repeat(64) } : source,
-    report: { verdict: 'passed', cases: [{ id: 'reads-page', phase: 'Succeeded', answer: 'Checked answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] },
+    report: { verdict: 'passed', cases: [{ id: 'reads-page', question: 'What did the page say?', phase: 'Succeeded', answer: 'Checked answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' }] },
   });
   const user = userEvent.setup(); render(<Example onStale={onStale} />);
   await user.click(await screen.findByRole('button', { name: 'File' }));
-  await screen.findByText(older ? 'Earlier test verdict: passed' : 'Test verdict: passed');
+  await screen.findByText(older ? 'Not run since your edit' : '1 of 1 passed');
   const editor = screen.getByRole('textbox');
   fireEvent.change(editor, { target: { value: 'Temporary draft' } });
-  expect(screen.getByText('Earlier test verdict: passed')).toBeTruthy();
+  expect(screen.getByText('Not run since your edit')).toBeTruthy();
   expect(onStale).toHaveBeenLastCalledWith(true);
   if (autosave) { fireEvent.blur(editor); await screen.findByText('Saved'); }
   fireEvent.change(editor, { target: { value: pair.agent } }); fireEvent.blur(editor);
   await screen.findByText('Saved');
   await waitFor(() => expect(onStale).toHaveBeenLastCalledWith(false));
-  expect(screen.getByText(older ? 'Earlier test verdict: passed' : 'Test verdict: passed')).toBeTruthy();
-  expect(!!screen.queryByText(/Not run since your change/)).toBe(older);
+  expect(screen.getByText(older ? 'Not run since your edit' : '1 of 1 passed')).toBeTruthy();
+  expect(!!screen.queryByText(/Not run since your edit/)).toBe(older);
 });
 test('source-less replies keep an older verdict stale after undo to a newer saved file', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC((command, args) => command === 'agent_open' ? pair : command === 'agent_save'
     ? { ...pair, agent: (args as { content: string }).content }
-    : { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'reads-page', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } });
+    : { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'reads-page', question: 'What did the page say?', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' }] } });
   const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: 'File' }));
-  await screen.findByText('Test verdict: passed');
+  await screen.findByText('1 of 1 passed');
   const editor = screen.getByRole('textbox');
   fireEvent.change(editor, { target: { value: 'Saved newer file' } }); fireEvent.blur(editor);
   await screen.findByText('Saved');
   fireEvent.change(editor, { target: { value: 'Temporary draft' } });
   fireEvent.change(editor, { target: { value: 'Saved newer file' } }); fireEvent.blur(editor);
   await screen.findByText('Saved');
-  expect(screen.getByText('Earlier test verdict: passed')).toBeTruthy();
-  expect(screen.queryByText('Test verdict: passed')).toBeNull();
+  expect(screen.getByText('Not run since your edit')).toBeTruthy();
+  expect(screen.queryByText('1 of 1 passed')).toBeNull();
 });
 test('a failed Run request does not make an earlier verdict current after editing', async () => {
   vi.stubGlobal('isTauri', true);
@@ -150,15 +156,15 @@ test('a failed Run request does not make an earlier verdict current after editin
     if (command === 'agent_open') return pair;
     if (command === 'agent_save') return { ...pair, agent: (args as { content: string }).content };
     if (command === 'agent_run') return Promise.reject(new Error('IPC failure'));
-    return { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'reads-page', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } };
+    return { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'reads-page', question: 'What did the page say?', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' }] } };
   });
   const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: 'File' }));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'New draft' } }); fireEvent.blur(screen.getByRole('textbox'));
   await screen.findByText('Saved');
-  await user.click(screen.getByRole('button', { name: 'Run test' }));
+  await user.click(screen.getByRole('button', { name: 'Run tests' }));
   await screen.findByText('Run information is not supported by this build.');
-  expect(screen.getByText('Earlier test verdict: passed')).toBeTruthy();
+  expect(screen.getByText('Not run since your edit')).toBeTruthy();
 });
 test('an edit during a delayed Run reply keeps the earlier result stale', async () => {
   let finish!: (value: unknown) => void;
@@ -167,18 +173,18 @@ test('an edit during a delayed Run reply keeps the earlier result stale', async 
     : command === 'agent_run' ? new Promise(resolve => { finish = resolve; }) : idle);
   const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: 'File' }));
-  await user.click(screen.getByRole('button', { name: 'Run test' }));
+  await user.click(screen.getByRole('button', { name: 'Run tests' }));
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Edited while submitting' } }); fireEvent.blur(screen.getByRole('textbox'));
   await screen.findByText('Saved');
   await act(async () => finish(idle));
-  expect(screen.getByText(/Not run since your change/)).toBeTruthy();
+  expect(screen.getByText(/Not run since your edit/)).toBeTruthy();
 });
 test('remounting with an old native report keeps it visibly stale', async () => {
   vi.stubGlobal('isTauri', true);
-  mockIPC(command => command === 'agent_open' ? { ...pair, source: { agent: 'b'.repeat(64), tests: 'c'.repeat(64) } } : { ...idle, state: 'complete', source: { agent: 'a'.repeat(64), tests: 'c'.repeat(64) }, report: { verdict: 'passed', cases: [{ id: 'reads-page', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } });
+  mockIPC(command => command === 'agent_open' ? { ...pair, source: { agent: 'b'.repeat(64), tests: 'c'.repeat(64) } } : { ...idle, state: 'complete', source: { agent: 'a'.repeat(64), tests: 'c'.repeat(64) }, report: { verdict: 'passed', cases: [{ id: 'reads-page', question: 'What did the page say?', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' }] } });
   render(<Example />);
-  expect(await screen.findByText('Earlier test verdict: passed')).toBeTruthy();
-  expect(screen.queryByText('Test verdict: passed')).toBeNull();
+  expect(await screen.findByText('Not run since your edit')).toBeTruthy();
+  expect(screen.queryByText('1 of 1 passed')).toBeNull();
 });
 test('typing autosaves without leaving the field', async () => {
   native(); const user = userEvent.setup(); render(<Example />);

@@ -49,7 +49,7 @@ test('local readiness never enables unconfirmed remote checks, and changing plac
   await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
   await user.click(screen.getByRole('button', { name: 'Designer' }));
-  const run = await screen.findByRole('button', { name: 'Run all checks' });
+  const run = await screen.findByRole('button', { name: 'Run all tests' });
   expect(run.matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.getByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
@@ -83,7 +83,7 @@ test('local results remain explicitly local after confirming cluster access', as
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_requirements') return null;
     if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
-    if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', verdict: 'passed' }] }] }, acknowledged: [], pending: null, error: null };
+    if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'check', question: 'What did the page say?', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', expected: 'checksum', verdict: 'passed' }] }] }, acknowledged: [], pending: null, error: null };
     if (command === 'cluster_contexts') return [context];
     if (command === 'cluster_discover') return [target];
     if (command === 'cluster_use') return { status: 'connected', providers: [provider], failure: null };
@@ -91,14 +91,14 @@ test('local results remain explicitly local after confirming cluster access', as
   });
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
-  await screen.findByText('1 of 1 checks passing', { selector: '.checks-status' });
+  await screen.findByText('1 of 1 tests passing', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
   await screen.findByRole('combobox', { name: 'kubectl context' }); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   await screen.findAllByText('Access confirmed');
-  expect(screen.getByText('This computer: 1 of 1 checks passing', { selector: '.checks-status' })).toBeTruthy();
+  expect(screen.getByText('This computer: 1 of 1 tests passing', { selector: '.checks-status' })).toBeTruthy();
 });
 
 test('local model acknowledgement survives a cluster round trip', async () => {
@@ -127,21 +127,21 @@ test('local-result observation continues while remote access is unconfirmed', as
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_requirements') return null;
     if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\\nname: reader\\n---\\nRead.', tests: 'Checks' };
-    if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: complete ? 'complete' : 'running', canRun: false, report: complete ? { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', verdict: 'passed' }] }] } : null, acknowledged: [], pending: null, error: null };
+    if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: complete ? 'complete' : 'running', canRun: false, report: complete ? { verdict: 'passed', cases: [{ id: 'check', question: 'What did the page say?', phase: 'Succeeded', verdict: 'passed', answer: 'yes', completedTools: [], assertions: [{ id: 'yes', kind: 'contains', expected: 'checksum', verdict: 'passed' }] }] } : null, acknowledged: [], pending: null, error: null };
     if (command === 'cluster_contexts') return [context];
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
-  await screen.findByText('Running checks…', { selector: '.checks-status' });
+  await screen.findByText('Running tests…', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Use a cluster you already have instead' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
   complete = true;
-  expect(await screen.findByText('This computer: 1 of 1 checks passing', { selector: '.checks-status' })).toBeTruthy();
+  expect(await screen.findByText('This computer: 1 of 1 tests passing', { selector: '.checks-status' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
-  expect(screen.getByRole('button', { name: 'Run all checks' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run all tests' }).matches(':disabled')).toBe(true);
 });
 
 test('expert_skip_selects_cluster_without_vm', async () => {

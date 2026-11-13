@@ -364,6 +364,12 @@ async fn ipc_waiter_loss_keeps_native_owner() {
     assert_eq!(run.start(vm.clone()).state, RunState::Running);
     run.start(vm.clone()); // duplicate renderer command cannot submit twice
     let result = finished(&run, &vm).await;
+    let display = serde_json::to_value(&result).unwrap();
+    assert_eq!(display["stage"], "done");
+    assert_eq!(display["model"], "gpt-5.6-terra");
+    assert!(display["report"]["cases"][0]["question"]
+        .as_str()
+        .is_some_and(|s| !s.is_empty()));
     let report = result.report.unwrap();
     assert_eq!(report.verdict, bridge_engine::engine::run::Verdict::Passed);
     assert_eq!(report.cases[0].answer.as_deref(), Some(ANSWER));

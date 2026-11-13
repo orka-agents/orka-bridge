@@ -128,7 +128,7 @@ test('pending soul edits survive File view and block running until the atomic up
     return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
   });
   const user = userEvent.setup(); render(<Example />);
-  const run = await screen.findByRole('button', { name: 'Run test' });
+  const run = await screen.findByRole('button', { name: 'Run tests' });
   await waitFor(() => expect(run.matches(':disabled')).toBe(false));
   await user.click(screen.getByText('More settings'));
   fireEvent.change(screen.getByRole('textbox', { name: 'Personality' }), { target: { value: 'New text' } });
