@@ -1,7 +1,7 @@
 # Clusters: places and focused setup
 
-Source: [`53b7453170e527d870372be4352e1ed3c235133d`](https://github.com/orka-agents/orka-bridge/commit/53b7453170e527d870372be4352e1ed3c235133d).
-[Native UI evidence run](https://github.com/orka-agents/orka-bridge/actions/runs/43495409329).
+Source: [`1a4ce834483c2492303ff98ae343c907104975cf`](https://github.com/orka-agents/orka-bridge/commit/1a4ce834483c2492303ff98ae343c907104975cf).
+[Native UI evidence run](https://github.com/orka-agents/orka-bridge/actions/runs/43512947750).
 
 Original native captures, not browser mockups. Mac compact captures have 540×900 content plus the native title bar (540×928 image). Windows compact renderer captures are 540×900.
 
