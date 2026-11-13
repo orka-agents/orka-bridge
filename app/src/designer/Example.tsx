@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { type ExamplePair } from '../setup/state';
 import { SAMPLE_DOCUMENT_ID, agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
 import { readWorkspaceCatalog, type WorkspaceCatalogReply } from '../catalog';
@@ -13,8 +12,8 @@ import Send, { SendEntry, SendHistory } from '../clusters/Send';
 
 export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true, setupPending = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
   documentId?: string; active?: boolean; setupPending?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
-  onPair?: (pair: ExamplePair | undefined) => void; onRun?: (snapshot: RunSnapshot | undefined) => void;
-  onSaveState?: (state: SaveState) => void; onStale?: (stale: boolean) => void;
+  onPair?: (pair: AgentPair | undefined, documentId: string) => void; onRun?: (snapshot: RunSnapshot | undefined, documentId: string) => void;
+  onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void;
 }) {
   const [boundDocument, setBoundDocument] = useState(documentId);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
@@ -43,7 +42,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   const observePendingSoul = useCallback((pending: boolean) => { pendingSoulCurrent.current = pending; setPendingSoul(pending); if (pending) setStale(true); }, []);
   const [sendOpen, setSendOpen] = useState(false);
   const [localRun, setLocalRun] = useState<RunSnapshot>();
-  const observeRun = useCallback((value: RunSnapshot | undefined) => { setLocalRun(value); onRun?.(value); }, [onRun]);
+  const observeRun = useCallback((value: RunSnapshot | undefined) => { setLocalRun(value); onRun?.(value, boundDocument); }, [onRun, boundDocument]);
   const openSend = () => {
     setSendOpen(true);
     requestAnimationFrame(() => { const panel = document.querySelector<HTMLElement>('.send-panel'); panel?.focus(); panel?.scrollIntoView?.({ block: 'start' }); });
@@ -57,12 +56,12 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
     void open.then(value => {
       if (!mounted) return;
       setPair(value); setDraft(value.agent); latest.current = saved.current = value.agent;
-      lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n'; onPair?.(value);
-    }, () => { if (mounted) { setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined); } });
+      lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n'; onPair?.(value, boundDocument);
+    }, () => { if (mounted) { setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined, boundDocument); } });
     return () => { mounted = false; };
   }, [onPair, boundDocument]);
-  useEffect(() => { onSaveState?.(pendingSoul ? 'dirty' : saveState); }, [saveState, pendingSoul, onSaveState]);
-  useEffect(() => { onStale?.(stale); }, [stale, onStale]);
+  useEffect(() => { onSaveState?.(pendingSoul ? 'dirty' : saveState, boundDocument); }, [saveState, pendingSoul, onSaveState, boundDocument]);
+  useEffect(() => { onStale?.(stale, boundDocument); }, [stale, onStale, boundDocument]);
 
   const flush = useCallback(async (retry = false) => {
     clearTimeout(timer.current);
@@ -74,7 +73,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
         const content = latest.current;
         const value = await agentCall('agent_save', content, boundDocument);
         if (value.agent !== content) throw Error('Save did not confirm the current file.');
-        saved.current = content; setPair(value); onPair?.(value);
+        saved.current = content; setPair(value); onPair?.(value, boundDocument);
         // Fingerprinted replies let Run distinguish older results from unsaved edits.
         if (value.source) setStale(latest.current !== content);
       } while (latest.current !== saved.current);
@@ -90,7 +89,8 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
     reloadEpoch.current++; reloadAdmitted.current = false; setReloading(false);
     setPair(undefined); setDraft(''); latest.current = saved.current = '';
     setLocalRun(undefined); setStale(false); setError(undefined); setSendOpen(false);
-    onPair?.(undefined); onRun?.(undefined); setBoundDocument(documentId);
+    // Clear the destination view, not the previous document's last observed result.
+    onPair?.(undefined, documentId); onRun?.(undefined, documentId); setBoundDocument(documentId);
   }, [documentId, boundDocument, pendingSoul, saveState, flush, onPair, onRun]);
   const edit = (value: string, rawFile = false) => {
     const content = rawFile ? value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current) : value;
@@ -111,7 +111,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
       if (request !== reloadEpoch.current || latest.current !== before || saved.current !== before || busy.current || needsCommit.current || pendingSoulCurrent.current) return;
       setPair(value); setDraft(value.agent); latest.current = saved.current = value.agent;
       lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n';
-      setStale(false); onPair?.(value);
+      setStale(false); onPair?.(value, boundDocument);
     } finally { if (request === reloadEpoch.current) { reloadAdmitted.current = false; setReloading(false); } }
   }
   const info = { ...agentInfo(draft), description: readForm(draft).description };
