@@ -193,7 +193,7 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
   }
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/agent folder|Reopen your agent/);
   // Browser preview cannot read native selection, so the host is neither "This computer" nor "No place selected".
-  expect(screen.getByText('Status unavailable')).toBeTruthy();
+  expect(within(screen.getByRole('banner')).getByText('Status unavailable')).toBeTruthy();
   // The Overview page also has a "This computer" heading, so assert on the host chip.
   expect(document.querySelector('.host-chip')?.textContent).not.toContain('This computer');
 });

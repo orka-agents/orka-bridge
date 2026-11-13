@@ -200,7 +200,13 @@ func nativeButtons(_ label: String) -> [AXUIElement] {
 // Page content only: the fixed header and footer can overlay scrolled controls.
 func bodyBounds() -> CGRect {
     let rect = window()!.1
-    return CGRect(x: rect.minX, y: rect.minY + 110, width: rect.width, height: max(0, rect.height - 142))
+    // The compact tab bar is shorter than the wide one. Derive its bottom from
+    // the actual native tab, rather than clipping a visible Back button at 110px.
+    guard let tabsBottom = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).map({ $0.maxY }).max() else {
+        fail("Cannot locate the native tab bar for the page viewport")
+    }
+    let top = tabsBottom + 8 // tab-bar bottom padding; footer remains 32px tall
+    return CGRect(x: rect.minX, y: top, width: rect.width, height: max(0, rect.maxY - 32 - top))
 }
 func visibleButtons(_ label: String) -> [CGRect] {
     nativeButtons(label).filter { attribute($0, "AXEnabled") as? Bool == true }
@@ -536,6 +542,7 @@ func localPreflight(_ name: String) throws {
     clickButton("Set up")
     Thread.sleep(forTimeInterval: 1)
     scrollMain(1000)
+    try capture("\(name)-navigation", "Clusters")
     require(!visibleButtons("Back to places").isEmpty, "Local detail has no visible Back to places control")
     var settled = false
     for _ in 0..<12 {

@@ -55,6 +55,21 @@ test('Places passively lists this computer and retained identities with truthful
   expect(ipc.mock.calls.map(([c]) => c).every(c => ['setup_status', 'setup_requirements', 'cluster_places'].includes(c))).toBe(true);
 });
 
+test('an unreadable workspace status stays unknown while retained places remain readable', async () => {
+  const { ipc } = native();
+  mockIPC(command => command === 'setup_status' ? Promise.reject(Error('lost status reply')) : ipc(command));
+  render(<Host />);
+  await screen.findByRole('alert');
+  const local = within(row('This computer'));
+  expect(local.queryByText('Not set up')).toBeNull();
+  expect(local.queryByText('AI not connected')).toBeNull();
+  expect(local.getByText('Status unavailable')).toBeTruthy();
+  expect(local.getByRole('button', { name: 'Check status' })).toBeTruthy();
+  expect(await screen.findByRole('region', { name: 'team-other' })).toBeTruthy();
+  expect(screen.queryByText('Reading your places…')).toBeNull();
+  expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
+});
+
 test.each<SelectedPlace>([{ kind: 'thisComputer' }, { kind: 'cluster' }])('native access alone is not a Designer selection: %j', async initial => {
   native(); render(<Host initial={initial} />);
   await screen.findByRole('region', { name: 'team-dev' });
@@ -89,6 +104,31 @@ test('Add and Connect only navigate, reset the context, and never choose a place
   expect(screen.getByText(/team-dev/, { selector: '.cluster-intent' })).toBeTruthy();
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_discover')).toHaveLength(1);
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
+});
+
+test('Manage rechecks the same installation with its already-entered ServiceAccount', async () => {
+  const { ipc } = native(); const user = userEvent.setup(); const accounts: unknown[] = [];
+  mockIPC((command, args) => {
+    if (command === 'cluster_use') {
+      const name = args && 'saName' in args ? args.saName : undefined;
+      accounts.push(name);
+      if (name !== 'team-runner') return { status: 'needServiceAccount', providers: [], failure: null };
+    }
+    return ipc(command);
+  });
+  render(<Host />);
+  await user.click(await screen.findByRole('button', { name: 'Add a place' }));
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
+  await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
+  await user.type(await screen.findByRole('textbox', { name: 'ServiceAccount name' }), 'team-runner');
+  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
+  await screen.findByText('Access confirmed');
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Manage' }));
+  await user.click(await screen.findByRole('button', { name: 'Check access again' }));
+  expect(await screen.findByText('Access confirmed')).toBeTruthy();
+  expect(screen.queryByRole('textbox', { name: 'ServiceAccount name' })).toBeNull();
+  expect(accounts).toEqual([null, 'team-runner', 'team-runner']);
 });
 
 test('selected Manage uses current App capabilities without discovery and changes context only explicitly', async () => {

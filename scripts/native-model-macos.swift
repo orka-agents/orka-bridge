@@ -121,7 +121,7 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     Thread.sleep(forTimeInterval: 1)
 }
 // A ready workspace opens on Places; its local card's Manage action reaches the model controls.
-// The fixture has no cluster_places handler, so only the local card is expected here.
+// The fixture returns an empty cluster snapshot, so only the local card is expected here.
 var rows = try capture("local-places-wide", ["Places for your agents", "This computer"])
 require(enabledButton("Manage") != nil && enabledButton("Set up") == nil, "Ready local card must offer only Manage")
 click("Manage", rows)

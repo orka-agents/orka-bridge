@@ -45,7 +45,9 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     setContextId(target?.context_id ?? ''); setTargets(target ? [target] : undefined); setTargetId(target?.id ?? '');
     setAccess(target ? { status: 'connected', providers: current?.providers ?? [], failure: null } : undefined);
     setProviderId(current?.providerId ?? ''); providerName.current = current?.providers?.find(p => p.id === current.providerId)?.name ?? '';
-    setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice(''); setChangingContext(false);
+    // A Manage visit may retain the name already entered for this exact target handle.
+    if (!target || target.id !== targetId) { setAccount(''); setNeedsAccount(false); }
+    setError(undefined); setDetails(false); setNotice(''); setChangingContext(false);
     setReloading(false);
     // An entry reset also fences a pending local kubeconfig read; restart just that read.
     if (!initialLoaded.current) readContexts(); else setBusy(false);

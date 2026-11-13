@@ -7,5 +7,5 @@ export async function openLocalSetup(user = userEvent.setup()) {
     if (!screen.queryByRole('button', { name: 'Back to places' }) && !screen.queryByRole('region', { name: 'This computer' })) throw Error('Waiting for Places or local progress');
   });
   const row = screen.queryByRole('region', { name: 'This computer' });
-  if (row) await user.click(within(row).getByRole('button', { name: /^(Set up|Continue setup|Manage)$/ }));
+  if (row) await user.click(within(row).getByRole('button', { name: /^(Set up|Continue setup|Manage|Check status)$/ }));
 }

@@ -243,7 +243,7 @@ try {
         $start = Find-Control $script:window 'Get started' $button
         if ($start) { Press $start }
         # Places owns the local entry: this computer, an empty session and one Set up action.
-        $setUp = Wait-For 'Set up action missing on Places' { $control = Find-Action $script:window 'Set up'; if ($control -and $control.Current.IsEnabled) { $control } }
+        $setUp = Wait-For 'Set up action missing on Places' { $control = Find-Action $script:window 'Set up'; if ($control -and $control.Current.IsEnabled -and ((Get-UiNames $script:window) -match 'No clusters added yet')) { $control } }
         $places = Get-UiNames $script:window
         if (!($places -match 'Places for your agents') -or !($places -match 'No clusters added yet') -or !(Find-Action $script:window 'Add a place') -or ($places -match 'Where should your agents run|Engine diagnostics')) { throw 'Places did not show this computer, Set up, Add a place and an empty cluster list' }
         Capture 'places-empty'

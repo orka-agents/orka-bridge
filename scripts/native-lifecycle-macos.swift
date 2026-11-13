@@ -235,7 +235,9 @@ press(find(main, "Clusters") { pressable($0, "Clusters") })
 wait("Welcome or Places did not appear") { nodes(main).contains { pressable($0, "Get started") || pressableAction($0, "Set up") } }
 if let start = nodes(main).first(where: { pressable($0, "Get started") }) { press(start) }
 // Places owns the local entry. Observe it as drawn: this computer, an empty session, one action.
-let setUp = find(main, "places-set-up") { pressableAction($0, "Set up") }
+let setUp = find(main, "places-set-up") {
+    pressableAction($0, "Set up") && shownStrings(main).contains { $0.contains("No clusters added yet") }
+}
 let placesText = shownStrings(main)
 check(placesText.contains { $0.contains("Places for your agents") } && placesText.contains { $0.contains("No clusters added yet") }
     && !nodes(main).filter { pressableAction($0, "Set up") }.isEmpty && !nodes(main).filter { pressableAction($0, "Add a place") }.isEmpty

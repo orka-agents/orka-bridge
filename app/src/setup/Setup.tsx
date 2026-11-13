@@ -69,7 +69,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelSta
   useEffect(() => { if (confirmChange && active) confirmation.current?.focus(); }, [confirmChange, active]);
   const welcome = !seen && !!status && !error && status.selected !== 'localVm';
   useEffect(() => { onWelcome?.(welcome); }, [welcome, onWelcome]);
-  const readSnapshot = active && !welcome && !!status;
+  const readSnapshot = active && !welcome && (seen || !!error || !!status);
   useEffect(() => {
     if (!readSnapshot) return;
     let live = true;
@@ -173,7 +173,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelSta
       {view === 'local' && selected && !['ready', 'failed', 'notIntegrated'].includes(status?.localVm ?? '') && <p className="muted">Meanwhile, meet the agent you'll test first.</p>}
       {view === 'local' && selected && status?.localVm === 'ready' && !firstCheck && <p className="muted">On first setup, Bridge tests the bundled example after you connect the AI, then opens its result in Designer.</p>}
     </div>
-    {view === 'places' && <Places snapshot={snapshot} unavailable={snapshotUnavailable} status={status} model={modelState} place={currentPlace} onLocal={openLocal} onCluster={chooseCluster} />}
+    {view === 'places' && <Places snapshot={snapshot} unavailable={snapshotUnavailable} status={error ? undefined : status} model={modelState} place={currentPlace} onLocal={openLocal} onCluster={chooseCluster} />}
     <div hidden={view !== 'local'}>
       {cluster && <button type="button" className="workspace-secondary" onClick={chooseComputer}>Use this computer</button>}
       <div className={selected ? `setup workspace-setup-grid${status?.localVm === 'failed' ? ' workspace-setup-failed' : ''}` : 'workspace-choice local-preflight'}>

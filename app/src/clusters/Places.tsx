@@ -12,12 +12,12 @@ export default function Places({ snapshot, unavailable, status, model, place, on
   const ready = status?.localVm === 'ready';
   const started = status?.selected === 'localVm';
   const busy = ['preparing', 'installing', 'starting', 'closing'].includes(status?.localVm ?? '');
-  const localLabel = ready ? 'Running' : status?.localVm === 'failed' ? 'Needs you' : status?.localVm === 'closed' ? 'Workspace stopped' : status?.localVm === 'cancelled' ? 'Setup paused' : status?.localVm === 'notIntegrated' ? 'Workspace unavailable' : busy ? status?.localVm === 'closing' ? 'Stopping workspace' : 'Setup in progress' : 'Not set up';
-  const action = ready ? 'Manage' : started ? 'Continue setup' : 'Set up';
+  const localLabel = !status ? 'Status unavailable' : ready ? 'Running' : status?.localVm === 'failed' ? 'Needs you' : status?.localVm === 'closed' ? 'Workspace stopped' : status?.localVm === 'cancelled' ? 'Setup paused' : status?.localVm === 'notIntegrated' ? 'Workspace unavailable' : busy ? status?.localVm === 'closing' ? 'Stopping workspace' : 'Setup in progress' : 'Not set up';
+  const action = !status ? 'Check status' : ready ? 'Manage' : started ? 'Continue setup' : 'Set up';
   return <div className="places-list">
     <section className="card place-row" aria-label="This computer">
       <span className="icon-tile" aria-hidden="true"><svg className="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></svg></span>
-      <div className="place-summary"><h2>This computer</h2><p>{ready ? 'Workspace running' : started ? 'Workspace setup' : 'A workspace on this computer'}</p><p className="muted">{model === 'connected' ? 'AI connected' : model === 'queued' ? 'AI connection queued' : 'AI not connected'}</p></div>
+      <div className="place-summary"><h2>This computer</h2><p>{!status ? 'Workspace status could not be read' : ready ? 'Workspace running' : started ? 'Workspace setup' : 'A workspace on this computer'}</p><p className="muted">{!status ? 'AI status unknown' : model === 'connected' ? 'AI connected' : model === 'queued' ? 'AI connection queued' : 'AI not connected'}</p></div>
       <StatusPill state={ready ? 'passed' : status?.localVm === 'failed' ? 'needs-you' : busy ? 'running' : 'not-started'}>{localLabel}</StatusPill>
       <button type="button" className="workspace-secondary" onClick={onLocal}>{action}</button>
     </section>
