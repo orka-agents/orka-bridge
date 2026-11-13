@@ -110,7 +110,8 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   }
   const running = snapshot?.state === 'running';
   const samePlace = snapshot?.targetId === target?.id && snapshot?.providerId === providerId;
-  const resultSource = checkingEnabled ? checked?.value?.source ?? undefined : source;
+  // A temporary reload block must not promote cached editor hashes to fresh evidence.
+  const resultSource = remote && target && providerId ? checked?.value?.source ?? undefined : source;
   const editorCurrent = sameSource(source, snapshot?.source) === true;
   const current = !stale && editorCurrent && sameSource(resultSource, snapshot?.source) === true;
   const localCurrent = !stale && sameSource(source, local?.source) === true && sameSource(resultSource, local?.source) === true;

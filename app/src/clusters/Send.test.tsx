@@ -72,11 +72,13 @@ test('preflight pending blocks Send and only matching source enables it', async 
 test('a fresh preflight file change makes the earlier pass stale before Reload', async () => {
   const passed = { verdict: 'passed', cases: [{ ...report.cases[0], answer: 'checksum', verdict: 'passed', assertions: [{ id: 'has-text', kind: 'contains', expected: 'checksum', verdict: 'passed' }] }] };
   native(idle, { ...running, state: 'complete', stage: 'done', report: passed }, { ...allowed, source: { ...source, tests: 'c'.repeat(64) } });
-  render(<Send place={place} source={source} stale={false} visible remote />);
+  const view = render(<Send place={place} source={source} stale={false} visible remote />);
   await screen.findByRole('button', { name: 'Reload saved files' });
   expect(screen.getByText('Not run since your edit')).toBeTruthy();
   expect(screen.getAllByText('Test file changed since this run.').some(node => !node.classList.contains('test-announcement'))).toBe(true);
   expect(screen.getAllByRole('status').find(node => node.classList.contains('test-announcement'))?.textContent).toBe('Test file changed since this run.');
+  expect(screen.getByText('reads-the-page').closest('details')?.querySelector('.status-passed')).toBeNull();
+  view.rerender(<Send place={place} source={source} stale={false} blocked="Wait for your saved files to reload" visible remote />);
   expect(screen.getByText('reads-the-page').closest('details')?.querySelector('.status-passed')).toBeNull();
 });
 test.each(['failed', 'editorMismatch'])('preflight %s cannot promote an earlier pass', async mode => {
