@@ -8,7 +8,8 @@ export default function NewAgent({ active, model, onCreated, onCancel }: { activ
   const [error, setError] = useState<string>();
   const admitted = useRef(false);
   const input = useRef<HTMLInputElement>(null);
-  useEffect(() => { input.current?.focus(); let active = true; void creationRoot().then(value => { if (active) setRoot(value); }); return () => { active = false; }; }, []);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; input.current?.focus(); void creationRoot().then(value => { if (mounted.current) setRoot(value); }); return () => { mounted.current = false; }; }, []);
   const stem = name || '<name>';
   const separator = root?.includes('\\') ? '\\' : '/';
   return <section className="new-agent" aria-labelledby={active ? 'page-title' : undefined}>
@@ -16,9 +17,11 @@ export default function NewAgent({ active, model, onCreated, onCancel }: { activ
     <form className="new-agent-form card" onSubmit={event => {
       event.preventDefault(); if (admitted.current) return;
       admitted.current = true; setBusy(true); setError(undefined);
-      void createDocument(name, model).then(onCreated).catch(() => {
-        setError('Your agent could not be created. Check the name and folder, or choose another name if it already exists, then try again.');
-      }).finally(() => { admitted.current = false; setBusy(false); });
+      // An explicit Open can leave this form while native creation finishes.
+      // Its registration remains available, but a late reply cannot steal selection.
+      void createDocument(name, model).then(id => { if (mounted.current) return onCreated(id); }).catch(() => {
+        if (mounted.current) setError('Your agent could not be created. Check the name and folder, or choose another name if it already exists, then try again.');
+      }).finally(() => { admitted.current = false; if (mounted.current) setBusy(false); });
     }}>
       <label htmlFor="new-agent-name">Name</label>
       <input id="new-agent-name" className="part-button" ref={input} required minLength={1} maxLength={63} pattern="[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?" aria-describedby="new-agent-name-hint" value={name} disabled={busy} onChange={event => { setName(event.target.value); setError(undefined); }} />

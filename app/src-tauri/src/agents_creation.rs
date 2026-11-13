@@ -171,6 +171,9 @@ impl Agents {
             };
             registry.pending.push(pending.clone());
             registry.save(data)?; // Must be durable before the destination can become visible.
+
+            // cap-std Windows directory handles do not share DELETE access.
+            drop(root);
             publish_no_replace(&parent, &pending.stage, name).map_err(|e| {
                 if matches!(
                     e,

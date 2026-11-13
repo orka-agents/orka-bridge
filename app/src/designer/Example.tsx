@@ -12,8 +12,8 @@ import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
 import Send, { SendEntry, SendHistory } from '../clusters/Send';
 
-export default function Example({ documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
-  documentId?: string; persistInitialSelection?: boolean; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
+export default function Example({ documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
+  documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: AgentPair | undefined, documentId: string) => void; onRun?: (snapshot: RunSnapshot | undefined, documentId: string) => void;
   onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void;
 }) {
@@ -30,6 +30,12 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, persistInitia
   const [selecting, setSelecting] = useState(false);
   useEffect(() => { if (observedDocument.current !== documentId) { observedDocument.current = documentId; requestDocument(documentId); } }, [documentId, requestDocument]);
   useEffect(() => { if (newAgentRequest) setWantsCreate(true); }, [newAgentRequest]);
+  const handledOpen = useRef(0);
+  useEffect(() => {
+    if (!openDocumentRequest || handledOpen.current === openDocumentRequest) return;
+    handledOpen.current = openDocumentRequest;
+    setWantsCreate(false); setCreating(false); requestDocument(documentId);
+  }, [openDocumentRequest, documentId, requestDocument]);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [catalog, setCatalog] = useState<{ key: number; attempt: number; reply?: WorkspaceCatalogReply }>();
   const catalogEnabled = catalogKey !== undefined && !setupPending && !remote;
@@ -107,6 +113,8 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, persistInitia
     setSelecting(true);
     void selectDocument(next).then(() => {
       if (requestedNow.current !== next) return;
+      // The editor stays writable during IPC. Re-admit after any newer edit is saved.
+      if (busy.current || needsCommit.current || pendingSoulCurrent.current || latest.current !== saved.current) return;
       setSelectionNeeded(false); setSelectionError(undefined);
       if (next === boundDocument) return;
       reloadEpoch.current++; reloadAdmitted.current = false; setReloading(false);

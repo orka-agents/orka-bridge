@@ -220,13 +220,14 @@ impl AgentFolder {
         })
     }
     pub(crate) fn seed_created(&self, root: &Dir, model: Option<&str>) -> io::Result<()> {
+        // JSON string quoting is also YAML scalar quoting, including YAML keywords.
+        let name = serde_json::to_string(&self.name).map_err(|_| invalid())?;
         let mut agent = include_str!("../example-agent/web-reader.agent.md").replacen(
             "name: web-reader\n",
-            &format!("name: {}\n", self.name),
+            &format!("name: {name}\n"),
             1,
         );
         if let Some(model) = model {
-            // JSON string quoting is also YAML scalar quoting, including YAML keywords.
             let scalar = serde_json::to_string(model).map_err(|_| invalid())?;
             agent = agent.replacen("model: gpt-5.6-terra\n", &format!("model: {scalar}\n"), 1);
         }

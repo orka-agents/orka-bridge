@@ -344,7 +344,11 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     if name == "send-probe" || name == "cluster-probe" || name == "overview-probe" || name.hasPrefix("overview-fixture-") { return observations }
     if name.hasPrefix("new-agent-") {
         let expected = name == "new-agent-created" ? "native-helper" : "New agent"
-        require(!nativeTextBounds(expected, heading: true).isEmpty, "Native creation heading is missing \(expected)")
+        let heading = observations.contains { observation in
+            let top = 1 - observation.boundingBox.maxY
+            return top > 0.10 && top < 0.25 && observation.topCandidates(1).first?.string == expected
+        }
+        require(heading, "Native creation screenshot is missing \(expected)")
         print("PASS \(name): native owned-agent creation, no workspace or model")
         return observations
     }
@@ -570,10 +574,10 @@ do {
     let agent = folder.appendingPathComponent("native-helper.agent.md")
     let checks = folder.appendingPathComponent("native-helper.agent.test.md")
     for _ in 0..<50 {
-        if FileManager.default.fileExists(atPath: checks.path) && !nativeTextBounds("native-helper", heading: true).isEmpty { break }
+        if FileManager.default.fileExists(atPath: checks.path) && nativeButtons("Create").isEmpty && nativeTextIsVisible("Instructions") { break }
         Thread.sleep(forTimeInterval: 0.1)
     }
-    require(try String(contentsOf: agent, encoding: .utf8).contains("name: native-helper"), "Created agent metadata missing")
+    require(try String(contentsOf: agent, encoding: .utf8).contains("name: \"native-helper\"\n"), "Created agent metadata missing")
     require(try String(contentsOf: checks, encoding: .utf8).contains("web_fetch"), "Created starter lost its tool assertion")
     let created = try capture("new-agent-created", "Designer")
     requireNoLocalWorkspace()
@@ -584,7 +588,7 @@ do {
     }
     clickButton("Open web-reader")
     for _ in 0..<30 {
-        if !nativeTextBounds("web-reader", heading: true).isEmpty { break }
+        if nativeTextIsVisible("web-reader") { break }
         Thread.sleep(forTimeInterval: 0.1)
     }
     try capture("agent-after-creation", "Designer")

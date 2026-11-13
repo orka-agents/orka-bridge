@@ -177,6 +177,65 @@ test('a newer switch request wins over an older selection reply', async () => {
   expect(screen.getByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
 });
 
+test('edits made during selection are saved before the reply can clear the draft', async () => {
+  let finish!: (value: null) => void; let selects = 0; const writes: string[] = [];
+  native((command, args) => {
+    if (command === 'agent_select' && selects++ === 0) return new Promise(resolve => { finish = resolve; });
+    if (command === 'agent_save') { writes.push(String(args.content)); return { ...pair, agent: args.content }; }
+  });
+  const view = render(<Example />);
+  const editor = await screen.findByRole('textbox', { name: 'Instructions' });
+  view.rerender(<Example documentId={id} />);
+  await waitFor(() => expect(finish).toBeDefined());
+  fireEvent.change(editor, { target: { value: 'Save this late edit' } });
+  await act(async () => finish(null));
+  await screen.findByRole('heading', { name: 'helper', level: 1 });
+  expect(writes).toHaveLength(1); expect(writes[0]).toContain('Save this late edit');
+});
+
+test('a save already in flight finishes before selection can reset its source', async () => {
+  let finishSelect!: (value: null) => void; let finishSave!: (value: unknown) => void;
+  let selects = 0; const writes: string[] = [];
+  native((command, args) => {
+    if (command === 'agent_select' && selects++ === 0) return new Promise(resolve => { finishSelect = resolve; });
+    if (command === 'agent_save') { writes.push(String(args.content)); return new Promise(resolve => { finishSave = resolve; }); }
+  });
+  const view = render(<Example />);
+  const editor = await screen.findByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement;
+  view.rerender(<Example documentId={id} />);
+  await waitFor(() => expect(finishSelect).toBeDefined());
+  fireEvent.change(editor, { target: { value: 'Save in flight' } });
+  await waitFor(() => expect(finishSave).toBeDefined());
+  await act(async () => finishSelect(null));
+  expect(editor.value).toBe('Save in flight');
+  expect(screen.queryByRole('heading', { name: 'helper', level: 1 })).toBeNull();
+  await act(async () => finishSave({ ...pair, agent: writes[0] }));
+  await screen.findByRole('heading', { name: 'helper', level: 1 });
+  expect(writes).toHaveLength(1); expect(writes[0]).toContain('Save in flight');
+});
+
+test.each([false, true])('Overview open exits the form and wins over an in-flight create (%s)', async pending => {
+  let finish!: (value: string) => void;
+  native(command => {
+    if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: SAMPLE_DOCUMENT_ID, name: 'web-reader', state: 'readable', source: null, summary: null, reason: null }] };
+    if (command === 'agent_create') return new Promise(resolve => { finish = resolve; });
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await user.click(await screen.findByRole('button', { name: 'New agent' }));
+  if (pending) {
+    await user.type(screen.getByRole('textbox', { name: 'Name' }), 'helper');
+    await user.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(finish).toBeDefined());
+  }
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open web-reader' }));
+  if (pending) await act(async () => finish(id));
+  expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
+  expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'helper', level: 1 })).toBeNull();
+});
+
 test('Overview offers the same creation form without starting setup', async () => {
   localStorage.setItem('bridge.welcomeSeen.v1', '1'); native();
   const user = userEvent.setup(); render(<App />);

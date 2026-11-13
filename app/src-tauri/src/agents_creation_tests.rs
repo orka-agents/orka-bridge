@@ -16,6 +16,7 @@ fn pending(home: &Path, data: &Path, name: &str, staged: bool) -> DocumentId {
     let path = folder(home, name);
     let dir = Dir::open_ambient_dir(&path, cap_std::ambient_authority()).unwrap();
     let identity = super::creation::Identity::read(&dir).unwrap();
+    drop(dir); // Windows directory handles prevent the fixture rename while retained.
     let stage = format!(".bridge-create-{}", id.0);
     if staged {
         fs::rename(&path, folder(home, &stage)).unwrap();
@@ -44,7 +45,7 @@ fn creation_uses_shipped_pair_and_commits_it_without_editing_sample() {
         pair.agent,
         include_str!("../example-agent/web-reader.agent.md").replacen(
             "name: web-reader\n",
-            "name: helper\n",
+            "name: \"helper\"\n",
             1
         )
     );
@@ -95,6 +96,26 @@ fn creation_uses_shipped_pair_and_commits_it_without_editing_sample() {
         agents.creation_root().unwrap(),
         home.path().join("Orka/agents").to_str().unwrap()
     );
+}
+
+#[test]
+fn valid_names_remain_yaml_strings_in_starter_metadata() {
+    let home = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let agents = owner(home.path(), data.path());
+    for name in ["null", "true", "123", "helper"] {
+        let id = agents.create(name, None).unwrap();
+        let pair = agents.get(id).unwrap().open().unwrap();
+        let yaml = pair
+            .agent
+            .strip_prefix("---\n")
+            .unwrap()
+            .split_once("\n---\n")
+            .unwrap()
+            .0;
+        let value: serde_yaml_ng::Value = serde_yaml_ng::from_str(yaml).unwrap();
+        assert_eq!(value["name"].as_str(), Some(name), "{name}");
+    }
 }
 
 #[test]
