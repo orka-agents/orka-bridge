@@ -1,6 +1,20 @@
-import { expect, test } from 'vitest';
-import { isRunSnapshot } from './run-api';
+import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
+import { afterEach, expect, test, vi } from 'vitest';
+import { SAMPLE_DOCUMENT_ID } from './agent-api';
+import { isRunSnapshot, runCall } from './run-api';
+afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
 const base = { state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'one', question: 'What is the answer?', phase: 'Succeeded', answer: '42', completedTools: [], verdict: 'passed', assertions: [{ id: 'answer', kind: 'contains', expected: '42', verdict: 'passed' }] }] }, acknowledged: [], pending: null, error: null };
+test('only automatic first-test admission opts into the bundled-source check', async () => {
+  vi.stubGlobal('isTauri', true);
+  const ipc = vi.fn(() => ({ ...base, documentId: SAMPLE_DOCUMENT_ID, busy: null }));
+  mockIPC(ipc);
+  expect((await runCall('agent_run')).ok).toBe(true);
+  expect((await runCall('agent_run', SAMPLE_DOCUMENT_ID, true)).ok).toBe(true);
+  expect(ipc.mock.calls).toEqual([
+    ['agent_run', { documentId: SAMPLE_DOCUMENT_ID }],
+    ['agent_run', { documentId: SAMPLE_DOCUMENT_ID, bundledExample: true }],
+  ]);
+});
 test('frozen evidence contract accepts long valid source fields and optional local stages', () => {
   expect(isRunSnapshot(base)).toBe(true); // Send reuses this six-key adapter.
   expect(isRunSnapshot({ ...base, stage: 'done', model: 'model' })).toBe(true);

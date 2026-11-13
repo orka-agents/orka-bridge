@@ -126,6 +126,16 @@ impl ExampleRun {
         snapshot.can_run = self.2 && state.active.is_none() && vm.status() == LocalVmStatus::Ready;
         snapshot
     }
+    pub fn start_first_test(
+        self: &Arc<Self>,
+        vm: Arc<LocalVm>,
+        id: DocumentId,
+    ) -> Result<RunSnapshot, &'static str> {
+        if id != DocumentId::SAMPLE {
+            return Err("The automatic first test requires the bundled example.");
+        }
+        Ok(self.start_checked(vm, self.3.clone(), true))
+    }
     pub fn start(self: &Arc<Self>, vm: Arc<LocalVm>) -> RunSnapshot {
         self.start_document(vm, self.3.clone())
     }
@@ -133,6 +143,14 @@ impl ExampleRun {
         self: &Arc<Self>,
         vm: Arc<LocalVm>,
         folder: Arc<AgentFolder>,
+    ) -> RunSnapshot {
+        self.start_checked(vm, folder, false)
+    }
+    fn start_checked(
+        self: &Arc<Self>,
+        vm: Arc<LocalVm>,
+        folder: Arc<AgentFolder>,
+        bundled_example: bool,
     ) -> RunSnapshot {
         let id = folder.document_id();
         if !self.2 {
@@ -164,6 +182,19 @@ impl ExampleRun {
         self.1.spawn(async move {
             let pair = tokio::task::spawn_blocking(move || {
                 let snapshot = folder.capture().map_err(|_| ())?;
+                if bundled_example {
+                    let example = crate::local_vm::example();
+                    for (slot, expected) in [
+                        (bridge_runtime_protocol::FileSlot::Agent, example.agent),
+                        (bridge_runtime_protocol::FileSlot::Tests, example.tests),
+                    ] {
+                        let actual = std::str::from_utf8(snapshot.file(slot)).map_err(|_| ())?;
+                        if actual.replace("\r\n", "\n") != expected.replace("\r\n", "\n") {
+                            return Err(());
+                        }
+                    }
+                }
+                // Parse and execute this held capture, never a later file read.
                 CapturedPair::from_snapshot(snapshot).map_err(|_| ())
             })
             .await;

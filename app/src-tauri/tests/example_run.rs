@@ -19,6 +19,93 @@ use tokio::sync::watch;
 mod created_agent;
 
 #[tokio::test]
+async fn first_test_rejects_files_edited_after_renderer_open_but_manual_run_accepts_them() {
+    for leaf in ["web-reader.agent.md", "web-reader.agent.test.md"] {
+        let (vm, posts, _) = fixture(false, false).await;
+        let home = tempfile::tempdir().unwrap();
+        let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+        let viewed = folder.open().unwrap(); // Renderer has already compared this pair.
+        let root = std::path::Path::new(viewed.path.as_ref().unwrap())
+            .parent()
+            .unwrap();
+        let file = root.join(leaf);
+        let edited = format!(
+            "{}\nEdited after the renderer check.\n",
+            std::fs::read_to_string(&file).unwrap()
+        );
+        std::fs::write(&file, &edited).unwrap();
+        let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
+        run.start_first_test(vm.clone(), viewed.document_id)
+            .unwrap();
+        let rejected = finished(&run, &vm).await;
+        assert_eq!(rejected.state, RunState::Unknown);
+        assert_eq!(rejected.error, Some("source"));
+        assert!(rejected.report.is_none());
+        assert!(rejected.acknowledged.is_empty());
+        assert!(
+            posts.lock().unwrap().is_empty(),
+            "automatic test must not submit Agent or Task"
+        );
+        assert!(!run.is_active());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), edited);
+        run.start(vm.clone()); // The explicit manual path retains its existing semantics.
+        assert_eq!(finished(&run, &vm).await.state, RunState::Complete);
+        assert_eq!(posts.lock().unwrap().len(), 2);
+        vm.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn first_test_accepts_bundled_lf_crlf_and_mixed_line_endings() {
+    for ending in ["lf", "crlf", "mixed"] {
+        let (vm, posts, _) = fixture(false, false).await;
+        let home = tempfile::tempdir().unwrap();
+        let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+        let pair = folder.open().unwrap();
+        let root = std::path::Path::new(pair.path.as_ref().unwrap())
+            .parent()
+            .unwrap();
+        for (leaf, text) in [
+            ("web-reader.agent.md", pair.agent),
+            ("web-reader.agent.test.md", pair.tests),
+        ] {
+            let normal = text.replace("\r\n", "\n");
+            let content = match ending {
+                "crlf" => normal.replace('\n', "\r\n"),
+                "mixed" => normal.replacen('\n', "\r\n", 1),
+                _ => normal,
+            };
+            std::fs::write(root.join(leaf), content).unwrap();
+        }
+        let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
+        run.start_first_test(vm.clone(), pair.document_id).unwrap();
+        assert_eq!(
+            finished(&run, &vm).await.state,
+            RunState::Complete,
+            "{ending}"
+        );
+        assert_eq!(posts.lock().unwrap().len(), 2);
+        vm.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn first_test_cannot_select_another_document_or_claim_admission() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let sample = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let pair = sample.open().unwrap();
+    let other = created_agent::created(home.path(), "other", &pair.agent, &pair.tests);
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, sample);
+    assert!(run
+        .start_first_test(vm.clone(), other.document_id())
+        .is_err());
+    assert!(!run.is_active());
+    assert!(posts.lock().unwrap().is_empty());
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn documents_keep_results_and_share_admission_not_hash_ownership() {
     use bridge_engine::agent_folder::DocumentId;
     let (vm, posts, _) = fixture(false, false).await;

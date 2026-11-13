@@ -28,8 +28,8 @@ test.each(['unavailable', 'other', 'sample'] as const)('setup keeps %s Run evide
     throw Error('unavailable');
   });
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
-  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent)
     .toContain({ unavailable: 'Result unknown', other: 'Needs you', sample: 'Passed' }[kind]));

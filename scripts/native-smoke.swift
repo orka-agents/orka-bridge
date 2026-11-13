@@ -382,7 +382,8 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
                     "Idle workspace chooser was not retained")
             requireNoLocalWorkspace()
             require(!observations.contains {
-                ["Connect model", "Use GitHub sign-in", "Connect a model"].contains($0.topCandidates(1).first?.string ?? "")
+                let label = $0.topCandidates(1).first?.string ?? ""
+                return label.contains("Connect the AI") || label.contains("Connect the Al")
             }, "Model connection is exposed before workspace readiness")
         }
         print("PASS \(name): native workspace screen observed")

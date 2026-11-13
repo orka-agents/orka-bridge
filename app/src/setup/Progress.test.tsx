@@ -32,7 +32,7 @@ test('five steps show native transfer bytes and ETA in one bar, with expandable 
   await screen.findByRole('heading', { name: 'Getting your workspace ready' });
   const steps = screen.getByRole('list', { name: 'Setup steps' });
   expect(within(steps).getAllByRole('listitem')).toHaveLength(5);
-  for (const name of ['Install your workspace files', 'Start your workspace', 'Orka ready', 'Choose the AI your agent uses', 'Run your first test']) expect(within(steps).getByText(name)).toBeTruthy();
+  for (const name of ['Install your workspace files', 'Start your workspace', 'Orka ready', 'Connect the AI', 'Run your first test']) expect(within(steps).getByText(name)).toBeTruthy();
   expect(screen.getByText('Where agents run').nextElementSibling?.textContent).toBe('On this computer');
   expect(screen.getByText('Installing, 1.1 GiB of 2.8 GiB')).toBeTruthy();
   expect(screen.getByText('30 seconds left')).toBeTruthy();
@@ -41,7 +41,7 @@ test('five steps show native transfer bytes and ETA in one bar, with expandable 
   expect(Number(bar.getAttribute('aria-valuenow'))).toBeGreaterThan(0);
   expect(Number(bar.getAttribute('aria-valuenow'))).toBeLessThan(70);
   expect(screen.queryByText(/Downloading/)).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Connect model' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Connect the AI' }).matches(':disabled')).toBe(false);
   expect(screen.queryByText('Checking workspace files')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.getByText('Checking workspace files')).toBeTruthy();
@@ -54,13 +54,13 @@ test('tab, footer and card agree on one step index and the model action is avail
   expect(within(screen.getByRole('contentinfo')).getByText('Setting up, step 1 of 5')).toBeTruthy();
   expect(screen.getByText('Step 1 of 5')).toBeTruthy();
   expect(document.body.textContent).not.toMatch(/of 4/);
-  expect(screen.getByRole('button', { name: 'Use GitHub sign-in' }).hasAttribute('disabled')).toBe(false);
+  expect(screen.getByRole('button', { name: 'Connect the AI' }).hasAttribute('disabled')).toBe(false);
   expect(screen.getByText('Pick any time')).toBeTruthy();
 });
 
 test('compact order puts the model action before the long step history, with completed rows as single lines', async () => {
   native(); render(<App />);
-  const model = (await screen.findByRole('heading', { name: 'Connect a model' })).closest('section')!;
+  const model = (await screen.findByRole('heading', { name: 'Connect the AI' })).closest('section')!;
   const history = screen.getByRole('list', { name: 'Setup steps' });
   const progress = screen.getByRole('region', { name: 'Workspace setup' });
   expect(progress.compareDocumentPosition(model) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -112,7 +112,7 @@ test('keyboard Cancel then start again calls native retry and keeps the Meet pan
   const cancel = await screen.findByRole('button', { name: 'Cancel' }); cancel.focus();
   await user.keyboard('{Enter}');
   const retry = await screen.findByRole('button', { name: 'Start again' });
-  expect(screen.getByText('What has arrived is kept.')).toBeTruthy();
+  expect(screen.getByText('Setup is paused. Your downloaded workspace files are kept; press Start again to resume.')).toBeTruthy();
   retry.focus(); await user.keyboard(' ');
   await screen.findByRole('button', { name: 'Cancel' });
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_cancel_local')).toHaveLength(1);
@@ -163,7 +163,7 @@ test('setup readiness does not reopen the already editable document', async () =
 
 test('an established Designer stays editable when a running workspace later fails', async () => {
   const { ipc, fail } = native('ready'); const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'File' }));
   const editor = screen.getByRole('textbox', { name: 'Agent file' }); fail();
@@ -222,9 +222,9 @@ test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup s
   mockIPC(command => command === 'agent_run_status' ? snapshot : ipc(command));
   const user = userEvent.setup(); render(<App />);
   // A test result is shown only for a ready workspace whose AI is connected.
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
-  await screen.findByText('Model connected: copilot / gpt-5.6-terra.');
-  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText('Connected with GitHub Copilot.');
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toContain({ running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown' }[result]));
@@ -232,7 +232,7 @@ test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup s
 
 test('changing workspace and starting again preserves an owned draft after a failed save', async () => {
   const { ipc } = native('ready'); const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'File' }));
   const editor = screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
@@ -240,7 +240,7 @@ test('changing workspace and starting again preserves an owned draft after a fai
   await screen.findByText('Your changes could not be saved. Your draft is still here.');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Stop workspace and change' }));
+  await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   await screen.findByRole('button', { name: 'Cancel' });
   await user.click(screen.getByRole('button', { name: 'Designer' }));
@@ -251,8 +251,8 @@ test('changing workspace and starting again preserves an owned draft after a fai
 
 test('the AI step resets after a connected workspace leaves ready', async () => {
   const { fail } = native('ready'); const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
-  await screen.findByText('Model connected: copilot / gpt-5.6-terra.'); fail();
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText('Connected with GitHub Copilot.'); fail();
   await within(screen.getByRole('contentinfo')).findByText('Setup failed', {}, { timeout: 2000 });
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[3].textContent).not.toContain('Connected'));
 });
@@ -276,10 +276,10 @@ test('model settling during Change cannot strand subsequent Continue actions', a
     : command === 'setup_select_local' ? { selected: 'localVm', localVm: 'installing', model: 'locked' }
     : Promise.reject('unavailable'));
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Stop workspace and change' }));
-  connect({ ready: true }); await screen.findByText('Model connected: copilot / gpt-5.6-terra.');
+  await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
+  connect({ ready: true }); await screen.findByText('Connected with GitHub Copilot.');
   selected = null; change({ selected: null, localVm: 'cancelled', model: 'locked' });
   const next = await screen.findByRole('button', { name: 'Continue' });
   expect(next.matches(':disabled')).toBe(false);
@@ -309,14 +309,14 @@ test('Change where agents run does not stop until confirmed, and returns to choo
   await user.click(screen.getByRole('button', { name: 'Keep workspace running' }));
   expect(ipc.mock.calls.some(([c]) => c === 'setup_change_local')).toBe(false);
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Stop workspace and change' }));
+  await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
   expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_change_local')).toHaveLength(1);
 });
 
 test('an unreadable status makes the card unavailable instead of keeping the last running snapshot, and recovery keeps the queued choice', async () => {
   const { ipc, unreadable, readable } = native(); const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(screen.getByRole('progressbar')).toBeTruthy();
   const card = () => within(screen.getByRole('region', { name: 'Workspace setup' }));
   expect(card().getByText('Step 1 of 5')).toBeTruthy();

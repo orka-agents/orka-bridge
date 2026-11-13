@@ -76,7 +76,10 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     if name.hasPrefix("local-") {
         visible = rows.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     } else {
-        guard let panel = rows.first(where: { $0.topCandidates(1).first?.string == "Connect a model" })
+        guard let panel = rows.filter({
+            let label = $0.topCandidates(1).first?.string ?? ""
+            return (label.contains("Connect the AI") || label.contains("Connect the Al")) && $0.boundingBox.minX > 0.5
+        }).max(by: { $0.boundingBox.maxY < $1.boundingBox.maxY })
             else { fatalError("Model panel heading was not recognized") }
         visible = rows.filter {
             $0.boundingBox.minX >= panel.boundingBox.minX - 0.02 &&
@@ -84,9 +87,9 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         }.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
     for value in expected {
-        let found = visible.contains(value)
-        let nativeFailure = !found && name.hasPrefix("local-") && nativeFailureTextIsVisible(value)
-        require(found || nativeFailure, "Missing \(value) in \(name): \(text)")
+        let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI").contains(value)
+        let nativeText = !found && name.hasPrefix("local-") && nativeResultTextIsVisible(value)
+        require(found || nativeText, "Missing \(value) in \(name): \(text)")
     }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
@@ -106,33 +109,26 @@ func enabledButton(_ label: String) -> AXUIElement? {
 }
 func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     guard let button = enabledButton(label) else { require(false, "Native button is disabled or missing: \(label)"); return }
-    let rect = window()!.1
-    let p: CGPoint
-    if let row = rows.first(where: { $0.topCandidates(1).first?.string == label }) {
-        p = CGPoint(x: rect.minX + row.boundingBox.midX * rect.width,
-                    y: rect.minY + (1 - row.boundingBox.midY) * rect.height)
-    } else {
-        // Vision can join Connected and Remove sign-in on one line. Still
-        // pointer-click the exact enabled native button, never the joined row.
-        guard let bounds = nativeBounds(button), rect.contains(bounds) else {
-            require(false, "Native button is not visible: \(label)"); return
-        }
-        p = CGPoint(x: bounds.midX, y: bounds.midY)
+    // A heading and a step can have the same words as the action. Click the
+    // exact accessible button, never an OCR row that could name either heading.
+    guard let bounds = nativeBounds(button), window()!.1.contains(bounds) else {
+        require(false, "Native button is not visible: \(label)"); return
     }
+    let p = CGPoint(x: bounds.midX, y: bounds.midY)
     for type in [CGEventType.leftMouseDown, .leftMouseUp] {
         CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
     }
     Thread.sleep(forTimeInterval: 1)
 }
-var rows = try capture("before-connect", ["Use GitHub sign-in", "Remove sign-in"])
-click("Use GitHub sign-in", rows)
-rows = try capture("connected", ["Model connected", "Remove sign-in"])
+var rows = try capture("before-connect", ["Connect the AI", "Remove sign-in"])
+click("Connect the AI", rows)
+rows = try capture("connected", ["Connected with GitHub Copilot", "Remove sign-in"])
 click("Remove sign-in", rows)
 rows = try capture("remove-failed", ["Remove sign-in again", "Copy details for help"])
 click("Remove sign-in", rows)
-rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Use GitHub sign-in"])
-click("Use GitHub sign-in", rows)
-_ = try capture("reconnected", ["Model connected", "Remove sign-in"])
+rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Connect the AI"])
+click("Connect the AI", rows)
+_ = try capture("reconnected", ["Connected with GitHub Copilot", "Remove sign-in"])
 func scroll(_ pixels: Int32) {
     let rect = window()!.1
     CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: rect.maxX - 20, y: rect.midY), mouseButton: .left)?.post(tap: .cghidEventTap)
@@ -163,8 +159,8 @@ func localSize(_ width: CGFloat, _ height: CGFloat) {
     require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Fixture content size not applied")
 }
 // Synthetic IPC renders the real local result component; no VM or inference.
-rows = try seek("Open example", -200)
-click("Open example", rows)
+rows = try seek("Read its instructions", -200)
+click("Read its instructions", rows)
 rows = try seek("Tests on local", -250)
 _ = try capture("local-result-wide", ["Tests on local", "1 of 2 passed"])
 _ = try seek("The answer did not include", -150)
@@ -203,14 +199,13 @@ func nativeBounds(_ element: AXUIElement) -> CGRect? {
         && extent.width > 0 && extent.height > 0 else { return nil }
     return CGRect(origin: origin, size: extent)
 }
-// Vision can read 2099 as 9099 in small Inter text. Require the exact rendered
-// failure text through native accessibility, fully within this window, instead
-// of accepting either number or weakening the expected value.
-func nativeFailureTextIsVisible(_ expected: String) -> Bool {
+// Vision can misread small Inter failure values and elapsed labels. Require
+// the exact expected native text, visibly inside this window, not OCR aliases.
+func nativeResultTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
-            text.hasPrefix("The answer did not include"), text.contains(expected),
+            (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected)),
             let bounds = nativeBounds(element) else { return false }
         return window()!.1.contains(bounds)
     }
@@ -225,6 +220,15 @@ require(editors.count == 1, "Expected the fixture Instructions editor")
 let editor = editors[0]
 require(AXUIElementSetAttributeValue(editor, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus fixture Instructions")
 Thread.sleep(forTimeInterval: 0.3)
+guard let editorBounds = nativeBounds(editor) else { fatalError("Native Instructions bounds missing") }
+let visibleEditor = editorBounds.intersection(window()!.1)
+require(!visibleEditor.isEmpty && !visibleEditor.isNull, "Native Instructions editor is offscreen")
+let editorPoint = CGPoint(x: visibleEditor.midX, y: visibleEditor.midY)
+for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: editorPoint, mouseButton: .left)?.post(tap: .cghidEventTap)
+}
+Thread.sleep(forTimeInterval: 0.2)
+require(attribute(editor, "AXFocused") as? Bool == true, "Native Instructions did not receive focus")
 for down in [true, false] {
     let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
     event.flags = .maskCommand; event.post(tap: .cghidEventTap)
@@ -239,6 +243,8 @@ for character in "Changed fixture instructions.".utf16 {
 }
 Thread.sleep(forTimeInterval: 1)
 require((attribute(editor, "AXValue") as? String)?.contains("Changed fixture instructions.") == true, "Native keystrokes did not edit Instructions")
+// Focusing Instructions scrolls below the compact test card; return to its start.
+scroll(4000)
 _ = try seek("Not run since your edit", -250)
 _ = try capture("local-stale", ["Not run since your edit"])
 rows = try seek("Run tests", -150)

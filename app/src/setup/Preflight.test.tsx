@@ -21,7 +21,7 @@ function native(preflight: unknown = ready, integrated = true) {
     throw Error('unexpected command');
   });
   mockIPC(ipc);
-  render(<Setup onOpenExample={() => {}} onReady={() => {}} />);
+  render(<Setup onOpenExample={() => {}} />);
   return { ipc, update: (next: unknown) => { value = next; } };
 }
 afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
@@ -115,7 +115,7 @@ test('preflight cause stays specific in the app status and host pill', async () 
 test('a direct native preflight failure is decoded and explained without raw diagnostic text', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => command === 'setup_status' ? { selected: 'localVm', localVm: 'failed', model: 'locked', preflightFailure: 'insufficientMemory', localVmError: 'SECRET_MARKER RuntimeError::Preflight' } : command === 'setup_requirements' ? requirements : null);
-  render(<Setup onOpenExample={() => {}} onReady={() => {}} />);
+  render(<Setup onOpenExample={() => {}} />);
   expect(await screen.findByText(/less installed memory/)).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
   expect(document.body.textContent).not.toContain('SECRET_MARKER');

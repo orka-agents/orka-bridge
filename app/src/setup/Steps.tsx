@@ -37,7 +37,7 @@ function stepRows({ status, stopping, error, modelState = 'idle', firstCheck }: 
   const test: [Status, string] = firstCheck && status.localVm === 'ready' && connected ? [{ running: 'running', passed: 'passed', failed: 'failed', unknown: 'not-started', stale: 'stale' }[firstCheck] as Status,
     { running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown', stale: 'Needs running' }[firstCheck]]
     : connected ? ['needs-you', 'Needs you'] : ['not-started', 'Waiting'];
-  const names = ['Install your workspace files', 'Start your workspace', 'Orka ready', 'Choose the AI your agent uses', 'Run your first test'];
+  const names = ['Install your workspace files', 'Start your workspace', 'Orka ready', 'Connect the AI', 'Run your first test'];
   // After an unreadable poll the snapshot is last known, not observed: keep the words but nothing runs or is current.
   const rows = [infraRow(1), infraRow(2), infraRow(3), model, test].map(([state, result], i) => ({ name: names[i], state: error ? 'not-started' as Status : state, result: error ? `Last known: ${result}` : result }));
   return { view, failed, paused, infra, rows };
@@ -52,7 +52,7 @@ export function SetupProgress(props: Props & { confirm?: ReactNode }) {
   const progress = status.workspaceProgress;
   const copying = !stopping && status.localVm === 'installing' && progress?.phase === 'materializing';
   const stateLine = error ? 'Workspace status is unavailable.' : stopping ? 'Stopping your workspace…' : ready ? 'Your workspace is running on this computer.'
-    : paused ? 'What has arrived is kept.' : status.localVm === 'starting' ? 'Starting your workspace…'
+    : paused ? 'Setup is paused. Your downloaded workspace files are kept; press Start again to resume.' : status.localVm === 'starting' ? 'Starting your workspace…'
     : status.localVm === 'closing' ? 'Stopping your workspace…'
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
     : copying ? 'Installing your workspace…' : 'Checking your workspace files…';
@@ -75,12 +75,11 @@ export function SetupProgress(props: Props & { confirm?: ReactNode }) {
         {status.localVmError && <pre tabIndex={0}>{ready ? modelDetails(status.localVmError) : status.localVmError}</pre>}
       </div>}</>}
     <div className="workspace-step-actions">
-      {['preparing', 'installing', 'starting'].includes(status.localVm) && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</button><span className="muted">Cancel keeps what has arrived.</span></>}
+      {['preparing', 'installing', 'starting'].includes(status.localVm) && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</button><span className="muted">Cancel pauses setup and keeps downloaded files. You can resume with Start again.</span></>}
       {status.localVm === 'notIntegrated' && onCluster && <button type="button" className="workspace-link" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</button>}
       {paused && <button type="button" className="workspace-primary" disabled={busy || !!error} onClick={onRestart}>Start again</button>}
-      {ready && <><button type="button" className="workspace-secondary" disabled={busy || !!error} onClick={event => onChange(event.currentTarget)}>Change where agents run</button><button type="button" className="workspace-primary" disabled={!!error} onClick={onOpenExample}>Open example</button></>}
+      {ready && <><button type="button" className="workspace-link" disabled={busy || !!error} onClick={event => onChange(event.currentTarget)}>Change where agents run</button>{!confirm && <button type="button" className="workspace-link" disabled={busy || !!error} onClick={onOpenExample}>Read its instructions</button>}{confirm}{props.modelState === 'connected' && !confirm && <button type="button" className="workspace-primary" disabled={busy || !!error || props.firstCheck === 'running'} onClick={onOpenExample}>{props.firstCheck ? 'Open your test result' : 'Open your first test'}</button>}</>}
     </div>
-    {confirm}
   </section>;
 }
 
