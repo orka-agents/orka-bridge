@@ -11,8 +11,8 @@ import type { ModelState } from './setup/Model';
 import { workspaceRecovery } from './setup/recovery-info';
 import { preflightRecovery } from './setup/preflight-state';
 import { setupView } from './setup/progress';
-import type { RunSnapshot } from './designer/run-api';
-import { agentInfo, type SaveState } from './designer/agent-api';
+import { runCall, type RunSnapshot } from './designer/run-api';
+import { agentInfo, sameSource, type SaveState, type SourceId } from './designer/agent-api';
 
 const pages = ['Overview', 'Designer', 'Clusters'] as const;
 type Page = (typeof pages)[number];
@@ -92,12 +92,28 @@ export default function App() {
   const [runUnavailable, setRunUnavailable] = useState(false);
   // Setup keeps the sample's latest evidence even while Designer shows another document.
   const [sampleResult, setSampleResult] = useState<{ snapshot?: RunSnapshot }>();
+  const [sampleSource, setSampleSource] = useState<SourceId>();
   const [sampleStale, setSampleStale] = useState(false);
   const [sampleDirty, setSampleDirty] = useState(false);
+  const observeSampleRun = useCallback((snapshot: RunSnapshot | undefined) => { setSampleResult({ snapshot }); }, []);
+  const sampleObserved = sampleResult !== undefined;
+  useEffect(() => {
+    if (documentId === SAMPLE_DOCUMENT_ID || !sampleObserved) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const observe = async () => {
+      const result = await runCall('agent_run_status');
+      if (cancelled) return;
+      observeSampleRun(result.ok ? result.snapshot : undefined);
+      timer = setTimeout(() => { void observe(); }, 500);
+    };
+    void observe();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [documentId, sampleObserved, observeSampleRun]);
   const observeRun = useCallback((snapshot: RunSnapshot | undefined, id: string) => {
     setRun(snapshot); setRunUnavailable(!snapshot);
-    if (id === SAMPLE_DOCUMENT_ID) setSampleResult({ snapshot });
-  }, []);
+    if (id === SAMPLE_DOCUMENT_ID) observeSampleRun(snapshot);
+  }, [observeSampleRun]);
   const observeStale = useCallback((value: boolean, id: string) => {
     setStale(value);
     if (id === SAMPLE_DOCUMENT_ID) setSampleStale(value);
@@ -117,9 +133,10 @@ export default function App() {
       setSetupReadOnly(status.selected === 'localVm' && !workspaceAdmitted.current);
     }
   }, []);
-  const observePair = useCallback((pair: ExamplePair | undefined) => {
+  const observePair = useCallback((pair: (ExamplePair & { source?: SourceId }) | undefined, id: string) => {
     setExampleState(pair ? 'loaded' : 'failed');
     setAgentName(agentInfo(pair?.agent).name);
+    if (id === SAMPLE_DOCUMENT_ID) setSampleSource(pair?.source);
   }, []);
   const cases = run?.report?.cases;
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
@@ -132,9 +149,10 @@ export default function App() {
     canOpen: page === 'Clusters' && setup?.localVm === 'ready' && !workspaceBusy && !remote,
     sampleDirty,
     onOpen: () => openDesigner(SAMPLE_DOCUMENT_ID),
+    onSnapshot: observeSampleRun,
   });
   const sample = sampleResult?.snapshot;
-  const firstCheck = sampleResult ? sampleStale || (sample?.sourceCurrent === false && !!sample.report) ? 'stale'
+  const firstCheck = firstTest === 'running' ? 'running' : sampleResult ? sampleStale || (sameSource(sampleSource, sample?.source) === false && !!sample?.report) ? 'stale'
     : !sample || sample.state === 'unknown' ? 'unknown' : sample.state === 'running' ? 'running' : sample.state === 'complete' ? sample.report?.verdict : undefined
     : firstTest;
   // Tab, footer and the Setup card share this derivation. Native selection, not the default radio, names the host.

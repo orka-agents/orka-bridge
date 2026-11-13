@@ -85,6 +85,37 @@ test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains 
   expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe(`Run your first test${expected}`);
 });
 
+test('a manual sample test stays observed when Designer switches to another agent before completion', async () => {
+  const { finish, failNext } = native(); const user = await completeSetup();
+  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testRunning')); finish();
+  await screen.findByText('1 of 1 passed');
+  failNext(); await user.click(screen.getByRole('button', { name: 'Run tests' }));
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open other' }));
+  await screen.findByRole('heading', { name: 'other', level: 1 });
+  finish();
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testFailed'));
+});
+
+test('a newer automatic test replaces retained sample evidence after Designer switches documents', async () => {
+  const { ipc, finish } = native(); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Continue' }));
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
+  await screen.findByRole('button', { name: 'Run tests' });
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open other' }));
+  await screen.findByRole('heading', { name: 'other', level: 1 });
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1));
+  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testRunning');
+  await user.click(screen.getByRole('button', { name: 'Overview' })); finish();
+  await screen.findByText('Workspace stopped', {}, { timeout: 2000 });
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testPassed');
+});
+
 test('a requested document switch does not admit the pending test while the bound sample has unsaved edits', async () => {
   const { ipc } = native(true); const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
