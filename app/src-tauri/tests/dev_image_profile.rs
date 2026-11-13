@@ -29,17 +29,17 @@ fn actual_app_binary_contains_the_local_image_selector_only_in_debug() {
     ))]
     for hash in if cfg!(windows) {
         [
-            "270e3a180ce55270b6e1b1ea5a7cdc09cccd2d8406aab07f4d9609112fcdc7db",
-            "602f3a9f7871f590d44d277c1ffb294d8e931d47c655ace1796758b7f8520c3c",
+            "0233d40dbb5cc3c89c6ecc2f2802b975c588cca3de17907ade4853d6a59c02e4",
+            "9aa023fd1b0187d5fc6b3099a51f63d4390f8dacbf3884b6d4f42a945252b7f4",
             "4a44487bb3cfdc2be1d7697b8c71c97733d6ab2db62e6e6e8f1c6af9431ffd2e",
-            "4febfbd8d144e84ce1526a3fcde2130c701a68fdffcc366b3663d0bb2c28797f",
+            "2454d45db754d144cdd63b01ea0b973a0aefcb94e4376aa66cc261978a667885",
         ]
     } else {
         [
-            "3f0108d781819ee10cddf4836890c46dfb222b9fb44660b7f04ef84a1f9de724",
-            "c825114be1778ba341ef0680aabd8478745b228e2fc3e71ee1bd2b256e9831ff",
+            "a186512dcf6cdf6c1dc556e8e57f7012385584288d2e8f0d7622efd5a2f80e13",
+            "4f75a6f374923f9a6569997c65bb7f5ac65ff1f0ac1c65d5af2c8fd4e803d0fd",
             "27f833e233753a0a601f3a6792dcd73e2f2c7c8bd30e00b837315c71c5996dcb",
-            "e78ca98b09c444d2d6ba2c73ae650c98ab49cf8e4d7319de5700066d324e7f41",
+            "3bd75d66535a48ae837afcb938fbd831e0e65ef9080cf19de5952929cb5d23c8",
         ]
     } {
         let raw: Vec<u8> = (0..64)

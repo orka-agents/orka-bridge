@@ -40,19 +40,19 @@ pub(super) fn shipping_image(target: ImageTarget) -> Option<ReleaseImage> {
         ImageTarget::MacosArm64 => (
             "macos-arm64",
             include_bytes!("../../../images/release/macos-arm64.json").as_slice(),
-            "04ad8d90419e05d3d2d7d941c9ce1f0d2f85074d82fd9fe62a0822547248e757",
+            "60a36d2f38643ab1337f0849dfd3d2db570e445c1a4116612fe25ab7c6d1e144",
         ),
         ImageTarget::WindowsAmd64 => (
             "windows-amd64",
             include_bytes!("../../../images/release/windows-amd64.json").as_slice(),
-            "a6f998fc68522287a3d391fcbd549c0d58a7f7de861a7764c1c98a7afc19051f",
+            "4d62e8f907b9557a704d14a265cb67de2f9020396ddb1e1a8b1fb938c9fda9ec",
         ),
     };
     let value: serde_json::Value = serde_json::from_slice(manifest).ok()?;
-    let base = "https://github.com/orka-agents/orka-bridge/releases/download/bridge-images-preview-181d7f64/";
+    let base = "https://github.com/orka-agents/orka-bridge/releases/download/bridge-images-preview-d86ebac3/";
     Some(ReleaseImage {
         pin: ImagePin {
-            release_id: "bridge-images-preview-181d7f64".into(),
+            release_id: "bridge-images-preview-d86ebac3".into(),
             manifest_url: format!("{base}manifest-{platform}.json"),
             manifest_sha256: digest.into(),
             accepted_schema_sha256:
