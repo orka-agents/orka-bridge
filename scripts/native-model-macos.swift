@@ -88,8 +88,8 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     }
     for value in expected {
         let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI").contains(value)
-        let nativeFailure = !found && name.hasPrefix("local-") && nativeFailureTextIsVisible(value)
-        require(found || nativeFailure, "Missing \(value) in \(name): \(text)")
+        let nativeText = !found && name.hasPrefix("local-") && nativeResultTextIsVisible(value)
+        require(found || nativeText, "Missing \(value) in \(name): \(text)")
     }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
@@ -199,14 +199,13 @@ func nativeBounds(_ element: AXUIElement) -> CGRect? {
         && extent.width > 0 && extent.height > 0 else { return nil }
     return CGRect(origin: origin, size: extent)
 }
-// Vision can read 2099 as 9099 in small Inter text. Require the exact rendered
-// failure text through native accessibility, fully within this window, instead
-// of accepting either number or weakening the expected value.
-func nativeFailureTextIsVisible(_ expected: String) -> Bool {
+// Vision can misread small Inter failure values and elapsed labels. Require
+// the exact expected native text, visibly inside this window, not OCR aliases.
+func nativeResultTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
-            text.hasPrefix("The answer did not include"), text.contains(expected),
+            (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected)),
             let bounds = nativeBounds(element) else { return false }
         return window()!.1.contains(bounds)
     }
@@ -221,6 +220,15 @@ require(editors.count == 1, "Expected the fixture Instructions editor")
 let editor = editors[0]
 require(AXUIElementSetAttributeValue(editor, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus fixture Instructions")
 Thread.sleep(forTimeInterval: 0.3)
+guard let editorBounds = nativeBounds(editor) else { fatalError("Native Instructions bounds missing") }
+let visibleEditor = editorBounds.intersection(window()!.1)
+require(!visibleEditor.isEmpty && !visibleEditor.isNull, "Native Instructions editor is offscreen")
+let editorPoint = CGPoint(x: visibleEditor.midX, y: visibleEditor.midY)
+for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: editorPoint, mouseButton: .left)?.post(tap: .cghidEventTap)
+}
+Thread.sleep(forTimeInterval: 0.2)
+require(attribute(editor, "AXFocused") as? Bool == true, "Native Instructions did not receive focus")
 for down in [true, false] {
     let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
     event.flags = .maskCommand; event.post(tap: .cghidEventTap)
