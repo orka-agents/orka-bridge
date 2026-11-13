@@ -10,7 +10,7 @@
 .steps-four > li { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 16px 0; border-bottom: 1px solid var(--color-border); }
 .steps-four > li:first-child { padding-top: 0; }
 .steps-four > li:last-child { border-bottom: 0; }
-.steps-four b { font-weight: 550; }
+.steps-four b { font-weight: 550; user-select: none; }
 .step-result { color: var(--color-text-secondary); font-size: var(--size-body); }
 .step-waiting b { color: var(--color-text-secondary); }
 .step-failed [role="alert"] { color: var(--color-status-failed); }
@@ -50,15 +50,15 @@
 .workspace-meet { padding: 24px; }
 .workspace-kicker { color: var(--color-text-secondary); font-size: var(--size-body); }
 .workspace-meet h2 { margin: 8px 0; font: var(--type-card); }
-.workspace-meet .meet-description { font-size: var(--size-reading); line-height: 1.65; }
+.workspace-meet .meet-description { font: var(--type-body); }
 .workspace-meet dl { margin: 12px 0; }
 .workspace-meet dl > div { margin: 12px 0; }
 .workspace-meet dt { color: var(--color-text-secondary); font-size: var(--size-body); margin-bottom: 8px; }
-.workspace-meet dd { margin: 0; font-size: var(--size-reading); line-height: 1.65; max-width: 65ch; }
+.workspace-meet dd { margin: 0; font: var(--type-body); max-width: 65ch; }
 .workspace-tool { display: inline-flex; align-items: center; gap: var(--space-1); border-radius: var(--radius-control); padding: var(--space-1) var(--space-2); background: var(--color-tint-stale); }
 .workspace-tool code { color: var(--color-text-secondary); font-size: .92em; }
-.workspace-change { margin-top: 16px; padding: 16px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-row); background: var(--color-chrome); }
-.workspace-change h2 { font-size: var(--size-reading); }
+.workspace-change { flex-basis: 100%; padding: 16px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-row); background: var(--color-chrome); }
+.workspace-change h2 { font: var(--type-card); margin-top: 0; }
 @media (max-width: 820px) {
   .setup.workspace-setup-grid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
   .setup.workspace-setup-grid > :is(.setup-progress, .setup-model-slot, .setup-history, .workspace-meet) { grid-column: 1; grid-row: auto; }

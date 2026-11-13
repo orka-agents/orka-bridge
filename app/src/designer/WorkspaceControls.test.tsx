@@ -174,13 +174,13 @@ test('confirmed Change invalidates catalog before the stop reply, retaining the 
     return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
   });
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
-  await screen.findByText('Model connected: copilot / gpt-5.6-terra.');
-  await user.click(screen.getByRole('button', { name: 'Open example' }));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText('Connected with GitHub Copilot.');
+  await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('option', { name: 'listed' });
   await user.click(screen.getByRole('button', { name: /Clusters/ }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Stop workspace and change' }));
+  await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
   // Designer stays mounted under the inactive page. It must not retain old choices.
   expect(document.querySelector('option[value="listed"]')).toBeNull();
   expect(document.querySelector('.instructions-editor')?.textContent).toBe('Role only.\n');

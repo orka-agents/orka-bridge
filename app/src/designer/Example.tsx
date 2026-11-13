@@ -119,6 +119,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
   const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
     : reloading ? 'Wait for your saved files to reload' : setupPending ? 'Wait for your workspace to be ready before sending'
     : saveState !== 'saved' || pendingSoul ? 'Save your changes first' : undefined;
+  const testSource = pair && <details className="check-source"><summary>Test file: {pair.name ?? 'web-reader'}.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Test file, read-only">{pair.tests}</pre></details>;
   return <section className="designer" aria-labelledby={active ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
       <div className="agent-heading-copy"><h1 className="agent-name" id={active ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{info.description && <p className="muted">{info.description}</p>}</div>
@@ -134,6 +135,13 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
       </div>
     </div>
     {!pair ? error ? <p role="alert">{error}</p> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
+      <div className={`designer-work${remote ? ' designer-remote' : ''}`}>
+      <div className="designer-tests card" hidden={remote}>
+        {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run tests</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a test.</p></div>
+          : <Run documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />}
+        {!remote && testSource}
+      </div>
+      <div className="designer-editing">
       <div className="designer-file card">
         <div className="file-toolbar"><h2>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2><span className="muted" role="status">{saveLabel}</span></div>
         {view === 'File' ? <>
@@ -148,11 +156,10 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
         {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
       </div>
       <div className="designer-checks card">
-        {!remote && setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run tests</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a test.</p></div>
-          : null}
-        {!setupPending && <div hidden={remote}><Run documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} /></div>}
         <Send documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
-        <details className="check-source"><summary>Test file: {pair.name ?? 'web-reader'}.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Test file, read-only">{pair.tests}</pre></details>
+        {remote && testSource}
+      </div>
+      </div>
       </div>
     </>}
     {!pair && <div className="designer-checks card"><SendHistory revision={boundDocument} /></div>}

@@ -118,7 +118,7 @@ test('sign-in removal stays in progress in the setup step and shell', async () =
   mockIPC(command => command === 'setup_remove_model' ? new Promise(() => {}) : original(command));
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Remove sign-in' }));
-  const step = within(screen.getByRole('list', { name: 'Setup steps' })).getByText('Choose the AI your agent uses').closest('li')!;
+  const step = within(screen.getByRole('list', { name: 'Setup steps' })).getByText('Connect the AI').closest('li')!;
   expect(step.textContent).toContain('Removing sign-in');
   expect(step.querySelector('.status-running')).toBeTruthy();
   expect(screen.getByRole('contentinfo').textContent).toContain('Removing the AI sign-in');
@@ -127,8 +127,8 @@ test('sign-in removal stays in progress in the setup step and shell', async () =
 test('AI failure marks its setup step and every shell status without losing the running workspace', async () => {
   const { ready } = native(); ready();
   const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
-  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Guest Connect did not acknowledge a ready model'));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Bridge could not confirm the AI connection'));
   expect(screen.getByText('Needs attention').closest('li')?.className).toBe('step-failed');
   expect(within(screen.getByRole('navigation')).getByText('AI needs attention')).toBeTruthy();
   expect(screen.getByRole('contentinfo').textContent).toContain('AI connection needs attention');
