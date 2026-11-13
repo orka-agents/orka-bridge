@@ -90,6 +90,7 @@ func window() -> (CGWindowID, CGRect)? {
         let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return nil }
     return (id, rect)
 }
+func waitForWorkspaceRenderer() {
 var found = false
 let rendererDeadline = Date(timeIntervalSinceNow: 30)
 while Date() < rendererDeadline {
@@ -102,12 +103,17 @@ while Date() < rendererDeadline {
         let names = Set(buttons.flatMap { element in
             ["AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
         })
-        let bodyReady = buttons.contains { nativeBounds($0).map { $0.minY > frame.minY + 110 } == true }
+        // Navigation/footer controls can render before setup_status settles.
+        // Observe the welcome or the actual release setup result, not a button
+        // that merely happens to be below the header.
+        let bodyReady = names.contains("Get started") || nativeTextIsVisible("Workspace setup is not included in this build. Nothing will be downloaded or started.")
         if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names) && bodyReady { found = true; break }
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 }
 require(found, "Bridge native window, rendered navigation and page controls did not appear within the startup budget")
+}
+waitForWorkspaceRenderer()
 func mouse(_ type: CGEventType, _ point: CGPoint) {
     CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
 }
@@ -495,12 +501,7 @@ for _ in 0..<30 {
 require(app.isTerminated, "Bridge did not quit before preference check")
 app = try launch()
 app.activate(options: [])
-for _ in 0..<30 {
-    if window() != nil { break }
-    Thread.sleep(forTimeInterval: 1)
-}
-require(window() != nil, "Relaunched Bridge window did not appear")
-Thread.sleep(forTimeInterval: 2)
+waitForWorkspaceRenderer()
 let retained = try capture("choice-retained", "Clusters")
 require(!retained.contains { $0.topCandidates(1).first?.string == "Get started" },
         "Restart must retain this theme's saved native choice")
@@ -1012,12 +1013,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     require(app.isTerminated, "Bridge did not quit before Send history check")
     app = try launch()
     app.activate(options: [])
-    for _ in 0..<30 {
-        if window() != nil { break }
-        Thread.sleep(forTimeInterval: 1)
-    }
-    require(window() != nil, "Relaunched Bridge window did not appear for Send history")
-    Thread.sleep(forTimeInterval: 2)
+    // A native frame can appear before the relaunched WebView paints anything.
+    // Use the same observed page readiness as the initial launch.
+    waitForWorkspaceRenderer()
     let restarted = try capture("choice-retained", "Clusters")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)

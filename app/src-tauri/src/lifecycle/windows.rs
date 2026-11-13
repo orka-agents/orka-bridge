@@ -298,10 +298,12 @@ mod tests {
         if case == "missing_icon" {
             context.set_default_window_icon(None);
         }
+        eprintln!("native-session {case}: building native app");
         let app = tauri::Builder::default()
             .any_thread()
             .build(context)
             .unwrap();
+        eprintln!("native-session {case}: native app built");
         if case == "missing_icon" {
             let error = super::super::install(app.handle(), shutdown, true).unwrap_err();
             assert!(error.to_string().contains("tray icon is missing"));
@@ -331,6 +333,7 @@ mod tests {
                     probe.calls.fetch_add(1, Ordering::SeqCst);
                 }
             });
+            eprintln!("native-session menu_quit: building menu window");
             let window = tauri::WebviewWindowBuilder::new(
                 &app,
                 "menu-probe",
@@ -339,6 +342,7 @@ mod tests {
             .visible(false)
             .build()
             .unwrap();
+            eprintln!("native-session menu_quit: menu window built");
             super::super::install(app.handle(), shutdown, true).unwrap();
             tauri::async_runtime::block_on(async {
                 vm.start();
@@ -361,6 +365,7 @@ mod tests {
                 assert_ne!(quit, u32::MAX);
                 assert_ne!(PostMessageW(hwnd, WM_COMMAND, quit as WPARAM, 0), 0);
             }
+            eprintln!("native-session menu_quit: native Quit posted; entering event loop");
             // Predefined Quit posts WM_QUIT directly: it exits 0 without this VM's marker.
             app.run(|_, _| {});
             panic!("native File > Quit must exit through terminal cleanup");

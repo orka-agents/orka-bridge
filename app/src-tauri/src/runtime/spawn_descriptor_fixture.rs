@@ -126,7 +126,12 @@ fn probe_distinguishes_private_socket_from_reused_descriptor_number() {
                 });
             }
             let output = command.output().unwrap();
-            assert!(output.status.success());
+            assert!(
+                output.status.success(),
+                "descriptor probe exited {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
             assert_eq!(
                 unsafe { libc::fcntl(source, libc::F_GETFL) },
                 flags,
