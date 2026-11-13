@@ -1,3 +1,4 @@
+import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -37,7 +38,7 @@ test.each([
   ['unknown', "couldn't establish", undefined],
 ] as const)('finite %s cause offers recovery and a way out', async (cause, summary, topic) => {
   const { ipc } = native({ cause, operation: cause === 'network' ? 'download' : 'start', codes: [] });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const alert = await screen.findByRole('alert');
   expect(alert.textContent).toContain(summary);
   if (topic) {
@@ -53,14 +54,14 @@ test.each([
 });
 
 test('download heading and preservation do not promise rejected bytes are kept', async () => {
-  native({ cause: 'network', operation: 'download', codes: [] }); render(<App />);
+  native({ cause: 'network', operation: 'download', codes: [] }); render(<App />); await openLocalSetup();
   expect(await screen.findByRole('heading', { level: 1, name: "Your workspace files couldn't be downloaded" })).toBeTruthy();
   expect(screen.getByRole('alert').textContent).toContain('Reusable verified content is kept. Rejected content is not kept.');
 });
 
 test('keyboard retry calls native selection once and returns to progress', async () => {
   const { ipc } = native({ cause: 'unknown', operation: 'start', codes: [] });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const retry = await screen.findByRole('button', { name: 'Try again' });
   retry.focus(); await user.keyboard('{Enter}{Enter}');
   await screen.findByRole('progressbar', { name: 'Workspace setup progress' });
@@ -70,7 +71,7 @@ test('keyboard retry calls native selection once and returns to progress', async
 
 test('copy includes only native finite metadata, ignoring misleading raw diagnostics', async () => {
   native({ cause: 'permission', operation: 'start', codes: [5] }, 'Image(NoSpace) code: 4294967296 Bearer PRIVATE C:\\Users\\private');
-  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(); render(<App />);
+  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Copy details for help' }));
   expect(copy).toHaveBeenCalledTimes(1);
   expect(copy.mock.calls[0][0]).toContain('Category: permission');
@@ -80,7 +81,7 @@ test('copy includes only native finite metadata, ignoring misleading raw diagnos
 
 test('raw text can neither classify the error nor supply copied OS codes', async () => {
   native(undefined, 'virtualizationDisabled NoSpace code: 5 startupStopFailed');
-  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(); render(<App />);
+  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(); render(<App />); await openLocalSetup();
   expect((await screen.findByRole('alert')).textContent).toContain("couldn't establish");
   await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
   expect(copy.mock.calls[0][0]).not.toContain('code: 5');
@@ -90,7 +91,7 @@ test('copy and help failures do not echo rejected text', async () => {
   const { ipc } = native({ cause: 'noSpace', operation: 'prepare', codes: [] });
   const original = ipc.getMockImplementation()!;
   ipc.mockImplementation(command => { if (command === 'setup_open_help') throw 'SECRET'; return original(command); });
-  const user = userEvent.setup(); vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue('SECRET'); render(<App />);
+  const user = userEvent.setup(); vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue('SECRET'); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Copy details for help' }));
   expect(screen.getByText("Couldn't copy. Open Show details to read the error.")).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Show me how' }));
@@ -107,7 +108,7 @@ test.each(['insufficientMemory', 'virtualizationDisabled', 'hypervisorUnavailabl
 });
 
 test('typed unconfirmed stop cannot admit a second workspace', async () => {
-  native({ cause: 'stopUnconfirmed', operation: 'stop', codes: [] }); render(<App />);
+  native({ cause: 'stopUnconfirmed', operation: 'stop', codes: [] }); render(<App />); await openLocalSetup();
   expect((await screen.findByRole('alert')).textContent).toContain("couldn't be stopped safely");
   expect(screen.getByRole('button', { name: 'Try again' }).matches(':disabled')).toBe(true);
 });
@@ -116,7 +117,7 @@ test('sign-in removal stays in progress in the setup step and shell', async () =
   const { ipc, ready } = native(); ready();
   const original = ipc.getMockImplementation()!;
   mockIPC(command => command === 'setup_remove_model' ? new Promise(() => {}) : original(command));
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Remove sign-in' }));
   const step = within(screen.getByRole('list', { name: 'Setup steps' })).getByText('Connect the AI').closest('li')!;
   expect(step.textContent).toContain('Removing sign-in');
@@ -126,7 +127,7 @@ test('sign-in removal stays in progress in the setup step and shell', async () =
 
 test('AI failure marks its setup step and every shell status without losing the running workspace', async () => {
   const { ready } = native(); ready();
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Bridge could not confirm the AI connection'));
   expect(screen.getByText('Needs attention').closest('li')?.className).toBe('step-failed');

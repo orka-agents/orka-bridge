@@ -7,8 +7,8 @@ import type { HelpTopic } from './recovery-info';
 export type ModelState = 'idle' | 'queued' | 'connecting' | 'removing' | 'connected' | 'failed';
 // `enabled` is native permission to touch credentials. `queueable` only permits remembering the
 // creator's choice while the workspace is still arriving. `away` means another place was chosen.
-export default function Model({ enabled, queueable = false, paused = false, away = false, primary = true, onState, onSettled }: {
-  enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; primary?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void;
+export default function Model({ enabled, queueable = false, paused = false, away = false, primary = true, onState, onSettled, onConnectRequest }: {
+  enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; primary?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void; onConnectRequest?: () => void;
 }) {
   // In-memory consent only. It never carries a credential and is consumed once.
   const [queued, setQueued] = useState(false);
@@ -79,6 +79,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
     } catch { setNotice("Couldn't copy. Share the visible error message for help."); }
   }
   function choose() {
+    onConnectRequest?.();
     refocus.current = document.activeElement === retry.current ? 'connect' : undefined;
     if (enabled) void perform('connect'); else if (queueable && !paused) setQueued(true);
   }

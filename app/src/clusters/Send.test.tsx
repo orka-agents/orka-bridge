@@ -1,3 +1,4 @@
+import { openLocalSetup } from '../setup/test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -322,7 +323,9 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
   await waitFor(() => expect(starts).toBe(1));
   expect(sentArgs).toEqual({ documentId: '9b2b93c4-375c-4815-9717-39852a96e411', targetId: target.id, providerId: other.id, expectedSource: source });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('radio', { name: 'On this computer' }));
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await openLocalSetup(user);
+  await user.click(screen.getByRole('button', { name: 'Use this computer' }));
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect((await screen.findByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).readOnly).toBe(false);
 });

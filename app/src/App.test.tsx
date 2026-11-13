@@ -1,3 +1,4 @@
+import { openLocalSetup } from './setup/test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -52,11 +53,11 @@ test('navigation_order', () => {
 test('selected_heading', async () => {
   const user = userEvent.setup();
   render(<App />);
-  expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
   for (const name of ['Designer', 'Clusters', 'Overview']) {
     await user.click(screen.getByRole('button', { name }));
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
-    expect(await screen.findByRole('main', { name: name === 'Clusters' ? 'Where should your agents run?' : name === 'Overview' ? 'Your agents' : name })).toBeTruthy();
+    expect(await screen.findByRole('main', { name: name === 'Clusters' ? 'Places for your agents' : name === 'Overview' ? 'Your agents' : name })).toBeTruthy();
     const selected = screen.getAllByRole('button').filter(button => button.getAttribute('aria-current') === 'page');
     expect(selected).toEqual([screen.getByRole('button', { name })]);
   }
@@ -72,7 +73,7 @@ test('keyboard_activation', async () => {
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Designer');
   await user.tab();
   await user.keyboard('{Enter}');
-  expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
 });
 
 test('navigation starts at the page heading after scrolling another page', async () => {
@@ -192,7 +193,7 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
   }
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/agent folder|Reopen your agent/);
   // Browser preview cannot read native selection, so the host is neither "This computer" nor "No place selected".
-  expect(screen.getByText('Status unavailable')).toBeTruthy();
+  expect(within(screen.getByRole('banner')).getByText('Status unavailable')).toBeTruthy();
   // The Overview page also has a "This computer" heading, so assert on the host chip.
   expect(document.querySelector('.host-chip')?.textContent).not.toContain('This computer');
 });
@@ -206,6 +207,7 @@ test('setup refreshes while another page is open', async () => {
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   localVm = 'failed';
   expect(await within(screen.getByRole('navigation')).findByText('Setup failed', {}, { timeout: 2000 })).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByRole('status').textContent).toContain('Setup failed');
   expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
 });
 
@@ -224,7 +226,7 @@ test('model acknowledgment and observed check counts survive navigation', async 
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('AI connected')).toBeTruthy();
   expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('AI connected');
@@ -250,7 +252,7 @@ test('a running check finishes in the footer after leaving Designer', async () =
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await within(screen.getByRole('contentinfo')).findByText('Running tests…');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
@@ -267,7 +269,7 @@ test('the idle refresh does not erase a delayed selection failure', async () => 
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 1200)); });
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
@@ -282,7 +284,7 @@ test('an unavailable example is not reported as still opening', async () => {
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   expect(await within(screen.getByRole('navigation')).findByText('Example unavailable')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).queryByText('Opening example…')).toBeNull();
@@ -297,7 +299,7 @@ test.each(['unknown', 'unavailable'])('background check status preserves %s outc
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   const expected = state === 'unknown' ? 'Test result unknown' : 'Test status unavailable';
   await within(screen.getByRole('contentinfo')).findByText(expected);
@@ -312,7 +314,7 @@ test('a retained native report for older source is stale in the shared chrome', 
   mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
     : command === 'agent_open' ? { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: reader\n---\nEdited file.', tests: 'Checks', source: { agent: 'b'.repeat(64), tests: 'c'.repeat(64) } }
     : { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: false, source: { agent: 'a'.repeat(64), tests: 'c'.repeat(64) }, report: { verdict: 'passed', cases: [{ id: 'check', question: 'What did the page say?', phase: 'Succeeded', answer: 'Earlier answer', completedTools: [], assertions: [{ id: 'contains-1', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('Tests not run since your edit')).toBeTruthy();
   expect(within(screen.getByRole('contentinfo')).queryByText('1 of 1 tests passing')).toBeNull();
@@ -326,7 +328,7 @@ test('Open example retries a failed read without discarding successful runs', as
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await within(screen.getByRole('navigation')).findByText('Example unavailable');
   await user.click(screen.getByRole('button', { name: 'Clusters' })); fail = false;
@@ -340,7 +342,7 @@ test('a transient setup read failure recovers while off Clusters', async () => {
     : { selected: 'localVm', localVm: 'starting', model: 'locked' }
     : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   vi.stubGlobal('isTauri', true);
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await within(screen.getByRole('navigation')).findByText('Workspace unavailable');
   await user.click(screen.getByRole('button', { name: 'Overview' })); fail = false;
   expect(await within(screen.getByRole('navigation')).findByText('Setting up, step 2 of 5', {}, { timeout: 2000 })).toBeTruthy();
@@ -355,7 +357,7 @@ test('a transient setup read failure does not invalidate an admitted model conne
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   vi.stubGlobal('isTauri', true);
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   fail = true;
   await within(screen.getByRole('navigation')).findByText('Workspace unavailable', {}, { timeout: 2000 });
@@ -392,7 +394,7 @@ test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remem
     if (command === 'engine_call') return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
     return null;
   });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
@@ -404,8 +406,6 @@ test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remem
   await screen.findByRole('heading', { name: 'reader', level: 1 });
   expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
   expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe(context.id);
   expect(uses).toBe(1); expect(calls).not.toContain('send_preflight'); expect(calls).not.toContain('send_start');
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
@@ -429,7 +429,7 @@ test('setup Open example restores the sample after Overview opened another docum
     if (command === 'agent_run_status') return { documentId: (args as { documentId: string }).documentId, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open other' }));
   await screen.findByRole('heading', { name: 'other', level: 1 });
@@ -448,7 +448,7 @@ test('Overview Open retries a transient failure for the same document', async ()
     if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open reader' }));
   await within(screen.getByRole('navigation')).findByText('Example unavailable');
@@ -470,7 +470,7 @@ test('opening the already-local file does not acquire another VM catalog session
     if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('button', { name: 'Refresh tools and models' });
@@ -493,7 +493,7 @@ test('Overview waits for native busy release even when the report is already com
     if (command === 'overview_agents') { lists++; return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' }; }
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await within(screen.getByRole('contentinfo')).findByText('1 of 1 tests passing');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
@@ -513,9 +513,9 @@ test('Clusters reads setup without engine diagnostics or legacy IPC', async () =
   vi.stubGlobal('isTauri', true);
   const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
   const user = userEvent.setup(); render(<App />);
-  expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
   expect(screen.queryByText('Engine diagnostics')).toBeNull();
-  expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status'].includes(command))).toBe(true);
+  expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status', 'cluster_places'].includes(command))).toBe(true);
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_requirements')).toEqual([['setup_requirements', {}]]);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(screen.queryByRole('heading', { name: 'Engine available' })).toBeNull();

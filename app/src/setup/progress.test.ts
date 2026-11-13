@@ -18,7 +18,7 @@ test('one derivation maps native and model state to the five setup steps', () =>
   expect(step(status('ready'), { model: 'queued' })).toBe('Setting up, step 4 of 5');
   expect(step(status('ready'), { model: 'connecting' })).toBe('Setting up, step 4 of 5');
   expect(step(status('ready'), { model: 'connected' })).toBe('Setting up, step 5 of 5');
-  expect(step(status('ready'), { model: 'connected', check: 'running' })).toBe('Setting up, step 5 of 5');
+  expect(step(status('ready'), { model: 'connected', check: 'running', initialAutomatic: true })).toBe('Setting up, step 5 of 5');
   expect(setupView(status('ready'), { model: 'connected' }).step).toBe(5);
 });
 
@@ -37,11 +37,11 @@ test('host selection is native: local only when selected, never inferred while c
   expect(setupView(undefined, { checking: false })).toMatchObject({ place: 'unavailable', line: 'Workspace unavailable' });
 });
 
-test('completion needs a current first test result, never stale, running or unknown ones', () => {
+test('test uncertainty and manual runs do not reopen completed workspace setup', () => {
   const done = (check?: CheckStepState) => setupView(status('ready'), { model: 'connected', check });
-  expect(done('passed')).toMatchObject({ done: true, line: 'This computer ready' });
-  expect(done('failed').done).toBe(true);
-  for (const check of ['running', 'stale', 'unknown', undefined] as const) expect(done(check)).toMatchObject({ done: false, step: 5 });
+  for (const check of ['passed', 'failed', 'stale', 'unknown', 'running'] as const) expect(done(check)).toMatchObject({ done: true, line: 'This computer ready' });
+  expect(done()).toMatchObject({ done: false, step: 5 });
+  expect(setupView(status('ready'), { model: 'connected', check: 'running', initialAutomatic: true })).toMatchObject({ done: false, step: 5 });
 });
 
 test('model and workspace trouble keep their own words and tone', () => {

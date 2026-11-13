@@ -96,6 +96,14 @@ function Find-Control($Root, [string]$Name, $Type) {
     $Root.FindFirst($children, $conditions)
 }
 $button = [System.Windows.Automation.ControlType]::Button
+# A Places row action can carry its row name after the visible verb; match the verb as a leading word.
+function Find-Action($Root, [string]$Label) {
+    $buttons = $Root.FindAll($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, $button))
+    foreach ($candidate in $buttons) { $name = $candidate.Current.Name; if ($name -ceq $Label -or $name.StartsWith("$Label ", [StringComparison]::Ordinal)) { return $candidate } }
+}
+function Get-UiNames($Root) {
+    @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+}
 $menuItem = [System.Windows.Automation.ControlType]::MenuItem
 function Press($Element) {
     $pattern = $null
@@ -230,11 +238,21 @@ try {
         Start-Bridge
         $script:originalPid = $script:app.Id
         Press (Wait-For 'Clusters button missing' { Find-Control $script:window 'Clusters' $button })
-        Wait-For 'Requirements choice did not appear' { (Find-Control $script:window 'Get started' $button) -or (Find-Control $script:window 'Check again' $button) } | Out-Null
+        # The dark walk reuses the light walk's profile, so the welcome may already be dismissed.
+        Wait-For 'Welcome or Places did not appear' { (Find-Control $script:window 'Get started' $button) -or (Find-Action $script:window 'Set up') } | Out-Null
         $start = Find-Control $script:window 'Get started' $button
         if ($start) { Press $start }
+        # Places owns the local entry: this computer's Set up action beside an empty cluster list.
+        $setUp = Wait-For 'Set up action missing on Places' { $control = Find-Action $script:window 'Set up'; if ($control -and $control.Current.IsEnabled -and ((Get-UiNames $script:window) -match 'No clusters added yet')) { $control } }
+        Capture 'places-empty'
+        Press $setUp
         $requirements = Wait-For 'Computer requirements panel missing' { Find-Control $script:window 'Computer requirements' $null }
         Wait-For 'Computer requirements did not settle' { $check = Find-Control $requirements 'Check again' $button; if ($check -and $check.Current.IsEnabled) { $true } } | Out-Null
+        # Memory, Workspace image and Data disk rows come from this native build and must settle.
+        Wait-For 'Local size rows did not settle' {
+            $names = Get-UiNames $script:window
+            ($names -cmatch '^Memory\b') -and ($names -cmatch '^Workspace image\b') -and ($names -cmatch '^Data disk, up to\b') -and !($names -cmatch '^Reading|Unavailable in this build')
+        } | Out-Null
         # Observe the real runner; never inject Ready or select a local workspace.
         Capture 'computer-requirements'
         if (Test-Path $selected) { throw 'Preflight selected a workspace' }

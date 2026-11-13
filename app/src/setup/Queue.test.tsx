@@ -1,3 +1,4 @@
+import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -22,7 +23,8 @@ function native(localVm = 'installing', extra: Partial<Sim> = {}) {
       case 'setup_connect_model': if (sim.connect === 'hang') return new Promise(() => {}); if (sim.connect === 'fail') throw { kind: 'modelConnect' }; return { ready: true };
       case 'setup_remove_model': if (sim.remove === 'hang') return new Promise(() => {}); if (sim.remove === 'fail') throw { kind: 'modelStore' }; return { ready: false };
       case 'setup_requirements': return null;
-      case 'cluster_contexts': return [];
+      case 'cluster_contexts': return [{ id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' }];
+      case 'cluster_discover': return [];
       case 'setup_example': return pair;
       case 'agent_open': return { ...pair, documentId: doc, name: 'web-reader' };
       case 'agent_save': return { ...pair, documentId: doc, name: 'web-reader' };
@@ -50,7 +52,7 @@ async function observe(ipc: { mock: { calls: unknown[][] } }) {
 }
 
 test('a choice during transfer connects exactly once at readiness, with no second click and no disabled status buttons', async () => {
-  const { ipc, sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  const { ipc, sim, connects } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(screen.getByText('Queued', { selector: '.pill' }).closest('button')).toBeNull();
   expect(screen.getByText('Queued', { selector: '.step-result' })).toBeTruthy();
@@ -72,7 +74,7 @@ test('a choice during transfer connects exactly once at readiness, with no secon
 });
 
 test.each([false, undefined])('a platform without native model support (%s) offers no early choice and never reaches for credentials', async modelSupported => {
-  const { ipc, sim, connects } = native('installing', { modelSupported }); render(<App />);
+  const { ipc, sim, connects } = native('installing', { modelSupported }); render(<App />); await openLocalSetup();
   await screen.findAllByText('Setting up, step 1 of 5', {}, wait);
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
   expect(screen.getAllByText('Waiting').length).toBeGreaterThan(0);
@@ -83,7 +85,7 @@ test.each([false, undefined])('a platform without native model support (%s) offe
 });
 
 test('readiness with an unlocked model connects once immediately', async () => {
-  const { sim, connects } = native('starting'); const user = userEvent.setup(); render(<App />);
+  const { sim, connects } = native('starting'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   sim.localVm = 'ready'; sim.model = 'available';
   await screen.findByText(/Connected with GitHub Copilot/, {}, wait);
@@ -91,7 +93,7 @@ test('readiness with an unlocked model connects once immediately', async () => {
 });
 
 test('an unreadable observation holds the intent without firing or clearing it', async () => {
-  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   sim.unreadable = true;
   await within(screen.getByRole('navigation')).findByText('Workspace unavailable', {}, wait);
@@ -105,7 +107,7 @@ test('an unreadable observation holds the intent without firing or clearing it',
 });
 
 test('the hidden Setup keeps polling and finishes an already-submitted intent from Designer', async () => {
-  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   sim.localVm = 'ready'; sim.model = 'available';
@@ -115,7 +117,7 @@ test('the hidden Setup keeps polling and finishes an already-submitted intent fr
 });
 
 test('cancelling ends the attempt: a later readiness does not connect and a fresh attempt needs fresh consent', async () => {
-  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(screen.getByRole('button', { name: 'Cancel' }));
   await screen.findByRole('button', { name: 'Start again' });
@@ -129,7 +131,7 @@ test('cancelling ends the attempt: a later readiness does not connect and a fres
 });
 
 test('a failed attempt drops the intent and a retry reaching readiness does not connect', async () => {
-  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  const { sim, connects } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   sim.localVm = 'failed';
   await screen.findByRole('alert', {}, wait);
@@ -140,7 +142,7 @@ test('a failed attempt drops the intent and a retry reaching readiness does not 
 });
 
 test('a queued connection that fails is not retried without an explicit action', async () => {
-  const { sim, connects } = native('starting', { connect: 'fail' }); const user = userEvent.setup(); render(<App />);
+  const { sim, connects } = native('starting', { connect: 'fail' }); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   sim.localVm = 'ready'; sim.model = 'available';
   await screen.findByText('Bridge could not confirm the AI connection. Check again to reconnect.', {}, wait);
@@ -152,23 +154,26 @@ test('a queued connection that fails is not retried without an explicit action',
 });
 
 test('choosing a cluster clears the held intent even though the view stays mounted', async () => {
-  const { ipc, sim, connects } = native(); const user = userEvent.setup(); render(<App />);
+  const { ipc, sim, connects } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   sim.localVm = 'ready';
   await observe(ipc);
   expect(within(screen.getByRole('navigation')).getByText('AI unavailable')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
-  await screen.findByRole('radio', { name: 'On a cluster you already have' });
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), '00000000-0000-4000-8000-000000000001');
+  await screen.findByText('No Orka was found on this context.');
   sim.model = 'available';
   await observe(ipc); expect(connects()).toBe(0);
-  await user.click(screen.getByRole('radio', { name: 'On this computer' }));
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await openLocalSetup(user);
+  await user.click(screen.getByRole('button', { name: 'Use this computer' }));
   expect(await screen.findByRole('button', { name: 'Connect the AI' })).toBeTruthy();
   await observe(ipc); expect(connects()).toBe(0);
 });
 
 test.each(['notIntegrated', 'cancelled', 'closed', 'closing', 'idle'])('nothing can be queued while the workspace is %s', async localVm => {
-  const { connects } = native(localVm); render(<App />);
+  const { connects } = native(localVm); render(<App />); await openLocalSetup();
   await screen.findByRole('region', { name: 'Workspace setup' });
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
@@ -200,7 +205,7 @@ test('native selection, not the default radio, names the host, including checkin
   expect(chip().textContent).not.toContain('No place selected');
 });
 
-test('an edit makes the first-test step and shell status stale immediately, so setup does not claim completion', async () => {
+test('an edit marks the first test stale immediately without putting the ready workspace back in setup', async () => {
   native('ready', { model: 'available' });
   const snapshot = { documentId: doc, busy: null, state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'a', question: 'What did the page say?', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', expected: 'ok', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null };
   const user = userEvent.setup();
@@ -208,7 +213,7 @@ test('an edit makes the first-test step and shell status stale immediately, so s
     : command === 'setup_connect_model' ? { ready: true } : command === 'setup_requirements' ? null
     : command === 'setup_example' ? pair : command === 'agent_open' ? { ...pair, documentId: doc, name: 'web-reader' }
     : command === 'agent_save' ? new Promise(() => {}) : Promise.reject({ kind: 'unavailable' }));
-  render(<App />);
+  render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await within(screen.getByRole('contentinfo')).findByText('1 of 1 tests passing');
@@ -221,32 +226,32 @@ test('an edit makes the first-test step and shell status stale immediately, so s
   expect(within(screen.getByRole('contentinfo')).getByText('Tests not run since your edit')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText(/tests need running/)).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  expect(within(screen.getByRole('navigation')).getByText('Setting up, step 5 of 5')).toBeTruthy();
-  expect(within(screen.getByRole('navigation')).queryByText('This computer ready')).toBeNull();
-  expect(screen.getByText('Needs running')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).queryByText('Setting up, step 5 of 5')).toBeNull();
+  expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy();
+  expect(within(screen.getByRole('region', { name: 'Workspace setup' })).getByText('Needs running')).toBeTruthy();
 });
 
-test('host and footer dots are busy blue while connecting or removing, amber when it is the creator\'s move, and green only when complete', async () => {
-  native('ready', { model: 'available', connect: 'hang' }); const user = userEvent.setup(); render(<App />);
+test('the single host dot is busy blue while connecting or removing, amber when it is the creator\'s move, and green only when complete', async () => {
+  native('ready', { model: 'available', connect: 'hang' }); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const dots = () => [...document.querySelectorAll('.live-dot')].map(dot => dot.className.replace('live-dot', '').trim());
   await screen.findByRole('button', { name: 'Connect the AI' });
-  expect(dots()).toEqual(['needs-you', 'needs-you']);
+  expect(dots()).toEqual(['needs-you']);
   expect(screen.getByText('Step 4 of 5').className).toContain('status-needs-you');
   await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
   await screen.findAllByText('Connecting the AI…');
-  expect(dots()).toEqual(['busy', 'busy']);
+  expect(dots()).toEqual(['busy']);
   expect(screen.getByText('Step 4 of 5').className).toContain('status-running');
   expect(within(screen.getByRole('contentinfo')).getByText('Connecting the AI…')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('Setting up, step 4 of 5')).toBeTruthy();
 });
 
 test('removing the sign-in is busy blue and a connected model with no test yet is amber, not green', async () => {
-  native('ready', { model: 'available', remove: 'hang' }); const user = userEvent.setup(); render(<App />);
+  native('ready', { model: 'available', remove: 'hang' }); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const dots = () => [...document.querySelectorAll('.live-dot')].map(dot => dot.className.replace('live-dot', '').trim());
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await screen.findByText(/Connected with GitHub Copilot/);
-  expect(dots()).toEqual(['needs-you', 'needs-you']);
+  expect(dots()).toEqual(['needs-you']);
   await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
   await screen.findByText('Removing sign-in…');
-  expect(dots()).toEqual(['busy', 'busy']);
+  expect(dots()).toEqual(['busy']);
 });

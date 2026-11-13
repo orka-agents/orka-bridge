@@ -1,3 +1,4 @@
+import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -33,11 +34,11 @@ test('Get started remembers the welcome without starting a workspace, including 
   expect(screen.getByText('Share it')).toBeTruthy();
   expect(screen.queryByText(/5 minutes/)).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Get started' }));
-  const heading = await screen.findByRole('heading', { name: 'Where should your agents run?' });
+  const heading = await screen.findByRole('heading', { name: 'Places for your agents' });
   expect(document.activeElement).toBe(heading);
   expect(localStorage.getItem(preference)).toBe('1');
   first.unmount(); render(<App />);
-  expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
@@ -52,7 +53,7 @@ test('welcome chrome advances only after Get started, including with denied pref
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(document.querySelectorAll('#page-title')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
 });
 
@@ -68,13 +69,13 @@ test('expert route is available without starting a local workspace', async () =>
   const expert = await screen.findByRole('button', { name: 'I already run Orka on a cluster' });
   expect(expert.matches(':disabled')).toBe(false);
   await user.click(expert);
-  expect(screen.getByRole('radio', { name: 'On a cluster you already have' }).matches(':checked')).toBe(true);
+  expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_select_local')).toBe(false);
 });
 
-test('keyboard disclosure and local radio selection are inert; only Continue starts once', async () => {
+test('keyboard disclosure and opening local setup are inert; only Continue starts once', async () => {
   localStorage.setItem(preference, '1'); const ipc = native(); const user = userEvent.setup(); render(<App />);
-  const local = await screen.findByRole('radio', { name: 'On this computer' });
+  const local = await screen.findByRole('button', { name: 'Set up' });
   local.focus(); await user.keyboard(' ');
   const disclosure = screen.getByRole('button', { name: "What's inside" });
   const details = document.getElementById(disclosure.getAttribute('aria-controls')!);
@@ -93,9 +94,9 @@ test('keyboard disclosure and local radio selection are inert; only Continue sta
 
 test('requirements render the native build values rather than fixed image or memory sizes', async () => {
   localStorage.setItem(preference, '1'); native(unselected, { memoryBytes: 8589934592, imageBytes: 18253611008, stateDiskBytes: 68719476736 });
-  render(<App />);
-  expect(await screen.findByText(/8 GiB of memory/)).toBeTruthy();
-  expect(screen.getByText(/17 GiB workspace image/)).toBeTruthy();
+  render(<App />); await openLocalSetup();
+  expect(screen.getByText('8 GiB')).toBeTruthy();
+  expect(screen.getByText('17 GiB')).toBeTruthy();
   expect(screen.getByText(/64 GiB/)).toBeTruthy();
   expect(screen.queryByText(/6 GB|2 GB|6 GiB/)).toBeNull();
 });
@@ -118,7 +119,7 @@ test.each(['getItem', 'setItem'] as const)('denied preference %s does not preven
   native(); vi.spyOn(Storage.prototype, method).mockImplementation(() => { throw new DOMException('Denied', 'SecurityError'); });
   const user = userEvent.setup(); render(<App />);
   await user.click(await screen.findByRole('button', { name: 'Get started' }));
-  expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
 });
 
 test.each([
@@ -128,8 +129,8 @@ test.each([
   { memoryBytes: 'SECRET_MARKER', imageBytes: 123, stateDiskBytes: 123 },
   { ...requirements, secret: 'SECRET_MARKER' },
 ])('unsupported sizing cannot produce requirements copy or leak data: %j', async value => {
-  localStorage.setItem(preference, '1'); native(unselected, value); render(<App />);
-  expect(await screen.findByText('Workspace size information is unavailable in this build.')).toBeTruthy();
+  localStorage.setItem(preference, '1'); native(unselected, value); render(<App />); await openLocalSetup();
+  expect(await screen.findByText('Workspace size will be shown before download')).toBeTruthy();
   expect(screen.queryByText(/GiB/)).toBeNull();
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
 });

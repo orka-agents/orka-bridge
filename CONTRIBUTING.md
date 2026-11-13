@@ -85,9 +85,9 @@ See [the helper build instructions](app/src-tauri/native/macos/README.md).
 Intel Macs can build the app but cannot run its local VM. Both pinned images
 support model Connect, the workspace catalog and the example agent.
 
-In Clusters, dismiss the one-time welcome with Get started, then press Continue
-for On this computer. On Windows and Apple-silicon Mac, the running VM
-unlocks Use GitHub sign-in, which needs GitHub CLI already installed and signed
+In Clusters, dismiss the one-time welcome with Get started, then press Set up
+on This computer's place and Continue after its computer checks. On Windows and
+Apple-silicon Mac, the running VM unlocks Use GitHub sign-in, which needs GitHub CLI already installed and signed
 in to github.com. Bridge does not install it or open browser sign-in. Starting
 a VM alone does not verify model inference. Local images are debug-only;
 release builds ignore `BRIDGE_DEV_IMAGE_DIR`. Supported release builds select

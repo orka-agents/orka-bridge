@@ -120,7 +120,11 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     }
     Thread.sleep(forTimeInterval: 1)
 }
-var rows = try capture("before-connect", ["Connect the AI", "Remove sign-in"])
+// A ready workspace opens on Places; the local card's Manage reaches the model controls.
+var rows = try capture("local-places-wide", ["Places for your agents", "This computer"])
+require(enabledButton("Manage") != nil && enabledButton("Set up") == nil, "Ready local card must offer only Manage")
+click("Manage", rows)
+rows = try capture("before-connect", ["Connect the AI", "Remove sign-in"])
 click("Connect the AI", rows)
 rows = try capture("connected", ["Connected with GitHub Copilot", "Remove sign-in"])
 click("Remove sign-in", rows)
@@ -255,3 +259,9 @@ localSize(1280, 800)
 scroll(4000)
 _ = try seek("Waiting for answers", -250)
 _ = try capture("local-running-wide", ["Waiting for answers", "Observed for"])
+localSize(540, 900)
+scroll(4000)
+click("Clusters", [])
+_ = try capture("local-manage-compact", ["Back to places", "Remove sign-in"])
+click("Back to places", [])
+_ = try capture("local-places-compact", ["Places for your agents", "This computer"])

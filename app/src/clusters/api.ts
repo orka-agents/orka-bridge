@@ -1,4 +1,5 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { isPlaces, type Place } from '../overview/api';
 
 export type ContextView = { id: string; name: string };
 export type TargetView = { id: string; context_id: string; context_name: string; service_name: string; service_namespace: string; watched_namespace: string; image: string };
@@ -31,6 +32,19 @@ async function call<T>(command: string, args: Record<string, unknown>, valid: (v
     if (failure(error)) throw new ClusterRequestError(error);
   }
   throw new ClusterRequestError({ check, result: 'unknown' });
+}
+export type ClusterPlaceSnapshot = { places: Place[]; selectedKey: string | null };
+// Unlike Overview's refresh, this reads only the native session's retained views.
+export async function clusterPlaces(): Promise<ClusterPlaceSnapshot | undefined> {
+  if (!isTauri()) return;
+  try {
+    const value: unknown = await invoke('cluster_places', {});
+    if (!object(value) || !keys(value, ['places', 'selectedKey'])) return;
+    const retained = { places: value.places, historyState: 'complete', unobserved: [] };
+    if (isPlaces(retained) && (value.selectedKey === null || typeof value.selectedKey === 'string' && retained.places.some(p => p.key === value.selectedKey))) {
+      return { places: retained.places, selectedKey: value.selectedKey };
+    }
+  } catch { /* Passive observation never exports native diagnostics or renews access. */ }
 }
 export const contexts = () => call('cluster_contexts', {}, (v): v is ContextView[] => list(v, context), 'configuration');
 export const reloadContexts = () => call('cluster_reload', {}, (v): v is ContextView[] => list(v, context), 'configuration');

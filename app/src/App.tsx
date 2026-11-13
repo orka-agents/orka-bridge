@@ -77,6 +77,7 @@ export default function App() {
   const [model, setModel] = useState<ModelState>('idle');
   const [catalogEpoch, setCatalogEpoch] = useState(0);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [localSetupView, setLocalSetupView] = useState(false);
   const catalogContext = useRef('');
   const observeModel = useCallback((value: ModelState) => { setModel(value); setCatalogEpoch(epoch => epoch + 1); }, []);
   const observeWorkspaceAction = useCallback((pending: boolean) => {
@@ -98,8 +99,9 @@ export default function App() {
   const [sampleDirty, setSampleDirty] = useState(false);
   const observeSampleRun = useCallback((snapshot: RunSnapshot | undefined) => { setSampleResult({ snapshot }); }, []);
   const sampleObserved = sampleResult !== undefined;
+  const [sampleCheck, setSampleCheck] = useState(0);
   useEffect(() => {
-    if (!sampleObserved) return;
+    if (!sampleObserved && sampleCheck === 0) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const observe = async () => {
@@ -110,7 +112,7 @@ export default function App() {
     };
     void observe();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [sampleObserved, observeSampleRun]);
+  }, [sampleObserved, sampleCheck, observeSampleRun]);
   const observeRun = useCallback((snapshot: RunSnapshot | undefined, id: string) => {
     setRun(snapshot); setRunUnavailable(!snapshot);
     if (id === SAMPLE_DOCUMENT_ID) observeSampleRun(snapshot);
@@ -147,7 +149,7 @@ export default function App() {
   const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
   const firstTest = useFirstTest({
     ready: setup?.selected === 'localVm' && setup.localVm === 'ready' && model === 'connected' && !workspaceBusy && !remote,
-    canOpen: page === 'Clusters' && setup?.localVm === 'ready' && !workspaceBusy && !remote,
+    canOpen: page === 'Clusters' && localSetupView && setup?.localVm === 'ready' && !workspaceBusy && !remote,
     sampleDirty,
     onOpen: () => openDesigner(SAMPLE_DOCUMENT_ID),
     onSnapshot: observeSampleRun,
@@ -157,7 +159,9 @@ export default function App() {
     : !sample || sample.state === 'unknown' ? 'unknown' : sample.state === 'running' ? 'running' : sample.state === 'complete' ? sample.report?.verdict : undefined
     : firstTest;
   // Tab, footer and the Setup card share this derivation. Native selection, not the default radio, names the host.
-  const view = setupView(setup, { checking, model, check: firstCheck });
+  const initialAutomatic = firstTest === 'running';
+  const firstTestResult = sampleSource !== null && sample?.report ? { failed: sample.report.cases.filter(check => check.verdict === 'failed').length } : undefined;
+  const view = setupView(setup, { checking, model, check: firstCheck, initialAutomatic });
   const { line: setupLine, detail, tone: hostTone } = view;
   const workspaceReady = setup?.localVm === 'ready';
   const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
@@ -180,6 +184,11 @@ export default function App() {
   const openDesigner = (id = documentId) => {
     if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
     setDocumentId(id); setExampleOpen(true); setPage('Designer');
+  };
+  const checkFirstTest = () => {
+    setSampleCheck(value => value + 1);
+    // Retry an unreadable source through Designer's existing guarded sample-open path.
+    if (sampleSource === null) openDesigner(SAMPLE_DOCUMENT_ID);
   };
   return (
     <div className="app-shell">
@@ -212,7 +221,7 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup place={place} onPlace={choosePlace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
+          <Setup place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
         {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} documentId={documentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} actions={<>
@@ -232,14 +241,13 @@ export default function App() {
         </section>}
       </main>
       <footer className="status-bar">
-        <span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" />
-        <span>{remote ? place.target ? `${placeName} · Access confirmed` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : setupLine}</span>
-        {!remote && !welcome && hostDetail !== setupLine ? <><span aria-hidden="true">·</span><span>{hostDetail}</span></> : null}
+        {!remote && <span>{welcome ? 'Nothing is set up yet' : !view.done ? setupLine : undefined}</span>}
+        {!remote && !welcome && hostDetail !== setupLine && <span>{hostDetail}</span>}
         {exampleState === 'loaded' && <><span aria-hidden="true">·</span><span aria-live="polite" aria-atomic="true">{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
-          page !== 'Clusters' ? (remote ? placeName : hostDetail === setupLine ? setupLine : `${setupLine} · ${hostDetail}`) : undefined,
-          page !== 'Designer' ? checks : undefined,
+          page !== 'Clusters' || !localSetupView ? `Local workspace: ${hostDetail === setupLine ? setupLine : `${setupLine} · ${hostDetail}`}` : undefined,
+          page !== 'Designer' && checks ? `Checks: ${checks}` : undefined,
         ].filter(Boolean).join(' · ')}</span>
       </footer>
     </div>

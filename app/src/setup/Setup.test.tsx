@@ -1,3 +1,4 @@
+import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -31,7 +32,7 @@ test('reopen observes a lost workspace immediately without replaying setup, Conn
     if (command === 'setup_connect_model') return { ready: true };
     throw { kind: 'unavailable' };
   });
-  mockIPC(ipc); const user = userEvent.setup(); render(<App />);
+  mockIPC(ipc); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(await screen.findByText('Connected with GitHub Copilot.')).toBeTruthy();
   lost = true;
@@ -49,7 +50,7 @@ test('running native session unlocks only its explicit model command', async () 
     if (command === 'setup_connect_model') return { ready: true };
     throw new Error('Forbidden command');
   });
-  const user = userEvent.setup(); mockIPC(ipc); render(<App />);
+  const user = userEvent.setup(); mockIPC(ipc); render(<App />); await openLocalSetup();
   const connect = await screen.findByRole('button', { name: 'Connect the AI' });
   expect(connect.hasAttribute('disabled')).toBe(false);
   expect(ipc.mock.calls.some(([command]) => command === 'setup_connect_model')).toBe(false);
@@ -67,7 +68,7 @@ test('failed Connect refreshes retained guest details without locking the runnin
     if (command === 'setup_connect_model') { failed = true; throw { kind: 'modelConnect', message: 'SECRET_MARKER' }; }
     throw new Error('Forbidden command');
   });
-  const user = userEvent.setup(); mockIPC(ipc); render(<App />);
+  const user = userEvent.setup(); mockIPC(ipc); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(screen.queryByText(detail)).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));
@@ -80,20 +81,20 @@ test('failed Connect refreshes retained guest details without locking the runnin
 
 test('the chooser only reads setup and build information, without runtime or credential effects', async () => {
   const ipc = native(); const fetch = vi.fn(); vi.stubGlobal('fetch', fetch); render(<App />);
-  expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
   expect(screen.getByText(unavailable)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
-  const existing = screen.getByRole('radio', { name: 'On a cluster you already have' });
+  const existing = screen.getByRole('button', { name: 'Add a place' });
   expect(existing.matches(':disabled')).toBe(false);
-  expect(ipc.mock.calls.every(call => ['setup_status', 'setup_requirements', 'engine_call'].includes(call[0]))).toBe(true);
+  expect(ipc.mock.calls.every(call => ['setup_status', 'setup_requirements', 'cluster_places'].includes(call[0]))).toBe(true);
   expect(fetch).not.toHaveBeenCalled(); expect(screen.queryByRole('textbox')).toBeNull();
 });
 
 test('remount observes the native choice without inventing workspace or model readiness', async () => {
-  const ipc = native(); const user = userEvent.setup(); const first = render(<App />);
+  const ipc = native(); const user = userEvent.setup(); const first = render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   expect(await screen.findByRole('region', { name: 'Workspace setup' })).toBeTruthy();
-  first.unmount(); render(<App />);
+  first.unmount(); render(<App />); await openLocalSetup();
   await screen.findByRole('region', { name: 'Workspace setup' });
   expect(screen.getByText(unavailable)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
@@ -107,6 +108,7 @@ test.each([null, 'attempted'])('a lost selection reply preserves durable intent 
   let intentAtSelection: string | null = null;
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_status') return { selected: selected ? 'localVm' : null, localVm: !selected ? 'idle' : ++reads === 1 ? 'starting' : 'ready', model: selected && reads > 1 ? 'available' : 'locked' };
+    if (command === 'cluster_places') return { places: [], selectedKey: null };
     if (command === 'setup_requirements') return null;
     if (command === 'setup_select_local') {
       intentAtSelection = localStorage.getItem('bridge.firstTest.v1'); selected = true;
@@ -115,21 +117,23 @@ test.each([null, 'attempted'])('a lost selection reply preserves durable intent 
     throw Error('Forbidden command: ' + command);
   });
   mockIPC(ipc); const user = userEvent.setup(); const view = render(<Setup onOpenExample={vi.fn()} />);
+  await openLocalSetup(user);
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   expect(intentAtSelection).toBe(previous ?? 'pending');
   await act(async () => { loseReply(); });
   await screen.findByText('Your workspace is running on this computer.', {}, { timeout: 2000 });
   view.unmount(); render(<Setup onOpenExample={vi.fn()} />);
+  await openLocalSetup(user);
   await screen.findByText('Your workspace is running on this computer.');
   expect(localStorage.getItem('bridge.firstTest.v1')).toBe(previous ?? 'pending');
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toHaveLength(1);
-  expect(ipc.mock.calls.every(([command]) => ['setup_status', 'setup_requirements', 'setup_example', 'setup_select_local'].includes(command))).toBe(true);
+  expect(ipc.mock.calls.every(([command]) => ['setup_status', 'setup_requirements', 'setup_example', 'setup_select_local', 'cluster_places'].includes(command))).toBe(true);
 });
 
 test('browser preview never pretends that native persistence or integration works', async () => {
-  vi.stubGlobal('isTauri', false); const ipc = vi.fn(); mockIPC(ipc); render(<App />);
+  vi.stubGlobal('isTauri', false); const ipc = vi.fn(); mockIPC(ipc); render(<App />); await openLocalSetup();
   expect(await screen.findByText('Workspace setup is not available in this preview.')).toBeTruthy();
-  expect(screen.getByRole('radio', { name: 'On this computer' }).matches(':disabled')).toBe(true);
+  expect(screen.queryByRole('radio')).toBeNull();
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
   expect(ipc).not.toHaveBeenCalled();
 });
@@ -137,7 +141,7 @@ test('browser preview never pretends that native persistence or integration work
 test('unsupported native replies cannot claim availability or leak extra data', async () => {
   native(); mockIPC(command => command === 'setup_status'
     ? { ...status(), model: 'ready', credential: 'SECRET_MARKER' } : Promise.reject({ kind: 'unavailable' }));
-  render(<App />); expect(await screen.findByRole('alert')).toBeTruthy();
+  render(<App />); await openLocalSetup(); expect(await screen.findByRole('alert')).toBeTruthy();
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
 });
@@ -145,7 +149,7 @@ test('unsupported native replies cannot claim availability or leak extra data', 
 test('save failures do not mark the choice saved and never render rejected paths', async () => {
   native(); mockIPC(command => command === 'setup_status' ? status() : command === 'setup_requirements' ? null
     : Promise.reject({ kind: 'storage', message: '/private/SECRET_MARKER' }));
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   expect(await screen.findByRole('alert')).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
@@ -156,7 +160,7 @@ test('a failed initial read can be checked again without changing the saved choi
   native(); let reads = 0;
   mockIPC(command => command === 'setup_status'
     ? ++reads === 1 ? Promise.reject('SECRET_MARKER') : status('localVm') : Promise.reject({ kind: 'unavailable' }));
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   expect(await screen.findByRole('alert')).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Check again' }));
@@ -175,7 +179,7 @@ test('Continue shows real startup states and a ready session can open the owned 
     if (command === 'send_history') return [];
     throw { kind: 'unavailable' };
   }); mockIPC(ipc);
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await screen.findByRole('button', { name: 'Continue' });
   expect(screen.queryByRole('button', { name: 'Read its instructions' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Continue' }));
@@ -186,7 +190,7 @@ test('Continue shows real startup states and a ready session can open the owned 
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   expect(await screen.findByText('exact agent source')).toBeTruthy();
   expect(screen.getByText('exact test source')).toBeTruthy();
-  expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_requirements', 'setup_select_local', 'setup_example', 'agent_open', 'agent_run_status', 'send_status', 'send_history', 'engine_call'].includes(name))).toBe(true);
+  expect(ipc.mock.calls.every(([name]) => ['setup_status', 'setup_requirements', 'setup_select_local', 'setup_example', 'agent_open', 'agent_run_status', 'send_status', 'send_history', 'engine_call', 'cluster_places'].includes(name))).toBe(true);
 });
 
 test.each([
@@ -195,7 +199,7 @@ test.each([
 ])('keeps retained failure reason plain and behind disclosure: %s', async localVmError => {
   native(); mockIPC(command => command === 'setup_status'
     ? { ...status('localVm'), localVm: 'failed', localVmError } : Promise.reject({ kind: 'unavailable' }));
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   expect((await screen.findByRole('alert')).textContent).toContain('Your workspace and agent files are kept.');
   expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
   expect(screen.queryByText(localVmError)).toBeNull();
@@ -212,7 +216,7 @@ test('a delayed Continue reply stays pending across repeat activation and naviga
   const ipc = vi.fn(command => command === 'setup_status' ? status(selected) : command === 'setup_select_local'
     ? new Promise(resolve => { complete = resolve; }) : Promise.reject({ kind: 'unavailable' }));
   mockIPC(ipc);
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'Continue' }));
@@ -238,54 +242,51 @@ function nativeDirect() {
   return ipc;
 }
 
-test('without a place prop Setup keeps its own local/cluster toggle (compatibility default)', async () => {
+test('standalone Setup navigates through Places without implicit destination or workspace effects', async () => {
   const ipc = nativeDirect(); const user = userEvent.setup();
   render(<Setup onOpenExample={vi.fn()} />);
-  await screen.findByRole('radio', { name: 'On this computer' });
+  await screen.findByRole('button', { name: 'Set up' });
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_contexts');
-  await user.click(screen.getByRole('radio', { name: 'On a cluster you already have' }));
+  await user.click(screen.getByRole('button', { name: 'Add a place' }));
   expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
-  await user.click(screen.getByRole('radio', { name: 'On this computer' }));
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await openLocalSetup(user);
   expect(screen.queryByRole('combobox', { name: 'kubectl context' })).toBeNull();
+  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
 });
 
-test('a place prop derives the radio selection and keeps ClusterCard mounted hidden, not refetched, after first use', async () => {
-  const ipc = nativeDirect();
-  const onPlace = vi.fn();
+test('controlled destination changes do not navigate; visited ClusterCard stays mounted hidden without refetching contexts', async () => {
+  const ipc = nativeDirect(); const user = userEvent.setup(); const onPlace = vi.fn();
   const view = render(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
-  await screen.findByRole('radio', { name: 'On this computer' });
-  expect(screen.getByRole('radio', { name: 'On this computer' }).matches(':checked')).toBe(true);
-  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_contexts');
-
-  view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'cluster' }} onPlace={onPlace} />);
-  expect(screen.getByRole('radio', { name: 'On a cluster you already have' }).matches(':checked')).toBe(true);
-  expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
-  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_contexts')).toHaveLength(1);
-
-  view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
-  expect(screen.getByRole('radio', { name: 'On this computer' }).matches(':checked')).toBe(true);
-  expect(screen.queryByRole('combobox', { name: 'kubectl context' })).toBeNull();
-
+  await user.click(await screen.findByRole('button', { name: 'Add a place' }));
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
+  const card = document.querySelector('.cluster-card');
   view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'cluster' }} onPlace={onPlace} />);
   expect(screen.getByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  expect(screen.queryByRole('combobox', { name: 'kubectl context' })).toBeNull();
+  expect(document.querySelector('.cluster-card')).toBe(card);
+  view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
+  expect(screen.getByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  expect(screen.getByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_contexts')).toHaveLength(1);
+  expect(onPlace).not.toHaveBeenCalled();
 });
 
-test('a shared place change alone never admits setup or starts the workspace', async () => {
-  const ipc = nativeDirect();
-  const view = render(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={vi.fn()} />);
-  await screen.findByRole('radio', { name: 'On this computer' });
-  view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'cluster' }} onPlace={vi.fn()} />);
-  await screen.findByRole('combobox', { name: 'kubectl context' });
-  view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={vi.fn()} />);
-  await screen.findByRole('radio', { name: 'On this computer' });
-  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
-  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_change_local');
-  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_cancel_local');
-  expect(ipc.mock.calls.every(([c]) => ['setup_status', 'setup_requirements', 'cluster_contexts'].includes(c))).toBe(true);
+test('a shared place change alone never admits setup, starts the workspace or opens cluster discovery', async () => {
+  const ipc = nativeDirect(); const onPlace = vi.fn();
+  const view = render(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
+  await screen.findByRole('button', { name: 'Set up' });
+  view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'cluster' }} onPlace={onPlace} />);
+  expect(screen.getByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
+  view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
+  expect(screen.getByRole('button', { name: 'Set up' })).toBeTruthy();
+  expect(ipc.mock.calls.every(([c]) => ['setup_status', 'setup_requirements', 'cluster_places'].includes(c))).toBe(true);
+  expect(onPlace).not.toHaveBeenCalled();
 });
 
-test('cluster configuration survives returning to an already-selected local workspace and back, without auto-using the cluster again', async () => {
+test('cluster configuration survives tab navigation without automatically using the cluster again', async () => {
   vi.stubGlobal('isTauri', true);
   const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' };
   const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name,
@@ -298,34 +299,19 @@ test('cluster configuration survives returning to an already-selected local work
     if (command === 'cluster_use') return { status: 'needServiceAccount', providers: [], failure: null };
     throw Error('Unsupported');
   });
-  mockIPC(ipc);
-  const user = userEvent.setup();
-  const view = render(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={vi.fn()} />);
-  // Already selected and running locally: Setup shows the workspace-setup-grid, not the chooser.
-  await screen.findByText('Your workspace is running on this computer.');
-
-  view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'cluster' }} onPlace={vi.fn()} />);
+  mockIPC(ipc); const user = userEvent.setup();
+  const props = { onOpenExample: vi.fn(), onPlace: vi.fn(), place: { kind: 'thisComputer' } as const };
+  const view = render(<Setup {...props} />);
+  await user.click(await screen.findByRole('button', { name: 'Add a place' }));
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
   await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
-  await screen.findByText('Orka found');
-  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
-  const account = await screen.findByRole('textbox', { name: 'ServiceAccount name' });
-  await user.type(account, 'remembered-account');
-  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toHaveLength(1);
-
-  // Back to the already-selected local workspace: Setup returns to the setup-grid view. ClusterCard
-  // must stay mounted (hidden), not be torn down and lose its context/target/account.
-  view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={vi.fn()} />);
-  await screen.findByText('Your workspace is running on this computer.');
+  await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
+  await user.type(await screen.findByRole('textbox', { name: 'ServiceAccount name' }), 'remembered-account');
+  view.rerender(<Setup {...props} active={false} />);
   expect(screen.queryByRole('combobox', { name: 'kubectl context' })).toBeNull();
-
-  view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'cluster' }} onPlace={vi.fn()} />);
+  view.rerender(<Setup {...props} active />);
   expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe(context.id);
-  expect(screen.getByText('Orka found')).toBeTruthy();
-  const reenteredAccount = screen.getByRole('textbox', { name: 'ServiceAccount name' }) as HTMLInputElement;
-  expect(reenteredAccount.value).toBe('remembered-account');
-  // No auto re-Use: the remembered access confirmation is gone and no extra cluster_use fired.
-  expect(screen.queryByText('Access confirmed')).toBeNull();
+  expect((screen.getByRole('textbox', { name: 'ServiceAccount name' }) as HTMLInputElement).value).toBe('remembered-account');
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toHaveLength(1);
-  expect(screen.getByRole('button', { name: 'Use this cluster' })).toBeTruthy();
+  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_contexts')).toHaveLength(1);
 });

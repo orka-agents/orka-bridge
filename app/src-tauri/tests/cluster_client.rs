@@ -17,6 +17,57 @@ use std::{
 mod forward;
 
 #[tokio::test]
+async fn places_snapshot_is_passive_and_selection_is_exact_and_revocable() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let (session, _) = reading_session(
+        config(&api.start(), json!({"token":"static-fixture"})),
+        &orka,
+    );
+    assert_eq!(reply(session.places())["places"], json!([]));
+    assert_eq!(reply(session.places())["selectedKey"], Value::Null);
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    api.calls.lock().unwrap().clear();
+    orka.calls.lock().unwrap().clear();
+    let view = reply(session.places());
+    assert_eq!(view["places"].as_array().unwrap().len(), 1);
+    assert_eq!(view["selectedKey"], view["places"][0]["key"]);
+    assert_eq!(view["places"][0]["observedAt"], Value::Null);
+    assert_eq!(view["places"][0]["stale"], true);
+    assert_eq!(view["places"][0]["agents"], json!([]));
+    assert_eq!(reply(session.places()), view);
+    assert!(api.calls.lock().unwrap().is_empty());
+    assert!(orka.calls.lock().unwrap().is_empty());
+    assert!(!view.to_string().contains("static-fixture"));
+    *api.replacement.lock().unwrap() = true;
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    let both = reply(session.places());
+    let places = both["places"].as_array().unwrap();
+    assert_eq!(places.len(), 2);
+    assert_eq!(places[0]["context"], places[1]["context"]);
+    assert_ne!(places[0]["key"], places[1]["key"]);
+    assert_ne!(both["selectedKey"], view["selectedKey"]);
+    assert!(places
+        .iter()
+        .any(|place| place["key"] == both["selectedKey"]));
+    session.discover(&context).await.unwrap();
+    assert_eq!(reply(session.places())["selectedKey"], Value::Null);
+    assert_eq!(reply(session.places())["places"], both["places"]);
+    session.reload().await.unwrap();
+    assert_eq!(reply(session.places())["selectedKey"], Value::Null);
+    assert_eq!(reply(session.places())["places"], both["places"]);
+}
+
+#[tokio::test]
 async fn overview_bound_watched_namespace_must_still_be_explicit() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());

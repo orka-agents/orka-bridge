@@ -124,7 +124,7 @@ impl Inventory {
             }
         }
     }
-    fn snapshot(&self) -> Vec<Place> {
+    pub(crate) fn snapshot(&self) -> Vec<Place> {
         self.entries
             .lock()
             .unwrap()

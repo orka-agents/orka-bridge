@@ -89,6 +89,18 @@ func pressable(_ element: AXUIElement, _ label: String) -> Bool {
     ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == label }
         && attribute(element, "AXEnabled") as? Bool == true && actions(element).contains("AXPress")
 }
+// A Places row action can carry its row name after the visible verb; match the verb as a leading word.
+func pressableAction(_ element: AXUIElement, _ label: String) -> Bool {
+    attribute(element, "AXRole") as? String == "AXButton"
+        && ["AXTitle", "AXDescription"].contains { key in
+            guard let value = attribute(element, key) as? String else { return false }
+            return value == label || value.hasPrefix(label + " ")
+        }
+        && attribute(element, "AXEnabled") as? Bool == true && actions(element).contains("AXPress")
+}
+func shownStrings(_ root: AXUIElement) -> [String] {
+    nodes(root).flatMap { element in ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String } }
+}
 func writableTextArea(_ element: AXUIElement) -> Bool {
     var writable = DarwinBoolean(false)
     return attribute(element, "AXRole") as? String == "AXTextArea" && AXUIElementIsAttributeSettable(element, "AXValue" as CFString, &writable) == .success && writable.boolValue
@@ -219,10 +231,24 @@ let pid = app!.processIdentifier
 let originalID = windowInfo()!.0
 var main = find(root, "main-window") { attribute($0, "AXRole") as? String == "AXWindow" }
 press(find(main, "Clusters") { pressable($0, "Clusters") })
-wait("Requirements choice did not appear") { nodes(main).contains { pressable($0, "Get started") || pressable($0, "Check again") } }
+// The dark walk reuses the light walk's profile, so the welcome may already be dismissed.
+wait("Welcome or Places did not appear") { nodes(main).contains { pressable($0, "Get started") || pressableAction($0, "Set up") } }
 if let start = nodes(main).first(where: { pressable($0, "Get started") }) { press(start) }
+// Places owns the local entry: this computer's Set up action beside an empty cluster list.
+let setUp = find(main, "places-set-up") {
+    pressableAction($0, "Set up") && shownStrings(main).contains { $0.contains("No clusters added yet") }
+}
+try command("/usr/sbin/screencapture", ["-x", "-o", "-l", String(windowInfo()!.0), "\(output)/places-empty.png"])
+press(setUp)
 let requirements = find(main, "computer-requirements-panel") { text($0).contains("Computer requirements") }
 _ = find(requirements, "computer-requirements") { pressable($0, "Check again") }
+// Memory, Workspace image and Data disk rows must settle without an engineering-build caveat.
+currentStage = "local-size-block"; print("STAGE: \(currentStage)")
+wait("Local size rows did not settle") {
+    let shown = shownStrings(main)
+    return ["Memory", "Workspace image", "Data disk, up to"].allSatisfy { label in shown.contains { $0 == label || $0.hasPrefix(label + " ") } }
+        && !shown.contains { $0.hasPrefix("Reading") || $0.contains("Unavailable in this build") }
+}
 // Capture the runner observations as drawn, without selecting local or asserting Ready.
 try command("/usr/sbin/screencapture", ["-x", "-o", "-l", String(windowInfo()!.0), "\(output)/computer-requirements.png"])
 check(!FileManager.default.fileExists(atPath: selected), "Preflight selected a workspace")

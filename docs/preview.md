@@ -88,13 +88,13 @@ describe these prompts.
 
 ## Set up and run the example
 
-1. Open **Clusters**, Bridge's workspace setup screen. Choose **Get started**
-   on the first visit, then **On this computer** and **Continue**.
+1. Open **Clusters**. Choose **Get started** on the first visit, then
+   **Set up** on **This computer** and **Continue**.
 2. Leave Bridge open while it downloads, verifies and installs the image,
    then starts the VM. You don't need to choose an image or download URL.
 3. Once ready, choose **Use GitHub sign-in** in the model section, having
    read the token warning above. Wait for the model to connect.
-4. Choose **Open example** to open `web-reader` in **Designer**, the agent
+4. Choose **Read its instructions** to open `web-reader` in **Designer**, the agent
    editor. Its files live in `Orka/agents/web-reader` under your home folder.
 5. Choose **Run tests** on **Tests on local**. Save any edits before running.
    For the unchanged example, look for **1 of 1 passed**.

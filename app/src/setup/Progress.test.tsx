@@ -1,9 +1,10 @@
+import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
-import { SetupSteps } from './Steps';
+import { SetupProgress, SetupSteps } from './Steps';
 
 const pair = { agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\nkmx:\n  tools:\n    - kind: builtin\n      name: web_fetch\n---\nFetch before answering.', tests: 'The checksum check.' };
 const progress = { phase: 'materializing', bytes: 1200000000, totalBytes: 3000000000, elapsedMs: 20000, remainingMs: 30000 };
@@ -27,8 +28,38 @@ function native(initial = 'installing', numbers: { phase: string; bytes: number 
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
+test.each([
+  ['stale', undefined, 'Run the test again', 'Needs running', 'needs-you', undefined],
+  ['stale', 1, 'Run the test again', 'Needs running', 'needs-you', undefined],
+  ['unknown', undefined, 'Check again', 'Result unknown', 'not-started', undefined],
+  ['unknown', 1, 'Check again', 'Result unknown', 'not-started', undefined],
+  ['running', undefined, undefined, 'Running test', 'running', undefined],
+  ['passed', 0, 'Open your test result', 'Ready', 'passed', undefined],
+  ['failed', undefined, 'Check again', 'Ready', 'passed', undefined],
+  ['failed', 0, 'Open your test result', 'Ready', 'passed', undefined],
+  ['failed', 1, 'Open your test result', 'Ready', 'passed', '1 test failing'],
+  ['failed', 2, 'Open your test result', 'Ready', 'passed', '2 tests failing'],
+] as const)('workspace card separates %s evidence (%s failures) from setup', (firstCheck, count, primary, badge, tone, summary) => {
+  render(<SetupProgress status={{ selected: 'localVm', localVm: 'ready', model: 'available' }} modelState="connected"
+    firstCheck={firstCheck} firstTestResult={count === undefined ? undefined : { failed: count }}
+    onCheckFirstTest={() => {}} onOpenExample={() => {}} busy={false} stopping={false}
+    onCancel={() => {}} onRestart={() => {}} onChange={() => {}} />);
+  const region = screen.getByRole('region', { name: 'Workspace setup' });
+  expect(within(region).queryByText('Step 5 of 5')).toBeNull();
+  expect(within(region).getByText(badge).className).toContain(`status-${tone}`);
+  const result = within(region).queryByRole('button', { name: 'Open your test result' });
+  expect(!!result).toBe(count !== undefined);
+  if (result && (firstCheck === 'stale' || firstCheck === 'unknown')) expect(result.className).toBe('workspace-secondary');
+  expect(within(region).queryByText(/\d+ tests? failing/)?.textContent).toBe(summary);
+  if (summary) expect(within(region).getByRole('status').compareDocumentPosition(within(region).getByText(summary)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  if (primary) {
+    const button = within(region).getByRole('button', { name: primary });
+    expect(button.className).toBe('workspace-primary');
+  } else expect(region.querySelector('.workspace-primary')).toBeNull();
+});
+
 test('five steps show native transfer bytes and ETA in one bar, with expandable details', async () => {
-  native(); const user = userEvent.setup(); render(<App />);
+  native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await screen.findByRole('heading', { name: 'Getting your workspace ready' });
   const steps = screen.getByRole('list', { name: 'Setup steps' });
   expect(within(steps).getAllByRole('listitem')).toHaveLength(5);
@@ -49,7 +80,7 @@ test('five steps show native transfer bytes and ETA in one bar, with expandable 
 });
 
 test('tab, footer and card agree on one step index and the model action is available during transfer', async () => {
-  native(); render(<App />);
+  native(); render(<App />); await openLocalSetup();
   expect(await within(screen.getByRole('navigation')).findByText('Setting up, step 1 of 5')).toBeTruthy();
   expect(within(screen.getByRole('contentinfo')).getByText('Setting up, step 1 of 5')).toBeTruthy();
   expect(screen.getByText('Step 1 of 5')).toBeTruthy();
@@ -59,7 +90,7 @@ test('tab, footer and card agree on one step index and the model action is avail
 });
 
 test('compact order puts the model action before the long step history, with completed rows as single lines', async () => {
-  native(); render(<App />);
+  native(); render(<App />); await openLocalSetup();
   const model = (await screen.findByRole('heading', { name: 'Connect the AI' })).closest('section')!;
   const history = screen.getByRole('list', { name: 'Setup steps' });
   const progress = screen.getByRole('region', { name: 'Workspace setup' });
@@ -69,7 +100,7 @@ test('compact order puts the model action before the long step history, with com
 });
 
 test('startup uses the same bar, labels its time as a rough estimate and shows native elapsed time', async () => {
-  native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 12000, remainingMs: null }); render(<App />);
+  native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 12000, remainingMs: null }); render(<App />); await openLocalSetup();
   const bar = await screen.findByRole('progressbar', { name: 'Workspace setup progress' });
   expect(Number(bar.getAttribute('aria-valuenow'))).toBeGreaterThanOrEqual(70);
   expect(Number(bar.getAttribute('aria-valuenow'))).toBeLessThan(100);
@@ -81,7 +112,7 @@ test('startup uses the same bar, labels its time as a rough estimate and shows n
 });
 
 test('startup past its estimate stays incomplete and says it is taking longer', async () => {
-  native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 95000, remainingMs: null }); render(<App />);
+  native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 95000, remainingMs: null }); render(<App />); await openLocalSetup();
   const bar = await screen.findByRole('progressbar', { name: 'Workspace setup progress' });
   expect(Number(bar.getAttribute('aria-valuenow'))).toBeLessThan(100);
   expect(screen.getByText(/Taking longer than the rough 30-second estimate/)).toBeTruthy();
@@ -90,7 +121,7 @@ test('startup past its estimate stays incomplete and says it is taking longer', 
 });
 
 test('unavailable progress never fabricates bytes or time left, and the bar stays indeterminate', async () => {
-  native('installing', null); render(<App />);
+  native('installing', null); render(<App />); await openLocalSetup();
   await screen.findByRole('list', { name: 'Setup steps' });
   const bar = screen.getByRole('progressbar');
   expect(bar.hasAttribute('aria-valuenow')).toBe(false);
@@ -98,7 +129,7 @@ test('unavailable progress never fabricates bytes or time left, and the bar stay
 });
 
 test('the one bar never completes before native ready and is gone once ready', async () => {
-  const { ready } = native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 31000, remainingMs: null }); render(<App />);
+  const { ready } = native('starting', { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 31000, remainingMs: null }); render(<App />); await openLocalSetup();
   await screen.findByRole('progressbar');
   ready();
   await waitFor(() => expect(screen.queryByRole('progressbar')).toBeNull(), { timeout: 2000 });
@@ -108,7 +139,7 @@ test('the one bar never completes before native ready and is gone once ready', a
 });
 
 test('keyboard Cancel then start again calls native retry and keeps the Meet panel', async () => {
-  const { ipc } = native(); const user = userEvent.setup(); render(<App />);
+  const { ipc } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const cancel = await screen.findByRole('button', { name: 'Cancel' }); cancel.focus();
   await user.keyboard('{Enter}');
   const retry = await screen.findByRole('button', { name: 'Start again' });
@@ -120,7 +151,7 @@ test('keyboard Cancel then start again calls native retry and keeps the Meet pan
 });
 
 test('Meet opens the owned example for editing without Run commands', async () => {
-  const { ipc } = native(); const user = userEvent.setup(); render(<App />);
+  const { ipc } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   expect(await screen.findByRole('heading', { name: 'web-reader' })).toBeTruthy();
   expect(screen.getByText('Answers from the web page named in the request')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('No agent open')).toBeTruthy();
@@ -139,7 +170,7 @@ test('Meet opens the owned example for editing without Run commands', async () =
 });
 
 test('unreadable setup status keeps owned editing but never admits Run or discovery', async () => {
-  const { ipc, unreadable } = native(); const user = userEvent.setup(); render(<App />);
+  const { ipc, unreadable } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   unreadable();
   await waitFor(() => expect(within(screen.getByRole('contentinfo')).getAllByText('Workspace unavailable').length).toBeGreaterThan(0));
@@ -150,7 +181,7 @@ test('unreadable setup status keeps owned editing but never admits Run or discov
 });
 
 test('setup readiness does not reopen the already editable document', async () => {
-  const { ipc, ready } = native(); const user = userEvent.setup(); render(<App />);
+  const { ipc, ready } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('textbox', { name: 'Instructions' });
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
@@ -162,7 +193,7 @@ test('setup readiness does not reopen the already editable document', async () =
 });
 
 test('an established Designer stays editable when a running workspace later fails', async () => {
-  const { ipc, fail } = native('ready'); const user = userEvent.setup(); render(<App />);
+  const { ipc, fail } = native('ready'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'File' }));
@@ -174,7 +205,7 @@ test('an established Designer stays editable when a running workspace later fail
 });
 
 test('failure is one plain red step, native details stay behind disclosure', async () => {
-  native('failed'); const user = userEvent.setup(); render(<App />);
+  native('failed'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const alert = await screen.findByRole('alert');
   expect(alert.textContent).toContain("Bridge couldn't establish why the workspace failed.");
   expect(alert.textContent).toContain('Your workspace and agent files are kept.');
@@ -200,7 +231,7 @@ test('opening Designer while Continue awaits native admission opens editing but 
   const { ipc } = native(); let admit!: (value: unknown) => void; let started = false;
   mockIPC(command => command === 'setup_status' ? { selected: started ? 'localVm' : null, localVm: started ? 'installing' : 'idle', model: 'locked' }
     : command === 'setup_select_local' ? new Promise(resolve => { admit = resolve; }) : ipc(command));
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
@@ -211,7 +242,7 @@ test('opening Designer while Continue awaits native admission opens editing but 
 });
 
 test('a failed example read is not presented as an endless load', async () => {
-  const { ipc } = native(); mockIPC(command => command === 'setup_example' ? Promise.reject('unavailable') : ipc(command)); render(<App />);
+  const { ipc } = native(); mockIPC(command => command === 'setup_example' ? Promise.reject('unavailable') : ipc(command)); render(<App />); await openLocalSetup();
   expect(await screen.findByText('The example could not be opened. Try opening Designer.')).toBeTruthy();
   expect(screen.queryByText('Opening the example\'s introduction…')).toBeNull();
 });
@@ -220,7 +251,7 @@ test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup s
   const { ipc } = native('ready');
   const snapshot = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: result === 'running' ? 'running' : 'complete', canRun: result !== 'running', report: result === 'running' ? null : { verdict: result, cases: [{ id: 'checksum', question: 'What did the page say?', phase: 'Succeeded', answer: 'checksum', completedTools: ['web_fetch'], verdict: result, assertions: [{ id: 'value', kind: 'contains', expected: 'checksum', verdict: result }] }] }, acknowledged: [], pending: null, error: null };
   mockIPC(command => command === 'agent_run_status' ? snapshot : ipc(command));
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   // A test result is shown only for a ready workspace whose AI is connected.
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await screen.findByText('Connected with GitHub Copilot.');
@@ -228,10 +259,11 @@ test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup s
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toContain({ running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown' }[result]));
+  if (result === 'running') expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].getAttribute('aria-current')).toBeNull();
 });
 
 test('changing workspace and starting again preserves an owned draft after a failed save', async () => {
-  const { ipc } = native('ready'); const user = userEvent.setup(); render(<App />);
+  const { ipc } = native('ready'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'File' }));
@@ -241,6 +273,7 @@ test('changing workspace and starting again preserves an owned draft after a fai
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
+  await openLocalSetup(user);
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   await screen.findByRole('button', { name: 'Cancel' });
   await user.click(screen.getByRole('button', { name: 'Designer' }));
@@ -250,7 +283,7 @@ test('changing workspace and starting again preserves an owned draft after a fai
 });
 
 test('the AI step resets after a connected workspace leaves ready', async () => {
-  const { fail } = native('ready'); const user = userEvent.setup(); render(<App />);
+  const { fail } = native('ready'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await screen.findByText('Connected with GitHub Copilot.'); fail();
   await within(screen.getByRole('contentinfo')).findByText('Setup failed', {}, { timeout: 2000 });
@@ -260,7 +293,7 @@ test('the AI step resets after a connected workspace leaves ready', async () => 
 test('a delayed Cancel shows pending stop near the top instead of old byte progress', async () => {
   const { ipc } = native(); let done!: (value: unknown) => void;
   mockIPC(command => command === 'setup_cancel_local' ? new Promise(resolve => { done = resolve; }) : ipc(command));
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Cancel' }));
   expect(screen.getByText('Stopping your workspace…')).toBeTruthy();
   expect(screen.queryByRole('progressbar')).toBeNull();
@@ -275,18 +308,20 @@ test('model settling during Change cannot strand subsequent Continue actions', a
     : command === 'setup_change_local' ? new Promise(resolve => { change = resolve; })
     : command === 'setup_select_local' ? { selected: 'localVm', localVm: 'installing', model: 'locked' }
     : Promise.reject('unavailable'));
-  const user = userEvent.setup(); render(<App />);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
   connect({ ready: true }); await screen.findByText('Connected with GitHub Copilot.');
   selected = null; change({ selected: null, localVm: 'cancelled', model: 'locked' });
+  await screen.findByRole('heading', { name: 'Places for your agents' });
+  await openLocalSetup(user);
   const next = await screen.findByRole('button', { name: 'Continue' });
   expect(next.matches(':disabled')).toBe(false);
 });
 
 test('Cancel and Start again restore keyboard focus after replacing the action', async () => {
-  native(); const user = userEvent.setup(); render(<App />);
+  native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Cancel' }));
   await screen.findByRole('button', { name: 'Start again' });
   expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Getting your workspace ready', level: 1 }));
@@ -296,26 +331,26 @@ test('Cancel and Start again restore keyboard focus after replacing the action',
 });
 
 test('keeping the workspace running returns focus to the confirmation invoker', async () => {
-  native('ready'); const user = userEvent.setup(); render(<App />);
+  native('ready'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const invoker = await screen.findByRole('button', { name: 'Change where agents run' });
   await user.click(invoker); await user.click(screen.getByRole('button', { name: 'Keep workspace running' }));
   expect(document.activeElement).toBe(invoker);
 });
 
 test('Change where agents run does not stop until confirmed, and returns to chooser', async () => {
-  const { ipc } = native('ready'); const user = userEvent.setup(); render(<App />);
+  const { ipc } = native('ready'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
   expect(ipc.mock.calls.some(([c]) => c === 'setup_change_local')).toBe(false);
   await user.click(screen.getByRole('button', { name: 'Keep workspace running' }));
   expect(ipc.mock.calls.some(([c]) => c === 'setup_change_local')).toBe(false);
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
   await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
-  expect(await screen.findByRole('heading', { name: 'Where should your agents run?' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_change_local')).toHaveLength(1);
 });
 
 test('an unreadable status makes the card unavailable instead of keeping the last running snapshot, and recovery keeps the queued choice', async () => {
-  const { ipc, unreadable, readable } = native(); const user = userEvent.setup(); render(<App />);
+  const { ipc, unreadable, readable } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(screen.getByRole('progressbar')).toBeTruthy();
   const card = () => within(screen.getByRole('region', { name: 'Workspace setup' }));
