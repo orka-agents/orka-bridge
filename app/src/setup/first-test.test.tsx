@@ -31,7 +31,7 @@ test('first completion submits the sample once, waits for release, then opens it
   expect(ipc).not.toHaveBeenCalled();
   view.rerender({ ready: true });
   await waitFor(() => expect(view.result.current).toBe('running'));
-  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample }]]);
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample, bundledExample: true }]]);
   expect(onOpen).not.toHaveBeenCalled();
   finish(true);
   await new Promise(resolve => setTimeout(resolve, 550));
@@ -86,14 +86,18 @@ test('edited saved sample is not overwritten or automatically submitted', async 
   expect(ipc.mock.calls.some(([c]) => c === 'agent_run' || c === 'agent_save')).toBe(false);
 });
 
-test('losing readiness ends first-test observation without leaving a running step on reconnect', async () => {
-  const { ipc } = native(); armFirstTest();
-  const view = renderHook(({ ready }) => useFirstTest({ ready, canOpen: false, sampleDirty: false, onOpen: vi.fn() }), { initialProps: { ready: true } });
+test.each([true, false])('an admitted test remains observed through unavailable setup status (recover first: %s)', async recoverFirst => {
+  const { ipc, finish } = native(); const onOpen = vi.fn(); armFirstTest();
+  const view = renderHook(({ ready }) => useFirstTest({ ready, canOpen: true, sampleDirty: false, onOpen }), { initialProps: { ready: true } });
   await waitFor(() => expect(view.result.current).toBe('running'));
   view.rerender({ ready: false });
+  expect(view.result.current).toBe('running');
+  if (recoverFirst) view.rerender({ ready: true });
+  finish();
   await waitFor(() => expect(view.result.current).toBe('unknown'));
+  expect(onOpen).toHaveBeenCalledTimes(recoverFirst ? 1 : 0);
   view.rerender({ ready: true });
-  expect(view.result.current).toBe('unknown');
+  await act(async () => {});
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
 });
 

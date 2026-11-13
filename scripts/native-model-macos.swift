@@ -76,7 +76,10 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     if name.hasPrefix("local-") {
         visible = rows.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     } else {
-        guard let panel = rows.filter({ $0.topCandidates(1).first?.string == "Connect the AI" && $0.boundingBox.minX > 0.5 }).max(by: { $0.boundingBox.maxY < $1.boundingBox.maxY })
+        guard let panel = rows.filter({
+            let label = $0.topCandidates(1).first?.string ?? ""
+            return (label.contains("Connect the AI") || label.contains("Connect the Al")) && $0.boundingBox.minX > 0.5
+        }).max(by: { $0.boundingBox.maxY < $1.boundingBox.maxY })
             else { fatalError("Model panel heading was not recognized") }
         visible = rows.filter {
             $0.boundingBox.minX >= panel.boundingBox.minX - 0.02 &&
@@ -84,7 +87,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         }.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
     for value in expected {
-        let found = visible.contains(value)
+        let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI").contains(value)
         let nativeFailure = !found && name.hasPrefix("local-") && nativeFailureTextIsVisible(value)
         require(found || nativeFailure, "Missing \(value) in \(name): \(text)")
     }

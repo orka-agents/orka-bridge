@@ -206,10 +206,14 @@ fn agent_run_status(
 #[tauri::command]
 async fn agent_run(
     document_id: DocumentId,
+    bundled_example: Option<bool>,
     agents: tauri::State<'_, Arc<Agents>>,
     state: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
 ) -> Result<bridge_engine::example_run::RunSnapshot, &'static str> {
+    if bundled_example == Some(true) {
+        return state.start_first_test(vm.inner().clone(), document_id);
+    }
     let folder = document_folder(agents.inner().clone(), document_id).await?;
     Ok(state.start_document(vm.inner().clone(), folder))
 }

@@ -24,36 +24,45 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
   const latest = useRef(options);
   useEffect(() => { latest.current = options; });
   const [check, setCheck] = useState<CheckStepState>();
+  const mounted = useRef(false);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   useEffect(() => {
-    if (!options.ready || options.sampleDirty) { setCheck(value => value === 'running' ? 'unknown' : value); return; }
-    if (!pending()) return;
+    mounted.current = true;
+    return () => { mounted.current = false; clearTimeout(timer.current); };
+  }, []);
+  useEffect(() => {
+    if (!options.ready || options.sampleDirty || !pending()) return;
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
+    let claimed = false;
     const finish = (snapshot?: RunSnapshot) => {
+      if (cancelled || !mounted.current) return;
       setCheck(snapshot?.state === 'complete' ? snapshot.report?.verdict ?? 'unknown' : 'unknown');
-      if (latest.current.canOpen) latest.current.onOpen();
+      if (latest.current.ready && latest.current.canOpen) latest.current.onOpen();
     };
     const observe = async (snapshot: RunSnapshot) => {
-      if (cancelled) return;
+      if (cancelled || !mounted.current) return;
       if (snapshot.state !== 'running' && snapshot.busy?.documentId !== SAMPLE_DOCUMENT_ID) { finish(snapshot); return; }
       setCheck('running');
-      timer = setTimeout(() => { void runCall('agent_run_status').then(result => {
-        if (cancelled) return;
+      timer.current = setTimeout(() => { void runCall('agent_run_status').then(result => {
+        if (cancelled || !mounted.current) return;
         if (result.ok) void observe(result.snapshot); else finish();
       }); }, 500);
     };
     void Promise.all([loadExample(), agentCall('agent_open', undefined, SAMPLE_DOCUMENT_ID), runCall('agent_run_status')]).then(async ([bundled, saved, status]) => {
       // StrictMode's abandoned effect must not consume the durable one-shot.
-      if (cancelled || !latest.current.ready || latest.current.sampleDirty || !claim()) return;
+      if (cancelled || !mounted.current || !latest.current.ready || latest.current.sampleDirty || !claim()) return;
+      claimed = true;
       if (!bundled.ok || text(saved.agent) !== text(bundled.pair.agent) || text(saved.tests) !== text(bundled.pair.tests) || !status.ok) { finish(); return; }
       if (status.snapshot.state !== 'idle') { void observe(status.snapshot); return; }
       if (!status.snapshot.canRun || status.snapshot.busy) { finish(); return; }
       // Claim is persisted before submission: an interrupted/unknown attempt is never replayed.
-      const result = await runCall('agent_run');
-      if (cancelled) return;
+      const result = await runCall('agent_run', SAMPLE_DOCUMENT_ID, true);
+      if (cancelled || !mounted.current) return;
       if (result.ok) void observe(result.snapshot); else finish();
-    }).catch(() => { if (!cancelled && claim()) finish(); });
-    return () => { cancelled = true; clearTimeout(timer); };
+    }).catch(() => { if (!cancelled && mounted.current && claim()) finish(); });
+    // Eligibility gates submission, not observation of an already claimed attempt.
+    // A transient setup poll failure must not orphan native busy ownership.
+    return () => { if (!claimed) cancelled = true; };
   }, [options.ready, options.sampleDirty]);
   return check;
 }

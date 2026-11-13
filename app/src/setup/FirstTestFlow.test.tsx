@@ -50,7 +50,7 @@ test('first setup shows a running test, opens Designer on its result and never a
   expect(await screen.findByText('Correct checksum', { selector: 'p' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Open your test result' }));
-  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample }]]);
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample, bundledExample: true }]]);
 });
 
 test('Overview refreshes after the automatic test releases native admission without mounting Designer', async () => {

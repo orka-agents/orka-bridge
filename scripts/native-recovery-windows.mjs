@@ -229,7 +229,7 @@ try {
       localStorage.setItem('bridge.welcomeSeen.v1', '1');
       localStorage.removeItem('bridge.firstTest.v1');
       window.isTauri = true;
-      window.__TAURI_INTERNALS__ = { invoke: async command => {
+      window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
         if (command === 'setup_status') return status();
         if (command === 'setup_select_local') { selected = true; return status(); }
         if (command === 'setup_requirements') return null;
@@ -239,7 +239,7 @@ try {
           connected = true; return { ready: true };
         }
         if (command === 'agent_open') return { ...pair, documentId, name: 'web-reader' };
-        if (command === 'agent_run') { if (submitted) throw Error('Fixture automatic test replayed'); submitted = true; return snapshot(); }
+        if (command === 'agent_run') { if (args?.bundledExample !== true) throw Error('Fixture automatic test requires native source guard'); if (submitted) throw Error('Fixture automatic test replayed'); submitted = true; return snapshot(); }
         if (command === 'agent_run_status') return snapshot();
         if (command === 'send_history' || command === 'cluster_contexts') return [];
         throw Error('Unmocked action fixture command: ' + command);
