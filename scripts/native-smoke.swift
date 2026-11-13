@@ -403,7 +403,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
         return observations
     }
-    if name == "cluster-access" || name == "cluster-access-wide" {
+    if name.hasPrefix("cluster-access") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Access confirmed") && text.contains("Open your agent"), "Fixture access not confirmed: \(text)")
         return observations
@@ -434,7 +434,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): native Places subview with blank kubectl context")
         return observations
     }
-    if name == "cluster-manage" {
+    if name == "cluster-manage" || name == "cluster-manage-compact" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Back to places"), "Manage is not a Places subview: \(text)")
         require(!nativeButtons("Open your agent").isEmpty && !nativeButtons("Change context").isEmpty
@@ -933,7 +933,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Use this cluster", in: normal)
     Thread.sleep(forTimeInterval: 1)
     scrollMain(-400)
-    let connected = try capture("cluster-access", "Clusters")
+    let connected = try capture("cluster-access-compact", "Clusters")
     clickText("Open your agent", in: connected)
     Thread.sleep(forTimeInterval: 0.5)
     let ownedAgent = try capture("agent-cluster-owned", "Designer")
@@ -1159,6 +1159,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickButton("Manage")
     Thread.sleep(forTimeInterval: 0.5)
     try capture("cluster-manage", "Clusters")
+    setContent(540, 900)
+    scrollMain(1000)
+    try capture("cluster-manage-compact", "Clusters")
+    setContent(1220, 900)
     // Reveal the context choice, then leave without choosing: Designer's selection stays.
     clickButton("Change context")
     try capture("cluster-manage-change", "Clusters")
