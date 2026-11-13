@@ -181,6 +181,15 @@ impl Wire {
                             json!({"items":[{"name":"web_fetch","builtin":true}],"metadata":{}}),
                         )
                     }
+                } else if route.ends_with("/agents") && mode == "paged-agents" {
+                    let url = reqwest::Url::parse(&format!("http://fixture{path}")).unwrap();
+                    let next = url
+                        .query_pairs()
+                        .any(|(k, v)| k == "continue" && v == "next+/ =?");
+                    (
+                        200,
+                        json!({"items":[{"metadata":{"name":"reader","namespace":"agents","uid":if next {"second"} else {"first"}}}],"metadata":if next {json!({})} else {json!({"continue":"next+/ =?"})}}),
+                    )
                 } else if route.ends_with("/agents") {
                     (200, json!({"items":[],"metadata":{}}))
                 } else if route.ends_with("/result") {
@@ -394,6 +403,56 @@ async fn disk_pair_to_cluster_checks_pass() {
         "model:exact"
     );
 }
+#[tokio::test]
+async fn overview_inventory_wire_has_one_scoped_page_limit_not_the_access_probe() {
+    let api = Arc::new(ApiFixture::default());
+    let mut client = ClusterClient::new(
+        config(&api.start(), json!({"token":"creator-fixture"})),
+        Arc::new(PodOrkaRead),
+    );
+    let id = target(&mut client).await;
+    let access = client.connect(id, None).await.unwrap();
+    api.wire.calls.lock().unwrap().clear();
+    *api.wire.mode.lock().unwrap() = "paged-agents";
+    assert_eq!(access.inventory().await.unwrap().len(), 2);
+    let calls = api.wire.calls.lock().unwrap();
+    let requests: Vec<_> = calls
+        .iter()
+        .filter(|c| c.0.starts_with("GET /api/v1/agents?"))
+        .collect();
+    assert_eq!(requests.len(), 2);
+    for (index, call) in requests.iter().enumerate() {
+        let request = &call.0;
+        let url = reqwest::Url::parse(&format!(
+            "http://fixture{}",
+            request.trim_start_matches("GET ")
+        ))
+        .unwrap();
+        assert_eq!(
+            url.query_pairs()
+                .filter(|(k, _)| k == "limit")
+                .map(|(_, v)| v.into_owned())
+                .collect::<Vec<_>>(),
+            ["10"]
+        );
+        assert!(url
+            .query_pairs()
+            .any(|(k, v)| k == "namespace" && v == "agents"));
+        assert_eq!(
+            url.query_pairs()
+                .find(|(k, _)| k == "continue")
+                .map(|(_, v)| v.into_owned()),
+            if index == 0 {
+                None
+            } else {
+                Some("next+/ =?".into())
+            }
+        );
+    }
+    drop(calls);
+    assert_eq!(api.wire.posts(), 0);
+}
+
 #[tokio::test]
 async fn agent_access_probe_requests_only_one_item() {
     let api = Arc::new(ApiFixture::default());

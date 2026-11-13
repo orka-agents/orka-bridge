@@ -34,12 +34,14 @@ pub enum Verdict {
 pub struct AssertionReport {
     pub id: String,
     pub kind: &'static str,
+    pub expected: String,
     pub verdict: Verdict,
 }
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CaseReport {
     pub id: String,
+    pub question: String,
     pub phase: String,
     pub answer: Option<String>,
     /// Names from attributable completed calls, not a complete URL/body trace.
@@ -478,6 +480,7 @@ impl<'a> NativeRunner<'a> {
                     if verdict != Verdict::Unknown || terminal_rounds == 3 {
                         cases.push(CaseReport {
                             id: case.id.clone(),
+                            question: case.input().into(),
                             phase: phase.into(),
                             answer,
                             completed_tools: tools,

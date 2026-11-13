@@ -132,7 +132,7 @@ test('setup opens the owned document for editing but keeps discovery and Run gat
   expect((instructions as HTMLTextAreaElement).readOnly).toBe(false);
   expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(true);
   expect(screen.getByRole('combobox').matches(':disabled')).toBe(true);
-  expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByText('More settings'));
   expect(screen.getByText(path)).toBeTruthy();
   fireEvent.change(instructions, { target: { value: 'Edited during setup.' } }); fireEvent.blur(instructions);

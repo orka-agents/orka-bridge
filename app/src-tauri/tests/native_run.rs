@@ -762,6 +762,16 @@ async fn submits_exact_mapping_and_observes_only_acknowledged_unique_resources()
     let report = runner.observe(&handle).await.unwrap();
     assert_eq!(report.verdict, Verdict::Passed);
     assert_eq!(report.cases[0].answer.as_deref(), Some("secret-expected"));
+    let display = serde_json::to_value(&report).unwrap();
+    assert_eq!(display["cases"][0]["question"], pair().cases()[0].input());
+    assert_eq!(
+        display["cases"][0]["assertions"][0]["expected"],
+        "secret-expected"
+    );
+    assert_eq!(
+        display["cases"][0]["assertions"][1]["expected"],
+        "web_fetch"
+    );
     let second = runner.submit(pair()).await.unwrap();
     assert_ne!(handle.agent().unwrap().name, second.agent().unwrap().name);
     assert_ne!(handle.tasks()[0].name, second.tasks()[0].name);

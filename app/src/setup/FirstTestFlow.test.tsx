@@ -20,7 +20,7 @@ function native() {
     if (command === 'setup_connect_model') return { ready: true };
     if (command === 'agent_open') return { ...pair, documentId: sample, name: 'web-reader' };
     if (command === 'agent_run') { running = true; return { ...idle, state: 'running', canRun: false, busy: { documentId: sample, name: 'web-reader' } }; }
-    if (command === 'agent_run_status') return finished ? { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'checksum', phase: 'Succeeded', answer: 'Correct checksum', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } } : running ? { ...idle, state: 'running', canRun: false, busy: { documentId: sample, name: 'web-reader' } } : idle;
+    if (command === 'agent_run_status') return finished ? { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'checksum', question: 'What checksum is on the page?', phase: 'Succeeded', answer: 'Correct checksum', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', expected: 'Correct checksum', verdict: 'passed' }], verdict: 'passed' }] } } : running ? { ...idle, state: 'running', canRun: false, busy: { documentId: sample, name: 'web-reader' } } : idle;
     if (command === 'send_history' || command === 'cluster_contexts') return [];
     if (command === 'overview_files') return { files: [], unavailable: 0 };
     if (command === 'overview_agents') return { state: 'stopped', agents: [] };
@@ -45,7 +45,9 @@ test('first setup shows a running test, opens Designer on its result and never a
   expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testRunning');
   finish();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page'));
-  expect(await screen.findByText('Correct checksum')).toBeTruthy();
+  expect(await screen.findByText('1 of 1 passed')).toBeTruthy();
+  await user.click(screen.getByText('checksum', { selector: 'code' }));
+  expect(await screen.findByText('Correct checksum', { selector: 'p' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Open your test result' }));
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample }]]);

@@ -65,7 +65,7 @@ export type AttemptSummary = {
   provider: string; plannedAgentName: string; agentUid: string | null;
   verdict: 'running' | 'passed' | 'failed' | 'unknown'; time: number;
 };
-function isSummary(value: unknown): value is AttemptSummary {
+export function isSummary(value: unknown): value is AttemptSummary {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
   const row = value as Record<string, unknown>;
   const identity = row.targetUids;

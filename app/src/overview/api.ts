@@ -1,5 +1,9 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { type AttemptSummary, isSummary } from '../clusters/send-api';
 import { isDocumentId, isSourceId, type SourceId } from '../designer/agent-api';
+export type RemoteAgent = Agent & { agentType: string | null; model: string | null; tools: string[] | null; record: AttemptSummary | null };
+export type Place = { key: string; context: string; service: string; namespace: string; stale: boolean; observedAt: number | null; agents: RemoteAgent[] };
+export type Places = { places: Place[]; historyState: 'complete' | 'unavailable'; unobserved: AttemptSummary[] };
 export type SavedFile = { documentId: string; name: string; state: 'readable' | 'unreadable'; source: SourceId | null; summary: { name: string | null; description: string | null; model: string; tools: string[] } | null; reason: string | null };
 export type SavedFiles = { state: 'complete' | 'unavailable'; files: SavedFile[]; runActive: boolean };
 export type Agent = { name: string; namespace: string; uid: string };
@@ -23,6 +27,24 @@ export function isLiveAgents(v: unknown): v is LiveAgents {
   return object(v) && ['complete', 'busy', 'unavailable'].includes(String(v.state)) && typeof v.runActive === 'boolean' && (v.installation === null || isDocumentId(v.installation)) && (v.observedAt === null || time(v.observedAt)) && (v.reason === null || v.reason === 'image' || v.reason === 'stopped' || v.reason === 'read') && observation(v.observation)
     && Array.isArray(v.agents) && v.agents.every(a => object(a) && text(a.name) && text(a.namespace) && text(a.uid))
     && (v.state !== 'complete' || v.installation !== null && v.observedAt !== null);
+}
+export function isPlaces(v: unknown): v is Places {
+  if (!object(v) || !['complete', 'unavailable'].includes(String(v.historyState)) || !Array.isArray(v.places) || !Array.isArray(v.unobserved) || !v.unobserved.every(isSummary)) return false;
+  const keys = new Set<string>();
+  return v.places.every(p => {
+    if (!object(p) || !text(p.key) || keys.has(p.key) || !text(p.context) || !text(p.service) || !text(p.namespace) || typeof p.stale !== 'boolean'
+      || !(p.observedAt === null && p.stale || time(p.observedAt)) || !Array.isArray(p.agents)) return false;
+    keys.add(p.key);
+    const uids = new Set<string>();
+    return p.agents.every(a => {
+      if (!object(a) || !text(a.name) || a.namespace !== p.namespace || !text(a.uid) || uids.has(a.uid) || !nullableText(a.agentType) || !nullableText(a.model)
+        || !(a.tools === null || Array.isArray(a.tools) && a.tools.every(text)) || !(a.record === null || isSummary(a.record) && a.record.agentUid === a.uid && a.record.targetUids.watchedNamespace === p.namespace)) return false;
+      uids.add(a.uid); return true;
+    });
+  });
+}
+export async function readPlaces(): Promise<Places | undefined> {
+  if (isTauri()) { try { const v: unknown = await invoke('overview_places'); if (isPlaces(v)) return v; } catch { /* No native diagnostics reach Overview. */ } }
 }
 export const unavailableFiles: SavedFiles = { state: 'unavailable', files: [], runActive: false };
 export const unavailableAgents: LiveAgents = { state: 'unavailable', installation: null, agents: [], observedAt: null, observation: null, runActive: false, reason: 'read' };

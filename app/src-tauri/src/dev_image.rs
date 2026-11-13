@@ -29,14 +29,14 @@ pub enum DevImageDiskFormat {
 impl DevImagePlatform {
     pub const fn state_compatibility_id(self) -> &'static str {
         match self {
-            Self::MacOsArm64 => "engineering-afc68ae1",
-            Self::WindowsAmd64 => "engineering-74e6c5e4",
+            Self::MacOsArm64 => "engineering-7ce86e7a",
+            Self::WindowsAmd64 => "engineering-7ce86e7a",
         }
     }
     pub const fn source_commit(self) -> &'static str {
         match self {
-            Self::MacOsArm64 => "afc68ae14e9702d148b01b243cc2a27d90fde5a6",
-            Self::WindowsAmd64 => "74e6c5e4f662d9e7b2c8559be0dc77191fe2889a",
+            Self::MacOsArm64 => "7ce86e7a8ede790f9ff6304213f0cd792c6d3334",
+            Self::WindowsAmd64 => "7ce86e7a8ede790f9ff6304213f0cd792c6d3334",
         }
     }
 }
@@ -129,7 +129,7 @@ const MAC_PINS: Pins = Pins {
         FilePin {
             name: "boot-assets.json",
             bytes: 12546,
-            sha256: digest(b"a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27"),
+            sha256: digest(b"2c589a7ea777cd353e5a7664f04a6ab4e332d4e174732bf43f69f08f3fd6f403"),
         },
         FilePin {
             name: "os.kernel",
@@ -138,13 +138,13 @@ const MAC_PINS: Pins = Pins {
         },
         FilePin {
             name: "os.initrd",
-            bytes: 35046667,
-            sha256: digest(b"606891f6e94ce5c4263bbc5360d7fdb6bb874b2109478e4e9e67322fd47d7f20"),
+            bytes: 35859124,
+            sha256: digest(b"1e0129f4ad2349e39e1bef65f6d7590f74294b0f1557257c6b2de41b15a112f6"),
         },
         FilePin {
             name: "os.raw",
             bytes: 17179869184,
-            sha256: digest(b"9eb75d4a9de5f2e922157dc597601d7f10d3b71f3c52fd6ffd3f18d59c6a799b"),
+            sha256: digest(b"4647c7068e7f3daeae282b0fc36921142522683482885eb679334752d71172dc"),
         },
     ],
 };
@@ -155,7 +155,7 @@ const WINDOWS_PINS: Pins = Pins {
         FilePin {
             name: "boot-assets.json",
             bytes: 12504,
-            sha256: digest(b"33d6946647e7d6ab3e83e42a25caa497aea215ad1cac91d011473a4ad0a008ae"),
+            sha256: digest(b"c18e950cfe3fde37e0dd31bbdc629aa06e369a3b800374273e185133ccb209dc"),
         },
         FilePin {
             name: "os.kernel",
@@ -164,13 +164,13 @@ const WINDOWS_PINS: Pins = Pins {
         },
         FilePin {
             name: "os.initrd",
-            bytes: 16997033,
-            sha256: digest(b"6f843edde13d7a26b14e54e10838fe5a70aedb2a3c26bbfb998fd45ae90d743a"),
+            bytes: 16993032,
+            sha256: digest(b"9e79b76a9a4174c0638e199dc6e477971f06091526b62e118cc9058fd95f3588"),
         },
         FilePin {
             name: "os.qcow2",
-            bytes: 3606118400,
-            sha256: digest(b"a2787ff53247377e0d16b94dbc7ee43033c00aea8379de0cfe68ce58f843426e"),
+            bytes: 3780575232,
+            sha256: digest(b"069e00084af957b1068f7cf38869ba5b87f867a6986bc8dcab922f66cab04c9b"),
         },
     ],
 };
@@ -460,37 +460,37 @@ mod tests {
     fn delivered_amd_model_image_and_arm_identity_stay_separate() {
         assert_eq!(
             WINDOWS_PINS.files[0].sha256,
-            digest(b"33d6946647e7d6ab3e83e42a25caa497aea215ad1cac91d011473a4ad0a008ae")
+            digest(b"c18e950cfe3fde37e0dd31bbdc629aa06e369a3b800374273e185133ccb209dc")
         );
-        assert_eq!(WINDOWS_PINS.files[2].bytes, 16997033);
+        assert_eq!(WINDOWS_PINS.files[2].bytes, 16993032);
         assert_eq!(
             WINDOWS_PINS.files[2].sha256,
-            digest(b"6f843edde13d7a26b14e54e10838fe5a70aedb2a3c26bbfb998fd45ae90d743a")
+            digest(b"9e79b76a9a4174c0638e199dc6e477971f06091526b62e118cc9058fd95f3588")
         );
-        assert_eq!(WINDOWS_PINS.files[3].bytes, 3606118400);
+        assert_eq!(WINDOWS_PINS.files[3].bytes, 3780575232);
         assert_eq!(
             WINDOWS_PINS.files[3].sha256,
-            digest(b"a2787ff53247377e0d16b94dbc7ee43033c00aea8379de0cfe68ce58f843426e")
+            digest(b"069e00084af957b1068f7cf38869ba5b87f867a6986bc8dcab922f66cab04c9b")
         );
         assert_eq!(
             DevImagePlatform::WindowsAmd64.source_commit(),
-            "74e6c5e4f662d9e7b2c8559be0dc77191fe2889a"
+            "7ce86e7a8ede790f9ff6304213f0cd792c6d3334"
         );
         assert_eq!(
             DevImagePlatform::WindowsAmd64.state_compatibility_id(),
-            "engineering-74e6c5e4"
+            "engineering-7ce86e7a"
         );
         assert_eq!(
             DevImagePlatform::MacOsArm64.source_commit(),
-            "afc68ae14e9702d148b01b243cc2a27d90fde5a6"
+            "7ce86e7a8ede790f9ff6304213f0cd792c6d3334"
         );
         assert_eq!(
             DevImagePlatform::MacOsArm64.state_compatibility_id(),
-            "engineering-afc68ae1"
+            "engineering-7ce86e7a"
         );
         assert_eq!(
             MAC_PINS.files[0].sha256,
-            digest(b"a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27")
+            digest(b"2c589a7ea777cd353e5a7664f04a6ab4e332d4e174732bf43f69f08f3fd6f403")
         );
     }
 
@@ -730,8 +730,8 @@ mod tests {
 
     #[test]
     fn pinned_image_bytes_sum_each_platform_pins() {
-        assert_eq!(image_bytes_for(&MAC_PINS), Some(17_259_087_309));
-        assert_eq!(image_bytes_for(&WINDOWS_PINS), Some(3_637_297_985));
+        assert_eq!(image_bytes_for(&MAC_PINS), Some(17_259_899_766));
+        assert_eq!(image_bytes_for(&WINDOWS_PINS), Some(3_811_750_816));
         assert_eq!(
             pinned_image_bytes(),
             native_pins().and_then(image_bytes_for)

@@ -13,7 +13,7 @@ const b = '00000000-0000-4000-8000-000000000002';
 const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
 const pair = { documentId: a, name: 'alpha', agent: '---\nname: alpha\n---\nInstructions A', tests: 'Checks', source };
 const idle = { documentId: a, busy: null, state: 'idle', canRun: true, source, report: null, acknowledged: [], pending: null, error: null };
-const complete: RunSnapshot = { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'check', phase: 'Succeeded', answer: 'Only A answer', completedTools: [], assertions: [{ id: 'answer', kind: 'contains', verdict: 'passed' }], verdict: 'passed' }] } };
+const complete: RunSnapshot = { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'check', question: 'What did the page say?', phase: 'Succeeded', answer: 'Only A answer', completedTools: [], assertions: [{ id: 'answer', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' }] } };
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 function native() { vi.stubGlobal('isTauri', true); }
 
@@ -35,10 +35,10 @@ test('foreign busy names the owner without its result, resources or Stop control
     : { documentId: b, view: null, busy: { documentId: a, name: 'alpha' } });
   render(<><Run documentId={b} /><Send documentId={b} place={{ kind: 'thisComputer' }} stale={false} visible remote={false} /></>);
   expect(await screen.findByText('alpha is running a test.')).toBeTruthy();
-  expect(await screen.findByText('alpha is sending checks.')).toBeTruthy();
+  expect(await screen.findByText('alpha is sending tests.')).toBeTruthy();
   expect(screen.queryByText('Only A answer')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Run test' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(true);
 });
 test('Send report validation keeps document ownership after Run DTO changes', async () => {
   native(); const view = { documentId: a, id: b, targetId: a, providerId: b, targetName: 'team', source,
@@ -102,6 +102,6 @@ test('a delayed Run poll from A cannot replace B after a prop change', async () 
   const view = render(<Run documentId={a} />);
   view.rerender(<Run documentId={b} />);
   await act(async () => resolve(complete));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Run test' }).hasAttribute('disabled')).toBe(false));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(false));
   expect(screen.queryByText('Only A answer')).toBeNull();
 });

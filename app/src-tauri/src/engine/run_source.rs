@@ -318,6 +318,10 @@ impl RunCase {
                         Assertion::Contains { .. } => "contains",
                         Assertion::ToolCalled { .. } => "toolCalled",
                     },
+                    expected: match assertion {
+                        Assertion::Contains { value, .. } => value.clone(),
+                        Assertion::ToolCalled { tool, .. } => tool.clone(),
+                    },
                     verdict,
                 }
             })

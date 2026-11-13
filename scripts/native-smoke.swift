@@ -14,8 +14,11 @@ func restoreDisplay() {
         }
     }
 }
+var restoreTemporaryTests: (() throws -> Void)?
 func fail(_ message: String) -> Never {
     fputs("\(message)\n", stderr)
+    do { try restoreTemporaryTests?() }
+    catch { fputs("Cannot restore original test file: \(error)\n", stderr) }
     restoreDisplay()
     exit(1)
 }
@@ -88,12 +91,23 @@ func window() -> (CGWindowID, CGRect)? {
     return (id, rect)
 }
 var found = false
-for _ in 0..<30 {
-    if window() != nil { found = true; break }
-    Thread.sleep(forTimeInterval: 1)
+let rendererDeadline = Date(timeIntervalSinceNow: 30)
+while Date() < rendererDeadline {
+    if let (_, frame) = window() {
+        let buttons = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXButton"
+                && attribute(element, "AXEnabled") as? Bool == true
+                && nativeBounds(element).map { frame.contains($0) } == true
+        }
+        let names = Set(buttons.flatMap { element in
+            ["AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+        })
+        let bodyReady = buttons.contains { nativeBounds($0).map { $0.minY > frame.minY + 110 } == true }
+        if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names) && bodyReady { found = true; break }
+    }
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 }
-require(found, "Bridge native window did not appear")
-Thread.sleep(forTimeInterval: 2)
+require(found, "Bridge native window, rendered navigation and page controls did not appear within the startup budget")
 func mouse(_ type: CGEventType, _ point: CGPoint) {
     CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
 }
@@ -157,14 +171,42 @@ func clickDesignerView(_ name: String) {
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.3)
 }
-func nativeTextIsVisible(_ expected: String) -> Bool {
-    nativeElements().contains { element in
-        guard attribute(element, "AXRole") as? String == "AXStaticText",
-            (attribute(element, "AXValue") as? String)?.contains(expected) == true,
-            let bounds = nativeBounds(element), let rect = window()?.1 else { return false }
-        return rect.contains(bounds)
+func nativeTextBounds(_ expected: String, heading: Bool = false) -> [CGRect] {
+    guard let rect = window()?.1 else { return [] }
+    // Destination chips and footer mirrors are not evidence of a visible card.
+    let body = CGRect(x: rect.minX, y: rect.minY + 110, width: rect.width, height: max(0, rect.height - 142))
+    var matches: [CGRect] = []
+    for element in nativeElements() {
+        guard let role = attribute(element, "AXRole") as? String else { continue }
+        if ["AXStaticText", "AXHeading", "AXDisclosureTriangle"].contains(role) && (!heading || role == "AXHeading") {
+            let values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+            if values.contains(where: { heading ? $0 == expected : $0.contains(expected) }),
+                let bounds = nativeBounds(element), body.contains(bounds) { matches.append(bounds) }
+        }
+        guard !heading, role == "AXGroup",
+            let children = attribute(element, "AXChildren") as? [AXUIElement] else { continue }
+        // WebKit can flatten an inline badge into its surrounding group.
+        // Join adjacent text siblings only on one visible, touching line.
+        var text = ""
+        var line: CGRect?
+        func finishLine() {
+            if let bounds = line, text.contains(expected) { matches.append(bounds) }
+            text = ""; line = nil
+        }
+        for child in children {
+            guard attribute(child, "AXRole") as? String == "AXStaticText",
+                let value = attribute(child, "AXValue") as? String,
+                let bounds = nativeBounds(child), body.contains(bounds) else { finishLine(); continue }
+            if let prior = line, abs(prior.midY - bounds.midY) > 2
+                || bounds.minX < prior.maxX - 2 || bounds.minX > prior.maxX + 4 { finishLine() }
+            text += value
+            line = line.map { $0.union(bounds) } ?? bounds
+        }
+        finishLine()
     }
+    return matches
 }
+func nativeTextIsVisible(_ expected: String) -> Bool { !nativeTextBounds(expected).isEmpty }
 @discardableResult
 func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> AXUIElement {
     // Small Inter labels can be grouped with subtitles by Vision. Identify the
@@ -240,7 +282,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         "\(observation.boundingBox): \(observation.topCandidates(1).first?.string ?? "")"
     }.joined(separator: "\n")
     try recognized.write(toFile: "\(output)/\(name).ocr.txt", atomically: true, encoding: .utf8)
-    if name == "send-probe" || name == "cluster-probe" { return observations }
+    if name == "send-probe" || name == "cluster-probe" || name == "overview-probe" || name.hasPrefix("overview-fixture-") { return observations }
     if name == "before-settings" || name == "designer-settings" {
         // These captures intentionally scroll the page heading out of view.
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
@@ -281,14 +323,20 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     }
     if name == "send-history-restarted" {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Past Sends") && text.contains("Saved checks: pass") && text.contains("Saved checks: unknown"), "Saved pass and unknown missing after restart: \(text)")
-        require(text.contains("bridge-run-") && text.contains("fixture-cluster"), "Saved destination or planned Agent missing: \(text)")
+        require(text.contains("Past Sends") && text.contains("Saved tests: pass") && text.contains("Saved tests: unknown"), "Newest saved results missing after restart: \(text)")
+        require(text.contains("bridge-run-") && text.contains("fixture-secondary"), "Saved destination or planned Agent missing: \(text)")
         print("PASS send-history-restarted: saved summaries after app restart; no reconnect or Send")
+        return observations
+    }
+    if name == "send-history-passed" {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("Saved tests: pass"), "Earlier saved pass missing: \(text)")
         return observations
     }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Send your agent") || text.contains("Checks on your cluster") || text.contains("Checks:") || text.contains("Running checks") || text.contains("Planned Agent"), "Send panel not visible: \(text)")
+        let markers = ["Send your agent", "Tests on your cluster", "passed", "evaluating tests", "Planned Agent", "question", "answer", "Not run since your edit", "Stopped watching"]
+        require(markers.contains { text.localizedCaseInsensitiveContains($0) }, "Send panel not visible: \(text)")
         print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
         return observations
     }
@@ -360,24 +408,32 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
     // Disabling Start during IPC can reset WebKit's keyboard focus. Locate the
     // real control after each state transition instead of counting Tab stops.
     var observed: [String] = []
+    var disabled = false
     for _ in 0..<4 {
         let seen = try capture("send-probe", "Designer")
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
-        if let control = observed.first(where: { $0 == label || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
+        if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: .regularExpression) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
+            if ["Send and run tests", "Stop", "Check again", "Reload saved files", "Send to a cluster"].contains(label) {
+                let enabled = nativeElements().contains { element in
+                    attribute(element, "AXRole") as? String == "AXButton"
+                        && attribute(element, "AXEnabled") as? Bool == true
+                        && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
+                }
+                if !enabled { disabled = true; Thread.sleep(forTimeInterval: 0.3); continue }
+            }
             clickText(control, in: seen)
             return
         }
         scrollMain(pixels)
     }
-    fail("Send control not visible: \(label); observed: \(observed)")
+    fail("Send control \(disabled ? "stayed disabled" : "not visible"): \(label); observed: \(observed)")
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 var initial = try capture("initial", "Clusters")
-// CI's light pass owns a fresh profile; dark reuses the saved native choice.
+// Each theme owns a fresh runner profile; verify retention after its own restart.
 let initiallyWelcome = initial.contains { $0.topCandidates(1).first?.string == "Get started" }
-require(theme == "light" ? initiallyWelcome : !initiallyWelcome,
-        "Expected a first-run welcome in light and a retained choice in dark")
+require(initiallyWelcome, "Expected a first-run welcome in the fresh \(theme) job")
 if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" }) {
     clickText("Get started", in: initial)
     initial = try capture("chooser", "Clusters")
@@ -447,6 +503,8 @@ for _ in 0..<30 {
 require(window() != nil, "Relaunched Bridge window did not appear")
 Thread.sleep(forTimeInterval: 2)
 let retained = try capture("choice-retained", "Clusters")
+require(!retained.contains { $0.topCandidates(1).first?.string == "Get started" },
+        "Restart must retain this theme's saved native choice")
 clickTab("Overview", retained)
 let overview = try capture("overview", "Overview")
 require(nativeTextIsVisible("Agent list unavailable with this Mac image"),
@@ -577,6 +635,27 @@ let compactFile = try capture("file-compact", "Designer")
 clickTab("Clusters", compactFile)
 print("PASS native walk: pointer, Shift-Tab/Tab, Space, Enter and minimum window")
 if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
+    func fixtureControl(_ value: [String: Any]) throws {
+        let config = try Data(contentsOf: URL(fileURLWithPath: ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"]!))
+        let parsed = try JSONSerialization.jsonObject(with: config) as! [String: Any]
+        let clusters = parsed["clusters"] as! [[String: Any]]
+        let cluster = clusters[0]["cluster"] as! [String: Any]
+        guard let server = URLComponents(string: cluster["server"] as! String), server.scheme == "http",
+            server.host == "127.0.0.1", server.port != nil, server.user == nil, server.password == nil,
+            server.path.isEmpty, server.query == nil, server.fragment == nil else {
+            fail("Fixture controls require the CI loopback server")
+        }
+        let command = Process()
+        command.executableURL = URL(fileURLWithPath: "/usr/bin/curl")
+        command.arguments = ["--noproxy", "*", "--fail", "--silent", "--show-error", "--max-time", "5",
+            "-H", "Content-Type: application/json", "--data-binary",
+            String(data: try JSONSerialization.data(withJSONObject: value), encoding: .utf8)!,
+            "http://127.0.0.1:\(server.port!)/fixture-control"]
+        try command.run(); command.waitUntilExit()
+        require(command.terminationStatus == 0, "Fixture control failed: \(value)")
+    }
+    // CI runs both themes against one fixture process; keep each Send sequence deterministic.
+    try fixtureControl(["action": "reset"])
     let local = try capture("before-cluster", "Clusters")
     clickText("Use a cluster you already have instead", in: local)
     Thread.sleep(forTimeInterval: 1)
@@ -653,27 +732,13 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         for _ in 0..<8 {
             let seen = try capture("send-probe", "Designer")
             if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(expected) }) {
-                return try capture(name, "Designer")
+                let captured = try capture(name, "Designer")
+                require(captured.contains { ($0.topCandidates(1).first?.string ?? "").contains(expected) }, "Captured state missing in \(name): \(expected)")
+                return captured
             }
             scrollMain(-100)
         }
         fail("Preflight state missing: \(expected)")
-    }
-    // Read-only preflight states use distinct synthetic identities. No workload
-    // is submitted for either blocked card.
-    for (index, name, expected) in [(4, "send-blocked", "Blocked"), (5, "send-cannot-check", "Bridge cannot check")] {
-        let selected = try chooseFixture(index)
-        clickText("Use this cluster", in: selected)
-        Thread.sleep(forTimeInterval: 1)
-        scrollMain(-400)
-        let connected = try capture("cluster-access", "Clusters")
-        clickText("Open your agent", in: connected)
-        Thread.sleep(forTimeInterval: 0.5)
-        let agent = try capture("agent-cluster-owned", "Designer")
-        clickText("Send to a cluster", in: agent)
-        Thread.sleep(forTimeInterval: 1)
-        let checked = try capturePreflight(name, expected)
-        clickTab("Clusters", checked)
     }
     let normal = try chooseFixture(1)
     // Closing a native select popup can return focus to navigation. Activate the
@@ -689,22 +754,102 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 1)
     let allowed = try capturePreflight("send-ready", "Built in to this Orka")
     require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Built in to this Orka") }, "Allowed preflight evidence is missing")
-    try clickSendControl("Send and run checks", scrolling: -350)
+    func focusSend() throws {
+        // Pixel scroll offsets are not stable across responsive reflow. Focus
+        // the real entry button, then pointer-click its verified native bounds.
+        let matches = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXButton"
+                && attribute(element, "AXEnabled") as? Bool == true
+                && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Send to a cluster" }
+        }
+        require(matches.count == 1, "Expected one enabled Send entry")
+        let entry = matches[0]
+        require(AXUIElementSetAttributeValue(entry, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus Send entry")
+        Thread.sleep(forTimeInterval: 0.3)
+        guard let bounds = nativeBounds(entry), window()!.1.contains(bounds) else { fail("Focused Send entry is not visible") }
+        mouse(.leftMouseDown, CGPoint(x: bounds.midX, y: bounds.midY))
+        mouse(.leftMouseUp, CGPoint(x: bounds.midX, y: bounds.midY))
+        Thread.sleep(forTimeInterval: 0.5)
+    }
+    func resultSize(_ width: CGFloat, _ height: CGFloat) throws {
+        let frame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable])
+        var size = frame.size
+        require(AXUIElementSetAttributeValue(nativeWindow, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!) == .success, "Cannot resize result window")
+        Thread.sleep(forTimeInterval: 0.3)
+        require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Result window size was not applied")
+        // Reflow can move the result header above the preserved scroll offset.
+        // Reopen the existing panel without starting another Send.
+        try focusSend()
+    }
+    func captureAnswer(_ name: String) throws {
+        let seen = try capturePreflight("send-probe", "QUESTION")
+        guard let question = seen.first(where: { ($0.topCandidates(1).first?.string ?? "").contains("QUESTION") })
+            else { fail("Question heading missing after native search") }
+        let y = (1 - question.boundingBox.maxY) * window()!.1.height
+        scrollMain(-Int32(max(0, y - 180)))
+        let answer = try capture(name, "Designer")
+        let text = answer.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("What SHA-256 checksum does") && text.contains("Fixture answer:"), "Question and answer are not visible together")
+    }
+    try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
-    // The shared card's action is above preflight; reveal the actual report,
-    // not merely its aggregate pill, before asserting fixture evidence.
-    let result = try capturePreflight("send-result", "Checks: pass")
-    require(result.contains { $0.topCandidates(1).first?.string == "Checks: pass" }, "Fixture-backed Send did not pass its real assertions")
+    let result = try capturePreflight("send-result", "1 of 1 passed")
+    require(result.contains { ($0.topCandidates(1).first?.string ?? "").contains("1 of 1 passed") }, "Fixture-backed Send did not pass its real tests")
+    try resultSize(1280, 800)
+    try capturePreflight("send-result-wide", "1 of 1 passed")
+    try clickSendControl("published-checksum", scrolling: -250)
+    try captureAnswer("send-answer-wide")
+    try resultSize(540, 900)
+    try captureAnswer("send-answer")
+    try clickSendControl("published-checksum", scrolling: 250)
     try clickSendControl("Details", scrolling: -350)
-    scrollMain(-350)
-    let details = try capture("send-result-details", "Designer")
+    let details = try capturePreflight("send-result-details", "Planned Agent")
     let detailsText = details.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     require(detailsText.contains("Planned Agent") && detailsText.contains("Copy"), "Short Agent identity and Copy are not visible in native Send details")
-    // The fixture's second Agent stays Running so this is a real Stop, not an
-    // injected renderer state. Previously created resources remain on the fixture.
-    try clickSendControl("Send and run checks", scrolling: 350)
+    try clickSendControl("Details", scrolling: 350)
+    // Observe the passing revision before the result walk changes its test file.
+    try resultSize(1220, 900)
+    clickTab("Overview", [])
+    Thread.sleep(forTimeInterval: 1)
+    let passedUID = try recordShot("overview-fixture-versions-passed-by-place", "Checks passed here")
+    clickTab("Designer", [])
+    try resultSize(540, 900)
+    // Add a distinct failing test to the CI-owned saved file. Reload through the
+    // existing preflight flow; the earlier pass must turn stale, not stay green.
+    let testsURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.test.md")
+    let originalTests = try Data(contentsOf: testsURL)
+    restoreTemporaryTests = { try originalTests.write(to: testsURL, options: .atomic) }
+    defer {
+        do { try restoreTemporaryTests?(); restoreTemporaryTests = nil }
+        catch { fail("Cannot restore original test file: \(error)") }
+    }
+    var mixedTests = originalTests
+    mixedTests.append(Data("\n```yaml agent-test\nid: has-a-date\ninput: Which date is shown on the page?\nassertions:\n  - id: date\n    type: contains\n    value: '2099-12-31'\n```\n".utf8))
+    try mixedTests.write(to: testsURL, options: .atomic)
+    try clickSendControl("Check again", scrolling: -250)
+    try focusSend()
+    try capturePreflight("send-disk-stale", "Not run since your edit")
+    try clickSendControl("Reload saved files", scrolling: -250)
+    try focusSend()
+    try capturePreflight("send-stale", "Not run since your edit")
+    try resultSize(1280, 800)
+    try capturePreflight("send-stale-wide", "Not run since your edit")
+    try clickSendControl("Send and run tests", scrolling: 350)
+    Thread.sleep(forTimeInterval: 1)
+    try capturePreflight("send-mixed-wide", "1 of 2 passed")
+    let failed = try capturePreflight("send-failed-wide", "The answer did not include")
+    require(failed.contains { ($0.topCandidates(1).first?.string ?? "").contains("2099-12-31") }, "Plain test failure reason missing")
+    try resultSize(540, 900)
+    try capturePreflight("send-failed", "The answer did not include")
+    // The fixture's third Agent stays Running. This still stops watching only;
+    // it does not claim to cancel already-submitted cluster work.
+    try clickSendControl("Send and run tests", scrolling: 350)
     Thread.sleep(forTimeInterval: 0.5)
-    try capture("send-running", "Designer")
+    try capturePreflight("send-running", "Waiting for answers and evaluating tests")
+    try resultSize(1280, 800)
+    try capturePreflight("send-running-wide", "Waiting for answers and evaluating tests")
+    try focusSend()
     try clickSendControl("Stop", scrolling: -350)
     Thread.sleep(forTimeInterval: 0.5)
     let stopped = try capture("send-stopped", "Designer")
@@ -714,6 +859,150 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Send to a cluster", in: returned)
     let returnedResult = try capturePreflight("send-page-return", "Stopped watching")
     require(returnedResult.contains { ($0.topCandidates(1).first?.string ?? "").contains("Stopped watching") }, "Page return lost the stopped Send result")
+    // Widen the CI-owned native window for the real Overview board. This does
+    // not change app state; the earlier compact captures remain 540x900.
+    let overviewFrame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: 1220, height: 900),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable])
+    var overviewSize = overviewFrame.size
+    require(AXUIElementSetAttributeValue(nativeWindow, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &overviewSize)!) == .success,
+            "Cannot resize native Overview window")
+    Thread.sleep(forTimeInterval: 0.5)
+    require(abs(window()!.1.width - overviewSize.width) < 3 && abs(window()!.1.height - overviewSize.height) < 3,
+            "Native Overview size not verified")
+    func visibleTextBounds(_ text: String) -> [CGRect] { nativeTextBounds(text) }
+    @discardableResult
+    func overviewShot(_ name: String, _ required: [String], heading: String? = nil) throws -> [VNRecognizedTextObservation] {
+        scrollMain(12000)
+        for _ in 0..<40 {
+            let anchors = heading.map { nativeTextBounds($0, heading: true) } ?? visibleTextBounds(required[0])
+            if !anchors.isEmpty && required.allSatisfy({ nativeTextIsVisible($0) }) {
+                let anchor = anchors[0]
+                scrollMain(-Int32(max(0, anchor.minY - window()!.1.minY - 150)))
+                require(required.allSatisfy({ nativeTextIsVisible($0) }) && (heading.map { !nativeTextBounds($0, heading: true).isEmpty } ?? true), "Overview state moved out of view: \(required)")
+                let seen = try capture(name, "Overview")
+                print("PASS \(name): visible native state \(required)")
+                return seen
+            }
+            scrollMain(-180)
+        }
+        let diagnostic = Process()
+        diagnostic.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        diagnostic.arguments = ["-x", "-o", "-l", String(window()!.0), "\(output)/\(name)-failed.png"]
+        try diagnostic.run(); diagnostic.waitUntilExit()
+        for element in nativeElements() {
+            guard let bounds = nativeBounds(element), window()!.1.contains(bounds) else { continue }
+            let values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+            let role = attribute(element, "AXRole") as? String ?? "unknown"
+            if !values.isEmpty { print("VISIBLE AX \(role): \(values) \(bounds)") }
+        }
+        fail("Overview state not visible for \(name): \(required)")
+    }
+    func recordShot(_ name: String, _ checks: String) throws -> String {
+        try overviewShot("overview-probe", [checks])
+        let anchor = visibleTextBounds(checks)[0]
+        guard let disclosure = visibleTextBounds("Observed identity").filter({ $0.minY > anchor.minY }).min(by: { $0.minY < $1.minY }) else {
+            fail("Observed identity disclosure not visible below \(checks)")
+        }
+        let point = CGPoint(x: disclosure.midX, y: disclosure.midY)
+        mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+        Thread.sleep(forTimeInterval: 0.5)
+        // Expanding the last card adds content below the old scroll limit.
+        // Bring its place row into view before checking the scoped identity.
+        try overviewShot("overview-probe", [checks, "fixture-cluster · agents"])
+        guard let currentAnchor = visibleTextBounds(checks).first,
+            let identity = visibleTextBounds("Observed identity").filter({ $0.minY > currentAnchor.minY }).min(by: { $0.minY < $1.minY }) else {
+            fail("Selected identity moved out of view below \(checks)")
+        }
+        // Earlier cards can retain open identities. Scope the UID to the
+        // disclosure below this card's check result, not the whole window.
+        let uids = Set(nativeElements().compactMap { element -> String? in
+            guard attribute(element, "AXRole") as? String == "AXStaticText",
+                let value = attribute(element, "AXValue") as? String, value.hasPrefix("uid-bridge-run-"),
+                let bounds = nativeBounds(element), bounds.minY > identity.maxY, window()!.1.contains(bounds) else { return nil }
+            return value
+        })
+        require(uids.count == 1 && nativeTextIsVisible(checks) && nativeTextIsVisible("fixture-cluster · agents"),
+                "Expected one visible retained Agent UID below selected identity, place and \(checks), found \(uids)")
+        try capture(name, "Overview")
+        print("PASS \(name): \(checks), retained \(uids.first!)")
+        return uids.first!
+    }
+    clickTab("Overview", returnedResult)
+    Thread.sleep(forTimeInterval: 1)
+    let unknownUID = try recordShot("overview-fixture-versions-unknown-by-place", "Checks unknown")
+    require(passedUID != unknownUID, "Repeated Send did not retain distinct Agent UIDs")
+    try overviewShot("overview-fixture-external-by-place", ["runtime-reader", "Not tested by Bridge", "Type: runtime", "Model observed: external-model", "Tools observed: web_fetch"])
+    // The primary-place captures retain the changed two-test revision. Restore
+    // the original pair before the separate place/provenance scenarios.
+    try restoreTemporaryTests?()
+    restoreTemporaryTests = nil
+    // Confirm another real synthetic installation via the existing Use flow.
+    clickTab("Clusters", [])
+    let secondary = try chooseFixture(6)
+    clickText("Use this cluster", in: secondary)
+    Thread.sleep(forTimeInterval: 1)
+    scrollMain(-400)
+    let secondConnected = try capture("cluster-access", "Clusters")
+    clickText("Open your agent", in: secondConnected)
+    let secondAgent = try capture("agent-cluster-owned", "Designer")
+    clickText("Send to a cluster", in: secondAgent)
+    try clickSendControl("Reload saved files", scrolling: -250)
+    try capturePreflight("send-ready", "Built in to this Orka")
+    try clickSendControl("Send and run tests", scrolling: -350)
+    Thread.sleep(forTimeInterval: 1)
+    try capturePreflight("send-secondary-result", "1 of 1 passed")
+    // The fixture accepts the create but withholds its UID receipt. Overview
+    // must keep this unknown attempt separate, never name-join it to inventory.
+    try fixtureControl(["action": "lose-agent-receipt", "place": "fixture-secondary"])
+    try clickSendControl("Send and run tests", scrolling: 350)
+    Thread.sleep(forTimeInterval: 1)
+    let noReceipt = try capturePreflight("send-no-agent-receipt", "Result unknown")
+    try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": true])
+    clickTab("Overview", noReceipt)
+    Thread.sleep(forTimeInterval: 1)
+    try overviewShot("overview-fixture-first-read-unavailable", ["Observation stale", "No Agent observation yet. Refresh or check access in Clusters."], heading: "fixture-secondary")
+    try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false])
+    scrollMain(12000)
+    clickText("Refresh", in: try capture("overview-probe", "Overview"))
+    Thread.sleep(forTimeInterval: 1)
+    try overviewShot("overview-fixture-multiple-places-by-place", ["fixture-secondary", "3 Agents", "Orka Agent"], heading: "fixture-secondary")
+    let attempt = "fixture-secondary · agents · Checks unknown"
+    try overviewShot("overview-probe", [attempt])
+    guard let attemptBounds = nativeTextBounds(attempt).first else { fail("Recorded attempt disclosure is not visible") }
+    let attemptPoint = CGPoint(x: attemptBounds.midX, y: attemptBounds.midY)
+    mouse(.leftMouseDown, attemptPoint); mouse(.leftMouseUp, attemptPoint)
+    Thread.sleep(forTimeInterval: 0.5)
+    try overviewShot("overview-fixture-unknown-attempt", ["Agent creation not confirmed", "Checks unknown", "Planned name: bridge-run-"])
+    scrollMain(12000)
+    clickText("By agent", in: try capture("overview-probe", "Overview"))
+    try overviewShot("overview-fixture-multiple-places-by-agent", ["recorded revision", "Also observed on fixture-secondary · agents"])
+    try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": true])
+    defer { try? fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false]) }
+    scrollMain(12000)
+    clickText("Refresh", in: try capture("overview-probe", "Overview"))
+    Thread.sleep(forTimeInterval: 1)
+    try overviewShot("overview-fixture-offline-by-agent", ["fixture-secondary · agents", "Recorded checks passed; observation stale", "Orka Agent · stale"])
+    scrollMain(12000)
+    clickText("By place", in: try capture("overview-probe", "Overview"))
+    try overviewShot("overview-fixture-offline-by-place", ["fixture-secondary", "Observation stale", "Last seen", "Orka Agent · stale"], heading: "fixture-secondary")
+    try overviewShot("overview-fixture-offline-record-by-place", ["Recorded checks passed; observation stale", "Orka Agent · stale"])
+    try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false])
+    // Keep the existing preflight-only cards out of the focused Overview walk.
+    // These identities still exercise the same blocked states without a Send.
+    clickTab("Clusters", [])
+    for (index, name, expected) in [(4, "send-blocked", "Blocked"), (5, "send-cannot-check", "Bridge cannot check")] {
+        let selected = try chooseFixture(index)
+        clickText("Use this cluster", in: selected)
+        Thread.sleep(forTimeInterval: 1)
+        scrollMain(-400)
+        let connected = try capture("cluster-access", "Clusters")
+        clickText("Open your agent", in: connected)
+        let agent = try capture("agent-cluster-owned", "Designer")
+        clickText("Send to a cluster", in: agent)
+        Thread.sleep(forTimeInterval: 1)
+        let checked = try capturePreflight(name, expected)
+        clickTab("Clusters", checked)
+    }
     // Reopen without reconnecting the cluster or sending again. Only the small
     // saved summaries survive; detailed results and live handles do not.
     app.terminate()
@@ -749,4 +1038,16 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     require(historyFound, "Saved Send history was not reachable after restart")
     try capture("send-history-restarted", "Designer")
+    // Prove the earlier passing summary remains reachable after restart.
+    var savedPass = false
+    for _ in 0..<6 {
+        let seen = try capture("send-probe", "Designer")
+        if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains("Saved tests: pass") }) {
+            try capture("send-history-passed", "Designer")
+            savedPass = true
+            break
+        }
+        scrollMain(-150)
+    }
+    require(savedPass, "Earlier saved pass was not reachable after restart")
 }

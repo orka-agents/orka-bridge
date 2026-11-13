@@ -10,6 +10,8 @@ pub mod engine;
 pub mod example_run;
 pub mod local_vm;
 pub mod overview;
+#[path = "overview/places.rs"]
+pub mod overview_places;
 pub mod pair_source;
 pub mod runtime;
 pub mod send;

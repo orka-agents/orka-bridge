@@ -8,8 +8,12 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: Reviewed checked-in publisher profile (none approved yet)
-        required: true
+        description: Reviewed image publisher profile (unused for Windows packaging)
+        required: false
+        type: string
+      windows_candidate_tag:
+        description: Future app release tag for Windows packaging only (empty runs image publisher)
+        required: false
         type: string
 
 permissions: {}
@@ -38,7 +42,7 @@ jobs:
         run: sudo unshare --net sh -c 'PYTHONPATH=images /usr/bin/python3 -m unittest discover -s images -p "test_*.py" -v'
 
   prepare:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'orka-agents/orka-bridge'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'orka-agents/orka-bridge' && inputs.windows_candidate_tag == ''
     needs: tests
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -61,7 +65,7 @@ jobs:
         run: python3 images/qualify.py prepare --profile "$PROFILE" --out "$OUT"
 
   draft:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'orka-agents/orka-bridge'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'orka-agents/orka-bridge' && inputs.windows_candidate_tag == ''
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -83,3 +87,102 @@ jobs:
           EXPECTED_MANIFEST: ${{ needs.prepare.outputs.manifest_sha256 }}
           OUT: ${{ runner.temp }}/image-package
         run: python3 images/qualify.py draft --profile "$PROFILE" --out "$OUT" --manifest-sha256 "$EXPECTED_MANIFEST"
+
+  qemu-inputs:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'orka-agents/orka-bridge' && inputs.windows_candidate_tag != ''
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      # GitHub requires push access to list/read unpublished release assets.
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate future app tag
+        env:
+          CANDIDATE_TAG: ${{ inputs.windows_candidate_tag }}
+        run: PYTHONPATH=runtime/windows python3 -c 'import os, delivery; delivery.validate_tag(os.environ["CANDIDATE_TAG"])'
+      - name: Read and verify fixed input draft (no build or release writes)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 runtime/windows/delivery.py fetch --out "$RUNNER_TEMP/qemu-inputs"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: qemu-inputs
+          path: |
+            ${{ runner.temp }}/qemu-inputs/bridge-windows-runtime-portable.zip
+            ${{ runner.temp }}/qemu-inputs/bridge-windows-runtime-source.zip
+            ${{ runner.temp }}/qemu-inputs/build-report.json
+            ${{ runner.temp }}/qemu-inputs/verification.json
+            ${{ runner.temp }}/qemu-inputs/SHA256SUMS
+            ${{ runner.temp }}/qemu-inputs/producer-run.json
+            ${{ runner.temp }}/qemu-inputs/producer-artifact.json
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  windows-candidate:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository == 'orka-agents/orka-bridge' && inputs.windows_candidate_tag != ''
+    needs: qemu-inputs
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      # External lock hashes refer to repository bytes, not a CRLF checkout.
+      GIT_CONFIG_COUNT: '1'
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: 'false'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: qemu-inputs
+          path: ${{ runner.temp }}/qemu-inputs
+      - uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c # v6
+        with:
+          python-version: '3.11'
+      - name: Independently recheck transferred inputs
+        run: python runtime/windows/delivery.py check --inputs "$env:RUNNER_TEMP/qemu-inputs"
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '26.5.0'
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: '1.98.1'
+      - name: Build Windows app
+        working-directory: app
+        run: |
+          npm install --global npm@11.17.0 --ignore-scripts
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm ci
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run build
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          npm run tauri -- build --no-bundle -- --locked
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Assemble portable app and inspect native extraction with restricted PATH
+        env:
+          CANDIDATE_TAG: ${{ inputs.windows_candidate_tag }}
+        run: |
+          python runtime/windows/delivery.py assemble --inputs "$env:RUNNER_TEMP/qemu-inputs" --executable app/src-tauri/target/release/orka-bridge.exe --licenses app/public/licenses --release-tag "$env:CANDIDATE_TAG" --out "$env:RUNNER_TEMP/windows-delivery"
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & runtime/windows/inspect-delivery.ps1 -Archive "$env:RUNNER_TEMP/windows-delivery/bridge-windows-x64.zip"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bridge-windows-candidate
+          path: |
+            ${{ runner.temp }}/windows-delivery/bridge-windows-x64.zip
+            ${{ runner.temp }}/windows-delivery/bridge-windows-runtime-source.zip
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error

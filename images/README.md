@@ -7,10 +7,11 @@ The packaging tools require only Python 3.11 or newer. Schema regression tests
 also use the development-only `jsonschema` validator (`python3-jsonschema` on
 Ubuntu), installed before CI enters the network-disabled test step.
 
-**`bridge-image/v2` is provisional.** The native-runtime owner must accept this
-mapping before it is frozen. `publisher-policy.json` intentionally contains no
-accepted schema hash or profiles. Neither a caller-supplied manifest nor a
-successful fixture test can approve a release. No image is approved for shipping.
+**`bridge-image/v2` is frozen.** `publisher-policy.json` accepts the exact schema
+hash also pinned by the native consumer. Acceptance is recorded outside the schema.
+Its paired source-preview profiles select retained image bytes, not a shipping
+release. Neither caller-supplied metadata nor a successful fixture test approves
+publication or proves a physical host walk. The shipping app catalog stays empty.
 
 ## Local packaging and verification
 
@@ -98,7 +99,8 @@ Kubernetes is explicitly **policy-declared**, not covered solely by the semantic
 lock hash. Orka, kind, Vekil and selected tools retain their available identities.
 kmx is currently represented by its nullable profile checksum; this does not
 invent an executable version/hash or assert that the guest endpoint exists.
-`publicationReady` stays false. See [the draft schema](manifest.schema.json).
+`publicationReady` stays false, including after any separately approved preview
+publication. See [the accepted schema](manifest.schema.json).
 
 ## Direct-boot input contract
 
@@ -146,12 +148,37 @@ target, input identity and reviewed native-receipt identity. Profile fields are
 `payloadPath/Sha256`, `metadataPath/Sha256`, `buildReceiptPath/Sha256`,
 `bootReceiptPath/Sha256`, `kernelPath/Sha256/Bytes` and `initrdPath/Sha256/Bytes`
 (each slash denotes separate fields). All six selected paths must differ. No producer member names or qualified build workflow are guessed here.
-The guest's existing production input policy must approve the actual lock too.
 A profile is a reviewed repository change, not workflow input that self-approves.
-The empty policy rejects before any network call.
+Before network access, its architecture/input identity must match a reviewed
+upstream release profile or the policy's `sourcePreviews` entry for the exact Orka
+source commit. The publisher alone passes that table as keyword-only
+`source_previews` to guest admission. Source previews retain the complete source
+and offline-profile validation; `lock.py --mode release` still refuses them.
+Release-mode locks still require a reviewed upstream release including #833.
 
-The manually selected profile is checked on trusted `main`. Prepare has read
-permissions only. It first requires the builder commit's checked-in guest version
+The paired profiles retain locally built disks through input-only drafts. Their
+`artifactId/artifactSha256` identify the successful **endpoint Actions artifact**,
+not the disk ZIP. Run, workflow, source, nonfork repository, artifact digest and
+artifact/run bindings remain checked. Only artifact expiry is ignored for this
+retained-input path; Actions disk inputs still require an unexpired artifact.
+
+`inputDraft` pins `releaseId`, `tag`, `archiveBytes`, `archiveSha256`, and ordered
+`parts` (`name`, `bytes`, `sha256`). Input tags use
+`bridge-image-inputs-<architecture>-<archiveSha256>`, separate from output image tags.
+Exactly one matching unpublished draft must target the producer commit, with the
+exact reviewed part inventory. Parts download by authenticated asset ID, verify
+individually, and reconstruct a hash-pinned ZIP before the same six-member checks.
+Draft identity and inventory are rechecked after download. ZIP64 permits the 16 GiB
+Mac member without materializing another raw disk. Part files are removed from
+private temporary space as each is joined; original receipts remain unchanged.
+The historical `nativeReceiptSha256` field pins supporting verification evidence;
+it is not interpreted by this tool and does not establish a native app walk.
+
+The manually selected profile is checked on trusted `main`. The existing Actions
+prepare job has read permissions only. Input drafts require push-capable GitHub
+authentication; these profiles are exercised with local `prepare`, not claimed to
+work in that read-only job. Workflow input acquisition is a separate integration
+step; no permission expansion is implicit in these profiles. It first requires the builder commit's checked-in guest version
 policy to match the publisher's exact policy bytes, so policy-declared Kubernetes
 cannot silently refer to a different build policy. It validates run and artifact
 identities, cross-binds metadata
@@ -177,10 +204,10 @@ manifest to prepare's externally pinned hash before any release creation. The
 internal draft preflight also compares payload/build/boot hashes and both boot
 assets' hashes and sizes to the selected profile. No extra public profile
 attestation field is added. Failure leaves the
-draft for operator inspection, never silently retries or publishes it. A draft
-is not release approval. Freezing the schema, native boot results and a separate
-publication decision remain required. This PR must not be used to dispatch or
-publish an image before those handoffs.
+draft for operator inspection, never silently retries or publishes it. An input
+draft must never be published. An output draft is not release approval: native
+walks and a separate publication decision remain required. Schema acceptance does
+not authorize dispatch or publication.
 
 ## Tests
 
