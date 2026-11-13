@@ -662,7 +662,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // CI runs both themes against one fixture process; keep each Send sequence deterministic.
     try fixtureControl(["action": "reset"])
     let local = try capture("before-cluster", "Clusters")
-    clickText("Use a cluster you already have instead", in: local)
+    // No local selection exists in this no-VM walk; use the chooser's cluster radio.
+    clickText("On a cluster you already have", in: local)
     Thread.sleep(forTimeInterval: 1)
     // The label focuses its native select. Choose the first synthetic context.
     let chooserFile = "\(output)/cluster-chooser.png"
