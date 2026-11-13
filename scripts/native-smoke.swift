@@ -422,7 +422,11 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     if name.hasPrefix("cluster-add") || name == "cluster-connect-blank" {
         // Add and a row's Connect both open a blank context choice, with no old workspace chooser.
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Back to places") && !text.contains("Orka found") && !text.contains("Access confirmed")
+        // Add preserves the Designer destination, so the tab may still say Access confirmed.
+        // Only a confirmation or handoff inside the page would make this entry non-blank.
+        let bodyConfirmed = nativeTextBounds("Access confirmed").contains { bodyBounds().intersects($0) }
+        require(text.contains("Back to places") && !text.contains("Orka found") && !bodyConfirmed
+            && nativeButtons("Open your agent").isEmpty && nativeButtons("Check access again").isEmpty
             && !text.contains("Where should your agents run") && !text.contains("On a cluster you already have"),
             "Add a place did not open a blank Places subview: \(text)")
         require(text.contains("Choose a context") || nativeStrings().contains { $0.contains("Choose a context") },
