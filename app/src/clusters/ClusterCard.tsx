@@ -29,7 +29,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   function readContexts() {
     const request = ++epoch.current; setBusy(true);
     void contexts().then(v => { if (request === epoch.current) { setChoices(v); initialLoaded.current = true; } }, error => {
-      if (request === epoch.current) { setError({ failure: failedCheck(error, 'configuration'), operation: 'Read kubeconfig' }); initialLoaded.current = true; }
+      if (request === epoch.current) { setError({ failure: failedCheck(error, 'configuration'), operation: 'Read kubeconfig' }); initialLoaded.current = false; }
     }).finally(() => { if (request === epoch.current) setBusy(false); });
   }
   useEffect(() => {
@@ -85,11 +85,11 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   const recovery = error && clusterRecovery(error.failure);
   async function reload() {
     if (!active || reloadActive.current) return;
-    reloadActive.current = true; admitted.current = false; const request = ++epoch.current;
+    reloadActive.current = true; initialLoaded.current = false; admitted.current = false; const request = ++epoch.current;
     setReloading(true); setBusy(true); setChoices([]); setContextId(''); setTargets(undefined); setTargetId('');
     setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
     onPlace({ kind: 'cluster' });
-    try { const value = await reloadContexts(); if (request === epoch.current) setChoices(value); }
+    try { const value = await reloadContexts(); if (request === epoch.current) { setChoices(value); initialLoaded.current = true; } }
     catch (error) { if (request === epoch.current) setError({ failure: failedCheck(error, 'configuration'), operation: 'Reload kubeconfig' }); }
     finally { if (request === epoch.current) { reloadActive.current = false; setReloading(false); setBusy(false); } }
   }

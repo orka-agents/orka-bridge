@@ -332,19 +332,29 @@ test('a Reload kubeconfig interrupted by deactivation resumes the reload on reac
   expect(screen.getByRole('option', { name: context.name })).toBeTruthy();
 });
 
-test('a new entry after an interrupted reload reads contexts again and discards the stale reply', async () => {
+test.each(['interrupted reload', 'failed initial read', 'failed reload'])('a new entry after %s reads contexts again and discards stale replies', async operation => {
   vi.stubGlobal('isTauri', true);
   const oldReload = deferred<unknown>(); const freshRead = deferred<unknown>(); let reads = 0;
+  const failure = { check: 'configuration', result: 'unknown' };
   const ipc = vi.fn((command: string) => {
-    if (command === 'cluster_contexts') return ++reads === 1 ? [context] : freshRead.promise;
-    if (command === 'cluster_reload') return oldReload.promise;
+    if (command === 'cluster_contexts') {
+      if (++reads > 1) return freshRead.promise;
+      return operation === 'failed initial read' ? Promise.reject(failure) : [context];
+    }
+    if (command === 'cluster_reload') return operation === 'failed reload' ? Promise.reject(failure) : oldReload.promise;
     throw Error('Unsupported');
   });
   mockIPC(ipc);
   const onPlace = vi.fn(); const user = userEvent.setup(); const entry = { revision: 1 };
   const view = render(<ClusterCard active entry={entry} onPlace={onPlace} onOpenAgent={vi.fn()} />);
-  await screen.findByRole('option', { name: context.name });
-  await user.click(screen.getByRole('button', { name: 'Reload kubeconfig' }));
+  if (operation === 'failed initial read') await screen.findByRole('alert');
+  else {
+    await screen.findByRole('option', { name: context.name });
+    await user.click(screen.getByRole('button', { name: 'Reload kubeconfig' }));
+    if (operation === 'failed reload') await screen.findByRole('alert');
+  }
+  expect(reads).toBe(1);
+  expect(ipc.mock.calls.filter(([command]) => command === 'cluster_reload')).toHaveLength(operation === 'failed initial read' ? 0 : 1);
 
   view.rerender(<ClusterCard active={false} entry={entry} onPlace={onPlace} onOpenAgent={vi.fn()} />);
   view.rerender(<ClusterCard active entry={{ revision: 2 }} onPlace={onPlace} onOpenAgent={vi.fn()} />);
@@ -357,7 +367,10 @@ test('a new entry after an interrupted reload reads contexts again and discards 
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
   expect(screen.getByRole('option', { name: context.name })).toBeTruthy();
   expect(screen.queryByText(/No kubectl contexts were found/)).toBeNull();
-  expect(onPlace).toHaveBeenCalledTimes(1);
+  expect(onPlace).toHaveBeenCalledTimes(operation === 'failed initial read' ? 0 : 1);
+  const completedReads = reads;
+  view.rerender(<ClusterCard active entry={{ revision: 3 }} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  expect(reads).toBe(completedReads);
 });
 
 test('reactivating after a provider reconnect remaps the remembered provider name to its freshly minted ID', async () => {
