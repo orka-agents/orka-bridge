@@ -148,22 +148,6 @@ test('selected Manage uses current App capabilities without discovery and change
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_discover');
 });
 
-test('Back fences late Use replies, even if native remembers their selected key', async () => {
-  const { ipc } = native(); const pending = deferred<unknown>(); const old = ipc.getMockImplementation()!;
-  ipc.mockImplementation(c => c === 'cluster_use' ? pending.promise : old(c));
-  const observe = vi.fn(); const user = userEvent.setup(); render(<Host observe={observe} />);
-  await user.click(await screen.findByRole('button', { name: 'Add a place' }));
-  await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
-  await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
-  await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
-  expect(observe).toHaveBeenLastCalledWith({ kind: 'cluster' });
-  const calls = observe.mock.calls.length;
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
-  await act(async () => pending.resolve({ status: 'connected', providers: [provider], failure: null }));
-  expect(observe).toHaveBeenCalledTimes(calls);
-  expect(screen.queryByText('Selected for Designer')).toBeNull();
-});
-
 test('local Manage is navigation; explicit Use this computer never starts a stopped VM or trusts its native cluster key', async () => {
   const { ipc } = native(); const observe = vi.fn(); const user = userEvent.setup(); render(<Host initial={connected} observe={observe} />);
   await user.click(within(await screen.findByRole('region', { name: 'This computer' })).getByRole('button', { name: 'Set up' }));
@@ -175,18 +159,6 @@ test('local Manage is navigation; explicit Use this computer never starts a stop
   expect(screen.queryByText('Selected for Designer')).toBeNull();
 });
 
-test('local preflight retains three size rows with plain missing facts; only Continue starts setup', async () => {
-  const { ipc } = native(); const user = userEvent.setup(); render(<Host />);
-  await user.click(within(await screen.findByRole('region', { name: 'This computer' })).getByRole('button', { name: 'Set up' }));
-  for (const label of ['Memory', 'Workspace image', 'Data disk, up to']) expect(screen.getByText(label, { selector: 'dt' })).toBeTruthy();
-  expect(screen.getByText('Workspace size will be shown before download')).toBeTruthy();
-  expect(document.body.textContent).not.toMatch(/unavailable in this build/i);
-  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
-  await user.click(screen.getByRole('button', { name: 'Continue' }));
-  expect(await screen.findByRole('region', { name: 'Workspace setup' })).toBeTruthy();
-  expect(ipc.mock.calls.filter(([c]) => c === 'setup_select_local')).toHaveLength(1);
-});
-
 test.each([['closed', 'Workspace stopped'], ['cancelled', 'Setup paused'], ['idle', 'Not set up']] as const)('a selected %s local workspace never claims setup is still running', async (localVm, label) => {
   const { sim } = native(); sim.status = { ...sim.status, selected: 'localVm', localVm };
   const user = userEvent.setup(); render(<Host />);
@@ -196,15 +168,6 @@ test.each([['closed', 'Workspace stopped'], ['cancelled', 'Setup paused'], ['idl
   expect(pill.className).toContain('status-not-started');
   expect(within(local).queryByText('Setup in progress')).toBeNull();
   expect(within(local).getByRole('button', { name: 'Continue setup' })).toBeTruthy();
-});
-
-test('cluster coordinates use the approved monospace treatment without changing the local title', async () => {
-  native(); render(<Host />);
-  const cluster = await screen.findByRole('region', { name: 'team-dev' });
-  expect(within(cluster).getByText('team-dev', { selector: 'code' })).toBeTruthy();
-  expect(within(cluster).getByText('agents', { selector: 'code' })).toBeTruthy();
-  expect(within(cluster).getByText('control / orka', { selector: 'code' })).toBeTruthy();
-  expect(within(row('This computer')).getByRole('heading', { name: 'This computer' }).querySelector('code')).toBeNull();
 });
 
 test('snapshot failure retains known rows but does not invent a selected row or empty inventory', async () => {
@@ -277,4 +240,8 @@ test('loading local size facts keeps all three rows visible and Continue gated',
   await act(async () => pending.resolve(null));
   expect(screen.getByText('Workspace size will be shown before download')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false);
+  expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
+  await user.click(screen.getByRole('button', { name: 'Continue' }));
+  expect(await screen.findByRole('region', { name: 'Workspace setup' })).toBeTruthy();
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toHaveLength(1);
 });

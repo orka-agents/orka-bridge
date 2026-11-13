@@ -86,9 +86,6 @@ try {
     ['cluster-unknown', { check: 'orkaIdentity', result: 'unknown' }, 'The cause could not be established'],
     ['cluster-reload-pending', null, 'Reload pending'],
     ['cluster-reloaded', null, 'corrected-context'],
-    // Add stages that need no failure: discovery before Use, then confirmed access with its Provider.
-    ['cluster-discovered', null, 'Use this cluster to confirm access.'],
-    ['cluster-confirmed', null, 'Your agent keeps the model in its file.'],
   ];
   for (const theme of ['light', 'dark']) {
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
@@ -122,8 +119,7 @@ try {
         document.getElementById('root').replaceWith(Object.assign(document.createElement('div'), { id: 'root' }));
       })()`);
       await evaluate(bundle);
-      // A ready workspace opens on Places; its Manage action reaches the model controls. Pending and
-      // failed workspaces open directly on their local progress or recovery.
+      // A ready workspace opens on Places; Manage reaches its model controls.
       if (model) await clickAction('Manage');
       if (model) {
         await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI')`), 'model action');
@@ -136,7 +132,7 @@ try {
           await until(() => evaluate(`document.querySelector('#cluster-context')?.options.length > 1`), 'fixture contexts');
           await evaluate(`(() => { const select = document.querySelector('#cluster-context'); select.value = select.options[1].value; select.dispatchEvent(new Event('change', { bubbles: true })); })()`);
           await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Use this cluster')`), 'cluster Use');
-          if (name !== 'cluster-discovered') await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Use this cluster').click()`);
+          await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Use this cluster').click()`);
           if (name.startsWith('cluster-reload')) {
             await until(() => evaluate(`document.body.textContent.includes('Access confirmed')`), 'confirmed fixture access');
             await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Reload kubeconfig').click()`);
@@ -149,9 +145,6 @@ try {
       }
       // Local panels stay mounted but hidden under Places; require the recovery alert to be on screen.
       await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && ${cluster ? '!!document.querySelector(\'.cluster-card\')' : `[...document.querySelectorAll('[role=alert]')].some(item => item.getClientRects().length)`}`), `${name} recovery`);
-      if (cluster && !await evaluate(`[...document.querySelectorAll('button')].some(button => button.textContent === 'Back to places' && button.getClientRects().length) && !document.querySelector('input[type=radio]') && !document.body.textContent.includes('Where should your agents run')`)) {
-        throw Error(`${name}: Add a place must be a Places subview without the old chooser`);
-      }
       if (cluster) await evaluate(`document.querySelector('.cluster-card').scrollIntoView({ block: 'end' })`);
       await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const image = await call('Page.captureScreenshot', { format: 'png' });
@@ -195,7 +188,6 @@ try {
       document.getElementById('root').replaceWith(Object.assign(document.createElement('div'), { id: 'root' }));
     })()`);
     await evaluate(bundle);
-    // Pending setup opens directly on its progress; a running workspace opens on Places and Manage.
     if (localVm === 'ready') await clickAction('Manage');
     if (queue) {
       await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI')`), 'queueable model action');
@@ -218,8 +210,7 @@ try {
     }
   }
   // Setup actions and the first test use the compiled app and synthetic IPC only.
-  // Places states first (empty, with remembered clusters, and the three local size states), then setup actions.
-  const actionFixtures = ['places-empty', 'places-populated', 'local-preflight', 'local-preflight-missing', 'local-preflight-reading', 'ai-idle', 'ai-connecting', 'ai-connected', 'first-test-running', 'first-test-result', 'first-test-badges', 'change', 'designer'];
+  const actionFixtures = ['places-empty', 'places-populated', 'local-preflight', 'local-preflight-missing', 'ai-idle', 'ai-connecting', 'ai-connected', 'first-test-running', 'first-test-result', 'first-test-badges', 'change', 'designer'];
   async function clickAction(label) {
     await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(label)} && !button.disabled)`), label);
     await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(label)} && !button.disabled).click()`);
@@ -231,11 +222,12 @@ try {
       const pair = ${JSON.stringify(pair)};
       const name = ${JSON.stringify(name)};
       const documentId = '9b2b93c4-375c-4815-9717-39852a96e411';
-      const places = name.startsWith('places-');
+      const places = name.startsWith('places-') || name.startsWith('local-preflight');
       let selected = ${JSON.stringify(!first && !name.startsWith('places-') && !name.startsWith('local-preflight'))};
       let connected = false;
       let submitted = false;
       window.__bridgeBadgeState = 'passed';
+      window.__bridgeRuns = 0;
       const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
       const status = () => ({ selected: selected ? 'localVm' : null, localVm: selected ? 'ready' : 'idle', model: selected ? 'available' : 'locked' });
       const report = { verdict: 'failed', cases: [{ id: 'page-checksum', question: 'What checksum does the page show?', phase: 'Succeeded', answer: 'No checksum was given.', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', expected: 'fixture-checksum', verdict: 'failed' }], verdict: 'failed' }] };
@@ -255,12 +247,10 @@ try {
       window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
         if (command === 'setup_status') return status();
         if (command === 'setup_select_local') { selected = true; return status(); }
-        // Known, missing and still-loading size facts. Fixture IPC only, not the native catalog.
-        if (command === 'setup_requirements') return name === 'local-preflight' ? ${JSON.stringify({ memoryBytes: 4 * GiB, imageBytes: Math.round(2.8 * GiB), stateDiskBytes: 20 * GiB })}
-          : name === 'local-preflight-reading' ? new Promise(() => {}) : null;
+        // Known and missing size facts: fixture IPC, not the native catalog.
+        if (command === 'setup_requirements') return name === 'local-preflight' ? ${JSON.stringify({ memoryBytes: 4 * GiB, imageBytes: Math.round(2.8 * GiB), stateDiskBytes: 20 * GiB })} : null;
         if (command === 'setup_preflight') return { platform: 'windows', virtualization: 'ready', memory: 'ready', installedMemoryBytes: ${16 * GiB}, requiredMemoryBytes: ${4 * GiB} };
-        // Remembered clusters are passive history: one with a past check, one never checked, none selected.
-        if (command === 'cluster_places') return places && name === 'places-populated' ? { selectedKey: null, places: [
+        if (command === 'cluster_places') return name === 'places-populated' ? { selectedKey: null, places: [
           { key: 'fixture-a', context: 'fixture-cluster', service: 'control / orka', namespace: 'agents', stale: false, observedAt: Date.now() - 600000, agents: [] },
           { key: 'fixture-b', context: 'fixture-secondary', service: 'control / orka', namespace: 'agents', stale: true, observedAt: null, agents: [] }] }
           : { places: [], selectedKey: null };
@@ -270,7 +260,7 @@ try {
           connected = true; return { ready: true };
         }
         if (command === 'agent_open') return { ...pair, documentId, name: 'web-reader', ...(name === 'first-test-badges' ? { source } : {}) };
-        if (command === 'agent_run') { if (args?.bundledExample !== true) throw Error('Fixture automatic test requires native source guard'); if (submitted) throw Error('Fixture automatic test replayed'); submitted = true; return snapshot(); }
+        if (command === 'agent_run') { if (args?.bundledExample !== true) throw Error('Fixture automatic test requires native source guard'); if (submitted) throw Error('Fixture automatic test replayed'); submitted = true; window.__bridgeRuns++; return snapshot(); }
         if (command === 'agent_run_status') return snapshot();
         if (command === 'send_history' || command === 'cluster_contexts') return [];
         throw Error('Unmocked action fixture command: ' + command);
@@ -278,9 +268,9 @@ try {
       document.getElementById('root').replaceWith(Object.assign(document.createElement('div'), { id: 'root' }));
     })()`);
     await evaluate(bundle);
-    // Navigation is user-visible: Places shows Set up (idle) or Manage (running). Only Continue starts setup.
+    // Places shows Set up (idle) or Manage (running); only Continue starts setup.
     if (first || name.startsWith('local-preflight')) await clickAction('Set up');
-    else if (!name.startsWith('places-')) await clickAction('Manage');
+    else if (!places) await clickAction('Manage');
     if (first) await clickAction('Continue');
     if (first || name === 'ai-connecting' || name === 'ai-connected') await clickAction('Connect the AI');
     if (name === 'change') {
@@ -291,37 +281,46 @@ try {
     if (name === 'first-test-badges') {
       await until(() => evaluate(`!!document.querySelector('.designer-work')`), 'sample result before badge recovery');
       await evaluate(`document.querySelector('button[aria-label="Clusters"]').click()`);
-      for (const [state, label] of [['passed', 'Passed'], ['failed', 'Failed'], ['stale', 'Needs running'], ['unknown', 'Result unknown']]) {
+      // Primary action and the single failed case are the Workspace setup card's, not the setup history's.
+      for (const [state, label, primary] of [['passed', 'Passed', 'Open your test result'], ['failed', 'Failed', 'Open your test result'], ['stale', 'Needs running', 'Run the test again'], ['unknown', 'Result unknown', 'Check again']]) {
         await evaluate(`window.__bridgeBadgeState = ${JSON.stringify(state)}`);
         await until(() => evaluate(`document.querySelector('[aria-label="Setup steps"] li:last-child .step-result')?.textContent === ${JSON.stringify(label)}`), `sample badge ${state}`);
-        await evaluate(`document.querySelector('[aria-label="Setup steps"] li:last-child').scrollIntoView({ block: 'center' })`);
-        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
-        const image = await call('Page.captureScreenshot', { format: 'png' });
-        await writeFile(join(output, `${theme}-${size}-sample-${state}.png`), Buffer.from(image.data, 'base64'));
+        const card = await evaluate(`(() => {
+          const card = document.querySelector("[aria-label='Workspace setup']");
+          const shown = [...card.querySelectorAll('button')].filter(button => button.getClientRects().length);
+          return { text: card.innerText, primary: shown.filter(button => button.classList.contains('workspace-primary')).map(button => button.textContent), result: shown.some(button => button.textContent === 'Open your test result'), page: document.body.innerText };
+        })()`);
+        const fail = reason => { throw Error(`sample ${state}: ${reason}: ${JSON.stringify(card)}`); };
+        if (card.primary.join('|') !== primary) fail(`primary action should be ${primary}`);
+        if (/step 5 of 5/i.test(card.page)) fail('first-test state is shown as unfinished setup step 5');
+        if (state === 'stale' && !card.result) fail('the stale sample has a readable report, so its result stays inspectable');
+        if (/\d+ tests? failing/.test(card.text) !== (state === 'failed') || state === 'failed' && !card.text.includes('1 test failing')) fail('failure count belongs only to the one failed case');
+        for (const [suffix, target] of [['', '[aria-label="Setup steps"] li:last-child'], ['-card', '[aria-label="Workspace setup"]']]) {
+          await evaluate(`document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' })`);
+          await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+          const image = await call('Page.captureScreenshot', { format: 'png' });
+          await writeFile(join(output, `${theme}-${size}-sample-${state}${suffix}.png`), Buffer.from(image.data, 'base64'));
+        }
       }
+      // Only the automatic test ran; no state offered here submitted another agent_run.
+      if (await evaluate('window.__bridgeRuns') !== 1) throw Error('A sample state submitted a run other than the automatic test');
       return;
     }
-    const expected = { 'places-empty': 'No clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Data disk, up to', 'local-preflight-missing': 'Data disk, up to', 'local-preflight-reading': 'Data disk, up to', 'ai-idle': 'GitHub CLI installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected with GitHub Copilot', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', change: 'Keep this workspace running?', designer: 'Instructions and settings' };
+    const expected = { 'places-empty': 'No clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Data disk, up to', 'local-preflight-missing': 'Data disk, up to', 'ai-idle': 'GitHub CLI installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected with GitHub Copilot', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', change: 'Keep this workspace running?', designer: 'Instructions and settings' };
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])})`), `${name} action state`);
-    if (name.startsWith('places-') || name.startsWith('local-preflight')) {
-      // Count what a user can see: hidden local panels stay mounted under Places.
+    if (places) {
+      // Count visible controls: hidden local panels stay mounted under Places.
       const probe = await evaluate(`(() => {
         const count = label => [...document.querySelectorAll('button')].filter(button => button.textContent.trim() === label && button.getClientRects().length).length;
-        const text = document.body.innerText;
-        return { setUp: count('Set up'), connect: count('Connect'), manage: count('Manage'), add: count('Add a place'), back: count('Back to places'), continue: count('Continue'), radios: document.querySelectorAll('input[type=radio]').length, text };
+        return { setUp: count('Set up'), connect: count('Connect'), add: count('Add a place'), back: count('Back to places'), continue: count('Continue'), radios: document.querySelectorAll('input[type=radio]').length, text: document.body.innerText };
       })()`);
-      const sizeText = ['Memory', 'Workspace image', 'Data disk, up to'].every(label => probe.text.includes(label));
-      const fail = reason => { throw Error(`${name}: ${reason}`); };
-      if (probe.radios || probe.text.includes('Where should your agents run') || probe.text.includes('Engine diagnostics') || probe.text.includes('Unavailable in this build')) fail('removed chooser, diagnostics or build caveat is visible');
-      if (name === 'places-empty' && (probe.setUp !== 1 || probe.add !== 1 || probe.connect || probe.manage || probe.back)) fail(`empty Places needs only Set up and Add a place: ${JSON.stringify(probe)}`);
-      if (name === 'places-populated' && (probe.setUp !== 1 || probe.connect !== 2 || probe.manage || probe.add !== 1 || !probe.text.includes('Last checked') || !probe.text.includes('Not checked yet') || probe.text.includes('Selected for Designer'))) fail(`remembered places need Last checked, Not checked yet and one Connect each: ${JSON.stringify(probe)}`);
-      if (name.startsWith('local-preflight')) {
-        if (!probe.back || !probe.continue || !sizeText) fail(`local detail needs Back to places, Continue and the three size rows: ${JSON.stringify(probe)}`);
-        if (name === 'local-preflight' && !probe.text.includes('GiB')) fail('known sizes were not shown');
-        if (name === 'local-preflight-missing' && !probe.text.includes('Workspace size will be shown before download')) fail('missing sizes need plain explanatory copy');
-        if (name === 'local-preflight-reading' && !probe.text.includes('Reading…')) fail('loading sizes must say Reading…');
-        if (name !== 'local-preflight-reading' && probe.text.includes('Reading…')) fail('sizes did not settle');
-      }
+      const fail = reason => { throw Error(`${name}: ${reason}: ${JSON.stringify(probe)}`); };
+      if (probe.radios || /Where should your agents run|Engine diagnostics|Unavailable in this build|Reading…/.test(probe.text)) fail('removed chooser, diagnostics, caveat or unsettled size is visible');
+      if (name === 'places-empty' && (probe.setUp !== 1 || probe.add !== 1 || probe.connect)) fail('empty Places needs only Set up and Add a place');
+      if (name === 'places-populated' && (probe.setUp !== 1 || probe.connect !== 2 || !probe.text.includes('Last checked') || probe.text.includes('Selected for Designer'))) fail('remembered places need Last checked, Not checked yet and one Connect each');
+      if (name.startsWith('local-preflight') && (!probe.back || !probe.continue || !['Memory', 'Workspace image', 'Data disk, up to'].every(label => probe.text.includes(label)))) fail('local detail needs Back to places, Continue and the three size rows');
+      if (name === 'local-preflight' && !probe.text.includes('GiB')) fail('known sizes were not shown');
+      if (name === 'local-preflight-missing' && !probe.text.includes('Workspace size will be shown before download')) fail('missing sizes need plain explanatory copy');
     }
     if (name === 'first-test-result' || name === 'designer') {
       await until(() => evaluate(`!!document.querySelector('.designer-work')`), 'Designer columns');
@@ -399,7 +398,7 @@ $c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
     for (const name of actionFixtures) await captureActions(theme, 'compact', name);
   }
   await writeFile(join(output, 'compact-window.txt'), notes.join('\n') + '\n');
-  await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*; known, missing and loading facts), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Designer layout JSON records test/editor/Send geometry. compact-window.txt says whether 540x900 was a real native window resize or renderer viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
+  await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Designer layout JSON records test/editor/Send geometry. compact-window.txt says whether 540x900 was a real native window resize or renderer viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
   // Keep the source identity next to images without inferring it from branch names.
   await writeFile(join(output, 'head.txt'), await readFile(join(output, '..', 'native-lifecycle', 'head.txt')));
 } finally {

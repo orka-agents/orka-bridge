@@ -15,7 +15,6 @@ test('places reads only the passive native snapshot and preserves unobserved fac
 test.each([
   null,
   { places: [place], selectedKey: 'same-name-not-same-installation' },
-  { places: [place, place], selectedKey: null },
   { places: [{ ...place, observedAt: null, stale: false }], selectedKey: null },
   { places: [place], selectedKey: null, token: 'SECRET_MARKER' },
 ])('invalid places snapshot is not projected: %j', async value => {

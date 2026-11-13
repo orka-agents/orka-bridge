@@ -35,7 +35,7 @@ function native(holdSave = false, lostReplies = false) {
     if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
     throw Error('Unexpected command: ' + command);
   });
-  mockIPC(ipc); return { ipc, finish: () => { finished = true; }, loseWorkspace: () => { selected = false; }, loseRunStatus: () => { unreadable = true; }, loseFileReads: () => { unreadableFiles = true; }, failNext: () => { verdict = 'failed'; } };
+  mockIPC(ipc); return { ipc, finish: () => { finished = true; }, loseWorkspace: () => { selected = false; }, loseRunStatus: () => { unreadable = true; }, loseFileReads: () => { unreadableFiles = true; }, restoreFileReads: () => { unreadableFiles = false; }, failNext: () => { verdict = 'failed'; } };
 }
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
@@ -52,6 +52,8 @@ test('first setup shows a running test, opens Designer on its result and never a
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1));
   expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
   expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testRunning');
+  expect(screen.getByText('Step 5 of 5')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open your test result' })).toBeNull();
   finish();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page'));
   expect(await screen.findByText('1 of 1 passed')).toBeTruthy();
@@ -84,6 +86,13 @@ test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains 
   await screen.findByRole('heading', { name: 'other', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe(`Run your first test${expected}`);
+  const card = within(screen.getByRole('region', { name: 'Workspace setup' }));
+  expect(card.queryByText(/\d+ tests? failing/)?.textContent).toBe(state === 'failed' ? '1 test failing' : undefined);
+  expect(screen.queryByText('Setting up, step 5 of 5')).toBeNull();
+  if (state === 'passed' || state === 'failed') {
+    await user.click(card.getByRole('button', { name: 'Open your test result' }));
+    await screen.findByRole('heading', { name: 'web-reader', level: 1 });
+  }
 });
 
 test.each([false, true])('a manual sample test stays observed across agent switches (blocked return: %s)', async blockedReturn => {
@@ -91,6 +100,9 @@ test.each([false, true])('a manual sample test stays observed across agent switc
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testRunning')); finish();
   await screen.findByText('1 of 1 passed');
   failNext(); await user.click(screen.getByRole('button', { name: 'Run tests' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  expect(screen.queryByText('Setting up, step 5 of 5')).toBeNull();
+  expect(screen.getByRole('region', { name: 'Workspace setup' }).textContent).toContain('Running test');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open other' }));
   await screen.findByRole('heading', { name: 'other', level: 1 });
@@ -106,7 +118,7 @@ test.each([false, true])('a manual sample test stays observed across agent switc
 });
 
 test('a failed sample reopen cannot resurrect Passed from a still-readable native run report', async () => {
-  const { finish, loseFileReads } = native(); const user = await completeSetup();
+  const { ipc, finish, loseFileReads, restoreFileReads } = native(); const user = await completeSetup();
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testRunning')); finish();
   await screen.findByText('1 of 1 passed'); loseFileReads();
   await user.click(screen.getByRole('button', { name: 'Overview' }));
@@ -118,6 +130,42 @@ test('a failed sample reopen cannot resurrect Passed from a still-readable nativ
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await new Promise(resolve => setTimeout(resolve, 550));
   expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testResult unknown');
+  expect(screen.queryByRole('button', { name: 'Open your test result' })).toBeNull();
+  restoreFileReads();
+  await user.click(screen.getByRole('button', { name: 'Check again' }));
+  await screen.findByRole('button', { name: 'Run tests' });
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await screen.findByRole('button', { name: 'Open your test result' });
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
+});
+
+test('Check again recovers a failed first sample open before any run observation', async () => {
+  const { ipc, loseFileReads, restoreFileReads } = native();
+  localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  const user = await completeSetup(); loseFileReads();
+  await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
+  await screen.findByText('Your agent folder could not be opened. Open it again from Designer.');
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  restoreFileReads();
+  const before = ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length;
+  await user.click(screen.getByRole('button', { name: 'Check again' }));
+  await screen.findByRole('button', { name: 'Run tests' });
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length).toBeGreaterThan(before));
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(0);
+});
+
+test('Run the test again hands an unsaved sample to the existing disabled Designer Run', async () => {
+  const { ipc, finish } = native(true); const user = await completeSetup();
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1)); finish();
+  await screen.findByText('1 of 1 passed');
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  await user.type(screen.getByRole('textbox', { name: 'Agent file' }), ' Unsaved.');
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Run the test again' }));
+  expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run tests' }).title).toBe('Save your changes before running the test');
+  expect(screen.getByRole('textbox', { name: 'Agent file' }).textContent).toContain('Unsaved.');
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
 });
 
 test('a newer automatic test replaces retained sample evidence after Designer switches documents', async () => {

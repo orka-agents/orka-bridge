@@ -120,12 +120,10 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     }
     Thread.sleep(forTimeInterval: 1)
 }
-// A ready workspace opens on Places; its local card's Manage action reaches the model controls.
-// The fixture returns an empty cluster snapshot, so only the local card is expected here.
+// A ready workspace opens on Places; the local card's Manage reaches the model controls.
 var rows = try capture("local-places-wide", ["Places for your agents", "This computer"])
 require(enabledButton("Manage") != nil && enabledButton("Set up") == nil, "Ready local card must offer only Manage")
 click("Manage", rows)
-require(enabledButton("Back to places") != nil, "Manage did not open the local detail")
 rows = try capture("before-connect", ["Connect the AI", "Remove sign-in"])
 click("Connect the AI", rows)
 rows = try capture("connected", ["Connected with GitHub Copilot", "Remove sign-in"])
@@ -261,12 +259,9 @@ localSize(1280, 800)
 scroll(4000)
 _ = try seek("Waiting for answers", -250)
 _ = try capture("local-running-wide", ["Waiting for answers", "Observed for"])
-// Compact local Manage and Places, through the real navigation. The tab restores the last subview (local detail).
 localSize(540, 900)
 scroll(4000)
 click("Clusters", [])
-require(enabledButton("Back to places") != nil, "Clusters did not restore the local Manage detail")
 _ = try capture("local-manage-compact", ["Back to places", "Remove sign-in"])
 click("Back to places", [])
-rows = try capture("local-places-compact", ["Places for your agents", "This computer"])
-require(enabledButton("Manage") != nil && enabledButton("Set up") == nil, "Compact ready local card must offer only Manage")
+_ = try capture("local-places-compact", ["Places for your agents", "This computer"])

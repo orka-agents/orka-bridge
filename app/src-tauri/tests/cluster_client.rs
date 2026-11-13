@@ -44,48 +44,27 @@ async fn places_snapshot_is_passive_and_selection_is_exact_and_revocable() {
     assert!(api.calls.lock().unwrap().is_empty());
     assert!(orka.calls.lock().unwrap().is_empty());
     assert!(!view.to_string().contains("static-fixture"));
-    session.discover(&context).await.unwrap();
-    assert_eq!(reply(session.places())["selectedKey"], Value::Null);
-    assert_eq!(reply(session.places())["places"], view["places"]);
-    session.reload().await.unwrap();
-    assert_eq!(reply(session.places())["selectedKey"], Value::Null);
-    assert_eq!(reply(session.places())["places"], view["places"]);
-}
-
-#[tokio::test]
-async fn places_snapshot_keeps_recreated_installations_separate_despite_same_names() {
-    let api = Arc::new(ApiFixture::default());
-    let orka = Arc::new(OrkaFixture::default());
-    let (session, _) = reading_session(
-        config(&api.start(), json!({"token":"static-fixture"})),
-        &orka,
-    );
-    let context = id_of(&session.contexts().await.unwrap()[0]);
-    let old_target = id_of(&session.discover(&context).await.unwrap()[0]);
-    assert_eq!(
-        reply(session.use_target(&old_target, None).await)["status"],
-        "connected"
-    );
-    let old_key = reply(session.places())["selectedKey"].clone();
     *api.replacement.lock().unwrap() = true;
-    let new_target = id_of(&session.discover(&context).await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
     assert_eq!(
-        reply(session.use_target(&new_target, None).await)["status"],
+        reply(session.use_target(&target, None).await)["status"],
         "connected"
     );
-    let view = reply(session.places());
-    let places = view["places"].as_array().unwrap();
+    let both = reply(session.places());
+    let places = both["places"].as_array().unwrap();
     assert_eq!(places.len(), 2);
     assert_eq!(places[0]["context"], places[1]["context"]);
     assert_ne!(places[0]["key"], places[1]["key"]);
-    assert_ne!(view["selectedKey"], old_key);
-    assert_eq!(
-        places
-            .iter()
-            .filter(|p| p["key"] == view["selectedKey"])
-            .count(),
-        1
-    );
+    assert_ne!(both["selectedKey"], view["selectedKey"]);
+    assert!(places
+        .iter()
+        .any(|place| place["key"] == both["selectedKey"]));
+    session.discover(&context).await.unwrap();
+    assert_eq!(reply(session.places())["selectedKey"], Value::Null);
+    assert_eq!(reply(session.places())["places"], both["places"]);
+    session.reload().await.unwrap();
+    assert_eq!(reply(session.places())["selectedKey"], Value::Null);
+    assert_eq!(reply(session.places())["places"], both["places"]);
 }
 
 #[tokio::test]

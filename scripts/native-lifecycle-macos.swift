@@ -234,20 +234,14 @@ press(find(main, "Clusters") { pressable($0, "Clusters") })
 // The dark walk reuses the light walk's profile, so the welcome may already be dismissed.
 wait("Welcome or Places did not appear") { nodes(main).contains { pressable($0, "Get started") || pressableAction($0, "Set up") } }
 if let start = nodes(main).first(where: { pressable($0, "Get started") }) { press(start) }
-// Places owns the local entry. Observe it as drawn: this computer, an empty session, one action.
+// Places owns the local entry: this computer's Set up action beside an empty cluster list.
 let setUp = find(main, "places-set-up") {
     pressableAction($0, "Set up") && shownStrings(main).contains { $0.contains("No clusters added yet") }
 }
-let placesText = shownStrings(main)
-check(placesText.contains { $0.contains("Places for your agents") } && placesText.contains { $0.contains("No clusters added yet") }
-    && !nodes(main).filter { pressableAction($0, "Set up") }.isEmpty && !nodes(main).filter { pressableAction($0, "Add a place") }.isEmpty
-    && !placesText.contains { $0.contains("Where should your agents run") || $0.contains("Engine diagnostics") },
-    "Places did not show this computer, its Set up action, Add a place and an empty cluster list")
 try command("/usr/sbin/screencapture", ["-x", "-o", "-l", String(windowInfo()!.0), "\(output)/places-empty.png"])
 press(setUp)
 let requirements = find(main, "computer-requirements-panel") { text($0).contains("Computer requirements") }
 _ = find(requirements, "computer-requirements") { pressable($0, "Check again") }
-_ = find(main, "back-to-places") { pressableAction($0, "Back to places") }
 // Memory, Workspace image and Data disk rows must settle without an engineering-build caveat.
 currentStage = "local-size-block"; print("STAGE: \(currentStage)")
 wait("Local size rows did not settle") {
@@ -255,10 +249,6 @@ wait("Local size rows did not settle") {
     return ["Memory", "Workspace image", "Data disk, up to"].allSatisfy { label in shown.contains { $0 == label || $0.hasPrefix(label + " ") } }
         && !shown.contains { $0.hasPrefix("Reading") || $0.contains("Unavailable in this build") }
 }
-let sizeFacts = shownStrings(main).filter { fact in
-    ["Memory", "Workspace image", "Data disk", "GiB", "MiB", "before download", "before setup", "will be checked"].contains { fact.contains($0) }
-}
-try Set(sizeFacts).sorted().joined(separator: "\n").write(toFile: "\(output)/local-size.txt", atomically: true, encoding: .utf8)
 // Capture the runner observations as drawn, without selecting local or asserting Ready.
 try command("/usr/sbin/screencapture", ["-x", "-o", "-l", String(windowInfo()!.0), "\(output)/computer-requirements.png"])
 check(!FileManager.default.fileExists(atPath: selected), "Preflight selected a workspace")

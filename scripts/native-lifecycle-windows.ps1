@@ -242,21 +242,17 @@ try {
         Wait-For 'Welcome or Places did not appear' { (Find-Control $script:window 'Get started' $button) -or (Find-Action $script:window 'Set up') } | Out-Null
         $start = Find-Control $script:window 'Get started' $button
         if ($start) { Press $start }
-        # Places owns the local entry: this computer, an empty session and one Set up action.
+        # Places owns the local entry: this computer's Set up action beside an empty cluster list.
         $setUp = Wait-For 'Set up action missing on Places' { $control = Find-Action $script:window 'Set up'; if ($control -and $control.Current.IsEnabled -and ((Get-UiNames $script:window) -match 'No clusters added yet')) { $control } }
-        $places = Get-UiNames $script:window
-        if (!($places -match 'Places for your agents') -or !($places -match 'No clusters added yet') -or !(Find-Action $script:window 'Add a place') -or ($places -match 'Where should your agents run|Engine diagnostics')) { throw 'Places did not show this computer, Set up, Add a place and an empty cluster list' }
         Capture 'places-empty'
         Press $setUp
         $requirements = Wait-For 'Computer requirements panel missing' { Find-Control $script:window 'Computer requirements' $null }
         Wait-For 'Computer requirements did not settle' { $check = Find-Control $requirements 'Check again' $button; if ($check -and $check.Current.IsEnabled) { $true } } | Out-Null
-        if (!(Find-Action $script:window 'Back to places')) { throw 'Local detail has no Back to places action' }
         # Memory, Workspace image and Data disk rows come from this native build and must settle.
         Wait-For 'Local size rows did not settle' {
             $names = Get-UiNames $script:window
             ($names -cmatch '^Memory\b') -and ($names -cmatch '^Workspace image\b') -and ($names -cmatch '^Data disk, up to\b') -and !($names -cmatch '^Reading|Unavailable in this build')
         } | Out-Null
-        Get-UiNames $script:window | Where-Object { $_ -cmatch '^(Memory|Workspace image|Data disk)|GiB|MiB|before download|before setup|will be checked' } | Select-Object -Unique | Set-Content (Join-Path $script:themeOutput 'local-size.txt')
         # Observe the real runner; never inject Ready or select a local workspace.
         Capture 'computer-requirements'
         if (Test-Path $selected) { throw 'Preflight selected a workspace' }

@@ -15,6 +15,32 @@ vi.mock('./designer/Example', () => ({ default: function Example({ onRun }: { on
 } }));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
+test('Check again replaces an in-flight sample observation without accepting its late reply or running', async () => {
+  result.snapshot = undefined;
+  vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
+  let old!: (value: unknown) => void; let reads = 0;
+  const unknown = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'unknown', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+  const ipc = vi.fn((command: string) => {
+    if (command === 'agent_run_status') return ++reads === 1 ? new Promise(resolve => { old = resolve; }) : unknown;
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_connect_model') return { ready: true };
+    if (command === 'setup_example') return { agent: 'Read.', tests: 'Checks' };
+    throw Error('unavailable');
+  });
+  mockIPC(ipc); const user = userEvent.setup(); render(<App />); await openLocalSetup(user);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
+  await waitFor(() => expect(reads).toBe(1));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Check again' }));
+  await waitFor(() => expect(reads).toBe(2));
+  old({ ...unknown, state: 'running' });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
+  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toContain('Result unknown');
+  expect(ipc.mock.calls.some(([command]) => command === 'agent_run')).toBe(false);
+});
+
 test.each(['unavailable', 'other', 'sample'] as const)('setup keeps %s Run evidence separate from workspace readiness', async kind => {
   const sample = '9b2b93c4-375c-4815-9717-39852a96e411';
   result.snapshot = kind === 'unavailable' ? undefined : {
@@ -36,5 +62,5 @@ test.each(['unavailable', 'other', 'sample'] as const)('setup keeps %s Run evide
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent)
     .toContain({ unavailable: 'Result unknown', other: 'Needs you', sample: 'Passed' }[kind]));
   const navigation = within(screen.getByRole('navigation'));
-  expect(navigation.getByText(kind === 'sample' ? 'This computer ready' : 'Setting up, step 5 of 5')).toBeTruthy();
+  expect(navigation.getByText(kind === 'other' ? 'Setting up, step 5 of 5' : 'This computer ready')).toBeTruthy();
 });

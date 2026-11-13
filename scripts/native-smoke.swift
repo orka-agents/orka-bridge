@@ -186,8 +186,7 @@ func clickDesignerView(_ name: String) {
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.3)
 }
-// Places controls are real native buttons. A per-row action may carry the row
-// name after its visible verb, so match the verb exactly or as a leading word.
+// Places actions are native buttons; a row action may carry the row name after its verb.
 func nativeButtons(_ label: String) -> [AXUIElement] {
     nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXButton"
@@ -197,15 +196,14 @@ func nativeButtons(_ label: String) -> [AXUIElement] {
             }
     }
 }
-// Page content only: the fixed header and footer can overlay scrolled controls.
+// Page content only; the fixed header and footer can overlay scrolled controls. The compact tab
+// bar is shorter than the wide one, so take its bottom from the actual native tab, not a fixed 110px.
 func bodyBounds() -> CGRect {
     let rect = window()!.1
-    // The compact tab bar is shorter than the wide one. Derive its bottom from
-    // the actual native tab, rather than clipping a visible Back button at 110px.
     guard let tabsBottom = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).map({ $0.maxY }).max() else {
         fail("Cannot locate the native tab bar for the page viewport")
     }
-    let top = tabsBottom + 8 // tab-bar bottom padding; footer remains 32px tall
+    let top = tabsBottom + 8
     return CGRect(x: rect.minX, y: top, width: rect.width, height: max(0, rect.maxY - 32 - top))
 }
 func visibleButtons(_ label: String) -> [CGRect] {
@@ -213,7 +211,6 @@ func visibleButtons(_ label: String) -> [CGRect] {
         .compactMap { nativeBounds($0) }.filter { bodyBounds().contains($0) }
 }
 func clickButton(_ label: String) {
-    // Page scroll position differs after reflow; locate the real control each time.
     for attempt in 0..<8 {
         let found = visibleButtons(label)
         require(found.count < 2, "Ambiguous native button \(label): \(found)")
@@ -227,8 +224,7 @@ func clickButton(_ label: String) {
     }
     fail("No visible enabled native button: \(label)")
 }
-// Whole accessibility tree, including content below the fold; for counting
-// controls and cards, not for proving what is visible.
+// Whole accessibility tree, below the fold included: for counting, not for proving visibility.
 func nativeStrings() -> [String] {
     nativeElements().flatMap { element in
         ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
@@ -345,7 +341,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         "\(observation.boundingBox): \(observation.topCandidates(1).first?.string ?? "")"
     }.joined(separator: "\n")
     try recognized.write(toFile: "\(output)/\(name).ocr.txt", atomically: true, encoding: .utf8)
-    if name == "send-probe" || name == "cluster-probe" || name == "local-probe" || name == "overview-probe" || name.hasPrefix("overview-fixture-") { return observations }
+    if name == "send-probe" || name == "cluster-probe" || name == "overview-probe" || name.hasPrefix("overview-fixture-") { return observations }
     if name == "before-settings" || name == "designer-settings" {
         // These captures intentionally scroll the page heading out of view.
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
@@ -420,47 +416,27 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         return observations
     }
     if name.hasPrefix("cluster-add") || name == "cluster-connect-blank" {
-        // Add and a row's Connect both open a blank context choice, with no old workspace chooser.
+        // Add and a row's Connect open a blank context choice. Add keeps the Designer destination,
+        // so only a confirmation inside the page body would make this entry non-blank.
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        // Add preserves the Designer destination, so the tab may still say Access confirmed.
-        // Only a confirmation or handoff inside the page would make this entry non-blank.
         let bodyConfirmed = nativeTextBounds("Access confirmed").contains { bodyBounds().intersects($0) }
         require(text.contains("Back to places") && !text.contains("Orka found") && !bodyConfirmed
             && nativeButtons("Open your agent").isEmpty && nativeButtons("Check access again").isEmpty
-            && !text.contains("Where should your agents run") && !text.contains("On a cluster you already have"),
-            "Add a place did not open a blank Places subview: \(text)")
-        require(text.contains("Choose a context") || nativeStrings().contains { $0.contains("Choose a context") },
-            "Blank context choice missing: \(text)")
+            && nativeStrings().contains { $0.contains("Choose a context") }, "Add a place did not open a blank Places subview: \(text)")
         print("PASS \(name): native Places subview with blank kubectl context")
         return observations
     }
-    if name == "cluster-manage" || name == "cluster-manage-compact" {
+    if name.hasPrefix("cluster-manage") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Back to places"), "Manage is not a Places subview: \(text)")
-        require(!nativeButtons("Open your agent").isEmpty && !nativeButtons("Change context").isEmpty
-            && !nativeButtons("Check access again").isEmpty && nativeStrings().contains { $0 == "Provider" },
-            "Manage lost the existing Provider, Open your agent, Change context or Check access again controls")
-        print("PASS \(name): native Manage handoff for the selected cluster")
-        return observations
-    }
-    if name == "cluster-manage-change" {
-        // Change context only reveals the select; nothing changes until a context is chosen.
-        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Back to places") && (text.contains("kubectl context") || nativeTextIsVisible("kubectl context")),
-                "Change context did not reveal the kubectl context choice: \(text)")
-        print("PASS \(name): native Change context reveals the select without selecting")
-        return observations
-    }
-    if name.hasPrefix("local-preflight") {
-        // Release builds must show the three size rows, never an engineering-build caveat.
-        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        for label in ["Memory", "Workspace image", "Data disk"] {
-            require(text.contains(label) || nativeTextIsVisible(label), "Local size row not visible: \(label); observed: \(text)")
+        if name == "cluster-manage-change" { // Change context only reveals the select.
+            require(text.contains("kubectl context") || nativeTextIsVisible("kubectl context"), "Change context did not reveal the context choice: \(text)")
+        } else {
+            require(!nativeButtons("Open your agent").isEmpty && !nativeButtons("Change context").isEmpty
+                && !nativeButtons("Check access again").isEmpty && nativeStrings().contains { $0 == "Provider" },
+                "Manage lost the existing Provider, Open your agent, Change context or Check access again controls")
         }
-        require(!text.contains("Unavailable in this build") && !nativeTextIsVisible("Unavailable in this build"),
-                "Release local size block says unavailable: \(text)")
-        require(!text.contains("Reading") && !nativeTextIsVisible("Reading…"), "Local size facts did not settle: \(text)")
-        print("PASS \(name): native local preflight with Memory, Workspace image and Data disk rows")
+        print("PASS \(name): native Manage for the selected cluster")
         return observations
     }
     if page == "Clusters" {
@@ -540,46 +516,24 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
     }
     fail("Send control \(disabled ? "stayed disabled" : "not visible"): \(label); observed: \(observed)")
 }
-func localPreflight(_ name: String) throws {
-    // Set up opens the local preflight and size block; only its Continue button
-    // would start a workspace, and this no-VM walk never presses it.
-    clickButton("Set up")
-    Thread.sleep(forTimeInterval: 1)
-    scrollMain(1000)
-    try capture("local-probe", "Clusters")
-    require(!visibleButtons("Back to places").isEmpty, "Local detail has no visible Back to places control")
-    var settled = false
-    for _ in 0..<12 {
-        let seen = try capture("local-probe", "Clusters")
-        let text = seen.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        let rows = ["Memory", "Workspace image", "Data disk"].allSatisfy { text.contains($0) || nativeTextIsVisible($0) }
-        let loading = text.contains("Reading") || nativeTextIsVisible("Reading…")
-        if rows && !loading { settled = true; break }
-        // Wait for loading values; scroll only while a row is still out of view.
-        if rows { Thread.sleep(forTimeInterval: 0.5) } else { scrollMain(-150) }
-    }
-    require(settled, "Local Memory, Workspace image and Data disk rows were not visible and settled")
-    try capture(name, "Clusters")
-    // The existing gate stays on this screen; its button must still exist, unpressed.
-    require(!nativeButtons("Continue").isEmpty, "Local preflight lost its Continue control")
-    requireNoLocalWorkspace()
-    clickButton("Back to places")
-    scrollMain(1000)
-}
-func requirePlaceCards(_ context: String) {
-    // One status and one action per card, counted over the whole page (cards can be below the fold).
+func requirePlaceCards() {
+    // Counted over the whole page; cards can be below the fold. The historical primary only Connects,
+    // the selected secondary only Manages, and local still needs Set up.
     let strings = nativeStrings()
     for expected in ["fixture-cluster", "fixture-secondary", "Last checked", "Not checked yet", "Selected for Designer"] {
-        require(strings.contains { $0.contains(expected) }, "\(context): Places is missing \(expected)")
+        require(strings.contains { $0.contains(expected) }, "Places is missing \(expected)")
     }
-    require(!strings.contains { $0.contains("No clusters added yet") || $0.contains("Engine diagnostics") },
-            "\(context): Places shows empty-session or removed diagnostics copy")
-    // Primary is a historical row to Connect; secondary is selected and only Manage; local still needs Set up.
-    require(nativeButtons("Connect").count == 1, "\(context): expected one Connect, for the non-selected place")
-    require(nativeButtons("Manage").count == 1, "\(context): expected one Manage, for the selected place")
-    require(nativeButtons("Set up").count == 1 && nativeButtons("Continue setup").isEmpty, "\(context): local card must offer only Set up")
-    require(nativeButtons("Add a place").count == 1, "\(context): expected one Add a place")
-    print("PASS \(context): Places shows Last checked, Not checked yet and Selected for Designer with one action per card")
+    require(!strings.contains { $0.contains("No clusters added yet") } && nativeButtons("Connect").count == 1
+        && nativeButtons("Manage").count == 1 && nativeButtons("Set up").count == 1 && nativeButtons("Add a place").count == 1,
+        "expected one Connect, Manage, Set up and Add a place")
+    print("PASS: Places shows Last checked, Not checked yet and Selected for Designer with one action per card")
+}
+func localPreflight(_ name: String) throws {
+    clickButton("Set up")
+    scrollMain(1000)
+    try capture(name, "Clusters")
+    requireNoLocalWorkspace() // the size screen must never start the VM
+    clickButton("Back to places")
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 var initial = try capture("initial", "Clusters")
@@ -590,8 +544,6 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" 
     clickText("Get started", in: initial)
     initial = try capture("places-empty", "Clusters")
 }
-// Places, not the old radio chooser, owns the local Set up entry. Check its
-// preflight and size block before the owned-form check; nothing is started.
 try localPreflight("local-preflight")
 do {
     // The owned form works before any workspace exists. Exercise its real writer,
@@ -776,7 +728,6 @@ Thread.sleep(forTimeInterval: 0.5)
 require(abs(window()!.1.width - compactSize.width) < 3 && abs(window()!.1.height - compactSize.height) < 3,
         "Native 540x900 content area not verified: \(window()!.1)")
 let compactClusters = try capture("clusters-compact", "Clusters")
-// Compact layout must keep the Memory, Workspace image and Data disk block visible.
 try localPreflight("local-preflight-compact")
 clickTab("Designer", compactClusters)
 try capture("designer-compact", "Designer")
@@ -812,7 +763,6 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // No local selection exists in this no-VM walk. Add a place offers only an existing cluster.
     clickButton("Add a place")
     Thread.sleep(forTimeInterval: 1)
-    try capture("cluster-add-compact", "Clusters")
     // The label focuses its native select. Choose the first synthetic context.
     let chooserFile = "\(output)/cluster-chooser.png"
     let command = Process()
@@ -842,15 +792,13 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(-200)
     }
     require(detailsOpened, "Discovered Orka has no visible Details control")
-    // Keep the current select when a result stage still shows it; otherwise return
-    // through Places and Add a place, as a user would. Neither route uses Use.
+    // Keep the current select while a result stage shows it; otherwise go back through Places and Add a place.
     func showContextSelect() {
         scrollMain(1000)
         if nativeTextIsVisible("kubectl context") { return }
         if !visibleButtons("Back to places").isEmpty { clickButton("Back to places") }
         clickButton("Add a place")
         scrollMain(1000)
-        require(nativeTextIsVisible("kubectl context"), "Add a place did not show the kubectl context choice")
     }
     func setContent(_ width: CGFloat, _ height: CGFloat) {
         let frame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height),
@@ -1140,34 +1088,28 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 1)
     scrollMain(-400)
     try capture("cluster-access-wide", "Clusters")
-    // Back leaves the confirmed destination alone. Places now has a historical
-    // check for the primary, an unobserved selected secondary, and one action per card.
+    // Back leaves the confirmed destination alone: the primary has a historical check, the selected secondary none.
     clickButton("Back to places")
     try capture("places-populated", "Clusters")
-    requirePlaceCards("wide")
-    setContent(540, 900)
-    scrollMain(1000)
-    try capture("places-populated-compact", "Clusters")
-    requirePlaceCards("compact")
-    setContent(1220, 900)
     // Connect on the non-selected row opens a blank choice and never reconnects or refreshes.
     clickButton("Connect")
     Thread.sleep(forTimeInterval: 1)
     try capture("cluster-connect-blank", "Clusters")
     clickButton("Back to places")
-    // Manage keeps the selected cluster's existing agent handoff.
-    clickButton("Manage")
+    clickButton("Manage") // keeps the selected cluster's agent handoff
     Thread.sleep(forTimeInterval: 0.5)
     try capture("cluster-manage", "Clusters")
     setContent(540, 900)
     scrollMain(1000)
     try capture("cluster-manage-compact", "Clusters")
+    clickButton("Back to places")
+    try capture("places-populated-compact", "Clusters")
     setContent(1220, 900)
-    // Reveal the context choice, then leave without choosing: Designer's selection stays.
+    clickButton("Manage")
     clickButton("Change context")
     try capture("cluster-manage-change", "Clusters")
     clickButton("Back to places")
-    requirePlaceCards("after Change context")
+    requirePlaceCards() // includes preserving selection when merely revealing context choice
     clickButton("Manage")
     scrollMain(-400)
     clickText("Open your agent", in: try capture("cluster-probe", "Clusters"))

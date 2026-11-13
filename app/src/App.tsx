@@ -99,8 +99,9 @@ export default function App() {
   const [sampleDirty, setSampleDirty] = useState(false);
   const observeSampleRun = useCallback((snapshot: RunSnapshot | undefined) => { setSampleResult({ snapshot }); }, []);
   const sampleObserved = sampleResult !== undefined;
+  const [sampleCheck, setSampleCheck] = useState(0);
   useEffect(() => {
-    if (!sampleObserved) return;
+    if (!sampleObserved && sampleCheck === 0) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const observe = async () => {
@@ -111,7 +112,7 @@ export default function App() {
     };
     void observe();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [sampleObserved, observeSampleRun]);
+  }, [sampleObserved, sampleCheck, observeSampleRun]);
   const observeRun = useCallback((snapshot: RunSnapshot | undefined, id: string) => {
     setRun(snapshot); setRunUnavailable(!snapshot);
     if (id === SAMPLE_DOCUMENT_ID) observeSampleRun(snapshot);
@@ -158,7 +159,9 @@ export default function App() {
     : !sample || sample.state === 'unknown' ? 'unknown' : sample.state === 'running' ? 'running' : sample.state === 'complete' ? sample.report?.verdict : undefined
     : firstTest;
   // Tab, footer and the Setup card share this derivation. Native selection, not the default radio, names the host.
-  const view = setupView(setup, { checking, model, check: firstCheck });
+  const initialAutomatic = firstTest === 'running';
+  const firstTestResult = sampleSource !== null && sample?.report ? { failed: sample.report.cases.filter(check => check.verdict === 'failed').length } : undefined;
+  const view = setupView(setup, { checking, model, check: firstCheck, initialAutomatic });
   const { line: setupLine, detail, tone: hostTone } = view;
   const workspaceReady = setup?.localVm === 'ready';
   const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
@@ -181,6 +184,11 @@ export default function App() {
   const openDesigner = (id = documentId) => {
     if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
     setDocumentId(id); setExampleOpen(true); setPage('Designer');
+  };
+  const checkFirstTest = () => {
+    setSampleCheck(value => value + 1);
+    // Retry an unreadable source through Designer's existing guarded sample-open path.
+    if (sampleSource === null) openDesigner(SAMPLE_DOCUMENT_ID);
   };
   return (
     <div className="app-shell">
@@ -213,7 +221,7 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
+          <Setup place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
         {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} documentId={documentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} actions={<>

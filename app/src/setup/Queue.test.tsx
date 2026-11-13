@@ -205,7 +205,7 @@ test('native selection, not the default radio, names the host, including checkin
   expect(chip().textContent).not.toContain('No place selected');
 });
 
-test('an edit makes the first-test step and shell status stale immediately, so setup does not claim completion', async () => {
+test('an edit marks the first test stale immediately without putting the ready workspace back in setup', async () => {
   native('ready', { model: 'available' });
   const snapshot = { documentId: doc, busy: null, state: 'complete', canRun: true, report: { verdict: 'passed', cases: [{ id: 'a', question: 'What did the page say?', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', expected: 'ok', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null };
   const user = userEvent.setup();
@@ -226,9 +226,9 @@ test('an edit makes the first-test step and shell status stale immediately, so s
   expect(within(screen.getByRole('contentinfo')).getByText('Tests not run since your edit')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText(/tests need running/)).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  expect(within(screen.getByRole('navigation')).getByText('Setting up, step 5 of 5')).toBeTruthy();
-  expect(within(screen.getByRole('navigation')).queryByText('This computer ready')).toBeNull();
-  expect(screen.getByText('Needs running')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).queryByText('Setting up, step 5 of 5')).toBeNull();
+  expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy();
+  expect(within(screen.getByRole('region', { name: 'Workspace setup' })).getByText('Needs running')).toBeTruthy();
 });
 
 test('the single host dot is busy blue while connecting or removing, amber when it is the creator\'s move, and green only when complete', async () => {

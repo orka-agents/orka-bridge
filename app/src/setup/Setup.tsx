@@ -18,13 +18,14 @@ const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting',
 const runtimeCopy = {
   notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
 };
-export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onExampleName, firstCheck, onStarting, onWorkspaceAction, onPlace, place, onLocalView, active = true }: {
+export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onExampleName, firstCheck, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, active = true }: {
   onOpenExample: () => void; onOpenAgent?: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
   onModelState?: (state: ModelState) => void;
   onWelcome?: (visible: boolean) => void;
   onExampleName?: (name: string | undefined) => void;
   firstCheck?: CheckStepState;
+  firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void;
   onStarting?: () => void;
   onWorkspaceAction?: (pending: boolean) => void;
   onPlace?: (place: SelectedPlace) => void;
@@ -199,14 +200,14 @@ export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelSta
           </div>
           {status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
         </>}
-        {selected && status && <SetupProgress status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample}
+        {selected && status && <SetupProgress status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onChange={button => { changeInvoker.current = button; setConfirmChange(true); }} onOpenExample={onOpenExample}
           confirm={confirmChange && <section ref={confirmation} tabIndex={-1} className="workspace-change" aria-label="Change where agents run">
             <h2>Keep this workspace running?</h2><p>You can choose a cluster without stopping this workspace, or stop it and return to the places list. Your downloaded workspace files and agent files are kept.</p>
             <div className="workspace-step-actions"><button type="button" className="workspace-primary" disabled={sending} onClick={() => { setConfirmChange(false); changeInvoker.current?.focus(); }}>Keep workspace running</button><button type="button" className="workspace-secondary" disabled={sending} onClick={() => { void chooseLocal('change'); }}>Stop workspace and choose a place</button></div>
             <button type="button" className="workspace-link" disabled={sending} onClick={() => chooseCluster()}>Choose a cluster, keep this workspace running</button>
           </section>} />}
         {status && modelMounted && <div className="setup-model-slot"><Model enabled={status.model === 'available'} queueable={canQueueModel(status)} paused={!!error || sending} away={cluster} primary={!confirmChange} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
-        {selected && status && <SetupSteps status={status} firstCheck={firstCheck} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} />}
+        {selected && status && <SetupSteps status={status} firstCheck={firstCheck} initialAutomatic={initialAutomatic} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} />}
         {selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={onOpenExample} onName={onExampleName} />}
       </div>
     </div>

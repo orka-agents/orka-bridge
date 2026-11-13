@@ -4,7 +4,7 @@ import { cleanup, render, screen, within, waitFor } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
-import { SetupSteps } from './Steps';
+import { SetupProgress, SetupSteps } from './Steps';
 
 const pair = { agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\nkmx:\n  tools:\n    - kind: builtin\n      name: web_fetch\n---\nFetch before answering.', tests: 'The checksum check.' };
 const progress = { phase: 'materializing', bytes: 1200000000, totalBytes: 3000000000, elapsedMs: 20000, remainingMs: 30000 };
@@ -27,6 +27,36 @@ function native(initial = 'installing', numbers: { phase: string; bytes: number 
 }
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+
+test.each([
+  ['stale', undefined, 'Run the test again', 'Needs running', 'needs-you', undefined],
+  ['stale', 1, 'Run the test again', 'Needs running', 'needs-you', undefined],
+  ['unknown', undefined, 'Check again', 'Result unknown', 'not-started', undefined],
+  ['unknown', 1, 'Check again', 'Result unknown', 'not-started', undefined],
+  ['running', undefined, undefined, 'Running test', 'running', undefined],
+  ['passed', 0, 'Open your test result', 'Ready', 'passed', undefined],
+  ['failed', undefined, 'Check again', 'Ready', 'passed', undefined],
+  ['failed', 0, 'Open your test result', 'Ready', 'passed', undefined],
+  ['failed', 1, 'Open your test result', 'Ready', 'passed', '1 test failing'],
+  ['failed', 2, 'Open your test result', 'Ready', 'passed', '2 tests failing'],
+] as const)('workspace card separates %s evidence (%s failures) from setup', (firstCheck, count, primary, badge, tone, summary) => {
+  render(<SetupProgress status={{ selected: 'localVm', localVm: 'ready', model: 'available' }} modelState="connected"
+    firstCheck={firstCheck} firstTestResult={count === undefined ? undefined : { failed: count }}
+    onCheckFirstTest={() => {}} onOpenExample={() => {}} busy={false} stopping={false}
+    onCancel={() => {}} onRestart={() => {}} onChange={() => {}} />);
+  const region = screen.getByRole('region', { name: 'Workspace setup' });
+  expect(within(region).queryByText('Step 5 of 5')).toBeNull();
+  expect(within(region).getByText(badge).className).toContain(`status-${tone}`);
+  const result = within(region).queryByRole('button', { name: 'Open your test result' });
+  expect(!!result).toBe(count !== undefined);
+  if (result && (firstCheck === 'stale' || firstCheck === 'unknown')) expect(result.className).toBe('workspace-secondary');
+  expect(within(region).queryByText(/\d+ tests? failing/)?.textContent).toBe(summary);
+  if (summary) expect(within(region).getByRole('status').compareDocumentPosition(within(region).getByText(summary)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  if (primary) {
+    const button = within(region).getByRole('button', { name: primary });
+    expect(button.className).toBe('workspace-primary');
+  } else expect(region.querySelector('.workspace-primary')).toBeNull();
+});
 
 test('five steps show native transfer bytes and ETA in one bar, with expandable details', async () => {
   native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
@@ -229,6 +259,7 @@ test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup s
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toContain({ running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown' }[result]));
+  if (result === 'running') expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].getAttribute('aria-current')).toBeNull();
 });
 
 test('changing workspace and starting again preserves an owned draft after a failed save', async () => {
