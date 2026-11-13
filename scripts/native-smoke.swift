@@ -446,7 +446,9 @@ if initial.contains(where: { $0.topCandidates(1).first?.string == "Get started" 
     clickText("Get started", in: initial)
     initial = try capture("chooser", "Clusters")
 }
-if initial.contains(where: { $0.topCandidates(1).first?.string == "Continue" }) {
+require(initial.contains { $0.topCandidates(1).first?.string == "Continue" },
+        "Workspace chooser must expose Continue before the owned-form check")
+do {
     // The owned form works before any workspace exists. Exercise its real writer,
     // not injected renderer data; editing remains owned during setup too.
     // Welcome focuses the choice heading. Clusters and Designer precede it.
@@ -1019,7 +1021,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // A native frame can appear before the relaunched WebView paints anything.
     // Use the same observed page readiness as the initial launch.
     waitForWorkspaceRenderer()
-    let restarted = try capture("choice-retained", "Clusters")
+    let restarted = try capture("cluster-place-reopened", "Clusters")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
     scrollMain(3000)
