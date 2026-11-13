@@ -117,6 +117,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelSta
     if (action === 'start' && status.selected === 'localVm' && !['cancelled', 'closed', 'failed'].includes(status.localVm)) return;
     // Observation must not invalidate an explicit selection awaiting its reply.
     const firstStart = action === 'start' && status.selected !== 'localVm';
+    if (firstStart) armFirstTest();
     if (action === 'change') retireFirstTest();
     clearTimeout(timer.current);
     ++epoch.current;
@@ -129,12 +130,13 @@ export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelSta
     if (!mounted.current) return;
     onWorkspaceAction?.(false);
     setSending(false); setPendingAction(undefined); setConfirmChange(false);
-    if (result.ok) { if (firstStart) armFirstTest(); focusChoice.current = true; setStatus(result.status); }
+    if (result.ok) { focusChoice.current = true; setStatus(result.status); }
     else { setError(result.message); }
     onStatus?.(result.ok ? result.status : undefined);
     const waiting = result.ok && pending(result.status.localVm);
     setBusy(waiting);
     if (result.ok) setCheck(value => value + 1);
+    else timer.current = setTimeout(() => setCheck(value => value + 1), 1000);
   }
 
   const titleId = active ? 'page-title' : undefined;

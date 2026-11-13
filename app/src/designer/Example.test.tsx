@@ -7,7 +7,7 @@ import ExampleView from './Example';
 // Exercise the save-state boundary used by App's single status-bar label.
 function Example(props: ComponentProps<typeof ExampleView>) {
   const [state, setState] = useState('');
-  return <><ExampleView {...props} onSaveState={value => { setState(value); props.onSaveState?.(value); }} /><output aria-label="Save-state observer">{state === 'saved' ? 'Saved' : ''}</output></>;
+  return <><ExampleView {...props} onSaveState={(value, id) => { setState(value); props.onSaveState?.(value, id); }} /><output aria-label="Save-state observer">{state === 'saved' ? 'Saved' : ''}</output></>;
 }
 const pair = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: web-reader\ndescription: Reads a page you name.\n---\nRead the page.\n', tests: 'Checks from disk' };
 const idle = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
@@ -144,11 +144,11 @@ test.each([
   const editor = screen.getByRole('textbox');
   fireEvent.change(editor, { target: { value: 'Temporary draft' } });
   expect(screen.getByText('Not run since your edit')).toBeTruthy();
-  expect(onStale).toHaveBeenLastCalledWith(true);
+  expect(onStale).toHaveBeenLastCalledWith(true, pair.documentId);
   if (autosave) { fireEvent.blur(editor); await screen.findByText('Saved'); }
   fireEvent.change(editor, { target: { value: pair.agent } }); fireEvent.blur(editor);
   await screen.findByText('Saved');
-  await waitFor(() => expect(onStale).toHaveBeenLastCalledWith(false));
+  await waitFor(() => expect(onStale).toHaveBeenLastCalledWith(false, pair.documentId));
   expect(screen.getByText(older ? 'Not run since your edit' : '1 of 1 passed')).toBeTruthy();
   expect(!!screen.queryByText(/Not run since your edit/)).toBe(older);
 });
