@@ -484,12 +484,7 @@ for _ in 0..<30 {
 require(app.isTerminated, "Bridge did not quit before preference check")
 app = try launch()
 app.activate(options: [])
-for _ in 0..<30 {
-    if window() != nil { break }
-    Thread.sleep(forTimeInterval: 1)
-}
-require(window() != nil, "Relaunched Bridge window did not appear")
-Thread.sleep(forTimeInterval: 2)
+waitForWorkspaceRenderer()
 let retained = try capture("choice-retained", "Clusters")
 clickTab("Overview", retained)
 let overview = try capture("overview", "Overview")
