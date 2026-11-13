@@ -1,8 +1,8 @@
 # Native setup and first-test screenshots
 
-Bridge revision [`2d59a7be6f88956cbe6c401e4fcdb89cf6929c4b`](https://github.com/orka-agents/orka-bridge/commit/2d59a7be6f88956cbe6c401e4fcdb89cf6929c4b), captured by [App CI](https://github.com/orka-agents/orka-bridge/actions/runs/43432018721). All three native artifact head files match that full revision.
+Bridge revision [`525b6de4727792d0f446b46bfc76a568838654a6`](https://github.com/orka-agents/orka-bridge/commit/525b6de4727792d0f446b46bfc76a568838654a6), captured by [App CI](https://github.com/orka-agents/orka-bridge/actions/runs/43442059413). All three native artifact head files match that full revision.
 
-These are **synthetic IPC fixtures rendered by the native apps**, not a browser dry run and not proof of real sign-in, model inference, VM or cluster execution. Click any image for full size.
+The setup/model/result images are **synthetic IPC fixtures rendered by the native apps**, not a browser dry run or proof of real sign-in, model inference, VM or cluster execution. Four additional captures at the end exercise the real release chooser and restart path with Continue untouched; native assertions require no local workspace/download/cache directories before and after the walk. Click any image for full size.
 
 Windows compact captures resized the actual native window: WebView/client **540×900 CSS px**, devicePixelRatio 1. Mac compact content is 540×900; its screenshots also include the native title bar. Wide captures retain their native viewport. Layout assertions check no horizontal overflow, top-aligned wide columns, compact test-first order, and Send after the editor. Change asserts Keep is the only rendered primary.
 
@@ -57,5 +57,15 @@ Windows compact captures resized the actual native window: WebView/client **540�
 | Saved native edit — stale result | ![Saved native edit — stale result, light](mac/light-local-stale.png) | ![Saved native edit — stale result, dark](mac/dark-local-stale.png) |
 | Running after edit — compact | ![Running after edit — compact, light](mac/light-local-running.png) | ![Running after edit — compact, dark](mac/dark-local-running.png) |
 | Running after edit — wide | ![Running after edit — wide, light](mac/light-local-running-wide.png) | ![Running after edit — wide, dark](mac/dark-local-running-wide.png) |
+
+</details>
+
+<details>
+<summary>Mac — real release chooser and restart, no workspace started (4 captures)</summary>
+
+| State | Light | Dark |
+|---|---|---|
+| Chooser after owned-form editing | ![Chooser, light](mac/light-local-choice.png) | ![Chooser, dark](mac/dark-local-choice.png) |
+| Chooser retained after restart | ![Restart, light](mac/light-chooser-retained.png) | ![Restart, dark](mac/dark-chooser-retained.png) |
 
 </details>
