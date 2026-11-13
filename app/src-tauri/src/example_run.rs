@@ -123,7 +123,10 @@ impl ExampleRun {
             snapshot.stage = Some("done");
         }
         snapshot.model_connected = vm.model_connected();
-        snapshot.can_run = self.2 && state.active.is_none() && vm.status() == LocalVmStatus::Ready;
+        snapshot.can_run = self.2
+            && state.active.is_none()
+            && vm.status() == LocalVmStatus::Ready
+            && vm.try_authoring().is_some();
         snapshot
     }
     pub fn start_first_test(
@@ -156,6 +159,9 @@ impl ExampleRun {
         if !self.2 {
             return self.status_document(&vm, id);
         }
+        let Some(admission) = vm.try_authoring() else {
+            return self.status_document(&vm, id);
+        };
         {
             let mut state = self.0.lock().unwrap();
             if state.active.is_some() {
@@ -180,6 +186,7 @@ impl ExampleRun {
         let owner = self.clone();
         let target = vm.clone();
         self.1.spawn(async move {
+            let _admission = admission;
             let pair = tokio::task::spawn_blocking(move || {
                 let snapshot = folder.capture().map_err(|_| ())?;
                 if bundled_example {

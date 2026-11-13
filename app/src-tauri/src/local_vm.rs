@@ -434,6 +434,7 @@ pub struct LocalVm {
     inner: Arc<Inner>,
     factory: Option<Arc<dyn LocalFactory>>,
     choice: AsyncMutex<()>,
+    authoring: Mutex<Arc<AsyncMutex<()>>>,
 }
 impl LocalVm {
     fn make(factory: Option<Arc<dyn LocalFactory>>) -> Arc<Self> {
@@ -465,6 +466,7 @@ impl LocalVm {
             }),
             factory,
             choice: AsyncMutex::new(()),
+            authoring: Mutex::new(Arc::new(AsyncMutex::new(()))),
         })
     }
     pub fn new(factory: Arc<dyn LocalFactory>) -> Arc<Self> {
@@ -472,6 +474,10 @@ impl LocalVm {
     }
     pub fn unavailable() -> Arc<Self> {
         Self::make(None)
+    }
+    /// Atomic Run/Chat admission, separate from each bounded VM request.
+    pub fn try_authoring(&self) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        self.authoring.lock().unwrap().clone().try_lock_owned().ok()
     }
     pub fn status(&self) -> LocalVmStatus {
         self.inner.state.lock().unwrap().phase
@@ -524,6 +530,8 @@ impl LocalVm {
         let Some(factory) = self.factory.clone() else {
             return;
         };
+        // Unknown work on an old boot must not own a new workspace's admission.
+        *self.authoring.lock().unwrap() = Arc::new(AsyncMutex::new(()));
         state.phase = LocalVmStatus::Preparing;
         state.model_connected = false;
         state.failure = None;
