@@ -33,8 +33,8 @@ test('restart shows saved pass and unknown without observing or adopting either 
   const history = await screen.findByRole('region', { name: 'Past Sends' });
   expect(within(history).getByText('bridge-run-before-restart')).toBeTruthy();
   expect(within(history).getByText('bridge-run-passed')).toBeTruthy();
-  expect(within(history).getByText('Saved checks: unknown')).toBeTruthy();
-  expect(within(history).getByText('Saved checks: pass')).toBeTruthy();
+  expect(within(history).getByText('Saved tests: unknown')).toBeTruthy();
+  expect(within(history).getByText('Saved tests: pass')).toBeTruthy();
   expect(within(history).getByText(/not resumed/)).toBeTruthy();
   expect(within(history).getAllByText('team-dev · agents')).toHaveLength(2);
   expect(ipc.mock.calls.every(([command]) => ['send_status', 'send_history'].includes(command))).toBe(true);
@@ -149,6 +149,7 @@ test('a storage write failure stays visible with an unknown live result', async 
   });
   render(panel());
   await waitFor(() => expect(screen.getByText(/could not save this Send/)).toBeTruthy());
-  expect(screen.getByText('Checks: unknown')).toBeTruthy();
+  expect(screen.getByText('Earlier result unknown')).toBeTruthy();
+  expect(document.querySelector('.send-panel .pill.status-stale')).toBeTruthy();
   expect(screen.queryByText('Checks: pass')).toBeNull();
 });

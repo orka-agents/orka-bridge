@@ -127,7 +127,7 @@ test('Meet opens the owned example for editing without Run commands', async () =
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   const main = screen.getByRole('main', { name: 'web-reader' });
   expect(within(main).getByText('Fetch before answering.')).toBeTruthy();
-  const run = within(main).getByRole('button', { name: 'Run test' });
+  const run = within(main).getByRole('button', { name: 'Run tests' });
   expect(run.matches(':disabled')).toBe(true);
   expect(run.title).toBe('Wait for your workspace and AI to be ready');
   await user.click(within(main).getByRole('button', { name: 'File' }));
@@ -193,7 +193,7 @@ test('Designer opens owned editing while the first native setup observation is p
   expect(ipc.mock.calls.filter(([command]) => command === 'agent_open')).toHaveLength(1);
   observe({ selected: 'localVm', localVm: 'installing', model: 'locked' });
   await within(screen.getByRole('contentinfo')).findByText('Setting up, step 1 of 5');
-  expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
 });
 
 test('opening Designer while Continue awaits native admission opens editing but not Run', async () => {
@@ -205,7 +205,7 @@ test('opening Designer while Continue awaits native admission opens editing but 
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   expect(ipc.mock.calls.filter(([command]) => command === 'agent_open')).toHaveLength(1);
-  expect(screen.getByRole('button', { name: 'Run test' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   started = true; admit({ selected: 'localVm', localVm: 'installing', model: 'locked' });
   await within(screen.getByRole('contentinfo')).findByText('Setting up, step 1 of 5');
 });
@@ -218,7 +218,7 @@ test('a failed example read is not presented as an endless load', async () => {
 
 test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup step reflects actual %s run evidence', async result => {
   const { ipc } = native('ready');
-  const snapshot = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: result === 'running' ? 'running' : 'complete', canRun: result !== 'running', report: result === 'running' ? null : { verdict: result, cases: [{ id: 'checksum', phase: 'Succeeded', answer: 'checksum', completedTools: ['web_fetch'], verdict: result, assertions: [{ id: 'value', kind: 'contains', verdict: result }] }] }, acknowledged: [], pending: null, error: null };
+  const snapshot = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: result === 'running' ? 'running' : 'complete', canRun: result !== 'running', report: result === 'running' ? null : { verdict: result, cases: [{ id: 'checksum', question: 'What did the page say?', phase: 'Succeeded', answer: 'checksum', completedTools: ['web_fetch'], verdict: result, assertions: [{ id: 'value', kind: 'contains', expected: 'checksum', verdict: result }] }] }, acknowledged: [], pending: null, error: null };
   mockIPC(command => command === 'agent_run_status' ? snapshot : ipc(command));
   const user = userEvent.setup(); render(<App />);
   // A test result is shown only for a ready workspace whose AI is connected.

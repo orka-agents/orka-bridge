@@ -532,18 +532,22 @@ mod tests {
             .into_bytes(),
         )
     }
-    fn executable(path: &Path, script: &str) {
-        let source = path.with_extension("source");
-        fs::write(&source, script).unwrap();
-        // Parallel tests may fork while this process holds the source writer.
-        // Only the copy child opens the executable for writing, so that writer
-        // cannot leak into another test's child and cause ETXTBSY at exec.
-        assert!(Command::new("/bin/cp")
-            .arg(&source)
+    fn write_kubectl(path: &Path, script: &str) {
+        // A parallel spawn can inherit even O_CLOEXEC writers until it execs.
+        // Keep the writer out of this process, and wait for it to close before use.
+        let mut writer = Command::new("/bin/sh")
+            .args(["-c", "cat > \"$1\"", "kubectl-fixture"])
             .arg(path)
-            .status()
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap();
+        writer
+            .stdin
+            .take()
             .unwrap()
-            .success());
+            .write_all(script.as_bytes())
+            .unwrap();
+        assert!(writer.wait().unwrap().success());
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
     /// A fake kubectl recording argv; existing objects live in `<kind>.json`.
@@ -573,7 +577,7 @@ esac
 "#
         );
         let path = dir.path().join("kubectl");
-        executable(&path, &script);
+        write_kubectl(&path, &script);
         let orka = Orka::with_kubectl(installation(), path);
         (dir, orka)
     }
@@ -639,6 +643,27 @@ esac
                 ("PATH", "/usr/local/bin:/usr/bin:/bin"),
             ]
         );
+    }
+
+    #[test]
+    fn kubectl_fixtures_execute_during_parallel_publication() {
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..16 {
+                        let (dir, orka) = kube(1);
+                        let output = orka
+                            .run(&["version"], None, Instant::now() + COMMAND_TIMEOUT)
+                            .expect("published fixture must be executable, even while peers spawn");
+                        assert!(output.is_empty());
+                        assert_eq!(
+                            log(dir.path()),
+                            [format!("{CTX} --namespace=orka-system version")]
+                        );
+                    }
+                });
+            }
+        });
     }
 
     #[test]
@@ -819,7 +844,7 @@ esac
         let s = server(vec![http("201 Created", "{}")]);
         let (dir, mut orka) = kube(s.port);
         let script = fs::read_to_string(&orka.kubectl).unwrap();
-        executable(
+        write_kubectl(
             &orka.kubectl,
             &script.replace("#!/bin/sh\n", "#!/bin/sh\nsleep 0.04\n"),
         );
