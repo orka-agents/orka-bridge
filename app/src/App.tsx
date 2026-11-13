@@ -92,13 +92,14 @@ export default function App() {
   const [runUnavailable, setRunUnavailable] = useState(false);
   // Setup keeps the sample's latest evidence even while Designer shows another document.
   const [sampleResult, setSampleResult] = useState<{ snapshot?: RunSnapshot }>();
-  const [sampleSource, setSampleSource] = useState<SourceId>();
+  // null records an unsuccessful sample open; a retained run report cannot prove its files readable.
+  const [sampleSource, setSampleSource] = useState<SourceId | null>();
   const [sampleStale, setSampleStale] = useState(false);
   const [sampleDirty, setSampleDirty] = useState(false);
   const observeSampleRun = useCallback((snapshot: RunSnapshot | undefined) => { setSampleResult({ snapshot }); }, []);
   const sampleObserved = sampleResult !== undefined;
   useEffect(() => {
-    if (documentId === SAMPLE_DOCUMENT_ID || !sampleObserved) return;
+    if (!sampleObserved) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const observe = async () => {
@@ -109,7 +110,7 @@ export default function App() {
     };
     void observe();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [documentId, sampleObserved, observeSampleRun]);
+  }, [sampleObserved, observeSampleRun]);
   const observeRun = useCallback((snapshot: RunSnapshot | undefined, id: string) => {
     setRun(snapshot); setRunUnavailable(!snapshot);
     if (id === SAMPLE_DOCUMENT_ID) observeSampleRun(snapshot);
@@ -136,7 +137,7 @@ export default function App() {
   const observePair = useCallback((pair: (ExamplePair & { source?: SourceId }) | undefined, id: string) => {
     setExampleState(pair ? 'loaded' : 'failed');
     setAgentName(agentInfo(pair?.agent).name);
-    if (id === SAMPLE_DOCUMENT_ID) setSampleSource(pair?.source);
+    if (id === SAMPLE_DOCUMENT_ID) setSampleSource(pair ? pair.source : null);
   }, []);
   const cases = run?.report?.cases;
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
@@ -152,7 +153,7 @@ export default function App() {
     onSnapshot: observeSampleRun,
   });
   const sample = sampleResult?.snapshot;
-  const firstCheck = firstTest === 'running' ? 'running' : sampleResult ? sampleStale || (sameSource(sampleSource, sample?.source) === false && !!sample?.report) ? 'stale'
+  const firstCheck = sampleSource === null ? 'unknown' : firstTest === 'running' ? 'running' : sampleResult ? sampleStale || (sameSource(sampleSource, sample?.source) === false && !!sample?.report) ? 'stale'
     : !sample || sample.state === 'unknown' ? 'unknown' : sample.state === 'running' ? 'running' : sample.state === 'complete' ? sample.report?.verdict : undefined
     : firstTest;
   // Tab, footer and the Setup card share this derivation. Native selection, not the default radio, names the host.

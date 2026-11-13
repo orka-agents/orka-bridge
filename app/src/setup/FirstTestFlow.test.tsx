@@ -11,7 +11,7 @@ const idle = { documentId: sample, busy: null, state: 'idle', canRun: true, mode
 function native(holdSave = false, lostReplies = false) {
   vi.stubGlobal('isTauri', true);
   let selected = false; let running = false; let finished = false;
-  let unreadable = false; let verdict = 'passed'; let saved = pair;
+  let unreadable = false; let unreadableFiles = false; let verdict = 'passed'; let saved = pair;
   const status = () => ({ selected: selected ? 'localVm' : null, localVm: selected ? 'ready' : 'idle', model: selected ? 'available' : 'locked' });
   const ipc = vi.fn((command: string, payload?: unknown) => {
     const args = payload as Record<string, unknown> | undefined;
@@ -21,7 +21,7 @@ function native(holdSave = false, lostReplies = false) {
     if (command === 'setup_change_local') { selected = false; return status(); }
     if (command === 'setup_example') return { agent: pair.agent, tests: pair.tests };
     if (command === 'setup_connect_model') return { ready: true };
-    if (command === 'agent_open') return args?.documentId === other ? { ...pair, documentId: other, name: 'other', agent: '---\nname: other\n---\nOther instructions.' } : { ...saved, documentId: sample, name: 'web-reader' };
+    if (command === 'agent_open') { if (unreadableFiles) throw Error('Lost file read'); return args?.documentId === other ? { ...pair, documentId: other, name: 'other', agent: '---\nname: other\n---\nOther instructions.' } : { ...saved, documentId: sample, name: 'web-reader' }; }
     if (command === 'agent_save') { if (holdSave) return new Promise(() => {}); saved = { ...pair, agent: String(args?.content), source: { ...pair.source, agent: 'c'.repeat(64) } }; return { ...saved, documentId: sample, name: 'web-reader' }; }
     if (command === 'agent_run') { running = true; finished = false; if (lostReplies) throw Error('Lost run reply'); return { ...idle, state: 'running', canRun: false, busy: { documentId: sample, name: 'web-reader' } }; }
     if (command === 'agent_run_status') {
@@ -34,7 +34,7 @@ function native(holdSave = false, lostReplies = false) {
     if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
     throw Error('Unexpected command: ' + command);
   });
-  mockIPC(ipc); return { ipc, finish: () => { finished = true; }, loseWorkspace: () => { selected = false; }, loseRunStatus: () => { unreadable = true; }, failNext: () => { verdict = 'failed'; } };
+  mockIPC(ipc); return { ipc, finish: () => { finished = true; }, loseWorkspace: () => { selected = false; }, loseRunStatus: () => { unreadable = true; }, loseFileReads: () => { unreadableFiles = true; }, failNext: () => { verdict = 'failed'; } };
 }
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
@@ -85,17 +85,38 @@ test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains 
   expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe(`Run your first test${expected}`);
 });
 
-test('a manual sample test stays observed when Designer switches to another agent before completion', async () => {
-  const { finish, failNext } = native(); const user = await completeSetup();
+test.each([false, true])('a manual sample test stays observed across agent switches (blocked return: %s)', async blockedReturn => {
+  const { finish, failNext } = native(blockedReturn); const user = await completeSetup();
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testRunning')); finish();
   await screen.findByText('1 of 1 passed');
   failNext(); await user.click(screen.getByRole('button', { name: 'Run tests' }));
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open other' }));
   await screen.findByRole('heading', { name: 'other', level: 1 });
+  if (blockedReturn) {
+    await user.click(screen.getByRole('button', { name: 'File' }));
+    await user.type(screen.getByRole('textbox', { name: 'Agent file' }), ' Unsaved.');
+    await user.click(screen.getByRole('button', { name: 'Clusters' }));
+    await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
+  }
   finish();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testFailed'));
+});
+
+test('a failed sample reopen cannot resurrect Passed from a still-readable native run report', async () => {
+  const { finish, loseFileReads } = native(); const user = await completeSetup();
+  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testRunning')); finish();
+  await screen.findByText('1 of 1 passed'); loseFileReads();
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open other' }));
+  await screen.findByText('Your agent folder could not be opened. Open it again from Designer.');
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
+  await screen.findByText('Your agent folder could not be opened. Open it again from Designer.');
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await new Promise(resolve => setTimeout(resolve, 550));
+  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testResult unknown');
 });
 
 test('a newer automatic test replaces retained sample evidence after Designer switches documents', async () => {
