@@ -203,10 +203,83 @@ try {
       await shoot('-end');
     }
   }
+  // Setup actions and the first test use the compiled app and synthetic IPC only.
+  const actionFixtures = ['chooser', 'ai-idle', 'ai-connecting', 'ai-connected', 'first-test-running', 'first-test-result', 'change', 'designer'];
+  async function clickAction(label) {
+    await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(label)} && !button.disabled)`), label);
+    await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(label)} && !button.disabled).click()`);
+  }
+  async function captureActions(theme, size, name) {
+    ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `actions-${theme}-${size}-${name}` }));
+    const first = name.startsWith('first-test-');
+    await evaluate(`(() => {
+      const pair = ${JSON.stringify(pair)};
+      const name = ${JSON.stringify(name)};
+      const documentId = '9b2b93c4-375c-4815-9717-39852a96e411';
+      let selected = ${JSON.stringify(!first && name !== 'chooser')};
+      let connected = false;
+      let submitted = false;
+      const status = () => ({ selected: selected ? 'localVm' : null, localVm: selected ? 'ready' : 'idle', model: selected ? 'available' : 'locked' });
+      const report = { verdict: 'failed', cases: [{ id: 'page-checksum', question: 'What checksum does the page show?', phase: 'Succeeded', answer: 'No checksum was given.', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', expected: 'fixture-checksum', verdict: 'failed' }], verdict: 'failed' }] };
+      const snapshot = () => {
+        const running = submitted && name === 'first-test-running';
+        const complete = submitted && name === 'first-test-result';
+        return { documentId, busy: running ? { documentId, name: 'web-reader' } : null, state: running ? 'running' : complete ? 'complete' : 'idle', canRun: !running, modelConnected: connected, stage: running ? 'observe' : complete ? 'done' : null, model: connected ? 'fixture-model' : null, report: complete ? report : null, acknowledged: [], pending: null, error: null };
+      };
+      localStorage.setItem('bridge.welcomeSeen.v1', '1');
+      localStorage.removeItem('bridge.firstTest.v1');
+      window.isTauri = true;
+      window.__TAURI_INTERNALS__ = { invoke: async command => {
+        if (command === 'setup_status') return status();
+        if (command === 'setup_select_local') { selected = true; return status(); }
+        if (command === 'setup_requirements') return null;
+        if (command === 'setup_example') return pair;
+        if (command === 'setup_connect_model') {
+          if (name === 'ai-connecting') return new Promise(() => {});
+          connected = true; return { ready: true };
+        }
+        if (command === 'agent_open') return { ...pair, documentId, name: 'web-reader' };
+        if (command === 'agent_run') { if (submitted) throw Error('Fixture automatic test replayed'); submitted = true; return snapshot(); }
+        if (command === 'agent_run_status') return snapshot();
+        if (command === 'send_history' || command === 'cluster_contexts') return [];
+        throw Error('Unmocked action fixture command: ' + command);
+      } };
+      document.getElementById('root').replaceWith(Object.assign(document.createElement('div'), { id: 'root' }));
+    })()`);
+    await evaluate(bundle);
+    if (first) await clickAction('Continue');
+    if (first || name === 'ai-connecting' || name === 'ai-connected') await clickAction('Connect the AI');
+    if (name === 'change') await clickAction('Change where agents run');
+    if (name === 'designer') await clickAction('Read its instructions');
+    const expected = { chooser: 'Where should your agents run?', 'ai-idle': 'GitHub CLI installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected with GitHub Copilot', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', change: 'Keep this workspace running?', designer: 'Instructions and settings' };
+    await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])})`), `${name} action state`);
+    if (name === 'first-test-result' || name === 'designer') {
+      await until(() => evaluate(`!!document.querySelector('.designer-work')`), 'Designer columns');
+      const layout = await evaluate(`(() => {
+        const tests = document.querySelector('.designer-tests').getBoundingClientRect();
+        const editor = document.querySelector('.designer-file').getBoundingClientRect();
+        const send = document.querySelector('.designer-checks').getBoundingClientRect();
+        return { tests: { x: tests.x, y: tests.y, bottom: tests.bottom }, editor: { x: editor.x, y: editor.y, bottom: editor.bottom }, sendY: send.y, width: innerWidth, height: innerHeight, scrollWidth: document.querySelector('main').scrollWidth };
+      })()`);
+      if (size === 'wide' ? Math.abs(layout.tests.y - layout.editor.y) > 2 || layout.tests.x <= layout.editor.x : layout.tests.bottom > layout.editor.y + 2) throw Error(`Test visibility failed: ${JSON.stringify(layout)}`);
+      if (layout.sendY < layout.editor.bottom || layout.scrollWidth > layout.width + 2) throw Error(`Editor/Send layout failed: ${JSON.stringify(layout)}`);
+      await writeFile(join(output, `${theme}-${size}-${name}-layout.json`), JSON.stringify(layout, null, 2));
+    }
+    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+    const image = await call('Page.captureScreenshot', { format: 'png' });
+    await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
+    if (size === 'compact' && name === 'change') {
+      await evaluate(`document.querySelector('.workspace-change').scrollIntoView({ block: 'center' })`);
+      const detail = await call('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(output, `${theme}-${size}-${name}-confirmation.png`), Buffer.from(detail.data, 'base64'));
+    }
+    console.log(`Captured native WebView2 action fixture: ${theme}/${size}/${name}`);
+  }
   const notes = [];
   for (const theme of ['light', 'dark']) {
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
     for (const fixture of setupFixtures) await captureSetup(theme, 'wide', fixture);
+    for (const name of actionFixtures) await captureActions(theme, 'wide', name);
   }
   // Resize the real native window so its client area is 540x900, as a user would. Win32 SetWindowPos through
   // PowerShell, then verify what the embedded WebView actually reports; never assume the resize worked.
@@ -253,9 +326,10 @@ $c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
   for (const theme of ['light', 'dark']) {
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
     for (const fixture of setupFixtures) await captureSetup(theme, 'compact', fixture);
+    for (const name of actionFixtures) await captureActions(theme, 'compact', name);
   }
   await writeFile(join(output, 'compact-window.txt'), notes.join('\n') + '\n');
-  await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*) use the same fixtures; compact-window.txt says whether 540x900 was a real native window resize or renderer viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
+  await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*) and setup actions/first-test/Designer states use synthetic IPC. Designer layout JSON records test/editor/Send geometry. compact-window.txt says whether 540x900 was a real native window resize or renderer viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
   // Keep the source identity next to images without inferring it from branch names.
   await writeFile(join(output, 'head.txt'), await readFile(join(output, '..', 'native-lifecycle', 'head.txt')));
 } finally {

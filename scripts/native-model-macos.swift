@@ -106,19 +106,12 @@ func enabledButton(_ label: String) -> AXUIElement? {
 }
 func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     guard let button = enabledButton(label) else { require(false, "Native button is disabled or missing: \(label)"); return }
-    let rect = window()!.1
-    let p: CGPoint
-    if let row = rows.first(where: { $0.topCandidates(1).first?.string == label }) {
-        p = CGPoint(x: rect.minX + row.boundingBox.midX * rect.width,
-                    y: rect.minY + (1 - row.boundingBox.midY) * rect.height)
-    } else {
-        // Vision can join Connected and Remove sign-in on one line. Still
-        // pointer-click the exact enabled native button, never the joined row.
-        guard let bounds = nativeBounds(button), rect.contains(bounds) else {
-            require(false, "Native button is not visible: \(label)"); return
-        }
-        p = CGPoint(x: bounds.midX, y: bounds.midY)
+    // A heading and a step can have the same words as the action. Click the
+    // exact accessible button, never an OCR row that could name either heading.
+    guard let bounds = nativeBounds(button), window()!.1.contains(bounds) else {
+        require(false, "Native button is not visible: \(label)"); return
     }
+    let p = CGPoint(x: bounds.midX, y: bounds.midY)
     for type in [CGEventType.leftMouseDown, .leftMouseUp] {
         CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
     }

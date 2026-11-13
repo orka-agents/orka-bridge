@@ -37,8 +37,10 @@ test('first completion submits the sample once, waits for release, then opens it
   await new Promise(resolve => setTimeout(resolve, 550));
   expect(onOpen).not.toHaveBeenCalled();
   finish();
-  await waitFor(() => expect(onOpen).toHaveBeenCalledOnce());
-  expect(view.result.current).toBe('unknown');
+  await waitFor(() => {
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(view.result.current).toBe('unknown');
+  });
   view.rerender({ ready: false }); view.rerender({ ready: true });
   view.unmount();
   renderHook(() => useFirstTest({ ready: true, canOpen: true, sampleDirty: false, onOpen }));
