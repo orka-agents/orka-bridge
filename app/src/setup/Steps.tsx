@@ -12,7 +12,7 @@ export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stal
 
 type Props = {
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
-  firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void;
+  firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void; onRunFirstTest?: () => void;
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onChange: (button: HTMLButtonElement) => void; onOpenExample: () => void;
 };
 const rowClass: Record<Status, string> = { passed: 'step-done', failed: 'step-failed', running: 'step-current', 'needs-you': 'step-current', stale: 'step-waiting', 'not-started': 'step-waiting' };
@@ -81,7 +81,7 @@ export function SetupProgress(props: Props & { confirm?: ReactNode }) {
       {status.localVm === 'notIntegrated' && onCluster && <button type="button" className="workspace-link" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</button>}
       {paused && <button type="button" className="workspace-primary" disabled={busy || !!error} onClick={onRestart}>Start again</button>}
       {ready && <><button type="button" className="workspace-link" disabled={busy || !!error} onClick={event => onChange(event.currentTarget)}>Change where agents run</button>{!confirm && <button type="button" className="workspace-link" disabled={busy || !!error} onClick={onOpenExample}>Read its instructions</button>}{confirm}{props.modelState === 'connected' && !confirm && <>
-        {props.firstCheck === 'stale' ? <button type="button" className="workspace-primary" disabled={busy || !!error} onClick={onOpenExample}>Run the test again</button>
+        {props.firstCheck === 'stale' ? <button type="button" className="workspace-primary" disabled={busy || !!error} onClick={props.onRunFirstTest ?? onOpenExample}>Run the test again</button>
           : (props.firstCheck === 'unknown' || ((props.firstCheck === 'passed' || props.firstCheck === 'failed') && !props.firstTestResult)) ? <button type="button" className="workspace-primary" disabled={busy || !!error || !props.onCheckFirstTest} onClick={props.onCheckFirstTest}>Check again</button>
           : !props.firstCheck && <button type="button" className="workspace-primary" disabled={busy || !!error} onClick={onOpenExample}>Open your first test</button>}
         {props.firstTestResult && <button type="button" className={props.firstCheck === 'stale' || props.firstCheck === 'unknown' || props.firstCheck === 'running' ? 'workspace-secondary' : 'workspace-primary'} disabled={busy || !!error} onClick={onOpenExample}>Open your test result</button>}

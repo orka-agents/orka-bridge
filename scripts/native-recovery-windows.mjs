@@ -218,11 +218,11 @@ try {
   async function captureActions(theme, size, name) {
     ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `actions-${theme}-${size}-${name}` }));
     const first = name.startsWith('first-test-');
+    const places = name.startsWith('places-') || name.startsWith('local-preflight');
     await evaluate(`(() => {
       const pair = ${JSON.stringify(pair)};
       const name = ${JSON.stringify(name)};
       const documentId = '9b2b93c4-375c-4815-9717-39852a96e411';
-      const places = name.startsWith('places-') || name.startsWith('local-preflight');
       let selected = ${JSON.stringify(!first && !name.startsWith('places-') && !name.startsWith('local-preflight'))};
       let connected = false;
       let submitted = false;

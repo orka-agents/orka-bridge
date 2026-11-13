@@ -4,6 +4,7 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
+import Setup from './Setup';
 
 function native() {
   vi.stubGlobal('isTauri', true);
@@ -34,6 +35,17 @@ test('AI connection is the only next primary and its prerequisite is visible bef
   expect(document.body.textContent).not.toMatch(/guest|\bVM\b|inference|gpt-5.6-terra/);
   expect(screen.queryByText('Engine diagnostics')).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'engine_call')).toBe(false);
+});
+
+test('a local test rerun selects this computer before its guarded Designer handoff, without starting a VM', async () => {
+  const ipc = native(); const user = userEvent.setup(); const calls: string[] = [];
+  render(<Setup place={{ kind: 'cluster' }} firstCheck="stale" firstTestResult={{ failed: 0 }}
+    onPlace={place => calls.push(place.kind)} onOpenExample={() => calls.push('Designer')} />);
+  await openLocalSetup(user);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Run the test again' }));
+  expect(calls).toEqual(['thisComputer', 'Designer']);
+  expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
 });
 
 test('Change focuses its explanation, makes Keep primary and restores focus without stopping', async () => {

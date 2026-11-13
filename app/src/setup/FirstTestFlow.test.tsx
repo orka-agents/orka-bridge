@@ -53,6 +53,7 @@ test('first setup shows a running test, opens Designer on its result and never a
   expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
   expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testRunning');
   expect(screen.getByText('Step 5 of 5')).toBeTruthy();
+  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].getAttribute('aria-current')).toBe('step');
   expect(screen.queryByRole('button', { name: 'Open your test result' })).toBeNull();
   finish();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page'));
@@ -139,17 +140,17 @@ test('a failed sample reopen cannot resurrect Passed from a still-readable nativ
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
 });
 
-test('Check again recovers a failed first sample open before any run observation', async () => {
-  const { ipc, loseFileReads, restoreFileReads } = native();
+test('Check again observes status before any report even while the guarded sample open still fails', async () => {
+  const { ipc, loseFileReads } = native();
   localStorage.setItem('bridge.firstTest.v1', 'attempted');
   const user = await completeSetup(); loseFileReads();
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   await screen.findByText('Your agent folder could not be opened. Open it again from Designer.');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  restoreFileReads();
   const before = ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length;
   await user.click(screen.getByRole('button', { name: 'Check again' }));
-  await screen.findByRole('button', { name: 'Run tests' });
+  await screen.findByText('Your agent folder could not be opened. Open it again from Designer.');
+  expect(screen.queryByRole('button', { name: 'Run tests' })).toBeNull();
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length).toBeGreaterThan(before));
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(0);
 });
