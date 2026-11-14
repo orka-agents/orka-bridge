@@ -59,6 +59,7 @@ fn connection() -> ModelConnection {
     ModelConnection {
         id: Uuid::from_u128(2),
         selection: ModelSelection {
+            vendor: None,
             provider: "copilot".into(),
             model: "m".into(),
         },
