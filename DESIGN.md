@@ -5,7 +5,8 @@ this file first, in its own pull request.
 
 The palette, the tab bar, the window and the two-column layouts come from the approved frames. This file extends the
 existing tokens in [`app/src/app.css`](app/src/app.css): `--font-*`, `--type-*`, `--size-*`, `--space-*`, `--radius-*`
-and `--color-*`. Use the [Bridge glossary](docs/glossary.md) for UI concepts and labels.
+and `--color-*`. Use the [Bridge glossary](https://github.com/orka-agents/orka-bridge/blob/2df7dba2a3c0e751271b25a15b9850221e320abe/docs/glossary.md)
+for UI concepts and labels.
 
 In these rules, ink, ink-2 and ink-3 mean `--color-text`, `--color-text-secondary` and `--color-text-tertiary`;
 line-2 means `--color-border-strong`; card and well mean `--color-card` and `--color-chrome`. Teal uses
