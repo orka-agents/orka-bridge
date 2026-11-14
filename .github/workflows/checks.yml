@@ -146,7 +146,7 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           failed=0
-          baseline="$RUNNER_TEMP/reported-native-session"
+          baseline="$(cygpath -u "$RUNNER_TEMP")/reported-native-session"
           mkdir -p "$baseline"
           git fetch --depth 1 origin 2df7dba2a3c0e751271b25a15b9850221e320abe
           git archive 2df7dba2a3c0e751271b25a15b9850221e320abe | tar -x -C "$baseline"
