@@ -24,6 +24,15 @@ function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: s
   const [checkedVerdict, setCheckedVerdict] = useState<AttemptSummary['verdict']>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const removeInvoker = useRef<HTMLButtonElement>(null);
+  const keepDetails = useRef<HTMLButtonElement>(null);
+  const savedDisclosure = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!confirmRemove) return;
+    keepDetails.current?.focus();
+    return () => { (removeInvoker.current ?? savedDisclosure.current)?.focus(); };
+  }, [confirmRemove]);
   const operation = useRef(false);
   const epoch = useRef(0);
   useEffect(() => () => { epoch.current++; }, []);
@@ -43,7 +52,7 @@ function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: s
     try {
       const value = await sendHistoryDetail(command, attempt.id);
       if (request === epoch.current) {
-        setDetail(value); setError(undefined);
+        setDetail(value); setError(undefined); setConfirmRemove(false);
         if (command === 'send_history_check') setCheckedVerdict(value.interrupted ? 'unknown' : value.report?.verdict ?? 'unknown');
       }
     } catch (failure) { if (request === epoch.current) setError((failure as Error).message); }
@@ -53,7 +62,7 @@ function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: s
   return <li>
     <div className="send-history-heading"><strong>{attempt.plannedAgentName}</strong><span>Saved tests: {verdict === 'running' ? 'unknown' : words[verdict]}</span></div>
     <p>{attempt.targetDisplay}</p><p>AI connection: {attempt.provider} · <time dateTime={new Date(attempt.time * 1000).toISOString()}>{new Date(attempt.time * 1000).toLocaleString()}</time></p>
-    <details onToggle={event => setOpen(event.currentTarget.open)}><summary>Show saved details</summary>
+    <details onToggle={event => { setOpen(event.currentTarget.open); if (!event.currentTarget.open) setConfirmRemove(false); }}><summary ref={savedDisclosure}>Show saved details</summary>
       {open && <>
         {error && <p role="alert">{error}</p>}
         {!detail && !error && <p role="status">Reading saved details…</p>}
@@ -67,9 +76,15 @@ function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: s
           {detail.availability === 'missing' && <p role="status">No longer available from the cluster</p>}
           {detail.availability === 'unavailable' && <p role="status">Cluster status unavailable. Reconnect this cluster in Clusters and try again. Saved answers are unchanged.</p>}
           {detail.availability === 'available' && <p role="status">Cluster status checked. No tests were submitted.</p>}
+          {confirmRemove && <p role="alert">Remove saved details from this computer? Cluster data stays unchanged.</p>}
           <div className="workspace-step-actions">
-            {detail.canCheck && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void act('send_history_check'); }}>Check cluster status</button>}
-            {detail.canRemove && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void act('send_history_remove'); }}>Remove saved details</button>}
+            {confirmRemove ? <>
+              <button type="button" className="workspace-secondary send-history-remove" disabled={busy} onClick={() => { void act('send_history_remove'); }}>Remove local copy</button>
+              <button ref={keepDetails} type="button" className="workspace-secondary" disabled={busy} onClick={() => setConfirmRemove(false)}>Keep saved details</button>
+            </> : <>
+              {detail.canCheck && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void act('send_history_check'); }}>Check cluster status</button>}
+              {detail.canRemove && <button ref={removeInvoker} type="button" className="workspace-secondary send-history-remove" disabled={busy} onClick={() => setConfirmRemove(true)}>Remove saved details</button>}
+            </>}
           </div>
           {busy && <p role="status">Updating saved details…</p>}
         </>}

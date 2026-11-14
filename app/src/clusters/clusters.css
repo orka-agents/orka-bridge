@@ -54,6 +54,7 @@
 .send-history-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 18px; }
 .send-history li p { margin: 6px 0; color: var(--color-text-secondary); }
 .send-history li details { margin-top: 10px; }
+.send-history .send-history-remove:not(:disabled) { color: var(--color-status-failed); }
 @media (max-width: 700px) {
   .place-row { grid-template-columns: auto minmax(0, 1fr); align-items: start; }
   .place-row > .pill, .place-row > button { grid-column: 2; justify-self: start; }

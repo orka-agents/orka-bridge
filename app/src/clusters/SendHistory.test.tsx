@@ -224,7 +224,14 @@ test('interrupted evidence is unknown without a live spinner and requires an exp
 test('remove saved details removes the local answer only and does not check or delete cluster work', async () => {
   const ipc = detailed(); await openSaved();
   await screen.findByText('Saved on this computer');
-  await userEvent.setup().click(screen.getByRole('button', { name: 'Remove saved details' }));
+  const user = userEvent.setup();
+  await user.click(screen.getByRole('button', { name: 'Remove saved details' }));
+  expect(ipc.mock.calls.some(([command]) => command === 'send_history_remove')).toBe(false);
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep saved details' }));
+  await user.click(screen.getByRole('button', { name: 'Keep saved details' }));
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove saved details' }));
+  await user.click(screen.getByRole('button', { name: 'Remove saved details' }));
+  await user.click(screen.getByRole('button', { name: 'Remove local copy' }));
   expect(await screen.findByText('Saved details removed from this computer.')).toBeTruthy();
   expect(screen.queryByText('<img src=x onerror=alert(1)> Saved answer')).toBeNull();
   expect(ipc.mock.calls.map(([command]) => command)).toEqual(['send_history', 'send_history_details', 'send_history_remove']);
@@ -245,6 +252,7 @@ test('removing answers after a status check keeps the newly saved unknown verdic
   await user.click(await screen.findByRole('button', { name: 'Check cluster status' }));
   await screen.findByText('Saved tests: unknown');
   await user.click(screen.getByRole('button', { name: 'Remove saved details' }));
+  await user.click(screen.getByRole('button', { name: 'Remove local copy' }));
   await screen.findByText('Saved details removed from this computer.');
   expect(screen.getByText('Saved tests: unknown')).toBeTruthy();
   expect(screen.queryByText('Saved tests: pass')).toBeNull();
