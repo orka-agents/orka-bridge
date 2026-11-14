@@ -92,7 +92,7 @@ async fn overview_files(
     let agents = state.inner().clone();
     let run = run.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        bridge_engine::overview::saved_files(&agents, run.is_active())
+        bridge_engine::overview::saved_files_with_history(&agents, &run)
     })
     .await
     .map_err(|_| "Could not read saved files.")
@@ -354,12 +354,40 @@ fn send_status(document_id: DocumentId, state: tauri::State<'_, Arc<SendOwner>>)
     state.status_document(document_id)
 }
 #[tauri::command]
-fn send_history(
+async fn send_history(
     state: tauri::State<'_, Arc<SendOwner>>,
 ) -> Result<Vec<bridge_engine::send_summary::AttemptSummary>, &'static str> {
-    state.history().map_err(|_| {
-        "Saved Send summaries could not be read. They are unavailable, not passing results."
-    })
+    let owner = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || owner.history())
+        .await
+        .map_err(|_| "Saved Send summaries could not be read.")?
+        .map_err(|_| {
+            "Saved Send summaries could not be read. They are unavailable, not passing results."
+        })
+}
+#[tauri::command]
+async fn send_history_details(
+    send_id: String,
+    state: tauri::State<'_, Arc<SendOwner>>,
+) -> Result<bridge_engine::send_summary::DetailView, &'static str> {
+    let owner = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || owner.history_details(&send_id))
+        .await
+        .map_err(|_| "storage")?
+}
+#[tauri::command]
+async fn send_history_remove(
+    send_id: String,
+    state: tauri::State<'_, Arc<SendOwner>>,
+) -> Result<bridge_engine::send_summary::DetailView, &'static str> {
+    state.history_remove(&send_id).await
+}
+#[tauri::command]
+async fn send_history_check(
+    send_id: String,
+    state: tauri::State<'_, Arc<SendOwner>>,
+) -> Result<bridge_engine::send_summary::DetailView, &'static str> {
+    state.inner().history_check(&send_id).await
 }
 #[tauri::command]
 async fn send_stop(
@@ -415,10 +443,11 @@ fn main() {
                 session,
                 app.path().app_local_data_dir().ok(),
             ));
-            app.manage(bridge_engine::example_run::ExampleRun::new(
+            app.manage(bridge_engine::example_run::ExampleRun::with_history_root(
                 tauri::async_runtime::handle().inner().clone(),
                 bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE,
                 folder,
+                app.path().app_local_data_dir().ok(),
             ));
             #[cfg(debug_assertions)]
             eprintln!("bridge-startup: installing lifecycle");
@@ -476,6 +505,9 @@ fn main() {
             send_start,
             send_status,
             send_history,
+            send_history_details,
+            send_history_remove,
+            send_history_check,
             send_stop
         ])
         .build(tauri::generate_context!())
