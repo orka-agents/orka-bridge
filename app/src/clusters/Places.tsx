@@ -25,7 +25,7 @@ export default function Places({ snapshot, unavailable, status, view, place, onL
       return <section className="card place-row" aria-label={item.context} key={item.key}>
         <span className="icon-tile" aria-hidden="true"><svg className="icon" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5M3 18l9 5 9-5" /></svg></span>
         <div className="place-summary"><h2>{item.context}</h2><p>{item.namespace} · {item.service}</p><p className="muted">{checked}</p>{observed && !item.stale && <p className="muted">{item.agents.length} {item.agents.length === 1 ? 'agent' : 'agents'} at last check</p>}</div>
-        <StatusPill state={selected ? 'passed' : 'not-started'}>{selected ? 'Selected for Designer' : 'Disconnected'}</StatusPill>
+        <StatusPill state={selected ? 'passed' : 'not-started'}>{selected ? 'Selected for Designer' : 'Not selected'}</StatusPill>
         <button type="button" className="workspace-secondary" onClick={() => onCluster(item, selected)}>{selected ? 'Manage' : 'Connect'}</button>
       </section>;
     })}

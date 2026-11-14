@@ -300,7 +300,7 @@ test('Manage refreshes confirmed agents and offers cancellable removal, finite f
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_forget');
   await user.click(screen.getByRole('button', { name: 'Remove' }));
   await user.click(screen.getByRole('button', { name: 'Remove cluster' }));
-  expect((await screen.findByRole('alert')).textContent).toContain("Couldn't remove");
+  expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm removal");
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
   expect(observe).not.toHaveBeenCalled();
   fail = false;
@@ -381,6 +381,21 @@ test('remembered reconnect revokes the old frontend target before native replies
   await act(async () => pending.resolve(target));
   expect(screen.getByRole('heading', { name: 'Clusters' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Use this cluster' })).toBeNull();
+});
+
+test('returning to Clusters resumes a remembered Connect interrupted by tab navigation', async () => {
+  const { ipc } = native(); const old = ipc.getMockImplementation()!; const pending = deferred<unknown>();
+  let reconnects = 0;
+  mockIPC(command => command === 'cluster_reconnect' && ++reconnects === 1 ? pending.promise : old(command));
+  const props = { onOpenExample: () => {} };
+  const user = userEvent.setup(); const view = render(<Setup {...props} />);
+  await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Connect' }));
+  view.rerender(<Setup {...props} active={false} />);
+  await act(async () => pending.resolve(target));
+  expect(screen.queryByRole('button', { name: 'Use this cluster' })).toBeNull();
+  view.rerender(<Setup {...props} active />);
+  expect(await screen.findByRole('button', { name: 'Use this cluster' })).toBeTruthy();
+  expect(reconnects).toBe(2);
 });
 
 test.each(['local', 'another cluster'])('late removal completion does not replace %s opened after Back', async destination => {

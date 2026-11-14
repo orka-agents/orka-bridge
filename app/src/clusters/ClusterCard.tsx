@@ -88,6 +88,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     // failure, or one already loaded) is left alone, and late replies to the interrupted
     // request stay discarded by the epoch check above.
     if (!was && reloadInterrupted.current) { reloadInterrupted.current = false; void reload(); }
+    else if (!was && entry?.remembered && !changingContext && !targets && !error) void reconnect(entry.remembered.key);
     else if (!was && !initialLoaded.current && (!entry?.remembered || changingContext)) readContexts();
   }, [active]);
   useEffect(() => {
@@ -252,7 +253,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     <p className="muted">After reloading kubeconfig, choose a context and check access again.</p>
     {retained && (confirmRemoval ? <div role="group" aria-label="Remove cluster confirmation">
       <p>Remove <code>{retained.context}</code>? This only forgets the cluster in Bridge. Its agents and your kubeconfig are kept.</p>
-      {removeError && <p role="alert">Couldn't remove this cluster from Bridge. Try again. Its agents and your kubeconfig are kept.</p>}
+      {removeError && <p role="alert">Couldn't confirm removal from Bridge. Check that its local storage is available, then reopen Bridge. Its agents and your kubeconfig are kept.</p>}
       <div className="workspace-step-actions">
         <button type="button" className="workspace-secondary cluster-remove" disabled={removing} onClick={() => { void remove(); }}>Remove cluster</button>
         <button ref={keepCluster} type="button" className="workspace-secondary" disabled={removing} onClick={() => { focusRemoval.current = true; setConfirmRemoval(false); setRemoveError(false); }}>Keep cluster</button>

@@ -427,7 +427,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): native discovery card; no Use or Send")
         return observations
     }
-    if name == "cluster-connect-known" {
+    if name.hasPrefix("cluster-connect-known") {
         require(nativeTextIsVisible("Cluster found") && !nativeButtons("Use this cluster").isEmpty,
                 "Remembered Connect did not discover its known context without choosing again")
         require(!nativeStrings().contains { $0.contains("choose its context to check it again") },
@@ -1243,7 +1243,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let connectPoint = CGPoint(x: connectBounds.midX, y: connectBounds.midY)
     mouse(.leftMouseDown, connectPoint); mouse(.leftMouseUp, connectPoint)
     Thread.sleep(forTimeInterval: 1)
-    try capture("cluster-connect-known", "Clusters")
+    try capture("cluster-connect-known-restarted", "Clusters")
     clickButton("Use this cluster")
     clickButton("Done")
     clickButton("Manage")
