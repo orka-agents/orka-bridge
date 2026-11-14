@@ -341,7 +341,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         "\(observation.boundingBox): \(observation.topCandidates(1).first?.string ?? "")"
     }.joined(separator: "\n")
     try recognized.write(toFile: "\(output)/\(name).ocr.txt", atomically: true, encoding: .utf8)
-    if name == "send-probe" || name == "cluster-probe" || name == "overview-probe" || name.hasPrefix("overview-fixture-") { return observations }
+    if name == "new-agent-probe" || name == "send-probe" || name == "cluster-probe" || name == "overview-probe" || name.hasPrefix("overview-fixture-") { return observations }
     if name.hasPrefix("new-agent-") {
         let expected = name == "new-agent-created" ? "native-helper" : "New agent"
         let heading = observations.contains { observation in
@@ -576,6 +576,11 @@ do {
     for _ in 0..<50 {
         if FileManager.default.fileExists(atPath: checks.path) && nativeButtons("Create").isEmpty && nativeTextIsVisible("Instructions") { break }
         Thread.sleep(forTimeInterval: 0.1)
+    }
+    if !FileManager.default.fileExists(atPath: agent.path) || !FileManager.default.fileExists(atPath: checks.path) {
+        let observed = try capture("new-agent-probe", "Designer")
+        let text = observed.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        fail("Creation did not publish its pair; native screen: \(text)")
     }
     require(try String(contentsOf: agent, encoding: .utf8).contains("name: \"native-helper\"\n"), "Created agent metadata missing")
     require(try String(contentsOf: checks, encoding: .utf8).contains("web_fetch"), "Created starter lost its tool assertion")

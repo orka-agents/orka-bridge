@@ -269,6 +269,20 @@ test('a failed personality digest resumes autosave of earlier instructions', asy
   expect(writes[0]).toContain('Old personality');
 });
 
+test.each(['', 'Upper', 'helper'])('Enter validates the name before native creation (%s)', async name => {
+  const created: unknown[] = [];
+  native((command, args) => { if (command === 'agent_create') { created.push(args.name); return id; } });
+  const user = userEvent.setup(); render(<Example />);
+  await user.click(await screen.findByRole('button', { name: 'New agent' }));
+  const input = screen.getByRole('textbox', { name: 'Name' });
+  if (name) await user.type(input, name);
+  await user.keyboard('{Enter}');
+  if (name === 'helper') {
+    await screen.findByRole('heading', { name: 'helper', level: 1 });
+    expect(created).toEqual(['helper']);
+  } else { expect(created).toEqual([]); expect(screen.getByRole('textbox', { name: 'Name' })).toBe(input); }
+});
+
 test('Overview offers the same creation form without starting setup', async () => {
   localStorage.setItem('bridge.welcomeSeen.v1', '1'); native();
   const user = userEvent.setup(); render(<App />);
