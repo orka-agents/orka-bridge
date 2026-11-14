@@ -135,7 +135,8 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
     }, () => {
       if (!mounted.current || requestedNow.current !== next) return;
       setSelectionError('Your agent selection could not be saved. Try choosing it again.');
-      requestedNow.current = boundDocument; setRequestedDocument(boundDocument); setSelectionNeeded(false);
+      requestedNow.current = observedDocument.current = boundDocument;
+      setRequestedDocument(boundDocument); setSelectionNeeded(false); onDocument?.(boundDocument);
     })
       .finally(() => { if (mounted.current) setSelecting(false); });
   }, [requestedDocument, boundDocument, wantsCreate, selectionNeeded, pendingSoul, saveState, selecting, flush, onPair, onRun, onDocument, onNewAgentHandled]);
