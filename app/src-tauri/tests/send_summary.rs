@@ -312,6 +312,42 @@ fn agent_acknowledgement_space_is_reserved_in_the_summary_ledger_before_create()
 }
 
 #[test]
+fn per_attempt_capacity_reserves_receipts_before_posting() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SummaryStore::new(Some(dir.path().into()));
+    let mut evidence = details();
+    let assertions: Vec<_> = (0..64).map(|i| serde_json::json!({"id":format!("a-{i}"),"type":"contains","value":"x".repeat(65_000)})).collect();
+    evidence.cases = serde_json::from_value(
+        serde_json::json!([{"id":"one","input":"question","assertions":assertions}]),
+    )
+    .unwrap();
+    evidence.resources = serde_json::from_value(serde_json::json!([{"kind":"Agent","name":"bridge-run-planned","namespace":"agents","uid":null,"generation":0,"specDigest":"a".repeat(64),"terminal":false}])).unwrap();
+    let extra = 4 * 1024 * 1024 - 16 - serde_json::to_vec(&evidence).unwrap().len();
+    let mut cases = serde_json::to_value(&evidence.cases).unwrap();
+    let value = cases[0]["assertions"][0]["value"]
+        .as_str()
+        .unwrap()
+        .to_string()
+        + &"x".repeat(extra);
+    cases[0]["assertions"][0]["value"] = serde_json::json!(value);
+    evidence.cases = serde_json::from_value(cases).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&evidence).unwrap().len(),
+        4 * 1024 * 1024 - 16
+    );
+    let mut acknowledged = evidence.clone();
+    acknowledged.resources[0].uid = Some(Uuid::new_v4().to_string());
+    assert!(serde_json::to_vec(&acknowledged).unwrap().len() > 4 * 1024 * 1024);
+    assert!(
+        store
+            .checkpoint(summary(Uuid::new_v4(), AttemptVerdict::Running), evidence)
+            .is_err(),
+        "the per-attempt limit must include future receipt growth before any POST"
+    );
+    assert!(store.list().unwrap().is_empty());
+}
+
+#[test]
 fn aggregate_history_quota_includes_the_summary_ledger() {
     let dir = tempfile::tempdir().unwrap();
     let store = SummaryStore::new(Some(dir.path().into()));

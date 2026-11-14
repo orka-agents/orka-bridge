@@ -213,16 +213,16 @@ impl SummaryStore {
         let _lock = self.lock.lock().map_err(|_| "storage")?;
         details.validate().map_err(|_| "storage")?;
         let mut bytes = serde_json::to_vec(&details).map_err(|_| "storage")?;
-        if bytes.len() > ATTEMPT_BYTES {
+        if details.charge(bytes.len() as u64) > ATTEMPT_BYTES as u64 {
             details.omit_answers();
             summary.verdict = AttemptVerdict::Unknown;
             bytes = serde_json::to_vec(&details).map_err(|_| "storage")?;
-            if bytes.len() > ATTEMPT_BYTES {
+            if details.charge(bytes.len() as u64) > ATTEMPT_BYTES as u64 {
                 details.report = None;
                 bytes = serde_json::to_vec(&details).map_err(|_| "storage")?;
             }
         }
-        if bytes.len() > ATTEMPT_BYTES {
+        if details.charge(bytes.len() as u64) > ATTEMPT_BYTES as u64 {
             return Err("storage");
         }
         let mut saved = self.publish(summary.clone(), Some((&details, &bytes)), |root, bytes| {
@@ -383,12 +383,14 @@ mod quota_tests {
         .unwrap();
         detail.cases = (0..32).map(|i| serde_json::from_value(serde_json::json!({"id":format!("case-{i}"),"input":"question","assertions":[{"id":"a","type":"contains","value":"answer"}]})).unwrap()).collect();
         detail.resources = (0..33).map(|i| serde_json::from_value(serde_json::json!({"kind":if i==0 {"Agent"} else {"Task"},"name":format!("bridge-resource-{i}"),"namespace":"agents","uid":null,"generation":0,"specDigest":"a".repeat(64),"terminal":false})).unwrap()).collect();
+        detail.validate().unwrap();
         let before = detail.charge(serde_json::to_vec(&detail).unwrap().len() as u64);
-        for uid in ["u".repeat(4096), "\0".repeat(4096)] {
+        for uid in ["u".repeat(4096), "\u{1}".repeat(4096)] {
             for resource in &mut detail.resources {
                 resource.uid = Some(uid.clone());
                 resource.generation = u64::MAX;
             }
+            detail.validate().unwrap();
             let after = detail.charge(serde_json::to_vec(&detail).unwrap().len() as u64);
             assert!(after <= before, "all 33 maximum escaped UIDs must fit their existing reservation: {before} -> {after}");
         }
