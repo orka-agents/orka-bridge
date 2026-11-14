@@ -16,11 +16,16 @@ export default function Model({ enabled, queueable = false, paused = false, away
   const status = useRef<HTMLDivElement>(null);
   const retry = useRef<HTMLButtonElement>(null);
   const removal = useRef<HTMLButtonElement>(null);
-  // Which action the keyboard user started: focus follows its operation and returns to that same action.
+  const cancelRemoval = useRef<HTMLButtonElement>(null);
+  const [confirmRemoval, setConfirmRemoval] = useState(false);
+  // Focus follows the keyboard user's operation, then its retry or next available action.
   const refocus = useRef<'connect' | 'remove'>(undefined);
   const [busy, setBusy] = useState<'connect' | 'remove'>();
   const [removed, setRemoved] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [attempted, setAttempted] = useState(false);
+  const ready = enabled && connected;
+  const hasSignIn = !removed && attempted;
   const [error, setError] = useState<ModelFailure>();
   const [notice, setNotice] = useState('');
   const [failedAction, setFailedAction] = useState<'connect' | 'remove'>('connect');
@@ -29,7 +34,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
   useEffect(() => {
     epoch.current++;
     active.current = false;
-    if (!enabled) { setBusy(undefined); setReady(false); setRemoved(false); setError(undefined); }
+    if (!enabled) { setBusy(undefined); setConnected(false); setRemoved(false); setError(undefined); }
     return () => { epoch.current++; };
   }, [enabled]);
   useEffect(() => {
@@ -46,23 +51,25 @@ export default function Model({ enabled, queueable = false, paused = false, away
   useEffect(() => {
     if (!refocus.current) return;
     const at = document.activeElement;
-    const owns = !root.current?.closest('[hidden]') && (!at || at === document.body || at === status.current || at === retry.current || at === removal.current);
+    const owns = !root.current?.closest('[hidden]') && (!at || at === document.body || at === status.current || at === retry.current || at === removal.current || at === cancelRemoval.current);
     if (!owns) { refocus.current = undefined; return; }
     if (busy || queued) { status.current?.focus(); return; }
-    (refocus.current === 'remove' ? removal.current : retry.current)?.focus();
+    if (confirmRemoval) { cancelRemoval.current?.focus(); return; }
+    (refocus.current === 'remove' ? removal.current ?? retry.current : retry.current)?.focus();
     if (document.activeElement === document.body) status.current?.focus();
     refocus.current = undefined;
-  }, [busy, queued, ready, error]);
+  }, [busy, queued, ready, error, confirmRemoval]);
   async function perform(action: 'connect' | 'remove') {
     if (!enabled || paused || active.current || (action === 'connect' && ready)) return;
     active.current = true;
     const request = ++epoch.current;
     setBusy(action); setError(undefined); setRemoved(false); setNotice(''); setFailedAction(action);
-    if (action === 'remove') setReady(false);
+    setAttempted(true); setConfirmRemoval(false);
+    if (action === 'remove') setConnected(false);
     const result = await (action === 'connect' ? connectModel() : removeModel());
     if (request !== epoch.current) return;
     active.current = false; setBusy(undefined);
-    if (result.ok) { setReady(action === 'connect'); setRemoved(action === 'remove'); }
+    if (result.ok) { setConnected(action === 'connect'); setRemoved(action === 'remove'); }
     else setError(result);
     onSettled?.();
   }
@@ -83,18 +90,19 @@ export default function Model({ enabled, queueable = false, paused = false, away
     refocus.current = document.activeElement === retry.current ? 'connect' : undefined;
     if (enabled) void perform('connect'); else if (queueable && !paused) setQueued(true);
   }
-  const cliUnavailable = error?.category === 'modelCaptureUnavailable';
-  const signInCheck = error && ['modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(error.category);
+  const removalFailed = !!error && failedAction === 'remove';
+  const cliUnavailable = !removalFailed && error?.category === 'modelCaptureUnavailable';
+  const signInCheck = !removalFailed && error && ['modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(error.category);
   return <section ref={root} className="card setup-model" aria-labelledby="model-title" aria-busy={!!busy}>
     <h2 id="model-title">Connect the AI</h2>
-    <p className="muted">Use GitHub Copilot. GitHub CLI must be installed and signed in to github.com.</p>
+    {!ready && <><p className="muted">Use GitHub Copilot. GitHub CLI must be installed and signed in to github.com.</p>
     {!enabled && (queueable || queued) ? <p className="muted">Choose now to connect automatically when the local cluster is ready.</p>
       : !enabled ? <p className="muted">Start the local cluster before connecting the AI.</p>
-      : <p className="muted">Your sign-in is shared only with the local cluster.</p>}
+      : <p className="muted">Your sign-in is shared only with the local cluster.</p>}</>}
     <div className={error ? 'workspace-failure' : undefined} role={error ? 'alert' : undefined}>
       <div className={error ? 'workspace-failure-explanation' : undefined}>
-        {error && <><p className="failure-summary">{error.message}</p>
-        <p>{failedAction === 'remove' ? 'Press Remove sign-in again to retry cleanup. If it happens again, copy the details for help.'
+        {error && <><p className="failure-summary">{removalFailed && error.category === 'unknown' ? 'Bridge could not confirm sign-in removal.' : error.message}</p>
+        <p>{failedAction === 'remove' ? 'Press Retry removal to retry cleanup. If it happens again, copy the details for help.'
           : cliUnavailable ? 'Install GitHub CLI if needed, then sign in to github.com in your terminal:'
           : signInCheck ? 'Check your GitHub CLI sign-in in your terminal:'
           : error.category === 'modelBusy' ? 'Wait for the other operation to finish, then press Check again.'
@@ -103,26 +111,42 @@ export default function Model({ enabled, queueable = false, paused = false, away
         <p>The local cluster and your agent files are kept. {failedAction === 'remove' ? 'Removal has not been confirmed.' : 'A sign-in may already have been saved.'}</p>
         {failedAction === 'connect' && <p className="muted">Check again reconnects the AI using your saved sign-in when available.</p>}</>}
         <div className="workspace-step-actions">
+          {confirmRemoval ? <div role="group" aria-label="Remove sign-in confirmation">
+            <p>Disconnect the AI and remove Bridge’s saved sign-in? GitHub CLI stays signed in.</p>
+            <div className="workspace-step-actions">
+              <button ref={cancelRemoval} type="button" className="workspace-primary" onClick={() => {
+                refocus.current = document.activeElement === cancelRemoval.current ? 'remove' : undefined;
+                setConfirmRemoval(false);
+              }}>Cancel</button>
+              <button ref={removal} type="button" className="workspace-secondary" disabled={!enabled || paused || !!busy} onClick={() => {
+                refocus.current = document.activeElement === removal.current ? 'remove' : undefined;
+                void perform('remove');
+              }}>Remove sign-in</button>
+            </div>
+          </div> : <>
           {cliUnavailable && <button type="button" className="workspace-secondary" onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</button>}
           {(cliUnavailable || signInCheck) && <button type="button" className="workspace-secondary" onClick={() => { void help('githubSignIn'); }}>Sign-in help</button>}
-          {queued || busy || ready ? <div ref={status} tabIndex={-1} className="model-state">
+          {queued || busy || ready ? <div ref={status} role={ready ? 'status' : undefined} tabIndex={-1} className="model-state">
             <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? 'Removing sign-in…' : ready ? 'Connected' : queued ? 'Queued' : 'Connecting the AI…'}</StatusPill>
             {queued && <><span className="muted">Connects when the local cluster is ready.</span>
               <button type="button" className="workspace-link" onClick={() => setQueued(false)}>Cancel queued connection</button></>}
           </div>
-          : <button key="model-connect" ref={retry} type="button" className={primary ? 'workspace-primary' : 'workspace-secondary'} disabled={(!enabled && !queueable) || paused || !!busy} onClick={choose}>
+          : !removalFailed && <button key="model-connect" ref={retry} type="button" className={primary ? 'workspace-primary' : 'workspace-secondary'} disabled={(!enabled && !queueable) || paused || !!busy} onClick={choose}>
             {error && failedAction === 'connect' ? 'Check again' : 'Connect the AI'}
           </button>}
-          {busy !== 'remove' && <button ref={removal} type="button" className="workspace-link" disabled={!enabled || paused || !!busy}
-            onClick={() => { refocus.current = document.activeElement === removal.current ? 'remove' : undefined; void perform('remove'); }}>Remove sign-in</button>}
+          {hasSignIn && busy !== 'remove' && <button ref={removal} type="button" className={removalFailed ? 'workspace-primary' : 'workspace-link'} disabled={!enabled || paused || !!busy}
+            onClick={() => {
+              refocus.current = document.activeElement === removal.current ? 'remove' : undefined;
+              if (removalFailed) void perform('remove'); else setConfirmRemoval(true);
+            }}>{removalFailed ? 'Retry removal' : 'Remove sign-in'}</button>}
           {error && <button type="button" className="workspace-secondary" onClick={() => { void copy(); }}>Copy details for help</button>}
+          </>}
         </div>
       </div>
     </div>
     {busy === 'connect' && <p role="status">Connecting with your saved sign-in. This may take a few seconds…</p>}
     {busy === 'remove' && <p role="status">Disconnecting the AI and removing Bridge’s saved sign-in…</p>}
     {removed && <p role="status">Bridge no longer has a saved sign-in. GitHub CLI stays signed in.</p>}
-    {ready && <p role="status">Connected with GitHub Copilot.</p>}
     {notice && <p role="status">{notice}</p>}
   </section>;
 }

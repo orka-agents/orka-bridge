@@ -1,6 +1,6 @@
 import { openLocalSetup } from '../setup/test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
@@ -46,8 +46,8 @@ test('local readiness never enables unconfirmed remote checks, and changing plac
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep the local cluster running' }));
+  await user.click(await screen.findByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
   await screen.findByText('Cluster found');
   await user.click(screen.getByRole('button', { name: 'Designer' }));
@@ -95,8 +95,8 @@ test('local results remain explicitly local after confirming cluster access', as
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByText('1 of 1 tests passing', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep the local cluster running' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await screen.findByRole('combobox', { name: 'kubectl context' }); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   await screen.findAllByText('Access confirmed');
@@ -114,13 +114,13 @@ test('local model acknowledgement survives a cluster round trip', async () => {
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText(/Connected with GitHub Copilot/);
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep the local cluster running' }));
+  await within(screen.getByRole('region', { name: 'Connect the AI' })).findByText('Connected');
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
   await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
   await openLocalSetup(user);
-  expect(await screen.findByText(/Connected with GitHub Copilot/)).toBeTruthy();
+  expect(await within(screen.getByRole('region', { name: 'Connect the AI' })).findByText('Connected')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
 });
 
@@ -139,8 +139,8 @@ test('local-result observation continues while remote access is unconfirmed', as
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByText('Running tests…', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep the local cluster running' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
   await screen.findByText('Cluster found');
   complete = true;

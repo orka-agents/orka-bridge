@@ -7,13 +7,16 @@ import { afterEach, expect, test, vi } from 'vitest';
 import type { RunSnapshot } from './designer/run-api';
 import App from './App';
 
-const result = vi.hoisted(() => ({ snapshot: undefined as RunSnapshot | undefined }));
+const result = vi.hoisted(() => ({ snapshot: undefined as RunSnapshot | undefined, dirty: false }));
 // Inject the Designer callback boundary; exercise App, Setup and Steps together.
-vi.mock('./designer/Example', () => ({ default: function Example({ onRun }: { onRun: (value: RunSnapshot | undefined, documentId: string) => void }) {
-  useEffect(() => { onRun(result.snapshot, result.snapshot?.documentId ?? '9b2b93c4-375c-4815-9717-39852a96e411'); }, [onRun]);
+vi.mock('./designer/Example', () => ({ default: function Example({ onRun, onSaveState }: { onRun: (value: RunSnapshot | undefined, documentId: string) => void; onSaveState?: (value: 'dirty', documentId: string) => void }) {
+  useEffect(() => {
+    if (result.dirty) onSaveState?.('dirty', '9b2b93c4-375c-4815-9717-39852a96e411');
+    onRun(result.snapshot, result.snapshot?.documentId ?? '9b2b93c4-375c-4815-9717-39852a96e411');
+  }, [onRun, onSaveState]);
   return <h1>Agent</h1>;
 } }));
-afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); result.dirty = false; });
 
 test('Check again replaces an in-flight sample observation without accepting its late reply or running', async () => {
   result.snapshot = undefined;
@@ -37,7 +40,36 @@ test('Check again replaces an in-flight sample observation without accepting its
   old({ ...unknown, state: 'running' });
   await new Promise(resolve => setTimeout(resolve, 50));
   expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
-  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toContain('Result unknown');
+  expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')?.textContent).toContain('Result unknown');
+  expect(ipc.mock.calls.some(([command]) => command === 'agent_run')).toBe(false);
+});
+
+test('a completed sample retires held setup intent even when the next status poll is unreadable', async () => {
+  const sample = '9b2b93c4-375c-4815-9717-39852a96e411';
+  result.snapshot = undefined; result.dirty = true;
+  vi.stubGlobal('isTauri', true);
+  localStorage.setItem('bridge.welcomeSeen.v1', '1');
+  localStorage.setItem('bridge.firstTest.v1', 'pending');
+  let unreadable = false;
+  const idle = { documentId: sample, state: 'idle', busy: null, canRun: true, report: null, acknowledged: [], pending: null, error: null };
+  const ipc = vi.fn((command: string) => {
+    if (command === 'agent_run_status') return unreadable ? Promise.reject('unavailable') : result.snapshot ?? idle;
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_connect_model') return { ready: true };
+    throw Error('unavailable');
+  });
+  mockIPC(ipc); const user = userEvent.setup(); render(<App />); await openLocalSetup(user);
+  await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText('Step 5 of 5');
+  result.snapshot = { ...idle, state: 'complete', report: { verdict: 'passed', cases: [{ id: 'check', question: 'Read?', phase: 'Succeeded', answer: 'yes', completedTools: [], assertions: [{ id: 'answer', kind: 'contains', expected: 'yes', verdict: 'passed' }], verdict: 'passed' }] } };
+  const navigation = within(screen.getByRole('navigation'));
+  await navigation.findByText('Local cluster ready');
+  expect(screen.queryByText('Step 5 of 5')).toBeNull();
+  unreadable = true;
+  await navigation.findByText('Test result unknown');
+  expect(screen.queryByText('Step 5 of 5')).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'agent_run')).toBe(false);
 });
 
@@ -59,8 +91,9 @@ test.each(['unavailable', 'other', 'sample'] as const)('setup keeps %s Run evide
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent)
+  if (kind === 'sample') await user.click(screen.getByText('Completed setup steps', { selector: 'summary' }));
+  await waitFor(() => expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')?.textContent)
     .toContain({ unavailable: 'Result unknown', other: 'Needs you', sample: 'Its test passed' }[kind]));
   const navigation = within(screen.getByRole('navigation'));
-  expect(navigation.getByText(kind === 'other' ? 'Setting up, step 5 of 5' : 'Local cluster ready')).toBeTruthy();
+  expect(navigation.getByText({ unavailable: 'Test result unknown', other: 'Local cluster running', sample: 'Local cluster ready' }[kind])).toBeTruthy();
 });

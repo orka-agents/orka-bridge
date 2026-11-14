@@ -45,7 +45,6 @@ test.each([
     await user.click(within(alert).getByRole('button', { name: 'Show me how' }));
     expect(ipc).toHaveBeenCalledWith('setup_open_help', { topic });
   }
-  expect(screen.getByRole('contentinfo').textContent).toContain('Setup failed');
   expect(screen.getByRole('contentinfo').textContent).toContain(summary);
   expect(screen.getByRole('button', { name: 'Use a cluster you already have instead' }).matches(':disabled')).toBe(false);
   expect(document.body.textContent).not.toContain('PRIVATE');
@@ -118,7 +117,11 @@ test('sign-in removal stays in progress in the setup step and shell', async () =
   const original = ipc.getMockImplementation()!;
   mockIPC(command => command === 'setup_remove_model' ? new Promise(() => {}) : original(command));
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(await screen.findByRole('button', { name: 'Remove sign-in' }));
+  // A failed Connect may have saved a sign-in, so cleanup remains available without claiming connection.
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await screen.findByRole('alert');
+  await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  await user.click(within(screen.getByRole('group', { name: 'Remove sign-in confirmation' })).getByRole('button', { name: 'Remove sign-in' }));
   const step = within(screen.getByRole('list', { name: 'Setup steps' })).getByText('Connect the AI').closest('li')!;
   expect(step.textContent).toContain('Removing sign-in');
   expect(step.querySelector('.status-running')).toBeTruthy();
@@ -132,7 +135,7 @@ test('AI failure marks its setup step and every shell status without losing the 
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Bridge could not confirm the AI connection'));
   expect(screen.getByText('Needs attention').closest('li')?.className).toBe('step-failed');
   expect(within(screen.getByRole('navigation')).getByText('AI needs attention')).toBeTruthy();
-  expect(screen.getByRole('contentinfo').textContent).toContain('Check the AI connection in Clusters');
+  expect(screen.getByRole('contentinfo').textContent).toContain('AI needs attention');
   expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('Check the AI connection in Clusters');
   expect(document.querySelector('.host-chip .live-dot')?.className).toContain('bad');
   expect(screen.getByRole('alert').textContent).toContain('local cluster and your agent files are kept');
