@@ -4,8 +4,8 @@ use crate::engine::run::{RunCase, RunReport, SavedResource};
 
 const ATTEMPT_BYTES: usize = 4 * 1024 * 1024;
 const TOTAL_BYTES: u64 = 64 * 1024 * 1024;
-// Reserve room for all 33 bounded resource receipts before the first POST.
-const CONTROL_RESERVE: u64 = 192 * 1024;
+// A UID may need six JSON bytes per UTF-8 byte; generation needs at most 20 digits.
+const UID_RESERVE: u64 = MAX_TEXT as u64 * 6 + 2;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -39,16 +39,16 @@ impl AttemptDetails {
             .iter()
             .any(|r| !r.terminal && (r.kind == "Task" || r.uid.is_none()))
     }
-    fn charge(&self, bytes: u64) -> io::Result<u64> {
-        let receipts = serde_json::to_vec(&self.resources)
-            .map_err(|_| invalid())?
-            .len() as u64;
-        Ok(bytes
+    fn charge(&self, bytes: u64) -> u64 {
+        let pending = self.resources.iter().filter(|r| r.uid.is_none()).count() as u64;
+        let future = (self.cases.len() + 1).saturating_sub(self.resources.len()) as u64;
+        // Future generated names, the validated namespace, keys and digest fit in 1 KiB.
+        bytes
             + if self.unresolved() {
-                CONTROL_RESERVE.saturating_sub(receipts)
+                pending * (UID_RESERVE + 20) + future * (UID_RESERVE + 1024)
             } else {
                 0
-            })
+            }
     }
     fn omit_answers(&mut self) {
         self.detail_state = "omitted".into();
@@ -315,18 +315,27 @@ impl SummaryStore {
             }
             sidecars.insert(
                 key.to_string(),
-                (d.charge(entry.metadata()?.len())?, d.unresolved()),
+                (d.charge(entry.metadata()?.len()), d.unresolved()),
             );
         }
         if let Some((d, b)) = details {
-            sidecars.insert(id.clone(), (d.charge(b.len() as u64)?, d.unresolved()));
+            sidecars.insert(id.clone(), (d.charge(b.len() as u64), d.unresolved()));
         }
         let mut evicted = Vec::new();
         let bytes = loop {
             let bytes = serde_json::to_vec(&ledger).map_err(|_| invalid())?;
-            let total: u64 = sidecars.values().map(|(n, _)| n).sum();
+            let pending_agents = ledger
+                .attempts
+                .iter()
+                .filter(|a| {
+                    a.agent_uid.is_none()
+                        && sidecars.get(&a.id).is_some_and(|(_, protected)| *protected)
+                })
+                .count() as u64;
+            let ledger_charge = bytes.len() as u64 + pending_agents * UID_RESERVE;
+            let total = sidecars.values().map(|(n, _)| n).sum::<u64>() + ledger_charge;
             if ledger.attempts.len() <= MAX_ATTEMPTS
-                && bytes.len() as u64 <= MAX_BYTES
+                && ledger_charge <= MAX_BYTES
                 && total <= TOTAL_BYTES
             {
                 break bytes;
@@ -372,17 +381,16 @@ mod quota_tests {
             }]
         }))
         .unwrap();
-        let before = detail
-            .charge(serde_json::to_vec(&detail).unwrap().len() as u64)
-            .unwrap();
-        detail.resources[0].uid = Some("u".repeat(4096));
-        detail.resources[0].generation = 1;
-        let after = detail
-            .charge(serde_json::to_vec(&detail).unwrap().len() as u64)
-            .unwrap();
-        assert_eq!(
-            before, after,
-            "acknowledgements must consume existing reserved capacity"
-        );
+        detail.cases = (0..32).map(|i| serde_json::from_value(serde_json::json!({"id":format!("case-{i}"),"input":"question","assertions":[{"id":"a","type":"contains","value":"answer"}]})).unwrap()).collect();
+        detail.resources = (0..33).map(|i| serde_json::from_value(serde_json::json!({"kind":if i==0 {"Agent"} else {"Task"},"name":format!("bridge-resource-{i}"),"namespace":"agents","uid":null,"generation":0,"specDigest":"a".repeat(64),"terminal":false})).unwrap()).collect();
+        let before = detail.charge(serde_json::to_vec(&detail).unwrap().len() as u64);
+        for uid in ["u".repeat(4096), "\0".repeat(4096)] {
+            for resource in &mut detail.resources {
+                resource.uid = Some(uid.clone());
+                resource.generation = u64::MAX;
+            }
+            let after = detail.charge(serde_json::to_vec(&detail).unwrap().len() as u64);
+            assert!(after <= before, "all 33 maximum escaped UIDs must fit their existing reservation: {before} -> {after}");
+        }
     }
 }

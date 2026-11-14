@@ -92,6 +92,7 @@ impl NativeRunner<'_> {
         });
         let mut availability = "available";
         let mut refreshed = false;
+        let mut verified_failure = false;
         let agent = resources.iter().find(|r| r.kind == "Agent").cloned();
         let deadline = self.http.deadline();
         let (_tx, mut stop) = watch::channel(false);
@@ -138,7 +139,15 @@ impl NativeRunner<'_> {
             match read {
                 Ok(None) => (),
                 Ok(Some((row, captured))) => {
-                    refreshed |= captured;
+                    verified_failure |= matches!(row.phase.as_str(), "Failed" | "Cancelled");
+                    refreshed |= captured
+                        || report
+                            .cases
+                            .iter()
+                            .find(|old| old.id == row.id)
+                            .is_none_or(|old| {
+                                old.phase != row.phase || old.completed_tools != row.completed_tools
+                            });
                     if let Some(old) = report.cases.iter_mut().find(|r| r.id == row.id) {
                         *old = row;
                     } else {
@@ -153,7 +162,9 @@ impl NativeRunner<'_> {
                 }
             }
         }
-        report.verdict = if seen == cases.len()
+        report.verdict = if verified_failure {
+            Verdict::Failed
+        } else if seen == cases.len()
             && availability == "available"
             && resources
                 .iter()

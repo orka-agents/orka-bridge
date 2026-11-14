@@ -152,8 +152,18 @@ async fn history_records_terminal_phase_and_tools_without_answer_text() {
         let started = s.start().await;
         until(|| s.view(None)["stage"] == "observe").await;
         s.owner.stop(&id(&started)).await;
+        let root = s.home.path().join("app-local");
+        let send = id(&started);
+        let mut detail: bridge_engine::send_summary::AttemptDetails = serde_json::from_slice(
+            &std::fs::read(root.join(format!("send-history-v1/{send}.json"))).unwrap(),
+        )
+        .unwrap();
+        detail.captured_at = 1;
+        bridge_engine::send_summary::SummaryStore::new(Some(root))
+            .checkpoint(s.owner.history().unwrap()[0].clone(), detail)
+            .unwrap();
         *s.api.wire.mode.lock().unwrap() = mode;
-        let view = s.owner.history_check(&id(&started)).await.unwrap();
+        let view = s.owner.history_check(&send).await.unwrap();
         assert!(
             view.report.is_some(),
             "{mode}: availability {:?}, calls {:?}",
@@ -181,6 +191,18 @@ async fn history_records_terminal_phase_and_tools_without_answer_text() {
             } else {
                 Verdict::Failed
             }
+        );
+        assert_eq!(
+            report.verdict,
+            if tool_only {
+                Verdict::Passed
+            } else {
+                Verdict::Failed
+            }
+        );
+        assert!(
+            view.captured_at.unwrap() > 1,
+            "new phase and tool evidence needs its own capture time"
         );
         assert!(!view.interrupted);
     }
