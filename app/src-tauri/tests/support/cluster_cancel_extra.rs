@@ -65,6 +65,55 @@ async fn terminal_receipts_do_not_promote_a_partial_cancelled_report() {
 }
 
 #[tokio::test]
+async fn denied_partial_submission_recovers_not_run_rows_without_replaying_cancel() {
+    let s = setup().await;
+    set_cases(&s, 3);
+    *s.api.wire.mode.lock().unwrap() = "mixed-pending";
+    let send = id(&s.start().await);
+    until(|| s.api.wire.posts() == 3).await;
+    until(|| {
+        s.api
+            .wire
+            .objects
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|o| o["kind"] == "Task")
+            .count()
+            == 2
+    })
+    .await;
+    *s.api.forward_status.lock().unwrap() = Some(403);
+    cancel_active(&s, &send).await;
+    assert_eq!(s.finish(&send).await["cancellation"], "denied");
+    *s.api.forward_status.lock().unwrap() = None;
+    *s.api.wire.mode.lock().unwrap() = "";
+    for task in s
+        .api
+        .wire
+        .objects
+        .lock()
+        .unwrap()
+        .values_mut()
+        .filter(|o| o["kind"] == "Task")
+    {
+        task["status"]["phase"] = json!("Cancelled");
+    }
+    let before = s.api.wire.posts();
+    let detail = serde_json::to_value(s.owner.history_check(&send).await.unwrap()).unwrap();
+    let rows = detail["report"]["cases"].as_array().unwrap();
+    assert_eq!(rows.len(), 3, "{detail}");
+    assert_eq!(rows[2]["phase"], "NotRun");
+    assert_eq!(detail["report"]["verdict"], "cancelled");
+    assert_eq!(detail["canCancel"], false);
+    assert_eq!(
+        s.api.wire.posts(),
+        before,
+        "status recovery must stay GET-only"
+    );
+}
+
+#[tokio::test]
 async fn control_open_denial_remains_denied_with_unfinished_work() {
     let (s, send) = running().await;
     *s.api.forward_status.lock().unwrap() = Some(403);

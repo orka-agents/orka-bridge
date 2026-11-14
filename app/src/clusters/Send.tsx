@@ -288,5 +288,5 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
         {snapshot?.report?.cases.some(c => c.verdict === 'cancelled') && <> {cancellationDetails}</>}</p>
     </Details>}
     </LongCard>
-  </section><SendHistory revision={`${documentId}:${status?.busy?.documentId ?? ''}:${snapshot?.id ?? ''}:${snapshot?.state ?? ''}:${snapshot?.stage ?? ''}:${snapshot?.storageError ?? false}`} /></>;
+  </section><SendHistory revision={`${documentId}:${status?.busy?.documentId ?? ''}:${snapshot?.id ?? ''}:${snapshot?.state ?? ''}:${snapshot?.stage ?? ''}:${snapshot?.cancellation ?? ''}:${snapshot?.storageError ?? false}`} /></>;
 }

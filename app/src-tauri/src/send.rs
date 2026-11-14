@@ -312,6 +312,33 @@ impl SendOwner {
     ) -> Result<DetailView, &'static str> {
         if cancel {
             details.cancellation = Some(Cancellation::Cancelling);
+        }
+        // A saved cancel intent proves submission ended, even if control access failed.
+        if details.cancellation.is_some() {
+            let task_count = details
+                .resources
+                .iter()
+                .filter(|r| r.kind == "Task")
+                .count();
+            let report = details.report.get_or_insert(RunReport {
+                cases: Vec::new(),
+                verdict: Verdict::Unknown,
+            });
+            for case in details.cases.iter().skip(task_count) {
+                if !report.cases.iter().any(|r| r.id == case.id) {
+                    report.cases.push(CaseReport {
+                        id: case.id.clone(),
+                        question: case.input().into(),
+                        phase: "NotRun".into(),
+                        answer: None,
+                        completed_tools: Vec::new(),
+                        assertions: case.unevaluated(),
+                        verdict: Verdict::Unknown,
+                    });
+                }
+            }
+        }
+        if cancel {
             self.summary.checkpoint(summary.clone(), details.clone())?;
         }
         let read = async {
@@ -356,28 +383,6 @@ impl SendOwner {
                     .await;
                 runner.close().await;
                 details.cancellation = Some(result.map_err(|_| Cancellation::Unconfirmed)?);
-                let task_count = details
-                    .resources
-                    .iter()
-                    .filter(|r| r.kind == "Task")
-                    .count();
-                let report = details.report.get_or_insert(RunReport {
-                    cases: Vec::new(),
-                    verdict: Verdict::Unknown,
-                });
-                for case in details.cases.iter().skip(task_count) {
-                    if !report.cases.iter().any(|r| r.id == case.id) {
-                        report.cases.push(CaseReport {
-                            id: case.id.clone(),
-                            question: case.input().into(),
-                            phase: "NotRun".into(),
-                            answer: None,
-                            completed_tools: Vec::new(),
-                            assertions: case.unevaluated(),
-                            verdict: Verdict::Unknown,
-                        });
-                    }
-                }
             }
             let transport = access
                 .read_transport(&fresh)

@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
@@ -104,6 +104,27 @@ test('saved cancellation is explicit and retains answers when a retry fails', as
   expect(await screen.findByText(/Cancellation could not be confirmed/)).toBeTruthy();
   expect(screen.getByText('Completed answer kept')).toBeTruthy();
   expect(document.body.textContent).not.toContain('PRIVATE_DIAGNOSTIC');
+});
+
+test('retry cancellation refreshes an already-open saved outcome', async () => {
+  vi.stubGlobal('isTauri', true);
+  let cancellation = 'requested';
+  const detail = () => ({ id, documentId: SAMPLE_DOCUMENT_ID, model: 'model', capturedAt: 1, report: { verdict: 'unknown', cases: [passed] }, interrupted: true, canCheck: true, canRemove: false, canCancel: true, cancellation, detailState: 'saved', availability: null });
+  mockIPC(command => {
+    if (command === 'send_history') return [{ id, source, targetDisplay: 'team-dev', targetUids: { serviceNamespace: 'control', serviceUid: 's', deploymentNamespace: 'control', deploymentUid: 'd', watchedNamespace: 'agents' }, provider: 'team-model', plannedAgentName: 'agent', agentUid: 'uid', verdict: 'unknown', time: 1 }];
+    if (command === 'send_preflight') return preflight;
+    if (command === 'send_history_details') return detail();
+    if (command === 'send_history_cancel') { cancellation = 'denied'; return detail(); }
+    if (command === 'send_status') return { documentId: SAMPLE_DOCUMENT_ID, view: { ...active, state: 'unknown', stage: 'done', cancellation, report: detail().report }, busy: null };
+    throw Error('Unsupported');
+  });
+  render(panel());
+  await userEvent.click(await screen.findByText('Show saved details'));
+  await waitFor(() => expect(screen.getAllByText('Cancellation requested. Waiting for the cluster.')).toHaveLength(2));
+  const current = screen.getByRole('region', { name: 'Send and cluster tests' });
+  await userEvent.click(within(current).getByRole('button', { name: 'Retry cancellation' }));
+  await waitFor(() => expect(screen.getAllByText('Cannot cancel with this cluster identity')).toHaveLength(2));
+  expect(screen.queryByText('Cancellation requested. Waiting for the cluster.')).toBeNull();
 });
 
 test('first cancellation after restart announces progress while the native control operation owns the wait', async () => {
