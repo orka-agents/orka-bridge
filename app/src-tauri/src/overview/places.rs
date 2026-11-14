@@ -35,6 +35,7 @@ pub struct Place {
     pub namespace: String,
     pub stale: bool,
     pub observed_at: Option<u64>,
+    pub checked_at: Option<u64>,
     pub agents: Vec<RemoteAgent>,
     #[serde(skip)]
     identity: Identity,
@@ -43,14 +44,15 @@ impl Place {
     pub(crate) fn new(binding: TargetBinding) -> Self {
         Self::from_identity(Identity::from(&binding), None)
     }
-    fn from_identity(identity: Identity, observed_at: Option<u64>) -> Self {
+    fn from_identity(identity: Identity, checked_at: Option<u64>) -> Self {
         Self {
             key: identity.key(),
             context: identity.context_name.clone(),
             service: format!("{}/{}", identity.service_namespace, identity.service_name),
             namespace: identity.watched_namespace.clone(),
             stale: true,
-            observed_at,
+            observed_at: None,
+            checked_at,
             agents: Vec::new(),
             identity,
         }
@@ -116,7 +118,7 @@ impl State {
             .filter(|(key, _)| excluding != Some(key.as_str()))
             .map(|(_, e)| Remembered {
                 identity: e.view.identity.clone(),
-                observed_at: e.view.observed_at.unwrap(),
+                observed_at: e.view.checked_at.unwrap(),
             })
             .collect();
         // Keep the lock across replacement so older snapshots cannot win a write race.
@@ -174,11 +176,12 @@ impl Inventory {
     }
     pub(crate) fn remember(&self, access: Arc<RemoteAccess>) {
         let mut view = Place::new(access.binding().clone());
-        view.observed_at = Some(crate::overview::now());
+        view.checked_at = Some(crate::overview::now());
         let mut state = self.state.lock().unwrap();
         let generation = state.next_generation();
         if let Some(prior) = state.entries.get(&view.key) {
             view.agents = prior.view.agents.clone();
+            view.observed_at = prior.view.observed_at;
         }
         state.entries.insert(
             view.key.clone(),
@@ -230,21 +233,42 @@ impl Inventory {
             })
             .collect();
         for (key, generation, access) in reads {
-            let result = access.inventory().await;
-            let mut state = self.state.lock().unwrap();
-            if let Some(entry) = state.entries.get_mut(&key) {
-                // Reload/re-Use while a read was in flight revokes that response.
-                if entry.generation == generation {
-                    if let Ok(agents) = result {
-                        entry.view.agents = agents;
-                        entry.view.observed_at = Some(crate::overview::now());
-                        entry.view.stale = false;
-                        let _ = state.save(None);
-                    }
+            self.refresh_entry(&key, generation, access).await;
+        }
+        self.snapshot()
+    }
+    pub(crate) async fn refresh_one(&self, key: &str) -> Vec<Place> {
+        // A selected cluster must not queue behind unrelated Overview inventory reads.
+        let read = self
+            .state
+            .lock()
+            .unwrap()
+            .entries
+            .get_mut(key)
+            .and_then(|e| {
+                e.view.stale = true;
+                e.access.clone().map(|access| (e.generation, access))
+            });
+        if let Some((generation, access)) = read {
+            self.refresh_entry(key, generation, access).await;
+        }
+        self.get(key).into_iter().collect()
+    }
+    async fn refresh_entry(&self, key: &str, generation: u64, access: Arc<RemoteAccess>) {
+        let result = access.inventory().await;
+        let mut state = self.state.lock().unwrap();
+        if let Some(entry) = state.entries.get_mut(key) {
+            // Reload/re-Use while a read was in flight revokes that response.
+            if entry.generation == generation {
+                if let Ok(agents) = result {
+                    entry.view.agents = agents;
+                    entry.view.observed_at = Some(crate::overview::now());
+                    entry.view.checked_at = entry.view.observed_at;
+                    entry.view.stale = false;
+                    let _ = state.save(None);
                 }
             }
         }
-        self.snapshot()
     }
 }
 pub(crate) fn project(mut places: Vec<Place>, history: Option<Vec<AttemptSummary>>) -> Places {

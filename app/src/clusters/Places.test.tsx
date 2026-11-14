@@ -281,8 +281,8 @@ test('Manage refreshes confirmed agents and offers cancellable removal, finite f
   const { ipc, sim } = native(); const old = ipc.getMockImplementation()!;
   const fresh = { ...primary, stale: false, observedAt: 1700100000000, agents: [{ name: 'reader', namespace: 'agents', uid: 'uid-reader', agentType: 'Declarative', model: 'gpt-test', tools: [], record: null }] };
   let fail = true;
-  mockIPC(command => {
-    if (command === 'overview_places') return { places: [fresh], historyState: 'complete', unobserved: [] };
+  mockIPC((command, args) => {
+    if (command === 'overview_places') { expect(args).toEqual({ key: primary.key }); return { places: [fresh], historyState: 'complete', unobserved: [] }; }
     if (command === 'cluster_forget' && fail) return Promise.reject('SECRET_MARKER');
     return old(command);
   });
@@ -322,6 +322,26 @@ test.each([{ check: 'configuration', result: 'unknown' }, { check: 'orkaIdentity
   await user.click(screen.getByRole('button', { name: 'Change context' }));
   expect(await screen.findByRole('option', { name: context.name })).toBeTruthy();
   expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe('');
+});
+
+test('returning to Add after reconnect replaces obsolete cached context handles', async () => {
+  const { ipc } = native(); const old = ipc.getMockImplementation()!;
+  const freshContext = { ...context, id: '00000000-0000-4000-8000-000000000099' };
+  let refreshed = false;
+  mockIPC(command => {
+    if (command === 'cluster_contexts') return [refreshed ? freshContext : context];
+    if (command === 'cluster_reconnect') { refreshed = true; return { ...target, context_id: freshContext.id }; }
+    return old(command);
+  });
+  const user = userEvent.setup(); render(<Host />);
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
+  expect((await screen.findByRole('option', { name: context.name }) as HTMLOptionElement).value).toBe(context.id);
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(within(row('team-dev')).getByRole('button', { name: 'Connect' }));
+  await screen.findByRole('button', { name: 'Use this cluster' });
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
+  expect((await screen.findByRole('option', { name: context.name }) as HTMLOptionElement).value).toBe(freshContext.id);
 });
 
 test('Remove on an unselected remembered entry fences its late reconnect reply', async () => {

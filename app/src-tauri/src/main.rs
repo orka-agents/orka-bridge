@@ -108,13 +108,19 @@ async fn overview_agents(
 async fn overview_places(
     session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
     send: tauri::State<'_, Arc<SendOwner>>,
+    key: Option<String>,
 ) -> Result<bridge_engine::overview_places::Places, &'static str> {
     let send = send.inner().clone();
     let history = tauri::async_runtime::spawn_blocking(move || send.history())
         .await
         .ok()
         .and_then(Result::ok);
-    Ok(bridge_engine::overview_places::list(session.inner(), history).await)
+    Ok(match key {
+        Some(key) => {
+            bridge_engine::overview_places::project(session.overview_one(&key).await, history)
+        }
+        None => bridge_engine::overview_places::list(session.inner(), history).await,
+    })
 }
 #[tauri::command]
 async fn agents_list(

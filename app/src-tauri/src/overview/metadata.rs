@@ -76,6 +76,7 @@ impl Identity {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(super) struct Remembered {
     pub identity: Identity,
+    // Version 1's wire name is retained; this is last check time, not saved inventory.
     pub observed_at: u64,
 }
 #[derive(Serialize, Deserialize)]

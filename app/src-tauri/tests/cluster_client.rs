@@ -37,7 +37,8 @@ async fn places_snapshot_is_passive_and_selection_is_exact_and_revocable() {
     let view = reply(session.places());
     assert_eq!(view["places"].as_array().unwrap().len(), 1);
     assert_eq!(view["selectedKey"], view["places"][0]["key"]);
-    assert!(view["places"][0]["observedAt"].as_u64().is_some());
+    assert_eq!(view["places"][0]["observedAt"], Value::Null);
+    assert!(view["places"][0]["checkedAt"].as_u64().is_some());
     assert_eq!(view["places"][0]["stale"], true);
     assert_eq!(view["places"][0]["agents"], json!([]));
     assert_eq!(reply(session.places()), view);
@@ -226,6 +227,94 @@ async fn overview_coalesces_refresh_and_fences_results_after_reload() {
 }
 
 #[tokio::test]
+async fn overview_scoped_refresh_does_not_wait_for_unrelated_global_read() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let mut cfg = config(&api.start(), json!({"token":"static-fixture"}));
+    let mut healthy = cfg.contexts[0].clone();
+    cfg.contexts[0].name = "a-offline".into();
+    healthy.name = "z-healthy".into();
+    cfg.contexts = vec![cfg.contexts[0].clone(), healthy];
+    let (session, _) = reading_session(cfg, &orka);
+    for context in session.contexts().await.unwrap() {
+        let target = id_of(&session.discover(&id_of(context)).await.unwrap()[0]);
+        assert_eq!(
+            reply(session.use_target(&target, None).await)["status"],
+            "connected"
+        );
+    }
+    let key = session.places().places[1].key.clone();
+    orka.calls.lock().unwrap().clear();
+    let gate = Arc::new(tokio::sync::Notify::new());
+    *orka.inventory_gate.lock().unwrap() = Some(gate.clone());
+    *orka.inventory_gate_context.lock().unwrap() = Some("a-offline".into());
+    *orka.agents.lock().unwrap() = Some(
+        json!({"items":[{"metadata":{"name":"known","namespace":"agents","uid":"healthy-agent"}}],"metadata":{}}),
+    );
+    let mut blocked = tokio::spawn({
+        let session = session.clone();
+        async move { session.overview().await }
+    });
+    until(|| !orka.calls.lock().unwrap().is_empty()).await;
+    let healthy = tokio::select! {
+        result = session.overview_one(&key) => reply(result),
+        _ = &mut blocked => panic!("scoped read waited for the unrelated inventory"),
+    };
+    assert_eq!(healthy.as_array().unwrap().len(), 1);
+    assert_eq!(healthy[0]["key"], key);
+    assert_eq!(healthy[0]["stale"], false);
+    assert_eq!(healthy[0]["agents"][0]["uid"], "healthy-agent");
+    let offline = reply(session.places());
+    assert_eq!(offline["places"][0]["stale"], true);
+    assert_eq!(offline["places"][0]["observedAt"], Value::Null);
+    assert_eq!(orka.calls.lock().unwrap().len(), 2);
+    assert!(!blocked.is_finished());
+    gate.notify_one();
+    blocked.await.unwrap();
+    orka.calls.lock().unwrap().clear();
+    assert!(session.overview_one("not-confirmed").await.is_empty());
+    assert!(orka.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn overview_scoped_refresh_fences_reload_and_remove() {
+    for remove in [false, true] {
+        let api = Arc::new(ApiFixture::default());
+        let orka = Arc::new(OrkaFixture::default());
+        let (session, _) = reading_session(
+            config(&api.start(), json!({"token":"static-fixture"})),
+            &orka,
+        );
+        let context = id_of(&session.contexts().await.unwrap()[0]);
+        let target = id_of(&session.discover(&context).await.unwrap()[0]);
+        session.use_target(&target, None).await;
+        let key = session.places().places[0].key.clone();
+        let gate = Arc::new(tokio::sync::Notify::new());
+        *orka.inventory_gate.lock().unwrap() = Some(gate.clone());
+        orka.calls.lock().unwrap().clear();
+        let reading = tokio::spawn({
+            let session = session.clone();
+            let key = key.clone();
+            async move { session.overview_one(&key).await }
+        });
+        until(|| !orka.calls.lock().unwrap().is_empty()).await;
+        if remove {
+            session.forget(&key).await.unwrap();
+        } else {
+            session.reload().await.unwrap();
+        }
+        gate.notify_one();
+        let late = reply(reading.await.unwrap());
+        if remove {
+            assert_eq!(late, json!([]));
+        } else {
+            assert_eq!(late[0]["stale"], true);
+            assert_eq!(late[0]["observedAt"], Value::Null);
+        }
+    }
+}
+
+#[tokio::test]
 async fn overview_inventory_is_get_only_and_keeps_stale_after_reload_without_reconnecting() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());
@@ -249,6 +338,8 @@ async fn overview_inventory_is_get_only_and_keeps_stale_after_reload_without_rec
     assert_eq!(first[0]["agents"][0]["model"], "other");
     assert_eq!(first[0]["agents"][1]["model"], Value::Null);
     assert_eq!(first[0]["stale"], false);
+    assert!(first[0]["observedAt"].as_u64().is_some());
+    assert_eq!(first[0]["checkedAt"], first[0]["observedAt"]);
     {
         let calls = api.calls.lock().unwrap();
         assert_eq!(
@@ -275,7 +366,8 @@ async fn overview_inventory_is_get_only_and_keeps_stale_after_reload_without_rec
     assert_eq!(offline[0]["stale"], true);
     assert_eq!(offline[0]["agents"], first[0]["agents"]);
     *orka.fail.lock().unwrap() = None;
-    assert_eq!(reply(session.overview().await)[0]["stale"], false);
+    let latest = reply(session.overview().await);
+    assert_eq!(latest[0]["stale"], false);
     session.reload().await.unwrap();
     let calls = orka.calls.lock().unwrap().len();
     assert_eq!(reply(session.overview().await)[0]["stale"], true);
@@ -290,10 +382,18 @@ async fn overview_inventory_is_get_only_and_keeps_stale_after_reload_without_rec
         reply(session.use_target(&target, None).await)["status"],
         "connected"
     );
+    let remembered = reply(session.places());
     assert_eq!(
-        reply(session.places())["places"][0]["agents"],
-        first[0]["agents"],
+        remembered["places"][0]["agents"], first[0]["agents"],
         "successful re-Use retains the last complete, stale inventory"
+    );
+    assert_eq!(
+        remembered["places"][0]["observedAt"],
+        latest[0]["observedAt"]
+    );
+    assert!(
+        remembered["places"][0]["checkedAt"].as_u64().unwrap()
+            >= latest[0]["checkedAt"].as_u64().unwrap()
     );
     let again = reply(session.overview().await);
     assert_eq!(again.as_array().unwrap().len(), 1);
@@ -534,6 +634,13 @@ async fn remembered_reconnect_is_exact_uid_discovery_not_admission() {
 
 #[tokio::test]
 async fn forget_revokes_old_handles_and_fences_remove_readd_inventory_aba() {
+    check_remove_readd_inventory_aba(false).await;
+}
+#[tokio::test]
+async fn overview_scoped_refresh_fences_remove_readd_inventory_aba() {
+    check_remove_readd_inventory_aba(true).await;
+}
+async fn check_remove_readd_inventory_aba(scoped: bool) {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());
     let (session, _) = reading_session(
@@ -549,7 +656,14 @@ async fn forget_revokes_old_handles_and_fences_remove_readd_inventory_aba() {
     orka.calls.lock().unwrap().clear();
     let reading = tokio::spawn({
         let session = session.clone();
-        async move { session.overview().await }
+        let key = key.clone();
+        async move {
+            if scoped {
+                session.overview_one(&key).await
+            } else {
+                session.overview().await
+            }
+        }
     });
     until(|| !orka.calls.lock().unwrap().is_empty()).await;
     session.forget(&key).await.unwrap();
@@ -816,6 +930,7 @@ struct OrkaFixture {
     agents: Mutex<Option<Value>>,
     inventory_pages: Mutex<Vec<Value>>,
     inventory_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
+    inventory_gate_context: Mutex<Option<String>>,
     identity: Mutex<Value>,
     fail: Mutex<Option<AccessOutcome>>,
     fail_at: Mutex<Option<(OrkaResource, AccessOutcome)>>,
@@ -832,6 +947,7 @@ impl Default for OrkaFixture {
             agents: Mutex::new(None),
             inventory_pages: Mutex::default(),
             inventory_gate: Mutex::default(),
+            inventory_gate_context: Mutex::default(),
             identity: Mutex::new(
                 json!({"authenticated":true,"authType":"tokenReview","namespace":"agents"}),
             ),
@@ -847,7 +963,7 @@ impl OrkaRead for OrkaFixture {
     fn get<'a>(
         &'a self,
         _: &'a kube::Client,
-        _: &'a TargetBinding,
+        binding: &'a TargetBinding,
         bearer: &'a str,
         resource: OrkaResource,
         namespace: &'a str,
@@ -878,7 +994,13 @@ impl OrkaRead for OrkaFixture {
             }
             if resource == OrkaResource::AgentInventory {
                 let gate = self.inventory_gate.lock().unwrap().clone();
-                if let Some(gate) = gate {
+                let gated = self
+                    .inventory_gate_context
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .is_none_or(|context| context == &binding.context_name);
+                if let Some(gate) = gate.filter(|_| gated) {
                     gate.notified().await;
                 }
                 let pages = self.inventory_pages.lock().unwrap();

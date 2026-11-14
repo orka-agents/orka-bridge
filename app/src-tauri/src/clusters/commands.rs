@@ -182,6 +182,9 @@ impl ClusterSession {
     pub async fn overview(&self) -> Vec<crate::overview_places::Place> {
         self.6.refresh().await
     }
+    pub async fn overview_one(&self, key: &str) -> Vec<crate::overview_places::Place> {
+        self.6.refresh_one(key).await
+    }
     /// A display-only snapshot: never reads kubeconfig, refreshes inventory or renews access.
     pub fn places(&self) -> ClusterPlaceSnapshot {
         // Do not hold the admission lock while reading the independent inventory.

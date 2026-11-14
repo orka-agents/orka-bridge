@@ -98,17 +98,19 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   const target = targets?.find(t => t.id === targetId);
   const recovery = error && clusterRecovery(error.failure);
   const connected = access?.status === 'connected';
+  const checkedAt = summary?.checkedAt ?? summary?.observedAt ?? retained?.checkedAt ?? retained?.observedAt;
   useEffect(() => {
     if (!active || !connected || removing) return;
     const request = epoch.current;
     let live = true;
     setSummary(undefined);
-    void Promise.all([clusterPlaces(), readPlaces()]).then(([snapshot, inventory]) => {
+    void clusterPlaces().then(async snapshot => {
       if (!live || request !== epoch.current) return;
       setPersistence(snapshot?.persistenceState ?? 'unavailable');
       const key = snapshot?.selectedKey;
       setRetained(previous => snapshot?.places.find(p => p.key === key) ?? previous);
-      setSummary(inventory?.places.find(p => p.key === key) ?? null);
+      const inventory = key ? await readPlaces(key) : undefined;
+      if (live && request === epoch.current) setSummary(inventory?.places.find(p => p.key === key) ?? null);
     });
     return () => { live = false; };
   }, [active, connected, access, entry, removing]);
@@ -119,6 +121,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   }, [confirmRemoval, active]);
   async function reconnect(key: string) {
     const request = ++epoch.current; setBusy(true); setError(undefined);
+    initialLoaded.current = false; setChoices([]);
     // Native reconnect retires the prior session before resolving fresh handles.
     onPlace({ kind: 'cluster' });
     try {
@@ -228,7 +231,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
         <select ref={providerField} id="send-provider" disabled={removing} value={providerId} onChange={event => { const next = event.target.value; setProviderId(next); providerName.current = access.providers.find(p => p.id === next)?.name ?? ''; onPlace({ kind: 'cluster', target, providers: access.providers, providerId: next }); }}>
           <option value="">Choose an AI connection</option>{access.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.ready ? 'Ready' : 'Not ready'}</option>)}
         </select><p className="muted">Send checks whether this AI connection supports your agent's model.</p>
-        <p className="muted">{(summary?.observedAt ?? retained?.observedAt) != null ? `Last checked ${new Date((summary?.observedAt ?? retained?.observedAt)!).toLocaleString()}` : 'Last check unavailable'}</p>
+        <p className="muted">{checkedAt != null ? `Last checked ${new Date(checkedAt).toLocaleString()}` : 'Last check unavailable'}</p>
         <h3>Agents on this cluster</h3>
         {summary === undefined ? <p role="status">Reading agents…</p> : !summary || summary.stale ? <p>Agents could not be checked. Check access again to retry.</p> : summary.agents.length ? <ul>{summary.agents.map(agent => <li key={agent.uid}><code>{agent.name}</code>{agent.model && <> · <code>{agent.model}</code></>}</li>)}</ul> : <p>No agents on this cluster yet.</p>}
         {persistence === 'unavailable' && <p role="status">Remembered cluster information is unavailable. This connection is usable, but may not be remembered after Bridge closes.</p>}

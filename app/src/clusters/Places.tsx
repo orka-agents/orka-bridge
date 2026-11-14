@@ -21,7 +21,8 @@ export default function Places({ snapshot, unavailable, status, view, place, onL
     {snapshot?.places.map(item => {
       const selected = place.kind === 'cluster' && !!place.target && snapshot.selectedKey === item.key;
       const observed = item.observedAt !== null;
-      const checked = observed ? `Last checked ${new Date(item.observedAt!).toLocaleString()}` : 'Not checked yet';
+      const checkedAt = item.checkedAt ?? item.observedAt;
+      const checked = checkedAt !== null ? `Last checked ${new Date(checkedAt).toLocaleString()}` : 'Not checked yet';
       return <section className="card place-row" aria-label={item.context} key={item.key}>
         <span className="icon-tile" aria-hidden="true"><svg className="icon" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5M3 18l9 5 9-5" /></svg></span>
         <div className="place-summary"><h2>{item.context}</h2><p>{item.namespace} · {item.service}</p><p className="muted">{checked}</p>{observed && !item.stale && <p className="muted">{item.agents.length} {item.agents.length === 1 ? 'agent' : 'agents'} at last check</p>}</div>

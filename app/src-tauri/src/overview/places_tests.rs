@@ -145,7 +145,11 @@ async fn metadata_roundtrip_is_allowlisted_stale_passive_and_removal_survives_re
     assert_eq!(snapshot.persistence_state, "complete");
     assert!(snapshot.selected_key.is_none());
     assert_eq!(snapshot.places[0].key, Place::new(binding()).key);
-    assert_eq!(snapshot.places[0].observed_at, Some(123));
+    assert_eq!(snapshot.places[0].observed_at, None);
+    assert_eq!(
+        serde_json::to_value(&snapshot.places[0]).unwrap()["checkedAt"],
+        123
+    );
     assert!(snapshot.places[0].stale);
     assert!(snapshot.places[0].agents.is_empty());
     assert!(session.overview().await[0].stale);
