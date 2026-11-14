@@ -35,9 +35,9 @@ function stepRows({ status, stopping, error, modelState = 'idle', firstCheck, in
     : modelState === 'connecting' ? ['running', 'Connecting'] : modelState === 'removing' ? ['running', 'Removing sign-in']
     : modelState === 'queued' ? ['not-started', 'Queued']
     : status.localVm === 'ready' ? status.model === 'locked' ? ['not-started', 'Unavailable'] : ['needs-you', 'Needs you']
-    : canQueueModel(status) ? ['needs-you', 'Pick any time'] : ['not-started', 'Waiting'];
+    : canQueueModel(status) ? ['not-started', 'Pick any time'] : ['not-started', 'Waiting'];
   // A kept result belongs to an earlier workspace until this one is ready with its model connected.
-  const test: [Status, string] = firstCheck && status.localVm === 'ready' && connected ? [{ running: 'running', passed: 'passed', failed: 'failed', unknown: 'not-started', stale: 'stale' }[firstCheck] as Status,
+  const test: [Status, string] = firstCheck && status.localVm === 'ready' && connected ? [{ running: 'running', passed: 'passed', failed: 'failed', unknown: 'stale', stale: 'stale' }[firstCheck] as Status,
     { running: 'Running', passed: 'Its test passed', failed: 'Its test failed', unknown: 'Result unknown', stale: 'Needs running' }[firstCheck]]
     : connected ? ['needs-you', 'Needs you'] : ['not-started', 'Waiting'];
   const names = [status.preflightFailure ? 'Check this computer' : 'Install the local cluster', 'Start the local cluster', 'Cluster ready', 'Connect the AI', 'Run your first agent'];
@@ -59,11 +59,11 @@ export function SetupProgress(props: Props) {
     : status.localVm === 'closing' ? 'Stopping the local cluster…'
     : status.localVm === 'notIntegrated' ? 'Local cluster setup is not included in this build. Nothing will be downloaded or started.'
     : copying ? 'Installing the local cluster…' : 'Checking the cluster download…';
-  const pill: [Status, string] = error ? ['not-started', 'Unavailable'] : [view.status, !view.done && view.step > 0 && !paused ? `Step ${view.step} of ${setupSteps}` : view.line];
+  const pill: Status = error ? 'needs-you' : view.status;
   // The failed step owns its recovery card; do not render an otherwise empty summary above it.
   if (failed) return null;
   return <section className="card workspace-steps setup-progress" aria-label="Local cluster setup">
-    <div className="steps-head"><h2>{view.done ? 'Local cluster' : 'Setting up on this computer'}</h2><StatusPill state={pill[0]}>{pill[1]}</StatusPill></div>
+    <div className="steps-head"><h2>{view.done ? 'Local cluster' : 'Setting up on this computer'}</h2><StatusPill state={pill}>{pill === 'passed' ? 'Ready' : undefined}</StatusPill><span className="status-description">{error ? 'Unavailable' : !view.done && view.step > 0 && !paused ? `Step ${view.step} of ${setupSteps}` : view.line}</span></div>
     <p className="step-place"><span>Cluster</span><b>Local cluster</b></p>
     {!failed && <p role="status">{stateLine}</p>}
     {ready && !error && props.modelState === 'connected' && props.firstCheck === 'failed' && !!props.firstTestResult?.failed && <p>Its test failed</p>}

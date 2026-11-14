@@ -45,7 +45,9 @@ test('stale rows have no passing icons or current verdict words', () => {
 });
 test('unknown tool evidence is not a fabricated failure', () => {
   const unknown = { ...failed, verdict: 'unknown' as const, completedTools: [], answer: null, assertions: [{ id: 'fetch', kind: 'toolCalled' as const, expected: 'web_fetch', verdict: 'unknown' as const }] };
-  render(<TestResults report={{ verdict: 'unknown', cases: [unknown] }} stale={false} />);
+  const { container } = render(<TestResults report={{ verdict: 'unknown', cases: [unknown] }} stale={false} />);
+  expect(container.querySelector('.test-result summary .status-stale')).toBeTruthy();
+  expect(container.querySelector('.test-result summary .status-not-started')).toBeNull();
   expect(screen.getByText('No answer was observed.')).toBeTruthy();
   expect(screen.getByText('A call to web_fetch was not observed; this result is unknown.')).toBeTruthy();
 });

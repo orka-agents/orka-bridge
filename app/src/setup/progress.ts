@@ -36,7 +36,7 @@ export function setupView(status: SetupStatus | undefined, { checking = false, s
     status: ({ busy: 'running', 'needs-you': 'needs-you', wait: 'not-started', ready: 'passed', bad: 'failed' } as const)[tone],
     action: done ? 'Manage' : step === 4 ? 'Connect the AI' : place === 'local' ? 'Continue setup' : 'Set up',
   });
-  if (!status) return checking ? view('checking', 0, 'Checking the local cluster…', 'Checking the local cluster…', 'wait') : view('unavailable', 0, 'Local cluster unavailable', 'Local cluster unavailable', 'wait');
+  if (!status) return checking ? view('checking', 0, 'Checking the local cluster…', 'Checking the local cluster…', 'busy') : view('unavailable', 0, 'Local cluster unavailable', 'Local cluster unavailable', 'needs-you');
   const place = status.selected === 'localVm' ? 'local' : 'none';
   if (status.localVm === 'notIntegrated') return view(place, 0, 'Local cluster unavailable', 'Local cluster unavailable', 'wait');
   if (place === 'none') return view(place, 0, 'Choose where agents run', 'Choose where agents run', 'wait');
@@ -61,8 +61,9 @@ export function setupView(status: SetupStatus | undefined, { checking = false, s
       // Test evidence can need attention after setup; only the initial automatic run is a setup stage.
       const done = !initialAutomatic;
       const tone = check === 'failed' ? 'bad' : check === 'passed' ? 'ready' : check === 'running' ? 'busy' : initialAutomatic || check === 'stale' ? 'needs-you' : 'wait';
-      const line = !done ? 'Run your first agent' : check ? { passed: 'Local cluster ready', failed: 'Its test failed', running: 'Running test', stale: 'Tests need running', unknown: 'Test result unknown' }[check] : 'Local cluster running';
-      return view(place, 5, line, 'AI connected', tone, done);
+      const line = !done ? 'Run your first agent' : check ? { passed: 'Local cluster ready', failed: 'Its test failed', running: 'Running test', stale: 'Tests need running', unknown: 'Test result unknown' }[check] : 'Local cluster ready';
+      return { ...view(place, 5, line, 'AI connected', check || !done ? tone : 'ready', done),
+        ...(check === 'stale' || check === 'unknown' ? { status: 'stale' as const } : {}) };
     }
     default: return view(place, 1, 'Getting the local cluster ready', 'Getting the local cluster ready', 'busy');
   }

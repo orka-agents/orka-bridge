@@ -205,7 +205,7 @@ try {
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && [...document.querySelectorAll('.setup-progress')].some(item => item.getClientRects().length)`), `${name} setup progress`);
     const chrome = await evaluate(`document.querySelector('header').innerText + document.querySelector('footer').innerText`);
     if (/step \d+ of 5|setting up,? step/i.test(chrome)) throw Error(`${name}: chrome repeats a step counter: ${chrome}`);
-    if (localVm === 'ready' && !await evaluate(`document.querySelector('.setup-progress .pill')?.textContent === 'Step 4 of 5' && !document.querySelector('[aria-label="This computer"] .pill.status-passed')`)) throw Error(`${name}: unfinished local setup must remain step 4`);
+    if (localVm === 'ready' && !await evaluate(`document.querySelector('.setup-progress .status-description')?.textContent === 'Step 4 of 5' && !!document.querySelector('.setup-progress .pill.status-needs-you') && !document.querySelector('[aria-label="This computer"] .pill.status-passed')`)) throw Error(`${name}: unfinished local setup must remain step 4`);
     await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     if (!modelSupported && !await evaluate(`document.body.textContent.includes('Waiting') && !document.body.textContent.includes('Queued') && ![...document.querySelectorAll('button')].some(button => button.textContent === 'Connect the AI')`)) {
       throw new Error(`${name}: an unsupported platform must show Waiting with no model action`);
@@ -358,7 +358,7 @@ try {
       if (await evaluate('window.__bridgeRuns') !== 1) throw Error('A sample state submitted a run other than the automatic test');
       return;
     }
-    const expected = { 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Data disk, up to', 'local-preflight-missing': 'Data disk, up to', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first agentRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster running', 'local-stopped': 'Set up this computer', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings' };
+    const expected = { 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Data disk, up to', 'local-preflight-missing': 'Data disk, up to', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first agentRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster ready', 'local-stopped': 'Set up this computer', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings' };
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])})`), `${name} action state`).catch(async error => {
       throw Error(`${error.message}: ${await evaluate('document.body.innerText')}`);
     });
@@ -394,7 +394,7 @@ try {
     await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
     if (['ai-connected', 'local-completed'].includes(name)) {
       const complete = await evaluate(`({ heading: document.querySelector('h1').textContent, pill: document.querySelector('.setup-progress .pill')?.textContent, details: !!document.querySelector('.setup-history details:not([open])'), text: document.body.innerText, model: document.querySelector('.setup-model').innerText })`);
-      if (complete.heading !== 'Local cluster' || complete.pill !== 'Local cluster running' || /step \d+ of 5/i.test(complete.text) || !complete.details || !complete.text.includes('Stop the local cluster') || complete.model.includes('GitHub CLI must be installed')) throw Error(`Completed local page is not collapsed: ${JSON.stringify(complete)}`);
+      if (complete.heading !== 'Local cluster' || complete.pill !== 'Ready' || /step \d+ of 5/i.test(complete.text) || !complete.details || !complete.text.includes('Stop the local cluster') || complete.model.includes('GitHub CLI must be installed')) throw Error(`Completed local page is not collapsed: ${JSON.stringify(complete)}`);
     }
     if (name === 'ai-idle' && await evaluate(`document.querySelector('.setup-model').innerText.includes('Remove sign-in')`)) throw Error('Unused sign-in removal is visible before connecting');
     if (await evaluate(`document.body.innerText.includes('Change where agents run')`)) throw Error('Removed change panel is still visible');

@@ -44,7 +44,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onUncertain 
   return <section aria-label="Computer requirements" aria-busy={checking} className="workspace-preflight">
     <div aria-live="polite">
       <section aria-label="Virtualization">
-        <p role={failedVirtualization && !checking ? 'alert' : undefined}><StatusIcon state={checking ? 'running' : failedVirtualization ? 'failed' : virtualization === 'ready' ? 'passed' : 'not-started'} /><b>Virtualization: </b>{checking ? 'Checking…' : {
+        <p role={failedVirtualization && !checking ? 'alert' : undefined}><StatusIcon state={checking ? 'running' : failedVirtualization ? 'failed' : virtualization === 'ready' ? 'passed' : 'needs-you'} /><b>Virtualization: </b>{checking ? 'Checking…' : {
           ready: 'Available', disabled: 'Turned off or unavailable on this PC', hypervisorUnavailable: 'Windows Hypervisor Platform is unavailable', unsupported: 'Not supported on this Mac', unknown: "Couldn't check",
         }[virtualization]}</p>
         <Disclosure label="Show me how" open={virtualHelp} controls="preflight-virtual-help" onOpenChange={next => { void help(next); }}>
@@ -55,7 +55,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onUncertain 
           : "If Bridge couldn't check, starting the local cluster will check virtualization. You can also use a cluster instead."}</p>}</Disclosure>
       </section>
       <section aria-label="Installed memory">
-        <p role={memory === 'insufficient' && !checking ? 'alert' : undefined}><StatusIcon state={checking ? 'running' : memory === 'insufficient' ? 'failed' : memory === 'ready' ? 'passed' : 'not-started'} /><b>Installed memory: </b>{checking ? 'Checking…' : result?.installedMemoryBytes != null
+        <p role={memory === 'insufficient' && !checking ? 'alert' : undefined}><StatusIcon state={checking ? 'running' : memory === 'insufficient' ? 'failed' : memory === 'ready' ? 'passed' : 'needs-you'} /><b>Installed memory: </b>{checking ? 'Checking…' : result?.installedMemoryBytes != null
           ? `${formatSize(result.installedMemoryBytes)} installed; ${formatSize(requiredMemoryBytes)} needed${memory === 'insufficient' ? '. Not enough installed memory.' : '.'}`
           : "Couldn't check"}</p>
         <Disclosure label="Show me how" open={memoryHelp} controls="preflight-memory-help" onOpenChange={setMemoryHelp}>

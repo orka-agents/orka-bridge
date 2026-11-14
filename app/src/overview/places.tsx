@@ -21,11 +21,11 @@ function Revision({ source }: { source: SourceId }) {
 function RemoteCard({ agent, place, historyState, files, also, onOpen }: { agent: RemoteAgent; place: Place; historyState: Places['historyState']; files: SavedFile[]; also: string[]; onOpen: (id: string) => void }) {
   const record = historyState === 'complete' ? agent.record : null;
   const file = record ? ownedFile(record.source, files) : undefined;
-  const state: Status = place.stale ? 'stale' : record?.verdict === 'unknown' ? 'not-started' : record?.verdict ?? 'not-started';
+  const state: Status = place.stale ? 'stale' : record?.verdict === 'unknown' ? 'stale' : record?.verdict ?? 'not-started';
   const checks = historyState === 'unavailable' ? 'Recorded checks unavailable' : !record ? 'Not tested by Bridge'
     : place.stale ? `Recorded checks ${record.verdict}; observation stale` : record.verdict === 'unknown' ? 'Checks unknown' : record.verdict === 'running' ? 'Running checks here' : `Checks ${record.verdict} here`;
   const identity = <dl className="overview-identity"><div><dt>Name</dt><dd>{agent.name}</dd></div><div><dt>UID</dt><dd>{agent.uid}</dd></div><div><dt>Cluster</dt><dd>{label(place)}</dd></div><div><dt>Service</dt><dd>{place.service}</dd></div></dl>;
-  return <LongCard title={file?.summary?.name || file?.name || agent.name} status={<StatusPill state={state}>agent{place.stale ? ' · stale' : ''}</StatusPill>}
+  return <LongCard title={file?.summary?.name || file?.name || agent.name} status={<StatusPill state={state} />}
     summary={file?.summary?.description ?? 'Agent without a linked file'}
     action={file ? <Button type="button" kind="secondary" size="small" aria-label={`Open ${file.name}`} onClick={() => onOpen(file.documentId)}>Open</Button> : undefined}>
     <CardSection title="Checks"><p>{checks}</p><p>{record ? <>Last tests: {when(record.time * 1000)}</> : 'Last run: unavailable'}</p></CardSection>

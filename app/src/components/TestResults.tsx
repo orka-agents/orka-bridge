@@ -42,7 +42,7 @@ export function TestResults({ report, stale }: { report: Report | null | undefin
   const order = { failed: 0, unknown: 1, passed: 2 };
   return <div className={stale ? 'test-results result-stale' : 'test-results'}>
     {stale && <p>Earlier result</p>}
-    {[...report.cases].sort((a, b) => order[a.verdict] - order[b.verdict]).map(c => <Disclosure className="test-result" key={`${c.id}:${c.verdict}:${stale}`} defaultOpen={c.verdict !== 'passed'} label={<><StatusIcon state={stale ? 'stale' : c.verdict === 'unknown' ? 'not-started' : c.verdict} /><code>{c.id}</code><span>{stale ? 'Earlier result' : words[c.verdict]}</span></>}>
+    {[...report.cases].sort((a, b) => order[a.verdict] - order[b.verdict]).map(c => <Disclosure className="test-result" key={`${c.id}:${c.verdict}:${stale}`} defaultOpen={c.verdict !== 'passed'} label={<><StatusIcon state={stale ? 'stale' : c.verdict === 'unknown' ? 'stale' : c.verdict} /><code>{c.id}</code><span>{stale ? 'Earlier result' : words[c.verdict]}</span></>}>
       <div className="test-answer">
         <h5 className="section-label">Question</h5><p className="reading">{c.question}</p>
         <h5 className="section-label">Answer</h5><p className="reading">{c.answer ?? 'No answer was observed.'}</p>
