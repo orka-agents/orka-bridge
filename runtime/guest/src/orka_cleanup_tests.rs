@@ -101,6 +101,22 @@ fn cleanup_deletes_only_resolved_uid_with_orphan_precondition_and_confirms_absen
     }
 }
 #[test]
+fn cleanup_accepts_valid_resource_names_longer_than_a_job_label() {
+    for length in [64, 253] {
+        let name = "a".repeat(length);
+        let mut task = cleanup_task("Succeeded");
+        task["metadata"]["name"] = json!(name);
+        let (dir, mut runner) = cleanup_fixture(json!([task]));
+        fs::write(dir.path().join("agents.json"), cleanup_list("Agent", json!([
+            cleanup_agent("recorded-uid", RUN), cleanup_agent("unrelated", &name)
+        ])).to_string()).unwrap();
+        let mut pod = cleanup_pod("Succeeded");
+        pod["metadata"]["name"] = json!(name);
+        fs::write(dir.path().join("pods.json"), cleanup_list("Pod", json!([pod])).to_string()).unwrap();
+        assert!(cleanup_call(&mut runner).unwrap(), "valid resource name of {length} bytes");
+    }
+}
+#[test]
 fn cleanup_absent_uid_is_success_even_if_name_recreated_and_never_deletes_replacement() {
     for agents in [json!([]), json!([cleanup_agent("replacement", RUN)])] {
         let (dir, mut runner) = cleanup_fixture(json!([]));

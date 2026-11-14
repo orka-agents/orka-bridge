@@ -40,7 +40,14 @@ fn items<'a>(list: &'a Value, kind: &str, api: &str) -> io::Result<&'a [Value]> 
             || item["apiVersion"] != api
             || item["metadata"]["namespace"] != ORKA_NAMESPACE
             || name.len() > 253
-            || !name.split('.').all(job_label)
+            // Resource names are DNS subdomains (253 bytes total), not label
+            // values: Kubernetes does not impose a 63-byte component limit.
+            || name.split('.').any(|part| {
+                part.is_empty()
+                    || part.starts_with('-')
+                    || part.ends_with('-')
+                    || !part.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+            })
             || uid.is_empty()
             || uid.len() > 64
             || !names.insert(name)

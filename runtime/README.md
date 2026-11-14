@@ -116,6 +116,10 @@ post-delete observation. Already-absent UIDs also return true. A finalizer can
 leave `removed: false`; failures return an error, never a successful absence.
 Mutations are not retried or replayed. A later sweep must observe again.
 
+Each complete namespace list must fit the existing 1 MiB guest output bound.
+Larger retained Task histories skip cleanup; pagination is not implemented.
+Tasks and answers are never discarded to make a cleanup observation fit.
+
 ## Native Chat transport
 
 The physical host channel also accepts the separate `orkaChat` action. Its request
