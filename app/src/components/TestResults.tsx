@@ -29,7 +29,9 @@ function reason(c: Case) {
   if (c.phase === 'Failed') return 'The agent could not finish this test. Try running it again.';
   if (c.phase === 'Cancelled') return 'The test was cancelled before it finished.';
   const failed = c.assertions.filter(a => a.verdict === 'failed');
-  if (failed.length) return failed.map(a => a.kind === 'contains' ? `The answer did not include “${a.expected}”.` : `The expected tool call ${a.expected} was not confirmed.`).join(' ');
+  if (failed.length) return failed.map(a => a.kind === 'contains'
+    ? a.expected.length > 48 ? 'The answer did not include the expected value. Open Details to see it.' : `The answer did not include “${a.expected}”.`
+    : `The expected tool call ${a.expected} was not confirmed.`).join(' ');
   const unknown = c.assertions.find(a => a.verdict === 'unknown');
   if (unknown) return unknown.kind === 'toolCalled' ? `A call to ${unknown.expected} was not observed; this result is unknown.` : 'No answer was available to evaluate this test.';
   return undefined;

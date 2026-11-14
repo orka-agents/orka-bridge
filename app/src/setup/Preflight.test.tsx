@@ -44,7 +44,7 @@ test('insufficient installed memory blocks preparation, explains RAM, and can be
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_preflight')).toHaveLength(2);
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  expect(await screen.findByText('Starting your workspace…')).toBeTruthy();
+  expect(await screen.findByText('Starting the local cluster…')).toBeTruthy();
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_select_local')).toHaveLength(1);
 });
 
@@ -62,8 +62,8 @@ test('virtualization failure offers native fixed-topic help, sanitized copy, and
   await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
   expect(copy.mock.calls[0][0]).toContain('disabled');
   expect(copy.mock.calls[0][0]).not.toMatch(/SECRET_MARKER|C:\\/);
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
-  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   expect(await screen.findByLabelText('kubectl context')).toBeTruthy();
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
 });
@@ -87,7 +87,7 @@ test('Mac unsupported virtualization explains platform support without Windows h
 
 test('unavailable builds never query or claim host readiness', async () => {
   const { ipc } = await native(ready, false);
-  await screen.findByText(/Workspace setup is not included/);
+  await screen.findByText(/Local cluster setup is not included/);
   expect(screen.queryByRole('region', { name: 'Computer requirements' })).toBeNull();
   expect(ipc.mock.calls.some(([c]) => c === 'setup_preflight')).toBe(false);
 });
@@ -98,8 +98,8 @@ test('a pending refresh disables Continue and an old request cannot survive leav
   const user = userEvent.setup();
   await screen.findByRole('region', { name: 'Computer requirements' });
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
-  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   complete({ ...ready, virtualization: 'disabled' });
   await screen.findByLabelText('kubectl context');
   expect(screen.queryByRole('region', { name: 'Computer requirements' })).toBeNull();

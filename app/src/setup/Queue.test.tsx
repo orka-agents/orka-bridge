@@ -96,7 +96,7 @@ test('an unreadable observation holds the intent without firing or clearing it',
   const { sim, connects } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   sim.unreadable = true;
-  await within(screen.getByRole('navigation')).findByText('Workspace unavailable', {}, wait);
+  await within(screen.getByRole('navigation')).findByText('Local cluster unavailable', {}, wait);
   sim.localVm = 'ready'; sim.model = 'available';
   await settle(); expect(connects()).toBe(0);
   expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
@@ -160,12 +160,12 @@ test('choosing a cluster clears the held intent even though the view stays mount
   await observe(ipc);
   expect(within(screen.getByRole('navigation')).getByText('AI unavailable')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
+  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep the local cluster running' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), '00000000-0000-4000-8000-000000000001');
-  await screen.findByText('No Orka was found on this context.');
+  await screen.findByText('No cluster with Orka was found using this context.');
   sim.model = 'available';
   await observe(ipc); expect(connects()).toBe(0);
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
   await openLocalSetup(user);
   await user.click(screen.getByRole('button', { name: 'Use this computer' }));
   expect(await screen.findByRole('button', { name: 'Connect the AI' })).toBeTruthy();
@@ -174,7 +174,7 @@ test('choosing a cluster clears the held intent even though the view stays mount
 
 test.each(['notIntegrated', 'cancelled', 'closed', 'closing', 'idle'])('nothing can be queued while the workspace is %s', async localVm => {
   const { connects } = native(localVm); render(<App />); await openLocalSetup();
-  await screen.findByRole('region', { name: 'Workspace setup' });
+  await screen.findByRole('region', { name: 'Local cluster setup' });
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
   expect(screen.queryByText('Queued')).toBeNull();
@@ -194,7 +194,7 @@ test('native selection, not the default radio, names the host, including checkin
   const chip = () => document.querySelector('.host-chip')!;
   expect(chip().querySelector('.host-label')?.textContent).toBe('Checking…');
   await act(async () => { release(); });
-  await waitFor(() => expect(chip().querySelector('.host-label')?.textContent).toBe('No place selected'));
+  await waitFor(() => expect(chip().querySelector('.host-label')?.textContent).toBe('No cluster selected'));
   expect(chip().tagName).toBe('SPAN');
   expect(within(screen.getByRole('navigation')).queryByRole('button', { name: /computer|place/i })).toBeNull();
   // A valid saved choice restored after relaunch is "This computer"; an unreadable read afterwards is not "no selection".
@@ -202,7 +202,7 @@ test('native selection, not the default radio, names the host, including checkin
   await waitFor(() => expect(chip().querySelector('.host-label')?.textContent).toBe('This computer'), wait);
   sim.unreadable = true;
   await waitFor(() => expect(chip().querySelector('.host-label')?.textContent).toBe('Status unavailable'), wait);
-  expect(chip().textContent).not.toContain('No place selected');
+  expect(chip().textContent).not.toContain('No cluster selected');
 });
 
 test('an edit marks the first test stale immediately without putting the ready workspace back in setup', async () => {
@@ -218,7 +218,7 @@ test('an edit marks the first test stale immediately without putting the ready w
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await within(screen.getByRole('contentinfo')).findByText('1 of 1 tests passing');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await waitFor(() => expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy());
+  await waitFor(() => expect(within(screen.getByRole('navigation')).getByText('Local cluster ready')).toBeTruthy());
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   await user.click(screen.getByRole('button', { name: 'File' }));
   await user.type(screen.getByRole('textbox', { name: 'Agent file' }), ' edit');
@@ -227,8 +227,8 @@ test('an edit marks the first test stale immediately without putting the ready w
   expect(within(screen.getByRole('navigation')).getByText(/tests need running/)).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(within(screen.getByRole('navigation')).queryByText('Setting up, step 5 of 5')).toBeNull();
-  expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy();
-  expect(within(screen.getByRole('region', { name: 'Workspace setup' })).getByText('Needs running')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText('Local cluster ready')).toBeTruthy();
+  expect(within(screen.getByRole('region', { name: 'Local cluster setup' })).getByText('Needs running')).toBeTruthy();
 });
 
 test('the single host dot is busy blue while connecting or removing, amber when it is the creator\'s move, and green only when complete', async () => {
