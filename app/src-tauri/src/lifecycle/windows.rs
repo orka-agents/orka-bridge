@@ -238,9 +238,6 @@ mod tests {
             ("timeout", 1, "cleanup unconfirmed", false),
             ("panic", 1, "session-end handler panicked", false),
         ] {
-            if std::env::var_os("BRIDGE_MENU_DIAGNOSTIC").is_some() && case != "menu_quit" {
-                continue;
-            }
             let marker = temp.path().join(case);
             let mut child = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", &child_test, "--nocapture"])
@@ -354,16 +351,25 @@ mod tests {
                     );
                 });
             }
-            let mut builder = tauri::WebviewWindowBuilder::new(
-                &app,
-                "menu-probe",
-                tauri::WebviewUrl::External("about:blank".parse().unwrap()),
-            )
-            .visible(false);
-            if mode == "fresh" {
-                builder = builder.data_directory(profile.path().to_path_buf());
-            }
-            let window = builder.build().unwrap();
+            let hwnd = if mode == "native" {
+                let window = tauri::WindowBuilder::new(&app, "menu-probe")
+                    .visible(false)
+                    .build()
+                    .unwrap();
+                assert!(window.webviews().is_empty());
+                window.hwnd().unwrap().0 as HWND
+            } else {
+                let mut builder = tauri::WebviewWindowBuilder::new(
+                    &app,
+                    "menu-probe",
+                    tauri::WebviewUrl::External("about:blank".parse().unwrap()),
+                )
+                .visible(false);
+                if mode == "fresh" {
+                    builder = builder.data_directory(profile.path().to_path_buf());
+                }
+                builder.build().unwrap().hwnd().unwrap().0 as HWND
+            };
             eprintln!(
                 "native-session menu_quit: {mode} build elapsed {:?}",
                 build_start.elapsed()
@@ -380,7 +386,6 @@ mod tests {
                 .await
                 .unwrap();
             });
-            let hwnd = window.hwnd().unwrap().0 as HWND;
             unsafe {
                 let menu = GetMenu(hwnd);
                 assert!(!menu.is_null());

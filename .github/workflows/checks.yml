@@ -118,18 +118,44 @@ jobs:
       - name: Mac deferred termination (no VM or host logout)
         if: runner.os == 'macOS' && matrix.suite == 'checks'
         run: cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --test native_termination --features custom-protocol
+      - name: Trace WebView2 callback waits on this disposable runner
+        if: runner.os == 'Windows'
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          root = Path.home() / '.cargo' / 'registry' / 'src'
+          path, = root.glob('*/webview2-com-0.39.1/src/lib.rs')
+          source = path.read_text()
+          old = '    let mut msg = MSG::default();'
+          assert source.count(old) == 1
+          source = source.replace(old, '    eprintln!("WebView2 wait entered: {}", std::any::type_name::<T>());\n' + old)
+          old = '        if let Ok(result) = rx.try_recv() {\n            return Ok(result);\n        }'
+          new = '''        match rx.try_recv() {
+                      Ok(result) => {
+                          eprintln!("WebView2 wait completed: {}", std::any::type_name::<T>());
+                          return Ok(result);
+                      }
+                      Err(mpsc::TryRecvError::Disconnected) => eprintln!("WebView2 completion channel DISCONNECTED: {}", std::any::type_name::<T>()),
+                      Err(mpsc::TryRecvError::Empty) => {}
+                  }'''
+          assert source.count(old) == 1
+          path.write_text(source.replace(old, new))
+          PY
+          cargo +1.98.1 clean --manifest-path src-tauri/Cargo.toml -p webview2-com
       - name: Diagnose Windows native menu WebView startup
         if: runner.os == 'Windows'
         run: |
           failed=0
-          for mode in baseline fresh kick; do
-            echo "=== Native menu diagnostic: $mode ==="
-            if BRIDGE_MENU_DIAGNOSTIC="$mode" cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --bin orka-bridge --features custom-protocol lifecycle::windows::tests::native_session_messages_in_subprocesses -- --exact --nocapture; then
-              echo "$mode passed"
-            else
-              echo "$mode failed"
-              failed=1
-            fi
+          for trial in {1..10}; do
+            for mode in baseline native; do
+              echo "=== Native menu diagnostic: trial=$trial mode=$mode ==="
+              if BRIDGE_MENU_DIAGNOSTIC="$mode" cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --bin orka-bridge --features custom-protocol lifecycle::windows::tests::native_session_messages_in_subprocesses -- --exact --nocapture; then
+                echo "trial=$trial mode=$mode passed"
+              else
+                echo "trial=$trial mode=$mode failed"
+                failed=1
+              fi
+            done
           done
           exit "$failed"
       - name: Rust checks
@@ -144,7 +170,7 @@ jobs:
           cargo +1.98.1 clippy --release --manifest-path src-tauri/Cargo.toml --locked --all-targets --features custom-protocol -- -D warnings
       # Keep successful compilation/tests even if the later desktop walk fails.
       - name: Preserve verified Rust cache
-        if: matrix.suite != 'bundle' && steps.rust-cache.outputs.cache-hit != 'true'
+        if: runner.os != 'Windows' && matrix.suite != 'bundle' && steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
@@ -285,7 +311,7 @@ jobs:
             app/src-tauri/target
           key: ${{ steps.rust-cache.outputs.cache-primary-key }}
       - name: Preserve compiled dependencies after a failed native check
-        if: failure() && steps.rust-cache.outcome == 'success' && steps.rust-cache.outputs.cache-hit != 'true'
+        if: runner.os != 'Windows' && failure() && steps.rust-cache.outcome == 'success' && steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
