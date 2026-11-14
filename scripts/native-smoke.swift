@@ -1133,7 +1133,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         try clickSendControl("Retry cancellation", scrolling: -250)
         Thread.sleep(forTimeInterval: 0.5)
         try capturePreflight("send-cancel-\(mode)", expected)
-        require(nativeTextIsVisible("Check cluster status") && nativeTextIsVisible("Retry cancellation"), "Unresolved cancellation lost its explicit recovery actions")
+        require(visibleButtons("Check cluster status").count == 1 && visibleButtons("Retry cancellation").count == 1, "Unresolved cancellation lost its explicit recovery actions")
     }
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "confirmed"])
     try clickSendControl("Retry cancellation", scrolling: -250)
