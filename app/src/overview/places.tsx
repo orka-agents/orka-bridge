@@ -1,3 +1,4 @@
+import { Disclosure } from '../components/Disclosure';
 import { Button } from '../components/Button';
 import type { ReactNode } from 'react';
 import type { AttemptSummary } from '../clusters/send-api';
@@ -31,7 +32,7 @@ function RemoteCard({ agent, place, historyState, files, also, onOpen }: { agent
     <CardSection title="Cluster settings"><p>Model on cluster: {agent.model || 'unavailable'}</p><p>Tools on cluster: {agent.tools ? agent.tools.length ? agent.tools.join(', ') : 'None' : 'unavailable'}</p></CardSection>
     {!!also.length && <p className="muted">Also found on {also.join('; ')}</p>}
     {record && <Revision source={record.source} />}
-    {file ? <Details hint="Cluster details"><p>Runtime: {agent.agentType || 'unavailable'}</p>{identity}</Details> : <details className="card-details"><summary>Open</summary><p>No single matching agent file is available to edit.</p><p>Runtime: {agent.agentType || 'unavailable'}</p>{identity}</details>}
+    {file ? <Details hint="Cluster details"><p>Runtime: {agent.agentType || 'unavailable'}</p>{identity}</Details> : <Disclosure className="card-details" label="Open"><p>No single matching agent file is available to edit.</p><p>Runtime: {agent.agentType || 'unavailable'}</p>{identity}</Disclosure>}
   </LongCard>;
 }
 export function remoteCards(places: Places, files: SavedFile[], local: AgentCard[], onOpen: (id: string) => void): AgentCard[] {
@@ -71,13 +72,12 @@ export function SourceGroups({ cards, files }: { cards: AgentCard[]; files: Save
 export function RecordedAttempts({ attempts }: { attempts: AttemptSummary[] }) {
   if (!attempts.length) return null;
   return <section className="overview-attempts" aria-label="Earlier Sends"><h2>Earlier Sends</h2><p>Saved Send attempts. Current cluster status is unknown.</p>
-    {attempts.map(attempt => <details className="card-details" key={attempt.id}>
-      <summary>{attempt.targetDisplay} · Checks {attempt.verdict}</summary>
+    {attempts.map(attempt => <Disclosure className="card-details" key={attempt.id} label={attempt.targetDisplay}>
       <p>{attempt.agentUid ? 'Current agent status unknown' : 'Agent creation not confirmed'}</p>
       <p>Checks {attempt.verdict}</p><p>Last tests: {when(attempt.time * 1000)}</p>
       <p>Planned name: {attempt.plannedAgentName}</p>
       {attempt.agentUid && <p>Recorded UID: {attempt.agentUid}</p>}
       <Revision source={attempt.source} />
-    </details>)}
+    </Disclosure>)}
   </section>;
 }

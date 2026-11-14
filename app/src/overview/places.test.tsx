@@ -42,8 +42,8 @@ test('each retained Agent has a card per place, external runtime is read-only an
   expect(within(one).getByText('Runtime: runtime')).toBeTruthy();
   expect(within(one).getAllByText('Model on cluster: observed-model')).toHaveLength(3);
   const external = within(one).getByRole('heading', { name: 'same-name' }).closest('.long-card')! as HTMLElement;
-  expect(within(external).queryByRole('button', { name: /Open/ })).toBeNull();
-  await userEvent.click(within(external).getByText('Open'));
+  expect(external.querySelector('button')).toBeNull();
+  await userEvent.click(within(external).getByRole('button', { name: 'Open' }));
   expect(within(external).getByText('external')).toBeTruthy();
   expect(props.onOpenDocument).not.toHaveBeenCalled();
   expect(screen.getAllByText('Also found on team-two · agents · control/orka')).toHaveLength(2);

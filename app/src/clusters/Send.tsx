@@ -1,3 +1,4 @@
+import { Disclosure } from '../components/Disclosure';
 import { Button } from '../components/Button';
 import { useEffect, useRef, useState } from 'react';
 import { SAMPLE_DOCUMENT_ID, type SourceId, sameSource } from '../designer/agent-api';
@@ -64,7 +65,7 @@ function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: s
   return <li>
     <div className="send-history-heading"><strong>{attempt.targetDisplay}</strong><span>Saved tests: {verdict === 'running' ? 'unknown' : words[verdict]}</span></div>
     <p>{attempt.plannedAgentName}</p><p>AI connection: {attempt.provider} · <time dateTime={new Date(attempt.time * 1000).toISOString()}>{new Date(attempt.time * 1000).toLocaleString()}</time></p>
-    <details onToggle={event => { setOpen(event.currentTarget.open); if (!event.currentTarget.open) setConfirmRemove(false); }}><summary ref={savedDisclosure}>Show saved details</summary>
+    <Disclosure label="Show saved details" summaryRef={savedDisclosure} onToggle={event => { setOpen(event.currentTarget.open); if (!event.currentTarget.open) setConfirmRemove(false); }}>
       {open && <>
         {error && <p role="alert">{error}</p>}
         {!detail && !error && <p role="status">Reading saved details…</p>}
@@ -97,7 +98,7 @@ function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: s
         <div><dt>Test file hash</dt><dd>{attempt.source.tests}</dd></div>
         {detail?.model && <div><dt>Model</dt><dd>{detail.model}</dd></div>}
       </dl></Details>
-    </details>
+    </Disclosure>
   </li>;
 }
 export function SendHistory({ revision }: { revision: string }) {

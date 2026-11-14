@@ -1,3 +1,4 @@
+import { Disclosure } from '../components/Disclosure';
 import { Button } from '../components/Button';
 import { useEffect, useRef, useState } from 'react';
 import { CardSection, Details, GeneratedValue, LongCard, StatusPill, type Status } from '../components/DesignSystem';
@@ -99,7 +100,7 @@ export default function Overview({ active, runBusy, workspaceKey, onOpenDocument
           {!!also.length && <p className="muted">Also found on {also.join('; ')}</p>}
           <CardSection title="Cluster settings"><p>Model and tools have not been checked.</p></CardSection>
           {file?.state === 'readable' ? <Details hint="Cluster details">{identity(agent, observed.installation, observed.observedAt)}</Details>
-            : <details className="card-details"><summary>Open</summary><p>No linked agent file is available to edit.</p>{identity(agent, observed.installation, observed.observedAt)}</details>}
+            : <Disclosure className="card-details" label="Open"><p>No linked agent file is available to edit.</p>{identity(agent, observed.installation, observed.observedAt)}</Disclosure>}
         </LongCard> };
       }) ?? [];
   const clusterCards = places ? remoteCards(places, saved, localCards, onOpenDocument) : [];

@@ -1,3 +1,4 @@
+import { Disclosure } from '../components/Disclosure';
 import { Button } from '../components/Button';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { SAMPLE_DOCUMENT_ID, agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
@@ -127,7 +128,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, active = true
     : reloading ? 'Wait for your saved files to reload.'
     : pendingSoul ? 'Wait for your personality edit to save. Check Agent view if it needs attention.'
     : saveState !== 'saved' ? saveState === 'error' ? 'Your changes could not be saved. Try saving again in Agent view.' : 'Wait for your changes to save.' : undefined;
-  const testSource = pair && <details className="check-source"><summary>Test file: {pair.name ?? 'web-reader'}.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Test file, read-only">{pair.tests}</pre></details>;
+  const testSource = pair && <Disclosure className="check-source" label={<>Test file: {pair.name ?? 'web-reader'}.agent.test.md</>}><pre className="example-source" tabIndex={0} aria-label="Test file, read-only">{pair.tests}</pre></Disclosure>;
   return <section className="designer" aria-labelledby={active ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
       <div className="agent-heading-copy"><h1 className="agent-name" id={active ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{info.description && <p className="muted">{info.description}</p>}</div>
