@@ -100,7 +100,7 @@ impl LocalResults {
             let id = observation.document_id;
             ledger.snapshot.results.push(observation);
             let bytes = serde_json::to_vec(&ledger)?;
-            // Never silently evict an identity: PR 2 needs every acknowledged UID.
+            // Never silently evict an identity: Overview needs every acknowledged UID.
             if bytes.len() > MAX_BYTES {
                 return Err(invalid());
             }
@@ -109,7 +109,8 @@ impl LocalResults {
             root.remove_file(SAVING)?;
             Ok(())
         })();
-        *failed = result.is_err();
+        // Later writes cannot recover an earlier run's unsaved ownership tuple.
+        *failed |= result.is_err();
         result
     }
     fn root(&self, create: bool) -> io::Result<Option<Dir>> {
@@ -214,6 +215,13 @@ mod tests {
             })
             .is_err());
         assert!(store.list().is_err());
+        let mut recovery = row.clone();
+        recovery.document_id = DocumentId(Uuid::new_v4());
+        store.record(recovery).unwrap();
+        assert!(
+            store.list().is_err(),
+            "a later save cannot recover a lost ownership tuple"
+        );
         let reopened = LocalResults::new(root);
         assert_eq!(reopened.list().unwrap().results[0].state, RunState::Unknown);
         let mut next = row;
