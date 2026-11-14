@@ -134,6 +134,188 @@ async fn history_recovery_is_get_only_offline_preserving_and_serialized() {
     assert_eq!(s.owner.history().unwrap().len(), 1);
 }
 
+/// Wait for the real reader thread without letting paused Tokio time auto-advance.
+async fn reader_started(entered: &mut tokio::sync::oneshot::Receiver<()>) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match entered.try_recv() {
+            Ok(()) => return,
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty) => {
+                assert!(std::time::Instant::now() < deadline, "reader did not start");
+                tokio::task::yield_now().await;
+            }
+            Err(error) => panic!("reader dropped its entry signal: {error}"),
+        }
+    }
+}
+
+fn block_next_read(
+    s: &Setup,
+    release: std::sync::mpsc::Receiver<()>,
+) -> tokio::sync::oneshot::Receiver<()> {
+    let (entered, started) = tokio::sync::oneshot::channel();
+    *s.on_read.lock().unwrap() = Some(Box::new(move || {
+        let _ = entered.send(());
+        // Dropping the sender also releases this read, including on test failure.
+        let _ = release.recv();
+    }));
+    started
+}
+
+#[tokio::test]
+async fn history_blocked_reader_times_out_releases_gate_and_keeps_shared_limit() {
+    let s = setup().await;
+    let started = s.start().await;
+    let send = id(&started);
+    assert_eq!(s.finish(&send).await["state"], "complete");
+    let posts = s.api.wire.posts();
+    let (release, blocked) = std::sync::mpsc::channel();
+    let mut entered = block_next_read(&s, blocked);
+    tokio::time::pause();
+    let check = tokio::spawn({
+        let owner = s.owner.clone();
+        let send = send.clone();
+        async move { owner.history_check(&send).await }
+    });
+    reader_started(&mut entered).await;
+    tokio::time::advance(Duration::from_secs(10)).await;
+    // Real time also bounds RED: Tokio does not auto-advance past blocking-pool work.
+    tokio::time::resume();
+    let checked = tokio::time::timeout(Duration::from_secs(1), check)
+        .await
+        .expect("history must release its gate after the configuration read budget")
+        .unwrap()
+        .unwrap();
+    assert_eq!(checked.availability.as_deref(), Some("unavailable"));
+    assert_eq!(checked.report.unwrap().verdict, Verdict::Passed);
+
+    let extra_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = extra_reads.clone();
+    *s.on_read.lock().unwrap() = Some(Box::new(move || {
+        count.fetch_add(1, Ordering::SeqCst);
+    }));
+    let checked = tokio::time::timeout(Duration::from_secs(1), s.owner.history_check(&send))
+        .await
+        .expect("another history check must not wait on the stuck read")
+        .unwrap();
+    assert_eq!(checked.availability.as_deref(), Some("unavailable"));
+    let preview = tokio::time::timeout(
+        Duration::from_secs(1),
+        s.owner.preflight(&s.target, &s.provider),
+    )
+    .await
+    .expect("preflight must share the outstanding read limit");
+    assert!(!preview.can_send);
+    let next = tokio::time::timeout(Duration::from_secs(1), s.start())
+        .await
+        .expect("history must not hold Send admission");
+    let done = s.finish(&id(&next)).await;
+    assert_eq!(done["error"], "access", "{done}");
+    let removed = tokio::time::timeout(Duration::from_secs(1), s.owner.history_remove(&send))
+        .await
+        .expect("history must not hold local removal")
+        .unwrap();
+    assert_eq!(removed.detail_state, "removed");
+    tokio::time::timeout(Duration::from_secs(1), s.owner.shutdown())
+        .await
+        .expect("shutdown must not wait on a stalled filesystem reader");
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), s.session.reload())
+            .await
+            .expect("reload must share the outstanding read limit")
+            .is_err()
+    );
+    assert_eq!(extra_reads.load(Ordering::SeqCst), 0);
+    assert_eq!(s.api.wire.posts(), posts);
+    drop(release);
+    // The limit opens only when the old read exits; its late result is discarded.
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while s.session.reload().await.is_err() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("a completed reader must release the shared limit");
+    assert_eq!(extra_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        s.owner.history_details(&send).unwrap().detail_state,
+        "removed"
+    );
+}
+
+#[test]
+fn history_blocked_live_reader_stop_does_not_hold_runtime_shutdown() {
+    let (release, blocked) = std::sync::mpsc::channel();
+    let (closed, closing) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let s = setup().await;
+            let mut entered = block_next_read(&s, blocked);
+            let started = s.start().await;
+            reader_started(&mut entered).await;
+            let stopped = tokio::time::timeout(Duration::from_secs(1), s.owner.stop(&id(&started)))
+                .await
+                .expect("Stop must not wait for the filesystem read");
+            assert_eq!(serde_json::to_value(stopped).unwrap()["stage"], "stopped");
+            assert_eq!(s.api.wire.posts(), 0);
+            s.owner.shutdown().await;
+            s.session.shutdown().await;
+        });
+        drop(runtime);
+        closed.send(()).unwrap();
+    });
+    let result = closing.recv_timeout(Duration::from_secs(5));
+    // Always release the read before asserting/joining, even on RED or a worker panic.
+    drop(release);
+    let joined = worker.join();
+    assert!(
+        result.is_ok(),
+        "a stopped reader held Tokio runtime shutdown"
+    );
+    joined.unwrap();
+}
+
+#[tokio::test]
+async fn history_keeps_a_fresh_assertion_failure_when_optional_events_are_missing() {
+    let s = setup().await;
+    *s.api.wire.mode.lock().unwrap() = "wrong-result";
+    let started = s.start().await;
+    let send = id(&started);
+    assert_eq!(s.finish(&send).await["report"]["verdict"], "failed");
+    let posts = s.api.wire.posts();
+    *s.api.wire.mode.lock().unwrap() = "wrong-result-events-missing";
+    let checked = s.owner.history_check(&send).await.unwrap();
+    assert_eq!(checked.availability.as_deref(), Some("missing"));
+    let report = checked.report.unwrap();
+    assert_eq!(report.cases[0].verdict, Verdict::Failed);
+    assert_eq!(
+        report.verdict,
+        Verdict::Failed,
+        "fresh failing answer evidence is decisive"
+    );
+    assert_eq!(
+        s.owner.history().unwrap()[0].verdict,
+        bridge_engine::send_summary::AttemptVerdict::Failed
+    );
+    *s.api.wire.mode.lock().unwrap() = "result-403";
+    assert_eq!(
+        s.owner
+            .history_check(&send)
+            .await
+            .unwrap()
+            .report
+            .unwrap()
+            .verdict,
+        Verdict::Unknown,
+        "cached-only failure must not become freshly verified"
+    );
+    assert_eq!(s.api.wire.posts(), posts);
+}
+
 #[tokio::test]
 async fn history_records_terminal_phase_and_tools_without_answer_text() {
     for (mode, tool_only) in [("failed-empty", false), ("empty-result", true)] {
@@ -906,10 +1088,11 @@ async fn send_start_future_is_send_for_desktop_dispatch() {
 #[tokio::test]
 async fn reload_during_send_keeps_its_frozen_target_and_requires_use_again() {
     let s = setup().await;
-    // Reload lands while this attempt rereads configuration for its own admission.
+    // Reload invalidates selection, but cannot start a second configuration read
+    // inside this attempt's reader. The already-admitted Send keeps frozen access.
     let (session, handle) = (s.session.clone(), tokio::runtime::Handle::current());
     *s.on_read.lock().unwrap() = Some(Box::new(move || {
-        handle.block_on(session.reload()).unwrap();
+        assert!(handle.block_on(session.reload()).is_err());
     }));
     let first = s.start().await;
     let done = s.finish(&id(&first)).await;

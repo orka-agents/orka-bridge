@@ -231,6 +231,12 @@ impl Wire {
                         hook();
                     }
                 }
+                if method == "GET"
+                    && route.ends_with("/result")
+                    && ["wrong-result", "wrong-result-events-missing"].contains(&mode)
+                {
+                    value = json!({"result":"wrong answer"});
+                }
                 if method == "GET" && route.ends_with("/result") && mode == "empty-result" {
                     value = json!({"result":null});
                 }
@@ -259,7 +265,10 @@ impl Wire {
                 if method == "GET" && route.contains("/agents/") && mode == "agent-generation" {
                     value["metadata"]["generation"] = json!(2);
                 }
-                if method == "GET" && route.ends_with("/events") && mode == "events-404" {
+                if method == "GET"
+                    && route.ends_with("/events")
+                    && ["events-404", "wrong-result-events-missing"].contains(&mode)
+                {
                     status = 404;
                     value = json!({"error":"missing"});
                 }

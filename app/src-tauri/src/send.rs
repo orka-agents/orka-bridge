@@ -245,9 +245,10 @@ impl SendOwner {
             {
                 return Err(());
             }
-            let kubeconfig = tokio::task::spawn_blocking(move || reader())
+            let kubeconfig = self
+                .session
+                .read_configuration(reader)
                 .await
-                .map_err(drop)?
                 .map_err(drop)?;
             let fresh = access.fresh_client(kubeconfig);
             let transport = access.read_transport(&fresh).await.map_err(drop)?;
@@ -341,17 +342,13 @@ impl SendOwner {
                         "Select a configured Provider in Clusters.",
                     )
                 })?;
-            let kubeconfig = tokio::task::spawn_blocking(move || reader())
-                .await
-                .ok()
-                .and_then(Result::ok)
-                .ok_or_else(|| {
-                    CheckRow::new(
-                        "Installation",
-                        CannotCheck,
-                        "Bridge cannot check the current context configuration.",
-                    )
-                })?;
+            let kubeconfig = self.session.read_configuration(reader).await.map_err(|_| {
+                CheckRow::new(
+                    "Installation",
+                    CannotCheck,
+                    "Bridge cannot check the current context configuration.",
+                )
+            })?;
             let fresh = access.fresh_client(kubeconfig);
             let transport = access.transport(&fresh, provider).await.map_err(|_| {
                 CheckRow::new(
@@ -597,13 +594,8 @@ impl SendOwner {
             .find(|v| v.id == provider)
             .map(|v| v.name.clone())
             .ok_or(Stage::Access)?;
-        let kubeconfig = until_stop(stop, Stage::Access, async move {
-            tokio::task::spawn_blocking(move || reader())
-                .await
-                .map_err(drop)?
-                .map_err(drop)
-        })
-        .await?;
+        let kubeconfig =
+            until_stop(stop, Stage::Access, self.session.read_configuration(reader)).await?;
         let fresh = access.fresh_client(kubeconfig);
         self.update(id, |v| v.stage = Stage::Preflight);
         // Revalidates the fresh kubeconfig binding. Not raced with Stop, so the

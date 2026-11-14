@@ -139,7 +139,8 @@ impl NativeRunner<'_> {
             match read {
                 Ok(None) => (),
                 Ok(Some((row, captured))) => {
-                    verified_failure |= matches!(row.phase.as_str(), "Failed" | "Cancelled");
+                    verified_failure |= matches!(row.phase.as_str(), "Failed" | "Cancelled")
+                        || (captured && row.verdict == Verdict::Failed);
                     refreshed |= captured
                         || report
                             .cases
