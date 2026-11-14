@@ -15,6 +15,8 @@ use std::{
     },
 };
 use tokio::sync::watch;
+#[path = "support/run_cancel.rs"]
+mod cancellation;
 #[path = "support/created_agent.rs"]
 mod created_agent;
 
@@ -256,6 +258,7 @@ struct Channel {
     missing_tools: bool,
     posts: Arc<Mutex<Vec<Value>>>,
     lost_task: bool,
+    cancel: Option<Arc<cancellation::Script>>,
 }
 impl Write for Channel {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
@@ -263,31 +266,64 @@ impl Write for Channel {
             panic!("request")
         };
         let result = match r.body {
-            RequestBody::ModelStatus {} => ResultBody::ModelState(ModelState {
-                retained_cleanup: true,
-                diagnostic: None,
-                phase: ModelPhase::Ready,
-                credential: CredentialState {
-                    profile: CREDENTIAL_PROFILE,
-                    generation: Some(r.boot_nonce),
-                    installed: true,
-                },
-                connection: Some(ModelConnection {
-                    id: r.boot_nonce,
-                    generation: r.boot_nonce,
-                    selection: ModelSelection {
-                        provider: "copilot".into(),
-                        model: "gpt-5.6-terra".into(),
+            RequestBody::ModelStatus {} => {
+                if let Some(s) = &self.cancel {
+                    if let Some(hook) = s.model_hook.lock().unwrap().take() {
+                        hook();
+                    }
+                }
+                ResultBody::ModelState(ModelState {
+                    retained_cleanup: true,
+                    diagnostic: None,
+                    phase: ModelPhase::Ready,
+                    credential: CredentialState {
+                        profile: CREDENTIAL_PROFILE,
+                        generation: Some(r.boot_nonce),
+                        installed: true,
                     },
-                }),
-            }),
+                    connection: Some(ModelConnection {
+                        id: r.boot_nonce,
+                        generation: r.boot_nonce,
+                        selection: ModelSelection {
+                            provider: "copilot".into(),
+                            model: "gpt-5.6-terra".into(),
+                        },
+                    }),
+                })
+            }
             RequestBody::Execute {
                 operation,
                 action: EngineActionWire::Orka { request },
                 ..
             } => {
                 let mut status = 200;
-                let body = if let Some(body) = request.body {
+                if let Some(s) = &self.cancel {
+                    s.trace
+                        .lock()
+                        .unwrap()
+                        .push((request.path.clone(), request.body.clone()));
+                }
+                let body = if request.path.ends_with("/cancel") {
+                    let s = self.cancel.as_ref().unwrap();
+                    if s.fail_cancel.load(Ordering::SeqCst) {
+                        return Err(io::ErrorKind::BrokenPipe.into());
+                    }
+                    status = if s.deny_first.swap(false, Ordering::SeqCst) {
+                        403
+                    } else {
+                        s.status.load(Ordering::SeqCst)
+                    };
+                    if let Some(phase) = s.cancel_phase.lock().unwrap().take() {
+                        *s.phase.lock().unwrap() = phase;
+                    }
+                    if s.replace_on_cancel.load(Ordering::SeqCst) {
+                        s.replaced.store(true, Ordering::SeqCst);
+                    }
+                    if status == 200 {
+                        *s.phase.lock().unwrap() = "Cancelled".into();
+                    }
+                    json!({})
+                } else if let Some(body) = request.body {
                     self.posts.lock().unwrap().push(body.clone());
                     if self.lost_task && request.path == "tasks" {
                         return Err(io::ErrorKind::BrokenPipe.into());
@@ -304,6 +340,17 @@ impl Write for Channel {
                     }
                     self.objects
                         .insert(format!("{}/{name}", request.path), object.clone());
+                    if request.path == "tasks" {
+                        if let Some(s) = &self.cancel {
+                            object["status"]["phase"] = json!(*s.phase.lock().unwrap());
+                            if let Some(hook) = s.hook.lock().unwrap().take() {
+                                hook();
+                            }
+                            if s.lose_create.load(Ordering::SeqCst) {
+                                return Err(io::ErrorKind::BrokenPipe.into());
+                            }
+                        }
+                    }
                     object
                 } else if request.path.ends_with("/result") {
                     json!({"result":ANSWER})
@@ -321,9 +368,50 @@ impl Write for Channel {
                     };
                     json!({"namespace":"orka-system","streamType":"task","streamID":name,"afterSeq":after,"latestSeq":if self.missing_tools{after}else{after+1},"events":events})
                 } else {
-                    self.objects[&request.path].clone()
+                    let mut object = self.objects[&request.path].clone();
+                    if request.path.starts_with("tasks/") {
+                        if let Some(s) = &self.cancel {
+                            if s.read_failed.load(Ordering::SeqCst) {
+                                status = 404;
+                            }
+                            object["status"]["phase"] = json!(*s.phase.lock().unwrap());
+                            if s.replaced.load(Ordering::SeqCst) {
+                                object["metadata"]["uid"] = json!("replacement");
+                            }
+                        }
+                    }
+                    object
                 };
                 self.output = serde_json::to_vec(&json!({"status":status,"body":body}))?;
+                ResultBody::Operation {
+                    operation,
+                    info: OperationInfo {
+                        state: OperationState::Completed,
+                        exit: Some(0),
+                        bytes: self.output.len(),
+                        has_diagnostics: false,
+                    },
+                }
+            }
+            RequestBody::Execute {
+                operation,
+                action: EngineActionWire::RunWorker { name, uid },
+                ..
+            } => {
+                let s = self.cancel.as_ref().unwrap();
+                assert_eq!(
+                    self.objects[&format!("tasks/{name}")]["metadata"]["uid"],
+                    uid
+                );
+                s.trace
+                    .lock()
+                    .unwrap()
+                    .push((format!("worker/{name}"), None));
+                self.output = serde_json::to_vec(&if s.worker_bad.load(Ordering::SeqCst) {
+                    json!({"finished":true,"pods":0,"extra":true})
+                } else {
+                    json!({"finished":matches!(s.phase.lock().unwrap().as_str(), "Succeeded"|"Failed"|"Cancelled"),"pods":s.pods.load(Ordering::SeqCst)})
+                })?;
                 ResultBody::Operation {
                     operation,
                     info: OperationInfo {
@@ -388,13 +476,28 @@ impl Read for Channel {
         self.input.read(bytes)
     }
 }
-struct Session(VmClient, Arc<AtomicBool>, Uuid, bool);
+struct Session(
+    VmClient,
+    Arc<AtomicBool>,
+    Uuid,
+    bool,
+    bool,
+    Option<Arc<cancellation::Script>>,
+);
 impl LocalSession for Session {
+    fn run_cancel_supported(&self) -> bool {
+        self.4
+    }
     fn with_client(
         &mut self,
         work: &mut dyn FnMut(Uuid, &mut VmClient) -> Result<(), RuntimeError>,
     ) -> Result<(), RuntimeError> {
         work(self.2, &mut self.0)?;
+        if let Some(script) = &self.5 {
+            if let Some(hook) = script.release_hook.lock().unwrap().take() {
+                hook();
+            }
+        }
         if self.3 {
             Err(RuntimeError::Closed)
         } else {
@@ -450,6 +553,7 @@ async fn fixture_with_outcome(
             missing_tools,
             posts: posts.clone(),
             lost_task,
+            cancel: None,
         }),
         id,
     )
@@ -459,6 +563,8 @@ async fn fixture_with_outcome(
         stopped.clone(),
         id,
         closed_after_work,
+        false,
+        None,
     ))))));
     vm.start();
     for _ in 0..100 {

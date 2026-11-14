@@ -22,6 +22,7 @@ pub enum ErrorKind {
     Response,
     Identity,
     Stopped,
+    Conflict,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +30,7 @@ pub enum Verdict {
     Passed,
     Failed,
     Unknown,
+    Cancelled,
 }
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct AssertionReport {
@@ -66,7 +68,9 @@ fn optional_evidence<T>(result: Result<T, ErrorKind>) -> Result<Option<T>, Error
 }
 fn aggregate(rows: impl Iterator<Item = Verdict>) -> Verdict {
     let rows: Vec<_> = rows.collect();
-    if rows.contains(&Verdict::Failed) {
+    if rows.contains(&Verdict::Cancelled) {
+        Verdict::Cancelled
+    } else if rows.contains(&Verdict::Failed) {
         Verdict::Failed
     } else if rows.is_empty() || rows.contains(&Verdict::Unknown) {
         Verdict::Unknown
@@ -284,6 +288,31 @@ impl<'a> NativeRunner<'a> {
             id: Uuid::new_v4(),
         }
     }
+    /// Reborrow a native-owned receipt after releasing its original connection.
+    #[cfg_attr(test, allow(dead_code))] // Some direct-source harnesses omit the local Run owner.
+    pub(crate) fn resume_with_transport(
+        transport: impl RunTransport + 'a,
+        handle: &RunHandle,
+    ) -> Self {
+        Self {
+            http: Box::new(transport),
+            id: handle.target,
+        }
+    }
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn transport(&self) -> &dyn RunTransport {
+        self.http.as_ref()
+    }
+    /// Finite read of only terminal Tasks, for cancellation's partial results.
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) async fn observe_finished(
+        &self,
+        handle: &RunHandle,
+        deadline: Instant,
+    ) -> Result<RunReport, ErrorKind> {
+        let (_sender, mut stop) = watch::channel(false);
+        self.observe_inner(handle, &mut stop, deadline, true).await
+    }
     /// Map and validate every identical whole create body before the first POST.
     /// No I/O occurs here; a caller can record the planned Agent before mutation.
     pub fn prepare(&self, pair: ParsedPair) -> Result<PreparedRun, ErrorKind> {
@@ -414,7 +443,9 @@ impl<'a> NativeRunner<'a> {
         handle: &RunHandle,
         mut stop: watch::Receiver<bool>,
     ) -> Result<RunReport, RunError> {
-        let result = self.observe_inner(handle, &mut stop).await;
+        let result = self
+            .observe_inner(handle, &mut stop, self.http.deadline(), false)
+            .await;
         if matches!(result, Err(ErrorKind::Stopped)) {
             self.close().await;
         }
@@ -439,12 +470,22 @@ impl<'a> NativeRunner<'a> {
         &self,
         handle: &RunHandle,
         stop: &mut watch::Receiver<bool>,
+        deadline: Instant,
+        finished_only: bool,
     ) -> Result<RunReport, ErrorKind> {
         if handle.target != self.id {
             return Err(ErrorKind::Configuration);
         }
-        let agent = handle.agent.as_ref().ok_or(ErrorKind::Identity)?;
-        let deadline = self.http.deadline();
+        let Some(agent) = handle.agent.as_ref() else {
+            return if finished_only && handle.tasks.is_empty() {
+                Ok(RunReport {
+                    cases: Vec::new(),
+                    verdict: Verdict::Unknown,
+                })
+            } else {
+                Err(ErrorKind::Identity)
+            };
+        };
         let mut cases = Vec::new();
         for (case, task) in handle.pair.cases().iter().zip(&handle.tasks) {
             let mut terminal_rounds = 0;
@@ -468,13 +509,19 @@ impl<'a> NativeRunner<'a> {
                         .unwrap_or_default();
                     self.checked(task, deadline, stop).await?;
                     self.checked(agent, deadline, stop).await?;
-                    let assertions = case.evaluate(answer.as_deref(), &tools);
-                    let verdict = if phase == "Succeeded" {
+                    let assertions = if phase == "Cancelled" {
+                        Vec::new()
+                    } else {
+                        case.evaluate(answer.as_deref(), &tools)
+                    };
+                    let verdict = if phase == "Cancelled" {
+                        Verdict::Cancelled
+                    } else if phase == "Succeeded" {
                         aggregate(assertions.iter().map(|r| r.verdict))
                     } else {
                         Verdict::Failed
                     };
-                    if verdict != Verdict::Unknown || terminal_rounds == 3 {
+                    if finished_only || verdict != Verdict::Unknown || terminal_rounds == 3 {
                         cases.push(CaseReport {
                             id: case.id.clone(),
                             question: case.input().into(),
@@ -492,11 +539,16 @@ impl<'a> NativeRunner<'a> {
                 ) {
                     return Err(ErrorKind::Response);
                 }
+                if finished_only {
+                    break;
+                }
                 stoppable(stop, self.http.pause(deadline)).await?;
             }
         }
         self.checked(agent, deadline, stop).await?;
-        let verdict = if handle.tasks.len() == handle.pair.cases().len() {
+        let verdict = if cases.iter().any(|c| c.verdict == Verdict::Cancelled) {
+            Verdict::Cancelled
+        } else if cases.len() == handle.pair.cases().len() {
             aggregate(cases.iter().map(|c| c.verdict))
         } else {
             Verdict::Unknown

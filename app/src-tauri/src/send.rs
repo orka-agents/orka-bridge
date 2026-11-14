@@ -611,7 +611,7 @@ impl SendOwner {
                 summary.verdict = match report.verdict {
                     Verdict::Passed => AttemptVerdict::Passed,
                     Verdict::Failed => AttemptVerdict::Failed,
-                    Verdict::Unknown => AttemptVerdict::Unknown,
+                    Verdict::Unknown | Verdict::Cancelled => AttemptVerdict::Unknown,
                 };
                 if storage_error && summary.verdict == AttemptVerdict::Passed {
                     summary.verdict = AttemptVerdict::Unknown;
