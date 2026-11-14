@@ -1048,7 +1048,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     func recordShot(_ name: String, _ checks: String) throws -> String {
         try overviewShot("overview-probe", [checks])
         let anchor = visibleTextBounds(checks)[0]
-        guard let disclosure = visibleTextBounds("Cluster details").filter({ $0.minY > anchor.minY }).min(by: { $0.minY < $1.minY }) else {
+        guard let disclosure = visibleButtons("Details Cluster details").filter({ $0.minY > anchor.minY }).min(by: { $0.minY < $1.minY }) else {
             fail("Cluster details disclosure not visible below \(checks)")
         }
         let point = CGPoint(x: disclosure.midX, y: disclosure.midY)
@@ -1058,7 +1058,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         // Bring its place row into view before checking the scoped identity.
         try overviewShot("overview-probe", [checks, "fixture-cluster · agents"])
         guard let currentAnchor = visibleTextBounds(checks).first,
-            let identity = visibleTextBounds("Cluster details").filter({ $0.minY > currentAnchor.minY }).min(by: { $0.minY < $1.minY }) else {
+            let identity = visibleButtons("Details Cluster details").filter({ $0.minY > currentAnchor.minY }).min(by: { $0.minY < $1.minY }) else {
             fail("Selected identity moved out of view below \(checks)")
         }
         // Earlier cards can retain open identities. Scope the UID to the
