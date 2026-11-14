@@ -568,6 +568,8 @@ do {
             event.flags = []; event.post(tap: .cghidEventTap)
         }
     }
+    // Blur the identifier before submission so macOS text correction cannot hide in focus.
+    key(48)
     let creationForm = try capture("new-agent-form", "Designer")
     clickText("Create", in: creationForm)
     let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/native-helper")
