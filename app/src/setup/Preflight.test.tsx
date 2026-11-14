@@ -11,12 +11,13 @@ const ready = { platform: 'windows', virtualization: 'ready', memory: 'ready', i
 async function native(preflight: unknown = ready, integrated = true) {
   vi.stubGlobal('isTauri', true);
   localStorage.setItem('bridge.welcomeSeen.v1', '1');
-  let value = preflight;
+  let value = preflight; let started = false;
+  const status = () => ({ selected: started ? 'localVm' : null, localVm: started ? 'starting' : integrated ? 'idle' : 'notIntegrated', model: 'locked' });
   const ipc = vi.fn(command => {
-    if (command === 'setup_status') return { selected: null, localVm: integrated ? 'idle' : 'notIntegrated', model: 'locked' };
+    if (command === 'setup_status') return status();
     if (command === 'setup_requirements') return integrated ? requirements : null;
     if (command === 'setup_preflight') return value;
-    if (command === 'setup_select_local') return { selected: 'localVm', localVm: 'starting', model: 'locked' };
+    if (command === 'setup_select_local') { started = true; return status(); }
     if (command === 'setup_open_help') return Promise.reject('SECRET_MARKER');
     if (command === 'cluster_contexts') return [];
     throw Error('unexpected command');
@@ -38,9 +39,12 @@ test('insufficient installed memory blocks preparation, explains RAM, and can be
   expect(memory.textContent).toMatch(/Closing apps does not increase installed memory/);
   expect(memory.textContent).toMatch(/cluster/);
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
+  expect(within(panel).getByRole('status').textContent).toBe('Fix the computer requirements above before continuing.');
+  expect(memory.querySelector('.status-failed')).toBeTruthy();
   update(ready);
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));
+  expect(within(panel).getByRole('status').textContent).toBe('These checks do not change this computer.');
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_preflight')).toHaveLength(2);
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
   await user.click(screen.getByRole('button', { name: 'Continue' }));
@@ -73,6 +77,8 @@ test.each([null, { ...ready, extra: 'SECRET_MARKER' }, { ...ready, requiredMemor
   expect(await screen.findAllByText(/Couldn't check/)).toHaveLength(2);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
+  expect(screen.getByRole('button', { name: 'Check again' }).className).toBe('workspace-primary');
+  expect(screen.getByRole('button', { name: 'Continue' }).className).toBe('workspace-secondary');
 });
 
 test('Mac unsupported virtualization explains platform support without Windows help', async () => {

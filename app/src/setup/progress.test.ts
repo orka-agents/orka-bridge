@@ -11,14 +11,14 @@ const starting = (elapsedMs: number): WorkspaceProgress => ({ phase: 'starting',
 
 test('one derivation maps native and model state to the five setup steps', () => {
   const step = (s: SetupStatus, model: Parameters<typeof setupView>[1] = {}) => setupView(s, model).line;
-  expect(step(status('preparing'))).toBe('Setting up, step 1 of 5');
-  expect(step(status('installing'))).toBe('Setting up, step 1 of 5');
-  expect(step(status('starting'))).toBe('Setting up, step 2 of 5');
-  expect(step(status('ready'), { model: 'idle' })).toBe('Setting up, step 4 of 5');
-  expect(step(status('ready'), { model: 'queued' })).toBe('Setting up, step 4 of 5');
-  expect(step(status('ready'), { model: 'connecting' })).toBe('Setting up, step 4 of 5');
-  expect(step(status('ready'), { model: 'connected' })).toBe('Setting up, step 5 of 5');
-  expect(step(status('ready'), { model: 'connected', check: 'running', initialAutomatic: true })).toBe('Setting up, step 5 of 5');
+  expect(step(status('preparing'))).toBe('Getting the local cluster ready');
+  expect(step(status('installing'))).toBe('Getting the local cluster ready');
+  expect(step(status('starting'))).toBe('Starting the local cluster');
+  expect(step(status('ready'), { model: 'idle' })).toBe('Connect the AI');
+  expect(step(status('ready'), { model: 'queued' })).toBe('AI queued');
+  expect(step(status('ready'), { model: 'connecting' })).toBe('Connecting the AI…');
+  expect(step(status('ready'), { model: 'connected' })).toBe('Local cluster running');
+  expect(step(status('ready'), { model: 'connected', check: 'running', initialAutomatic: true })).toBe('Run your first agent');
   expect(setupView(status('ready'), { model: 'connected' }).step).toBe(5);
 });
 
@@ -39,8 +39,8 @@ test('host selection is native: local only when selected, never inferred while c
 
 test('test uncertainty and manual runs do not reopen completed workspace setup', () => {
   const done = (check?: CheckStepState) => setupView(status('ready'), { model: 'connected', check });
-  for (const check of ['passed', 'failed', 'stale', 'unknown', 'running'] as const) expect(done(check)).toMatchObject({ done: true, line: 'Local cluster ready' });
-  expect(done()).toMatchObject({ done: false, step: 5 });
+  for (const check of ['passed', 'failed', 'stale', 'unknown', 'running'] as const) expect(done(check)).toMatchObject({ done: true });
+  expect(done()).toMatchObject({ done: true, line: 'Local cluster running' });
   expect(setupView(status('ready'), { model: 'connected', check: 'running', initialAutomatic: true })).toMatchObject({ done: false, step: 5 });
 });
 
@@ -117,7 +117,7 @@ test('tone: running work is busy blue, waiting for the creator is needs-you, rea
   for (const state of ['preparing', 'installing', 'starting'] as const) expect(setupView(status(state)).tone).toBe('busy');
   // Waiting on the creator is amber, not ready; waiting on the machine is neutral.
   expect(tone({ model: 'idle' })).toBe('needs-you');
-  expect(tone({ model: 'connected' })).toBe('needs-you');
+  expect(tone({ model: 'connected' })).toBe('wait');
   expect(tone({ model: 'connected', check: 'stale' })).toBe('needs-you');
   expect(tone({ model: 'connected', check: 'unknown' })).toBe('wait');
   expect(tone({ model: 'queued' })).toBe('wait');
@@ -125,7 +125,7 @@ test('tone: running work is busy blue, waiting for the creator is needs-you, rea
   expect(tone({}, status('cancelled'))).toBe('wait');
   // Only a finished flow is green; model trouble is red.
   expect(tone({ model: 'connected', check: 'passed' })).toBe('ready');
-  expect(tone({ model: 'connected', check: 'failed' })).toBe('ready');
+  expect(tone({ model: 'connected', check: 'failed' })).toBe('bad');
   expect(tone({ model: 'failed' })).toBe('bad');
   expect(setupView(status('failed')).tone).toBe('bad');
 });

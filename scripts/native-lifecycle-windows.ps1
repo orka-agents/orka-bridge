@@ -24,6 +24,14 @@ public static class NativeWalk {
   private delegate bool EnumWindow(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr h, EnumWindow callback, IntPtr l);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr h, System.Text.StringBuilder name, int size);
+  public static string[] ChildClasses(IntPtr root) {
+    var classes = new System.Collections.Generic.List<string>();
+    EnumChildWindows(root, (h, l) => {
+      var cls = new System.Text.StringBuilder(256); GetClassName(h, cls, cls.Capacity);
+      classes.Add(cls.ToString()); return true;
+    }, IntPtr.Zero);
+    return classes.ToArray();
+  }
   [DllImport("oleacc.dll")] private static extern int AccessibleObjectFromWindow(IntPtr h, uint id, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible);
   [DllImport("oleacc.dll")] private static extern int AccessibleChildren(Accessibility.IAccessible accessible, int start, int count, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex=2)] object[] children, out int obtained);
   // Legacy Explorer toolbars may have no UIA children. Use MSAA, never toolbar process memory.
@@ -80,7 +88,7 @@ $vmData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ai.o
 if (Test-Path $data) { throw "Expected fresh hosted-CI application profile: $data (will not erase it)" }
 if (!(Test-Path $env:BRIDGE_DEV_IMAGE_DIR -PathType Container) -or @(Get-ChildItem -Force $env:BRIDGE_DEV_IMAGE_DIR).Count) { throw 'Expected empty image source directory' }
 if (Get-Process -Name orka-bridge -ErrorAction SilentlyContinue) { throw 'Bridge is already running' }
-$desktop = [System.Windows.Automation.AutomationElement]::RootElement
+$desktop = $null
 $children = [System.Windows.Automation.TreeScope]::Descendants
 function Wait-For([string]$Message, [scriptblock]$Predicate) {
     for ($i = 0; $i -lt 100; $i++) {
@@ -132,9 +140,52 @@ function Capture([string]$Name, [bool]$Menu = $false) {
         }
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
+function Save-BrowserDiagnostics([string]$Name) {
+    try {
+        $browsers = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | ForEach-Object {
+            # Keep only process/profile metadata, never the full command line or environment.
+            $command = [string]$_.CommandLine
+            $process = Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue
+            [pscustomobject]@{
+                pid = $_.ProcessId; parent = $_.ParentProcessId; created = $_.CreationDate
+                cpuSeconds = $(if ($process) { $process.TotalProcessorTime.TotalSeconds })
+                executable = $_.ExecutablePath
+                profile = [regex]::Match($command, '(?:"--user-data-dir=(?<path>[^"]+)"|--user-data-dir="(?<path>[^"]+)"|--user-data-dir=(?<path>\S+))').Groups['path'].Value
+                type = [regex]::Match($command, '--type=(\S+)').Groups[1].Value
+            }
+        })
+        $versions = @(foreach ($root in @([Environment]::GetFolderPath('ProgramFilesX86'), [Environment]::GetFolderPath('LocalApplicationData'))) {
+            Get-ChildItem (Join-Path $root 'Microsoft\EdgeWebView\Application\*\msedgewebview2.exe') -ErrorAction SilentlyContinue | ForEach-Object {
+                [pscustomobject]@{ executable = $_.FullName; version = $_.VersionInfo.FileVersion }
+            }
+        })
+        $classes = @()
+        if ($script:hwnd -and $script:hwnd -ne [IntPtr]::Zero) { $classes = @([NativeWalk]::ChildClasses($script:hwnd)) }
+        $startupMarkers = @()
+        if ($script:startupLog -and (Test-Path $script:startupLog)) {
+            $stream = [IO.File]::Open($script:startupLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            $reader = [IO.StreamReader]::new($stream)
+            try { $startupMarkers = @($reader.ReadToEnd() -split '\r?\n' | Where-Object { $_ -like 'bridge-startup:*' }) }
+            finally { $reader.Dispose() }
+        }
+        [pscustomobject]@{
+            captured = [DateTime]::UtcNow; hostPid = $(if ($script:app) { $script:app.Id } else { $null })
+            hostCpuSeconds = $(if ($script:app -and !$script:app.HasExited) { $script:app.TotalProcessorTime.TotalSeconds })
+            startupMarkers = $startupMarkers
+            childClasses = @($classes); browsers = $browsers; installed = $versions
+        } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $script:themeOutput "browser-$Name.json")
+    } catch { Write-Warning "Browser diagnostics unavailable: $_" }
+}
 function Start-Bridge {
     if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared; refusing to resume a VM' }
-    $script:app = Start-Process $Executable -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log")
+    $script:window = $null
+    $script:desktop = $null
+    $script:hwnd = [IntPtr]::Zero
+    $script:app = $null
+    $script:startupLog = $null
+    Save-BrowserDiagnostics 'before-launch'
+    $script:startupLog = Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log"
+    $script:app = Start-Process $Executable -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError $script:startupLog
     # Process.MainWindowHandle can select Tao's hidden event target. Identify
     # the real app frame by its configured title and this launch's process ID.
     $script:hwnd = Wait-For 'Main native window did not appear' {
@@ -146,8 +197,22 @@ function Start-Bridge {
             if ($owner -eq $script:app.Id -and [NativeWalk]::IsWindowVisible($h)) { return $h }
         }
     }
-    $script:window = [System.Windows.Automation.AutomationElement]::FromHandle($script:hwnd)
-    [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
+}
+function Find-ReadyClusters {
+    if (!$script:window) {
+        # Keep the original frame and control waits separate. Native setup proves
+        # controller construction finished; the Clusters control, not page-load
+        # completion, proves the frontend is ready for this walk.
+        if (!(Test-Path $script:startupLog)) { return }
+        $stream = [IO.File]::Open($script:startupLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        $reader = [IO.StreamReader]::new($stream)
+        try { $startup = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        if (!$startup.Contains('bridge-startup: ready')) { return }
+        $script:desktop = [System.Windows.Automation.AutomationElement]::RootElement
+        $script:window = [System.Windows.Automation.AutomationElement]::FromHandle($script:hwnd)
+        [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
+    }
+    Find-Control $script:window 'Clusters' $button
 }
 function Find-TrayPoint($Root, [string]$Label) {
     $all = @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
@@ -237,7 +302,8 @@ try {
         Broadcast-Theme
         Start-Bridge
         $script:originalPid = $script:app.Id
-        Press (Wait-For 'Clusters button missing' { Find-Control $script:window 'Clusters' $button })
+        Press (Wait-For 'Clusters button missing' { Find-ReadyClusters })
+        Save-BrowserDiagnostics 'loaded'
         # The dark walk reuses the light walk's profile, so the welcome may already be dismissed.
         Wait-For 'Welcome or Places did not appear' { (Find-Control $script:window 'Get started' $button) -or (Find-Action $script:window 'Set up') } | Out-Null
         $start = Find-Control $script:window 'Get started' $button
@@ -311,14 +377,25 @@ try {
         "PASS $theme`: native Close/hide, tray menu/Open, same PID $script:originalPid/window $script:hwnd, File view/edited text retained, hidden/minimized second launches, menu stop. Standard Quit is covered by native subprocess tests. Integrated debug shell only; empty image source, no VM/Ready/provider/cluster/session logout proof. OS popup theme is captured as drawn, not forced by product hooks." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
     }
 } catch {
+    $failure = $_
     if ($script:themeOutput) {
+        Save-BrowserDiagnostics 'failure'
         try {
+            if (!$script:window) { throw 'UIA not attached: native startup did not complete' }
             $all = @($script:window.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
             @("Root Name=$($script:window.Current.Name); PID=$($script:window.Current.ProcessId); HWND=$($script:window.Current.NativeWindowHandle); Class=$($script:window.Current.ClassName); Descendants=$($all.Count)"; $all | Select-Object -First 100 | ForEach-Object { "Name=$($_.Current.Name); Type=$($_.Current.ControlType.ProgrammaticName); Enabled=$($_.Current.IsEnabled); Offscreen=$($_.Current.IsOffscreen)" }) | Set-Content (Join-Path $script:themeOutput 'failure-ui.txt')
         } catch { Write-Warning $_ }
         try { Capture 'failure' $true } catch { Write-Warning $_ }
+        if (!$script:window -and $script:app -and !$script:app.HasExited) {
+            # The walk has already failed. Observe that same process, without
+            # retrying startup or accepting late readiness, before cleanup.
+            Start-Sleep -Seconds 5
+            Save-BrowserDiagnostics 'failure-after-5s'
+            Start-Sleep -Seconds 15
+            Save-BrowserDiagnostics 'failure-after-20s'
+        }
     }
-    throw
+    throw $failure
 } finally {
     # Force cleanup only on test failure; it is not evidence that the stop route worked.
     if ($script:app -and !$script:app.HasExited) { Stop-Process -Id $script:app.Id -Force -ErrorAction SilentlyContinue }
