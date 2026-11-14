@@ -196,7 +196,7 @@ function Tray-Menu {
     [NativeWalk]::mouse_event(16, 0, 0, 0, [UIntPtr]::Zero)
     # Both providers require enabled, on-screen native items; MSAA yields real click points.
     $open = Wait-For 'Open Bridge menu item missing' { Find-PopupControl 'Open Bridge' }
-    $stop = Wait-For 'Stop workspace and quit menu item missing' { Find-PopupControl 'Stop workspace and quit' }
+    $stop = Wait-For 'Stop the local cluster and quit menu item missing' { Find-PopupControl 'Stop the local cluster and quit' }
     return @($open, $stop)
 }
 function Retained {
@@ -243,15 +243,15 @@ try {
         $start = Find-Control $script:window 'Get started' $button
         if ($start) { Press $start }
         # Places owns the local entry: this computer's Set up action beside an empty cluster list.
-        $setUp = Wait-For 'Set up action missing on Places' { $control = Find-Action $script:window 'Set up'; if ($control -and $control.Current.IsEnabled -and ((Get-UiNames $script:window) -match 'No clusters added yet')) { $control } }
+        $setUp = Wait-For 'Set up action missing on Places' { $control = Find-Action $script:window 'Set up'; if ($control -and $control.Current.IsEnabled -and ((Get-UiNames $script:window) -match 'No other clusters added yet')) { $control } }
         Capture 'places-empty'
         Press $setUp
         $requirements = Wait-For 'Computer requirements panel missing' { Find-Control $script:window 'Computer requirements' $null }
         Wait-For 'Computer requirements did not settle' { $check = Find-Control $requirements 'Check again' $button; if ($check -and $check.Current.IsEnabled) { $true } } | Out-Null
-        # Memory, Workspace image and Data disk rows come from this native build and must settle.
+        # Memory, Cluster download and Data disk rows come from this native build and must settle.
         Wait-For 'Local size rows did not settle' {
             $names = Get-UiNames $script:window
-            ($names -cmatch '^Memory\b') -and ($names -cmatch '^Workspace image\b') -and ($names -cmatch '^Data disk, up to\b') -and !($names -cmatch '^Reading|Unavailable in this build')
+            ($names -cmatch '^Memory\b') -and ($names -cmatch '^Cluster download\b') -and ($names -cmatch '^Data disk, up to\b') -and !($names -cmatch '^Reading|Unavailable in this build')
         } | Out-Null
         # Observe the real runner; never inject Ready or select a local workspace.
         Capture 'computer-requirements'

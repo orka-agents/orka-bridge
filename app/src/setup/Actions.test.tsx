@@ -26,18 +26,18 @@ test('AI connection is the only next primary and its prerequisite is visible bef
   const ipc = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const connect = await screen.findByRole('button', { name: 'Connect the AI' });
   expect(connect.className).toBe('workspace-primary');
-  expect(screen.getByText(/GitHub CLI installed and signed in/)).toBeTruthy();
+  expect(screen.getByText(/GitHub CLI must be installed and signed in/)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Open example' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Change where agents run' }).className).toBe('workspace-link');
   await user.click(connect);
   expect(await screen.findByText('Connected with GitHub Copilot.')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Open your first test' }).className).toBe('workspace-primary');
+  expect(screen.getByRole('button', { name: 'Open your first agent' }).className).toBe('workspace-primary');
   expect(document.body.textContent).not.toMatch(/guest|\bVM\b|inference|gpt-5.6-terra/);
   expect(screen.queryByText('Engine diagnostics')).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'engine_call')).toBe(false);
 });
 
-test.each(['Run the test again', 'Open your test result'])('%s selects this computer before its guarded local handoff, without starting a VM', async action => {
+test.each(['Run it again', 'See what it answered'])('%s selects this computer before its guarded local handoff, without starting a VM', async action => {
   const ipc = native(); const user = userEvent.setup(); const calls: string[] = [];
   render(<Setup place={{ kind: 'cluster' }} firstCheck="stale" firstTestResult={{ failed: 0 }}
     onPlace={place => calls.push(place.kind)} onOpenExample={() => calls.push('Designer')} />);
@@ -56,11 +56,11 @@ test('Change focuses its explanation, makes Keep primary and restores focus with
   await user.click(change);
   const panel = screen.getByRole('region', { name: 'Change where agents run' });
   expect(panel.contains(document.activeElement)).toBe(true);
-  expect(within(panel).getByText(/downloaded workspace files and agent files are kept/)).toBeTruthy();
-  const keep = within(panel).getByRole('button', { name: 'Keep workspace running' });
+  expect(within(panel).getByText(/agent files are kept/)).toBeTruthy();
+  const keep = within(panel).getByRole('button', { name: 'Keep the local cluster running' });
   expect(keep.className).toBe('workspace-primary');
   expect(screen.getByRole('button', { name: 'Connect the AI' }).className).toBe('workspace-secondary');
-  expect(within(panel).getByRole('button', { name: 'Stop workspace and choose a place' }).className).toBe('workspace-secondary');
+  expect(within(panel).getByRole('button', { name: 'Stop the local cluster and choose a cluster' }).className).toBe('workspace-secondary');
   await user.click(keep);
   expect(document.activeElement).toBe(change);
   expect(screen.getByRole('button', { name: 'Connect the AI' }).className).toBe('workspace-primary');
@@ -70,7 +70,7 @@ test('Change focuses its explanation, makes Keep primary and restores focus with
 test('cluster picking is explicitly separate from stopping and does not stop the local workspace', async () => {
   const ipc = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
+  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep the local cluster running' }));
   expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_change_local')).toBe(false);
 });

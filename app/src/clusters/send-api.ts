@@ -14,7 +14,7 @@ const text = (v: unknown) => v === null || typeof v === 'string' && v.length > 0
 export const sendErrors = {
   capture: 'Your saved agent or check files changed, or could not be read. Check this destination again before sending.',
   access: 'Cluster access could not be confirmed. Choose your cluster again in Clusters.',
-  preflight: 'The installation, tools or Provider could not be confirmed. Check your cluster and try again.',
+  preflight: 'The cluster, tools or AI connection could not be confirmed. Check your cluster and try again.',
   storage: 'Nothing was sent because Bridge could not save a summary. Check local storage before trying again.',
   submit: 'Sending was not confirmed. Named resources may still exist. Nothing was retried.',
   observe: 'The result could not be confirmed. The cluster may still be running checks.',

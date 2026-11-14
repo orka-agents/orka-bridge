@@ -115,7 +115,7 @@ while Date() < rendererDeadline {
         // Navigation/footer controls can render before setup_status settles.
         // Observe the welcome or the actual release setup result, not a button
         // that merely happens to be below the header.
-        let bodyReady = names.contains("Get started") || nativeTextIsVisible("Places for your agents")
+        let bodyReady = names.contains("Get started") || nativeTextIsVisible("Choose where agents run")
         if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names) && bodyReady { found = true; break }
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
@@ -357,7 +357,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         } else if name == "cluster-reload-options" {
             require(text.contains("fixture-reloaded"), "Corrected kubeconfig context not reread: \(text)")
         } else {
-            require(!text.contains("Access confirmed") && !text.contains("Orka found"), "Reload retained stale selection: \(text)")
+            require(!text.contains("Access confirmed") && !text.contains("Cluster found"), "Reload retained stale selection: \(text)")
         }
         print("PASS \(name): offline native reload, no real credentials")
         return observations
@@ -374,7 +374,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         print("PASS \(name): native fixture access state, no real credentials")
         return observations
     }
-    if let expected = ["send-ready": "Built in to this Orka", "send-blocked": "Blocked", "send-cannot-check": "Bridge cannot check"][name] {
+    if let expected = ["send-ready": "Built in to this cluster", "send-blocked": "Blocked", "send-cannot-check": "Bridge cannot check"][name] {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains(expected), "Native preflight evidence missing: \(expected); observed: \(text)")
         print("PASS \(name): observed native preflight evidence; no workload submitted")
@@ -416,7 +416,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         if name == "cluster-card-details" {
             require(text.contains("orka:fixture"), "Fixture Orka image is not visible in Details: \(text)")
         } else {
-            require(text.contains("Orka found") && !text.contains("Access confirmed"), "Fixture Orka not visible: \(text)")
+            require(text.contains("Cluster found") && !text.contains("Access confirmed"), "Fixture Orka not visible: \(text)")
         }
         print("PASS \(name): native discovery card; no Use or Send")
         return observations
@@ -426,21 +426,21 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         // so only a confirmation inside the page body would make this entry non-blank.
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         let bodyConfirmed = nativeTextBounds("Access confirmed").contains { bodyBounds().intersects($0) }
-        require(text.contains("Back to places") && !text.contains("Orka found") && !bodyConfirmed
+        require(text.contains("Back to clusters") && !text.contains("Cluster found") && !bodyConfirmed
             && nativeButtons("Open your agent").isEmpty && nativeButtons("Check access again").isEmpty
-            && nativeStrings().contains { $0.contains("Choose a context") }, "Add a place did not open a blank Places subview: \(text)")
+            && nativeStrings().contains { $0.contains("Choose a context") }, "Add a cluster did not open a blank Places subview: \(text)")
         print("PASS \(name): native Places subview with blank kubectl context")
         return observations
     }
     if name.hasPrefix("cluster-manage") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(text.contains("Back to places"), "Manage is not a Places subview: \(text)")
+        require(text.contains("Back to clusters"), "Manage is not a Places subview: \(text)")
         if name == "cluster-manage-change" { // Change context only reveals the select.
             require(text.contains("kubectl context") || nativeTextIsVisible("kubectl context"), "Change context did not reveal the context choice: \(text)")
         } else {
             require(!nativeButtons("Open your agent").isEmpty && !nativeButtons("Change context").isEmpty
-                && !nativeButtons("Check access again").isEmpty && nativeStrings().contains { $0 == "Provider" },
-                "Manage lost the existing Provider, Open your agent, Change context or Check access again controls")
+                && !nativeButtons("Check access again").isEmpty && nativeStrings().contains { $0 == "AI connection" },
+                "Manage lost the existing AI connection, Open your agent, Change context or Check access again controls")
         }
         print("PASS \(name): native Manage for the selected cluster")
         return observations
@@ -449,21 +449,21 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can read the capital I in AI as lowercase l. Match the rest of the heading.
         let welcome = text.contains("Build an") && text.contains("does a real job")
-        let places = text.contains("Places for your agents")
-        let detail = text.contains("Back to places")
+        let places = text.contains("Choose where agents run")
+        let detail = text.contains("Back to clusters")
         require(welcome || places || detail, "Places heading or subview not visible; observed: \(text)")
         // The old chooser and its radios were replaced by Places and its subviews.
         require(!text.contains("Where should your agents run") && !text.contains("On a cluster you already have")
             && !text.contains("Engine diagnostics"), "Removed workspace chooser or diagnostics is still visible: \(text)")
         if !welcome {
-            require(!nativeTextIsVisible("Workspace setup is not included in this build. Nothing will be downloaded or started."),
+            require(!nativeTextIsVisible("Local cluster setup is not included in this build. Nothing will be downloaded or started."),
                     "Supported release still reports setup unavailable")
         }
         if ["places-empty", "places-after-form", "places-local", "places-retained"].contains(name) {
             // An empty session still shows this computer and one direct next action.
-            require(places && !welcome && !detail && nativeTextIsVisible("No clusters added yet")
-                && visibleButtons("Set up").count == 1 && nativeButtons("Add a place").count == 1,
-                "Empty Places did not retain this computer, its Set up action and Add a place")
+            require(places && !welcome && !detail && nativeTextIsVisible("No other clusters added yet")
+                && visibleButtons("Set up").count == 1 && nativeButtons("Add a cluster").count == 1,
+                "Empty Places did not retain this computer, its Set up action and Add a cluster")
             requireNoLocalWorkspace()
             require(!observations.contains {
                 let label = $0.topCandidates(1).first?.string ?? ""
@@ -529,9 +529,9 @@ func requirePlaceCards() {
     for expected in ["fixture-cluster", "fixture-secondary", "Last checked", "Not checked yet", "Selected for Designer"] {
         require(strings.contains { $0.contains(expected) }, "Places is missing \(expected)")
     }
-    require(!strings.contains { $0.contains("No clusters added yet") } && nativeButtons("Connect").count == 1
-        && nativeButtons("Manage").count == 1 && nativeButtons("Set up").count == 1 && nativeButtons("Add a place").count == 1,
-        "expected one Connect, Manage, Set up and Add a place")
+    require(!strings.contains { $0.contains("No other clusters added yet") } && nativeButtons("Connect").count == 1
+        && nativeButtons("Manage").count == 1 && nativeButtons("Set up").count == 1 && nativeButtons("Add a cluster").count == 1,
+        "expected one Connect, Manage, Set up and Add a cluster")
     print("PASS: Places shows Last checked, Not checked yet and Selected for Designer with one action per card")
 }
 func localPreflight(_ name: String) throws {
@@ -539,7 +539,7 @@ func localPreflight(_ name: String) throws {
     scrollMain(1000)
     try capture(name, "Clusters")
     requireNoLocalWorkspace() // the size screen must never start the VM
-    clickButton("Back to places")
+    clickButton("Back to clusters")
 }
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 var initial = try capture("initial", "Clusters")
@@ -766,8 +766,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // CI runs both themes against one fixture process; keep each Send sequence deterministic.
     try fixtureControl(["action": "reset"])
     try capture("before-cluster", "Clusters")
-    // No local selection exists in this no-VM walk. Add a place offers only an existing cluster.
-    clickButton("Add a place")
+    // No local selection exists in this no-VM walk. Add a cluster offers only an existing cluster.
+    clickButton("Add a cluster")
     Thread.sleep(forTimeInterval: 1)
     // The label focuses its native select. Choose the first synthetic context.
     let chooserFile = "\(output)/cluster-chooser.png"
@@ -798,12 +798,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(-200)
     }
     require(detailsOpened, "Discovered Orka has no visible Details control")
-    // Keep the current select while a result stage shows it; otherwise go back through Places and Add a place.
+    // Keep the current select while a result stage shows it; otherwise go back through Places and Add a cluster.
     func showContextSelect() {
         scrollMain(1000)
         if nativeTextIsVisible("kubectl context") { return }
-        if !visibleButtons("Back to places").isEmpty { clickButton("Back to places") }
-        clickButton("Add a place")
+        if !visibleButtons("Back to clusters").isEmpty { clickButton("Back to clusters") }
+        clickButton("Add a cluster")
         scrollMain(1000)
     }
     func setContent(_ width: CGFloat, _ height: CGFloat) {
@@ -893,8 +893,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let ownedAgent = try capture("agent-cluster-owned", "Designer")
     clickText("Send to a cluster", in: ownedAgent)
     Thread.sleep(forTimeInterval: 1)
-    let allowed = try capturePreflight("send-ready", "Built in to this Orka")
-    require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Built in to this Orka") }, "Allowed preflight evidence is missing")
+    let allowed = try capturePreflight("send-ready", "Built in to this cluster")
+    require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Built in to this cluster") }, "Allowed preflight evidence is missing")
     func focusSend() throws {
         // Pixel scroll offsets are not stable across responsive reflow. Focus
         // the real entry button, then pointer-click its verified native bounds.
@@ -1041,8 +1041,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     func recordShot(_ name: String, _ checks: String) throws -> String {
         try overviewShot("overview-probe", [checks])
         let anchor = visibleTextBounds(checks)[0]
-        guard let disclosure = visibleTextBounds("Observed identity").filter({ $0.minY > anchor.minY }).min(by: { $0.minY < $1.minY }) else {
-            fail("Observed identity disclosure not visible below \(checks)")
+        guard let disclosure = visibleTextBounds("Cluster details").filter({ $0.minY > anchor.minY }).min(by: { $0.minY < $1.minY }) else {
+            fail("Cluster details disclosure not visible below \(checks)")
         }
         let point = CGPoint(x: disclosure.midX, y: disclosure.midY)
         mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
@@ -1051,7 +1051,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         // Bring its place row into view before checking the scoped identity.
         try overviewShot("overview-probe", [checks, "fixture-cluster · agents"])
         guard let currentAnchor = visibleTextBounds(checks).first,
-            let identity = visibleTextBounds("Observed identity").filter({ $0.minY > currentAnchor.minY }).min(by: { $0.minY < $1.minY }) else {
+            let identity = visibleTextBounds("Cluster details").filter({ $0.minY > currentAnchor.minY }).min(by: { $0.minY < $1.minY }) else {
             fail("Selected identity moved out of view below \(checks)")
         }
         // Earlier cards can retain open identities. Scope the UID to the
@@ -1072,7 +1072,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 1)
     let unknownUID = try recordShot("overview-fixture-versions-unknown-by-place", "Checks unknown")
     require(passedUID != unknownUID, "Repeated Send did not retain distinct Agent UIDs")
-    try overviewShot("overview-fixture-external-by-place", ["runtime-reader", "Not tested by Bridge", "Type: runtime", "Model observed: external-model", "Tools observed: web_fetch"])
+    try overviewShot("overview-fixture-external-by-place", ["runtime-reader", "Not tested by Bridge", "Model on cluster: external-model", "Tools on cluster: web_fetch"])
     // The primary-place captures retain the changed two-test revision. Restore
     // the original pair before the separate place/provenance scenarios.
     try restoreTemporaryTests?()
@@ -1084,10 +1084,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 1)
     // Confirm another real synthetic installation via the existing Use flow.
     clickTab("Clusters", [])
-    // The tab restores the primary's detail. Add a place from Places, wide, before choosing.
+    // The tab restores the primary's detail. Add a cluster from Places, wide, before choosing.
     scrollMain(1000)
-    if !visibleButtons("Back to places").isEmpty { clickButton("Back to places") }
-    clickButton("Add a place")
+    if !visibleButtons("Back to clusters").isEmpty { clickButton("Back to clusters") }
+    clickButton("Add a cluster")
     try capture("cluster-add-wide", "Clusters")
     let secondary = try chooseFixture(6)
     clickText("Use this cluster", in: secondary)
@@ -1095,26 +1095,26 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     scrollMain(-400)
     try capture("cluster-access-wide", "Clusters")
     // Back leaves the confirmed destination alone: the primary has a historical check, the selected secondary none.
-    clickButton("Back to places")
+    clickButton("Back to clusters")
     try capture("places-populated", "Clusters")
     // Connect on the non-selected row opens a blank choice and never reconnects or refreshes.
     clickButton("Connect")
     Thread.sleep(forTimeInterval: 1)
     try capture("cluster-connect-blank", "Clusters")
-    clickButton("Back to places")
+    clickButton("Back to clusters")
     clickButton("Manage") // keeps the selected cluster's agent handoff
     Thread.sleep(forTimeInterval: 0.5)
     try capture("cluster-manage", "Clusters")
     setContent(540, 900)
     scrollMain(1000)
     try capture("cluster-manage-compact", "Clusters")
-    clickButton("Back to places")
+    clickButton("Back to clusters")
     try capture("places-populated-compact", "Clusters")
     setContent(1220, 900)
     clickButton("Manage")
     clickButton("Change context")
     try capture("cluster-manage-change", "Clusters")
-    clickButton("Back to places")
+    clickButton("Back to clusters")
     requirePlaceCards() // includes preserving selection when merely revealing context choice
     clickButton("Manage")
     scrollMain(-400)
@@ -1122,7 +1122,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let secondAgent = try capture("agent-cluster-owned", "Designer")
     clickText("Send to a cluster", in: secondAgent)
     try clickSendControl("Reload saved files", scrolling: -250)
-    try capturePreflight("send-ready", "Built in to this Orka")
+    try capturePreflight("send-ready", "Built in to this cluster")
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
     try capturePreflight("send-secondary-result", "1 of 1 passed")
@@ -1135,12 +1135,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": true])
     clickTab("Overview", noReceipt)
     Thread.sleep(forTimeInterval: 1)
-    try overviewShot("overview-fixture-first-read-unavailable", ["Observation stale", "No Agent observation yet. Refresh or check access in Clusters."], heading: "fixture-secondary")
+    try overviewShot("overview-fixture-first-read-unavailable", ["Earlier cluster check", "Agents not checked yet. Refresh or check access in Clusters."], heading: "fixture-secondary")
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false])
     scrollMain(12000)
     clickText("Refresh", in: try capture("overview-probe", "Overview"))
     Thread.sleep(forTimeInterval: 1)
-    try overviewShot("overview-fixture-multiple-places-by-place", ["fixture-secondary", "3 Agents", "Orka Agent"], heading: "fixture-secondary")
+    try overviewShot("overview-fixture-multiple-places-by-place", ["fixture-secondary", "3 agents", "Checks passed here"], heading: "fixture-secondary")
     let attempt = "fixture-secondary · agents · Checks unknown"
     try overviewShot("overview-probe", [attempt])
     guard let attemptBounds = nativeTextBounds(attempt).first else { fail("Recorded attempt disclosure is not visible") }
@@ -1150,17 +1150,17 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try overviewShot("overview-fixture-unknown-attempt", ["Agent creation not confirmed", "Checks unknown", "Planned name: bridge-run-"])
     scrollMain(12000)
     clickText("By agent", in: try capture("overview-probe", "Overview"))
-    try overviewShot("overview-fixture-multiple-places-by-agent", ["recorded revision", "Also observed on fixture-secondary · agents"])
+    try overviewShot("overview-fixture-multiple-places-by-agent", ["saved version", "Also found on fixture-secondary · agents"])
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": true])
     defer { try? fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false]) }
     scrollMain(12000)
     clickText("Refresh", in: try capture("overview-probe", "Overview"))
     Thread.sleep(forTimeInterval: 1)
-    try overviewShot("overview-fixture-offline-by-agent", ["fixture-secondary · agents", "Recorded checks passed; observation stale", "Orka Agent · stale"])
+    try overviewShot("overview-fixture-offline-by-agent", ["fixture-secondary · agents", "Recorded checks passed; observation stale", "agent · stale"])
     scrollMain(12000)
-    clickText("By place", in: try capture("overview-probe", "Overview"))
-    try overviewShot("overview-fixture-offline-by-place", ["fixture-secondary", "Observation stale", "Last seen", "Orka Agent · stale"], heading: "fixture-secondary")
-    try overviewShot("overview-fixture-offline-record-by-place", ["Recorded checks passed; observation stale", "Orka Agent · stale"])
+    clickText("By cluster", in: try capture("overview-probe", "Overview"))
+    try overviewShot("overview-fixture-offline-by-place", ["fixture-secondary", "Earlier cluster check", "Last seen", "agent · stale"], heading: "fixture-secondary")
+    try overviewShot("overview-fixture-offline-record-by-place", ["Recorded checks passed; observation stale", "agent · stale"])
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false])
     // Keep the existing preflight-only cards out of the focused Overview walk.
     // These identities still exercise the same blocked states without a Send.
@@ -1193,7 +1193,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     waitForWorkspaceRenderer()
     let restarted = try capture("cluster-place-reopened", "Clusters")
     // Places are session-only: a restart keeps saved Send summaries but not retained cluster rows.
-    require(nativeTextIsVisible("No clusters added yet"), "Places must start empty after restart; no cluster authority is restored")
+    require(nativeTextIsVisible("No other clusters added yet"), "Places must start empty after restart; no cluster authority is restored")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
     scrollMain(3000)

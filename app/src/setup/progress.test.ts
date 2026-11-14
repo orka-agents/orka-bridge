@@ -33,13 +33,13 @@ test('the place choice shows no step count', () => {
 test('host selection is native: local only when selected, never inferred while checking or unreadable', () => {
   expect(setupView(status('installing')).place).toBe('local');
   expect(setupView(status('idle', { selected: null })).place).toBe('none');
-  expect(setupView(undefined, { checking: true })).toMatchObject({ place: 'checking', line: 'Checking workspace…' });
-  expect(setupView(undefined, { checking: false })).toMatchObject({ place: 'unavailable', line: 'Workspace unavailable' });
+  expect(setupView(undefined, { checking: true })).toMatchObject({ place: 'checking', line: 'Checking the local cluster…' });
+  expect(setupView(undefined, { checking: false })).toMatchObject({ place: 'unavailable', line: 'Local cluster unavailable' });
 });
 
 test('test uncertainty and manual runs do not reopen completed workspace setup', () => {
   const done = (check?: CheckStepState) => setupView(status('ready'), { model: 'connected', check });
-  for (const check of ['passed', 'failed', 'stale', 'unknown', 'running'] as const) expect(done(check)).toMatchObject({ done: true, line: 'This computer ready' });
+  for (const check of ['passed', 'failed', 'stale', 'unknown', 'running'] as const) expect(done(check)).toMatchObject({ done: true, line: 'Local cluster ready' });
   expect(done()).toMatchObject({ done: false, step: 5 });
   expect(setupView(status('ready'), { model: 'connected', check: 'running', initialAutomatic: true })).toMatchObject({ done: false, step: 5 });
 });
@@ -51,8 +51,8 @@ test('model and workspace trouble keep their own words and tone', () => {
   expect(setupView(status('failed', { workspaceFailure: { operation: 'start', cause: 'unknown', codes: [] } })).step).toBe(2);
   expect(setupView(status('failed', { workspaceFailure: { operation: 'download', cause: 'network', codes: [] } })).step).toBe(1);
   expect(setupView(status('cancelled')).line).toBe('Setup paused');
-  expect(setupView(status('closed')).line).toBe('Workspace stopped');
-  expect(setupView(status('notIntegrated', { selected: null })).line).toBe('Workspace unavailable');
+  expect(setupView(status('closed')).line).toBe('Local cluster stopped');
+  expect(setupView(status('notIntegrated', { selected: null })).line).toBe('Local cluster unavailable');
 });
 
 test('only an unfinished local attempt can queue a model choice', () => {
