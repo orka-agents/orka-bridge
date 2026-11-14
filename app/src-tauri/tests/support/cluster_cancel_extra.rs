@@ -19,6 +19,63 @@ pub(super) fn set_cases(s: &Setup, count: usize) {
     .unwrap();
 }
 
+async fn mixed_terminal_failure(explicit: bool) {
+    let s = setup().await;
+    set_cases(&s, 3);
+    *s.api.wire.mode.lock().unwrap() = "running";
+    let send = id(&s.start().await);
+    until(|| s.view(Some(&send))["stage"] == "observe").await;
+    let path = s
+        .home
+        .path()
+        .join("app-local/send-history-v1")
+        .join(format!("{send}.json"));
+    let saved: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    let names: Vec<_> = saved["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["kind"] == "Task")
+        .map(|r| r["name"].as_str().unwrap().to_owned())
+        .collect();
+    {
+        let mut objects = s.api.wire.objects.lock().unwrap();
+        for (name, phase) in names.iter().zip([
+            "Failed",
+            "Succeeded",
+            if explicit { "Running" } else { "Cancelled" },
+        ]) {
+            objects.get_mut(&format!("/api/v1/tasks/{name}")).unwrap()["status"]["phase"] =
+                json!(phase);
+        }
+    }
+    *s.api.wire.mode.lock().unwrap() = "result-404";
+    if explicit {
+        cancel_active(&s, &send).await;
+    }
+    let done = s.finish(&send).await;
+    assert_eq!(done["report"]["cases"][0]["verdict"], "failed", "{done}");
+    assert_eq!(done["report"]["cases"][1]["verdict"], "unknown", "{done}");
+    assert_eq!(done["report"]["cases"][2]["verdict"], "cancelled", "{done}");
+    assert_eq!(done["report"]["verdict"], "failed", "{done}");
+    let detail = serde_json::to_value(s.owner.history_check(&send).await.unwrap()).unwrap();
+    assert_eq!(detail["report"]["verdict"], "failed", "{detail}");
+    assert_eq!(
+        s.owner.history().unwrap()[0].verdict,
+        bridge_engine::send_summary::AttemptVerdict::Failed
+    );
+}
+
+#[tokio::test]
+async fn cluster_cancel_keeps_a_verified_failure_beside_unknown_and_cancelled_cases() {
+    mixed_terminal_failure(true).await;
+}
+
+#[tokio::test]
+async fn external_cancel_does_not_hide_a_cluster_failure() {
+    mixed_terminal_failure(false).await;
+}
+
 #[tokio::test]
 async fn terminal_receipts_do_not_promote_a_partial_cancelled_report() {
     let s = setup().await;

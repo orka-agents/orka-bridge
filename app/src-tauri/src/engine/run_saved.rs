@@ -76,6 +76,8 @@ pub struct Recovery {
     pub report: Option<RunReport>,
     pub availability: &'static str,
     pub refreshed: bool,
+    /// A failed outcome verified during this read, not only a cached row.
+    pub verified_failure: bool,
 }
 impl NativeRunner<'_> {
     pub(super) async fn read_saved(
@@ -156,7 +158,7 @@ impl NativeRunner<'_> {
                 let after=self.http.request(&path,None,None,deadline).await?;
                 if !task.matches(&after) || after["status"]["phase"]!=phase {return Err(ErrorKind::Identity);}
                 self.read_saved(agent, deadline).await?;
-                let assertions=if phase=="Cancelled" {case.unevaluated()} else {case.evaluate(answer.as_deref(),&tools)};
+                let assertions=if phase=="Cancelled" {Vec::new()} else {case.evaluate(answer.as_deref(),&tools)};
                 let verdict=if phase=="Cancelled" {Verdict::Cancelled} else if phase=="Succeeded" {aggregate(assertions.iter().map(|r|r.verdict))} else {Verdict::Failed};
                 Ok(Some((CaseReport {id:case.id.clone(),question:case.input().into(),phase:phase.into(),answer,completed_tools:tools,assertions,verdict},captured)))
             }.await;
@@ -187,7 +189,9 @@ impl NativeRunner<'_> {
                 }
             }
         }
-        report.verdict = if verified_failure {
+        report.verdict = if report.cases.iter().any(|r| r.verdict == Verdict::Cancelled) {
+            Verdict::Cancelled
+        } else if verified_failure {
             Verdict::Failed
         } else if (seen == cases.len()
             || (seen + report.cases.iter().filter(|r| r.phase == "NotRun").count() == cases.len()))
@@ -206,6 +210,7 @@ impl NativeRunner<'_> {
             report: (!report.cases.is_empty()).then_some(report),
             availability,
             refreshed,
+            verified_failure,
         }
     }
 }

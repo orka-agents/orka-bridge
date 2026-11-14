@@ -252,51 +252,35 @@ async fn recovery_reads_only_gets_uses_captured_rules_and_preserves_answer_when_
     );
 }
 
-// A Cancelled Task is not a failed assertion, in either live or recovered reports.
 #[tokio::test]
-async fn cancelled_phase_has_distinct_verdict_without_assertion_failures() {
+async fn saved_send_recheck_keeps_the_shared_cancelled_verdict_without_assertions() {
     let fixture = Fixture::start(Behavior {
         phase: "Cancelled",
-        answer: Some("not a match"),
         ..Behavior::default()
     })
     .await;
     let runner = fixture.runner();
-    let pair = ParsedPair::parse(AGENT.as_bytes(), TESTS.as_bytes()).unwrap();
-    let mut resources = Vec::new();
+    let pair = pair();
+    let cases = pair.cases().to_vec();
     let (_tx, stop) = tokio::sync::watch::channel(false);
-    let handle = runner
-        .submit_checkpointed(runner.prepare(pair.clone()).unwrap(), stop, &mut |event| {
-            match event {
-                RunCheckpoint::Before(r) => resources.push(r),
-                RunCheckpoint::Acknowledged(r) => {
-                    let old = resources.iter_mut().find(|old| old.name == r.name).unwrap();
-                    *old = r;
-                }
-                _ => (),
+    let mut resources = Vec::new();
+    runner
+        .submit_checkpointed(runner.prepare(pair).unwrap(), stop, &mut |event| {
+            if let RunCheckpoint::Acknowledged(resource) = event {
+                resources.push(resource);
             }
             Ok(())
         })
         .await
         .unwrap();
-    let live = runner.observe(&handle).await.unwrap();
-    assert_eq!(serde_json::to_value(live.verdict).unwrap(), "cancelled");
-    assert_eq!(live.cases[0].assertions.len(), 2);
-    assert!(live.cases[0]
-        .assertions
-        .iter()
-        .all(|a| a.verdict == Verdict::Unknown));
-    let saved = runner
-        .recover(&mut resources, pair.cases(), None)
+    let report = runner
+        .recover(&mut resources, &cases, None)
         .await
         .report
         .unwrap();
-    assert_eq!(serde_json::to_value(saved.verdict).unwrap(), "cancelled");
-    assert_eq!(saved.cases[0].assertions.len(), 2);
-    assert!(saved.cases[0]
-        .assertions
-        .iter()
-        .all(|a| a.verdict == Verdict::Unknown));
+    assert_eq!(report.verdict, Verdict::Cancelled);
+    assert_eq!(report.cases[0].verdict, Verdict::Cancelled);
+    assert!(report.cases[0].assertions.is_empty());
 }
 
 #[derive(Clone, Copy)]
@@ -972,6 +956,37 @@ async fn creates_one_task_per_case_without_reusing_inputs_or_expected_values() {
     assert!(!requests[2].1.to_string().contains("different-expected"));
 }
 #[tokio::test]
+async fn cancelled_is_neutral_has_no_assertions_and_reads_evidence_once() {
+    let fixture = Fixture::start(Behavior {
+        phase: "Cancelled",
+        ..Behavior::default()
+    })
+    .await;
+    let runner = fixture.runner();
+    let handle = runner.submit(pair()).await.unwrap();
+    let report = runner.observe(&handle).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&report).unwrap()["verdict"],
+        "cancelled"
+    );
+    assert_eq!(
+        serde_json::to_value(&report).unwrap()["cases"][0]["verdict"],
+        "cancelled"
+    );
+    assert!(report.cases[0].assertions.is_empty());
+    assert_eq!(
+        fixture
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(p, _)| p.contains("/result?"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn verdicts_depend_on_answer_completion_and_positive_attributable_tool_evidence() {
     // Each row attacks a different proof source; missing tools are never a negative completeness claim.
     for (behavior, contains, tool, overall) in [
@@ -1011,15 +1026,6 @@ async fn verdicts_depend_on_answer_completion_and_positive_attributable_tool_evi
             Verdict::Passed,
             Verdict::Unknown,
             Verdict::Failed,
-        ),
-        (
-            Behavior {
-                phase: "Cancelled",
-                ..Behavior::default()
-            },
-            Verdict::Unknown,
-            Verdict::Unknown,
-            Verdict::Cancelled,
         ),
         (
             Behavior {

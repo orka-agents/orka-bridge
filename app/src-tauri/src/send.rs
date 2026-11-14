@@ -401,6 +401,17 @@ impl SendOwner {
         match read {
             Ok(read) => {
                 details.report = read.report;
+                // Shared cancellation may be partial. Keep a freshly verified
+                // failure; otherwise require complete cluster outcomes below.
+                if let Some(report) = &mut details.report {
+                    if report.verdict == Verdict::Cancelled {
+                        report.verdict = if read.verified_failure {
+                            Verdict::Failed
+                        } else {
+                            Verdict::Unknown
+                        };
+                    }
+                }
                 details.availability = Some(read.availability.into());
                 if read.refreshed {
                     details.captured_at = unix_seconds();
@@ -434,34 +445,34 @@ impl SendOwner {
             } else if !details.unresolved() && details.resources.iter().any(|r| r.kind == "Task") {
                 details.cancellation = Some(Cancellation::Confirmed);
             }
-            // NotRun is incomplete work, except when an actual cancelled Task explains it.
-            if let Some(report) = &mut details.report {
-                if !details
-                    .resources
+        }
+        // NotRun is incomplete work, except when an actual cancelled Task explains it.
+        if let Some(report) = &mut details.report {
+            if !details
+                .resources
+                .iter()
+                .any(|r| r.kind == "Task" && !r.terminal)
+                && report.cases.iter().any(|r| r.verdict == Verdict::Cancelled)
+                && details.cases.len() == report.cases.len()
+                && details
+                    .cases
                     .iter()
-                    .any(|r| r.kind == "Task" && !r.terminal)
-                    && report.cases.iter().any(|r| r.verdict == Verdict::Cancelled)
-                    && details.cases.len() == report.cases.len()
-                    && details
-                        .cases
-                        .iter()
-                        .all(|case| report.cases.iter().any(|row| row.id == case.id))
-                    && report
-                        .cases
-                        .iter()
-                        .all(|r| r.phase == "NotRun" || r.verdict != Verdict::Unknown)
-                {
-                    report.verdict = if report.cases.iter().any(|r| r.verdict == Verdict::Failed) {
-                        Verdict::Failed
-                    } else {
-                        Verdict::Cancelled
-                    };
-                    summary.verdict = if report.verdict == Verdict::Failed {
-                        AttemptVerdict::Failed
-                    } else {
-                        AttemptVerdict::Cancelled
-                    };
-                }
+                    .all(|case| report.cases.iter().any(|row| row.id == case.id))
+                && report
+                    .cases
+                    .iter()
+                    .all(|r| r.phase == "NotRun" || r.verdict != Verdict::Unknown)
+            {
+                report.verdict = if report.cases.iter().any(|r| r.verdict == Verdict::Failed) {
+                    Verdict::Failed
+                } else {
+                    Verdict::Cancelled
+                };
+                summary.verdict = if report.verdict == Verdict::Failed {
+                    AttemptVerdict::Failed
+                } else {
+                    AttemptVerdict::Cancelled
+                };
             }
         }
         if details.cancellation.is_some() && details.unresolved() {
@@ -988,6 +999,7 @@ impl SendOwner {
                         .unwrap();
                     *old = resource;
                 }
+                RunCheckpoint::Evidence(_) => return Ok(()),
                 RunCheckpoint::Case(index, report) => {
                     if let Some(task) = details
                         .resources
@@ -1055,7 +1067,24 @@ impl SendOwner {
             .observe_checkpointed(&handle, stop.clone(), &mut checkpoint)
             .await;
         let result = match observed {
-            Ok(report) => {
+            Ok(mut report) => {
+                if report.verdict == Verdict::Cancelled {
+                    report.verdict = if report
+                        .cases
+                        .iter()
+                        .any(|row| row.verdict == Verdict::Failed)
+                    {
+                        Verdict::Failed
+                    } else if report
+                        .cases
+                        .iter()
+                        .any(|row| row.verdict == Verdict::Unknown)
+                    {
+                        Verdict::Unknown
+                    } else {
+                        Verdict::Cancelled
+                    };
+                }
                 summary.verdict = match report.verdict {
                     Verdict::Passed => AttemptVerdict::Passed,
                     Verdict::Failed => AttemptVerdict::Failed,
