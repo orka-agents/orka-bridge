@@ -185,6 +185,16 @@ impl ClusterSession {
             .and_then(|(id, access)| (id.0.to_string() == target).then(|| access.clone()));
         (access, self.1.clone())
     }
+    pub(crate) fn history_access(&self) -> SendAccess {
+        (
+            self.4
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|(_, access)| access.clone()),
+            self.1.clone(),
+        )
+    }
     pub async fn contexts(&self) -> Result<Vec<ContextView>, ClusterFailure> {
         let mut session = self.0.lock().await;
         session

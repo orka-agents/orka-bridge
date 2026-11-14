@@ -392,6 +392,12 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         require(text.contains("Saved tests: pass"), "Earlier saved pass missing: \(text)")
         return observations
     }
+    if name == "send-history-answer" {
+        let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(text.contains("Saved on this computer") && text.contains("Fixture answer:"), "Offline saved answer missing after restart: \(text)")
+        print("PASS send-history-answer: durable answer opened offline after restart, no cluster access restored")
+        return observations
+    }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         let markers = ["Send your agent", "Tests on your cluster", "passed", "evaluating tests", "Planned Agent", "question", "answer", "Not run since your edit", "Stopped watching"]
@@ -1172,8 +1178,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         let checked = try capturePreflight(name, expected)
         clickTab("Clusters", checked)
     }
-    // Reopen without reconnecting the cluster or sending again. Only the small
-    // saved summaries survive; detailed results and live handles do not.
+    // Reopen without reconnecting or sending again. Saved evidence survives;
+    // live handles and cluster authority do not.
     app.terminate()
     for _ in 0..<30 {
         if app.isTerminated { break }
@@ -1218,5 +1224,25 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(-150)
     }
     require(savedPass, "Earlier saved pass was not reachable after restart")
+    // Open the disclosure belonging to the visible passing record, not a newer
+    // interrupted Send. Keep its saved label in view for the native capture.
+    var savedOpened = false
+    for _ in 0..<6 {
+        let seen = try capture("send-probe", "Designer")
+        if let passed = seen.first(where: { ($0.topCandidates(1).first?.string ?? "").contains("Saved tests: pass") }),
+           let disclosure = seen.filter({
+               ($0.topCandidates(1).first?.string ?? "").contains("Show saved details")
+                   && $0.boundingBox.maxY < passed.boundingBox.minY
+           }).max(by: { $0.boundingBox.maxY < $1.boundingBox.maxY }),
+           let label = disclosure.topCandidates(1).first?.string {
+            clickText(label, in: [disclosure])
+            savedOpened = true
+            break
+        }
+        scrollMain(-100)
+    }
+    require(savedOpened, "Saved passing Send details were not reachable")
+    try clickSendControl("published-checksum", scrolling: -100)
+    try capture("send-history-answer", "Designer")
 }
 requireNoLocalWorkspace()

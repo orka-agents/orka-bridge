@@ -91,6 +91,136 @@ async fn document_send_binds_preview_admission_stop_and_session_results() {
     s.owner.shutdown().await;
 }
 
+#[tokio::test]
+async fn history_recovery_is_get_only_offline_preserving_and_serialized() {
+    let s = setup().await;
+    let started = s.start().await;
+    let send = id(&started);
+    let done = s.finish(&send).await;
+    assert_eq!(done["state"], "complete", "{done}");
+    let saved = s.owner.history_details(&send).unwrap();
+    assert_eq!(saved.detail_state, "saved");
+    assert!(!saved.interrupted);
+    assert!(saved.can_remove && saved.can_check);
+    let before = s.api.wire.posts();
+    // Historical reads are independent of today's edited source bytes.
+    std::fs::write(
+        s.agent_path().with_file_name("web-reader.agent.test.md"),
+        TESTS.replace("expected answer", "changed expectation"),
+    )
+    .unwrap();
+    let checked = s.owner.history_check(&send).await.unwrap();
+    assert_eq!(checked.availability.as_deref(), Some("available"));
+    assert_eq!(
+        checked.report.unwrap().verdict,
+        bridge_engine::engine::run::Verdict::Passed
+    );
+    assert_eq!(s.api.wire.posts(), before);
+    s.idle_forwards().await;
+    // The current selection/configuration cannot silently confer authority.
+    s.fresh.lock().unwrap().clusters[0]
+        .cluster
+        .as_mut()
+        .unwrap()
+        .server = Some("https://different.invalid".into());
+    let checked = s.owner.history_check(&send).await.unwrap();
+    assert_eq!(checked.availability.as_deref(), Some("unavailable"));
+    assert!(checked.report.unwrap().cases[0].answer.is_some());
+    s.idle_forwards().await;
+    let removed = s.owner.history_remove(&send).await.unwrap();
+    assert_eq!(removed.detail_state, "removed");
+    assert!(removed.report.is_none());
+    assert_eq!(s.api.wire.posts(), before);
+    assert_eq!(s.owner.history().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn storage_failure_after_agent_ack_keeps_remote_uncertainty_and_bars_tasks() {
+    let s = setup().await;
+    let root = s.home.path().join("app-local/send-history-v1");
+    *s.api.wire.after_post.lock().unwrap() = Some(Box::new(move || {
+        std::fs::create_dir(root.join("saving")).unwrap();
+    }));
+    let view = s.finish(&id(&s.start().await)).await;
+    assert_eq!(view["state"], "unknown");
+    assert_eq!(
+        view["error"], "submit",
+        "remote creation must not be labelled nothing sent: {view}"
+    );
+    assert_eq!(view["storageError"], true);
+    assert_eq!(view["acknowledged"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        s.api.wire.posts(),
+        1,
+        "no Task may follow a failed durable acknowledgement"
+    );
+}
+
+#[tokio::test]
+async fn omitted_answer_cache_does_not_stop_observing_the_remaining_tests() {
+    let s = setup().await;
+    let block = &TESTS[TESTS.find("```yaml agent-test").unwrap()..];
+    let cases: String = (0..6)
+        .map(|i| block.replace("id: fetch\n", &format!("id: fetch-{i}\n")))
+        .collect();
+    std::fs::write(
+        s.agent_path().with_file_name("web-reader.agent.test.md"),
+        format!("---\nschemaVersion: 1\n---\n{cases}"),
+    )
+    .unwrap();
+    *s.api.wire.mode.lock().unwrap() = "large-result";
+    let started = s.start().await;
+    let send = id(&started);
+    let view = s.finish(&send).await;
+    assert_eq!(
+        view["state"], "complete",
+        "reduced cache is not a storage failure: {view}"
+    );
+    assert_eq!(view["report"]["cases"].as_array().unwrap().len(), 6);
+    assert_eq!(view["report"]["verdict"], "passed");
+    assert_eq!(view["storageError"], false);
+    assert_eq!(s.api.wire.posts(), 7);
+    let saved = s.owner.history_details(&send).unwrap();
+    assert_eq!(saved.detail_state, "omitted");
+    assert!(!saved.interrupted);
+    let cached = saved.report.unwrap();
+    assert_eq!(cached.cases.len(), 6);
+    assert!(cached
+        .cases
+        .iter()
+        .all(|c| c.answer.is_none() && c.phase == "Succeeded"));
+}
+
+#[tokio::test]
+async fn history_preserves_answers_on_404_denial_and_agent_revision_change() {
+    let s = setup().await;
+    let started = s.start().await;
+    let send = id(&started);
+    s.finish(&send).await;
+    let before = s.api.wire.posts();
+    for (mode, availability) in [
+        ("agent-replaced", "missing"),
+        ("agent-generation", "missing"),
+        ("result-404", "missing"),
+        ("task-404", "missing"),
+        ("result-403", "unavailable"),
+        ("events-404", "missing"),
+    ] {
+        *s.api.wire.mode.lock().unwrap() = mode;
+        let view = s.owner.history_check(&send).await.unwrap();
+        assert_eq!(view.availability.as_deref(), Some(availability), "{mode}");
+        let report = view.report.unwrap();
+        assert_eq!(
+            report.cases[0].answer.as_deref(),
+            Some("expected answer"),
+            "{mode}"
+        );
+        assert_ne!(report.verdict, Verdict::Passed, "{mode}");
+        s.idle_forwards().await;
+    }
+    assert_eq!(s.api.wire.posts(), before);
+}
+
 #[path = "cluster_preflight.rs"]
 mod preflight;
 

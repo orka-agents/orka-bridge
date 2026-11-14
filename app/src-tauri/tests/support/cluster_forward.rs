@@ -17,6 +17,8 @@ pub(super) struct Wire {
     catalog: Mutex<Option<Vec<(u16, Value)>>>,
     active: AtomicUsize,
     forwards: AtomicUsize,
+    objects: Mutex<HashMap<String, Value>>,
+    after_post: Mutex<Option<Box<dyn FnOnce() + Send>>>,
 }
 impl Wire {
     pub(super) fn serve(&self, mut stream: std::net::TcpStream, headers: &str) {
@@ -64,7 +66,6 @@ impl Wire {
                 .unwrap();
         }
         let mut bytes = Vec::new();
-        let mut objects = HashMap::new();
         while let Ok(message) = ws.read() {
             let Message::Binary(data) = message else {
                 continue;
@@ -117,6 +118,7 @@ impl Wire {
                     return;
                 }
                 let route = path.split('?').next().unwrap();
+                let mut objects = self.objects.lock().unwrap();
                 let (mut status, mut value) = if method == "POST" {
                     let kind = if route.ends_with("agents") {
                         "Agent"
@@ -208,16 +210,46 @@ impl Wire {
                         .rsplit('/')
                         .next()
                         .unwrap();
-                    let agent = objects.values().find(|o| o["kind"] == "Agent").unwrap()
-                        ["metadata"]["name"]
+                    let agent = objects.get(route.trim_end_matches("/events")).unwrap()["spec"]
+                        ["agentRef"]["name"]
                         .clone();
                     (
                         200,
                         json!({"namespace":"agents","streamType":"task","streamID":task,"afterSeq":0,"latestSeq":1,"events":[{"namespace":"agents","streamType":"task","streamID":task,"seq":1,"type":"ToolCallCompleted","taskName":task,"agentName":agent,"toolName":"web_fetch","toolCallID":"call"}]}),
                     )
                 } else {
-                    (200, objects.get(route).unwrap().clone())
+                    objects
+                        .get(route)
+                        .map(|v| (200, v.clone()))
+                        .unwrap_or((404, json!({"error":"missing"})))
                 };
+                if method == "POST" {
+                    if let Some(hook) = self.after_post.lock().unwrap().take() {
+                        hook();
+                    }
+                }
+                if method == "GET" && route.ends_with("/result") && mode == "large-result" {
+                    value = json!({"result": format!("expected answer{}", "x".repeat(900_000))});
+                }
+                if method == "GET" && route.contains("/agents/") && mode == "agent-replaced" {
+                    value["metadata"]["uid"] = json!("replacement");
+                }
+                if method == "GET" && route.contains("/agents/") && mode == "agent-generation" {
+                    value["metadata"]["generation"] = json!(2);
+                }
+                if method == "GET" && route.ends_with("/events") && mode == "events-404" {
+                    status = 404;
+                    value = json!({"error":"missing"});
+                }
+                if method == "GET"
+                    && route.contains("/tasks/")
+                    && !route.ends_with("/result")
+                    && !route.ends_with("/events")
+                    && mode == "task-404"
+                {
+                    status = 404;
+                    value = json!({"error":"missing"});
+                }
                 if method == "GET"
                     && mode
                         .strip_prefix("get-")
