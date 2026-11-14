@@ -207,6 +207,41 @@ impl RunHandle {
     pub fn tasks(&self) -> &[ResourceId] {
         &self.tasks
     }
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn retain_evidence(&self, current: &mut RunReport, previous: RunReport) {
+        for old in previous.cases {
+            let Some(row) = current.cases.iter_mut().find(|row| row.id == old.id) else {
+                current.cases.push(old);
+                continue;
+            };
+            row.answer = row.answer.take().or(old.answer);
+            // Keep the maximum observed multiplicity of each completed tool.
+            let mut remaining = std::collections::HashMap::new();
+            for tool in &row.completed_tools {
+                *remaining.entry(tool.clone()).or_insert(0usize) += 1;
+            }
+            for tool in old.completed_tools {
+                let count = remaining.entry(tool.clone()).or_default();
+                if *count > 0 {
+                    *count -= 1;
+                } else {
+                    row.completed_tools.push(tool);
+                }
+            }
+            if let Some(case) = self.pair.cases().iter().find(|case| case.id == row.id) {
+                row.assertions = if row.phase == "Cancelled" {
+                    Vec::new()
+                } else {
+                    case.evaluate(row.answer.as_deref(), &row.completed_tools)
+                };
+                row.verdict = match row.phase.as_str() {
+                    "Cancelled" => Verdict::Cancelled,
+                    "Succeeded" => aggregate(row.assertions.iter().map(|a| a.verdict)),
+                    _ => Verdict::Failed,
+                };
+            }
+        }
+    }
 }
 impl fmt::Debug for RunHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -321,10 +356,27 @@ impl<'a> NativeRunner<'a> {
         &self,
         handle: &RunHandle,
         deadline: Instant,
-    ) -> Result<RunReport, ErrorKind> {
+    ) -> (RunReport, Result<(), ErrorKind>) {
         let (_sender, mut stop) = watch::channel(false);
-        self.observe_inner(handle, &mut stop, deadline, true, &mut |_| Ok(()))
-            .await
+        let mut cases = Vec::new();
+        let result = self
+            .observe_inner(handle, &mut stop, deadline, true, &mut |event| {
+                if let RunCheckpoint::Case(_, case) = event {
+                    cases.push(case);
+                }
+                Ok(())
+            })
+            .await;
+        match result {
+            Ok(report) => (report, Ok(())),
+            Err(kind) => (
+                RunReport {
+                    cases,
+                    verdict: Verdict::Unknown,
+                },
+                Err(kind),
+            ),
+        }
     }
     /// Map and validate every identical whole create body before the first POST.
     /// No I/O occurs here; a caller can record the planned Agent before mutation.

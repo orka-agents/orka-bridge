@@ -40,6 +40,12 @@ test('shared cancelled results remain readable without fabricating failed assert
   expect(isRunSnapshot({ ...base, cancellation: 'unconfirmed', report: { verdict: 'unknown', cases: [] } })).toBe(true);
   expect(isRunSnapshot({ ...base, report: { verdict: 'passed', cases: [] } })).toBe(false);
 });
+test('an active cancellation recheck can retain an empty unknown report', () => {
+  const recovering = { ...base, state: 'running', canRun: false, cancellation: 'cancelling', report: { verdict: 'unknown', cases: [] } };
+  expect(isRunSnapshot(recovering)).toBe(true);
+  expect(isRunSnapshot({ ...recovering, state: 'complete' })).toBe(false);
+  expect(isRunSnapshot({ ...recovering, cancellation: 'none' })).toBe(false);
+});
 test('missing or malformed evidence and impossible local stages fail closed', () => {
   for (const question of [undefined, null, 2, '', 'q'.repeat(1048577)]) {
     expect(isRunSnapshot({ ...base, report: { ...base.report, cases: [{ ...base.report.cases[0], question }] } })).toBe(false);

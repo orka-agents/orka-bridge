@@ -352,6 +352,14 @@ impl Write for Channel {
                         }
                     }
                     object
+                } else if self
+                    .cancel
+                    .as_ref()
+                    .is_some_and(|s| s.evidence_missing.load(Ordering::SeqCst))
+                    && (request.path.ends_with("/result") || request.path.ends_with("/events"))
+                {
+                    status = 404;
+                    Value::Null
                 } else if request.path.ends_with("/result") {
                     json!({"result":ANSWER})
                 } else if request.path.ends_with("/events") {
@@ -371,7 +379,13 @@ impl Write for Channel {
                     let mut object = self.objects[&request.path].clone();
                     if request.path.starts_with("tasks/") {
                         if let Some(s) = &self.cancel {
-                            if s.read_failed.load(Ordering::SeqCst) {
+                            if s.read_failed.load(Ordering::SeqCst)
+                                || s.bad_task
+                                    .lock()
+                                    .unwrap()
+                                    .as_ref()
+                                    .is_some_and(|name| request.path == format!("tasks/{name}"))
+                            {
                                 status = 404;
                             }
                             object["status"]["phase"] = json!(*s.phase.lock().unwrap());

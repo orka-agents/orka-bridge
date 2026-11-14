@@ -27,14 +27,14 @@ struct Proof {
     retry: bool,
     report: Option<RunReport>,
 }
-fn retain_answers(current: &mut Option<RunReport>, previous: Option<RunReport>) {
+fn retain_answers(
+    handle: &RunHandle,
+    current: &mut Option<RunReport>,
+    previous: Option<RunReport>,
+) {
     if let Some(previous) = previous {
         if let Some(current) = current {
-            for case in previous.cases {
-                if !current.cases.iter().any(|c| c.id == case.id) {
-                    current.cases.push(case);
-                }
-            }
+            handle.retain_evidence(current, previous);
         } else {
             *current = Some(previous);
         }
@@ -106,14 +106,11 @@ async fn prove(
         }
         // Save answers before waiting for a worker's grace period. A later
         // deadline or read failure must not erase already-read evidence.
-        match runner.observe_finished(&recovery.handle, deadline).await {
-            Ok(current) => {
-                let mut current = Some(current);
-                retain_answers(&mut current, report.take());
-                report = current;
-            }
-            Err(_) => failed = true,
-        }
+        let (current, result) = runner.observe_finished(&recovery.handle, deadline).await;
+        let mut current = Some(current);
+        retain_answers(&recovery.handle, &mut current, report.take());
+        report = current;
+        failed |= result.is_err();
         if failed || complete || Instant::now() >= deadline {
             return Proof {
                 confirmed: complete && !failed && Instant::now() < deadline,
@@ -150,6 +147,7 @@ impl ExampleRun {
         let confirmed = proof.confirmed;
         let mut report = proof.report;
         retain_answers(
+            &recovery.handle,
             &mut report,
             self.0.lock().unwrap().snapshots[&id].report.clone(),
         );

@@ -11,6 +11,8 @@ pub(super) struct Script {
     pub(super) replace_on_cancel: AtomicBool,
     pub(super) lose_create: AtomicBool,
     pub(super) read_failed: AtomicBool,
+    pub(super) bad_task: Mutex<Option<String>>,
+    pub(super) evidence_missing: AtomicBool,
     pub(super) deny_first: AtomicBool,
     pub(super) status: AtomicU16,
     pub(super) pods: AtomicU64,
@@ -30,6 +32,8 @@ impl Default for Script {
             replace_on_cancel: AtomicBool::new(false),
             lose_create: AtomicBool::new(false),
             read_failed: AtomicBool::new(false),
+            bad_task: Mutex::default(),
+            evidence_missing: AtomicBool::new(false),
             deny_first: AtomicBool::new(false),
             status: AtomicU16::new(200),
             pods: AtomicU64::new(0),
@@ -694,6 +698,68 @@ async fn failed_recovery_for_a_does_not_change_b_history_or_latest_observation()
         .is_some());
     vm.shutdown().await.unwrap();
     other_vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn initial_cancel_keeps_a_completed_case_when_a_later_task_read_fails() {
+    let script = Arc::new(Script::default());
+    let (vm, run, home) = cancel_fixture(script.clone(), true).await;
+    let pair = AgentFolder::new(Some(home.path().into())).open().unwrap();
+    let tests = std::path::Path::new(pair.path.as_ref().unwrap())
+        .with_file_name("web-reader.agent.test.md");
+    std::fs::write(tests, format!("{}\n```yaml agent-test\nid: unreadable\ninput: Another question\nassertions:\n - id: answer\n   type: contains\n   value: unused\n```\n", pair.tests)).unwrap();
+    run.start(vm.clone());
+    observing(&script).await;
+    let second = script.posts()[2].1.as_ref().unwrap()["name"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    *script.bad_task.lock().unwrap() = Some(second);
+    *script.phase.lock().unwrap() = "Succeeded".into();
+    run.cancel(vm.clone(), DocumentId::SAMPLE);
+    let done = finished(&run, &vm).await;
+    assert_eq!(
+        serde_json::to_value(&done).unwrap()["cancellation"],
+        "unconfirmed"
+    );
+    let report = done
+        .report
+        .expect("keep the completed first case despite a later read failure");
+    assert_eq!(report.verdict, Verdict::Unknown);
+    assert_eq!(report.cases.len(), 1);
+    assert_eq!(report.cases[0].answer.as_deref(), Some(ANSWER));
+    assert_eq!(report.cases[0].verdict, Verdict::Passed);
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn recheck_merges_missing_evidence_for_the_same_case_and_recomputes_assertions() {
+    let script = Arc::new(Script::default());
+    script.worker_bad.store(true, Ordering::SeqCst);
+    let (vm, run, _home) = cancel_fixture(script.clone(), true).await;
+    run.start(vm.clone());
+    observing(&script).await;
+    *script.phase.lock().unwrap() = "Succeeded".into();
+    run.cancel(vm.clone(), DocumentId::SAMPLE);
+    let first = finished(&run, &vm).await;
+    assert_eq!(first.report.unwrap().cases[0].verdict, Verdict::Passed);
+    script.worker_bad.store(false, Ordering::SeqCst);
+    script.evidence_missing.store(true, Ordering::SeqCst);
+    run.check_cancellation(vm.clone(), DocumentId::SAMPLE);
+    let done = finished(&run, &vm).await;
+    assert_eq!(
+        serde_json::to_value(&done).unwrap()["cancellation"],
+        "cancelled"
+    );
+    let report = done.report.unwrap();
+    assert_eq!(report.cases[0].answer.as_deref(), Some(ANSWER));
+    assert_eq!(report.cases[0].completed_tools, vec!["web_fetch"]);
+    assert_eq!(report.cases[0].verdict, Verdict::Passed);
+    assert!(report.cases[0]
+        .assertions
+        .iter()
+        .all(|a| a.verdict == Verdict::Passed));
+    vm.shutdown().await.unwrap();
 }
 
 #[tokio::test]
