@@ -334,14 +334,12 @@ mod tests {
                 }
             });
             eprintln!("native-session menu_quit: building menu window");
-            let window = tauri::WebviewWindowBuilder::new(
-                &app,
-                "menu-probe",
-                tauri::WebviewUrl::External("about:blank".parse().unwrap()),
-            )
-            .visible(false)
-            .build()
-            .unwrap();
+            // Quit is a native-menu contract; WebView2 startup is not part of it.
+            let window = tauri::WindowBuilder::new(&app, "menu-probe")
+                .visible(false)
+                .build()
+                .unwrap();
+            assert!(window.webviews().is_empty());
             eprintln!("native-session menu_quit: menu window built");
             super::super::install(app.handle(), shutdown, true).unwrap();
             tauri::async_runtime::block_on(async {
