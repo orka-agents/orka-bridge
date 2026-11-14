@@ -16,9 +16,9 @@ const errors = {
   modelReconnect: 'Bridge could not clean up the previous model connection. The local cluster may need a newer image. The saved sign-in was kept.',
   modelKeyInvalid: 'Paste the whole key.',
   modelAlreadyAssociated: 'Change or remove the current AI connection before adding a key.',
-  modelCredentialRejected: 'The company did not accept this key.',
-  modelProviderUnreachable: 'The local cluster could not reach the company.',
-  modelModelUnavailable: 'The default model is not listed for this key.',
+  modelCredentialRejected: 'GitHub Copilot did not accept the saved sign-in. Check your GitHub CLI sign-in.',
+  modelProviderUnreachable: 'The local cluster could not reach GitHub Copilot. Check your internet connection.',
+  modelModelUnavailable: 'The default model is not listed for this Copilot sign-in. Check your Copilot plan.',
   modelKeyCleanup: 'Key removal has not been confirmed. Retry removal before adding another key.',
 };
 export type KeyVendor = 'openai' | 'anthropic';

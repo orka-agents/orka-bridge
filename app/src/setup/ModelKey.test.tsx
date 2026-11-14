@@ -43,11 +43,12 @@ test('malformed replacement after Change keeps the field and Connect action avai
   await screen.findByLabelText('API key'); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect(field()).toBeTruthy(); expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
 });
-test('a Copilot credential error does not claim that its saved sign-in was removed', async () => {
-  invoke.mockRejectedValue({ kind: 'modelCredentialRejected' }); render(<Model enabled />);
+test.each(['modelCredentialRejected', 'modelProviderUnreachable', 'modelModelUnavailable'])('a Copilot %s error describes its retained sign-in, not an API key', async kind => {
+  invoke.mockRejectedValue({ kind }); render(<Model enabled />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' })); await screen.findByRole('alert');
   expect(screen.getByRole('button', { name: 'Remove sign-in' })).toBeTruthy();
   expect(screen.queryByText(/no longer has a saved/)).toBeNull();
+  expect(screen.getByRole('alert').textContent).not.toContain('this key');
 });
 test('empty or wrong-company key never crosses IPC; company changes clear the field', () => {
   render(<Model enabled />); keyChoice();
