@@ -331,13 +331,15 @@ try {
             if ($control -and !$control.Current.IsOffscreen -and $control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$value) -and !$value.Current.IsReadOnly) { $true }
         } | Out-Null
         $file = Wait-For 'Enabled File button missing' { $control = Find-Control $script:window 'File' $button; if ($control -and $control.Current.IsEnabled -and !$control.Current.IsOffscreen) { $control } }
-        # Activate the rendered tab by real pointer input, as for the editor below.
-        # The failed walk found this button but remained in Agent after generic Press.
-        $point = $file.GetClickablePoint()
-        $invoke = $null
-        $hasInvoke = $file.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$invoke)
-        Write-Host "File navigation: one pointer click at $($point.X),$($point.Y); UIA Invoke available=$hasInvoke"
-        Press ([Drawing.Point]::new([int]$point.X, [int]$point.Y))
+        # aria-pressed exposes Toggle rather than Invoke. Activate the exact
+        # control semantically; a coordinate fallback can miss during layout.
+        $toggle = $null
+        if (!$file.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$toggle)) {
+            $patterns = @($file.GetSupportedPatterns() | ForEach-Object { $_.ProgrammaticName }) -join ', '
+            throw "File button has no Toggle pattern; supported: $patterns"
+        }
+        Write-Host "File navigation: one Toggle action from $($toggle.Current.ToggleState)"
+        $toggle.Toggle()
         $editor = Wait-For 'Editable loaded File view missing' {
             $control = Find-Control $script:window 'Agent file' ([System.Windows.Automation.ControlType]::Edit)
             $value = $null
