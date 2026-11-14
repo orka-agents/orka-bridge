@@ -146,16 +146,32 @@ jobs:
         if: runner.os == 'Windows'
         run: |
           failed=0
+          baseline="$RUNNER_TEMP/reported-native-session"
+          mkdir -p "$baseline"
+          git fetch --depth 1 origin 2df7dba2a3c0e751271b25a15b9850221e320abe
+          git archive 2df7dba2a3c0e751271b25a15b9850221e320abe | tar -x -C "$baseline"
+          (
+            cd "$baseline/app"
+            npm ci
+            npm run build
+          )
           for trial in {1..10}; do
-            for mode in baseline native; do
-              echo "=== Native menu diagnostic: trial=$trial mode=$mode ==="
-              if BRIDGE_MENU_DIAGNOSTIC="$mode" cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --bin orka-bridge --features custom-protocol lifecycle::windows::tests::native_session_messages_in_subprocesses -- --exact --nocapture; then
-                echo "trial=$trial mode=$mode passed"
-              else
-                echo "trial=$trial mode=$mode failed"
-                failed=1
-              fi
-            done
+            echo "=== Reported failing source: trial=$trial ==="
+            if cargo +1.98.1 test --manifest-path "$baseline/app/src-tauri/Cargo.toml" --target-dir "$PWD/src-tauri/target" --locked --bin orka-bridge --features custom-protocol lifecycle::windows::tests::native_session_messages_in_subprocesses -- --exact --nocapture; then
+              echo "reported-source trial=$trial passed"
+            else
+              echo "reported-source trial=$trial failed"
+              failed=1
+            fi
+          done
+          for trial in {1..10}; do
+            echo "=== Native-only source: trial=$trial ==="
+            if BRIDGE_MENU_DIAGNOSTIC=native cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --bin orka-bridge --features custom-protocol lifecycle::windows::tests::native_session_messages_in_subprocesses -- --exact --nocapture; then
+              echo "native-only trial=$trial passed"
+            else
+              echo "native-only trial=$trial failed"
+              failed=1
+            fi
           done
           exit "$failed"
       - name: Rust checks
