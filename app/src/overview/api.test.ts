@@ -46,6 +46,17 @@ test('cancelled local summaries do not make the entire Overview unavailable', ()
   expect(isLiveAgents({ ...complete, observation })).toBe(true);
   expect(isLiveAgents({ ...complete, observation: { ...observation, report: { verdict: 'invented' } } })).toBe(false);
 });
+test('a scoped cluster read sends only its remembered key', async () => {
+  vi.stubGlobal('isTauri', true);
+  const value = { places: [], historyState: 'complete', unobserved: [] };
+  mockIPC((command, args) => { expect(command).toBe('overview_places'); expect(args).toEqual({ key: 'remembered-key' }); return value; });
+  expect(await readPlaces('remembered-key')).toEqual(value);
+});
+test('last connection check time does not imply a known agent inventory', () => {
+  const row = { key: 'key', context: 'team', service: 'control/orka', namespace: 'agents', stale: true, checkedAt: 123, observedAt: null, agents: [] };
+  expect(isPlaces({ places: [row], historyState: 'complete', unobserved: [] })).toBe(true);
+  expect(isPlaces({ places: [{ ...row, checkedAt: -1 }], historyState: 'complete', unobserved: [] })).toBe(false);
+});
 test('native rejection and browser preview never expose diagnostics', async () => {
   vi.stubGlobal('isTauri', true); mockIPC(() => { throw Error('/private/path with credential'); });
   expect(JSON.stringify(await readFiles())).not.toMatch(/private|credential/);
