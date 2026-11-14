@@ -303,6 +303,45 @@ async fn history_retains_cached_text_without_verifying_a_null_result() {
 }
 
 #[tokio::test]
+async fn history_tool_only_checks_use_fresh_events_when_result_is_missing() {
+    let s = setup().await;
+    std::fs::write(
+        s.agent_path().with_file_name("web-reader.agent.test.md"),
+        TESTS.replace(
+            "  - id: answer\n    type: contains\n    value: expected answer\n",
+            "",
+        ),
+    )
+    .unwrap();
+    let started = s.start().await;
+    let send = id(&started);
+    assert_eq!(s.finish(&send).await["report"]["verdict"], "passed");
+    let posts = s.api.wire.posts();
+    *s.api.wire.mode.lock().unwrap() = "result-404";
+    let report = s.owner.history_check(&send).await.unwrap().report.unwrap();
+    assert_eq!(report.cases[0].completed_tools, ["web_fetch"]);
+    assert_eq!(report.cases[0].verdict, Verdict::Passed);
+    assert_eq!(
+        report.verdict,
+        Verdict::Passed,
+        "tool-only checks do not require answer text"
+    );
+    *s.api.wire.mode.lock().unwrap() = "events-404";
+    assert_eq!(
+        s.owner
+            .history_check(&send)
+            .await
+            .unwrap()
+            .report
+            .unwrap()
+            .verdict,
+        Verdict::Unknown,
+        "cached tool names cannot become fresh proof"
+    );
+    assert_eq!(s.api.wire.posts(), posts);
+}
+
+#[tokio::test]
 async fn history_keeps_a_fresh_assertion_failure_when_optional_events_are_missing() {
     let s = setup().await;
     *s.api.wire.mode.lock().unwrap() = "wrong-result";

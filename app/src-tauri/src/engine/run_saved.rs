@@ -119,12 +119,13 @@ impl NativeRunner<'_> {
                 if !matches!(phase,"Succeeded"|"Failed"|"Cancelled") { return Err(ErrorKind::Response); }
                 task.terminal=true;
                 let old=report.cases.iter().find(|r| r.id==case.id);
+                let needs_answer=case.assertions().iter().any(|a|matches!(a,Assertion::Contains{..}));
                 let answer=match self.http.request(&format!("{path}/result"),None,None,deadline).await {
                     Ok(result)=>result["result"].as_str().map(str::to_owned),
-                    Err(error)=> { availability=if error==ErrorKind::NotFound {"missing"}else{"unavailable"}; None }
+                    Err(error)=> { if error!=ErrorKind::NotFound || needs_answer { availability=if error==ErrorKind::NotFound {"missing"}else{"unavailable"}; } None }
                 };
                 let captured=answer.is_some();
-                if !captured && availability=="available" && case.assertions().iter().any(|a|matches!(a,Assertion::Contains{..})) { availability="missing"; }
+                if !captured && availability=="available" && needs_answer { availability="missing"; }
                 let answer=answer.or_else(|| old.and_then(|r| r.answer.clone()));
                 let tools=match self.tools(&task.name,&task.namespace,&agent.name,deadline,&mut stop).await {
                     Ok(tools)=>tools,

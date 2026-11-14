@@ -364,7 +364,7 @@ impl SummaryStore {
             let _ = root.remove_file(sidecar(&id).map_err(|_| invalid())?);
         }
         root.remove_file(PENDING)?;
-        Ok(())
+        sync(&root)
     }
 }
 
