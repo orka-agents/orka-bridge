@@ -134,18 +134,13 @@ function Capture([string]$Name, [bool]$Menu = $false) {
 }
 function Start-Bridge {
     if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared; refusing to resume a VM' }
+    $script:window = $null
+    $script:desktop = $null
     $script:startupLog = Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log"
     $script:app = Start-Process $Executable -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError $script:startupLog
     # Process.MainWindowHandle can select Tao's hidden event target. Identify
     # the real app frame by its configured title and this launch's process ID.
-    $script:hwnd = Wait-For 'Main native page did not finish loading' {
-        # A visible frame does not mean WebView2 or native setup has finished.
-        # Let both complete before accessibility queries enter the app's STA.
-        if (!(Test-Path $script:startupLog)) { return }
-        $stream = [IO.File]::Open($script:startupLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-        $reader = [IO.StreamReader]::new($stream)
-        try { $startup = $reader.ReadToEnd() } finally { $reader.Dispose() }
-        if (!$startup.Contains('bridge-startup: ready') -or !$startup.Contains('bridge-startup: page Finished')) { return }
+    $script:hwnd = Wait-For 'Main native window did not appear' {
         $h = [IntPtr]::Zero
         # $null becomes an empty C# string; NullString passes a native null class.
         while (($h = [NativeWalk]::FindWindowEx([IntPtr]::Zero, $h, [NullString]::Value, 'Bridge')) -ne [IntPtr]::Zero) {
@@ -154,9 +149,22 @@ function Start-Bridge {
             if ($owner -eq $script:app.Id -and [NativeWalk]::IsWindowVisible($h)) { return $h }
         }
     }
-    $script:desktop = [System.Windows.Automation.AutomationElement]::RootElement
-    $script:window = [System.Windows.Automation.AutomationElement]::FromHandle($script:hwnd)
-    [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
+}
+function Find-ReadyClusters {
+    if (!$script:window) {
+        # Keep the original frame and control waits separate. Native setup proves
+        # controller construction finished; the Clusters control, not page-load
+        # completion, proves the frontend is ready for this walk.
+        if (!(Test-Path $script:startupLog)) { return }
+        $stream = [IO.File]::Open($script:startupLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        $reader = [IO.StreamReader]::new($stream)
+        try { $startup = $reader.ReadToEnd() } finally { $reader.Dispose() }
+        if (!$startup.Contains('bridge-startup: ready')) { return }
+        $script:desktop = [System.Windows.Automation.AutomationElement]::RootElement
+        $script:window = [System.Windows.Automation.AutomationElement]::FromHandle($script:hwnd)
+        [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
+    }
+    Find-Control $script:window 'Clusters' $button
 }
 function Find-TrayPoint($Root, [string]$Label) {
     $all = @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
@@ -246,7 +254,7 @@ try {
         Broadcast-Theme
         Start-Bridge
         $script:originalPid = $script:app.Id
-        Press (Wait-For 'Clusters button missing' { Find-Control $script:window 'Clusters' $button })
+        Press (Wait-For 'Clusters button missing' { Find-ReadyClusters })
         # The dark walk reuses the light walk's profile, so the welcome may already be dismissed.
         Wait-For 'Welcome or Places did not appear' { (Find-Control $script:window 'Get started' $button) -or (Find-Action $script:window 'Set up') } | Out-Null
         $start = Find-Control $script:window 'Get started' $button
