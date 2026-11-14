@@ -250,16 +250,21 @@ func fillMessage(_ text: String) {
         let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
         event.flags = .maskCommand; event.post(tap: .cghidEventTap)
     }
-    for character in text.utf16 {
-        var unit = character
+    // Deliver text in short Unicode payloads, not an unpaced pair of events
+    // per character that can flood the native event queue on a busy runner.
+    let characters = Array(text.utf16)
+    for start in stride(from: 0, to: characters.count, by: 16) {
+        let units = Array(characters[start..<min(start + 16, characters.count)])
         for down in [true, false] {
             let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
-            event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+            units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress!) }
             event.flags = []; event.post(tap: .cghidEventTap)
         }
     }
     Thread.sleep(forTimeInterval: 0.2)
-    require(attribute(field, "AXValue") as? String == text, "Native keystrokes did not fill Chat Message")
+    let actual = attribute(field, "AXValue") as? String
+    if actual != text { _ = try? capture("chat-input-failed", []) }
+    require(actual == text, "Native keystrokes did not fill Chat Message: expected \(text.debugDescription), got \(String(describing: actual))")
 }
 // Match the fixture's known Instructions value, not a label plus a guessed
 // offset which can land outside the editor after responsive reflow.
