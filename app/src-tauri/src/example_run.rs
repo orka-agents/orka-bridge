@@ -809,7 +809,11 @@ impl RunTransport for VmRunTransport<'_> {
                     body: body.cloned(),
                 })
                 .map_err(|_| ErrorKind::Transport)?;
-            if Instant::now() >= deadline {
+            // A successful in-flight create is authority, even after its budget:
+            // retain its UID before Stop/error handling; later requests stay fenced.
+            let created =
+                body.is_some() && matches!(path, "agents" | "tasks") && reply.status == 201;
+            if Instant::now() >= deadline && !created {
                 return Err(ErrorKind::Deadline);
             }
             if path.ends_with("/cancel") {

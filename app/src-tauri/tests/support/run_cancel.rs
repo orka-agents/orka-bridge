@@ -920,6 +920,50 @@ async fn cancellation_during_evidence_grace_keeps_the_already_read_answer() {
 }
 
 #[tokio::test]
+async fn late_create_ack_keeps_its_uid_and_is_cancelled_after_the_submission_deadline() {
+    let script = Arc::new(Script::default());
+    let (vm, run, _home) = cancel_fixture(script.clone(), true).await;
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let release_rx = Mutex::new(release_rx);
+    *script.hook.lock().unwrap() = Some(Box::new(move || {
+        entered_tx.send(()).unwrap();
+        release_rx.lock().unwrap().recv().unwrap();
+    }));
+    run.start(vm.clone());
+    tokio::task::spawn_blocking(move || entered_rx.recv().unwrap())
+        .await
+        .unwrap();
+    run.cancel(vm.clone(), DocumentId::SAMPLE);
+    tokio::time::pause();
+    tokio::time::advance(
+        bridge_engine::engine::run::RunLimits::default().operation_timeout
+            + std::time::Duration::from_secs(1),
+    )
+    .await;
+    tokio::time::resume();
+    release_tx.send(()).unwrap();
+    let done = finished(&run, &vm).await;
+    assert_eq!(
+        serde_json::to_value(&done).unwrap()["cancellation"],
+        "cancelled"
+    );
+    assert_eq!(done.acknowledged.len(), 2);
+    assert!(done.pending.is_none());
+    let posts = script.posts();
+    assert_eq!(
+        posts.len(),
+        3,
+        "keep two create receipts and issue one UID-fenced cancel"
+    );
+    assert_eq!(
+        posts[2].1.as_ref().unwrap()["uid"],
+        done.acknowledged[1].uid
+    );
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn malformed_worker_reply_never_confirms_cancellation() {
     let script = Arc::new(Script::default());
     script.worker_bad.store(true, Ordering::SeqCst);
