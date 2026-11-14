@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { type AccessView, type ClusterFailure, type ContextView, connectCluster, contexts, discover, failedCheck, reloadContexts, type SelectedPlace, type TargetView } from './api';
+import { type AccessView, type ClusterFailure, type ContextView, connectCluster, contexts, discover, failedCheck, reloadContexts, reconnectCluster, forgetCluster, clusterPlaces, type SelectedPlace, type TargetView } from './api';
 import { clusterDetails, clusterRecovery } from './recovery';
 import { StatusIcon } from '../components/DesignSystem';
+import { readPlaces, type Place } from '../overview/api';
 import './clusters.css';
 
-type Failure = { failure: ClusterFailure; operation: 'Read kubeconfig' | 'Reload kubeconfig' | 'Discover Orka' | 'Use cluster' };
-type Entry = { revision: number; current?: SelectedPlace; intent?: string };
-export default function ClusterCard({ active = true, entry, selection, onPlace, onOpenAgent }: { active?: boolean; entry?: Entry; selection?: SelectedPlace; onPlace: (place: SelectedPlace) => void; onOpenAgent: () => void }) {
+type Failure = { failure: ClusterFailure; operation: 'Read kubeconfig' | 'Reload kubeconfig' | 'Discover Orka' | 'Use cluster' | 'Reconnect cluster' };
+type Entry = { revision: number; current?: SelectedPlace; remembered?: Place };
+export default function ClusterCard({ active = true, entry, selection, onPlace, onOpenAgent, onDone, onRemoved }: { active?: boolean; entry?: Entry; selection?: SelectedPlace; onPlace: (place: SelectedPlace) => void; onOpenAgent: () => void; onDone?: () => void; onRemoved?: (key: string, targetId: string | undefined, navigate: boolean) => void }) {
   const [choices, setChoices] = useState<ContextView[]>([]);
   const [contextId, setContextId] = useState('');
   const [targets, setTargets] = useState<TargetView[]>();
@@ -21,6 +22,16 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   const [notice, setNotice] = useState('');
   const [details, setDetails] = useState(false);
   const [changingContext, setChangingContext] = useState(false);
+  const [retained, setRetained] = useState<Place>();
+  const [summary, setSummary] = useState<Place | null>();
+  const [persistence, setPersistence] = useState<'complete' | 'unavailable'>();
+  const [confirmRemoval, setConfirmRemoval] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState(false);
+  const removalActive = useRef(false);
+  const keepCluster = useRef<HTMLButtonElement>(null);
+  const removeButton = useRef<HTMLButtonElement>(null);
+  const focusRemoval = useRef(false);
   const epoch = useRef(0); const admitted = useRef(false); const reloadActive = useRef(false);
   const reloadInterrupted = useRef(false); const initialLoaded = useRef(false); const wasActive = useRef(active);
   const providerName = useRef('');
@@ -38,7 +49,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   }, []);
   useEffect(() => {
     if (!entry) return;
-    // Entry intent is presentation only. Only Manage receives App's still-current capability.
+    // Remembered identity is not a capability. Only Manage receives App's still-current access.
     // Reload clears the choices; a new entry must replace an interrupted reload's fenced reply.
     if (reloadActive.current || reloadInterrupted.current) initialLoaded.current = false;
     epoch.current++; admitted.current = false; reloadActive.current = false; reloadInterrupted.current = false;
@@ -50,9 +61,11 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     // A Manage visit may retain the name already entered for this exact target handle.
     if (!target || target.id !== targetId) { setAccount(''); setNeedsAccount(false); }
     setError(undefined); setDetails(false); setNotice(''); setChangingContext(false);
+    setRetained(entry.remembered); setSummary(undefined); setPersistence(undefined); setConfirmRemoval(false); setRemoveError(false);
     setReloading(false);
+    if (entry.remembered && !target) void reconnect(entry.remembered.key);
     // An entry reset also fences a pending local kubeconfig read; restart just that read.
-    if (!initialLoaded.current) readContexts(); else setBusy(false);
+    else if (!target && !initialLoaded.current) readContexts(); else setBusy(false);
   }, [entry]);
   useEffect(() => {
     if (!active) return;
@@ -75,7 +88,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     // failure, or one already loaded) is left alone, and late replies to the interrupted
     // request stay discarded by the epoch check above.
     if (!was && reloadInterrupted.current) { reloadInterrupted.current = false; void reload(); }
-    else if (!was && !initialLoaded.current) readContexts();
+    else if (!was && !initialLoaded.current && (!entry?.remembered || changingContext)) readContexts();
   }, [active]);
   useEffect(() => {
     // Opening a local document elsewhere also revokes this subview's confirmation.
@@ -83,10 +96,55 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   }, [selection]);
   const target = targets?.find(t => t.id === targetId);
   const recovery = error && clusterRecovery(error.failure);
+  const connected = access?.status === 'connected';
+  useEffect(() => {
+    if (!active || !connected || removing) return;
+    const request = epoch.current;
+    let live = true;
+    setSummary(undefined);
+    void Promise.all([clusterPlaces(), readPlaces()]).then(([snapshot, inventory]) => {
+      if (!live || request !== epoch.current) return;
+      setPersistence(snapshot?.persistenceState ?? 'unavailable');
+      const key = snapshot?.selectedKey;
+      setRetained(previous => snapshot?.places.find(p => p.key === key) ?? previous);
+      setSummary(inventory?.places.find(p => p.key === key) ?? null);
+    });
+    return () => { live = false; };
+  }, [active, connected, access, entry, removing]);
+  useEffect(() => {
+    if (!active) return;
+    if (confirmRemoval) keepCluster.current?.focus();
+    else if (focusRemoval.current) { removeButton.current?.focus(); focusRemoval.current = false; }
+  }, [confirmRemoval, active]);
+  async function reconnect(key: string) {
+    const request = ++epoch.current; setBusy(true); setError(undefined);
+    // Native reconnect retires the prior session before resolving fresh handles.
+    onPlace({ kind: 'cluster' });
+    try {
+      const value = await reconnectCluster(key);
+      if (request !== epoch.current) return;
+      setContextId(value.context_id); setTargets([value]); setTargetId(value.id);
+    } catch (error) { if (request === epoch.current) setError({ failure: failedCheck(error, 'configuration'), operation: 'Reconnect cluster' }); }
+    finally { if (request === epoch.current) setBusy(false); }
+  }
+  async function remove() {
+    if (!active || !retained || removalActive.current) return;
+    const { key } = retained; const removedTarget = target?.id;
+    removalActive.current = true; const request = ++epoch.current; admitted.current = false;
+    setRemoving(true); setBusy(true); setRemoveError(false);
+    try {
+      await forgetCluster(key);
+      // Removal revokes access even when navigation hid this card while native cleanup ran.
+      const current = request === epoch.current;
+      if (current) { ++epoch.current; setAccess(undefined); setTargets(undefined); setRetained(undefined); setBusy(false); }
+      onRemoved?.(key, removedTarget, current);
+    } catch { if (request === epoch.current) setRemoveError(true); }
+    finally { removalActive.current = false; setRemoving(false); if (request === epoch.current) setBusy(false); }
+  }
   async function reload() {
     if (!active || reloadActive.current) return;
     reloadActive.current = true; initialLoaded.current = false; admitted.current = false; const request = ++epoch.current;
-    setReloading(true); setBusy(true); setChoices([]); setContextId(''); setTargets(undefined); setTargetId('');
+    setChangingContext(true); setReloading(true); setBusy(true); setChoices([]); setContextId(''); setTargets(undefined); setTargetId('');
     setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
     onPlace({ kind: 'cluster' });
     try { const value = await reloadContexts(); if (request === epoch.current) { setChoices(value); initialLoaded.current = true; } }
@@ -102,6 +160,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     if (!active) return;
     const request = ++epoch.current;
     setContextId(id); setTargets(undefined); setTargetId(''); setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
+    setRetained(undefined); setSummary(undefined);
     onPlace({ kind: 'cluster' });
     if (!id) { setBusy(false); return; }
     setBusy(true);
@@ -137,33 +196,46 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     } catch (error) { if (request === epoch.current) setError({ failure: failedCheck(error, 'orkaConnection'), operation: 'Use cluster' }); }
     finally { if (request === epoch.current) { admitted.current = false; setBusy(false); } }
   }
-  const connected = access?.status === 'connected';
   return <section className="cluster-card" aria-label="Connect an existing cluster" aria-busy={busy} hidden={!active}>
-    {!connected || changingContext ? <>
-      {entry?.intent && !contextId && <p className="cluster-intent">Connect {entry.intent}: choose its context to check it again.</p>}
+    {((!connected && !entry?.remembered) || changingContext) ? <>
       <label htmlFor="cluster-context">kubectl context</label>
       <select id="cluster-context" value={contextId} disabled={busy} onChange={event => { setChangingContext(false); void check(event.target.value); }}>
         <option value="">Choose a context</option>{choices.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
       </select>
       <p className="muted">Choose the context for the cluster you want to use.</p>
-    </> : <button type="button" className="workspace-link" onClick={() => setChangingContext(value => !value)}>Change context</button>}
-    {!busy && !error && !choices.length && !connected && <p>No kubectl contexts were found. Add your existing context to kubeconfig, then press Reload kubeconfig.</p>}
-    {busy && <p role="status">{reloading ? 'Reload pending. Waiting for any current cluster check, then reading kubeconfig…' : !choices.length ? 'Reading kubectl contexts…' : targets ? 'Confirming access…' : 'Checking the cluster…'}</p>}
+    </> : <button type="button" className="workspace-link" disabled={removing} onClick={() => { setChangingContext(true); if (!initialLoaded.current) readContexts(); }}>Change context</button>}
+    {!busy && !error && !choices.length && !connected && (!entry?.remembered || changingContext) && <p>No kubectl contexts were found. Add your existing context to kubeconfig, then press Reload kubeconfig.</p>}
+    {busy && <p role="status">{removing ? 'Removing cluster…' : entry?.remembered && !changingContext && !targets ? 'Checking the remembered cluster…' : reloading ? 'Reload pending. Waiting for any current cluster check, then reading kubeconfig…' : !choices.length ? 'Reading kubectl contexts…' : targets ? 'Confirming access…' : 'Checking the cluster…'}</p>}
     {!busy && targets?.length === 0 && <p role="status">No cluster with Orka was found using this context.</p>}
     {!connected && targets && targets.length > 1 && <><label htmlFor="cluster-installation">Orka installation</label>
       <select id="cluster-installation" disabled={busy} value={targetId} onChange={e => { setTargetId(e.target.value); setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setNotice(''); onPlace({ kind: 'cluster' }); }}>
         <option value="">Choose an installation</option>{targets.map(t => <option key={t.id} value={t.id}>{t.service_namespace} / {t.service_name} · {t.watched_namespace}</option>)}
       </select></>}
+    {error && recovery && <div className="workspace-failure" role="alert"><div className="workspace-failure-explanation">
+      <p className="failure-summary">{recovery.cause}</p><p>{recovery.next}</p>
+      <p>Your local cluster and agent files are kept. Connection checks do not create an Agent or run checks.</p>
+      <div className="workspace-step-actions">
+        {(error.operation === 'Discover Orka' || error.operation === 'Reconnect cluster') && <button type="button" className="workspace-primary" disabled={busy} onClick={() => { if (error.operation === 'Reconnect cluster' && retained) void reconnect(retained.key); else void check(contextId); }}>Check again</button>}
+        <button type="button" className="workspace-secondary" onClick={() => { void copy(); }}>Copy details for help</button>
+      </div>
+    </div></div>}
     {target && <>
       {connected ? <>
         <div className="cluster-result"><h2><code>{target.context_name}</code></h2><p><code>{target.watched_namespace}</code> · <code>{target.service_namespace} / {target.service_name}</code></p></div>
         <ul className="cluster-checks"><li><StatusIcon state="passed" /><b>Cluster found</b></li><li><StatusIcon state="passed" /><b role="status">Access confirmed</b></li></ul>
         <h3>AI connection</h3><label className="sr-only" htmlFor="send-provider">AI connection</label>
-        <select ref={providerField} id="send-provider" value={providerId} onChange={event => { const next = event.target.value; setProviderId(next); providerName.current = access.providers.find(p => p.id === next)?.name ?? ''; onPlace({ kind: 'cluster', target, providers: access.providers, providerId: next }); }}>
+        <select ref={providerField} id="send-provider" disabled={removing} value={providerId} onChange={event => { const next = event.target.value; setProviderId(next); providerName.current = access.providers.find(p => p.id === next)?.name ?? ''; onPlace({ kind: 'cluster', target, providers: access.providers, providerId: next }); }}>
           <option value="">Choose an AI connection</option>{access.providers.map(p => <option key={p.id} value={p.id}>{p.name} · {p.ready ? 'Ready' : 'Not ready'}</option>)}
         </select><p className="muted">Send checks whether this AI connection supports your agent's model.</p>
-        <button type="button" className="workspace-primary" disabled={!providerId} title={!providerId ? 'Choose an AI connection first' : undefined} onClick={onOpenAgent}>Open your agent</button>
-        <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void confirm(); }}>Check access again</button>
+        <p className="muted">{(summary?.observedAt ?? retained?.observedAt) != null ? `Last checked ${new Date((summary?.observedAt ?? retained?.observedAt)!).toLocaleString()}` : 'Last check unavailable'}</p>
+        <h3>Agents on this cluster</h3>
+        {summary === undefined ? <p role="status">Reading agents…</p> : !summary || summary.stale ? <p>Agents could not be checked. Check access again to retry.</p> : summary.agents.length ? <ul>{summary.agents.map(agent => <li key={agent.uid}><code>{agent.name}</code>{agent.model && <> · <code>{agent.model}</code></>}</li>)}</ul> : <p>No agents on this cluster yet.</p>}
+        {persistence === 'unavailable' && <p role="status">Remembered cluster information is unavailable. This connection is usable, but may not be remembered after Bridge closes.</p>}
+        <div className="workspace-step-actions">
+          {onDone && <button type="button" className="workspace-primary" disabled={removing} onClick={onDone}>Done</button>}
+          <button type="button" className="workspace-secondary" disabled={!providerId || removing} title={!providerId ? 'Choose an AI connection first' : undefined} onClick={onOpenAgent}>Open your agent</button>
+          <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void confirm(); }}>Check access again</button>
+        </div>
       </> : <>
         <div className="cluster-found"><b>Cluster found</b><span><code>{target.watched_namespace}</code> · <code>{target.service_namespace} / {target.service_name}</code></span></div>
         {!error && <p className="muted">Check that you can access this cluster.</p>}
@@ -176,16 +248,16 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
       {details && <dl id="cluster-details" className="cluster-details"><div><dt>Context</dt><dd>{target.context_name}</dd></div><div><dt>Service</dt><dd>{target.service_namespace} / {target.service_name}</dd></div><div><dt>Watched namespace</dt><dd>{target.watched_namespace}</dd></div><div><dt>Orka image</dt><dd>{target.image}</dd></div>
         {access?.providers.map(p => <div key={p.id}><dt>Provider</dt><dd>{p.name} <span className="muted">{p.ready ? 'Ready' : 'Not ready'}</span></dd></div>)}</dl>}
     </>}
-    {error && recovery && <div className="workspace-failure" role="alert"><div className="workspace-failure-explanation">
-      <p className="failure-summary">{recovery.cause}</p><p>{recovery.next}</p>
-      <p>Your local cluster and agent files are kept. Connection checks do not create an Agent or run checks.</p>
-      <div className="workspace-step-actions">
-        {error.operation === 'Discover Orka' && <button type="button" className="workspace-primary" disabled={busy} onClick={() => { void check(contextId); }}>Check again</button>}
-        <button type="button" className="workspace-secondary" onClick={() => { void copy(); }}>Copy details for help</button>
-      </div>
-    </div></div>}
-    <button type="button" className="workspace-secondary" disabled={reloading} onClick={() => { void reload(); }}>{reloading ? 'Reloading kubeconfig…' : 'Reload kubeconfig'}</button>
+    <button type="button" className="workspace-secondary" disabled={reloading || removing} onClick={() => { void reload(); }}>{reloading ? 'Reloading kubeconfig…' : 'Reload kubeconfig'}</button>
     <p className="muted">After reloading kubeconfig, choose a context and check access again.</p>
+    {retained && (confirmRemoval ? <div role="group" aria-label="Remove cluster confirmation">
+      <p>Remove <code>{retained.context}</code>? This only forgets the cluster in Bridge. Its agents and your kubeconfig are kept.</p>
+      {removeError && <p role="alert">Couldn't remove this cluster from Bridge. Try again. Its agents and your kubeconfig are kept.</p>}
+      <div className="workspace-step-actions">
+        <button type="button" className="workspace-secondary cluster-remove" disabled={removing} onClick={() => { void remove(); }}>Remove cluster</button>
+        <button ref={keepCluster} type="button" className="workspace-secondary" disabled={removing} onClick={() => { focusRemoval.current = true; setConfirmRemoval(false); setRemoveError(false); }}>Keep cluster</button>
+      </div>
+    </div> : <button ref={removeButton} type="button" className="workspace-link cluster-remove" onClick={() => setConfirmRemoval(true)}>Remove</button>)}
     {notice && <p role="status">{notice}</p>}
   </section>;
 }

@@ -1,4 +1,6 @@
-//! Session-only inventories of explicitly confirmed places. No credentials in replies.
+//! Explicitly confirmed places. Only display/identity metadata survives a restart.
+mod metadata;
+use metadata::{Identity, Remembered, Store};
 #[cfg(test)]
 #[path = "places_tests.rs"]
 mod tests;
@@ -35,30 +37,26 @@ pub struct Place {
     pub observed_at: Option<u64>,
     pub agents: Vec<RemoteAgent>,
     #[serde(skip)]
-    pub(crate) binding: TargetBinding,
+    identity: Identity,
 }
 impl Place {
     pub(crate) fn new(binding: TargetBinding) -> Self {
-        // Opaque selection IDs and mutable image settings are not place identity.
-        let key = serde_json::to_string(&(
-            &binding.context_name,
-            &binding.service_namespace,
-            &binding.service_uid,
-            &binding.deployment_namespace,
-            &binding.deployment_uid,
-            &binding.watched_namespace,
-        ))
-        .unwrap();
+        Self::from_identity(Identity::from(&binding), None)
+    }
+    fn from_identity(identity: Identity, observed_at: Option<u64>) -> Self {
         Self {
-            key,
-            context: binding.context_name.clone(),
-            service: format!("{}/{}", binding.service_namespace, binding.service_name),
-            namespace: binding.watched_namespace.clone(),
+            key: identity.key(),
+            context: identity.context_name.clone(),
+            service: format!("{}/{}", identity.service_namespace, identity.service_name),
+            namespace: identity.watched_namespace.clone(),
             stale: true,
-            observed_at: None,
+            observed_at,
             agents: Vec::new(),
-            binding,
+            identity,
         }
+    }
+    pub(crate) fn matches(&self, binding: &TargetBinding) -> bool {
+        self.identity == Identity::from(binding)
     }
 }
 #[derive(Serialize)]
@@ -97,37 +95,119 @@ struct Entry {
     generation: u64,
 }
 #[derive(Default)]
+struct State {
+    entries: BTreeMap<String, Entry>,
+    // Never reset on removal: a late read must not match a remove/re-add generation.
+    generation: u64,
+    store: Store,
+}
+impl State {
+    fn next_generation(&mut self) -> u64 {
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .expect("inventory generation exhausted");
+        self.generation
+    }
+    fn save(&mut self, excluding: Option<&str>) -> Result<(), &'static str> {
+        let places: Vec<_> = self
+            .entries
+            .iter()
+            .filter(|(key, _)| excluding != Some(key.as_str()))
+            .map(|(_, e)| Remembered {
+                identity: e.view.identity.clone(),
+                observed_at: e.view.observed_at.unwrap(),
+            })
+            .collect();
+        // Keep the lock across replacement so older snapshots cannot win a write race.
+        self.store.save(&places)
+    }
+}
+#[derive(Default)]
 pub(crate) struct Inventory {
-    entries: Mutex<BTreeMap<String, Entry>>,
+    state: Mutex<State>,
     refreshing: tokio::sync::Mutex<()>,
 }
 impl Inventory {
+    pub(crate) fn with_storage(root: Option<std::path::PathBuf>) -> Self {
+        let (store, places) = Store::load(root);
+        let mut state = State {
+            store,
+            ..State::default()
+        };
+        for saved in places {
+            let view = Place::from_identity(saved.identity, Some(saved.observed_at));
+            let generation = state.next_generation();
+            state.entries.insert(
+                view.key.clone(),
+                Entry {
+                    view,
+                    generation,
+                    access: None,
+                },
+            );
+        }
+        Self {
+            state: Mutex::new(state),
+            refreshing: tokio::sync::Mutex::new(()),
+        }
+    }
+    pub(crate) fn persistence_state(&self) -> &'static str {
+        self.state.lock().unwrap().store.state()
+    }
+    pub(crate) fn get(&self, key: &str) -> Option<Place> {
+        self.state
+            .lock()
+            .unwrap()
+            .entries
+            .get(key)
+            .map(|e| e.view.clone())
+    }
+    pub(crate) fn forget(&self, key: &str) -> Result<(), &'static str> {
+        let mut state = self.state.lock().unwrap();
+        if !state.entries.contains_key(key) {
+            return Err("Cluster unavailable");
+        }
+        state.save(Some(key))?;
+        state.entries.remove(key);
+        Ok(())
+    }
     pub(crate) fn remember(&self, access: Arc<RemoteAccess>) {
-        let view = Place::new(access.binding().clone());
-        let mut entries = self.entries.lock().unwrap();
-        let entry = entries.entry(view.key.clone()).or_insert(Entry {
-            view,
-            access: None,
-            generation: 0,
-        });
-        entry.generation += 1;
-        entry.view.stale = true;
-        entry.access = Some(access);
+        let mut view = Place::new(access.binding().clone());
+        view.observed_at = Some(crate::overview::now());
+        let mut state = self.state.lock().unwrap();
+        let generation = state.next_generation();
+        if let Some(prior) = state.entries.get(&view.key) {
+            view.agents = prior.view.agents.clone();
+        }
+        state.entries.insert(
+            view.key.clone(),
+            Entry {
+                view,
+                access: Some(access),
+                generation,
+            },
+        );
+        // Live access is still usable if remembering fails; the snapshot reports unavailable.
+        let _ = state.save(None);
     }
     pub(crate) fn invalidate(&self, binding: Option<&TargetBinding>) {
         let key = binding.map(|b| Place::new(b.clone()).key);
-        for (id, entry) in self.entries.lock().unwrap().iter_mut() {
+        let mut state = self.state.lock().unwrap();
+        let generation = state.next_generation();
+        for (id, entry) in state.entries.iter_mut() {
             if key.as_ref().is_none_or(|key| key == id) {
-                entry.generation += 1;
+                entry.generation = generation;
                 entry.access = None;
                 entry.view.stale = true;
             }
         }
     }
     pub(crate) fn snapshot(&self) -> Vec<Place> {
-        self.entries
+        self.state
             .lock()
             .unwrap()
+            .entries
             .values()
             .map(|e| e.view.clone())
             .collect()
@@ -139,9 +219,10 @@ impl Inventory {
             return self.snapshot();
         };
         let reads: Vec<_> = self
-            .entries
+            .state
             .lock()
             .unwrap()
+            .entries
             .iter_mut()
             .filter_map(|(key, e)| {
                 e.view.stale = true;
@@ -150,13 +231,15 @@ impl Inventory {
             .collect();
         for (key, generation, access) in reads {
             let result = access.inventory().await;
-            if let Some(entry) = self.entries.lock().unwrap().get_mut(&key) {
+            let mut state = self.state.lock().unwrap();
+            if let Some(entry) = state.entries.get_mut(&key) {
                 // Reload/re-Use while a read was in flight revokes that response.
                 if entry.generation == generation {
                     if let Ok(agents) = result {
                         entry.view.agents = agents;
                         entry.view.observed_at = Some(crate::overview::now());
                         entry.view.stale = false;
+                        let _ = state.save(None);
                     }
                 }
             }
@@ -174,7 +257,7 @@ pub(crate) fn project(mut places: Vec<Place>, history: Option<Vec<AttemptSummary
     };
     let mut matched = HashSet::new();
     for place in &mut places {
-        let b = &place.binding;
+        let b = &place.identity;
         for agent in &mut place.agents {
             // History is newest first. A name is never an association key.
             if let Some(record) = history.iter().find(|r| {

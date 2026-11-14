@@ -289,6 +289,20 @@ async fn cluster_discover(
     state.discover(&context_id).await
 }
 #[tauri::command]
+async fn cluster_reconnect(
+    key: String,
+    state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+) -> Result<bridge_engine::clusters::TargetView, bridge_engine::clusters::ClusterFailure> {
+    state.reconnect(&key).await
+}
+#[tauri::command]
+async fn cluster_forget(
+    key: String,
+    state: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+) -> Result<(), &'static str> {
+    state.forget(&key).await
+}
+#[tauri::command]
 async fn cluster_use(
     target_id: String,
     sa_name: Option<String>,
@@ -380,7 +394,9 @@ fn main() {
             app.manage(ChatOwner::new(
                 tauri::async_runtime::handle().inner().clone(),
             ));
-            let session = bridge_engine::clusters::commands::ClusterSession::default();
+            let session = bridge_engine::clusters::commands::ClusterSession::with_storage(
+                app.path().app_local_data_dir().ok(),
+            );
             app.manage(session.clone());
             let agents = Agents::new(app.path().home_dir().ok(), app.path().app_data_dir().ok());
             let folder = agents.sample();
@@ -441,6 +457,8 @@ fn main() {
             agent_reveal,
             workspace_catalog,
             cluster_places,
+            cluster_reconnect,
+            cluster_forget,
             cluster_contexts,
             cluster_reload,
             cluster_discover,
