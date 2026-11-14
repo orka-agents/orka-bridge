@@ -51,7 +51,8 @@ test.each(['Run the test again', 'Open your test result'])('%s selects this comp
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
 });
 
-test('the finished local page owns the quiet Stop action and keeps files available to restart', async () => {
+test('the restored local page owns Stop and stays restartable even without an old welcome preference', async () => {
+  localStorage.removeItem('bridge.welcomeSeen.v1');
   const ipc = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   const stop = await screen.findByRole('button', { name: 'Stop the local cluster' });

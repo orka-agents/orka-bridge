@@ -141,7 +141,7 @@ export default function Setup({ onOpenExample, onOpenAgent, onStatus, onModelSta
     // Observation must not invalidate an explicit selection awaiting its reply.
     const firstStart = action === 'start' && status.selected !== 'localVm';
     if (firstStart) armFirstTest();
-    if (action === 'change') retireFirstTest();
+    if (action === 'change') { retireFirstTest(); start(); }
     clearTimeout(timer.current);
     ++epoch.current;
     mutation.current = true;
