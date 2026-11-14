@@ -61,6 +61,14 @@ test('an uncertain Send reply retains acknowledgement and cannot replay before s
   expect(field().value).toBe(''); expect(screen.getByText('Hello back')).toBeTruthy(); expect(sends()).toHaveLength(1);
   expect(screen.queryByRole('alert')).toBeNull();
 });
+test('terminal unavailable history releases uncertain admission for New conversation without losing the draft', async () => {
+  send = () => Promise.reject('unknown transport error'); await open(); enter(); await act(async () => {});
+  snapshot = { ...idle, state: 'contextUnavailable', canSend: false, error: 'response' }; await poll();
+  expect(field().value).toBe('Hello');
+  expect(screen.getByRole('button', { name: 'New conversation' }).hasAttribute('disabled')).toBe(false);
+  expect(screen.getByRole('alert').textContent).toContain('New conversation');
+  expect(screen.getByRole('alert').textContent).not.toContain('Reconnect');
+});
 test('automatic acknowledgement clears only the uncertain Send warning', async () => {
   send = () => Promise.reject('unknown transport error'); await open(); enter(); await act(async () => {});
   expect(screen.getByRole('alert')).toBeTruthy();

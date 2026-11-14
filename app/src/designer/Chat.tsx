@@ -30,7 +30,7 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
       if (value.busy) submitted.uncertain = false;
       // A lost IPC reply is not a rejection. An idle snapshot alone may precede
       // admission; retain acknowledgement until a turn or its busy→idle is seen.
-      if (!value.busy && !submitted.uncertain && ['ready', 'contextUnavailable'].includes(value.state)) {
+      if (!value.busy && (value.state === 'contextUnavailable' || !submitted.uncertain && value.state === 'ready')) {
         pending.current = undefined; setAwaitingTurn(false);
       }
     }
@@ -86,7 +86,9 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
     : snapshot ? states[snapshot.state] : 'Opening your conversation…';
   const canStop = snapshot && snapshot.state !== 'ready' && snapshot.state !== 'contextUnavailable';
   const canReset = snapshot && !snapshot.busy && !awaitingTurn && ['ready', 'contextUnavailable'].includes(snapshot.state);
-  const snapshotError = snapshot?.state === 'ready' && snapshot.error === 'connection'
+  const snapshotError = snapshot?.state === 'contextUnavailable' && snapshot.error
+    ? 'Use New conversation to continue without unconfirmed history.'
+    : snapshot?.state === 'ready' && snapshot.error === 'connection'
     ? 'The local cluster could not be reached. Check Clusters, then try sending again.'
     : snapshot?.error ? chatErrors[snapshot.error] : undefined;
   return <section className="chat-panel card" aria-label="Chat on local cluster">
