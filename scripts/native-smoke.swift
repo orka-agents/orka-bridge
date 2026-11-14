@@ -127,7 +127,9 @@ func mouse(_ type: CGEventType, _ point: CGPoint) {
     CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)?.post(tap: .cghidEventTap)
 }
 func clickText(_ label: String, in observations: [VNRecognizedTextObservation]) {
-    guard let target = observations.first(where: { $0.topCandidates(1).first?.string == label }) else {
+    // Vision can include the SVG chevron in a disclosure label.
+    let pattern = #"^\W*"# + NSRegularExpression.escapedPattern(for: label) + #"$"#
+    guard let target = observations.first(where: { $0.topCandidates(1).first?.string.range(of: pattern, options: .regularExpression) != nil }) else {
         // Preserve the label's actual pointer action when small dark text is
         // unreadable to Vision; require one exact, fully visible native label.
         let labels = nativeElements().filter {

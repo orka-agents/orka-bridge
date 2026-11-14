@@ -103,6 +103,17 @@ test('a place with no successful observation never contributes an invented zero 
   expect(screen.queryByText(/0 cluster Agents/)).toBeNull();
 });
 
+test('earlier Sends to the same target keep their verdict distinguishable before unfolding', async () => {
+  ipc({ places: [], historyState: 'complete', unobserved: [
+    { ...record, agentUid: null, verdict: 'unknown' },
+    { ...record, id: '22345678-1234-1234-1234-123456789abc', agentUid: null, verdict: 'failed' },
+  ] });
+  render(<Overview {...props} />);
+  const attempts = await screen.findByRole('region', { name: 'Earlier Sends' });
+  expect(within(attempts).getByRole('button', { name: 'team-one · agents Checks unknown' }).getAttribute('aria-expanded')).toBe('false');
+  expect(within(attempts).getByRole('button', { name: 'team-one · agents Checks failed' }).getAttribute('aria-expanded')).toBe('false');
+});
+
 test('unknown without UID is an attempt, not a counted Agent or association; history failure is visible', async () => {
   ipc({ places: [], historyState: 'complete', unobserved: [{ ...record, agentUid: null, verdict: 'unknown' }] });
   render(<Overview {...props} />);
@@ -110,7 +121,7 @@ test('unknown without UID is an attempt, not a counted Agent or association; his
   expect(within(attempts).getByText('Saved Send attempts. Current cluster status is unknown.')).toBeTruthy();
   expect(within(attempts).queryByText(/not found in the latest check/)).toBeNull();
   expect(within(attempts).getByText('Agent creation not confirmed')).toBeTruthy();
-  expect(within(attempts).getByText('Checks unknown')).toBeTruthy();
+  expect(within(attempts).getByText('Checks unknown', { selector: 'p' })).toBeTruthy();
   expect(within(attempts).queryByRole('button', { name: /Open/ })).toBeNull();
   ipc({ places: [second], historyState: 'unavailable', unobserved: [] });
   await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));

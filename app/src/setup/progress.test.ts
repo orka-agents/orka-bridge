@@ -26,7 +26,7 @@ test('status icons follow active work and uncertain evidence without changing se
   expect(setupView(undefined, { checking: true }).status).toBe('running');
   expect(setupView(undefined).status).toBe('needs-you');
   for (const check of ['stale', 'unknown'] as const) {
-    expect(setupView(status('ready'), { model: 'connected', check })).toMatchObject({ status: 'stale', done: true, step: 5, action: 'Manage' });
+    expect(setupView(status('ready'), { model: 'connected', check })).toMatchObject({ status: 'stale', tone: 'stale', done: true, step: 5, action: 'Manage' });
   }
   expect(setupView(status('ready'), { model: 'connected' })).toMatchObject({ status: 'passed', line: 'Local cluster ready', done: true, action: 'Manage' });
 });
@@ -127,8 +127,8 @@ test('tone: running work is busy blue, waiting for the creator is needs-you, rea
   // Waiting on the creator is amber, not ready; waiting on the machine is neutral.
   expect(tone({ model: 'idle' })).toBe('needs-you');
   expect(tone({ model: 'connected' })).toBe('ready');
-  expect(tone({ model: 'connected', check: 'stale' })).toBe('needs-you');
-  expect(tone({ model: 'connected', check: 'unknown' })).toBe('wait');
+  expect(tone({ model: 'connected', check: 'stale' })).toBe('stale');
+  expect(tone({ model: 'connected', check: 'unknown' })).toBe('stale');
   expect(tone({ model: 'queued' })).toBe('wait');
   expect(tone({ model: 'idle' }, status('ready', { model: 'locked' }))).toBe('wait');
   expect(tone({}, status('cancelled'))).toBe('wait');
