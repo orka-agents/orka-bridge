@@ -7,20 +7,20 @@ const errors = {
   modelCaptureInvalid: 'The stored GitHub sign-in returned invalid credential data.',
   modelCaptureTimedOut: 'Reading the stored GitHub sign-in timed out.',
   modelStore: 'Bridge could not save or load your sign-in.',
-  modelGuest: 'Your workspace is not ready to connect the AI.',
-  modelDelivery: 'Bridge could not confirm that your workspace received the sign-in.',
+  modelGuest: 'The local cluster is not ready to connect the AI.',
+  modelDelivery: 'Bridge could not confirm that the local cluster received the sign-in.',
   modelConnect: 'Bridge could not confirm the AI connection. Check again to reconnect.',
-  modelBusy: 'Another operation is using your workspace. Wait for it to finish.',
-  modelSession: 'Your workspace is not available to connect the AI.',
-  modelUnavailable: 'The stored model connection is unavailable or its completion is unknown.',
-  modelReconnect: 'Bridge could not clean up the previous model connection. This workspace may need a newer image. The saved sign-in was kept.',
+  modelBusy: 'Another operation is using the local cluster. Wait for it to finish.',
+  modelSession: 'The local cluster is not available to connect the AI.',
+  modelUnavailable: 'The AI connection is unavailable or could not be confirmed.',
+  modelReconnect: 'Bridge could not clean up the previous model connection. The local cluster may need a newer image. The saved sign-in was kept.',
 };
 export type ModelFailure = { message: string; category: keyof typeof errors | 'unknown'; codes: number[] };
 export type ModelResult = { ok: true } | ({ ok: false } & ModelFailure);
-export const connectModel = () => call('setup_connect_model', true, 'The model connection could not be completed.');
+export const connectModel = () => call('setup_connect_model', true, 'The AI connection could not be completed.');
 export const removeModel = () => call('setup_remove_model', false, 'Bridge could not confirm sign-in removal. Try Remove sign-in again.');
 async function call(command: string, ready: boolean, fallback: string): Promise<ModelResult> {
-  if (!isTauri()) return { ok: false, category: 'unknown', codes: [], message: 'Native model setup is not available in this preview.' };
+  if (!isTauri()) return { ok: false, category: 'unknown', codes: [], message: 'AI setup is not available in this preview.' };
   try {
     const value = await invoke<unknown>(command);
     if (typeof value === 'object' && value !== null && !Array.isArray(value)

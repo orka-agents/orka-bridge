@@ -62,14 +62,14 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
   const listed = models?.some(model => model.id === form.model);
   const knownModel = catalog?.models.state === 'ready' && catalog.models.items.some(model => model.id === form.model);
   const unlistedLabel = models ? knownModel ? ' (not offered for chat)' : ' (unlisted)' : '';
-  const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit tools in File view for this file’s format.'
-    : setupPending ? 'Tools will be available when your workspace is ready.' : catalogLoading ? 'Loading tools…' : tools === undefined ? 'Tools unavailable. Connect the AI in Clusters or edit File view.' : undefined;
+  const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit this agent’s tools in File view.'
+    : setupPending ? 'Tools will be available when the local cluster is ready.' : catalogLoading ? 'Loading tools…' : tools === undefined ? 'Tools unavailable. Connect the AI in Clusters or edit File view.' : undefined;
   useEffect(() => {
     if (toolReason) { setPicker(false); setQuery(''); return; }
     if (picker) { popover.current?.showPopover?.(); popover.current?.querySelector('input')?.focus(); }
   }, [picker, toolReason]);
   const modelReason = readOnly ? 'You can change the model after setup.' : !form.modelEditable ? 'Edit the model in File view for this file’s format.'
-    : setupPending ? 'Models will be available when your workspace is ready.' : catalogLoading ? 'Loading models…' : models === undefined ? 'Models unavailable. Connect the AI in Clusters or edit File view.' : undefined;
+    : setupPending ? 'Models will be available when the local cluster is ready.' : catalogLoading ? 'Loading models…' : models === undefined ? 'Models unavailable. Connect the AI in Clusters or edit File view.' : undefined;
   const labelFor = (name: string) => Object.hasOwn(builtInTools, name) ? builtInTools[name] : name;
   const editSoul = async (value: string) => {
     if (readOnly || !form.soulEditable) return;
@@ -98,7 +98,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
           const observation = tools?.find(item => item.kind === tool.kind && item.name === name);
           return <span className="tool-pill chip" key={tool.index} title={observation?.description}>
             <span>{label}</span>{label !== name && <code>{name}</code>}
-            {tool.kind === 'tool' && <span className="muted">(Workspace tool{builtins.has(name) ? ', built-in takes precedence' : ''})</span>}
+            {tool.kind === 'tool' && <span className="muted">(Cluster tool{builtins.has(name) ? ', built-in takes precedence' : ''})</span>}
             {!readOnly && form.toolsEditable && ['builtin', 'tool'].includes(tool.kind ?? '') && <button type="button" className="tool-remove" aria-label={`Remove ${label}`} onClick={() => { change(removeTool(source, tool.index)); focusAdd(); }}>×</button>}
           </span>;
         })}
@@ -111,13 +111,13 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
         <label htmlFor={`${id}-search`}>Find a tool</label>
         <input id={`${id}-search`} type="search" autoFocus value={query} onChange={event => setQuery(event.target.value)} />
         <p className="muted">Choose a tool to add to your agent.</p>
-        <ul aria-label="Workspace tools">{choices?.map(tool => <li key={`${tool.kind}:${tool.name}`}><button type="button" onClick={() => { change(addTool(source, tool.name, tool.kind)); close(); }}>
+        <ul aria-label="Cluster tools">{choices?.map(tool => <li key={`${tool.kind}:${tool.name}`}><button type="button" onClick={() => { change(addTool(source, tool.name, tool.kind)); close(); }}>
           <span>{tool.kind === 'builtin' ? labelFor(tool.name) : tool.name}</span><code>{tool.name}</code>
-          <span className="muted">{tool.kind === 'builtin' ? 'Built-in' : 'Workspace tool'}</span>
+          <span className="muted">{tool.kind === 'builtin' ? 'Built-in' : 'Cluster tool'}</span>
           <span className="tool-description">{toolDescription(tool)}</span>
           {tool.available === false && <span className="muted">Observed unavailable</span>}
         </button></li>)}</ul>
-        {!choices?.length && <p className="muted">{tools?.length ? 'No matching tools to add.' : 'No tools listed by this workspace.'}</p>}
+        {!choices?.length && <p className="muted">{tools?.length ? 'No matching tools to add.' : 'No tools listed by the local cluster.'}</p>}
       </div>}
     </section>
     <div className="agent-part">
@@ -127,7 +127,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
           {!listed && <option value={form.model ?? ''}>{form.model ? `${form.model}${unlistedLabel}` : 'No model in this file'}</option>}
           {models?.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}
         </select>
-        <span className="muted">{catalogLoading ? 'The model saved in your file is shown while choices load.' : modelReason ?? (models?.length ? `Workspace default: ${catalog?.defaultModel}` : 'No models listed by this workspace.')}</span>
+        <span className="muted">{catalogLoading ? 'The model saved in your file is shown while choices load.' : modelReason ?? (models?.length ? `Default model: ${catalog?.defaultModel}` : 'No models listed by the local cluster.')}</span>
       </div>
       {!listed && models && form.model && <p className="muted">{knownModel ? 'This model is not offered for chat by the connected AI. Choose another model to use it here.' : 'This model is saved in your file but is not listed by the connected AI. It may not run here. Choose a listed model or check your AI connection.'}</p>}
     </div>

@@ -2,7 +2,7 @@
 .tab-bar { display: flex; align-items: center; flex: none; gap: var(--space-1); padding: var(--space-2) var(--space-3); background: var(--color-chrome); border-bottom: 1px solid var(--color-border-strong); }
 .brand { display: flex; align-items: center; gap: var(--space-2); padding-inline: var(--space-2); font: var(--type-card); }
 .brand img { object-fit: contain; filter: var(--mark-filter); }
-.page-nav { display: flex; gap: var(--space-1); min-width: 0; }
+.page-nav { display: flex; flex: 1; gap: var(--space-1); min-width: 0; }
 .page-tab { flex: 1 1 0; display: flex; align-items: center; gap: var(--space-2); width: 180px; min-width: 0; min-height: 40px; padding: var(--space-1) var(--space-2); border: 0; border-radius: var(--radius-control); background: transparent; text-align: left; }
 .page-tab:hover, .page-tab[aria-current="page"] { background: var(--color-page); }
 .page-tab[aria-current="page"] { box-shadow: inset 0 -2px 0 var(--color-action); }
@@ -15,8 +15,8 @@
 .page-tab[aria-current="page"] b { font-weight: 600; }
 .tab-copy small { display: block; color: var(--color-text-secondary); font: var(--type-small); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab-copy small:has(.tab-agent-name) { display: flex; }
-.tab-agent-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; white-space: pre; }
-.tab-status-word { color: var(--status); flex-shrink: 0; }
+.tab-agent-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 40%; white-space: pre; }
+.tab-status-word { color: var(--status); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Small green text lacks contrast on the darker inactive light chrome. */
 .page-tab:not([aria-current]) .tab-status-word.status-passed { color: var(--color-text-secondary); }
 .chrome-tools { display: flex; align-items: center; margin-left: auto; min-width: 0; }

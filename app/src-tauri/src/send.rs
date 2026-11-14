@@ -211,7 +211,11 @@ impl SendOwner {
         };
         let pair = tokio::task::spawn_blocking(move || capture(&folder)).await;
         let Ok(Ok(pair)) = pair else {
-            check.rows.push(CheckRow::new("Source", Blocked, "Bridge cannot read a supported agent and companion tests. Check the files in Designer."));
+            check.rows.push(CheckRow::new(
+                "Source",
+                Blocked,
+                "Bridge cannot read a supported agent file and test file. Check them in Designer.",
+            ));
             return check.finish();
         };
         check.source = Some(pair.snapshot().clone());
@@ -219,7 +223,7 @@ impl SendOwner {
         check.rows.push(CheckRow::new(
             "Source",
             Allowed,
-            "The current agent and companion tests were captured.",
+            "The current agent file and test file were read.",
         ));
         let rows = async {
             let (access, reader) = self.session.send_access(&target);
@@ -234,9 +238,9 @@ impl SendOwner {
                 .filter(|p| access.providers().iter().any(|v| v.id == *p))
                 .ok_or_else(|| {
                     CheckRow::new(
-                        "Provider",
+                        "AI connection",
                         Blocked,
-                        "Select a configured Provider in Clusters.",
+                        "Select an AI connection in Clusters.",
                     )
                 })?;
             let kubeconfig = tokio::task::spawn_blocking(move || reader())
@@ -255,13 +259,13 @@ impl SendOwner {
                 CheckRow::new(
                     "Installation",
                     CannotCheck,
-                    "Bridge cannot check the selected installation. Reconnect in Clusters.",
+                    "Bridge cannot check the selected cluster. Reconnect in Clusters.",
                 )
             })?;
             let mut rows = vec![CheckRow::new(
                 "Installation",
                 Allowed,
-                "The selected installation and required resources were checked.",
+                "The selected cluster and required resources were checked.",
             )];
             rows.extend(access.check(&transport, provider, &pair).await);
             transport.close().await;

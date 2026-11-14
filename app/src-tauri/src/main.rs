@@ -301,18 +301,30 @@ async fn send_stop(
 }
 
 fn main() {
+    // Distinguish a native WebView startup stall from a frontend/navigation failure in debug walks.
+    #[cfg(debug_assertions)]
+    eprintln!("bridge-startup: main");
     let shutdown = Arc::new(TerminalShutdown::default());
     tauri::Builder::default()
+        .on_page_load(|_, load| {
+            if cfg!(debug_assertions) {
+                eprintln!("bridge-startup: page {:?}", load.event());
+            }
+        })
         .manage(shutdown.clone())
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             lifecycle::show(app)
         }))
         .setup(move |app| {
+            #[cfg(debug_assertions)]
+            eprintln!("bridge-startup: setup");
             let store = Arc::new(SetupStore::new(app.path().app_data_dir().ok()));
             let vm = local_vm::configured(
                 app.path().resource_dir().ok(),
                 app.path().app_local_data_dir().ok(),
             );
+            #[cfg(debug_assertions)]
+            eprintln!("bridge-startup: local VM configured");
             app.manage(if vm.status() == LocalVmStatus::NotIntegrated {
                 EngineState::configured()
             } else {
@@ -335,11 +347,15 @@ fn main() {
                 bridge_engine::local_vm::MODEL_IMAGE_AVAILABLE,
                 folder,
             ));
+            #[cfg(debug_assertions)]
+            eprintln!("bridge-startup: installing lifecycle");
             lifecycle::install(
                 app.handle(),
                 shutdown.clone(),
                 vm.status() != LocalVmStatus::NotIntegrated,
             )?;
+            #[cfg(debug_assertions)]
+            eprintln!("bridge-startup: ready");
             tauri::async_runtime::spawn(async move {
                 if local_vm::resume_selected(store, &vm).await.is_err() {
                     eprintln!("The saved setup choice could not be read.");

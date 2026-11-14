@@ -19,6 +19,16 @@ test('failed tests lead and open next to their frozen question, with a plain rea
   expect(rows[0].querySelector('details')?.open).toBe(false);
   expect(resultLabel(report)).toBe('1 of 2 passed');
 });
+test('long expected values stay in Details rather than overwhelming the failure reason', async () => {
+  const expected = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const { container } = render(<TestResults report={{ verdict: 'failed', cases: [{ ...failed, assertions: [{ ...failed.assertions[0], expected }] }] }} stale={false} />);
+  expect(container.querySelector('.test-reason')?.textContent).toBe('The answer did not include the expected value. Open Details to see it.');
+  const details = container.querySelector<HTMLDetailsElement>('.test-answer details')!;
+  expect(details.open).toBe(false);
+  await userEvent.click(details.querySelector('summary')!);
+  expect(details.open).toBe(true);
+  expect(details.textContent).toContain(expected);
+});
 test('passed rows reveal the same question and answer on click', async () => {
   const { container } = render(<TestResults report={{ verdict: 'passed', cases: [passed] }} stale={false} />);
   const row = container.querySelector<HTMLDetailsElement>('.test-result')!;
