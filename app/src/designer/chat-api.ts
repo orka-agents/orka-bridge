@@ -26,7 +26,7 @@ export function isChatSnapshot(value: unknown): value is ChatSnapshot {
       && ['contextRetained', 'terminationUnconfirmed', 'stopUnconfirmed'].every(key => typeof turn[key] === 'boolean')
       && Array.isArray(turn.tools) && turn.tools.every(tool => object(tool) && typeof tool.name === 'string' && typeof tool.callId === 'string' && typeof tool.phase === 'string')));
 }
-export async function chatCall(command: ChatCommand, documentId: string, message?: string): Promise<{ ok: true; snapshot: ChatSnapshot } | { ok: false; message: string }> {
+export async function chatCall(command: ChatCommand, documentId: string, message?: string): Promise<{ ok: true; snapshot: ChatSnapshot } | { ok: false; message: string; uncertain?: true }> {
   if (!isTauri()) return { ok: false, message: 'Chat is available only in the native app.' };
   try {
     const value = await invoke<unknown>(command, { documentId, ...(command === 'agent_chat_send' ? { message } : {}) });
@@ -34,5 +34,5 @@ export async function chatCall(command: ChatCommand, documentId: string, message
   } catch (error) {
     if (typeof error === 'string' && Object.hasOwn(chatErrors, error)) return { ok: false, message: chatErrors[error as keyof typeof chatErrors] };
   }
-  return { ok: false, message: 'Chat information is not supported by this build. Reconnect to check again.' };
+  return { ok: false, uncertain: true, message: 'Chat information could not be confirmed. Reconnect to check again without resending.' };
 }

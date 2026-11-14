@@ -13,10 +13,10 @@ const states: Record<ChatSnapshot['state'], string> = {
 export default function Chat({ documentId, blocked }: { documentId: string; blocked?: string }) {
   const [snapshot, setSnapshot] = useState<ChatSnapshot>();
   const [draft, setDraft] = useState(''); const draftRef = useRef('');
-  const [error, setError] = useState<string>(); const [readError, setReadError] = useState<string>();
+  const [error, setError] = useState<{ message: string; uncertainSend?: boolean }>(); const [readError, setReadError] = useState<string>();
   const [command, setCommand] = useState<ChatCommand>();
   const mutation = useRef(false); const epoch = useRef(0); const alive = useRef(true);
-  const pending = useRef<{ message: string; count: number } | undefined>(undefined);
+  const pending = useRef<{ message: string; count: number; uncertain?: boolean } | undefined>(undefined);
   const [awaitingTurn, setAwaitingTurn] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null); const composing = useRef(false);
   const transcript = useRef<HTMLElement>(null); const follow = useRef(true);
@@ -26,10 +26,15 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
     if (submitted && turns.slice(submitted.count).some(turn => turn.message === submitted.message)) {
       if (draftRef.current === submitted.message) { draftRef.current = ''; setDraft(''); }
       pending.current = undefined; setAwaitingTurn(false);
-    } else if (submitted && !value.busy) {
-      // Admission succeeded but saved-source/model preflight did not add a turn.
-      pending.current = undefined; setAwaitingTurn(false);
+    } else if (submitted) {
+      if (value.busy) submitted.uncertain = false;
+      // A lost IPC reply is not a rejection. An idle snapshot alone may precede
+      // admission; retain acknowledgement until a turn or its busy→idle is seen.
+      if (!value.busy && !submitted.uncertain && ['ready', 'contextUnavailable'].includes(value.state)) {
+        pending.current = undefined; setAwaitingTurn(false);
+      }
     }
+    if (submitted && !pending.current) setError(current => current?.uncertainSend ? undefined : current);
     setSnapshot(value);
   };
   const receiveRef = useRef(receive); receiveRef.current = receive;
@@ -60,23 +65,32 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
       pending.current = { message: draftRef.current, count: snapshot.versions.reduce((n, version) => n + version.turns.length, 0) };
       setAwaitingTurn(true);
     }
-    const result = await chatCall(action, documentId, pending.current?.message);
+    const operation = action === 'agent_chat_reconnect' && pending.current?.uncertain ? 'agent_chat_status' : action;
+    const result = await chatCall(operation, documentId, pending.current?.message);
     if (!alive.current || request !== epoch.current) return;
     if (result.ok) receiveRef.current(result.snapshot);
     else {
-      if (action === 'agent_chat_send') { pending.current = undefined; setAwaitingTurn(false); }
-      setError(result.message);
+      if (action === 'agent_chat_send') {
+        if (result.uncertain && pending.current) pending.current.uncertain = true;
+        else { pending.current = undefined; setAwaitingTurn(false); }
+      }
+      setError({ message: result.message, uncertainSend: action === 'agent_chat_send' && result.uncertain });
     }
     mutation.current = false; setCommand(undefined); composer.current?.focus();
   };
   const reason = blocked ?? (command ? 'Wait for this action to finish.' : awaitingTurn ? 'Wait for this message to be accepted.' : !snapshot ? 'Opening your conversation…' : !snapshot.canSend ? 'Wait for the current conversation or test to finish.' : undefined);
   const latestTurn = snapshot?.versions.at(-1)?.turns.at(-1);
-  const status = command === 'agent_chat_stop' ? states.requestingStop
+  const status = pending.current?.uncertain ? 'Checking whether your message was accepted. Do not resend it.'
+    : command === 'agent_chat_stop' ? states.requestingStop
     : snapshot?.state === 'working' && latestTurn && ['', 'Pending', 'Queued'].includes(latestTurn.phase) ? 'Waiting to start…'
     : snapshot ? states[snapshot.state] : 'Opening your conversation…';
   const canStop = snapshot && snapshot.state !== 'ready' && snapshot.state !== 'contextUnavailable';
+  const canReset = snapshot && !snapshot.busy && !awaitingTurn && ['ready', 'contextUnavailable'].includes(snapshot.state);
+  const snapshotError = snapshot?.state === 'ready' && snapshot.error === 'connection'
+    ? 'The local cluster could not be reached. Check Clusters, then try sending again.'
+    : snapshot?.error ? chatErrors[snapshot.error] : undefined;
   return <section className="chat-panel card" aria-label="Chat on local cluster">
-    <div className="chat-heading"><h2>Chat on local cluster</h2><button type="button" className="part-button" disabled={!snapshot || !!command || snapshot.busy} title={snapshot?.busy ? 'Wait for the current turn to finish or reconnect after requesting Stop.' : undefined} onClick={() => { void act('agent_chat_new'); }}>New conversation</button></div>
+    <div className="chat-heading"><h2>Chat on local cluster</h2><button type="button" className="part-button" disabled={!canReset || !!command} title={!canReset ? 'Wait for the current turn to finish or reconnect to check it.' : undefined} onClick={() => { void act('agent_chat_new'); }}>New conversation</button></div>
     <p className="muted">Talk to your saved agent. Chat does not run tests or change their results.</p>
     <section ref={transcript} className="chat-transcript" aria-label="Conversation" tabIndex={0} onScroll={event => {
       const area = event.currentTarget; follow.current = area.scrollHeight - area.clientHeight - area.scrollTop < 48;
@@ -95,7 +109,7 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
       </section>)}
     </section>
     <p role="status" aria-live="polite" aria-atomic="true">{status}</p>
-    {(error || readError || snapshot?.error) && <p role="alert">{error ?? readError ?? (snapshot?.error ? chatErrors[snapshot.error] : '')}</p>}
+    {(error || readError || snapshotError) && <p role="alert">{error?.message ?? readError ?? snapshotError}</p>}
     <form className="chat-composer" onSubmit={event => { event.preventDefault(); void act('agent_chat_send'); }}>
       <label htmlFor={`message-${documentId}`}>Message</label>
       <textarea ref={composer} id={`message-${documentId}`} rows={3} value={draft} aria-describedby={`chat-hint-${documentId}`}
@@ -110,7 +124,7 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
       <div className="chat-actions">
         <button type="submit" className="part-button chat-primary" disabled={!!reason || !draft.trim()} title={reason ?? (!draft.trim() ? 'Write a message first.' : undefined)}>Send message</button>
         {canStop && <button type="button" className="part-button" disabled={!!command || snapshot.state === 'requestingStop'} onClick={() => { void act('agent_chat_stop'); }}>Stop</button>}
-        {snapshot && snapshot.state !== 'contextUnavailable' && !snapshot.busy && !snapshot.canSend && <button type="button" className="part-button" disabled={!!command} onClick={() => { void act('agent_chat_reconnect'); }}>Reconnect</button>}
+        {snapshot && snapshot.state !== 'contextUnavailable' && !snapshot.busy && (!snapshot.canSend || pending.current?.uncertain) && <button type="button" className="part-button" disabled={!!command} onClick={() => { void act('agent_chat_reconnect'); }}>Reconnect</button>}
       </div>
     </form>
     <details className="card-details"><summary>About this conversation</summary>

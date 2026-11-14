@@ -29,12 +29,13 @@ test('never accepts a different document reply', async () => {
 test.each(['busy', 'source', 'model', 'contextUnavailable', 'invalidMessage', 'connection'] as const)('translates %s errors without leaking diagnostics', async error => {
   vi.stubGlobal('isTauri', true); mockIPC(() => Promise.reject(error));
   const result = await chatCall('agent_chat_send', id, 'Keep');
-  expect(result.ok).toBe(false); if (!result.ok) expect(result.message.length).toBeGreaterThan(10);
+  expect(result.ok).toBe(false); if (!result.ok) { expect(result.message.length).toBeGreaterThan(10); expect(result.uncertain).not.toBe(true); }
 });
 test('hides unknown native exception contents', async () => {
   vi.stubGlobal('isTauri', true); mockIPC(() => Promise.reject('secret-path-and-token'));
   const result = await chatCall('agent_chat_status', id);
   expect(result.ok).toBe(false); expect(JSON.stringify(result)).not.toContain('secret-path-and-token');
+  if (!result.ok) expect(result.uncertain).toBe(true);
 });
 test('browser preview cannot dispatch or claim a native conversation', async () => {
   vi.stubGlobal('isTauri', false);

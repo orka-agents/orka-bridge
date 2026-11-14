@@ -49,6 +49,44 @@ test.each(['busy', 'source', 'model'])('native %s rejection keeps the message an
   expect(field().value).toBe('Hello'); expect(screen.getByRole('alert')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(false);
 });
+test('an uncertain Send reply retains acknowledgement and cannot replay before status shows its turn', async () => {
+  send = () => Promise.reject('unknown transport error'); await open(); enter(); await act(async () => {});
+  await poll(); expect(field().value).toBe('Hello');
+  expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'New conversation' }).hasAttribute('disabled')).toBe(true);
+  fireEvent.keyDown(field(), { key: 'Enter' }); await act(async () => {}); expect(sends()).toHaveLength(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' })); await act(async () => {});
+  expect(calls.filter(c => c.command === 'agent_chat_reconnect')).toHaveLength(0);
+  snapshot = { ...idle, versions: [{ turns: [turn] }] }; await poll();
+  expect(field().value).toBe(''); expect(screen.getByText('Hello back')).toBeTruthy(); expect(sends()).toHaveLength(1);
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+test('automatic acknowledgement clears only the uncertain Send warning', async () => {
+  send = () => Promise.reject('unknown transport error'); await open(); enter(); await act(async () => {});
+  expect(screen.getByRole('alert')).toBeTruthy();
+  snapshot = { ...idle, versions: [{ turns: [turn] }] }; await poll();
+  expect(field().value).toBe(''); expect(screen.queryByRole('alert')).toBeNull();
+});
+test('an uncertain Send can reconcile an observed preflight without a turn while retaining the message', async () => {
+  send = () => Promise.reject('unknown transport error'); await open(); enter(); await act(async () => {});
+  snapshot = { ...idle, state: 'preparing', busy: true, canSend: false }; await poll();
+  snapshot = { ...idle, error: 'model' }; await poll();
+  expect(field().value).toBe('Hello'); expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(false);
+});
+test('a pre-turn observation loss retains acknowledgement through native reconnect', async () => {
+  send = () => Promise.reject('unknown transport error'); await open(); enter(); await act(async () => {});
+  snapshot = { ...idle, state: 'preparing', busy: true, canSend: false }; await poll();
+  snapshot = { ...idle, state: 'observationLost', busy: false, canSend: false }; await poll();
+  fireEvent.click(screen.getByRole('button', { name: 'Reconnect' })); await act(async () => {});
+  expect(calls.filter(c => c.command === 'agent_chat_reconnect')).toHaveLength(1);
+  snapshot = { ...idle, versions: [{ turns: [turn] }] }; await poll(); expect(field().value).toBe('');
+});
+test('ready-state connection preflight failure offers safe retry, not an impossible reconnect', async () => {
+  snapshot = { ...idle, error: 'connection' }; await open();
+  expect(screen.queryByText(/do not resend/i)).toBeNull();
+  expect(screen.getByRole('alert').textContent).toContain('try sending again');
+  expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull();
+});
 test('background status polling does not immediately erase an actionable admission error', async () => {
   send = () => Promise.reject('busy'); await open(); enter(); await act(async () => {});
   await poll(); expect(screen.getByRole('alert').textContent).toContain('busy'); expect(field().value).toBe('Hello');
@@ -98,6 +136,7 @@ test('read-only reconnect never resends an observation-lost message', async () =
   await open(); fireEvent.click(screen.getByRole('button', { name: 'Reconnect' })); await act(async () => {});
   expect(calls.some(c => c.command === 'agent_chat_reconnect')).toBe(true); expect(sends()).toEqual([]);
   expect(screen.getByText(/connection was lost/i)).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'New conversation' }).hasAttribute('disabled')).toBe(true);
 });
 test.each([
   ['requestingStop', 'Requesting stop…'],
