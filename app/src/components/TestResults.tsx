@@ -5,10 +5,11 @@ import './test-results.css';
 
 type Report = NonNullable<RunSnapshot['report']>;
 type Case = Report['cases'][number];
-const words = { passed: 'Passed', failed: 'Failed', unknown: 'Unknown' };
+const words = { passed: 'Passed', failed: 'Failed', unknown: 'Unknown', cancelled: 'Cancelled' };
 export function resultLabel(report: Report | null | undefined) {
   if (!report) return undefined;
   if (report.verdict === 'unknown') return 'Result unknown';
+  if (report.verdict === 'cancelled') return 'Tests cancelled';
   return `${report.cases.filter(c => c.verdict === 'passed').length} of ${report.cases.length} passed`;
 }
 export function resultAnnouncement(report: Report | null | undefined) {
@@ -26,6 +27,7 @@ export function TestProgress({ stage }: { stage: string }) {
   return <div className="test-progress"><StatusIcon state="running" /><span role="status">{stage}</span><Elapsed /></div>;
 }
 function reason(c: Case) {
+  if (c.phase === 'NotRun') return 'This test was not submitted.';
   if (c.phase === 'Failed') return 'The agent could not finish this test. Try running it again.';
   if (c.phase === 'Cancelled') return 'The test was cancelled before it finished.';
   const failed = c.assertions.filter(a => a.verdict === 'failed');
@@ -38,11 +40,11 @@ function reason(c: Case) {
 }
 export function TestResults({ report, stale }: { report: Report | null | undefined; stale: boolean }) {
   if (!report) return null;
-  const order = { failed: 0, unknown: 1, passed: 2 };
+  const order = { failed: 0, unknown: 1, cancelled: 2, passed: 3 };
   return <div className={stale ? 'test-results result-stale' : 'test-results'}>
     {stale && <p>Earlier result</p>}
     {[...report.cases].sort((a, b) => order[a.verdict] - order[b.verdict]).map(c => <details className="test-result" key={`${c.id}:${c.verdict}:${stale}`} open={c.verdict !== 'passed'}>
-      <summary><StatusIcon state={stale ? 'stale' : c.verdict === 'unknown' ? 'not-started' : c.verdict} /><code>{c.id}</code><span>{stale ? 'Earlier result' : words[c.verdict]}</span></summary>
+      <summary><StatusIcon state={stale ? 'stale' : c.verdict === 'unknown' || c.verdict === 'cancelled' ? 'not-started' : c.verdict} /><code>{c.id}</code><span>{stale ? 'Earlier result' : c.phase === 'NotRun' ? 'Not run' : words[c.verdict]}</span></summary>
       <div className="test-answer">
         <h5 className="section-label">Question</h5><p className="reading">{c.question}</p>
         <h5 className="section-label">Answer</h5><p className="reading">{c.answer ?? 'No answer was observed.'}</p>
@@ -50,7 +52,7 @@ export function TestResults({ report, stale }: { report: Report | null | undefin
         {!!c.completedTools.length && <p>Tools used: {c.completedTools.map((tool, i) => <span key={`${tool}:${i}`}>{i > 0 && ', '}<code>{tool}</code></span>)}</p>}
         <Details hint="Test expectations and execution">
           <p>Execution: {c.phase}</p>
-          <ul>{c.assertions.map(a => <li key={a.id}>{a.kind === 'contains' ? <>Answer includes “{a.expected}”</> : <>Uses <code>{a.expected}</code></>}: {{ passed: 'Met', failed: 'Not met', unknown: 'Unknown' }[a.verdict]}</li>)}</ul>
+          <ul>{c.assertions.map(a => <li key={a.id}>{a.kind === 'contains' ? <>Answer includes “{a.expected}”</> : <>Uses <code>{a.expected}</code></>}: {{ passed: 'Met', failed: 'Not met', unknown: 'Unknown', cancelled: 'Not evaluated' }[a.verdict]}</li>)}</ul>
         </Details>
       </div>
     </details>)}

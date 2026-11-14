@@ -177,6 +177,7 @@ export default function App() {
     : run?.state === 'running' ? 'running tests'
     : failedChecks ? `${failedChecks} ${failedChecks === 1 ? 'test' : 'tests'} failing`
     : cases?.some(check => check.verdict === 'unknown') ? 'test result unknown'
+    : cases?.some(check => check.verdict === 'cancelled') ? 'tests cancelled'
     : cases ? 'tests passing' : 'ready to edit';
   const tabStatus: Record<Page, string> = {
     Overview: overviewCounts,

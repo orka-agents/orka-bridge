@@ -61,7 +61,7 @@ export function setupView(status: SetupStatus | undefined, { checking = false, s
       // Test evidence can need attention after setup; only the initial automatic run is a setup stage.
       const done = !initialAutomatic;
       const tone = check === 'failed' ? 'bad' : check === 'passed' ? 'ready' : check === 'running' ? 'busy' : initialAutomatic || check === 'stale' ? 'needs-you' : 'wait';
-      const line = !done ? 'Run your first agent' : check ? { passed: 'Local cluster ready', failed: 'Its test failed', running: 'Running test', stale: 'Tests need running', unknown: 'Test result unknown' }[check] : 'Local cluster running';
+      const line = !done ? 'Run your first agent' : check ? { passed: 'Local cluster ready', failed: 'Its test failed', running: 'Running test', stale: 'Tests need running', unknown: 'Test result unknown', cancelled: 'Its test was cancelled' }[check] : 'Local cluster running';
       return view(place, 5, line, 'AI connected', tone, done);
     }
     default: return view(place, 1, 'Getting the local cluster ready', 'Getting the local cluster ready', 'busy');

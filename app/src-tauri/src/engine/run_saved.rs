@@ -2,7 +2,29 @@
 use super::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-fn digest(spec: &Value) -> String {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Cancellation {
+    Cancelling,
+    Requested,
+    Confirmed,
+    Unconfirmed,
+    Denied,
+    Unsupported,
+}
+
+/// Shared validation for native-owned control paths, including untrusted saved receipts.
+pub fn cancel_identity(name: &str, uid: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 253
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'.'))
+        && !uid.is_empty()
+        && uid.len() <= 4096
+        && !uid.contains('\0')
+}
+pub(super) fn digest(spec: &Value) -> String {
     format!("{:x}", Sha256::digest(serde_json::to_vec(spec).unwrap()))
 }
 
@@ -40,7 +62,7 @@ impl SavedResource {
         saved.generation = resource.generation;
         saved
     }
-    fn matches(&self, value: &Value) -> bool {
+    pub(super) fn matches(&self, value: &Value) -> bool {
         value["apiVersion"] == "core.orka.ai/v1alpha1"
             && value["kind"] == self.kind
             && value["metadata"]["name"] == self.name
@@ -56,7 +78,7 @@ pub struct Recovery {
     pub refreshed: bool,
 }
 impl NativeRunner<'_> {
-    async fn read_saved(
+    pub(super) async fn read_saved(
         &self,
         resource: &SavedResource,
         deadline: Instant,
@@ -134,15 +156,15 @@ impl NativeRunner<'_> {
                 let after=self.http.request(&path,None,None,deadline).await?;
                 if !task.matches(&after) || after["status"]["phase"]!=phase {return Err(ErrorKind::Identity);}
                 self.read_saved(agent, deadline).await?;
-                let assertions=case.evaluate(answer.as_deref(),&tools);
-                let verdict=if phase=="Succeeded" {aggregate(assertions.iter().map(|r|r.verdict))} else {Verdict::Failed};
+                let assertions=if phase=="Cancelled" {case.unevaluated()} else {case.evaluate(answer.as_deref(),&tools)};
+                let verdict=if phase=="Cancelled" {Verdict::Cancelled} else if phase=="Succeeded" {aggregate(assertions.iter().map(|r|r.verdict))} else {Verdict::Failed};
                 Ok(Some((CaseReport {id:case.id.clone(),question:case.input().into(),phase:phase.into(),answer,completed_tools:tools,assertions,verdict},captured)))
             }.await;
             match read {
                 Ok(None) => (),
                 Ok(Some((row, captured))) => {
-                    verified_failure |= matches!(row.phase.as_str(), "Failed" | "Cancelled")
-                        || (captured && row.verdict == Verdict::Failed);
+                    verified_failure |=
+                        row.phase == "Failed" || (captured && row.verdict == Verdict::Failed);
                     refreshed |= captured
                         || report
                             .cases
@@ -167,7 +189,8 @@ impl NativeRunner<'_> {
         }
         report.verdict = if verified_failure {
             Verdict::Failed
-        } else if seen == cases.len()
+        } else if (seen == cases.len()
+            || (seen + report.cases.iter().filter(|r| r.phase == "NotRun").count() == cases.len()))
             && availability == "available"
             && resources
                 .iter()

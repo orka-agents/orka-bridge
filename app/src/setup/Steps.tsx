@@ -8,7 +8,7 @@ import { canQueueModel, infraProgress, setupSteps, setupView } from './progress'
 import { modelDetails } from './recovery-info';
 import './steps.css';
 
-export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
+export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale' | 'cancelled';
 
 type Props = {
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
@@ -35,8 +35,8 @@ function stepRows({ status, stopping, error, modelState = 'idle', firstCheck, in
     : status.localVm === 'ready' ? status.model === 'locked' ? ['not-started', 'Unavailable'] : ['needs-you', 'Needs you']
     : canQueueModel(status) ? ['needs-you', 'Pick any time'] : ['not-started', 'Waiting'];
   // A kept result belongs to an earlier workspace until this one is ready with its model connected.
-  const test: [Status, string] = firstCheck && status.localVm === 'ready' && connected ? [{ running: 'running', passed: 'passed', failed: 'failed', unknown: 'not-started', stale: 'stale' }[firstCheck] as Status,
-    { running: 'Running', passed: 'Its test passed', failed: 'Its test failed', unknown: 'Result unknown', stale: 'Needs running' }[firstCheck]]
+  const test: [Status, string] = firstCheck && status.localVm === 'ready' && connected ? [{ running: 'running', passed: 'passed', failed: 'failed', unknown: 'not-started', stale: 'stale', cancelled: 'not-started' }[firstCheck] as Status,
+    { running: 'Running', passed: 'Its test passed', failed: 'Its test failed', unknown: 'Result unknown', stale: 'Needs running', cancelled: 'Its test was cancelled' }[firstCheck]]
     : connected ? ['needs-you', 'Needs you'] : ['not-started', 'Waiting'];
   const names = [status.preflightFailure ? 'Check this computer' : 'Install the local cluster', 'Start the local cluster', 'Cluster ready', 'Connect the AI', 'Run your first agent'];
   // After an unreadable poll the snapshot is last known, not observed: keep the words but nothing runs or is current.

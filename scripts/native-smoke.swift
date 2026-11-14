@@ -507,7 +507,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
         if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: .regularExpression) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
-            if ["Send and run tests", "Stop", "Check again", "Reload saved files", "Send to a cluster"].contains(label) {
+            if ["Send and run tests", "Cancel tests", "Retry cancellation", "Check cluster status", "Check again", "Reload saved files", "Send to a cluster"].contains(label) {
                 let enabled = nativeElements().contains { element in
                     attribute(element, "AXRole") as? String == "AXButton"
                         && attribute(element, "AXEnabled") as? Bool == true
@@ -924,8 +924,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         try focusSend()
     }
     func captureAnswer(_ name: String) throws {
-        let seen = try capturePreflight("send-probe", "QUESTION")
-        guard let question = seen.first(where: { ($0.topCandidates(1).first?.string ?? "").contains("QUESTION") })
+        let seen = try capturePreflight("send-probe", "What SHA-256 checksum does")
+        guard let question = seen.first(where: { ($0.topCandidates(1).first?.string ?? "").contains("What SHA-256 checksum does") })
             else { fail("Question heading missing after native search") }
         let y = (1 - question.boundingBox.maxY) * window()!.1.height
         scrollMain(-Int32(max(0, y - 180)))
@@ -983,23 +983,32 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     require(failed.contains { ($0.topCandidates(1).first?.string ?? "").contains("2099-12-31") }, "Plain test failure reason missing")
     try resultSize(540, 900)
     try capturePreflight("send-failed", "The answer did not include")
-    // The fixture's third Agent stays Running. This still stops watching only;
-    // it does not claim to cancel already-submitted cluster work.
+    // Arm only the loopback fixture: first answer completes, second Task stays
+    // live. Hold the cancel reply until its in-flight state has been captured.
+    try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "cancelling"])
     try clickSendControl("Send and run tests", scrolling: 350)
     Thread.sleep(forTimeInterval: 0.5)
     try capturePreflight("send-running", "Waiting for answers and evaluating tests")
     try resultSize(1280, 800)
     try capturePreflight("send-running-wide", "Waiting for answers and evaluating tests")
+    let partial = try capturePreflight("send-running-partial", "published-checksum")
+    require(partial.contains { ($0.topCandidates(1).first?.string ?? "").contains("Passed") }, "Cancellation walk needs a completed test before Cancel tests")
+    try clickSendControl("published-checksum", scrolling: -250)
+    try captureAnswer("send-running-answer-wide")
+    try clickSendControl("published-checksum", scrolling: 250)
     try focusSend()
-    try clickSendControl("Stop", scrolling: -350)
+    try clickSendControl("Cancel tests", scrolling: -350)
+    scrollMain(-500)
+    try capturePreflight("send-cancelling", "Cancelling tests")
+    try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "requested"])
     Thread.sleep(forTimeInterval: 0.5)
-    let stopped = try capture("send-stopped", "Designer")
-    require(stopped.contains { ($0.topCandidates(1).first?.string ?? "").contains("Stopped watching") }, "Native Stop did not return its result")
-    clickTab("Clusters", stopped); clickTab("Designer", stopped)
+    try capturePreflight("send-cancel-requested-wide", "Cancellation requested.")
+    try resultSize(540, 900)
+    let requested = try capturePreflight("send-cancel-requested", "Cancellation requested.")
+    clickTab("Clusters", requested); clickTab("Designer", requested)
     let returned = try capture("agent-cluster-return", "Designer")
     clickText("Send to a cluster", in: returned)
-    let returnedResult = try capturePreflight("send-page-return", "Stopped watching")
-    require(returnedResult.contains { ($0.topCandidates(1).first?.string ?? "").contains("Stopped watching") }, "Page return lost the stopped Send result")
+    let returnedResult = try capturePreflight("send-page-return", "Cancellation requested.")
     // Widen the CI-owned native window for the real Overview board. This does
     // not change app state; the earlier compact captures remain 540x900.
     let overviewFrame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: 1220, height: 900),
@@ -1073,6 +1082,44 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let unknownUID = try recordShot("overview-fixture-versions-unknown-by-place", "Checks unknown")
     require(passedUID != unknownUID, "Repeated Send did not retain distinct Agent UIDs")
     try overviewShot("overview-fixture-external-by-place", ["runtime-reader", "Not tested by Bridge", "Model on cluster: external-model", "Tools on cluster: web_fetch"])
+    // Explicit retries reuse this attempt's exact Task UID. Neither an HTTP
+    // acknowledgement nor a lost response may manufacture a terminal result.
+    clickTab("Designer", [])
+    try resultSize(1280, 800)
+    for (mode, expected) in [("denied", "Cannot cancel with this cluster identity"),
+                             ("unsupported", "This Orka cannot cancel tests."),
+                             ("unconfirmed", "Cancellation not confirmed.")] {
+        try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": mode])
+        try clickSendControl("Retry cancellation", scrolling: -250)
+        Thread.sleep(forTimeInterval: 0.5)
+        try capturePreflight("send-cancel-\(mode)", expected)
+        require(nativeTextIsVisible("Check cluster status") && nativeTextIsVisible("Retry cancellation"), "Unresolved cancellation lost its explicit recovery actions")
+    }
+    try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "confirmed"])
+    try clickSendControl("Retry cancellation", scrolling: -250)
+    Thread.sleep(forTimeInterval: 0.5)
+    try capturePreflight("send-cancel-confirmed-wide", "Tests cancelled on the cluster.")
+    try resultSize(540, 900)
+    try capturePreflight("send-cancel-confirmed", "Tests cancelled on the cluster.")
+    try clickSendControl("published-checksum", scrolling: -250)
+    try captureAnswer("send-cancel-answer")
+    try resultSize(1280, 800)
+    try captureAnswer("send-cancel-answer-wide")
+    // A separate run wins the cancel race with a real answer. The date test
+    // fails normally; cancellation must not replace it with a Cancelled result.
+    try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "completed"])
+    try focusSend()
+    try clickSendControl("Send and run tests", scrolling: -350)
+    Thread.sleep(forTimeInterval: 0.5)
+    try capturePreflight("send-race-running", "Waiting for answers and evaluating tests")
+    try focusSend()
+    try clickSendControl("Cancel tests", scrolling: -350)
+    Thread.sleep(forTimeInterval: 0.5)
+    try capturePreflight("send-cancel-completion-race", "Tests finished before cancellation.")
+    try focusSend()
+    try capturePreflight("send-cancel-race-result", "1 of 2 passed")
+    try capturePreflight("send-cancel-race-failure", "The answer did not include")
+    clickTab("Overview", [])
     // The primary-place captures retain the changed two-test revision. Restore
     // the original pair before the separate place/provenance scenarios.
     try restoreTemporaryTests?()

@@ -96,6 +96,15 @@ pub trait RunTransport: Send + Sync {
     fn close(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + '_>> {
         Box::pin(async {})
     }
+    /// Default fails closed; only native control transports opt in.
+    fn cancel_task<'a>(
+        &'a self,
+        _name: &'a str,
+        _uid: &'a str,
+        _deadline: Instant,
+    ) -> RunFuture<'a> {
+        Box::pin(async { Err(ErrorKind::Unsupported) })
+    }
     fn request<'a>(
         &'a self,
         path: &'a str,
@@ -160,6 +169,23 @@ impl Http {
         body: Option<&Value>,
         deadline: Instant,
     ) -> Result<Value, ErrorKind> {
+        self.request_status(
+            path,
+            after,
+            body,
+            deadline,
+            if body.is_some() { 201 } else { 200 },
+        )
+        .await
+    }
+    async fn request_status(
+        &self,
+        path: &str,
+        after: Option<u64>,
+        body: Option<&Value>,
+        deadline: Instant,
+        expected: u16,
+    ) -> Result<Value, ErrorKind> {
         let deadline = deadline.min(Instant::now() + self.limits.request_timeout);
         timeout_at(deadline, async {
             let mut url = self.target.endpoint.clone();
@@ -194,10 +220,10 @@ impl Http {
             match response.status().as_u16() {
                 401 => return Err(ErrorKind::Authentication),
                 403 => return Err(ErrorKind::Permission),
-                404 if body.is_none() => return Err(ErrorKind::NotFound),
-                status if status != if body.is_some() { 201 } else { 200 } => {
-                    return Err(ErrorKind::Response)
-                }
+                404 if body.is_none() || expected == 200 => return Err(ErrorKind::NotFound),
+                405 if body.is_some() && expected == 200 => return Err(ErrorKind::Unsupported),
+                409 if body.is_some() && expected == 200 => return Err(ErrorKind::Conflict),
+                status if status != expected => return Err(ErrorKind::Response),
                 _ => {}
             }
             const CAP: usize = 1024 * 1024;
@@ -211,7 +237,14 @@ impl Http {
                 }
                 bytes.extend_from_slice(&chunk);
             }
-            serde_json::from_slice(&bytes).map_err(|_| ErrorKind::Response)
+            let mut value: Value =
+                serde_json::from_slice(&bytes).map_err(|_| ErrorKind::Response)?;
+            if body.is_some() && expected == 200 {
+                if let Some(object) = value.as_object_mut() {
+                    object.remove("message");
+                }
+            }
+            Ok(value)
         })
         .await
         .map_err(|_| ErrorKind::Deadline)?
@@ -229,6 +262,21 @@ impl RunTransport for Http {
     }
     fn deadline(&self) -> Instant {
         Http::deadline(self)
+    }
+    fn cancel_task<'a>(&'a self, name: &'a str, uid: &'a str, deadline: Instant) -> RunFuture<'a> {
+        Box::pin(async move {
+            if !super::saved::cancel_identity(name, uid) {
+                return Err(ErrorKind::Identity);
+            }
+            self.request_status(
+                &format!("tasks/{name}/cancel"),
+                None,
+                Some(&serde_json::json!({"uid":uid})),
+                deadline,
+                200,
+            )
+            .await
+        })
     }
     fn request<'a>(
         &'a self,

@@ -1,6 +1,6 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { type DocumentRef, isDocumentId, isDocumentRef, isSourceId, SAMPLE_DOCUMENT_ID, type SourceId } from './agent-api';
-export type Verdict = 'passed' | 'failed' | 'unknown';
+export type Verdict = 'passed' | 'failed' | 'unknown' | 'cancelled';
 type Assertion = { id: string; kind: 'contains' | 'toolCalled'; expected: string; verdict: Verdict };
 type Case = { id: string; question: string; phase: string; answer: string | null; completedTools: string[]; assertions: Assertion[]; verdict: Verdict };
 type Receipt = { kind: 'Agent' | 'Task'; name: string; uid: string };
@@ -16,7 +16,7 @@ function record(value: unknown, keys: string[]): value is Record<string, unknown
   return typeof value === 'object' && value !== null && !Array.isArray(value) && Object.keys(value).sort().join(',') === keys.sort().join(',');
 }
 const text = (value: unknown, max = 4096): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
-const verdict = (value: unknown): value is Verdict => value === 'passed' || value === 'failed' || value === 'unknown';
+const verdict = (value: unknown): value is Verdict => value === 'passed' || value === 'failed' || value === 'unknown' || value === 'cancelled';
 export function isRunSnapshot(value: unknown): value is RunSnapshot {
   const keys = ['state', 'canRun', 'report', 'acknowledged', 'pending', 'error'];
   if (typeof value === 'object' && value !== null) {
