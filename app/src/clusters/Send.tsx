@@ -148,6 +148,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   const [message, setMessage] = useState<string>();
   const [controlCancelling, setControlCancelling] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [historyRevision, setHistoryRevision] = useState(0);
   const admitted = useRef(false); const epoch = useRef(0);
   useEffect(() => {
     let mounted = true; let polling = false;
@@ -209,6 +210,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
     setControlCancelling(command === 'send_history_cancel');
     try {
       await sendHistoryDetail(command, snapshot.id);
+      setHistoryRevision(value => value + 1);
       const result = await sendCall('send_status', { documentId });
       if (request === epoch.current) { setSnapshot(result); setMessage(undefined); }
     } catch (error) { if (request === epoch.current) setMessage((error as Error).message); }
@@ -288,5 +290,5 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
         {snapshot?.report?.cases.some(c => c.verdict === 'cancelled') && <> {cancellationDetails}</>}</p>
     </Details>}
     </LongCard>
-  </section><SendHistory revision={`${documentId}:${status?.busy?.documentId ?? ''}:${snapshot?.id ?? ''}:${snapshot?.state ?? ''}:${snapshot?.stage ?? ''}:${snapshot?.cancellation ?? ''}:${snapshot?.storageError ?? false}`} /></>;
+  </section><SendHistory revision={`${historyRevision}:${documentId}:${status?.busy?.documentId ?? ''}:${snapshot?.id ?? ''}:${snapshot?.state ?? ''}:${snapshot?.stage ?? ''}:${snapshot?.cancellation ?? ''}:${snapshot?.storageError ?? false}`} /></>;
 }

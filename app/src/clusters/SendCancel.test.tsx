@@ -106,15 +106,18 @@ test('saved cancellation is explicit and retains answers when a retry fails', as
   expect(document.body.textContent).not.toContain('PRIVATE_DIAGNOSTIC');
 });
 
-test('retry cancellation refreshes an already-open saved outcome', async () => {
+test.each(['outcome', 'answer'])('successful control refreshes an already-open saved %s', async change => {
   vi.stubGlobal('isTauri', true);
-  let cancellation = 'requested';
-  const detail = () => ({ id, documentId: SAMPLE_DOCUMENT_ID, model: 'model', capturedAt: 1, report: { verdict: 'unknown', cases: [passed] }, interrupted: true, canCheck: true, canRemove: false, canCancel: true, cancellation, detailState: 'saved', availability: null });
+  let cancellation = 'requested'; let recovered = false;
+  const detail = () => ({ id, documentId: SAMPLE_DOCUMENT_ID, model: 'model', capturedAt: 1, report: { verdict: 'unknown', cases: recovered ? [passed, { ...passed, id: 'newly-finished' }] : [passed] }, interrupted: true, canCheck: true, canRemove: false, canCancel: true, cancellation, detailState: 'saved', availability: null });
   mockIPC(command => {
     if (command === 'send_history') return [{ id, source, targetDisplay: 'team-dev', targetUids: { serviceNamespace: 'control', serviceUid: 's', deploymentNamespace: 'control', deploymentUid: 'd', watchedNamespace: 'agents' }, provider: 'team-model', plannedAgentName: 'agent', agentUid: 'uid', verdict: 'unknown', time: 1 }];
     if (command === 'send_preflight') return preflight;
     if (command === 'send_history_details') return detail();
-    if (command === 'send_history_cancel') { cancellation = 'denied'; return detail(); }
+    if (command === 'send_history_cancel' || command === 'send_history_check') {
+      if (change === 'outcome') cancellation = 'denied'; else recovered = true;
+      return detail();
+    }
     if (command === 'send_status') return { documentId: SAMPLE_DOCUMENT_ID, view: { ...active, state: 'unknown', stage: 'done', cancellation, report: detail().report }, busy: null };
     throw Error('Unsupported');
   });
@@ -122,9 +125,14 @@ test('retry cancellation refreshes an already-open saved outcome', async () => {
   await userEvent.click(await screen.findByText('Show saved details'));
   await waitFor(() => expect(screen.getAllByText('Cancellation requested. Waiting for the cluster.')).toHaveLength(2));
   const current = screen.getByRole('region', { name: 'Send and cluster tests' });
-  await userEvent.click(within(current).getByRole('button', { name: 'Retry cancellation' }));
-  await waitFor(() => expect(screen.getAllByText('Cannot cancel with this cluster identity')).toHaveLength(2));
-  expect(screen.queryByText('Cancellation requested. Waiting for the cluster.')).toBeNull();
+  await userEvent.click(within(current).getByRole('button', { name: change === 'outcome' ? 'Retry cancellation' : 'Check cluster status' }));
+  if (change === 'outcome') {
+    await waitFor(() => expect(screen.getAllByText('Cannot cancel with this cluster identity')).toHaveLength(2));
+    expect(screen.queryByText('Cancellation requested. Waiting for the cluster.')).toBeNull();
+  } else {
+    await waitFor(() => expect(screen.getAllByText('newly-finished')).toHaveLength(2));
+    expect(screen.getAllByText('Cancellation requested. Waiting for the cluster.')).toHaveLength(2);
+  }
 });
 
 test('first cancellation after restart announces progress while the native control operation owns the wait', async () => {
