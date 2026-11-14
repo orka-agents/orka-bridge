@@ -8,6 +8,12 @@ use std::collections::HashSet;
 #[derive(Clone)]
 pub struct ParsedPair {
     snapshot: SnapshotId,
+    agent: ParsedAgent,
+    cases: Vec<RunCase>,
+}
+/// The saved agent configuration, independent of any test file.
+#[derive(Clone)]
+pub struct ParsedAgent {
     prompt: String,
     name: Option<String>,
     description: Option<String>,
@@ -15,7 +21,6 @@ pub struct ParsedPair {
     tools: Vec<String>,
     declared_tools: Vec<DeclaredTool>,
     soul: Option<Soul>,
-    cases: Vec<RunCase>,
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -184,25 +189,11 @@ fn present(s: &str) -> bool {
 impl ParsedPair {
     pub fn parse(agent: &[u8], tests: &[u8]) -> Result<Self, ErrorKind> {
         let snapshot = SnapshotId::of(agent, tests);
-        let (header, prompt) = frontmatter(agent)?;
-        let agent: AgentHeader = yaml(header)?;
+        let agent = ParsedAgent::parse(agent)?;
         let (header, body) = frontmatter(tests)?;
         let tests_header: TestsHeader = yaml(header)?;
-        if agent.kmx.schema_version != 1
-            || tests_header.schema_version != 1
-            || agent.kmx.runtime != "orka"
-            || !present(&agent.model)
-            || !present(prompt)
-            || agent.kmx.soul.as_ref().is_some_and(|soul| !soul.valid())
-        {
+        if tests_header.schema_version != 1 {
             return Err(ErrorKind::Source);
-        }
-        let mut tools = Vec::new();
-        for tool in &agent.kmx.tools {
-            if !present(&tool.name) || tools.contains(&tool.name) {
-                return Err(ErrorKind::Source);
-            }
-            tools.push(tool.name.clone());
         }
         let mut cases: Vec<RunCase> = Vec::new();
         let mut block = None;
@@ -254,6 +245,61 @@ impl ParsedPair {
         }
         Ok(Self {
             snapshot,
+            agent,
+            cases,
+        })
+    }
+    pub fn snapshot(&self) -> &SnapshotId {
+        &self.snapshot
+    }
+    pub fn agent(&self) -> &ParsedAgent {
+        &self.agent
+    }
+    pub fn prompt(&self) -> &str {
+        self.agent.prompt()
+    }
+    pub fn name(&self) -> Option<&str> {
+        self.agent.name()
+    }
+    pub fn description(&self) -> Option<&str> {
+        self.agent.description()
+    }
+    pub fn model(&self) -> &str {
+        self.agent.model()
+    }
+    pub fn tools(&self) -> &[String] {
+        self.agent.tools()
+    }
+    pub fn declared_tools(&self) -> &[DeclaredTool] {
+        self.agent.declared_tools()
+    }
+    pub fn soul(&self) -> Option<&Soul> {
+        self.agent.soul()
+    }
+    pub fn cases(&self) -> &[RunCase] {
+        &self.cases
+    }
+}
+impl ParsedAgent {
+    pub fn parse(bytes: &[u8]) -> Result<Self, ErrorKind> {
+        let (header, prompt) = frontmatter(bytes)?;
+        let agent: AgentHeader = yaml(header)?;
+        if agent.kmx.schema_version != 1
+            || agent.kmx.runtime != "orka"
+            || !present(&agent.model)
+            || !present(prompt)
+            || agent.kmx.soul.as_ref().is_some_and(|soul| !soul.valid())
+        {
+            return Err(ErrorKind::Source);
+        }
+        let mut tools = Vec::new();
+        for tool in &agent.kmx.tools {
+            if !present(&tool.name) || tools.contains(&tool.name) {
+                return Err(ErrorKind::Source);
+            }
+            tools.push(tool.name.clone());
+        }
+        Ok(Self {
             prompt: prompt.into(),
             name: agent.name,
             description: agent.description,
@@ -261,11 +307,14 @@ impl ParsedPair {
             tools,
             declared_tools: agent.kmx.tools,
             soul: agent.kmx.soul,
-            cases,
         })
     }
-    pub fn snapshot(&self) -> &SnapshotId {
-        &self.snapshot
+    pub fn spec(&self, provider: &str) -> serde_json::Value {
+        let mut spec = serde_json::json!({"providerRef":{"name":provider},"model":{"name":self.model()},"systemPrompt":{"inline":self.prompt()},"tools":self.tools().iter().map(|name| serde_json::json!({"name":name})).collect::<Vec<_>>()});
+        if let Some(soul) = self.soul() {
+            spec["soul"] = serde_json::to_value(soul).expect("validated soul serializes");
+        }
+        spec
     }
     pub fn prompt(&self) -> &str {
         &self.prompt
@@ -287,9 +336,6 @@ impl ParsedPair {
     }
     pub fn soul(&self) -> Option<&Soul> {
         self.soul.as_ref()
-    }
-    pub fn cases(&self) -> &[RunCase] {
-        &self.cases
     }
 }
 impl RunCase {
