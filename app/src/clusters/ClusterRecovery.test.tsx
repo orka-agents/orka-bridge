@@ -24,7 +24,7 @@ afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlo
 async function select(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
   await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
-  await screen.findByText('Orka found');
+  await screen.findByText('Cluster found');
 }
 
 test.each(['empty', 'error'])('reload recovers after %s initial config without restart', async state => {
@@ -38,14 +38,14 @@ test.each(['empty', 'error'])('reload recovers after %s initial config without r
 test('reload clears all confirmed selection and requires explicit Use again', async () => {
   const { user, onPlace, ipc } = setup(); await select(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
-  await screen.findByRole('combobox', { name: 'Provider' });
+  await screen.findByRole('combobox', { name: 'AI connection' });
   expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster', target, providers: [provider], providerId: provider.id });
   await user.click(screen.getByRole('button', { name: 'Reload kubeconfig' }));
   await screen.findByRole('option', { name: 'corrected' });
   expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster' });
   expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe('');
-  expect(screen.queryByRole('combobox', { name: 'Provider' })).toBeNull();
-  expect(screen.queryByText('Orka found')).toBeNull();
+  expect(screen.queryByRole('combobox', { name: 'AI connection' })).toBeNull();
+  expect(screen.queryByText('Cluster found')).toBeNull();
   expect(screen.queryByText('Access confirmed')).toBeNull();
   expect(ipc.mock.calls.filter(([command]) => command === 'cluster_use')).toHaveLength(1);
 });
@@ -57,12 +57,12 @@ test.each(['cluster_contexts', 'cluster_discover', 'cluster_use'])('reload ignor
     await waitFor(() => expect(screen.getByRole('combobox').matches(':disabled')).toBe(false));
     await user.selectOptions(screen.getByRole('combobox'), context.id);
   }
-  if (command === 'cluster_use') { await screen.findByText('Orka found'); await user.click(screen.getByRole('button', { name: 'Use this cluster' })); }
+  if (command === 'cluster_use') { await screen.findByText('Cluster found'); await user.click(screen.getByRole('button', { name: 'Use this cluster' })); }
   await user.click(screen.getByRole('button', { name: 'Reload kubeconfig' }));
   expect(screen.getByRole('button', { name: 'Reloading kubeconfig…' }).matches(':disabled')).toBe(true);
   await act(async () => old.resolve(command === 'cluster_contexts' ? [context] : command === 'cluster_discover' ? [target] : connected));
   expect(screen.queryByText('Access confirmed')).toBeNull();
-  expect(screen.queryByText('Orka found')).toBeNull();
+  expect(screen.queryByText('Cluster found')).toBeNull();
   expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster' });
   await act(async () => reload.resolve([fresh]));
   expect(await screen.findByRole('option', { name: 'corrected' })).toBeTruthy();
@@ -89,7 +89,7 @@ test('first failed check has one cause/action, safe copied labels and visible cl
     : { status: 'denied', providers: [], failure: { check: 'providers', result: 'permissionDenied' } });
   const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
   await select(user); await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('Provider reading');
+  expect((await screen.findByRole('alert')).textContent).toContain('Reading AI connections');
   expect(screen.getByRole('alert').textContent).toContain('Access was denied');
   expect(screen.getByRole('alert').textContent).toContain('agent files are kept');
   await user.click(screen.getByRole('button', { name: 'Copy details for help' }));

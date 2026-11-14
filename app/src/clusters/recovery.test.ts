@@ -16,7 +16,7 @@ test.each(clusterResults)('finite %s result produces only fixed copied labels', 
 test.each([
   ['authenticationRejected', /sign-in was rejected/, /Refresh the sign-in/],
   ['permissionDenied', /Access was denied/, /administrator/],
-  ['identityRejected', /identity or namespace/, /identity and watched namespace/],
+  ['identityRejected', /account or namespace/, /identity and watched namespace/],
   ['connectionFailed', /connection could not be opened/, /connectivity and any VPN/],
 ] as const)('Orka identity %s has evidence-based cause and next step', (result, cause, next) => {
   const recovery = clusterRecovery({ check: 'orkaIdentity', result });
@@ -29,6 +29,6 @@ test.each([
   expect(clusterRecovery(failure).next).toContain('Reload kubeconfig');
 });
 test('no Providers is distinct from an unknown Provider read', () => {
-  expect(clusterRecovery({ check: 'providers', result: 'noProviders' }).cause).toContain('No Providers are configured');
-  expect(clusterRecovery({ check: 'providers', result: 'noProviders' }).next).toContain('configure a Provider');
+  expect(clusterRecovery({ check: 'providers', result: 'noProviders' }).cause).toContain('No AI connections are configured');
+  expect(clusterRecovery({ check: 'providers', result: 'noProviders' }).next).toContain('configure an AI connection');
 });

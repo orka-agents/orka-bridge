@@ -1,6 +1,6 @@
 import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
@@ -26,18 +26,19 @@ test('AI connection is the only next primary and its prerequisite is visible bef
   const ipc = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const connect = await screen.findByRole('button', { name: 'Connect the AI' });
   expect(connect.className).toBe('workspace-primary');
-  expect(screen.getByText(/GitHub CLI installed and signed in/)).toBeTruthy();
+  expect(screen.getByText(/GitHub CLI must be installed and signed in/)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Open example' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Change where agents run' }).className).toBe('workspace-link');
+  expect(screen.queryByRole('button', { name: 'Change where agents run' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Stop the local cluster' }).className).toBe('workspace-link');
   await user.click(connect);
-  expect(await screen.findByText('Connected with GitHub Copilot.')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Open your first test' }).className).toBe('workspace-primary');
+  expect(await screen.findByText('Connected', { selector: '.model-state .pill' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Open your first agent' }).className).toBe('workspace-primary');
   expect(document.body.textContent).not.toMatch(/guest|\bVM\b|inference|gpt-5.6-terra/);
   expect(screen.queryByText('Engine diagnostics')).toBeNull();
   expect(ipc.mock.calls.some(([command]) => command === 'engine_call')).toBe(false);
 });
 
-test.each(['Run the test again', 'Open your test result'])('%s selects this computer before its guarded local handoff, without starting a VM', async action => {
+test.each(['Run it again', 'See what it answered'])('%s selects this computer before its guarded local handoff, without starting a VM', async action => {
   const ipc = native(); const user = userEvent.setup(); const calls: string[] = [];
   render(<Setup place={{ kind: 'cluster' }} firstCheck="stale" firstTestResult={{ failed: 0 }}
     onPlace={place => calls.push(place.kind)} onOpenExample={() => calls.push('Designer')} />);
@@ -50,27 +51,21 @@ test.each(['Run the test again', 'Open your test result'])('%s selects this comp
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
 });
 
-test('Change focuses its explanation, makes Keep primary and restores focus without stopping', async () => {
+test('the restored local page owns Stop and stays restartable even without an old welcome preference', async () => {
+  localStorage.removeItem('bridge.welcomeSeen.v1');
   const ipc = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  const change = await screen.findByRole('button', { name: 'Change where agents run' });
-  await user.click(change);
-  const panel = screen.getByRole('region', { name: 'Change where agents run' });
-  expect(panel.contains(document.activeElement)).toBe(true);
-  expect(within(panel).getByText(/downloaded workspace files and agent files are kept/)).toBeTruthy();
-  const keep = within(panel).getByRole('button', { name: 'Keep workspace running' });
-  expect(keep.className).toBe('workspace-primary');
-  expect(screen.getByRole('button', { name: 'Connect the AI' }).className).toBe('workspace-secondary');
-  expect(within(panel).getByRole('button', { name: 'Stop workspace and choose a place' }).className).toBe('workspace-secondary');
-  await user.click(keep);
-  expect(document.activeElement).toBe(change);
-  expect(screen.getByRole('button', { name: 'Connect the AI' }).className).toBe('workspace-primary');
-  expect(ipc.mock.calls.some(([command]) => command === 'setup_change_local')).toBe(false);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  const stop = await screen.findByRole('button', { name: 'Stop the local cluster' });
+  expect(stop.className).toBe('workspace-link');
+  await user.click(stop);
+  expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_change_local')).toHaveLength(1);
 });
 
 test('cluster picking is explicitly separate from stopping and does not stop the local workspace', async () => {
   const ipc = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.some(([command]) => command === 'setup_change_local')).toBe(false);
 });

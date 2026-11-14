@@ -11,11 +11,11 @@ export function armFirstTest() {
 export function retireFirstTest() {
   try { if (localStorage.getItem(preference) === 'pending') localStorage.setItem(preference, 'attempted'); } catch { /* An unreadable preference cannot admit a test. */ }
 }
-function pending() {
+export function firstTestPending() {
   try { return localStorage.getItem(preference) === 'pending'; } catch { return false; }
 }
 function claim() {
-  if (!pending()) return false;
+  if (!firstTestPending()) return false;
   try { localStorage.setItem(preference, 'attempted'); return true; } catch { return false; }
 }
 const text = (value: string) => value.replaceAll('\r\n', '\n');
@@ -31,7 +31,7 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
     return () => { mounted.current = false; clearTimeout(timer.current); };
   }, []);
   useEffect(() => {
-    if (!options.ready || options.sampleDirty || !pending()) return;
+    if (!options.ready || options.sampleDirty || !firstTestPending()) return;
     let cancelled = false;
     let claimed = false;
     const finish = (snapshot?: RunSnapshot) => {

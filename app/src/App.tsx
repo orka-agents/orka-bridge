@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import mark from './assets/orka-mark.svg';
 import Setup from './setup/Setup';
-import { useFirstTest } from './setup/first-test';
+import { firstTestPending, retireFirstTest, useFirstTest } from './setup/first-test';
 import Example from './designer/Example';
 import Overview from './overview/Overview';
 import { SAMPLE_DOCUMENT_ID } from './designer/agent-api';
@@ -23,11 +23,11 @@ const emptyCopy: Record<Page, { title: string; detail: string }> = {
     detail: 'Agents on this machine and your connected clusters will appear here.',
   },
   Designer: {
-    title: 'A place to shape your agent',
+    title: 'Build and test your agent',
     detail: 'Your agent file, prompt, tools and tests will live here.',
   },
   Clusters: {
-    title: 'A place for your agents to run',
+    title: 'Choose where agents run',
     detail: 'Your local Orka and connected clusters will appear here.',
   },
 };
@@ -77,11 +77,12 @@ export default function App() {
   const [model, setModel] = useState<ModelState>('idle');
   const [catalogEpoch, setCatalogEpoch] = useState(0);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [workspaceStopping, setWorkspaceStopping] = useState(false);
   const [localSetupView, setLocalSetupView] = useState(false);
   const catalogContext = useRef('');
   const observeModel = useCallback((value: ModelState) => { setModel(value); setCatalogEpoch(epoch => epoch + 1); }, []);
-  const observeWorkspaceAction = useCallback((pending: boolean) => {
-    setWorkspaceBusy(pending);
+  const observeWorkspaceAction = useCallback((pending: boolean, stopping = false) => {
+    setWorkspaceBusy(pending); setWorkspaceStopping(pending && stopping);
     if (pending) setCatalogEpoch(epoch => epoch + 1);
   }, []);
   const choosePlace = useCallback((value: SelectedPlace) => { setPlace(value); setCatalogEpoch(epoch => epoch + 1); }, []);
@@ -97,7 +98,11 @@ export default function App() {
   const [sampleSource, setSampleSource] = useState<SourceId | null>();
   const [sampleStale, setSampleStale] = useState(false);
   const [sampleDirty, setSampleDirty] = useState(false);
-  const observeSampleRun = useCallback((snapshot: RunSnapshot | undefined) => { setSampleResult({ snapshot }); }, []);
+  const observeSampleRun = useCallback((snapshot: RunSnapshot | undefined) => {
+    // Observed sample completion consumes held setup intent; a later unreadable poll must not re-arm it.
+    if (snapshot?.state === 'complete' && snapshot.report) retireFirstTest();
+    setSampleResult({ snapshot });
+  }, []);
   const sampleObserved = sampleResult !== undefined;
   const [sampleCheck, setSampleCheck] = useState(0);
   useEffect(() => {
@@ -159,13 +164,13 @@ export default function App() {
     : !sample || sample.state === 'unknown' ? 'unknown' : sample.state === 'running' ? 'running' : sample.state === 'complete' ? sample.report?.verdict : undefined
     : firstTest;
   // Tab, footer and the Setup card share this derivation. Native selection, not the default radio, names the host.
-  const initialAutomatic = firstTest === 'running';
+  const initialAutomatic = firstTest === 'running' || (model === 'connected' && firstTestPending() && (!sample || sample.state === 'idle'));
   const firstTestResult = sampleSource !== null && sample?.report ? { failed: sample.report.cases.filter(check => check.verdict === 'failed').length } : undefined;
-  const view = setupView(setup, { checking, model, check: firstCheck, initialAutomatic });
+  const view = setupView(setup, { checking, stopping: workspaceStopping, model, check: firstCheck, initialAutomatic });
   const { line: setupLine, detail, tone: hostTone } = view;
   const workspaceReady = setup?.localVm === 'ready';
   const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
-    : { local: 'This computer', none: 'No place selected', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
+    : { local: 'This computer', none: 'No cluster selected', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
   const hostDetail = setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
   const agentStatus = checksStale ? 'tests need running' : runUnavailable ? 'test status unavailable' : run?.state === 'unknown' ? 'test result unknown'
@@ -185,6 +190,10 @@ export default function App() {
     if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
     setDocumentId(id); setExampleOpen(true); setPage('Designer');
   };
+  const footer = [
+    remote ? place.target ? `Cluster: ${place.target.context_name}` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' || setup?.model === 'locked' && setup?.localVm === 'ready' ? hostDetail : setupLine,
+    exampleState === 'loaded' ? { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState] : undefined,
+  ].filter(Boolean);
   const checkFirstTest = () => {
     setSampleCheck(value => value + 1);
     // Retry an unreadable source through Designer's existing guarded sample-open path.
@@ -241,12 +250,10 @@ export default function App() {
         </section>}
       </main>
       <footer className="status-bar">
-        {!remote && <span>{welcome ? 'Nothing is set up yet' : !view.done ? setupLine : undefined}</span>}
-        {!remote && !welcome && hostDetail !== setupLine && <span>{hostDetail}</span>}
-        {exampleState === 'loaded' && <><span aria-hidden="true">·</span><span aria-live="polite" aria-atomic="true">{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
+        {footer.map((part, index) => <span key={index}>{index > 0 && <span aria-hidden="true"> · </span>}<span aria-live={index > 0 ? 'polite' : undefined}>{part}</span></span>)}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
-          page !== 'Clusters' || !localSetupView ? `Local workspace: ${hostDetail === setupLine ? setupLine : `${setupLine} · ${hostDetail}`}` : undefined,
+          page !== 'Clusters' || !localSetupView ? `Local cluster: ${hostDetail === setupLine ? setupLine : `${setupLine} · ${hostDetail}`}` : undefined,
           page !== 'Designer' && checks ? `Checks: ${checks}` : undefined,
         ].filter(Boolean).join(' · ')}</span>
       </footer>

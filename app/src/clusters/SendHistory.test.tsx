@@ -33,9 +33,9 @@ test('restart shows saved pass and unknown without observing or adopting either 
   const history = await screen.findByRole('region', { name: 'Past Sends' });
   expect(within(history).getByText('bridge-run-before-restart')).toBeTruthy();
   expect(within(history).getByText('bridge-run-passed')).toBeTruthy();
-  expect(within(history).getByText('Saved tests: unknown')).toBeTruthy();
-  expect(within(history).getByText('Saved tests: pass')).toBeTruthy();
-  expect(within(history).getByText(/not resumed/)).toBeTruthy();
+  expect(within(history).getByText('Tests: unknown')).toBeTruthy();
+  expect(within(history).getByText('Tests: pass')).toBeTruthy();
+  expect(within(history).getByText(/interrupted Send may still be running/)).toBeTruthy();
   expect(within(history).getAllByText('team-dev · agents')).toHaveLength(2);
   expect(ipc.mock.calls.every(([command]) => ['send_status', 'send_history'].includes(command))).toBe(true);
   expect(within(history).queryByRole('button', { name: /resume|adopt/i })).toBeNull();
