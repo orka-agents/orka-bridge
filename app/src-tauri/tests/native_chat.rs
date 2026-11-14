@@ -55,9 +55,11 @@ async fn two_turns_reuse_frozen_agent_and_session_and_drain_cursor_events() {
     let tasks = g.posts("tasks");
     assert_eq!(tasks.len(), 2);
     assert_eq!(
-        tasks[0]["spec"]["sessionRef"],
-        tasks[1]["spec"]["sessionRef"]
+        tasks[0]["spec"]["sessionRef"]["name"],
+        tasks[1]["spec"]["sessionRef"]["name"]
     );
+    assert_eq!(tasks[0]["spec"]["sessionRef"]["create"], true);
+    assert!(tasks[1]["spec"]["sessionRef"].get("create").is_none());
     assert_eq!(tasks[0]["spec"]["sessionRef"]["maxMessages"], 50);
     assert_eq!(tasks[0]["spec"]["retryPolicy"]["maxRetries"], 0);
     assert_eq!(tasks[0]["spec"]["timeout"], "120s");
@@ -631,7 +633,81 @@ async fn rejected_preflight_keeps_existing_conversation_available_for_retry() {
     let tasks = g.posts("tasks");
     assert_eq!(tasks.len(), 2);
     assert_eq!(
-        tasks[0]["spec"]["sessionRef"],
-        tasks[1]["spec"]["sessionRef"]
+        tasks[0]["spec"]["sessionRef"]["name"],
+        tasks[1]["spec"]["sessionRef"]["name"]
     );
+}
+
+#[tokio::test]
+async fn deleted_session_refuses_followup_without_recreating_empty_context() {
+    let f = Fixture::new().await;
+    let chat = owner();
+    let id = f.folder.document_id();
+    chat.send(f.vm.clone(), f.folder.clone(), "First".into())
+        .unwrap();
+    ready(&chat, id).await;
+    f.guest.lock().unwrap().missing_session = true;
+    chat.send(f.vm.clone(), f.folder.clone(), "Followup".into())
+        .unwrap();
+    let s = until(&chat, id, |s| !s.busy).await;
+    assert_eq!(s.error, Some(ChatError::ContextUnavailable));
+    assert_eq!(f.guest.lock().unwrap().posts("tasks").len(), 1);
+    assert!(chat.new_conversation(id).is_ok());
+}
+
+#[tokio::test]
+async fn missing_uncertain_task_keeps_admission_until_session_is_released() {
+    let f = Fixture::new().await;
+    {
+        let mut g = f.guest.lock().unwrap();
+        g.lose_create = Some("tasks");
+        g.vanish_task = true;
+        g.release = false;
+    }
+    let chat = owner();
+    let id = f.folder.document_id();
+    chat.send(
+        f.vm.clone(),
+        f.folder.clone(),
+        "Lost acknowledgement".into(),
+    )
+    .unwrap();
+    let waiting = until(&chat, id, |s| {
+        !s.busy || f.guest.lock().unwrap().session_reads > 0
+    })
+    .await;
+    assert!(
+        waiting.busy,
+        "Task absence is not Session release: {waiting:?}"
+    );
+    assert!(f.vm.try_authoring().is_none());
+    f.guest.lock().unwrap().release = true;
+    let ended = until(&chat, id, |s| !s.busy).await;
+    assert_eq!(ended.state, ChatState::ContextUnavailable);
+    assert_eq!(f.guest.lock().unwrap().posts("tasks").len(), 1);
+    assert!(f.vm.try_authoring().is_some());
+}
+
+#[test]
+fn stop_before_preflight_dispatch_preserves_existing_context() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let f = runtime.block_on(Fixture::new());
+    let chat = ChatOwner::new(runtime.handle().clone());
+    let id = f.folder.document_id();
+    chat.send(f.vm.clone(), f.folder.clone(), "First".into())
+        .unwrap();
+    runtime.block_on(ready(&chat, id));
+    chat.send(f.vm.clone(), f.folder.clone(), "Never dispatched".into())
+        .unwrap();
+    chat.stop(f.vm.clone(), id).unwrap();
+    let stopped = runtime.block_on(until(&chat, id, |s| !s.busy));
+    assert_eq!(stopped.state, ChatState::Ready);
+    assert_eq!(stopped.versions[0].turns.len(), 1);
+    chat.send(f.vm.clone(), f.folder.clone(), "Retry".into())
+        .unwrap();
+    runtime.block_on(ready(&chat, id));
+    assert_eq!(f.guest.lock().unwrap().posts("tasks").len(), 2);
 }

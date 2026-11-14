@@ -21,6 +21,7 @@ pub struct Guest {
     pub transcript: Option<String>,
     pub missing_session: bool,
     pub lose_create: Option<&'static str>,
+    pub vanish_task: bool,
     pub reject_create: bool,
     pub old_guest: bool,
     pub broken_wire: bool,
@@ -48,6 +49,7 @@ impl Guest {
             transcript: None,
             missing_session: false,
             lose_create: None,
+            vanish_task: false,
             reject_create: false,
             old_guest: false,
             broken_wire: false,
@@ -104,6 +106,9 @@ impl Guest {
                 .insert(format!("{}/{name}", r.path), object.clone());
             if self.lose_create == Some(r.path.as_str()) {
                 self.lose_create = None;
+                if r.path == "tasks" && self.vanish_task {
+                    self.objects.remove(&format!("tasks/{name}"));
+                }
                 return (500, json!({"error":"lost reply"}));
             }
             return (201, object);

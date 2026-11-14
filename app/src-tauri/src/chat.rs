@@ -259,7 +259,7 @@ impl ChatOwner {
         };
         self.1.spawn(async move {
             let mut result = worker.run(send).await;
-            if result == Err(ChatError::Interrupted) {
+            if result == Err(ChatError::Interrupted) && !worker.preflight {
                 result = worker.stop_task().await;
             }
             let mut entries = owner.0.lock().unwrap();
@@ -434,6 +434,9 @@ impl Worker {
             } else {
                 self.context.as_ref().unwrap().session.clone()
             };
+            if !fresh && !self.session(self.context.as_ref().unwrap().deleted).await? {
+                return Err(ChatError::ContextUnavailable);
+            }
             let agent = if fresh {
                 Planned::new(
                     "bridge-chat-agent-",
@@ -449,10 +452,12 @@ impl Worker {
                     sent: true,
                 }
             };
-            let task = Planned::new(
-                "bridge-chat-task-",
-                json!({"type":"ai","agentRef":{"name":agent.name()},"prompt":message,"timeout":"120s","retryPolicy":{"maxRetries":0},"sessionRef":{"name":session,"create":true,"append":true,"maxMessages":50}}),
-            );
+            let mut task_spec = json!({"type":"ai","agentRef":{"name":agent.name()},"prompt":message,"timeout":"120s","retryPolicy":{"maxRetries":0},"sessionRef":{"name":session,"append":true,"maxMessages":50}});
+            // Go omits false Create; only the first turn may create a Session.
+            if fresh {
+                task_spec["sessionRef"]["create"] = json!(true);
+            }
+            let task = Planned::new("bridge-chat-task-", task_spec);
             // Validate both *whole* create bodies before the first mutation.
             agent
                 .request("agents")
@@ -539,6 +544,15 @@ impl Worker {
         }
         let reply = self.get(&format!("{collection}/{name}")).await?;
         if reply.status == 404 {
+            if !agent {
+                let c = self.context.as_mut().unwrap();
+                c.deleted = true;
+                self.safe = false;
+                if c.stopping {
+                    self.stopped();
+                }
+                return Ok(()); // Task absence alone does not establish Session release.
+            }
             self.safe = true;
             return Err(ChatError::ContextUnavailable);
         }
