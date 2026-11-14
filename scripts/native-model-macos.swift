@@ -289,6 +289,37 @@ func fillMessage(_ text: String) {
     if actual != text { _ = try? capture("chat-input-failed", []) }
     require(actual == text, "Native keystrokes did not fill Chat Message: expected \(text.debugDescription), got \(String(describing: actual))")
 }
+// Controls use the compiled frontend with a synthetic catalog, not real tools.
+for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
+    localSize(CGFloat(width), CGFloat(height))
+    scroll(4000)
+    _ = try seek("Instructions and settings", -150)
+    _ = try capture("local-controls-agent-\(size)", ["Instructions and settings"])
+    _ = try seek("Add a tool", -150)
+    waitForButton("Add a tool")
+    _ = try capture("local-controls-fields-\(size)", ["Add a tool", "It thinks with"])
+    click("Add a tool", [])
+    _ = try capture("local-controls-picker-\(size)", ["Find a tool", "Read a file"])
+    guard let close = enabledButton("Close picker"), let bounds = nativeBounds(close) else {
+        fatalError("Labeled picker X missing")
+    }
+    require(abs(bounds.width - 26) < 2 && abs(bounds.height - 26) < 2, "Picker X must be 26px square")
+    click("Close picker", [])
+    require(enabledButton("Close picker") == nil, "X did not dismiss picker")
+    require(attribute(enabledButton("Add a tool")!, "AXFocused") as? Bool == true, "X did not return focus")
+    click("Add a tool", [])
+    for down in [true, false] { CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: down)?.post(tap: .cghidEventTap) }
+    Thread.sleep(forTimeInterval: 0.3)
+    require(enabledButton("Close picker") == nil, "Escape did not dismiss picker")
+    click("Add a tool", [])
+    let outside = CGPoint(x: window()!.1.minX + 5, y: window()!.1.minY + 90)
+    for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+        CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: outside, mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+    Thread.sleep(forTimeInterval: 0.3)
+    require(enabledButton("Close picker") == nil, "Outside click did not dismiss picker")
+}
+scroll(4000)
 // Match the fixture's known Instructions value, not a label plus a guessed
 // offset which can land outside the editor after responsive reflow.
 let editors = nativeElements().filter {
