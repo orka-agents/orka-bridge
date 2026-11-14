@@ -124,6 +124,7 @@ impl NativeRunner<'_> {
                     Err(error)=> { availability=if error==ErrorKind::NotFound {"missing"}else{"unavailable"}; None }
                 };
                 let captured=answer.is_some();
+                if !captured && availability=="available" && case.assertions().iter().any(|a|matches!(a,Assertion::Contains{..})) { availability="missing"; }
                 let answer=answer.or_else(|| old.and_then(|r| r.answer.clone()));
                 let tools=match self.tools(&task.name,&task.namespace,&agent.name,deadline,&mut stop).await {
                     Ok(tools)=>tools,

@@ -208,6 +208,26 @@ test('reopened answers load locally on demand, with captured time and safe plain
   expect(ipc.mock.calls.map(([command]) => command)).toEqual(['send_history', 'send_history_details']);
 });
 
+test.each(['passed', 'failed'])('a closed row follows its completed %s summary instead of cached running detail', async verdict => {
+  vi.stubGlobal('isTauri', true);
+  let complete = false;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'send_history') return [{ ...summary, verdict: complete ? verdict : 'running' }];
+    if (command === 'send_history_details') return { ...saved, report: null, interrupted: true, canCheck: false, canRemove: false };
+    throw Error('Unexpected operation');
+  });
+  mockIPC(ipc);
+  const view = render(<SendHistory revision="running" />);
+  await openSaved();
+  await screen.findByText('Last seen running; current result unknown');
+  await userEvent.setup().click(screen.getByText('Show saved details'));
+  await waitFor(() => expect(screen.queryByText('Last seen running; current result unknown')).toBeNull());
+  complete = true;
+  view.rerender(<SendHistory revision="complete" />);
+  await screen.findByText(`Saved tests: ${verdict === 'passed' ? 'pass' : 'fail'}`);
+  expect(ipc.mock.calls.filter(([command]) => command === 'send_history_details')).toHaveLength(1);
+});
+
 test('interrupted evidence is unknown without a live spinner and requires an explicit cluster check', async () => {
   const ipc = detailed({ ...saved, interrupted: true, canRemove: false });
   await openSaved();

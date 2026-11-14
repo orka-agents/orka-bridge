@@ -280,6 +280,29 @@ fn history_blocked_live_reader_stop_does_not_hold_runtime_shutdown() {
 }
 
 #[tokio::test]
+async fn history_retains_cached_text_without_verifying_a_null_result() {
+    let s = setup().await;
+    let started = s.start().await;
+    let send = id(&started);
+    assert_eq!(s.finish(&send).await["report"]["verdict"], "passed");
+    let posts = s.api.wire.posts();
+    *s.api.wire.mode.lock().unwrap() = "empty-result";
+    let checked = s.owner.history_check(&send).await.unwrap();
+    let report = checked.report.unwrap();
+    assert_eq!(report.cases[0].answer.as_deref(), Some("expected answer"));
+    assert_eq!(
+        report.verdict,
+        Verdict::Unknown,
+        "cached text is not a freshly verified answer"
+    );
+    assert_eq!(
+        s.owner.history().unwrap()[0].verdict,
+        bridge_engine::send_summary::AttemptVerdict::Unknown
+    );
+    assert_eq!(s.api.wire.posts(), posts);
+}
+
+#[tokio::test]
 async fn history_keeps_a_fresh_assertion_failure_when_optional_events_are_missing() {
     let s = setup().await;
     *s.api.wire.mode.lock().unwrap() = "wrong-result";

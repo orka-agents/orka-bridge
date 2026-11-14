@@ -37,7 +37,8 @@ function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: s
   const epoch = useRef(0);
   useEffect(() => () => { epoch.current++; }, []);
   useEffect(() => {
-    if (!open || operation.current) return;
+    if (!open) { setDetail(undefined); return; }
+    if (operation.current) return;
     let mounted = true;
     const request = ++epoch.current;
     void sendHistoryDetail('send_history_details', attempt.id).then(value => {
