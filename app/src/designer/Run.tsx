@@ -4,7 +4,7 @@ import { CardSection, Details, GeneratedValue, LongCard, StatusPill, type Status
 import { changedFiles, resultAnnouncement, resultLabel, TestProgress, TestResults } from '../components/TestResults';
 import { SAMPLE_DOCUMENT_ID, type SourceId, sameSource } from './agent-api';
 import { errors, type RunSnapshot, runCall } from './run-api';
-export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, blocked = false, stale = false, onStart, source }: { documentId?: string; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId }) {
+export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, blocked = false, stale = false, onStart, source, startRequest, onStartRequestHandled }: { documentId?: string; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId; startRequest?: number; onStartRequestHandled?: () => void }) {
   const [received, setSnapshot] = useState<RunSnapshot>();
   const snapshot = received?.documentId === documentId ? received : undefined;
   const [message, setMessage] = useState<string>();
@@ -32,6 +32,14 @@ export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, block
     if (result.ok) { onStart?.(); setSnapshot(result.snapshot); setMessage(undefined); } else setMessage(result.message);
     setSending(false);
   };
+  const handledStart = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!startRequest || handledStart.current === startRequest || (!snapshot && !message)) return;
+    handledStart.current = startRequest;
+    // A card click is one attempt, never an intent held until the cluster reconnects.
+    if (!message) void start();
+    onStartRequestHandled?.();
+  });
   const running = sending || snapshot?.state === 'running';
   const outdated = stale || (sourceCurrent === false && !!snapshot?.report);
   const uncertain = snapshot?.state === 'unknown' || snapshot?.report?.verdict === 'unknown';
