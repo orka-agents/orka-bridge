@@ -81,6 +81,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
     clearKey();
     active.current = true;
     const request = ++epoch.current;
+    const before = { attempted, removed };
     setBusy(action); setError(undefined); setRemoved(false); setNotice(''); setFailedAction(action);
     setAttempted(true); setConfirmRemoval(false);
     if (action === 'remove') setConnected(false);
@@ -96,6 +97,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
       } else setConnection(undefined);
     } else {
       if (result.vendor) { setChoice('key'); setVendor(result.vendor); }
+      if (action === 'connect' && result.category === 'modelBusy') { setAttempted(before.attempted); setRemoved(before.removed); }
       setError(result);
       if ((choice === 'key' || result.vendor) && ['modelCredentialRejected', 'modelProviderUnreachable', 'modelModelUnavailable'].includes(result.category)) setRemoved(true);
     }

@@ -30,8 +30,25 @@ test.each([false, true])('prepared sample revision refreshes only a clean mounte
   const editor = () => screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
   if (dirty) fireEvent.change(editor(), { target: { value: `${pair.agent}My unsaved instruction.` } });
   agent = pair.agent.replace('Read the page.', 'Use the prepared model.');
-  view.rerender(<Example sampleRevision={1} />);
+  await act(async () => view.rerender(<Example sampleRevision={1} />));
   await waitFor(() => expect(editor().value).toBe(dirty ? `${pair.agent}My unsaved instruction.` : agent));
+});
+test('a prepared refresh owns the read over an older initial open and preserves later edits', async () => {
+  vi.stubGlobal('isTauri', true); const reads: ((value: unknown) => void)[] = [];
+  mockIPC(command => command === 'agent_open' ? new Promise(resolve => reads.push(resolve)) : idle);
+  const view = render(<Example sampleRevision={0} />);
+  await waitFor(() => expect(reads).toHaveLength(1));
+  view.rerender(<Example sampleRevision={1} />);
+  await waitFor(() => expect(reads).toHaveLength(2));
+  const prepared = pair.agent.replace('Read the page.', 'Use the prepared model.');
+  await act(async () => reads[1]({ ...pair, agent: prepared }));
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  fireEvent.click(screen.getByRole('button', { name: 'File' }));
+  const editor = () => screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
+  const changed = `${prepared}My unsaved instruction.`;
+  fireEvent.change(editor(), { target: { value: changed } });
+  await act(async () => reads[0](pair));
+  expect(editor().value).toBe(changed);
 });
 test('opening keeps a form-shaped skeleton until the owned document arrives', async () => {
   vi.stubGlobal('isTauri', true); let finish!: (value: unknown) => void;

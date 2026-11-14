@@ -165,6 +165,15 @@ fn state(b: Option<&Binding>, ready: bool) -> ModelSetupState {
         connection: b.and_then(|b| b.connection.clone()),
     }
 }
+fn cleanup_acknowledged(remote: &ModelState, known: &ModelConnection) -> bool {
+    remote.phase == ModelPhase::Idle
+        && remote.connection.is_none()
+        && !remote.credential.installed
+        && remote
+            .credential
+            .generation
+            .is_some_and(|g| g != known.generation)
+}
 fn finish_connect(
     root: &Path,
     b: &mut Binding,
@@ -449,6 +458,11 @@ impl SetupStore {
                 )
             })
         {
+            if b.connection.is_none() {
+                // A complete kmx rejection carries its anchored identity. Without one,
+                // completion is uncertain: retain custody and allow only same-attempt retry.
+                return Err(SetupError::model("modelConnect"));
+            }
             // Reuse sign-out's removal lifecycle without releasing either ownership guard.
             self.finish_sign_out(root, b, Some(client), store)
                 .map_err(|_| SetupError::model("modelKeyCleanup"))?;
@@ -504,12 +518,12 @@ impl SetupStore {
                 write_binding(root, &b)?;
                 return Ok(state(Some(&b), true));
             }
-            if let Some(connection) = remote.connection {
+            if let Some(connection) = &remote.connection {
                 // Persist the acknowledged identity before cleanup, never guess one.
                 b.connection = Some(connection.clone());
                 write_binding(root, &b)?;
                 let stopped = client
-                    .disconnect_model(&connection)
+                    .disconnect_model(connection)
                     .map_err(|_| SetupError::model("modelConnect"))?;
                 if stopped.phase != ModelPhase::Idle {
                     return Err(SetupError::connect(stopped.diagnostic));
@@ -520,14 +534,7 @@ impl SetupStore {
             } else if let Some(known) = &b.connection {
                 // Cleanup may have completed before the host's Stored write failed.
                 // Same-lease Idle plus a cleared, advanced generation proves completion.
-                if remote.phase != ModelPhase::Idle
-                    || remote.credential.installed
-                    || !remote
-                        .credential
-                        .generation
-                        .is_some_and(|g| g != known.generation)
-                    || known.selection != selection
-                {
+                if !cleanup_acknowledged(&remote, known) || known.selection != selection {
                     return Err(unavailable());
                 }
             } else if remote.credential.installed {
@@ -615,6 +622,16 @@ impl SetupStore {
             if b.nonce != Some(client.boot_nonce()) {
                 cleanup_previous_boot(root, &mut b, client)?;
             } else {
+                if b.phase == Phase::Pending {
+                    if let Some(known) = &b.connection {
+                        let remote = client.model_status().map_err(|_| unavailable())?;
+                        if cleanup_acknowledged(&remote, known) {
+                            // Guest cleanup may precede a failed Cleared checkpoint write.
+                            b.phase = Phase::Cleared;
+                            write_binding(root, &b)?;
+                        }
+                    }
+                }
                 return self.finish_sign_out(root, &mut b, Some(client), store);
             }
         }

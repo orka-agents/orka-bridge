@@ -30,11 +30,23 @@ test('key stays only in its password field and is cleared as soon as native take
   expect(screen.getByRole('button', { name: 'Change' })).toBeTruthy();
 });
 test('retry without a pasted key requests only a saved key, never implicit Copilot capture', async () => {
-  invoke.mockRejectedValue({ kind: 'modelBusy' });
+  invoke.mockRejectedValue({ kind: 'modelConnect' });
   render(<Model enabled />); keyChoice(); fireEvent.change(field(), { target: { value: key } });
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' })); await screen.findByRole('alert');
   fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
   expect(invoke.mock.calls[1]).toEqual(['setup_connect_model', { vendor: 'anthropic' }]);
+});
+test('a busy first key attempt restores selectors and requires a newly pasted key', async () => {
+  invoke.mockRejectedValueOnce({ kind: 'modelBusy' }).mockResolvedValue({ ready: true, connection: anthropic });
+  render(<Model enabled />); keyChoice(); fireEvent.change(field(), { target: { value: key } });
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' })); await screen.findByRole('alert');
+  expect(screen.getByRole('radio', { name: 'GitHub Copilot' }).hasAttribute('disabled')).toBe(false);
+  expect(screen.getByRole('button', { name: 'OpenAI' }).hasAttribute('disabled')).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  expect(invoke).toHaveBeenCalledTimes(1);
+  fireEvent.change(field(), { target: { value: key } }); fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  await screen.findByRole('button', { name: 'Change' });
+  expect(invoke.mock.calls[1]).toEqual(['setup_connect_key', { vendor: 'anthropic', key }]);
 });
 test('malformed replacement after Change keeps the field and Connect action available', async () => {
   invoke.mockResolvedValueOnce({ ready: true, connection: anthropic }).mockResolvedValue({ ready: false });

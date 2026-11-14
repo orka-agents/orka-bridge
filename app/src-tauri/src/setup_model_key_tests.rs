@@ -394,6 +394,8 @@ fn definitive_key_failures_disconnect_clear_delete_and_cleanup_uncertainty_wins(
                 error.kind,
                 if failure == 0 {
                     kind
+                } else if failure == 1 {
+                    "modelConnect"
                 } else {
                     "modelKeyCleanup"
                 }
@@ -424,6 +426,196 @@ fn definitive_key_failures_disconnect_clear_delete_and_cleanup_uncertainty_wins(
             assert_no_file_key(setup.root.as_deref().unwrap());
         }
     }
+}
+
+#[test]
+fn identityless_key_failure_is_uncertain_and_retries_only_the_installed_attempt() {
+    let (_tmp, setup, install) = selected_setup();
+    let vault = FakeVault {
+        secret: Some(KEY.as_bytes()),
+        ..FakeVault::default()
+    };
+    let conn = ModelConnection {
+        selection: key_selection(ModelVendor::Anthropic),
+        ..connection()
+    };
+    let expected = conn.clone();
+    let mut step = 0;
+    let (mut client, worker) = peer(Uuid::new_v4(), move |r| {
+        step += 1;
+        Some(match (step, &r.body) {
+            (1 | 2, RequestBody::ModelStatus {}) => idle(),
+            (3, RequestBody::CredentialStatus {}) => {
+                ResultBody::CredentialState(credential(None, false))
+            }
+            (4, RequestBody::CredentialPublish { profile: 2, .. }) => {
+                ResultBody::CredentialState(key_credential(Some(expected.generation), true))
+            }
+            (5, RequestBody::ModelConnect { .. }) => key_remote(
+                None,
+                expected.generation,
+                ModelPhase::Unknown,
+                Some(ModelErrorCode::CredentialRejected),
+            ),
+            (6, RequestBody::ModelStatus {}) => {
+                key_remote(None, expected.generation, ModelPhase::Unknown, None)
+            }
+            (
+                7,
+                RequestBody::ModelConnect {
+                    generation,
+                    selection,
+                },
+            ) => {
+                assert_eq!(
+                    (*generation, selection),
+                    (expected.generation, &expected.selection)
+                );
+                key_remote(
+                    Some(expected.clone()),
+                    expected.generation,
+                    ModelPhase::Ready,
+                    None,
+                )
+            }
+            _ => panic!("identityless retry must not clear, load, publish or guess an identity"),
+        })
+    });
+    let error = setup
+        .connect_key_model(install, ModelVendor::Anthropic, KEY, &mut client, &vault)
+        .unwrap_err();
+    assert_eq!(error.kind, "modelConnect");
+    assert_eq!(vault.counts(), (1, 1, 0));
+    assert!(setup.model_binding_status().unwrap().unknown);
+    assert!(
+        setup
+            .connect_saved_key_model(install, ModelVendor::Anthropic, &mut client, &vault)
+            .unwrap()
+            .ready
+    );
+    assert_eq!(vault.counts(), (1, 1, 0));
+    drop(client);
+    assert_eq!(worker.join().unwrap().frames.len(), 7);
+}
+
+#[test]
+fn cleanup_completion_requires_all_acknowledged_evidence() {
+    let conn = connection();
+    let cleared = ModelState {
+        retained_cleanup: true,
+        phase: ModelPhase::Idle,
+        connection: None,
+        credential: key_credential(Some(Uuid::new_v4()), false),
+        diagnostic: None,
+    };
+    assert!(cleanup_acknowledged(&cleared, &conn));
+    for variant in 0..5 {
+        let mut uncertain = cleared.clone();
+        match variant {
+            0 => uncertain.phase = ModelPhase::Unknown,
+            1 => uncertain.connection = Some(conn.clone()),
+            2 => uncertain.credential.installed = true,
+            3 => uncertain.credential.generation = Some(conn.generation),
+            _ => uncertain.credential.generation = None,
+        }
+        assert!(
+            !cleanup_acknowledged(&uncertain, &conn),
+            "variant {variant}"
+        );
+    }
+}
+
+#[test]
+fn automatic_key_cleanup_recovers_a_failed_cleared_checkpoint_on_remove() {
+    let (_tmp, setup, install) = selected_setup();
+    let root = setup.root.as_ref().unwrap().clone();
+    let checkpoint = Arc::new(Mutex::new(Vec::new()));
+    let observed = checkpoint.clone();
+    let vault = FakeVault {
+        secret: Some(KEY.as_bytes()),
+        ..FakeVault::default()
+    };
+    let conn = ModelConnection {
+        selection: key_selection(ModelVendor::Anthropic),
+        ..connection()
+    };
+    let cleared = Uuid::new_v4();
+    let mut step = 0;
+    let (mut client, worker) = peer(Uuid::new_v4(), move |r| {
+        step += 1;
+        Some(match (step, &r.body) {
+            (1 | 2, RequestBody::ModelStatus {}) => idle(),
+            (3, RequestBody::CredentialStatus {}) => {
+                ResultBody::CredentialState(credential(None, false))
+            }
+            (4, RequestBody::CredentialPublish { profile: 2, .. }) => {
+                ResultBody::CredentialState(key_credential(Some(conn.generation), true))
+            }
+            (5, RequestBody::ModelConnect { .. }) => key_remote(
+                Some(conn.clone()),
+                conn.generation,
+                ModelPhase::Unknown,
+                Some(ModelErrorCode::CredentialRejected),
+            ),
+            (6, RequestBody::ModelDisconnect { .. }) => ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
+                phase: ModelPhase::Idle,
+                connection: None,
+                credential: key_credential(Some(conn.generation), true),
+                diagnostic: None,
+            }),
+            (7, RequestBody::CredentialStatus {}) => {
+                ResultBody::CredentialState(key_credential(Some(conn.generation), true))
+            }
+            (8, RequestBody::CredentialClear { .. }) => {
+                let path = root.join("model-v1");
+                *observed.lock().unwrap() = fs::read(&path).unwrap();
+                fs::remove_file(&path).unwrap();
+                fs::create_dir(&path).unwrap();
+                ResultBody::CredentialState(key_credential(Some(cleared), false))
+            }
+            (9, _) => ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
+                phase: ModelPhase::Idle,
+                connection: None,
+                credential: key_credential(Some(cleared), false),
+                diagnostic: None,
+            }),
+            _ => panic!("completed cleanup must not replay credential operations"),
+        })
+    });
+    assert_eq!(
+        setup
+            .connect_key_model(install, ModelVendor::Anthropic, KEY, &mut client, &vault)
+            .unwrap_err()
+            .kind,
+        "modelKeyCleanup"
+    );
+    let path = setup.root.as_ref().unwrap().join("model-v1");
+    fs::remove_dir(&path).unwrap();
+    fs::write(&path, &*checkpoint.lock().unwrap()).unwrap();
+    assert_eq!(
+        read_binding(setup.root.as_ref().unwrap())
+            .unwrap()
+            .unwrap()
+            .phase,
+        Phase::Pending
+    );
+    assert!(
+        !setup
+            .sign_out_model(install, Some(&mut client), &vault)
+            .unwrap()
+            .associated
+    );
+    assert_eq!(vault.counts(), (1, 1, 1));
+    assert!(!path.exists());
+    drop(client);
+    let traffic = worker.join().unwrap();
+    assert_eq!(traffic.frames.len(), 9);
+    assert!(matches!(
+        traffic.frames.last().unwrap().body,
+        RequestBody::ModelStatus {}
+    ));
 }
 
 #[test]

@@ -80,12 +80,14 @@ export default function Example({ sampleRevision = 0, agentsRevision = 0, onRegi
   const [openAttempt, setOpenAttempt] = useState(0);
   useEffect(() => {
     let mounted = true;
+    const request = ++reloadEpoch.current;
+    reloadAdmitted.current = false; setReloading(false);
     const open = agentCall('agent_open', undefined, boundDocument);
     void open.then(value => {
-      if (!mounted) return;
+      if (!mounted || request !== reloadEpoch.current) return;
       setPair(value); setDraft(value.agent); latest.current = saved.current = value.agent;
       lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n'; onPair?.(value, boundDocument);
-    }, () => { if (mounted) { setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined, boundDocument); } });
+    }, () => { if (mounted && request === reloadEpoch.current) { setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined, boundDocument); } });
     return () => { mounted = false; };
   }, [onPair, boundDocument, openAttempt]);
   useEffect(() => { onSaveState?.(pendingSoul ? 'dirty' : saveState, boundDocument); }, [saveState, pendingSoul, onSaveState, boundDocument]);
@@ -152,7 +154,7 @@ export default function Example({ sampleRevision = 0, agentsRevision = 0, onRegi
   async function reloadSource() {
     if (reloadAdmitted.current || busy.current || needsCommit.current || pendingSoulCurrent.current || latest.current !== saved.current) return;
     reloadAdmitted.current = true; setReloading(true);
-    const request = reloadEpoch.current;
+    const request = ++reloadEpoch.current;
     const before = latest.current;
     try {
       const value = await agentCall('agent_open', undefined, boundDocument);
@@ -162,6 +164,11 @@ export default function Example({ sampleRevision = 0, agentsRevision = 0, onRegi
       setPair(value); setDraft(value.agent); latest.current = saved.current = value.agent;
       lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n';
       setStale(false); onPair?.(value, boundDocument);
+    } catch (failure) {
+      if (request === reloadEpoch.current && !pair) {
+        setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined, boundDocument);
+      }
+      throw failure;
     } finally { if (request === reloadEpoch.current) { reloadAdmitted.current = false; setReloading(false); } }
   }
   useEffect(() => {

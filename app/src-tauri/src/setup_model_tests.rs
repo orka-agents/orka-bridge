@@ -1232,10 +1232,14 @@ fn unknown_connect_retains_known_id_and_unknown_disconnect_never_clears_or_delet
         .is_err());
     drop(client);
     let traffic = worker.join().unwrap();
-    assert_eq!(traffic.frames.len(), 5);
+    assert_eq!(traffic.frames.len(), 6);
     assert_eq!(traffic.publications(), 1);
+    assert!(matches!(
+        traffic.frames[4].body,
+        RequestBody::ModelStatus {}
+    ));
     assert!(
-        matches!(traffic.frames[4].body, RequestBody::ModelDisconnect { connection } if connection == conn.id)
+        matches!(traffic.frames[5].body, RequestBody::ModelDisconnect { connection } if connection == conn.id)
     );
     assert_eq!(vault.counts(), (1, 1, 0));
     assert!(vault.slots.lock().unwrap().contains_key(&binding.slot));

@@ -38,6 +38,8 @@ require(["light", "dark"].contains(theme), "Expected light or dark")
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 let child = Process()
 child.executableURL = URL(fileURLWithPath: CommandLine.arguments[2])
+let keyCheckRelease = URL(fileURLWithPath: output).appendingPathComponent("key-check-release-\(UUID().uuidString)")
+child.environment = ProcessInfo.processInfo.environment.merging(["BRIDGE_MODEL_CHECK_RELEASE": keyCheckRelease.path]) { _, fixture in fixture }
 try child.run()
 defer { if child.isRunning { child.terminate(); child.waitUntilExit() } }
 func window() -> (CGWindowID, CGRect)? {
@@ -225,6 +227,7 @@ try keyCapture("filled", ["API key", "claude-sonnet-5-5"], compact: true)
 _ = try seek("Connect the AI", -200)
 click("Connect the AI", [])
 try keyCapture("checking", ["Checking", "Asking Anthropic"])
+try Data().write(to: keyCheckRelease, options: .atomic)
 waitForButton("Check again")
 for (state, message) in [("rejected", "Anthropic didn't accept this key"),
                          ("unreachable", "local cluster couldn't reach Anthropic"),

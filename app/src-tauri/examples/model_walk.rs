@@ -134,6 +134,8 @@ fn main() {
     let connected = std::sync::atomic::AtomicBool::new(false);
     let key_connected = std::sync::atomic::AtomicBool::new(false);
     let key_attempt = std::sync::atomic::AtomicUsize::new(0);
+    let key_check_release =
+        std::env::var_os("BRIDGE_MODEL_CHECK_RELEASE").map(std::path::PathBuf::from);
     let key_removed_once = std::sync::atomic::AtomicBool::new(false);
     let first_test_pending = std::sync::atomic::AtomicBool::new(false);
     let original = include_str!("../example-agent/web-reader.agent.md");
@@ -268,9 +270,14 @@ fn main() {
                     if let Some(kind) = ["modelCredentialRejected", "modelProviderUnreachable", "modelModelUnavailable"].get(attempt) {
                         let error = json!({"kind":kind});
                         let resolver = invoke.resolver;
-                        // Hold only the first synthetic check long enough to capture its busy UI.
+                        let release = key_check_release.clone();
+                        // The native driver releases the first rejection after capturing Checking.
                         tauri::async_runtime::spawn(async move {
-                            if attempt == 0 { tokio::time::sleep(std::time::Duration::from_secs(4)).await; }
+                            if attempt == 0 {
+                                if let Some(release) = release {
+                                    while !release.exists() { tokio::time::sleep(std::time::Duration::from_millis(20)).await; }
+                                }
+                            }
                             resolver.reject(error);
                         });
                         return true;
