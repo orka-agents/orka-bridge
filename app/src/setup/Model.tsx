@@ -176,7 +176,8 @@ export default function Model({ enabled, queueable = false, paused = false, away
           {cliUnavailable && <Button type="button" kind="secondary" onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</Button>}
           {(cliUnavailable || signInCheck) && <Button type="button" kind="secondary" onClick={() => { void help('githubSignIn'); }}>Sign-in help</Button>}
           {queued || busy || ready ? <div ref={status} role={ready ? 'status' : undefined} tabIndex={-1} className="model-state">
-            <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? keyMode ? 'Removing key…' : 'Removing sign-in…' : ready ? 'Connected' : queued ? 'Queued' : keyMode ? 'Checking' : 'Connecting the AI…'}</StatusPill>
+            <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? 'Removing' : ready ? 'Connected' : queued ? 'Queued' : keyMode ? 'Checking' : 'Connecting'}</StatusPill>
+            {busy && (busy === 'remove' || !keyMode) && <span className="status-description">{busy === 'remove' ? keyMode ? 'Removing key…' : 'Removing sign-in…' : 'Connecting the AI…'}</span>}
             {queued && <><span className="muted">Connects when the local cluster is ready.</span>
               <Button type="button" kind="quiet" onClick={() => setQueued(false)}>Cancel queued connection</Button></>}
           </div>
