@@ -1,8 +1,9 @@
+import { Button } from '../components/Button';
 import { useEffect, useRef, useState } from 'react';
 import { SAMPLE_DOCUMENT_ID, type SourceId, sameSource } from '../designer/agent-api';
 import type { RunSnapshot } from '../designer/run-api';
 import type { SelectedPlace } from './api';
-import { type AttemptSummary, type SendCheck, type SendStatus, sendCall, sendErrors, sendHistory, sendPreflight } from './send-api';
+import { type AttemptSummary, type SendHistoryDetail, type SendCheck, type SendStatus, sendCall, sendErrors, sendHistory, sendHistoryDetail, sendPreflight } from './send-api';
 import './clusters.css';
 import { CardSection, Details, Elapsed, GeneratedValue, LongCard, type Status, StatusIcon, StatusPill } from '../components/DesignSystem';
 import { changedFiles, resultAnnouncement, resultLabel, TestProgress, TestResults } from '../components/TestResults';
@@ -10,14 +11,95 @@ import { changedFiles, resultAnnouncement, resultLabel, TestProgress, TestResult
 export function SendEntry({ failingCheck, blocked, onProceed, onFix }: { failingCheck?: string; blocked?: string; onProceed: () => void; onFix: () => void }) {
   const [warning, setWarning] = useState(false);
   return <div className="send-entry">
-    <button type="button" className="shell-button" disabled={!!blocked} title={blocked} onClick={() => { if (failingCheck) setWarning(true); else onProceed(); }}>Send to a cluster</button>
+    <Button type="button" kind="secondary" disabled={!!blocked} title={blocked} onClick={() => { if (failingCheck) setWarning(true); else onProceed(); }}>Send to a cluster</Button>
     {warning && failingCheck && <div className="send-warning" role="note"><p>Test {failingCheck} failed. You can still send this agent.</p>
-      <button type="button" className="workspace-secondary" disabled={!!blocked} onClick={() => { setWarning(false); onProceed(); }}>Send anyway</button>
-      <button type="button" className="workspace-disclosure" onClick={() => { setWarning(false); onFix(); }}>Fix it first</button>
+      <Button type="button" kind="secondary" disabled={!!blocked} onClick={() => { setWarning(false); onProceed(); }}>Send anyway</Button>
+      <Button kind="quiet" onClick={() => { setWarning(false); onFix(); }}>Fix it first</Button>
     </div>}
   </div>;
 }
 const words = { passed: 'pass', failed: 'fail', unknown: 'unknown' } as const;
+function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: string }) {
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState<SendHistoryDetail>();
+  const [checkedVerdict, setCheckedVerdict] = useState<AttemptSummary['verdict']>();
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const removeInvoker = useRef<HTMLButtonElement>(null);
+  const keepDetails = useRef<HTMLButtonElement>(null);
+  const savedDisclosure = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!confirmRemove) return;
+    keepDetails.current?.focus();
+    return () => { (removeInvoker.current ?? savedDisclosure.current)?.focus(); };
+  }, [confirmRemove]);
+  const operation = useRef(false);
+  const epoch = useRef(0);
+  useEffect(() => () => { epoch.current++; }, []);
+  useEffect(() => {
+    if (!open) { setDetail(undefined); return; }
+    if (operation.current) return;
+    let mounted = true;
+    const request = ++epoch.current;
+    void sendHistoryDetail('send_history_details', attempt.id).then(value => {
+      if (mounted && request === epoch.current) { setDetail(value); setError(undefined); }
+    }, (failure: Error) => { if (mounted && request === epoch.current) setError(failure.message); });
+    return () => { mounted = false; };
+  }, [open, attempt.id, revision]);
+  async function act(command: 'send_history_check' | 'send_history_remove') {
+    if (operation.current) return;
+    operation.current = true; setBusy(true);
+    const request = ++epoch.current;
+    try {
+      const value = await sendHistoryDetail(command, attempt.id);
+      if (request === epoch.current) {
+        setDetail(value); setError(undefined); setConfirmRemove(false);
+        if (command === 'send_history_check') setCheckedVerdict(value.interrupted ? 'unknown' : value.report?.verdict ?? 'unknown');
+      }
+    } catch (failure) { if (request === epoch.current) setError((failure as Error).message); }
+    finally { operation.current = false; if (request === epoch.current) setBusy(false); }
+  }
+  const verdict = detail?.interrupted ? 'unknown' : detail?.report?.verdict ?? checkedVerdict ?? attempt.verdict;
+  return <li>
+    <div className="send-history-heading"><strong>{attempt.targetDisplay}</strong><span>Saved tests: {verdict === 'running' ? 'unknown' : words[verdict]}</span></div>
+    <p>{attempt.plannedAgentName}</p><p>AI connection: {attempt.provider} · <time dateTime={new Date(attempt.time * 1000).toISOString()}>{new Date(attempt.time * 1000).toLocaleString()}</time></p>
+    <details onToggle={event => { setOpen(event.currentTarget.open); if (!event.currentTarget.open) setConfirmRemove(false); }}><summary ref={savedDisclosure}>Show saved details</summary>
+      {open && <>
+        {error && <p role="alert">{error}</p>}
+        {!detail && !error && <p role="status">Reading saved details…</p>}
+        {detail && <>
+          {detail.interrupted && <p role="status">Last seen running; current result unknown</p>}
+          {detail.detailState === 'legacy' && <p>This earlier Send has a summary only.</p>}
+          {detail.detailState === 'removed' && <p>Saved details removed from this computer.</p>}
+          {detail.detailState === 'omitted' && <p>Some details could not be saved.</p>}
+          {detail.report && <><p>Saved on this computer</p>{detail.capturedAt !== null && <p>Captured <time dateTime={new Date(detail.capturedAt * 1000).toISOString()}>{new Date(detail.capturedAt * 1000).toLocaleString()}</time></p>}
+            <TestResults report={detail.report} stale={false} /></>}
+          {detail.availability === 'missing' && <p role="status">No longer available from the cluster</p>}
+          {detail.availability === 'unavailable' && <p role="status">Cluster status unavailable. Reconnect this cluster in Clusters and try again. Saved answers are unchanged.</p>}
+          {detail.availability === 'available' && <p role="status">Cluster status checked. No tests were submitted.</p>}
+          {confirmRemove && <p role="alert">Remove saved details from this computer? Cluster data stays unchanged.</p>}
+          <div className="workspace-step-actions">
+            {confirmRemove ? <>
+              <Button type="button" kind="secondary" className="send-history-remove" disabled={busy} onClick={() => { void act('send_history_remove'); }}>Remove local copy</Button>
+              <Button ref={keepDetails} type="button" kind="secondary" disabled={busy} onClick={() => setConfirmRemove(false)}>Keep saved details</Button>
+            </> : <>
+              {detail.canCheck && <Button type="button" kind="secondary" disabled={busy} onClick={() => { void act('send_history_check'); }}>Check cluster status</Button>}
+              {detail.canRemove && <Button ref={removeInvoker} type="button" kind="secondary" className="send-history-remove" disabled={busy} onClick={() => setConfirmRemove(true)}>Remove saved details</Button>}
+            </>}
+          </div>
+          {busy && <p role="status">Updating saved details…</p>}
+        </>}
+      </>}
+      <Details hint="Saved identity"><dl className="cluster-details">
+        <div><dt>Agent UID</dt><dd>{attempt.agentUid ?? 'Not confirmed'}</dd></div>
+        <div><dt>Agent file hash</dt><dd>{attempt.source.agent}</dd></div>
+        <div><dt>Test file hash</dt><dd>{attempt.source.tests}</dd></div>
+        {detail?.model && <div><dt>Model</dt><dd>{detail.model}</dd></div>}
+      </dl></Details>
+    </details>
+  </li>;
+}
 export function SendHistory({ revision }: { revision: string }) {
   const [history, setHistory] = useState<AttemptSummary[]>();
   const [error, setError] = useState<string>();
@@ -32,16 +114,9 @@ export function SendHistory({ revision }: { revision: string }) {
   return <section className="send-history" aria-label="Past Sends">
     <h4>Past Sends</h4>
     <p>Earlier Sends and their test results. An interrupted Send may still be running on the cluster.</p>
-    {error ? <><p role="alert">{error}</p><button type="button" className="workspace-secondary" onClick={() => setRetry(v => v + 1)}>Retry saved Sends</button></>
-      : history ? history.length ? <ol>{history.map(attempt => <li key={attempt.id}>
-        <div className="send-history-heading"><strong>{attempt.targetDisplay}</strong><span>Tests: {attempt.verdict === 'running' ? 'running' : words[attempt.verdict]}</span></div>
-        <p>{attempt.plannedAgentName}</p><p>AI connection: {attempt.provider} · <time dateTime={new Date(attempt.time * 1000).toISOString()}>{new Date(attempt.time * 1000).toLocaleString()}</time></p>
-        <details><summary>Show saved details</summary><dl className="cluster-details">
-          <div><dt>Agent UID</dt><dd>{attempt.agentUid ?? 'Not confirmed'}</dd></div>
-          <div><dt>Agent file hash</dt><dd>{attempt.source.agent}</dd></div>
-          <div><dt>Test file hash</dt><dd>{attempt.source.tests}</dd></div>
-        </dl></details>
-      </li>)}</ol> : <p>No saved Sends yet.</p> : <p role="status">Reading saved Sends…</p>}
+    <Details hint="Saved results and limits"><p>Up to 256 Sends, 64 MiB total and 4 MiB per Send. Old terminal details are evicted first. Interrupted Sends are not resumed. Checking their status never sends tests again. Removing saved details changes only this computer, not the cluster. Removed or evicted answers may not be recoverable.</p></Details>
+    {error ? <><p role="alert">{error}</p><Button type="button" kind="secondary" onClick={() => setRetry(v => v + 1)}>Retry saved Sends</Button></>
+      : history ? history.length ? <ol>{history.map(attempt => <SavedSend key={attempt.id} attempt={attempt} revision={revision} />)}</ol> : <p>No saved Sends yet.</p> : <p role="status">Reading saved Sends…</p>}
   </section>;
 }
 export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, model, local, stale, blocked, visible, remote, onChooseCluster, onReloadSource }: {
@@ -124,8 +199,8 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   const stages = { capture: 'Reading your saved files', access: 'Confirming cluster access', preflight: 'Checking the AI connection and tools', storage: 'Saving the Send summary', submit: 'Starting your tests', observe: 'Waiting for answers and evaluating tests', stopped: 'Stopped watching', done: 'Tests finished' };
   return <><section tabIndex={-1} className="send-panel" aria-label="Send and cluster tests" hidden={!visible && !remote && !running}>
     <LongCard title={visible ? 'Send your agent' : 'Tests on your cluster'} status={<StatusPill state={resultState}>{outdated ? unconfirmed ? 'Revision not confirmed' : undefined : running || resultState === 'running' ? undefined : uncertain ? snapshot?.stage === 'stopped' ? 'Stopped watching' : 'Result unknown' : resultLabel(snapshot?.report)}</StatusPill>} summary={<>The saved agent and test files go together{snapshot?.model && <> · <code>{snapshot.model}</code></>}{targetName && <> · <code>{targetName}</code></>}. Each Send creates a new agent, kept on the cluster even if a test fails.</>}
-      action={<div className="workspace-step-actions">{!running && <button type="button" className="setup-button" disabled={!!reason || busy || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run tests' : 'Run all tests'}</button>}
-      {running && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void mutate('send_stop'); }}>Stop</button>}
+      action={<div className="workspace-step-actions">{!running && <Button type="button" kind="primary" disabled={!!reason || busy || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run tests' : 'Run all tests'}</Button>}
+      {running && <Button type="button" kind="secondary" disabled={busy} onClick={() => { void mutate('send_stop'); }}>Stop</Button>}
     </div>}>
     <p className="sr-only test-announcement" role="status" aria-live="polite" aria-atomic="true">{!running ? outdated ? revisionExplanation : snapshot?.stage === 'stopped' ? 'Stopped watching.' : uncertain ? 'Test result unknown.' : resultAnnouncement(snapshot?.report) : undefined}</p>
     <CardSection title="What you send">
@@ -134,7 +209,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
       <div><dt>Destination</dt><dd>{target ? <><code>{target.context_name}</code> · <code>{target.watched_namespace}</code></> : 'Choose a cluster'}</dd></div>
       {provider && <div><dt>AI connection</dt><dd>{(checked?.value?.model ?? model) && <><code>{checked?.value?.model ?? model}</code> through </>}<code>{provider.name}</code> · {provider.ready ? 'AI connection ready; the model is checked when tests run' : 'AI connection not ready'}</dd></div>}
     </dl>
-    {(!target || !provider) && <button type="button" className="workspace-secondary" onClick={onChooseCluster} disabled={!onChooseCluster}>Choose a cluster</button>}
+    {(!target || !provider) && <Button type="button" kind="secondary" onClick={onChooseCluster} disabled={!onChooseCluster}>Choose a cluster</Button>}
     {checkingEnabled && <section className="send-preflight" aria-label="Before Send" aria-busy={!checked}>
       <h4>Before Send</h4>
       {!mismatched && checked?.value && <ul>{checked.value.rows.map(row => <li key={`${row.label}-${row.message}`} data-state={row.status}>
@@ -143,10 +218,10 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
       </li>)}</ul>}
       {reason && <p role={checked ? 'alert' : 'status'}>{reason}</p>}
       {!checked && <Elapsed />}
-      {checked && (mismatched ? <button type="button" className="workspace-secondary" disabled={busy || running || !onReloadSource} onClick={() => {
+      {checked && (mismatched ? <Button type="button" kind="secondary" disabled={busy || running || !onReloadSource} onClick={() => {
         setReloadError(undefined);
         void onReloadSource?.().catch(() => setReloadError('Your saved files could not be reloaded. Your draft is still here.'));
-      }}>Reload saved files</button> : <button type="button" className="workspace-secondary" disabled={busy || running} onClick={() => setRefresh(v => v + 1)}>Check again</button>)}
+      }}>Reload saved files</Button> : <Button type="button" kind="secondary" disabled={busy || running} onClick={() => setRefresh(v => v + 1)}>Check again</Button>)}
       {reloadError && <p role="alert">{reloadError}</p>}
     </section>}
     </CardSection>
@@ -169,7 +244,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
       {snapshot.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Test file hash" value={snapshot.source.tests} /></>}
       {snapshot.acknowledged.map(r => <GeneratedValue key={`${r.kind}-${r.uid}`} label={r.kind} value={r.name} />)}
       {snapshot.pending && <GeneratedValue label={`Possibly created ${snapshot.pending.kind}`} value={snapshot.pending.name} />}
-      <p>Sending requires permission to create an agent and run its tests. Detailed answers are kept only while Bridge is open. Small Send summaries remain on this computer. Stop ends watching and prevents further submissions; it does not cancel checks already sent.</p>
+      <p>Sending requires permission to create an agent and run its tests. Saved answers and test receipts remain in Past Sends on this computer, within its retention limits. Stop ends watching and prevents further submissions; it does not cancel checks already sent.</p>
     </Details>}
     </LongCard>
   </section><SendHistory revision={`${documentId}:${status?.busy?.documentId ?? ''}:${snapshot?.id ?? ''}:${snapshot?.state ?? ''}:${snapshot?.stage ?? ''}:${snapshot?.storageError ?? false}`} /></>;

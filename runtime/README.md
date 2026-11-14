@@ -44,6 +44,35 @@ The kmx actions remain read-only: no file execution flags, Task/package lookup
 or cancellation is inferred from incomplete upstream machine-output work. Native
 Orka requests use their separate guest-owned transport.
 
+## Model credentials and connections
+
+Only the physical host channel can publish credentials or connect a model. A
+`credentialPublish` request may specify `profile: 2` for a model API key; an
+omitted profile means the existing Copilot profile 1. Profile 1 is omitted when
+serialized, preserving older Copilot requests. Other profiles are invalid.
+The checked tmpfs endpoints are `copilot-github-token` (1) and `model-api-key`
+(2), both root:65532, mode 0640, single-link regular files. No credential is
+passed in command arguments or persisted with operation results.
+
+A model selection keeps the Kubernetes `provider` name and model ID. An absent
+`vendor` selects Copilot; `vendor: "openai"` or `"anthropic"` selects the key
+route. Connect requires the corresponding installed credential profile. The
+guest supplies kmx's route/vendor flags and checks both in its connection reply,
+including partial failures and disconnect. Only closed diagnostic codes and
+safe stderr messages cross back, never upstream response bodies.
+
+There is one installed credential at a time. Disconnect the owned connection
+before clearing or replacing its credential, then explicitly clear before
+switching profiles. A cleared endpoint stays empty and inode-checked while the
+other profile is used. A guest-process restart refuses either existing endpoint,
+even when empty, rather than adopting it; a VM boot recreates the memory-only
+folder. Retained cleanup uses the full saved `ModelConnection`, including
+`selection.vendor`, before any new credential is installed.
+
+Using the key route requires a rebuilt guest image with kmx supporting
+`model connect --route key --vendor openai|anthropic`. This protocol support does
+not add a host key-entry flow, change the catalog or update installed images.
+
 ## Native Run cancellation observations
 
 The physical host channel accepts Run `orka` requests to
@@ -76,6 +105,49 @@ cancel API, and a fresh local cluster. Identity setup never rewrites an existing
 Role: a new guest encountering the old Role refuses all Run calls rather than
 expanding its permissions. These guest operations alone add no host cancellation
 loop or UI, and do not update an installed image.
+
+## Local test Agent cleanup
+
+The serving Hello advertises optional `runCleanup: true`; Early never does.
+Omission means unsupported. The native host must not send the new action to an
+older guest: unknown actions can close that guest's strict control channel.
+Use a rebuilt guest image with the matching app. Older apps reject the new guest's
+Hello field and fail boot. This does not update image pins or installed images:
+cleanup remains inactive in shipped builds until a compatible guest is pinned.
+
+After a local Run returns, the native host sweeps superseded recorded UIDs while
+still holding authoring admission and its client. Every retained result keeps its
+Agent; Tasks and answers remain. A rotating cursor tries at most eight candidates,
+starting calls for up to five seconds per sweep. An in-flight guest check has its
+own five-second budget, so this is not a hard five-second host limit.
+
+The physical-host-only `cleanupRunAgent` action accepts only a recorded Agent
+`uid` (nonempty, at most 64 bytes), not a name or namespace. The native caller
+must first exclude every Agent needed by retained results or unfinished work.
+Within one five-second budget, including lazy identity setup, the guest resolves
+that UID from a complete Agent list in `orka-system`, requires a generated
+`bridge-run-<32 lowercase hex>` name, and checks all Tasks referring to that name
+and effective namespace. A matching Task must be Succeeded, Failed or Cancelled,
+have a valid `status.jobName`, and have no live pods under the existing
+`job-name=<jobName>` selector. Missing associations, unknown phases, malformed or
+partial lists and command failures never establish inactivity. An Agent with
+no Tasks can be reclaimed, including creation interrupted before Task submission.
+
+Cleanup uses a separate, lazily verified `bridge-native-run-cleanup` identity:
+Agent get/list/delete, Task get/list, and core pod list only. Existing Run/Chat
+manifests and generic Run's prohibition on DELETE are unchanged. No token or
+port-forward is created. Kubernetes raw DELETE carries `DeleteOptions` with the
+recorded UID precondition and `propagationPolicy: Orphan`, so a name replacement
+is fenced and Tasks, results, events and completed pods are preserved. Cleanup
+never deletes Tasks. Only typed `{removed: bool}` reaches operation storage;
+`true` requires a complete list confirming that UID absent, including a bounded
+post-delete observation. Already-absent UIDs also return true. A finalizer can
+leave `removed: false`; failures return an error, never a successful absence.
+Mutations are not retried or replayed. A later sweep must observe again.
+
+Each complete namespace list must fit the existing 1 MiB guest output bound.
+Larger retained Task histories skip cleanup; pagination is not implemented.
+Tasks and answers are never discarded to make a cleanup observation fit.
 
 ## Native Chat transport
 
