@@ -368,6 +368,24 @@ class ExecuteTests(unittest.TestCase):
             self.api.execute([kmx, 'cluster', 'orka', 'install'])
         self.assertEqual('command failed: kmx: started | PHASE  [1/1] Install | offline live workload set differs; refusing reinstall', str(raised.exception))
 
+    def test_kmx_refusal_keeps_early_cause_before_long_stack_footer(self):
+        kmx = self.tool('kmx', "printf 'PHASE Prepare kind cluster\\nERROR: synthetic early cause\\n' >&2; "
+                                 "i=0; while [ \"$i\" -lt 100 ]; do printf 'synthetic stack frame %s\\n' \"$i\" >&2; i=$((i+1)); done; "
+                                 "printf 'runtime/asm_arm64.s:1268\\nFAILED Prepare kind cluster\\nkind create: exit status 1\\n' >&2; exit 1\n")
+        with self.assertRaises(ValueError) as raised:
+            self.api.execute([kmx, 'cluster', 'up'])
+        message = str(raised.exception)
+        self.assertIn('ERROR: synthetic early cause', message)
+        self.assertIn(' | ... | ', message)
+        self.assertTrue(message.endswith('kind create: exit status 1'))
+        self.assertNotIn('synthetic stack frame 70', message)
+
+    def test_kmx_short_multiline_refusal_keeps_leading_context_once(self):
+        kmx = self.tool('kmx', "printf 'early context\\nsecond context\\nthird context\\nfinal reason\\n' >&2; exit 1\n")
+        with self.assertRaises(ValueError) as raised:
+            self.api.execute([kmx])
+        self.assertEqual('command failed: kmx: early context | second context | third context | final reason', str(raised.exception))
+
     def test_kmx_refusal_is_bounded(self):
         kmx = self.tool('kmx', "yes x | head -c 100000 | tr -d '\\n' >&2; echo >&2; echo final reason >&2; exit 1\n")
         with self.assertRaises(ValueError) as raised:
@@ -375,7 +393,8 @@ class ExecuteTests(unittest.TestCase):
         message = str(raised.exception)
         self.assertTrue(message.startswith('command failed: kmx: '))
         self.assertTrue(message.endswith(' | final reason'))
-        self.assertLessEqual(len(message), len('command failed: kmx: ') + 512)
+        self.assertIn(' | ... | ', message)
+        self.assertLessEqual(len(message), len('command failed: kmx: ') + 8192)
 
     def test_other_commands_keep_only_fixed_text(self):
         kubectl = self.tool('kubectl', "echo secret-child-detail >&2; exit 1\n")

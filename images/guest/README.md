@@ -345,7 +345,7 @@ reported Ready after the node container last started, and Orka's API answers
 reason and the journal stays at orka-ready. On a slow first boot the unit's 900 s start
 timeout can stop the run before that refusal; the journal still stays at orka-ready.
 The unit does not retry, and the next run, such as the next boot, repeats every check.
-A kmx refusal keeps kmx's last three lines, without terminal escapes or its confirmation box and bounded to 512 characters, in the lifecycle's error; other commands keep only their fixed name. The unit sends that error to the journal and the serial console.
+A kmx refusal keeps leading context (including progress) and its closing lines in the lifecycle's error, without terminal escapes or its confirmation box. Long output keeps up to 40 leading lines and three closing lines with an omission marker, bounded to 8,192 characters; shorter output keeps all filtered lines. Other commands keep only their fixed name. The unit sends that error to the journal and the serial console.
 Freshness compares kubelet and Docker timestamps, so it relies on the guest clock the
 early endpoint sets from the host.
 This marker is not authority: every resume rechecks ownership, caches and kmx.
