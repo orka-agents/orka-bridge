@@ -20,6 +20,51 @@ pub(super) fn set_cases(s: &Setup, count: usize) {
 }
 
 #[tokio::test]
+async fn terminal_receipts_do_not_promote_a_partial_cancelled_report() {
+    let s = setup().await;
+    set_cases(&s, 2);
+    *s.api.wire.mode.lock().unwrap() = "running";
+    let send = id(&s.start().await);
+    until(|| s.view(Some(&send))["stage"] == "observe").await;
+    cancel_active(&s, &send).await;
+    s.finish(&send).await;
+    let path = s
+        .home
+        .path()
+        .join("app-local/send-history-v1")
+        .join(format!("{send}.json"));
+    let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let unread = saved["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["kind"] == "Task")
+        .nth(1)
+        .unwrap()["name"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // Reproduce a partial recovery: terminal receipts survived, but one outcome did not.
+    saved["report"]["cases"].as_array_mut().unwrap().truncate(1);
+    saved["report"]["verdict"] = json!("unknown");
+    std::fs::write(&path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    s.api
+        .wire
+        .objects
+        .lock()
+        .unwrap()
+        .remove(&format!("/api/v1/tasks/{unread}"));
+    let detail = serde_json::to_value(s.owner.history_check(&send).await.unwrap()).unwrap();
+    assert_eq!(detail["cancellation"], "confirmed");
+    assert_eq!(detail["report"]["cases"].as_array().unwrap().len(), 1);
+    assert_eq!(detail["report"]["verdict"], "unknown", "{detail}");
+    assert_eq!(
+        s.owner.history().unwrap()[0].verdict,
+        bridge_engine::send_summary::AttemptVerdict::Unknown
+    );
+}
+
+#[tokio::test]
 async fn control_open_denial_remains_denied_with_unfinished_work() {
     let (s, send) = running().await;
     *s.api.forward_status.lock().unwrap() = Some(403);

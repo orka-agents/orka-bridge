@@ -436,6 +436,11 @@ impl SendOwner {
                     .iter()
                     .any(|r| r.kind == "Task" && !r.terminal)
                     && report.cases.iter().any(|r| r.verdict == Verdict::Cancelled)
+                    && details.cases.len() == report.cases.len()
+                    && details
+                        .cases
+                        .iter()
+                        .all(|case| report.cases.iter().any(|row| row.id == case.id))
                     && report
                         .cases
                         .iter()
