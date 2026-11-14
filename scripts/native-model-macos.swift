@@ -102,7 +102,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
 }
 func enabledButton(_ label: String) -> AXUIElement? {
     let buttons = nativeElements().filter { element in
-        attribute(element, "AXRole") as? String == "AXButton"
+        ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? "")
             && attribute(element, "AXEnabled") as? Bool == true
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
     }
