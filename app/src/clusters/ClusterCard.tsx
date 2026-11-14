@@ -89,7 +89,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     // failure, or one already loaded) is left alone, and late replies to the interrupted
     // request stay discarded by the epoch check above.
     if (!was && reloadInterrupted.current) { reloadInterrupted.current = false; void reload(); }
-    else if (!was && entry?.remembered && !changingContext && !targets && !error) void reconnect(entry.remembered.key);
+    else if (!was && entry?.remembered && !(entry.current?.kind === 'cluster' && entry.current.target) && !changingContext && !targets && !error) void reconnect(entry.remembered.key);
     else if (!was && !initialLoaded.current && (!entry?.remembered || changingContext)) readContexts();
   }, [active]);
   useEffect(() => {

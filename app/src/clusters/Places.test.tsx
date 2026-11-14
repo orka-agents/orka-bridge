@@ -324,6 +324,17 @@ test.each([{ check: 'configuration', result: 'unknown' }, { check: 'orkaIdentity
   expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe('');
 });
 
+test('Manage after an unused Add keeps its already confirmed target', async () => {
+  const { ipc } = native(); const user = userEvent.setup(); render(<Host initial={connected} />);
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
+  await screen.findByRole('combobox', { name: 'kubectl context' });
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(within(row('team-dev')).getByRole('button', { name: 'Manage' }));
+  expect(ipc.mock.calls.filter(([command]) => command === 'cluster_reconnect')).toHaveLength(0);
+  expect(screen.getByText('Access confirmed')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Use this cluster' })).toBeNull();
+});
+
 test('showing context choices does not strand a pending Manage inventory', async () => {
   const { ipc } = native(); const old = ipc.getMockImplementation()!; const pending = deferred<unknown>();
   const fresh = { ...primary, stale: false, agents: [{ name: 'reader', namespace: 'agents', uid: 'uid-reader', agentType: null, model: null, tools: [], record: null }] };
