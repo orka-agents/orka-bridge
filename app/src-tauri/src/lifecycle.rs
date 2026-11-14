@@ -85,7 +85,7 @@ pub fn install(
         let quit = MenuItem::with_id(
             app,
             "stop-quit",
-            "Stop workspace and quit",
+            "Stop the local cluster and quit",
             true,
             None::<&str>,
         )?;

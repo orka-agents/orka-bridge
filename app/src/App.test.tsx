@@ -23,7 +23,7 @@ test.each(['Agent', 'File'] as const)('a pending %s draft survives setup readine
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   const user = userEvent.setup(); render(<App />);
-  await within(screen.getByRole('contentinfo')).findByText('Starting workspace');
+  await within(screen.getByRole('contentinfo')).findByText('Starting the local cluster');
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   await screen.findByRole('textbox', { name: 'Instructions' });
   if (view === 'File') await user.click(screen.getByRole('button', { name: 'File' }));
@@ -53,11 +53,11 @@ test('navigation_order', () => {
 test('selected_heading', async () => {
   const user = userEvent.setup();
   render(<App />);
-  expect(await screen.findByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Clusters' })).toBeTruthy();
   for (const name of ['Designer', 'Clusters', 'Overview']) {
     await user.click(screen.getByRole('button', { name }));
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
-    expect(await screen.findByRole('main', { name: name === 'Clusters' ? 'Places for your agents' : name === 'Overview' ? 'Your agents' : name })).toBeTruthy();
+    expect(await screen.findByRole('main', { name: name === 'Clusters' ? 'Clusters' : name === 'Overview' ? 'Your agents' : name })).toBeTruthy();
     const selected = screen.getAllByRole('button').filter(button => button.getAttribute('aria-current') === 'page');
     expect(selected).toEqual([screen.getByRole('button', { name })]);
   }
@@ -73,7 +73,7 @@ test('keyboard_activation', async () => {
   expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Designer');
   await user.tab();
   await user.keyboard('{Enter}');
-  expect(await screen.findByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Clusters' })).toBeTruthy();
 });
 
 test('navigation starts at the page heading after scrolling another page', async () => {
@@ -104,7 +104,7 @@ test('Overview reads saved documents without opening, setup or VM commands; Open
   await user.click(screen.getByRole('button', { name: 'Open second' }));
   expect(await screen.findByRole('heading', { name: 'second', level: 1 })).toBeTruthy();
   // Native selection is still null, so the chip does not invent a place after Open.
-  expect(document.querySelector('.host-chip')?.textContent).toContain('No place selected');
+  expect(document.querySelector('.host-chip')?.textContent).toContain('No cluster selected');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open second' }));
   expect(calls.filter(c => c === 'agent_open')).toHaveLength(1);
@@ -165,13 +165,13 @@ test('Designer opens the owned agent without workspace setup and shares its save
 
 test.each([
   ['idle', null, 'Choose where agents run', 'Choose where agents run'],
-  ['preparing', 'localVm', 'Getting workspace ready', 'Setting up, step 1 of 5'],
-  ['installing', 'localVm', 'Getting workspace ready', 'Setting up, step 1 of 5'],
-  ['starting', 'localVm', 'Starting workspace', 'Setting up, step 2 of 5'],
+  ['preparing', 'localVm', 'Getting the local cluster ready', 'Setting up, step 1 of 5'],
+  ['installing', 'localVm', 'Getting the local cluster ready', 'Setting up, step 1 of 5'],
+  ['starting', 'localVm', 'Starting the local cluster', 'Setting up, step 2 of 5'],
   ['ready', 'localVm', 'AI connection unavailable', 'AI unavailable'],
-  ['failed', 'localVm', "Bridge couldn't establish why the workspace failed.", 'Setup failed'],
-  ['closed', 'localVm', 'Workspace stopped', 'Workspace stopped'],
-  ['notIntegrated', null, 'Workspace unavailable', 'Workspace unavailable'],
+  ['failed', 'localVm', "Bridge couldn't determine why the local cluster failed.", 'Setup failed'],
+  ['closed', 'localVm', 'Local cluster stopped', 'Local cluster stopped'],
+  ['notIntegrated', null, 'Local cluster unavailable', 'Local cluster unavailable'],
 ])('chrome reflects %s without invented readiness', async (localVm, selected, detail, tabLine) => {
   mockIPC(command => command === 'setup_status' ? { selected, localVm, model: 'locked' } : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   vi.stubGlobal('isTauri', true);
@@ -192,7 +192,7 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
     expect(button.getAttribute('title')).toMatch(/coming/i);
   }
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/agent folder|Reopen your agent/);
-  // Browser preview cannot read native selection, so the host is neither "This computer" nor "No place selected".
+  // Browser preview cannot read native selection, so the host is neither "This computer" nor "No cluster selected".
   expect(within(screen.getByRole('banner')).getByText('Status unavailable')).toBeTruthy();
   // The Overview page also has a "This computer" heading, so assert on the host chip.
   expect(document.querySelector('.host-chip')?.textContent).not.toContain('This computer');
@@ -233,9 +233,9 @@ test('model acknowledgment and observed check counts survive navigation', async 
   expect(document.querySelector('.host-chip')?.textContent).toBe('This computer: AI connected');
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 tests passing')).toBeTruthy();
-  expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
+  expect(screen.queryByText(/Connect the AI in Clusters first\./)).toBeNull();
   expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'page-reader, 1 test failing')).toBeTruthy();
-  expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText('Local cluster ready')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(within(screen.getByRole('contentinfo')).getByText('AI connected')).toBeTruthy();
   expect(screen.getByText(/Connected with GitHub Copilot/)).toBeTruthy();
@@ -343,7 +343,7 @@ test('a transient setup read failure recovers while off Clusters', async () => {
     : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await within(screen.getByRole('navigation')).findByText('Workspace unavailable');
+  await within(screen.getByRole('navigation')).findByText('Local cluster unavailable');
   await user.click(screen.getByRole('button', { name: 'Overview' })); fail = false;
   expect(await within(screen.getByRole('navigation')).findByText('Setting up, step 2 of 5', {}, { timeout: 2000 })).toBeTruthy();
 });
@@ -360,7 +360,7 @@ test('a transient setup read failure does not invalidate an admitted model conne
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   fail = true;
-  await within(screen.getByRole('navigation')).findByText('Workspace unavailable', {}, { timeout: 2000 });
+  await within(screen.getByRole('navigation')).findByText('Local cluster unavailable', {}, { timeout: 2000 });
   await act(async () => { finishConnect({ ready: true }); });
   expect(screen.getByText(/Connected with GitHub Copilot/)).toBeTruthy();
   fail = false;
@@ -396,7 +396,7 @@ test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remem
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
+  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep the local cluster running' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   await screen.findByRole('button', { name: 'Open your agent' });
@@ -501,7 +501,7 @@ test('Overview waits for native busy release even when the report is already com
   await user.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(lists).toBe(0);
   busy = false;
-  await within(screen.getByRole('region', { name: 'This computer' })).findByText('Workspace stopped', {}, { timeout: 2000 });
+  await within(screen.getByRole('region', { name: 'This computer' })).findByText('Local cluster stopped', {}, { timeout: 2000 });
   expect(lists).toBe(1);
 });
 

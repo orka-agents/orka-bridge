@@ -121,27 +121,26 @@ impl RemoteAccess {
                 "Bridge cannot check the selected access. Reconnect in Clusters.",
             )];
         }
-        let mut rows = vec![CheckRow::new(
-            "Access",
-            Allowed,
-            "The selected identity can read this Orka. Send still needs permission to create an Agent and checks.",
-        )];
+        let mut rows = vec![CheckRow::new("Access", Allowed, "Read access confirmed.")];
         let selected = self.providers().iter().find(|p| p.id == provider);
         let (status, message) = match self.configured_providers(stream).await {
-            Err(_) => (CannotCheck, "Bridge cannot check the selected Provider."),
+            Err(_) => (
+                CannotCheck,
+                "Bridge cannot check the selected AI connection.",
+            ),
             Ok(current) => {
                 match selected.and_then(|p| current.iter().find(|(name, _)| *name == p.name)) {
-                    Some((_, true)) => (Allowed, "The selected Provider is configured and ready."),
-                    Some((_, false)) => (Blocked, "The selected Provider is not ready."),
-                    None => (Blocked, "Select a configured Provider in Clusters."),
+                    Some((_, true)) => (Allowed, "The selected AI connection is ready."),
+                    Some((_, false)) => (Blocked, "The selected AI connection is not ready."),
+                    None => (Blocked, "Select an AI connection in Clusters."),
                 }
             }
         };
-        rows.push(CheckRow::new("Provider", status, message));
+        rows.push(CheckRow::new("AI connection", status, message));
         rows.push(CheckRow::new(
             "Model",
             Unverified,
-            "The file's exact model will be tested here; its availability is not checked yet.",
+            "Model will be checked when tests run.",
         ));
         let mut catalog = Catalogue::default();
         let readable = self.catalogue(stream, pair, &mut catalog).await.is_ok();
@@ -149,7 +148,7 @@ impl RemoteAccess {
             let builtin = catalog.builtins.contains(&tool.name);
             let resource = catalog.resources.contains(&tool.name);
             let (status, message) = match tool.kind {
-                ToolKind::Builtin if builtin => (Allowed, "Built in to this Orka.".into()),
+                ToolKind::Builtin if builtin => (Allowed, "Built in to this cluster.".into()),
                 _ if !readable => (
                     CannotCheck,
                     format!(
@@ -158,11 +157,14 @@ impl RemoteAccess {
                         self.binding().context_name
                     ),
                 ),
-                ToolKind::Builtin => (Blocked, "This built-in is not listed by this Orka.".into()),
+                ToolKind::Builtin => (
+                    Blocked,
+                    "This built-in tool is not listed on this cluster.".into(),
+                ),
                 ToolKind::Resource if !resource => (
                     Blocked,
                     format!(
-                        "Missing Tool {}; create it on {}.",
+                        "Missing tool {}; create it on {}.",
                         tool.name,
                         self.binding().context_name
                     ),
@@ -170,13 +172,13 @@ impl RemoteAccess {
                 ToolKind::Resource if builtin => (
                     Unverified,
                     format!(
-                        "{} has the same name as a built-in (implementation unverified).",
+                        "{} has the same name as a built-in tool; which one runs is not checked.",
                         tool.name
                     ),
                 ),
                 ToolKind::Resource => (
                     Allowed,
-                    "Tool exists in the watched namespace; its endpoint and policy are not checked yet."
+                    "Tool found on this cluster; its endpoint and policy are not checked yet."
                         .into(),
                 ),
             };

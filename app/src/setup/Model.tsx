@@ -87,10 +87,10 @@ export default function Model({ enabled, queueable = false, paused = false, away
   const signInCheck = error && ['modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(error.category);
   return <section ref={root} className="card setup-model" aria-labelledby="model-title" aria-busy={!!busy}>
     <h2 id="model-title">Connect the AI</h2>
-    <p className="muted">Use GitHub Copilot with GitHub CLI installed and signed in to github.com. Bridge keeps its own saved sign-in; GitHub CLI stays signed in.</p>
-    {!enabled && (queueable || queued) ? <p className="muted">You can choose now. Bridge connects it automatically when Orka is ready. No credentials are read or sent until then.</p>
-      : !enabled ? <p className="muted">Start your workspace before connecting the AI. No sign-in is read or sent yet.</p>
-      : <p className="muted">Your sign-in is shared only with your workspace on this computer.</p>}
+    <p className="muted">Use GitHub Copilot. GitHub CLI must be installed and signed in to github.com.</p>
+    {!enabled && (queueable || queued) ? <p className="muted">Choose now to connect automatically when the local cluster is ready.</p>
+      : !enabled ? <p className="muted">Start the local cluster before connecting the AI.</p>
+      : <p className="muted">Your sign-in is shared only with the local cluster.</p>}
     <div className={error ? 'workspace-failure' : undefined} role={error ? 'alert' : undefined}>
       <div className={error ? 'workspace-failure-explanation' : undefined}>
         {error && <><p className="failure-summary">{error.message}</p>
@@ -100,14 +100,14 @@ export default function Model({ enabled, queueable = false, paused = false, away
           : error.category === 'modelBusy' ? 'Wait for the other operation to finish, then press Check again.'
           : 'Press Check again to reconnect. If it happens again, copy the details for help.'}</p>
         {(cliUnavailable || signInCheck) && <pre>{cliUnavailable ? 'gh auth login --hostname github.com --web' : 'gh auth status --hostname github.com'}</pre>}
-        <p>Your running workspace and agent files are kept. {failedAction === 'remove' ? 'Removal has not been confirmed.' : 'A sign-in may already have been saved.'}</p>
-        {failedAction === 'connect' && <p className="muted">Check again reconnects the AI and may reuse the sign-in already saved for this workspace.</p>}</>}
+        <p>The local cluster and your agent files are kept. {failedAction === 'remove' ? 'Removal has not been confirmed.' : 'A sign-in may already have been saved.'}</p>
+        {failedAction === 'connect' && <p className="muted">Check again reconnects the AI using your saved sign-in when available.</p>}</>}
         <div className="workspace-step-actions">
           {cliUnavailable && <button type="button" className="workspace-secondary" onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</button>}
           {(cliUnavailable || signInCheck) && <button type="button" className="workspace-secondary" onClick={() => { void help('githubSignIn'); }}>Sign-in help</button>}
           {queued || busy || ready ? <div ref={status} tabIndex={-1} className="model-state">
             <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? 'Removing sign-in…' : ready ? 'Connected' : queued ? 'Queued' : 'Connecting the AI…'}</StatusPill>
-            {queued && <><span className="muted">Connects automatically when Orka is ready.</span>
+            {queued && <><span className="muted">Connects when the local cluster is ready.</span>
               <button type="button" className="workspace-link" onClick={() => setQueued(false)}>Cancel queued connection</button></>}
           </div>
           : <button key="model-connect" ref={retry} type="button" className={primary ? 'workspace-primary' : 'workspace-secondary'} disabled={(!enabled && !queueable) || paused || !!busy} onClick={choose}>
