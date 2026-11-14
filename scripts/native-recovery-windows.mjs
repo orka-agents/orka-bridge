@@ -165,7 +165,7 @@ try {
       const main = document.querySelector('main');
       return {
         width: innerWidth, scrollWidth: main.scrollWidth, clientWidth: main.clientWidth,
-        forms: shown('.cluster-card > :not(.cluster-actions):not([role="group"]), .local-preflight > .card').map(rect),
+        forms: shown('.cluster-card > :not(.cluster-actions):not([role="group"]), .local-preflight > .card').map(node => ({ ...rect(node), limit: node.matches('.local-preflight > .card') ? 554 : 520 })),
         rows: shown('.place-row').map(row => ({ name: rect(row.querySelector('.place-summary')), pill: rect(row.querySelector('.pill')), action: rect(row.querySelector('button')), row: rect(row) })),
         checks: shown('.cluster-checks li').map(row => ({ row: rect(row), card: rect(row.closest('.cluster-card')) })),
         setup: (() => { const root = shown('.workspace-setup-grid')[0]; if (!root) return null; const get = selector => rect(root.querySelector(selector)); return { priority: root.classList.contains('setup-action-model'), progress: get('.setup-progress'), model: get('.setup-model-slot'), history: get('.setup-history'), meet: get('.workspace-meet') }; })(),
@@ -175,7 +175,7 @@ try {
     const fail = reason => { throw Error(`${name}/${size}: ${reason}: ${JSON.stringify(layout)}`); };
     if (layout.scrollWidth > layout.clientWidth + 2) fail('page overflows horizontally');
     // Preflight card includes its 16px padding and 1px border on both sides.
-    if (layout.forms.some(rect => rect.width > (name.startsWith('local-preflight') ? 554 : 520) + 2)) fail('form exceeds its content width');
+    if (layout.forms.some(rect => rect.width > rect.limit + 2)) fail('form exceeds its content width');
     for (const { row, card } of layout.checks) {
       if (row.x < card.x + 16 || row.right > card.right - 16) fail('check border escapes card padding');
     }
@@ -495,7 +495,7 @@ $c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
     for (const name of actionFixtures) await captureActions(theme, 'compact', name);
   }
   await writeFile(join(output, 'compact-window.txt'), notes.join('\n') + '\n');
-  await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*), completed local/Stop pages (local-completed, local-stopped), removal confirmation/retry (ai-removal-*), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Designer layout JSON records test/editor/Send geometry. compact-window.txt says whether 540x900 was a real native window resize or renderer viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
+  await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*), completed local/Stop pages (local-completed, local-stopped), removal confirmation/retry (ai-removal-*), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Layout JSON records setup stacks, form widths, row alignment, card insets and Designer priority. compact-window.txt says whether 540x900 was a real native window resize or renderer viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
   // Keep the source identity next to images without inferring it from branch names.
   await writeFile(join(output, 'head.txt'), await readFile(join(output, '..', 'native-lifecycle', 'head.txt')));
 } finally {

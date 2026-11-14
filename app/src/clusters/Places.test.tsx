@@ -145,6 +145,20 @@ test('Add stays blank while remembered Connect resolves a fresh target without c
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
 });
 
+test('Manage Change context focuses its selector after a delayed kubeconfig read', async () => {
+  const { ipc } = native(); const contexts = deferred<unknown>(); const user = userEvent.setup();
+  mockIPC(command => command === 'cluster_contexts' ? contexts.promise : ipc(command));
+  render(<Host initial={connected} />);
+  await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Manage' }));
+  const change = await screen.findByRole('button', { name: 'Change context' });
+  change.focus(); await user.keyboard('{Enter}');
+  const select = await screen.findByRole('combobox', { name: 'kubectl context' });
+  expect(select.matches(':disabled')).toBe(true);
+  await act(async () => contexts.resolve([context]));
+  await waitFor(() => expect(select.matches(':disabled')).toBe(false));
+  expect(document.activeElement).toBe(select);
+});
+
 test('Manage rechecks the same installation with its already-entered ServiceAccount', async () => {
   const { ipc } = native(); const user = userEvent.setup(); const accounts: unknown[] = [];
   mockIPC((command, args) => {

@@ -40,7 +40,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   const accountField = useRef<HTMLInputElement>(null);
   const providerField = useRef<HTMLSelectElement>(null);
   const contextField = useRef<HTMLSelectElement>(null);
-  useEffect(() => { if (changingContext) contextField.current?.focus(); }, [changingContext]);
+  useEffect(() => { if (active && changingContext && !busy) contextField.current?.focus(); }, [active, changingContext, busy]);
   function readContexts() {
     const request = ++epoch.current; setBusy(true); setError(undefined);
     void contexts().then(v => { if (request === epoch.current) { setChoices(v); initialLoaded.current = true; } }, error => {

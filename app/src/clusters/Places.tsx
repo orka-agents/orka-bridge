@@ -26,7 +26,7 @@ export default function Places({ snapshot, unavailable, status, view, place, onL
       const checked = checkedAt !== null ? `Last checked ${new Date(checkedAt).toLocaleString()}` : 'Not checked yet';
       return <section className="card place-row" aria-label={item.context} key={item.key}>
         <span className="icon-tile" aria-hidden="true"><svg className="icon" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5M3 18l9 5 9-5" /></svg></span>
-        <div className="place-summary"><h2>{item.context}</h2><p className="place-meta"><span>{item.namespace} · {item.service}</span><span className="muted">{checked}</span>{selected && <span>Selected for Designer</span>}{observed && !item.stale && <span className="muted">{item.agents.length} {item.agents.length === 1 ? 'agent' : 'agents'} at last check</span>}</p></div>
+        <div className="place-summary"><h2><code>{item.context}</code></h2><p className="place-meta"><span>{item.namespace} · {item.service}</span><span className="muted">{checked}</span>{selected && <span>Selected for Designer</span>}{observed && !item.stale && <span className="muted">{item.agents.length} {item.agents.length === 1 ? 'agent' : 'agents'} at last check</span>}</p></div>
         <StatusPill state={checkedAt !== null ? item.stale ? 'stale' : 'passed' : 'not-started'}>{checkedAt !== null ? item.stale ? 'Stale' : 'Ready' : 'Not checked'}</StatusPill>
         <Button type="button" kind="secondary" size="small" onClick={() => onCluster(item, selected)}>{selected ? 'Manage' : 'Connect'}</Button>
       </section>;

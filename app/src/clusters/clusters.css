@@ -9,11 +9,9 @@
 .place-summary h2 { margin: 0 0 4px; }
 .place-summary p { margin: 4px 0 0; }
 .place-meta > span + span::before { content: ' · '; }
-.place-summary h2 { font-family: var(--font-mono); }
-.place-row .pill { justify-self: start; }
 .cluster-actions { margin-top: 0; gap: 8px; }
 .place-row > button { justify-self: end; }
-.place-row .pill { white-space: normal; }
+.place-row .pill { justify-self: start; white-space: normal; }
 .places-workspace .workspace-choice, .places-workspace .setup { max-width: none; width: 100%; }
 .places-workspace [hidden] { display: none; }
 .workspace-sizes { display: grid; gap: 8px; margin: 16px 0; }
