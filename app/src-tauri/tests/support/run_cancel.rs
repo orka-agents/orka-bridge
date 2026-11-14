@@ -433,6 +433,7 @@ async fn a_cancelled_task_waits_for_worker_proof_without_reposting_cancel() {
     }
     let waiting = run.status(&vm);
     assert_eq!(waiting.state, RunState::Running);
+    assert_eq!(waiting.stage, Some("cancel"));
     assert_eq!(
         serde_json::to_value(waiting).unwrap()["cancellation"],
         "cancelling"

@@ -135,13 +135,12 @@ impl ExampleRun {
         recovery: Recovery,
         retry: bool,
     ) {
-        self.0
-            .lock()
-            .unwrap()
-            .snapshots
-            .get_mut(&id)
-            .unwrap()
-            .cancellation = Cancellation::Cancelling;
+        {
+            let mut state = self.0.lock().unwrap();
+            let snapshot = state.snapshots.get_mut(&id).unwrap();
+            snapshot.cancellation = Cancellation::Cancelling;
+            snapshot.stage = Some("cancel");
+        }
         let deadline = Instant::now() + Duration::from_secs(60);
         let proof = prove(runner, &recovery, retry, deadline).await;
         let confirmed = proof.confirmed;
