@@ -26,7 +26,7 @@ impl Failure {
             Self::HypervisorUnavailable => "Windows Hypervisor Platform isn't available.",
             Self::VirtualizationUnsupported => "Virtualization isn't supported on this Mac.",
             Self::InsufficientMemory => {
-                "This computer has less installed memory than the workspace needs."
+                "This computer has less installed memory than the local cluster needs."
             }
         }
     }

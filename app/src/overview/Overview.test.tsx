@@ -33,11 +33,11 @@ test('initial loading is not empty and saved files do not wait for live reads', 
 test('counts keep files separate from Agents and external metadata is escaped', async () => {
   ipc({ ...files, files: [{ ...file, summary: { ...file.summary, description: '<img src=x onerror=alert(1)>', tools: ['x'.repeat(256)] } }] });
   const counts = vi.fn(); render(<Overview {...props} onCounts={counts} />);
-  expect(await screen.findByText('1 saved file · 1 Agent')).toBeTruthy();
+  expect(await screen.findByText('1 saved file · 1 agent')).toBeTruthy();
   expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeTruthy();
   expect(document.querySelector('img')).toBeNull();
-  expect(screen.getByText(/Model declared in file: gpt-test/)).toBeTruthy();
-  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 saved file · 1 Agent'));
+  expect(screen.getByText(/Model in file: gpt-test/)).toBeTruthy();
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 saved file · 1 agent'));
 });
 
 test('both empty offers the existing example, unavailable is not empty', async () => {
@@ -45,7 +45,7 @@ test('both empty offers the existing example, unavailable is not empty', async (
   const open = vi.fn(); const view = render(<Overview {...props} onOpenExample={open} />);
   await userEvent.click(await screen.findByRole('button', { name: 'Open example' })); expect(open).toHaveBeenCalledOnce();
   ipc({ ...files, files: [] }, unavailable); view.rerender(<Overview {...props} workspaceKey="closed" />);
-  expect(await screen.findByText('Workspace stopped')).toBeTruthy();
+  expect(await screen.findByText('Local cluster stopped')).toBeTruthy();
   expect(screen.getByText('No saved agent files')).toBeTruthy();
   expect(screen.queryByText('No agents on this computer yet')).toBeNull();
 });
@@ -54,8 +54,8 @@ test.each(['stopped', 'image', 'read'])('files remain openable when live list is
   ipc(files, { ...unavailable, reason });
   const open = vi.fn(); render(<Overview {...props} onOpenDocument={open} />);
   await userEvent.click(await screen.findByRole('button', { name: 'Open reader' })); expect(open).toHaveBeenCalledWith(id);
-  expect(screen.getByText(reason === 'image' ? 'Agent list unavailable with this Mac image' : reason === 'stopped' ? 'Workspace stopped' : 'Could not read agents')).toBeTruthy();
-  expect(screen.queryByText('0 Agents')).toBeNull();
+  expect(screen.getByText(reason === 'image' ? 'Agent list unavailable with this Mac image' : reason === 'stopped' ? 'Local cluster stopped' : 'Could not read agents')).toBeTruthy();
+  expect(screen.queryByText('0 agents')).toBeNull();
   expect(screen.getByText('Check result unavailable for this saved version')).toBeTruthy();
 });
 

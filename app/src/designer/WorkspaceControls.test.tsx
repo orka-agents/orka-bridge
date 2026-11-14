@@ -1,6 +1,6 @@
 import { openLocalSetup } from '../setup/test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import AgentParts from './AgentParts';
@@ -41,11 +41,11 @@ test('tool choices show descriptions as text, distinguish kinds and suppress eff
   expect(document.querySelector('.tool-picker b')).toBeNull();
   expect(screen.queryByText('Must not offer this target')).toBeNull();
   expect(screen.getByText(/Observed unavailable/)).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: /lookup.*Workspace tool/i }));
+  await user.click(screen.getByRole('button', { name: /lookup.*Cluster tool/i }));
   const edited = changed.mock.calls[0][0]; expect(readForm(edited).tools[0]).toMatchObject({ name: 'lookup', kind: 'tool' });
   expect(document.activeElement).toBe(add);
   view.rerender(<AgentParts source={edited} readOnly={false} catalog={catalog} onChange={changed} />);
-  await user.click(add); expect(screen.queryByRole('button', { name: /lookup.*Workspace tool/i })).toBeNull();
+  await user.click(add); expect(screen.queryByRole('button', { name: /lookup.*Cluster tool/i })).toBeNull();
   await user.keyboard('{Escape}'); expect(document.activeElement).toBe(add);
   await user.click(screen.getByRole('button', { name: 'Remove lookup' }));
   expect(readForm(changed.mock.calls.at(-1)![0]).tools).toEqual([]);
@@ -83,10 +83,10 @@ test('independent catalog failures and empty lists do not fall back to static in
   expect(screen.getAllByText(/(tools|models).*unavailable/i).length).toBeGreaterThan(0);
   view.rerender(<AgentParts source={source} readOnly={false} catalog={{ ...catalog, models: { state: 'unavailable' }, tools: { state: 'ready', items: [] } }} onChange={() => {}} />);
   await user.click(screen.getByRole('button', { name: 'Add a tool' }));
-  expect(screen.getByText('No tools listed by this workspace.')).toBeTruthy();
+  expect(screen.getByText('No tools listed by the local cluster.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /Read a file/ })).toBeNull();
   view.rerender(<AgentParts source={source} readOnly={false} catalog={{ ...catalog, models: { state: 'ready', items: [] }, tools: { state: 'unavailable' } }} onChange={() => {}} />);
-  expect(screen.getByText('No models listed by this workspace.')).toBeTruthy();
+  expect(screen.getByText('No models listed by the local cluster.')).toBeTruthy();
 });
 test('inline soul and digest publish together, and reference fields never switch source', async () => {
   const changed = vi.fn(); const user = userEvent.setup();
@@ -161,7 +161,7 @@ test('a failed catalog can be refreshed without changing the file', async () => 
   await screen.findByRole('option', { name: 'listed' });
   expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('unlisted');
 });
-test('confirmed Change invalidates catalog before the stop reply, retaining the editor', async () => {
+test('explicit Stop invalidates catalog before the stop reply, retaining the editor', async () => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   let finish!: (value: unknown) => void;
   const ready = { selected: 'localVm', localVm: 'ready', model: 'available', localVmError: null };
@@ -176,12 +176,11 @@ test('confirmed Change invalidates catalog before the stop reply, retaining the 
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText('Connected with GitHub Copilot.');
+  await within(screen.getByRole('region', { name: 'Connect the AI' })).findByText('Connected');
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('option', { name: 'listed' });
   await user.click(screen.getByRole('button', { name: /Clusters/ }));
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
+  await user.click(screen.getByRole('button', { name: 'Stop the local cluster' }));
   // Designer stays mounted under the inactive page. It must not retain old choices.
   expect(document.querySelector('option[value="listed"]')).toBeNull();
   expect(document.querySelector('.instructions-editor')?.textContent).toBe('Role only.\n');

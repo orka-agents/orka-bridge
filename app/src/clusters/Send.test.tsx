@@ -115,7 +115,7 @@ test('changed disk files can be explicitly reloaded before preflight is retried'
   await user.click(await screen.findByRole('button', { name: 'Reload saved files' }));
   await waitFor(() => expect((screen.getByRole('button', { name: 'Run all tests' }) as HTMLButtonElement).disabled).toBe(false));
   expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toBe('Changed on disk.\n');
-  expect(screen.getByText((_, node) => node?.tagName === 'DD' && node.textContent === 'file-model through Provider team-model · Provider ready; model availability is tested here')).toBeTruthy();
+  expect(screen.getByText((_, node) => node?.tagName === 'DD' && node.textContent === 'file-model through team-model · AI connection ready; the model is checked when tests run')).toBeTruthy();
 });
 test('a delayed reload never overwrites edits made while files are being read', async () => {
   vi.stubGlobal('isTauri', true); let opened = false; let finish!: (value: unknown) => void;
@@ -264,11 +264,11 @@ test('changing Provider or destination does not validate the new selection with 
   const view = render(<Example remote place={place} />);
   await screen.findByText('0 of 1 passed');
   view.rerender(<Example remote place={{ ...place, providerId: '00000000-0000-4000-8000-000000000005' }} />);
-  expect(await screen.findByText(/not validation of your current selection/)).toBeTruthy();
+  expect(await screen.findByText(/not your current selection/)).toBeTruthy();
   expect(document.querySelector('.send-panel .pill.status-passed')).toBeNull();
   expect(document.querySelector('.send-panel .pill.status-stale')).toBeTruthy();
   view.rerender(<Example remote place={{ ...place, target: { ...target, id: '00000000-0000-4000-8000-000000000006', context_name: 'other-cluster' } }} />);
-  expect(screen.getByText(/not validation of your current selection/)).toBeTruthy();
+  expect(screen.getByText(/not your current selection/)).toBeTruthy();
 });
 test('running results show a factual stage instead of a disabled primary beside Stop', async () => {
   const ipc = native(idle, running);
@@ -315,7 +315,7 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
   await user.click(await screen.findByRole('button', { name: 'Use a cluster you already have instead' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), target.context_id);
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Provider' }), other.id);
+  await user.selectOptions(await screen.findByRole('combobox', { name: 'AI connection' }), other.id);
   await user.click(screen.getByRole('button', { name: 'Open your agent' }));
   expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
   expect(screen.queryByText('Read-only during setup')).toBeNull();
@@ -323,7 +323,7 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
   await waitFor(() => expect(starts).toBe(1));
   expect(sentArgs).toEqual({ documentId: '9b2b93c4-375c-4815-9717-39852a96e411', targetId: target.id, providerId: other.id, expectedSource: source });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
   await openLocalSetup(user);
   await user.click(screen.getByRole('button', { name: 'Use this computer' }));
   await user.click(screen.getByRole('button', { name: 'Designer' }));
