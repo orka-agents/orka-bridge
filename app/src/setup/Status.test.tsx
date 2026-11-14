@@ -34,6 +34,15 @@ test('completed steps collapse and a failure does not display four waiting rows'
   expect(within(screen.getByRole('list', { name: 'Setup steps' })).getAllByRole('listitem')).toHaveLength(1);
 });
 
+test('an unreadable poll preserves the last-known failed step without admitting recovery actions', () => {
+  render(<SetupSteps {...actions} status={{ ...ready, localVm: 'failed', workspaceFailure: { operation: 'download', cause: 'network', codes: [] } }} error="Status unavailable" />);
+  const list = screen.getByRole('list', { name: 'Setup steps' });
+  expect(within(list).getAllByRole('listitem')).toHaveLength(1);
+  expect(within(list).getByText('Last known: Needs attention')).toBeTruthy();
+  expect(within(list).getByRole('button', { name: 'Try again' }).hasAttribute('disabled')).toBe(true);
+  expect(list.querySelector('.status-running, .status-passed, [aria-current]')).toBeNull();
+});
+
 test('unfinished local row, shell and card agree; finished local page owns Stop and cluster navigation never stops', async () => {
   vi.stubGlobal('isTauri', true);
   let selected: 'localVm' | null = 'localVm';

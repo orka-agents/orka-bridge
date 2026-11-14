@@ -95,13 +95,13 @@ export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | '
   const { status, busy, error, onRestart, onCluster } = props;
   const { view, failed, rows } = stepRows(props);
   const completed = rows.filter(row => row.state === 'passed');
-  const visible = rows.filter(row => failed ? row.state === 'failed' : row.state !== 'passed');
+  const visible = rows.filter((row, index) => failed ? index + 1 === view.step : row.state !== 'passed');
   const list = (items: typeof rows, label = 'Setup steps') => <ol className="steps-four" aria-label={label}>
       {items.map(({ name, state, result }) => {
         const index = rows.findIndex(row => row.name === name);
         return <li key={name} className={rowClass[state]} aria-current={!view.done && index + 1 === view.step && ['running', 'needs-you'].includes(state) ? 'step' : undefined}>
         <StatusIcon state={state} /><b>{name}</b><span className="step-result">{result}</span>
-        {failed && state === 'failed' && index < 3 && <div className="step-more">
+        {failed && index + 1 === view.step && index < 3 && <div className="step-more">
           <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /></div>}
       </li>; })}
     </ol>;
