@@ -126,6 +126,9 @@ test('unknown without UID is an attempt, not a counted Agent or association; his
   ipc({ places: [second], historyState: 'unavailable', unobserved: [] });
   await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Saved Send summaries unavailable. Recorded checks cannot be confirmed.');
+  const missing = (await screen.findByText('Recorded checks unavailable')).closest('.long-card')!;
+  expect(missing.querySelector('.pill.status-needs-you')).toBeTruthy();
+  expect(missing.querySelector('.pill.status-not-started')).toBeNull();
 });
 
 test('cluster inventory refresh works while the local VM is busy and ignores replies after hiding', async () => {

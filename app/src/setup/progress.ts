@@ -38,7 +38,7 @@ export function setupView(status: SetupStatus | undefined, { checking = false, s
   });
   if (!status) return checking ? view('checking', 0, 'Checking the local cluster…', 'Checking the local cluster…', 'busy') : view('unavailable', 0, 'Local cluster unavailable', 'Local cluster unavailable', 'needs-you');
   const place = status.selected === 'localVm' ? 'local' : 'none';
-  if (status.localVm === 'notIntegrated') return view(place, 0, 'Local cluster unavailable', 'Local cluster unavailable', 'wait');
+  if (status.localVm === 'notIntegrated') return view(place, 0, 'Local cluster unavailable', 'Local cluster unavailable', 'needs-you');
   if (place === 'none') return view(place, 0, 'Choose where agents run', 'Choose where agents run', 'wait');
   if (stopping) return view(place, status.localVm === 'ready' ? 5 : 0, 'Stopping the local cluster', 'Stopping the local cluster', 'busy', status.localVm === 'ready');
   switch (status.localVm) {

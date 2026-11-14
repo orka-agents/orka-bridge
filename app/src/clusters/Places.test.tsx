@@ -58,6 +58,15 @@ test('Places passively lists this computer and retained identities with truthful
   expect(ipc.mock.calls.map(([c]) => c).every(c => ['setup_status', 'setup_requirements', 'cluster_places'].includes(c))).toBe(true);
 });
 
+test('a build without local VM integration explains unavailability rather than advertising unused setup', async () => {
+  const { sim } = native(); sim.status = { ...sim.status, selected: null, localVm: 'notIntegrated' };
+  render(<Host />);
+  const local = await screen.findByRole('region', { name: 'This computer' });
+  await within(local).findByText('Local cluster unavailable');
+  expect(within(local).queryByText('The local cluster runs here')).toBeNull();
+  expect(local.querySelector('.pill.status-needs-you')).toBeTruthy();
+});
+
 test('an unreadable workspace status stays unknown while retained places remain readable', async () => {
   const { ipc } = native();
   mockIPC(command => command === 'setup_status' ? Promise.reject(Error('lost status reply')) : ipc(command));
