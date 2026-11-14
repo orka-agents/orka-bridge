@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createDocument, creationRoot } from './documents-api';
 
-export default function NewAgent({ active, model, onCreated, onCancel }: { active: boolean; model?: string; onCreated: (id: string) => Promise<void>; onCancel: () => void }) {
+export default function NewAgent({ active, model, onRegistered, onCreated, onCancel }: { active: boolean; model?: string; onRegistered: () => void; onCreated: (id: string) => Promise<void>; onCancel: () => void }) {
   const [name, setName] = useState('');
   const [root, setRoot] = useState<string>();
   const [busy, setBusy] = useState(false);
@@ -18,8 +18,8 @@ export default function NewAgent({ active, model, onCreated, onCancel }: { activ
       event.preventDefault(); if (admitted.current) return;
       admitted.current = true; setBusy(true); setError(undefined);
       // An explicit Open can leave this form while native creation finishes.
-      // Its registration remains available, but a late reply cannot steal selection.
-      void createDocument(name, model).then(id => { if (mounted.current) return onCreated(id); }).catch(() => {
+      // App still refreshes registration, but a late reply cannot steal selection.
+      void createDocument(name, model).then(id => { onRegistered(); if (mounted.current) return onCreated(id); }).catch(() => {
         if (mounted.current) setError('Your agent could not be created. Check the name and folder, or choose another name if it already exists, then try again.');
       }).finally(() => { admitted.current = false; if (mounted.current) setBusy(false); });
     }}>

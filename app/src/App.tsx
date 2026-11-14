@@ -64,6 +64,7 @@ export default function App() {
   const [exampleOpen, setExampleOpen] = useState(false);
   const [documentId, setDocumentId] = useState(SAMPLE_DOCUMENT_ID);
   const [newAgentRequest, setNewAgentRequest] = useState(0);
+  const [agentsRevision, setAgentsRevision] = useState(0);
   const [persistInitialSelection, setPersistInitialSelection] = useState(false);
   const [openDocumentRequest, setOpenDocumentRequest] = useState(0);
   const openRequest = useRef(0);
@@ -191,8 +192,9 @@ export default function App() {
     setPage('Designer');
     const open = (selected: string) => {
       if (request !== openRequest.current) return;
-      if (exampleState === 'failed' && saveState === 'saved') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
-      if (!exampleOpen) setPersistInitialSelection(id !== undefined);
+      const remount = exampleState === 'failed' && saveState === 'saved';
+      if (remount) { setExampleAttempt(value => value + 1); setExampleState('loading'); }
+      if (!exampleOpen || remount) setPersistInitialSelection(id !== undefined);
       else if (id !== undefined) setOpenDocumentRequest(value => value + 1);
       setDocumentId(selected); setExampleOpen(true);
       if (create) setNewAgentRequest(value => value + 1);
@@ -239,7 +241,7 @@ export default function App() {
           <Setup place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} /></div>}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogKey={!remote && !workspaceBusy && setup?.selected === 'localVm' && workspaceReady && setup?.model !== 'locked' && model === 'connected' ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} /></div>}
         <Overview onNewAgent={() => openDesigner(undefined, true)} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} onCounts={setOverviewCounts}
           onOpenDocument={id => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(id); }}
           onOpenExample={() => { if (remote) choosePlace({ kind: 'thisComputer' }); openDesigner(SAMPLE_DOCUMENT_ID); }}

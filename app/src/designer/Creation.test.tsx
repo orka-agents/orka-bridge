@@ -215,8 +215,9 @@ test('a save already in flight finishes before selection can reset its source', 
 });
 
 test.each([false, true])('Overview open exits the form and wins over an in-flight create (%s)', async pending => {
-  let finish!: (value: string) => void;
+  let finish!: (value: string) => void; let created = false;
   native(command => {
+    if (command === 'agents_list') return [{ id: SAMPLE_DOCUMENT_ID, name: 'web-reader', path: pair.path, available: true }, ...(created ? [{ id, name: 'helper', path: '/home/creator/Orka/agents/helper/helper.agent.md', available: true }] : [])];
     if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: SAMPLE_DOCUMENT_ID, name: 'web-reader', state: 'readable', source: null, summary: null, reason: null }] };
     if (command === 'agent_create') return new Promise(resolve => { finish = resolve; });
   });
@@ -230,10 +231,36 @@ test.each([false, true])('Overview open exits the form and wins over an in-fligh
   }
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open web-reader' }));
-  if (pending) await act(async () => finish(id));
+  if (pending) await act(async () => { created = true; finish(id); });
   expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
+  if (pending) await screen.findByRole('option', { name: 'helper' });
   expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
   expect(screen.queryByRole('heading', { name: 'helper', level: 1 })).toBeNull();
+});
+
+test('a failed restored agent can switch persistently and learn of a creation completed after remount', async () => {
+  const third = '22345678-1234-4234-8234-123456789abc';
+  let finish!: (value: string) => void; let created = false; let selected: unknown;
+  native((command, args) => {
+    if (command === 'agent_open' && args.documentId === SAMPLE_DOCUMENT_ID) throw Error('moved');
+    if (command === 'agent_select') { selected = args.documentId; return null; }
+    if (command === 'agent_create') return new Promise(resolve => { finish = resolve; });
+    if (command === 'agents_list') return [{ id, name: 'helper', path: '/home/creator/Orka/agents/helper/helper.agent.md', available: true }, ...(created ? [{ id: third, name: 'third', path: '/home/creator/Orka/agents/third/third.agent.md', available: true }] : [])];
+    if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'helper', state: 'readable', source: null, summary: null, reason: null }] };
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await screen.findByText(/folder could not be opened/);
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'third');
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open helper' }));
+  await screen.findByRole('heading', { name: 'helper', level: 1 });
+  await waitFor(() => expect(selected).toBe(id));
+  await act(async () => { created = true; finish(third); });
+  await screen.findByRole('option', { name: 'third' });
+  expect(screen.getByRole('heading', { name: 'helper', level: 1 })).toBeTruthy();
 });
 
 test('a selector choice replaces New agent queued behind a failed save', async () => {
