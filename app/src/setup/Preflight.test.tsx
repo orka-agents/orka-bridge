@@ -39,11 +39,12 @@ test('insufficient installed memory blocks preparation, explains RAM, and can be
   expect(memory.textContent).toMatch(/Closing apps does not increase installed memory/);
   expect(memory.textContent).toMatch(/cluster/);
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
-  expect(screen.getByText('Fix the computer requirements above before continuing.')).toBeTruthy();
+  expect(within(panel).getByRole('status').textContent).toBe('Fix the computer requirements above before continuing.');
   expect(memory.querySelector('.status-failed')).toBeTruthy();
   update(ready);
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));
+  expect(within(panel).getByRole('status').textContent).toBe('These checks do not change this computer.');
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_preflight')).toHaveLength(2);
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
   await user.click(screen.getByRole('button', { name: 'Continue' }));

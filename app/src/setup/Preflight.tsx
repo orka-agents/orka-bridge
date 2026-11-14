@@ -60,7 +60,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onUncertain 
         {memoryHelp && <p id="preflight-memory-help">This is installed RAM, not currently free memory. Closing apps does not increase installed memory. Use a computer with at least {formatSize(requiredMemoryBytes)} installed, or choose a cluster below. An unreadable check is left to local cluster startup; no memory is reserved by this check.</p>}
       </section>
     </div>
-    <p className="muted" id="preflight-reason">{checking ? 'Checking this computer before setup.' : failedVirtualization || memory === 'insufficient' ? 'Fix the computer requirements above before continuing.' : uncertain ? 'Some requirements could not be checked. Check again, or continue to try starting the local cluster.' : 'These checks do not change this computer.'}</p>
+    <p className="muted" id="preflight-reason" role="status">{checking ? 'Checking this computer before setup.' : failedVirtualization || memory === 'insufficient' ? 'Fix the computer requirements above before continuing.' : uncertain ? 'Some requirements could not be checked. Check again, or continue to try starting the local cluster.' : 'These checks do not change this computer.'}</p>
     <div className="workspace-step-actions">
       <button type="button" className={uncertain ? 'workspace-primary' : 'workspace-secondary'} disabled={checking} onClick={() => { onBlocked(true); setChecking(true); setNotice(''); setAttempt(value => value + 1); }}>Check again</button>
       <button type="button" className="workspace-secondary" disabled={checking} onClick={() => { void copy(); }}>Copy details for help</button>

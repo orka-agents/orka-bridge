@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import mark from './assets/orka-mark.svg';
 import Setup from './setup/Setup';
-import { firstTestPending, useFirstTest } from './setup/first-test';
+import { firstTestPending, retireFirstTest, useFirstTest } from './setup/first-test';
 import Example from './designer/Example';
 import Overview from './overview/Overview';
 import { SAMPLE_DOCUMENT_ID } from './designer/agent-api';
@@ -98,7 +98,11 @@ export default function App() {
   const [sampleSource, setSampleSource] = useState<SourceId | null>();
   const [sampleStale, setSampleStale] = useState(false);
   const [sampleDirty, setSampleDirty] = useState(false);
-  const observeSampleRun = useCallback((snapshot: RunSnapshot | undefined) => { setSampleResult({ snapshot }); }, []);
+  const observeSampleRun = useCallback((snapshot: RunSnapshot | undefined) => {
+    // Observed sample completion consumes held setup intent; a later unreadable poll must not re-arm it.
+    if (snapshot?.state === 'complete' && snapshot.report) retireFirstTest();
+    setSampleResult({ snapshot });
+  }, []);
   const sampleObserved = sampleResult !== undefined;
   const [sampleCheck, setSampleCheck] = useState(0);
   useEffect(() => {
