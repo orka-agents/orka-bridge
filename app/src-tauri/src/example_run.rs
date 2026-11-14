@@ -63,6 +63,13 @@ pub struct RunSnapshot {
     pub error: Option<&'static str>,
 }
 impl RunSnapshot {
+    fn claim_end(&mut self, stop: &watch::Receiver<bool>, phase: RunState) -> bool {
+        let cancelled = *stop.borrow();
+        if !cancelled {
+            self.state = phase;
+        }
+        cancelled
+    }
     fn idle(document_id: DocumentId) -> Self {
         Self {
             document_id,
@@ -81,6 +88,34 @@ impl RunSnapshot {
             acknowledged: Vec::new(),
             pending: None,
             error: None,
+        }
+    }
+}
+#[cfg(test)]
+mod terminal_claim_tests {
+    use super::*;
+    #[test]
+    fn stop_and_terminal_claim_have_only_two_ordered_outcomes() {
+        for phase in [RunState::Unknown, RunState::Complete] {
+            let (sender, stop) = watch::channel(false);
+            let mut snapshot = RunSnapshot::idle(DocumentId::SAMPLE);
+            snapshot.state = RunState::Running;
+            assert!(!snapshot.claim_end(&stop, phase));
+            assert_ne!(
+                snapshot.state,
+                RunState::Running,
+                "late Cancel admission is retired before history I/O"
+            );
+            sender.send(true).unwrap();
+            assert_eq!(snapshot.state, phase);
+            let mut snapshot = RunSnapshot::idle(DocumentId::SAMPLE);
+            snapshot.state = RunState::Running;
+            assert!(snapshot.claim_end(&stop, phase));
+            assert_eq!(
+                snapshot.state,
+                RunState::Running,
+                "accepted Stop must reach cancellation proof instead of failure/completion"
+            );
         }
     }
 }
@@ -533,7 +568,16 @@ impl ExampleRun {
         };
         let handle = match runner.submit_prepared(prepared, stop.clone()).await {
             Ok(handle) => handle,
-            Err(error) if *stop.borrow() => {
+            Err(error)
+                if self
+                    .0
+                    .lock()
+                    .unwrap()
+                    .snapshots
+                    .get_mut(&id)
+                    .unwrap()
+                    .claim_end(&stop, RunState::Unknown) =>
+            {
                 let recovery = Recovery {
                     document: self.0.lock().unwrap().active.clone().unwrap(),
                     installation,
@@ -568,7 +612,7 @@ impl ExampleRun {
         self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().stage = Some("observe");
         let observed = runner
             .observe_checkpointed(&handle, stop.clone(), &mut |event| {
-                if let RunCheckpoint::Case(_, case) = event {
+                if let RunCheckpoint::Case(_, case) | RunCheckpoint::Evidence(case) = event {
                     let mut state = self.0.lock().unwrap();
                     let report = state
                         .snapshots
@@ -579,26 +623,34 @@ impl ExampleRun {
                             cases: Vec::new(),
                             verdict: crate::engine::run::Verdict::Unknown,
                         });
-                    report.cases.push(case);
+                    handle.retain_evidence(
+                        report,
+                        RunReport {
+                            cases: vec![case],
+                            verdict: crate::engine::run::Verdict::Unknown,
+                        },
+                    );
                 }
                 Ok(())
             })
             .await;
         // Cancel and normal completion compete under the same lock. Once the
         // worker crosses its final Stop check, no request may claim to cancel it.
-        let cancelled = {
-            let mut state = self.0.lock().unwrap();
-            if *stop.borrow() {
-                true
-            } else {
-                state.snapshots.get_mut(&id).unwrap().state = if observed.is_ok() {
+        let cancelled = self
+            .0
+            .lock()
+            .unwrap()
+            .snapshots
+            .get_mut(&id)
+            .unwrap()
+            .claim_end(
+                &stop,
+                if observed.is_ok() {
                     RunState::Complete
                 } else {
                     RunState::Unknown
-                };
-                false
-            }
-        };
+                },
+            );
         if cancelled {
             let recovery = Recovery {
                 document: self.0.lock().unwrap().active.clone().unwrap(),

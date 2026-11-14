@@ -14,6 +14,8 @@ pub enum RunCheckpoint {
     Before(SavedResource),
     Acknowledged(SavedResource),
     Case(usize, CaseReport),
+    /// Positive evidence before grace polling finishes; not a finalized case.
+    Evidence(CaseReport),
 }
 type Checkpoint<'a> = dyn FnMut(RunCheckpoint) -> Result<(), ErrorKind> + Send + 'a;
 use serde::Deserialize;
@@ -617,22 +619,24 @@ impl<'a> NativeRunner<'a> {
                     } else {
                         Verdict::Failed
                     };
+                    let row = CaseReport {
+                        id: case.id.clone(),
+                        question: case.input().into(),
+                        phase: phase.into(),
+                        answer,
+                        completed_tools: tools,
+                        assertions,
+                        verdict,
+                    };
                     if finished_only || verdict != Verdict::Unknown || terminal_rounds == 3 {
-                        cases.push(CaseReport {
-                            id: case.id.clone(),
-                            question: case.input().into(),
-                            phase: phase.into(),
-                            answer,
-                            completed_tools: tools,
-                            assertions,
-                            verdict,
-                        });
+                        cases.push(row);
                         checkpoint(RunCheckpoint::Case(
                             cases.len() - 1,
                             cases.last().unwrap().clone(),
                         ))?;
                         break;
                     }
+                    checkpoint(RunCheckpoint::Evidence(row))?;
                 } else if !matches!(
                     phase,
                     "" | "Pending" | "Running" | "Finalizing" | "Scheduled"

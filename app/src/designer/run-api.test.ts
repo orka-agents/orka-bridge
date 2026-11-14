@@ -43,6 +43,8 @@ test('shared cancelled results remain readable without fabricating failed assert
 test('an active cancellation recheck can retain an empty unknown report', () => {
   const recovering = { ...base, state: 'running', canRun: false, cancellation: 'cancelling', report: { verdict: 'unknown', cases: [] } };
   expect(isRunSnapshot(recovering)).toBe(true);
+  expect(isRunSnapshot({ ...recovering, report: { verdict: 'cancelled', cases: [] } })).toBe(true);
+  expect(isRunSnapshot({ ...recovering, state: 'complete', report: { verdict: 'cancelled', cases: [] } })).toBe(false);
   expect(isRunSnapshot({ ...recovering, state: 'complete' })).toBe(false);
   expect(isRunSnapshot({ ...recovering, cancellation: 'none' })).toBe(false);
 });

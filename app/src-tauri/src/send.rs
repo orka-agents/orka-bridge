@@ -700,6 +700,7 @@ impl SendOwner {
                         .unwrap();
                     *old = resource;
                 }
+                RunCheckpoint::Evidence(_) => return Ok(()),
                 RunCheckpoint::Case(index, report) => {
                     if let Some(task) = details
                         .resources

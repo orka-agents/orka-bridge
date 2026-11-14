@@ -429,6 +429,9 @@ impl Write for Channel {
                     if status == 200 {
                         *s.phase.lock().unwrap() = "Cancelled".into();
                     }
+                    if let Some(hook) = s.cancel_hook.lock().unwrap().take() {
+                        hook();
+                    }
                     json!({})
                 } else if let Some(body) = request.body {
                     self.posts.lock().unwrap().push(body.clone());
@@ -459,12 +462,12 @@ impl Write for Channel {
                         }
                     }
                     object
-                } else if self
-                    .cancel
-                    .as_ref()
-                    .is_some_and(|s| s.evidence_missing.load(Ordering::SeqCst))
-                    && (request.path.ends_with("/result") || request.path.ends_with("/events"))
-                {
+                } else if self.cancel.as_ref().is_some_and(|s| {
+                    s.evidence_missing.load(Ordering::SeqCst)
+                        && (request.path.ends_with("/result") || request.path.ends_with("/events"))
+                        || s.events_missing.load(Ordering::SeqCst)
+                            && request.path.ends_with("/events")
+                }) {
                     status = 404;
                     Value::Null
                 } else if request.path.ends_with("/result") {
@@ -484,6 +487,20 @@ impl Write for Channel {
                     json!({"namespace":"orka-system","streamType":"task","streamID":name,"afterSeq":after,"latestSeq":if self.missing_tools{after}else{after+1},"events":events})
                 } else {
                     let mut object = self.objects[&request.path].clone();
+                    if request.path.starts_with("agents/") {
+                        if let Some(s) = &self.cancel {
+                            if s.trace
+                                .lock()
+                                .unwrap()
+                                .iter()
+                                .any(|(path, _)| path.ends_with("/result"))
+                            {
+                                if let Some(hook) = s.evidence_hook.lock().unwrap().take() {
+                                    hook();
+                                }
+                            }
+                        }
+                    }
                     if request.path.starts_with("tasks/") {
                         if let Some(s) = &self.cancel {
                             if s.read_failed.load(Ordering::SeqCst)

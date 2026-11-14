@@ -22,6 +22,9 @@ pub(super) struct Script {
     pub(super) fail_cancel: AtomicBool,
     pub(super) hook: Mutex<Option<Box<dyn Fn() + Send>>>,
     pub(super) model_hook: Mutex<Option<Box<dyn Fn() + Send>>>,
+    pub(super) cancel_hook: Mutex<Option<Box<dyn Fn() + Send>>>,
+    pub(super) evidence_hook: Mutex<Option<Box<dyn Fn() + Send>>>,
+    pub(super) events_missing: AtomicBool,
     pub(super) release_hook: Mutex<Option<Box<dyn Fn() + Send>>>,
 }
 impl Default for Script {
@@ -44,6 +47,9 @@ impl Default for Script {
             fail_cancel: AtomicBool::new(false),
             hook: Mutex::default(),
             model_hook: Mutex::default(),
+            cancel_hook: Mutex::default(),
+            evidence_hook: Mutex::default(),
+            events_missing: AtomicBool::new(false),
             release_hook: Mutex::default(),
         }
     }
@@ -274,7 +280,8 @@ async fn a_terminal_task_with_an_unfinished_worker_times_out_but_keeps_its_answe
     let (vm, run, _home) = cancel_fixture(script.clone(), true).await;
     run.start(vm.clone());
     observing(&script).await;
-    *script.phase.lock().unwrap() = "Succeeded".into();
+    script.status.store(409, Ordering::SeqCst);
+    *script.cancel_phase.lock().unwrap() = Some("Succeeded".into());
     run.cancel(vm.clone(), DocumentId::SAMPLE);
     for _ in 0..500 {
         if script
@@ -282,14 +289,24 @@ async fn a_terminal_task_with_an_unfinished_worker_times_out_but_keeps_its_answe
             .lock()
             .unwrap()
             .iter()
-            .any(|(p, _)| p.starts_with("worker/"))
+            .filter(|(p, _)| p.starts_with("worker/"))
+            .count()
+            >= 2
         {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(2)).await;
     }
-    // Let the first finite evidence read finish before advancing the proof clock.
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(
+        script
+            .trace
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(p, _)| p.starts_with("worker/"))
+            .count()
+            >= 2
+    );
     tokio::time::pause();
     tokio::time::advance(std::time::Duration::from_secs(61)).await;
     tokio::time::resume();
@@ -467,7 +484,8 @@ async fn check_read_failure_keeps_finished_answers_from_the_first_cancel() {
     let (vm, run, _home) = cancel_fixture(script.clone(), true).await;
     run.start(vm.clone());
     observing(&script).await;
-    *script.phase.lock().unwrap() = "Succeeded".into();
+    script.status.store(409, Ordering::SeqCst);
+    *script.cancel_phase.lock().unwrap() = Some("Succeeded".into());
     run.cancel(vm.clone(), DocumentId::SAMPLE);
     let first = finished(&run, &vm).await;
     assert_eq!(
@@ -718,8 +736,12 @@ async fn initial_cancel_keeps_a_completed_case_when_a_later_task_read_fails() {
         .as_str()
         .unwrap()
         .to_owned();
-    *script.bad_task.lock().unwrap() = Some(second);
-    *script.phase.lock().unwrap() = "Succeeded".into();
+    let changed = script.clone();
+    *script.cancel_hook.lock().unwrap() = Some(Box::new(move || {
+        *changed.bad_task.lock().unwrap() = Some(second.clone())
+    }));
+    script.status.store(409, Ordering::SeqCst);
+    *script.cancel_phase.lock().unwrap() = Some("Succeeded".into());
     run.cancel(vm.clone(), DocumentId::SAMPLE);
     let done = finished(&run, &vm).await;
     assert_eq!(
@@ -743,7 +765,8 @@ async fn recheck_merges_missing_evidence_for_the_same_case_and_recomputes_assert
     let (vm, run, _home) = cancel_fixture(script.clone(), true).await;
     run.start(vm.clone());
     observing(&script).await;
-    *script.phase.lock().unwrap() = "Succeeded".into();
+    script.status.store(409, Ordering::SeqCst);
+    *script.cancel_phase.lock().unwrap() = Some("Succeeded".into());
     run.cancel(vm.clone(), DocumentId::SAMPLE);
     let first = finished(&run, &vm).await;
     assert_eq!(first.report.unwrap().cases[0].verdict, Verdict::Passed);
@@ -805,8 +828,11 @@ async fn ordinary_observation_keeps_a_finished_answer_when_cancellation_reads_fa
         .unwrap()
         .iter()
         .any(|(path, body)| path == &second_path && body.is_none()));
-    script.evidence_missing.store(true, Ordering::SeqCst);
-    *script.bad_task.lock().unwrap() = Some(second);
+    let changed = script.clone();
+    *script.cancel_hook.lock().unwrap() = Some(Box::new(move || {
+        changed.evidence_missing.store(true, Ordering::SeqCst);
+        *changed.bad_task.lock().unwrap() = Some(second.clone());
+    }));
     run.cancel(vm.clone(), DocumentId::SAMPLE);
     let done = finished(&run, &vm).await;
     assert_eq!(
@@ -860,6 +886,36 @@ async fn temporary_read_session_contention_keeps_both_recovery_controls_availabl
         serde_json::to_value(finished(&run, &vm).await).unwrap()["cancellation"],
         "cancelled"
     );
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn cancellation_during_evidence_grace_keeps_the_already_read_answer() {
+    let script = Arc::new(Script::default());
+    *script.phase.lock().unwrap() = "Succeeded".into();
+    script.events_missing.store(true, Ordering::SeqCst);
+    script.worker_bad.store(true, Ordering::SeqCst);
+    let (vm, run, _home) = cancel_fixture(script.clone(), true).await;
+    let owner = run.clone();
+    let target = vm.clone();
+    let changed = script.clone();
+    *script.evidence_hook.lock().unwrap() = Some(Box::new(move || {
+        owner.cancel(target.clone(), DocumentId::SAMPLE);
+        changed.evidence_missing.store(true, Ordering::SeqCst);
+    }));
+    run.start(vm.clone());
+    let done = finished(&run, &vm).await;
+    assert_eq!(
+        serde_json::to_value(&done).unwrap()["cancellation"],
+        "unconfirmed"
+    );
+    let report = done.report.unwrap();
+    assert_eq!(report.cases.len(), 1);
+    assert_eq!(report.cases[0].answer.as_deref(), Some(ANSWER));
+    assert!(report.cases[0]
+        .assertions
+        .iter()
+        .any(|a| a.kind == "contains" && a.verdict == Verdict::Passed));
     vm.shutdown().await.unwrap();
 }
 
