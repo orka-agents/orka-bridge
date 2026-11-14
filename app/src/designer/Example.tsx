@@ -203,11 +203,6 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
     {!pair ? error ? <div className="designer-file card"><p role="alert">{error}</p><div className="heading-actions"><Button type="button" kind="secondary" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</Button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div hidden={view !== 'Chat'}><Chat key={boundDocument} documentId={boundDocument} blocked={chatBlocked} /></div>
       <div hidden={view === 'Chat'} className={`designer-work${remote ? ' designer-remote' : ''}`}>
-      <div className="designer-tests card" hidden={remote}>
-        {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><Button type="button" kind="primary" className="action-spaced" disabled title="Wait for the local cluster and AI to be ready">Run tests</Button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p></div>
-          : <Run documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />}
-        {!remote && testSource}
-      </div>
       <div className="designer-editing">
       <div className="designer-file card">
         <div className="file-toolbar"><h2>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2><span className="muted" role="status">{saveLabel}</span></div>
@@ -222,13 +217,18 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
         </div>
         {error && <div className="save-error"><p role="alert">{error}</p><Button kind="primary" className="action-spaced" type="button" onClick={() => { void flush(true); }}>Try saving again</Button></div>}
       </div>
-      <div className="designer-checks card">
+      <div className="designer-checks">
         <Send documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
         {remote && testSource}
       </div>
       </div>
+      <div className="designer-tests card" hidden={remote}>
+        {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><Button type="button" kind="primary" className="action-spaced" disabled title="Wait for the local cluster and AI to be ready">Run tests</Button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p></div>
+          : <Run documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />}
+        {!remote && testSource}
+      </div>
       </div>
     </>}
-    {!pair && <div className="designer-checks card"><SendHistory revision={boundDocument} /></div>}
+    {!pair && <div className="designer-checks"><SendHistory revision={boundDocument} /></div>}
   </section></>;
 }

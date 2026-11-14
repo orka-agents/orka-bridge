@@ -49,9 +49,10 @@ test('a persistent polite status announces the final Send verdict', async () => 
   await waitFor(() => expect(live?.textContent).toBe('Test result failed. 0 of 1 passed.'));
   expect(live?.isConnected).toBe(true);
 });
-test('stale local results do not gate checking or sending a saved pair', async () => {
+test('stale local results do not gate sending and preflight retry shares its action row', async () => {
   native(); render(<Send place={place} source={source} stale visible remote />);
   await waitFor(() => expect((screen.getByRole('button', { name: 'Send and run tests' }) as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.getByRole('button', { name: 'Check again' }).parentElement).toBe(screen.getByRole('button', { name: 'Send and run tests' }).parentElement);
 });
 test('capture failure shows the native check explanation, not a stale-file claim', async () => {
   native(idle, null, { ...allowed, source: null, model: null, rows: [{ label: 'Saved files', status: 'cannotCheck', message: 'Your saved files could not be read.' }], canSend: false });

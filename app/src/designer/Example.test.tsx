@@ -42,12 +42,15 @@ test('opens the owned pair without a VM and exposes a keyboard File switch', asy
   screen.getByRole('button', { name: 'File' }).focus(); await user.keyboard('{Enter}');
   expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).value).toBe(pair.agent);
 });
-test('local tests have a separate leading column while Send stays after the editor', async () => {
+test('editing leads the stable DOM with an independent test column and Send history after the editor', async () => {
   native(); const user = userEvent.setup(); const { container } = render(<Example />);
   const run = await screen.findByRole('region', { name: 'Tests on the local cluster' });
   const editor = container.querySelector('.designer-file')!;
   const history = screen.getByRole('region', { name: 'Past Sends' });
-  expect(run.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(editor.compareDocumentPosition(run) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(editor.closest('.designer-editing')).toBe(history.closest('.designer-editing'));
+  expect(run.closest('.designer-editing')).toBeNull();
+  expect(history.classList.contains('card')).toBe(true);
   expect(editor.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(run.closest('.designer-tests')).toBeTruthy();
   expect(history.closest('.designer-tests')).toBeNull();
@@ -55,12 +58,12 @@ test('local tests have a separate leading column while Send stays after the edit
   expect(screen.getByRole('textbox', { name: 'Agent file' })).toBeTruthy();
   expect(screen.getByRole('region', { name: 'Tests on the local cluster' })).toBe(run);
 });
-test('setup-pending tests lead the editor and remote places keep only the Send area', async () => {
+test('setup-pending tests follow the editor and remote places keep only the Send area', async () => {
   native(); const { container, rerender } = render(<Example setupPending />);
   await screen.findByRole('textbox', { name: 'Instructions' });
   const pending = screen.getByRole('button', { name: 'Run tests' });
   expect(pending.hasAttribute('disabled')).toBe(true);
-  expect(pending.compareDocumentPosition(container.querySelector('.designer-file')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(container.querySelector('.designer-file')!.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   rerender(<Example remote />);
   expect(screen.queryByRole('region', { name: 'Tests on the local cluster' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Run tests' })).toBeNull();

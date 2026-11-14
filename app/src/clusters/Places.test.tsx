@@ -50,6 +50,8 @@ test('Places passively lists this computer and retained identities with truthful
   expect(within(row('This computer')).getAllByRole('button')).toHaveLength(1);
   expect(within(row('This computer')).getByRole('button', { name: 'Set up' })).toBeTruthy();
   expect(within(row('team-dev')).getByText('Selected for Designer')).toBeTruthy();
+  expect(row('team-dev').querySelectorAll('.place-summary > p')).toHaveLength(1);
+  expect(within(row('team-dev')).getByText('Selected for Designer').closest('p')).toBe(within(row('team-dev')).getByText(/^Last checked /).closest('p'));
   expect(within(row('team-dev')).getByRole('button', { name: 'Manage' })).toBeTruthy();
   expect(within(row('team-dev')).queryByRole('button', { name: 'Connect' })).toBeNull();
   expect(within(row('team-dev')).getByText(/^Last checked /).closest('.pill')).toBeNull();
@@ -243,7 +245,7 @@ test('Back preserves a queued local Model and its one eventual connection while 
   expect(observe).toHaveBeenLastCalledWith({ kind: 'thisComputer' });
   expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
-  expect(within(row('This computer')).getByText('Getting the local cluster ready', { selector: 'p' })).toBeTruthy();
+  expect(within(row('This computer')).getByText('Getting the local cluster ready', { selector: '.place-meta span' })).toBeTruthy();
   expect(observe).toHaveBeenCalledTimes(1);
   sim.status = { ...sim.status, localVm: 'ready', model: 'available' };
   await act(async () => window.dispatchEvent(new Event('focus')));

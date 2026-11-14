@@ -94,6 +94,11 @@ export default function Model({ enabled, queueable = false, paused = false, away
   const removalFailed = !!error && failedAction === 'remove';
   const cliUnavailable = !removalFailed && error?.category === 'modelCaptureUnavailable';
   const signInCheck = !removalFailed && error && ['modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(error.category);
+  const removalAction = hasSignIn && busy !== 'remove' && <Button ref={removal} type="button" kind={removalFailed ? 'primary' : 'quiet'} className={removalFailed ? undefined : 'button-danger'} disabled={!enabled || paused || !!busy}
+            onClick={() => {
+              refocus.current = document.activeElement === removal.current ? 'remove' : undefined;
+              if (removalFailed) void perform('remove'); else setConfirmRemoval(true);
+            }}>{removalFailed ? 'Retry removal' : 'Remove sign-in'}</Button>;
   return <section ref={root} className="card setup-model" aria-labelledby="model-title" aria-busy={!!busy}>
     <h2 id="model-title">Connect the AI</h2>
     {!ready && <><p className="muted">Use GitHub Copilot. GitHub CLI must be installed and signed in to github.com.</p>
@@ -125,8 +130,6 @@ export default function Model({ enabled, queueable = false, paused = false, away
               }}>Remove sign-in</Button>
             </div>
           </div> : <>
-          {cliUnavailable && <Button type="button" kind="secondary" onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</Button>}
-          {(cliUnavailable || signInCheck) && <Button type="button" kind="secondary" onClick={() => { void help('githubSignIn'); }}>Sign-in help</Button>}
           {queued || busy || ready ? <div ref={status} role={ready ? 'status' : undefined} tabIndex={-1} className="model-state">
             <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? 'Removing' : ready ? 'Connected' : queued ? 'Queued' : 'Connecting'}</StatusPill>
             {busy && <span className="status-description">{busy === 'remove' ? 'Removing sign-in…' : 'Connecting the AI…'}</span>}
@@ -136,12 +139,11 @@ export default function Model({ enabled, queueable = false, paused = false, away
           : !removalFailed && <Button key="model-connect" ref={retry} type="button" kind={primary ? 'primary' : 'secondary'} disabled={(!enabled && !queueable) || paused || !!busy} onClick={choose}>
             {error && failedAction === 'connect' ? 'Check again' : 'Connect the AI'}
           </Button>}
-          {hasSignIn && busy !== 'remove' && <Button ref={removal} type="button" kind={removalFailed ? 'primary' : 'quiet'} className={removalFailed ? undefined : 'button-danger'} disabled={!enabled || paused || !!busy}
-            onClick={() => {
-              refocus.current = document.activeElement === removal.current ? 'remove' : undefined;
-              if (removalFailed) void perform('remove'); else setConfirmRemoval(true);
-            }}>{removalFailed ? 'Retry removal' : 'Remove sign-in'}</Button>}
+          {removalFailed && removalAction}
           {error && <Button type="button" kind="secondary" onClick={() => { void copy(); }}>Copy details for help</Button>}
+          {cliUnavailable && <Button type="button" kind="quiet" onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</Button>}
+          {(cliUnavailable || signInCheck) && <Button type="button" kind="quiet" onClick={() => { void help('githubSignIn'); }}>Sign-in help</Button>}
+          {!removalFailed && removalAction}
           </>}
         </div>
       </div>
