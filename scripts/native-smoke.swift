@@ -307,7 +307,7 @@ func key(_ code: CGKeyCode, shift: Bool = false) {
     Thread.sleep(forTimeInterval: 0.3)
 }
 @discardableResult
-func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservation] {
+func capture(_ name: String, _ page: String, afterFrame: (() throws -> Void)? = nil) throws -> [VNRecognizedTextObservation] {
     let file = "\(output)/\(name).png"
     let command = Process()
     command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
@@ -315,6 +315,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
     command.arguments = ["-x", "-o", "-l", String(window()!.0), file]
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture Bridge")
+    try afterFrame?()
     // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
         let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
@@ -1034,8 +1035,13 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try clickSendControl("published-checksum", scrolling: 250)
     try focusSend()
     try clickSendControl("Cancel tests", scrolling: -350)
-    try capturePreflight("send-cancelling", "Cancelling tests")
-    try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "requested"])
+    scrollMain(-500)
+    // Release the synthetic response as soon as pixels are captured. OCR is
+    // deliberately outside the existing five-second fixture hold window.
+    let cancellingFrame = try capture("send-cancelling", "Designer") {
+        try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "requested"])
+    }
+    require(cancellingFrame.contains { ($0.topCandidates(1).first?.string ?? "").contains("Cancelling tests") }, "Native cancellation progress missing from captured frame")
     Thread.sleep(forTimeInterval: 0.5)
     try capturePreflight("send-cancel-requested-wide", "Cancellation requested. Waiting for the cluster.")
     try resultSize(540, 900)
