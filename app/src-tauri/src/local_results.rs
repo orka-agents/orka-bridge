@@ -14,6 +14,7 @@ const MAX_BYTES: usize = 16 * 1024 * 1024;
 const DIRECTORY: &str = "local-results-v1";
 const HISTORY: &str = "history.json";
 const SAVING: &str = "saving";
+const INCOMPLETE: &str = "incomplete";
 
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -97,6 +98,8 @@ impl LocalResults {
             let bytes = serde_json::to_vec(&ledger)?;
             // Never silently evict an identity: Overview needs every acknowledged UID.
             if bytes.len() > MAX_BYTES {
+                // Later saves cannot reconstruct this acknowledged run's lost UID.
+                replace(&root, INCOMPLETE, b"capacity\n")?;
                 return Err(invalid());
             }
             replace(&root, SAVING, &serde_json::to_vec(&pending)?)?;
@@ -136,6 +139,11 @@ impl LocalResults {
         let Some(root) = root else {
             return Ok(Ledger::default());
         };
+        match root.symlink_metadata(INCOMPLETE) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e),
+            Ok(_) => return Err(invalid()),
+        }
         let mut ledger: Ledger = match root.symlink_metadata(HISTORY) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ledger::default(),
             Err(e) => return Err(e),
@@ -209,6 +217,62 @@ mod tests {
     use super::*;
     use crate::agent_folder::DocumentId;
     use serde_json::json;
+    #[test]
+    fn capacity_rejection_stays_unavailable_after_restart_and_later_record() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = Some(temp.path().into());
+        let store = LocalResults::new(path.clone());
+        let installation = Uuid::new_v4();
+        let owner = RunAgent {
+            installation,
+            namespace: "orka-system".into(),
+            agent_uid: "x".repeat(4096),
+        };
+        let mut ledger = Ledger::default();
+        // Fill a valid ledger just below the real limit without thousands of writes.
+        let count = (MAX_BYTES - serde_json::to_vec(&ledger).unwrap().len())
+            / (serde_json::to_vec(&owner).unwrap().len() + 1);
+        ledger.snapshot.run_agents = (0..count)
+            .map(|index| RunAgent {
+                agent_uid: format!("{index:08}{}", "x".repeat(4088)),
+                ..owner.clone()
+            })
+            .collect();
+        let original = serde_json::to_vec(&ledger).unwrap();
+        assert!(original.len() <= MAX_BYTES);
+        let root = store.root(true).unwrap().unwrap();
+        replace(&root, HISTORY, &original).unwrap();
+        assert_eq!(store.list().unwrap().run_agents.len(), count);
+        let mut row: LocalRunObservation = serde_json::from_value(json!({
+            "installation": installation, "documentId": DocumentId::SAMPLE,
+            "source": bridge_runtime_protocol::SnapshotId::of(b"a", b"b"),
+            "namespace": "orka-system", "agentName": "n".repeat(4096), "agentUid": "r".repeat(4096),
+            "observedAt": 1, "state": "complete", "report": {"verdict":"passed", "passed":1, "total":1}
+        })).unwrap();
+        assert_eq!(
+            store.record(row.clone()).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert!(
+            read(&root, HISTORY, MAX_BYTES).unwrap() == original,
+            "capacity rejection must not change the prior ledger"
+        );
+        drop(store);
+        let reopened = LocalResults::new(path.clone());
+        assert!(
+            reopened.list().is_err(),
+            "capacity failure must survive restart"
+        );
+        // A later small run must not clear the loss or replace the prior ledger.
+        row.agent_name = "small".into();
+        row.agent_uid = "small".into();
+        assert!(reopened.record(row).is_err());
+        assert!(
+            read(&root, HISTORY, MAX_BYTES).unwrap() == original,
+            "a later record must not change the prior ledger"
+        );
+        assert!(LocalResults::new(path).list().is_err());
+    }
     #[test]
     fn pending_first_save_recovers_acknowledged_identity_without_history() {
         let temp = tempfile::tempdir().unwrap();
