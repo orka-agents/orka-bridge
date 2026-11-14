@@ -24,6 +24,14 @@ public static class NativeWalk {
   private delegate bool EnumWindow(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr h, EnumWindow callback, IntPtr l);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr h, System.Text.StringBuilder name, int size);
+  public static string[] ChildClasses(IntPtr root) {
+    var classes = new System.Collections.Generic.List<string>();
+    EnumChildWindows(root, (h, l) => {
+      var cls = new System.Text.StringBuilder(256); GetClassName(h, cls, cls.Capacity);
+      classes.Add(cls.ToString()); return true;
+    }, IntPtr.Zero);
+    return classes.ToArray();
+  }
   [DllImport("oleacc.dll")] private static extern int AccessibleObjectFromWindow(IntPtr h, uint id, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible);
   [DllImport("oleacc.dll")] private static extern int AccessibleChildren(Accessibility.IAccessible accessible, int start, int count, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex=2)] object[] children, out int obtained);
   // Legacy Explorer toolbars may have no UIA children. Use MSAA, never toolbar process memory.
@@ -132,10 +140,38 @@ function Capture([string]$Name, [bool]$Menu = $false) {
         }
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
 }
+function Save-BrowserDiagnostics([string]$Name) {
+    try {
+        $browsers = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" | ForEach-Object {
+            # Keep only process/profile metadata, never the full command line or environment.
+            $command = [string]$_.CommandLine
+            [pscustomobject]@{
+                pid = $_.ProcessId; parent = $_.ParentProcessId; created = $_.CreationDate
+                executable = $_.ExecutablePath
+                profile = [regex]::Match($command, '(?:"--user-data-dir=(?<path>[^"]+)"|--user-data-dir="(?<path>[^"]+)"|--user-data-dir=(?<path>\S+))').Groups['path'].Value
+                type = [regex]::Match($command, '--type=(\S+)').Groups[1].Value
+            }
+        })
+        $versions = @(foreach ($root in @([Environment]::GetFolderPath('ProgramFilesX86'), [Environment]::GetFolderPath('LocalApplicationData'))) {
+            Get-ChildItem (Join-Path $root 'Microsoft\EdgeWebView\Application\*\msedgewebview2.exe') -ErrorAction SilentlyContinue | ForEach-Object {
+                [pscustomobject]@{ executable = $_.FullName; version = $_.VersionInfo.FileVersion }
+            }
+        })
+        $classes = @()
+        if ($script:hwnd -and $script:hwnd -ne [IntPtr]::Zero) { $classes = @([NativeWalk]::ChildClasses($script:hwnd)) }
+        [pscustomobject]@{
+            captured = [DateTime]::UtcNow; hostPid = $(if ($script:app) { $script:app.Id } else { $null })
+            childClasses = @($classes); browsers = $browsers; installed = $versions
+        } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $script:themeOutput "browser-$Name.json")
+    } catch { Write-Warning "Browser diagnostics unavailable: $_" }
+}
 function Start-Bridge {
     if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared; refusing to resume a VM' }
     $script:window = $null
     $script:desktop = $null
+    $script:hwnd = [IntPtr]::Zero
+    $script:app = $null
+    Save-BrowserDiagnostics 'before-launch'
     $script:startupLog = Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log"
     $script:app = Start-Process $Executable -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError $script:startupLog
     # Process.MainWindowHandle can select Tao's hidden event target. Identify
@@ -255,6 +291,7 @@ try {
         Start-Bridge
         $script:originalPid = $script:app.Id
         Press (Wait-For 'Clusters button missing' { Find-ReadyClusters })
+        Save-BrowserDiagnostics 'loaded'
         # The dark walk reuses the light walk's profile, so the welcome may already be dismissed.
         Wait-For 'Welcome or Places did not appear' { (Find-Control $script:window 'Get started' $button) -or (Find-Action $script:window 'Set up') } | Out-Null
         $start = Find-Control $script:window 'Get started' $button
@@ -329,7 +366,9 @@ try {
     }
 } catch {
     if ($script:themeOutput) {
+        Save-BrowserDiagnostics 'failure'
         try {
+            if (!$script:window) { throw 'UIA not attached: native startup did not complete' }
             $all = @($script:window.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
             @("Root Name=$($script:window.Current.Name); PID=$($script:window.Current.ProcessId); HWND=$($script:window.Current.NativeWindowHandle); Class=$($script:window.Current.ClassName); Descendants=$($all.Count)"; $all | Select-Object -First 100 | ForEach-Object { "Name=$($_.Current.Name); Type=$($_.Current.ControlType.ProgrammaticName); Enabled=$($_.Current.IsEnabled); Offscreen=$($_.Current.IsOffscreen)" }) | Set-Content (Join-Path $script:themeOutput 'failure-ui.txt')
         } catch { Write-Warning $_ }
