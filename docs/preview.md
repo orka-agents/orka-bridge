@@ -96,7 +96,7 @@ describe these prompts.
    read the token warning above. Wait for the model to connect.
 4. Choose **Read its instructions** to open `web-reader` in **Designer**, the agent
    editor. Its files live in `Orka/agents/web-reader` under your home folder.
-5. Choose **Run tests** on **Tests on local**. Save any edits before running.
+5. Choose **Run tests** on **Tests on the local cluster**. Save any edits before running.
    For the unchanged example, look for **1 of 1 passed**.
    Expand its **Passed** result to read the answer and check **Tools used**
    includes `web_fetch`. “Model connected” alone doesn't prove inference.
@@ -107,7 +107,7 @@ describe these prompts.
 
 Closing the window hides Bridge; the workspace keeps running. Use the tray or
 menu-bar icon's **Open Bridge**, or launch the app again, to reopen the window.
-Choose **Stop workspace and quit** from that icon's menu to stop it completely.
+Choose **Stop the local cluster and quit** from that icon's menu to stop it completely.
 Wait for quitting to finish before moving or deleting files.
 
 Quitting keeps VM files and your saved sign-in. On reopening, Bridge reuses
@@ -120,7 +120,7 @@ its workspace; **Use GitHub sign-in** reuses Bridge's saved copy.
    stays signed in.** This stops the model connection and clears the VM and
    OS-store copies. If it fails, retry the same button. If it still fails,
    ask for help before deleting the VM or its metadata.
-2. Choose **Stop workspace and quit**; closing the window isn't enough.
+2. Choose **Stop the local cluster and quit**; closing the window isn't enough.
 3. Delete the extracted Windows app folder, or move `Bridge.app` to Trash.
    Remove the downloaded archive too if you no longer need it.
 4. Open the following folder in File Explorer's address bar, or Finder's

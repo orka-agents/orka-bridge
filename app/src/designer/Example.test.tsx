@@ -44,7 +44,7 @@ test('opens the owned pair without a VM and exposes a keyboard File switch', asy
 });
 test('local tests have a separate leading column while Send stays after the editor', async () => {
   native(); const user = userEvent.setup(); const { container } = render(<Example />);
-  const run = await screen.findByRole('region', { name: 'Tests on local' });
+  const run = await screen.findByRole('region', { name: 'Tests on the local cluster' });
   const editor = container.querySelector('.designer-file')!;
   const history = screen.getByRole('region', { name: 'Past Sends' });
   expect(run.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -53,7 +53,7 @@ test('local tests have a separate leading column while Send stays after the edit
   expect(history.closest('.designer-tests')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'File' }));
   expect(screen.getByRole('textbox', { name: 'Agent file' })).toBeTruthy();
-  expect(screen.getByRole('region', { name: 'Tests on local' })).toBe(run);
+  expect(screen.getByRole('region', { name: 'Tests on the local cluster' })).toBe(run);
 });
 test('setup-pending tests lead the editor and remote places keep only the Send area', async () => {
   native(); const { container, rerender } = render(<Example setupPending />);
@@ -62,7 +62,7 @@ test('setup-pending tests lead the editor and remote places keep only the Send a
   expect(pending.hasAttribute('disabled')).toBe(true);
   expect(pending.compareDocumentPosition(container.querySelector('.designer-file')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   rerender(<Example remote />);
-  expect(screen.queryByRole('region', { name: 'Tests on local' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Tests on the local cluster' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Run tests' })).toBeNull();
   expect(screen.getByRole('region', { name: 'Past Sends' }).closest('.designer-editing')).toBeTruthy();
   expect(screen.getByText('Checks from disk')).toBeTruthy();

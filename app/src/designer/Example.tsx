@@ -163,7 +163,7 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const saveLabel = pendingSoul ? 'Unsaved changes' : { saved: '', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
   const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
-    : reloading ? 'Wait for your saved files to reload' : setupPending ? 'Wait for your workspace to be ready before sending'
+    : reloading ? 'Wait for your saved files to reload' : setupPending ? 'Wait for the local cluster to be ready before sending'
     : saveState !== 'saved' || pendingSoul ? 'Save your changes first' : undefined;
   const testSource = pair && <details className="check-source"><summary>Test file: {pair.name ?? 'web-reader'}.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Test file, read-only">{pair.tests}</pre></details>;
   return <>
@@ -193,7 +193,7 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
     {!pair ? error ? <div className="designer-file card"><p role="alert">{error}</p><div className="heading-actions"><button type="button" className="shell-button" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div className={`designer-work${remote ? ' designer-remote' : ''}`}>
       <div className="designer-tests card" hidden={remote}>
-        {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run tests</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a test.</p></div>
+        {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for the local cluster and AI to be ready">Run tests</button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p></div>
           : <Run documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />}
         {!remote && testSource}
       </div>
@@ -202,7 +202,7 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
         <div className="file-toolbar"><h2>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2><span className="muted" role="status">{saveLabel}</span></div>
         {view === 'File' ? <>
           <FileLocation path={pair.path} documentId={boundDocument} />
-          <p className="muted" id="file-hint">The --- block contains the agent’s name, model and tools. kmx, schemaVersion and runtime describe the Orka file format. Instructions follow the block. Each edit saves automatically in Git history.</p>
+          <p className="muted" id="file-hint">The --- block contains your agent’s name, model and tools. Instructions follow it. Your edits save automatically.</p>
           <FileEditor value={draft} onChange={value => edit(value, true)} onSave={() => { void flush(); }} />
         </> : null}
         <div hidden={view !== 'Agent'}>

@@ -84,7 +84,7 @@ test('known native stage error is shown without raw message; unknown errors neve
   expect(screen.queryByText(/synthetic-private-token/)).toBeNull();
   invoke.mockRejectedValue({ kind: 'invented', message: 'synthetic-private-token' });
   const result = await connectModel();
-  expect(result).toMatchObject({ ok: false, message: 'The model connection could not be completed.' });
+  expect(result).toMatchObject({ ok: false, message: 'The AI connection could not be completed.' });
 });
 test('a full Windows credential store explains sign-in failure without exposing the native message', async () => {
   invoke.mockRejectedValue({ kind: 'modelStore', message: 'synthetic-private-token /path/raw-stderr',
@@ -121,7 +121,7 @@ test('failed CLI recovery offers install and sign-in help and explicitly reconne
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   const alert = await screen.findByRole('alert');
   expect(alert.textContent).toContain('gh auth login --hostname github.com --web');
-  expect(alert.textContent).toContain('workspace and agent files are kept');
+  expect(alert.textContent).toContain('local cluster and your agent files are kept');
   expect(screen.getByRole('button', { name: 'Install GitHub CLI' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Sign-in help' })).toBeTruthy();
   expect(alert.textContent).not.toContain('SECRET');
@@ -194,7 +194,7 @@ test('a choice while the workspace is starting is queued without any credential 
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect(invoke).not.toHaveBeenCalled();
   expect(screen.getByText('Queued').closest('button')).toBeNull();
-  expect(screen.getByText(/connects automatically when Orka is ready/i)).toBeTruthy();
+  expect(screen.getByText(/connects when the local cluster is ready/i)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
   expect(onState).toHaveBeenLastCalledWith('queued');
 });

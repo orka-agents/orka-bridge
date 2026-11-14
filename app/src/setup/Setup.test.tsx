@@ -7,7 +7,7 @@ import App from '../App';
 import Setup from './Setup';
 
 const status = (selected: 'localVm' | null = null) => ({ selected, localVm: 'notIntegrated', model: 'locked' });
-const unavailable = 'Workspace setup is not included in this build. Nothing will be downloaded or started.';
+const unavailable = 'Local cluster setup is not included in this build. Nothing will be downloaded or started.';
 function native() {
   vi.stubGlobal('isTauri', true);
   let selected: 'localVm' | null = null;
@@ -37,8 +37,8 @@ test('reopen observes a lost workspace immediately without replaying setup, Conn
   expect(await screen.findByText('Connected with GitHub Copilot.')).toBeTruthy();
   lost = true;
   await act(async () => { window.dispatchEvent(new Event('focus')); });
-  expect(screen.getByText("Your workspace couldn't start")).toBeTruthy();
-  expect(screen.queryByText('Your workspace is running on this computer.')).toBeNull();
+  expect(screen.getByText("The local cluster couldn't start")).toBeTruthy();
+  expect(screen.queryByText('The local cluster is running on this computer.')).toBeNull();
   expect(ipc.mock.calls.filter(([name]) => name === 'setup_connect_model')).toHaveLength(1);
   expect(ipc.mock.calls.some(([name]) => ['setup_select_local', 'agent_run'].includes(name))).toBe(false);
 });
@@ -73,7 +73,7 @@ test('failed Connect refreshes retained guest details without locking the runnin
   expect(screen.queryByText(detail)).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));
   expect(await screen.findByText(detail)).toBeTruthy();
-  expect(screen.getByText('Your workspace is running on this computer.')).toBeTruthy();
+  expect(screen.getByText('The local cluster is running on this computer.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Check again' }).matches(':disabled')).toBe(false);
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toHaveLength(1);
@@ -81,10 +81,10 @@ test('failed Connect refreshes retained guest details without locking the runnin
 
 test('the chooser only reads setup and build information, without runtime or credential effects', async () => {
   const ipc = native(); const fetch = vi.fn(); vi.stubGlobal('fetch', fetch); render(<App />);
-  expect(await screen.findByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Clusters' })).toBeTruthy();
   expect(screen.getByText(unavailable)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
-  const existing = screen.getByRole('button', { name: 'Add a place' });
+  const existing = screen.getByRole('button', { name: 'Add a cluster' });
   expect(existing.matches(':disabled')).toBe(false);
   expect(ipc.mock.calls.every(call => ['setup_status', 'setup_requirements', 'cluster_places'].includes(call[0]))).toBe(true);
   expect(fetch).not.toHaveBeenCalled(); expect(screen.queryByRole('textbox')).toBeNull();
@@ -93,9 +93,9 @@ test('the chooser only reads setup and build information, without runtime or cre
 test('remount observes the native choice without inventing workspace or model readiness', async () => {
   const ipc = native(); const user = userEvent.setup(); const first = render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
-  expect(await screen.findByRole('region', { name: 'Workspace setup' })).toBeTruthy();
+  expect(await screen.findByRole('region', { name: 'Local cluster setup' })).toBeTruthy();
   first.unmount(); render(<App />); await openLocalSetup();
-  await screen.findByRole('region', { name: 'Workspace setup' });
+  await screen.findByRole('region', { name: 'Local cluster setup' });
   expect(screen.getByText(unavailable)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
   expect(ipc.mock.calls.filter(call => call[0] === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
@@ -121,10 +121,10 @@ test.each([null, 'attempted'])('a lost selection reply preserves durable intent 
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   expect(intentAtSelection).toBe(previous ?? 'pending');
   await act(async () => { loseReply(); });
-  await screen.findByText('Your workspace is running on this computer.', {}, { timeout: 2000 });
+  await screen.findByText('The local cluster is running on this computer.', {}, { timeout: 2000 });
   view.unmount(); render(<Setup onOpenExample={vi.fn()} />);
   await openLocalSetup(user);
-  await screen.findByText('Your workspace is running on this computer.');
+  await screen.findByText('The local cluster is running on this computer.');
   expect(localStorage.getItem('bridge.firstTest.v1')).toBe(previous ?? 'pending');
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toHaveLength(1);
   expect(ipc.mock.calls.every(([command]) => ['setup_status', 'setup_requirements', 'setup_example', 'setup_select_local', 'cluster_places'].includes(command))).toBe(true);
@@ -132,7 +132,7 @@ test.each([null, 'attempted'])('a lost selection reply preserves durable intent 
 
 test('browser preview never pretends that native persistence or integration works', async () => {
   vi.stubGlobal('isTauri', false); const ipc = vi.fn(); mockIPC(ipc); render(<App />); await openLocalSetup();
-  expect(await screen.findByText('Workspace setup is not available in this preview.')).toBeTruthy();
+  expect(await screen.findByText('Local cluster setup is not available in this preview.')).toBeTruthy();
   expect(screen.queryByRole('radio')).toBeNull();
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
   expect(ipc).not.toHaveBeenCalled();
@@ -152,7 +152,7 @@ test('save failures do not mark the choice saved and never render rejected paths
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   expect(await screen.findByRole('alert')).toBeTruthy();
-  expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Local cluster setup' })).toBeNull();
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
 });
 
@@ -162,9 +162,9 @@ test('a failed initial read can be checked again without changing the saved choi
     ? ++reads === 1 ? Promise.reject('SECRET_MARKER') : status('localVm') : Promise.reject({ kind: 'unavailable' }));
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   expect(await screen.findByRole('alert')).toBeTruthy();
-  expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Local cluster setup' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Check again' }));
-  expect(await screen.findByRole('region', { name: 'Workspace setup' })).toBeTruthy();
+  expect(await screen.findByRole('region', { name: 'Local cluster setup' })).toBeTruthy();
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
@@ -183,8 +183,8 @@ test('Continue shows real startup states and a ready session can open the owned 
   await screen.findByRole('button', { name: 'Continue' });
   expect(screen.queryByRole('button', { name: 'Read its instructions' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Continue' }));
-  expect(screen.queryByText('Your workspace is running on this computer.')).toBeNull();
-  expect(await screen.findByText('Your workspace is running on this computer.')).toBeTruthy();
+  expect(screen.queryByText('The local cluster is running on this computer.')).toBeNull();
+  expect(await screen.findByText('The local cluster is running on this computer.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Connect the AI' }).matches(':disabled')).toBe(true);
   expect(ipc.mock.calls.filter(([name]) => name === 'setup_select_local')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
@@ -200,7 +200,7 @@ test.each([
   native(); mockIPC(command => command === 'setup_status'
     ? { ...status('localVm'), localVm: 'failed', localVmError } : Promise.reject({ kind: 'unavailable' }));
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  expect((await screen.findByRole('alert')).textContent).toContain('Your workspace and agent files are kept.');
+  expect((await screen.findByRole('alert')).textContent).toContain('Your local cluster and agent files are kept.');
   expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
   expect(screen.queryByText(localVmError)).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Show details' }));
@@ -222,10 +222,10 @@ test('a delayed Continue reply stays pending across repeat activation and naviga
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   const designer = screen.getByRole('button', { name: 'Designer' });
   await user.click(designer); selected = 'localVm'; complete(status(selected));
-  await waitFor(() => expect(document.querySelector('[aria-label="Workspace setup"]')?.closest('[hidden]')).toBeTruthy());
+  await waitFor(() => expect(document.querySelector('[aria-label="Local cluster setup"]')?.closest('[hidden]')).toBeTruthy());
   expect(screen.getByRole('main', { name: 'Designer' })).toBeTruthy();
   expect(document.activeElement).toBe(designer);
-  expect(screen.queryByRole('region', { name: 'Workspace setup' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Local cluster setup' })).toBeNull();
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
   expect(ipc.mock.calls.some(([command]) => command === 'setup_connect_model')).toBe(false);
 });
@@ -247,9 +247,9 @@ test('standalone Setup navigates through Places without implicit destination or 
   render(<Setup onOpenExample={vi.fn()} />);
   await screen.findByRole('button', { name: 'Set up' });
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_contexts');
-  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
   await openLocalSetup(user);
   expect(screen.queryByRole('combobox', { name: 'kubectl context' })).toBeNull();
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_select_local');
@@ -258,17 +258,17 @@ test('standalone Setup navigates through Places without implicit destination or 
 test('controlled destination changes do not navigate; visited ClusterCard stays mounted hidden without refetching contexts', async () => {
   const ipc = nativeDirect(); const user = userEvent.setup(); const onPlace = vi.fn();
   const view = render(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
-  await user.click(await screen.findByRole('button', { name: 'Add a place' }));
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
   const card = document.querySelector('.cluster-card');
   view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'cluster' }} onPlace={onPlace} />);
   expect(screen.getByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
   expect(screen.queryByRole('combobox', { name: 'kubectl context' })).toBeNull();
   expect(document.querySelector('.cluster-card')).toBe(card);
   view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
-  expect(screen.getByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  expect(screen.getByRole('heading', { name: 'Clusters' })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   expect(screen.getByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_contexts')).toHaveLength(1);
   expect(onPlace).not.toHaveBeenCalled();
@@ -279,7 +279,7 @@ test('a shared place change alone never admits setup, starts the workspace or op
   const view = render(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
   await screen.findByRole('button', { name: 'Set up' });
   view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'cluster' }} onPlace={onPlace} />);
-  expect(screen.getByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Clusters' })).toBeTruthy();
   view.rerender(<Setup onOpenExample={vi.fn()} place={{ kind: 'thisComputer' }} onPlace={onPlace} />);
   expect(screen.getByRole('button', { name: 'Set up' })).toBeTruthy();
   expect(ipc.mock.calls.every(([c]) => ['setup_status', 'setup_requirements', 'cluster_places'].includes(c))).toBe(true);
@@ -302,7 +302,7 @@ test('cluster configuration survives tab navigation without automatically using 
   mockIPC(ipc); const user = userEvent.setup();
   const props = { onOpenExample: vi.fn(), onPlace: vi.fn(), place: { kind: 'thisComputer' } as const };
   const view = render(<Setup {...props} />);
-  await user.click(await screen.findByRole('button', { name: 'Add a place' }));
+  await user.click(await screen.findByRole('button', { name: 'Add a cluster' }));
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
   await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));

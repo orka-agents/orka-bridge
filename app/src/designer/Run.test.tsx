@@ -38,13 +38,13 @@ test('model connection advice follows the acknowledged model state, not Run avai
   let modelConnected = false;
   mockIPC(() => ({ ...idle, state: 'running', canRun: false, modelConnected }));
   const view = render(<Run />);
-  expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
-  expect(await screen.findByText(/Connect the model in Clusters first\./)).toBeTruthy();
+  expect(screen.queryByText(/Connect the AI in Clusters first\./)).toBeNull();
+  expect(await screen.findByText(/Connect the AI in Clusters first\./)).toBeTruthy();
   modelConnected = true;
   view.unmount();
   render(<Run />);
   expect(await screen.findByText('Starting your tests')).toBeTruthy();
-  expect(screen.queryByText(/Connect the model in Clusters first\./)).toBeNull();
+  expect(screen.queryByText(/Connect the AI in Clusters first\./)).toBeNull();
   expect(screen.queryByRole('button', { name: 'Run tests' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
 });

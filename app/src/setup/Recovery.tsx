@@ -17,7 +17,7 @@ export default function Recovery({ detail, preflightFailure, failure, disabled, 
   }
   return <div className="workspace-failure" role="alert">
     <div className="workspace-failure-explanation"><p className="failure-summary">{info.summary}</p>
-    <p>{info.action}</p><p>{preflightFailure ? 'No workspace files were changed by this check.' : info.preservation}</p>
+    <p>{info.action}</p><p>{preflightFailure ? 'This check made no changes.' : info.preservation}</p>
     <div className="workspace-step-actions">
       {info.topic && <button type="button" className="workspace-primary" onClick={() => { void help(); }}>Show me how</button>}
       <button type="button" className={info.topic ? 'workspace-secondary' : 'workspace-primary'} disabled={disabled || info.retryBlocked}

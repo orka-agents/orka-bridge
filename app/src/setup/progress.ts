@@ -4,7 +4,7 @@ import type { SetupStatus } from './state';
 import type { CheckStepState } from './Steps';
 
 // One derivation feeds the tab, footer and step list so their counters cannot disagree.
-// The stages are: install files, start, Orka ready, connect model, first test.
+// The stages are: install files, start, Cluster ready, connect model, first test.
 export const setupSteps = 5;
 // A frontend estimate only: native reports elapsed startup time, never a measured typical.
 export const startupEstimateMs = 30_000;
@@ -29,20 +29,20 @@ export function failedStep(status: SetupStatus): 1 | 2 {
 
 export function setupView(status: SetupStatus | undefined, { checking = false, model = 'idle', check, initialAutomatic = false }: { checking?: boolean; model?: ModelState; check?: CheckStepState; initialAutomatic?: boolean } = {}): SetupView {
   const view = (place: SetupView['place'], step: number, line: string, detail: string, tone: Tone, done = false): SetupView => ({ place, step, done, line, detail, tone });
-  if (!status) return checking ? view('checking', 0, 'Checking workspace…', 'Checking workspace…', 'wait') : view('unavailable', 0, 'Workspace unavailable', 'Workspace unavailable', 'wait');
+  if (!status) return checking ? view('checking', 0, 'Checking the local cluster…', 'Checking the local cluster…', 'wait') : view('unavailable', 0, 'Local cluster unavailable', 'Local cluster unavailable', 'wait');
   const place = status.selected === 'localVm' ? 'local' : 'none';
-  if (status.localVm === 'notIntegrated') return view(place, 0, 'Workspace unavailable', 'Workspace unavailable', 'wait');
+  if (status.localVm === 'notIntegrated') return view(place, 0, 'Local cluster unavailable', 'Local cluster unavailable', 'wait');
   if (place === 'none') return view(place, 0, 'Choose where agents run', 'Choose where agents run', 'wait');
   const at = (step: number) => `Setting up, step ${step} of ${setupSteps}`;
   switch (status.localVm) {
-    case 'starting': return view(place, 2, at(2), 'Starting workspace', 'busy');
-    case 'failed': return view(place, failedStep(status), 'Setup failed', 'Workspace needs attention', 'bad');
-    case 'closing': return view(place, 0, 'Stopping workspace', 'Stopping workspace', 'busy');
-    case 'closed': return view(place, 1, 'Workspace stopped', 'Workspace stopped', 'wait');
-    case 'cancelled': return view(place, 1, 'Setup paused', 'What has arrived is kept', 'wait');
+    case 'starting': return view(place, 2, at(2), 'Starting the local cluster', 'busy');
+    case 'failed': return view(place, failedStep(status), 'Setup failed', 'Local cluster needs attention', 'bad');
+    case 'closing': return view(place, 0, 'Stopping the local cluster', 'Stopping the local cluster', 'busy');
+    case 'closed': return view(place, 1, 'Local cluster stopped', 'Local cluster stopped', 'wait');
+    case 'cancelled': return view(place, 1, 'Setup paused', 'Downloaded files are kept', 'wait');
     case 'ready': {
       if (status.model === 'locked') return view(place, 4, 'AI unavailable', 'AI connection unavailable', 'wait');
-      if (model === 'failed') return view(place, 4, 'AI needs attention', 'AI connection needs attention', 'bad');
+      if (model === 'failed') return view(place, 4, 'AI needs attention', 'Check the AI connection in Clusters', 'bad');
       if (model !== 'connected') {
         const detail = { connecting: 'Connecting the AI…', removing: 'Removing the AI sign-in…', queued: 'AI queued', idle: 'Choose the AI' }[model];
         return view(place, 4, at(4), detail, model === 'idle' ? 'needs-you' : model === 'queued' ? 'wait' : 'busy');
@@ -50,9 +50,9 @@ export function setupView(status: SetupStatus | undefined, { checking = false, m
       // Test evidence can need attention after setup; only the initial automatic run is a setup stage.
       const done = !!check && !(check === 'running' && initialAutomatic);
       const tone = check === 'passed' || check === 'failed' ? 'ready' : check === 'running' ? 'busy' : check === 'unknown' ? 'wait' : 'needs-you';
-      return view(place, 5, done ? 'This computer ready' : at(5), 'AI connected', tone, done);
+      return view(place, 5, done ? 'Local cluster ready' : at(5), 'AI connected', tone, done);
     }
-    default: return view(place, 1, at(1), 'Getting workspace ready', 'busy');
+    default: return view(place, 1, at(1), 'Getting the local cluster ready', 'busy');
   }
 }
 
@@ -65,7 +65,7 @@ export function infraProgress(status: SetupStatus): Infra | null {
     const left = Math.ceil((startupEstimateMs - elapsed) / 1000);
     return {
       value: transferShare + startupShare * Math.min(elapsed / startupEstimateMs, 1),
-      text: progress?.phase === 'starting' ? `${plural(Math.floor(elapsed / 1000), 'second')} elapsed` : 'Getting the workspace ready…',
+      text: progress?.phase === 'starting' ? `${plural(Math.floor(elapsed / 1000), 'second')} elapsed` : 'Getting the local cluster ready…',
       estimate: left > 0 ? `Rough estimate, not a measurement: about ${plural(left, 'second')} left.` : 'Taking longer than the rough 30-second estimate. Still working.',
     };
   }
