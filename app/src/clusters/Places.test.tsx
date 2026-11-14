@@ -254,14 +254,14 @@ test('a known empty list promotes Set up, but a metadata failure does not imply 
   const user = userEvent.setup(); render(<Host />);
   const setup = await screen.findByRole('button', { name: 'Set up' });
   await screen.findByText(/No other clusters added/);
-  expect(setup.className).toContain('workspace-primary');
-  expect(screen.getByRole('button', { name: 'Add a cluster' }).className).toContain('workspace-secondary');
+  expect(setup.className).toContain('button-primary');
+  expect(screen.getByRole('button', { name: 'Add a cluster' }).className).toContain('button-secondary');
   await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   sim.snapshot.persistenceState = 'unavailable';
   await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
   await screen.findByText(/remembered cluster information is unavailable/i);
   expect(screen.queryByText(/No other clusters added/)).toBeNull();
-  expect(screen.getByRole('button', { name: 'Set up' }).className).toContain('workspace-secondary');
+  expect(screen.getByRole('button', { name: 'Set up' }).className).toContain('button-secondary');
 });
 
 test('successful Connect has Done and truthful persistence warning without disabling live access', async () => {
@@ -270,9 +270,9 @@ test('successful Connect has Done and truthful persistence warning without disab
   await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Connect' }));
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   expect(await screen.findByText(/not be remembered/i)).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Open your agent' }).className).toContain('workspace-secondary');
+  expect(screen.getByRole('button', { name: 'Open your agent' }).className).toContain('button-secondary');
   expect(screen.getByRole('button', { name: 'Open your agent' }).matches(':disabled')).toBe(false);
-  expect(screen.getByRole('button', { name: 'Done' }).className).toContain('workspace-primary');
+  expect(screen.getByRole('button', { name: 'Done' }).className).toContain('button-primary');
   await user.click(screen.getByRole('button', { name: 'Done' }));
   expect(await screen.findByRole('heading', { name: 'Clusters' })).toBeTruthy();
 });
