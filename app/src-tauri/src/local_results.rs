@@ -1,6 +1,6 @@
 //! Local test summaries, not execution handles. Agent ownership outlives results.
 use crate::{
-    agent_folder::{child, invalid, read, replace, DocumentId},
+    agent_folder::{child, invalid, read, replace, sync},
     example_run::RunState,
     overview::LocalRunObservation,
 };
@@ -89,25 +89,20 @@ impl LocalResults {
             if root.symlink_metadata(SAVING).is_ok() {
                 replace(&root, HISTORY, &serde_json::to_vec(&ledger)?)?;
             }
-            let owner = RunAgent::from(&observation);
-            if !ledger.snapshot.run_agents.contains(&owner) {
-                ledger.snapshot.run_agents.push(owner);
-            }
-            ledger
-                .snapshot
-                .results
-                .retain(|r| r.document_id != observation.document_id);
-            let id = observation.document_id;
-            ledger.snapshot.results.push(observation);
+            // Durable intent includes ownership even if the first ledger write is lost.
+            let mut pending = observation.clone();
+            pending.state = RunState::Unknown;
+            pending.report = None;
+            upsert(&mut ledger.snapshot, observation);
             let bytes = serde_json::to_vec(&ledger)?;
             // Never silently evict an identity: Overview needs every acknowledged UID.
             if bytes.len() > MAX_BYTES {
                 return Err(invalid());
             }
-            replace(&root, SAVING, &serde_json::to_vec(&id)?)?;
+            replace(&root, SAVING, &serde_json::to_vec(&pending)?)?;
             commit(&root, &bytes)?;
             root.remove_file(SAVING)?;
-            Ok(())
+            sync(&root)
         })();
         // Later writes cannot recover an earlier run's unsaved ownership tuple.
         *failed |= result.is_err();
@@ -156,23 +151,40 @@ impl LocalResults {
         {
             return Err(invalid());
         }
-        let pending: Option<DocumentId> = match root.symlink_metadata(SAVING) {
-            Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e),
-            Ok(_) => Some(serde_json::from_slice(&read(root, SAVING, 64)?)?),
-        };
         for row in &mut ledger.snapshot.results {
             validate(row)?;
             if !documents.insert(row.document_id) || !owners.contains(&RunAgent::from(&*row)) {
                 return Err(invalid());
             }
-            if row.state == RunState::Running || pending == Some(row.document_id) {
+            if row.state == RunState::Running {
                 row.state = RunState::Unknown;
                 row.report = None;
             }
         }
+        match root.symlink_metadata(SAVING) {
+            Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+            Err(e) => return Err(e),
+            Ok(_) => {
+                let mut pending: LocalRunObservation =
+                    serde_json::from_slice(&read(root, SAVING, 32 * 1024)?)?;
+                validate(&pending)?;
+                pending.state = RunState::Unknown;
+                pending.report = None;
+                upsert(&mut ledger.snapshot, pending);
+            }
+        }
         Ok(ledger)
     }
+}
+fn upsert(snapshot: &mut LocalResultsSnapshot, observation: LocalRunObservation) {
+    let owner = RunAgent::from(&observation);
+    if !snapshot.run_agents.contains(&owner) {
+        snapshot.run_agents.push(owner);
+    }
+    snapshot
+        .results
+        .retain(|row| row.document_id != observation.document_id);
+    snapshot.results.push(observation);
 }
 fn text(value: &str) -> bool {
     !value.is_empty() && value.len() <= 4096
@@ -195,7 +207,29 @@ fn validate(row: &LocalRunObservation) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_folder::DocumentId;
     use serde_json::json;
+    #[test]
+    fn pending_first_save_recovers_acknowledged_identity_without_history() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = Some(temp.path().into());
+        let store = LocalResults::new(root.clone());
+        let row: LocalRunObservation = serde_json::from_value(json!({
+            "installation": Uuid::new_v4(), "documentId": DocumentId::SAMPLE,
+            "source": bridge_runtime_protocol::SnapshotId::of(b"a", b"b"),
+            "namespace": "orka-system", "agentName": "test", "agentUid": "pending",
+            "observedAt": 1, "state": "running", "report": null
+        }))
+        .unwrap();
+        assert!(store
+            .save(row, |_, _| Err(io::Error::other("before ledger commit")))
+            .is_err());
+        let recovered = LocalResults::new(root).list().unwrap();
+        assert_eq!(recovered.run_agents.len(), 1);
+        assert_eq!(recovered.run_agents[0].agent_uid, "pending");
+        assert_eq!(recovered.results[0].state, RunState::Unknown);
+        assert!(recovered.results[0].report.is_none());
+    }
     #[test]
     fn interrupted_commit_is_unknown_after_reopen_and_next_record() {
         let temp = tempfile::tempdir().unwrap();
