@@ -94,6 +94,33 @@ impl RunSnapshot {
 #[cfg(test)]
 mod terminal_claim_tests {
     use super::*;
+    #[tokio::test]
+    async fn validation_failure_before_submission_keeps_cancelled_before_start() {
+        let run = ExampleRun::new(
+            tokio::runtime::Handle::current(),
+            true,
+            Arc::new(AgentFolder::new(None)),
+        );
+        let mut snapshot = RunSnapshot::idle(DocumentId::SAMPLE);
+        snapshot.state = RunState::Running;
+        snapshot.stage = Some("model");
+        snapshot.cancellation = Cancellation::Cancelling;
+        run.0
+            .lock()
+            .unwrap()
+            .snapshots
+            .insert(DocumentId::SAMPLE, snapshot);
+        run.fail(DocumentId::SAMPLE, "submit");
+        let state = run.0.lock().unwrap();
+        let done = &state.snapshots[&DocumentId::SAMPLE];
+        assert_eq!(done.state, RunState::Complete);
+        assert!(done.cancellation == Cancellation::BeforeStart);
+        assert!(done.error.is_none());
+        assert!(done.acknowledged.is_empty() && done.pending.is_none());
+        let report = done.report.as_ref().unwrap();
+        assert!(report.cases.is_empty());
+        assert_eq!(report.verdict, crate::engine::run::Verdict::Cancelled);
+    }
     #[test]
     fn stop_and_terminal_claim_have_only_two_ordered_outcomes() {
         for phase in [RunState::Unknown, RunState::Complete] {
@@ -558,7 +585,6 @@ impl ExampleRun {
             provider: provider.clone(),
             vm,
         });
-        self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().stage = Some("submit");
         let prepared = match runner.prepare(pair) {
             Ok(prepared) => prepared,
             Err(_) => {
@@ -566,6 +592,7 @@ impl ExampleRun {
                 return;
             }
         };
+        self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().stage = Some("submit");
         let handle = match runner.submit_prepared(prepared, stop.clone()).await {
             Ok(handle) => handle,
             Err(error)
