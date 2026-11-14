@@ -72,18 +72,18 @@ try {
   const bundle = await readFile(join(fileURLToPath(new URL('../app/dist/assets/', import.meta.url)), new URL(entry).pathname.split('/').pop()), 'utf8');
   const { frameTree } = await call('Page.getFrameTree');
   const fixtures = [
-    ['permission', { operation: 'start', cause: 'permission', codes: [5] }, 'operating system denied'],
+    ['permission', { operation: 'start', cause: 'permission', codes: [5] }, 'does not have permission'],
     ['preflight', null, 'Virtualization is turned off or unavailable on this PC.'],
-    ['prepare', { operation: 'prepare', cause: 'preparation', codes: [] }, 'local copies'],
-    ['download-reserved', { operation: 'download', cause: 'network', codes: [] }, 'Rejected content is not kept'],
-    ['unknown', { operation: 'start', cause: 'unknown', codes: [] }, "couldn't establish"],
+    ['prepare', { operation: 'prepare', cause: 'preparation', codes: [] }, 'existing cluster and agent files are kept'],
+    ['download-reserved', { operation: 'download', cause: 'network', codes: [] }, 'Your agent files are kept'],
+    ['unknown', { operation: 'start', cause: 'unknown', codes: [] }, "couldn't determine"],
     ['cli', 'modelCaptureUnavailable', 'gh auth login --hostname github.com --web'],
     ['sign-in', 'modelCaptureFailed', 'gh auth status --hostname github.com'],
     ['model-store', 'modelStore', 'could not save or load your sign-in'],
     ['model-copy', 'modelCaptureFailed', 'Share the visible error message'],
     ['cluster-empty', null, 'No kubectl contexts were found'],
     ['cluster-configuration', { check: 'configuration', result: 'unknown' }, 'kubeconfig could not be read'],
-    ['cluster-permission', { check: 'providers', result: 'permissionDenied' }, 'Provider reading failed. Access was denied.'],
+    ['cluster-permission', { check: 'providers', result: 'permissionDenied' }, 'Reading AI connections failed. Access was denied.'],
     ['cluster-unknown', { check: 'orkaIdentity', result: 'unknown' }, 'The cause could not be established'],
     ['cluster-reload-pending', null, 'Reload pending'],
     ['cluster-reloaded', null, 'corrected-context'],
@@ -127,8 +127,8 @@ try {
         await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI').click()`);
       }
       if (cluster) {
-        // Add a place offers only an existing cluster: its context choice opens directly.
-        await clickAction('Add a place');
+        // Add a cluster offers only an existing cluster: its context choice opens directly.
+        await clickAction('Add a cluster');
         if (!['cluster-empty', 'cluster-configuration'].includes(name)) {
           await until(() => evaluate(`document.querySelector('#cluster-context')?.options.length > 1`), 'fixture contexts');
           await evaluate(`(() => { const select = document.querySelector('#cluster-context'); select.value = select.options[1].value; select.dispatchEvent(new Event('change', { bubbles: true })); })()`);
@@ -164,14 +164,14 @@ try {
   const startup = elapsedMs => ({ phase: 'starting', bytes: null, totalBytes: null, elapsedMs, remainingMs: null });
   const setupFixtures = [
     ['setup-transfer', 'installing', transfer, false, 'Installing, 1.1 GiB of 2.8 GiB'],
-    ['setup-transfer-queued', 'installing', transfer, true, 'Connects automatically when Orka is ready.'],
+    ['setup-transfer-queued', 'installing', transfer, true, 'Connects when the local cluster is ready.'],
     // A valid first observation, then every later read fails: the card must say unavailable, not keep the old bar.
-    ['setup-unavailable', 'installing', transfer, false, 'Workspace status is unavailable.', true],
+    ['setup-unavailable', 'installing', transfer, false, 'Local cluster status is unavailable.', true],
     // A platform without native model support (reported by the snapshot) offers no early choice: a Waiting row, no action.
     ['setup-transfer-unsupported', 'installing', transfer, false, 'Installing, 1.1 GiB of 2.8 GiB', false, false],
     ['setup-startup', 'starting', startup(12000), false, 'Rough estimate, not a measurement'],
     ['setup-startup-slow', 'starting', startup(45000), false, 'Taking longer than the rough 30-second estimate'],
-    ['setup-ready', 'ready', null, false, 'Your workspace is running on this computer.'],
+    ['setup-ready', 'ready', null, false, 'The local cluster is running on this computer.'],
   ];
   const pair = { agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\n---\nFetch before answering.', tests: 'The checksum check.' };
   async function captureSetup(theme, size, [name, localVm, progress, queue, expected, failLater, modelSupported = true]) {
@@ -308,8 +308,8 @@ try {
       }
     }
     if (name === 'switch-place') {
-      await clickAction('Back to places');
-      await clickAction('Add a place');
+      await clickAction('Back to clusters');
+      await clickAction('Add a cluster');
     }
     if (name === 'designer') await clickAction('Read its instructions');
     if (name === 'first-test-badges') {
@@ -317,21 +317,21 @@ try {
       await evaluate(`document.querySelector('button[aria-label="Clusters"]').click()`);
       await until(() => evaluate(`!!document.querySelector('.setup-history details')`), 'completed step disclosure');
       await evaluate(`document.querySelector('.setup-history details').open = true`);
-      // Primary action and the single failed case are the Workspace setup card's, not the setup history's.
-      for (const [state, label, primary] of [['passed', 'Passed', 'Open your test result'], ['failed', 'Failed', 'Open your test result'], ['stale', 'Needs running', 'Run the test again'], ['unknown', 'Result unknown', 'Check again']]) {
+      // Primary action and the single failed case are the Local cluster setup card's, not the setup history's.
+      for (const [state, label, primary] of [['passed', 'Its test passed', 'See what it answered'], ['failed', 'Its test failed', 'See what it answered'], ['stale', 'Needs running', 'Run it again'], ['unknown', 'Result unknown', 'Check again']]) {
         await evaluate(`window.__bridgeBadgeState = ${JSON.stringify(state)}`);
-        await until(() => evaluate(`[...document.querySelectorAll('.setup-history li')].find(row => row.querySelector('b')?.textContent === 'Run your first test')?.querySelector('.step-result')?.textContent === ${JSON.stringify(label)}`), `sample badge ${state}`);
+        await until(() => evaluate(`[...document.querySelectorAll('.setup-history li')].find(row => row.querySelector('b')?.textContent === 'Run your first agent')?.querySelector('.step-result')?.textContent === ${JSON.stringify(label)}`), `sample badge ${state}`);
         const card = await evaluate(`(() => {
-          const card = document.querySelector("[aria-label='Workspace setup']");
+          const card = document.querySelector("[aria-label='Local cluster setup']");
           const shown = [...card.querySelectorAll('button')].filter(button => button.getClientRects().length);
-          return { text: card.innerText, primary: shown.filter(button => button.classList.contains('workspace-primary')).map(button => button.textContent), result: shown.some(button => button.textContent === 'Open your test result'), page: document.body.innerText };
+          return { text: card.innerText, primary: shown.filter(button => button.classList.contains('workspace-primary')).map(button => button.textContent), result: shown.some(button => button.textContent === 'See what it answered'), page: document.body.innerText };
         })()`);
         const fail = reason => { throw Error(`sample ${state}: ${reason}: ${JSON.stringify(card)}`); };
         if (card.primary.join('|') !== primary) fail(`primary action should be ${primary}`);
         if (/step 5 of 5/i.test(card.page)) fail('first-test state is shown as unfinished setup step 5');
         if (state === 'stale' && !card.result) fail('the stale sample has a readable report, so its result stays inspectable');
-        if (/\d+ tests? failing/.test(card.text) !== (state === 'failed') || state === 'failed' && !card.text.includes('1 test failing')) fail('failure count belongs only to the one failed case');
-        for (const [suffix, target] of [['', '[aria-label="Setup steps"] li:last-child, [aria-label="Completed setup steps"] li:last-child'], ['-card', '[aria-label="Workspace setup"]']]) {
+        if (card.text.includes('Its test failed') !== (state === 'failed')) fail('failure message belongs only to the failed test');
+        for (const [suffix, target] of [['', '[aria-label="Setup steps"] li:last-child, [aria-label="Completed setup steps"] li:last-child'], ['-card', '[aria-label="Local cluster setup"]']]) {
           await evaluate(`document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' })`);
           await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
           const image = await call('Page.captureScreenshot', { format: 'png' });
@@ -342,21 +342,21 @@ try {
       if (await evaluate('window.__bridgeRuns') !== 1) throw Error('A sample state submitted a run other than the automatic test');
       return;
     }
-    const expected = { 'places-empty': 'No clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Data disk, up to', 'local-preflight-missing': 'Data disk, up to', 'ai-idle': 'GitHub CLI installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected with GitHub Copilot', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster running', 'local-stopped': 'Set up this computer', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a place', designer: 'Instructions and settings' };
+    const expected = { 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Data disk, up to', 'local-preflight-missing': 'Data disk, up to', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first agentRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster running', 'local-stopped': 'Set up this computer', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings' };
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])})`), `${name} action state`);
     if (places) {
       // Count visible controls: hidden local panels stay mounted under Places.
       const probe = await evaluate(`(() => {
         const count = label => [...document.querySelectorAll('button')].filter(button => button.textContent.trim() === label && button.getClientRects().length).length;
-        return { setUp: count('Set up'), connect: count('Connect'), add: count('Add a place'), back: count('Back to places'), continue: count('Continue'), radios: document.querySelectorAll('input[type=radio]').length, text: document.body.innerText };
+        return { setUp: count('Set up'), connect: count('Connect'), add: count('Add a cluster'), back: count('Back to clusters'), continue: count('Continue'), radios: document.querySelectorAll('input[type=radio]').length, text: document.body.innerText };
       })()`);
       const fail = reason => { throw Error(`${name}: ${reason}: ${JSON.stringify(probe)}`); };
       if (probe.radios || /Where should your agents run|Engine diagnostics|Unavailable in this build|Reading…/.test(probe.text)) fail('removed chooser, diagnostics, caveat or unsettled size is visible');
-      if (name === 'places-empty' && (probe.setUp !== 1 || probe.add !== 1 || probe.connect)) fail('empty Places needs only Set up and Add a place');
+      if (name === 'places-empty' && (probe.setUp !== 1 || probe.add !== 1 || probe.connect)) fail('empty Places needs only Set up and Add a cluster');
       if (name === 'places-populated' && (probe.setUp !== 1 || probe.connect !== 2 || !probe.text.includes('Last checked') || probe.text.includes('Selected for Designer'))) fail('remembered places need Last checked, Not checked yet and one Connect each');
-      if (name.startsWith('local-preflight') && (!probe.back || !probe.continue || !['Memory', 'Workspace image', 'Data disk, up to'].every(label => probe.text.includes(label)))) fail('local detail needs Back to places, Continue and the three size rows');
+      if (name.startsWith('local-preflight') && (!probe.back || !probe.continue || !['Memory', 'Cluster download', 'Data disk, up to'].every(label => probe.text.includes(label)))) fail('local detail needs Back to clusters, Continue and the three size rows');
       if (name === 'local-preflight' && !probe.text.includes('GiB')) fail('known sizes were not shown');
-      if (name === 'local-preflight-missing' && !probe.text.includes('Workspace size will be shown before download')) fail('missing sizes need plain explanatory copy');
+      if (name === 'local-preflight-missing' && !probe.text.includes('Not available yet')) fail('missing sizes need plain explanatory copy');
     }
     if (name === 'first-test-result' || name === 'designer') {
       await until(() => evaluate(`!!document.querySelector('.designer-work')`), 'Designer columns');
@@ -376,7 +376,7 @@ try {
     await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
     if (['ai-connected', 'local-completed'].includes(name)) {
       const complete = await evaluate(`({ heading: document.querySelector('h1').textContent, pill: document.querySelector('.setup-progress .pill')?.textContent, details: !!document.querySelector('.setup-history details:not([open])'), text: document.body.innerText, model: document.querySelector('.setup-model').innerText })`);
-      if (complete.heading !== 'Local cluster' || complete.pill !== 'Local cluster running' || /step \d+ of 5/i.test(complete.text) || !complete.details || !complete.text.includes('Stop the local cluster') || complete.model.includes('GitHub CLI installed')) throw Error(`Completed local page is not collapsed: ${JSON.stringify(complete)}`);
+      if (complete.heading !== 'Local cluster' || complete.pill !== 'Local cluster running' || /step \d+ of 5/i.test(complete.text) || !complete.details || !complete.text.includes('Stop the local cluster') || complete.model.includes('GitHub CLI must be installed')) throw Error(`Completed local page is not collapsed: ${JSON.stringify(complete)}`);
     }
     if (name === 'ai-idle' && await evaluate(`document.querySelector('.setup-model').innerText.includes('Remove sign-in')`)) throw Error('Unused sign-in removal is visible before connecting');
     if (await evaluate(`document.body.innerText.includes('Change where agents run')`)) throw Error('Removed change panel is still visible');

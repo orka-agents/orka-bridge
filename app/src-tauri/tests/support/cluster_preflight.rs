@@ -211,12 +211,12 @@ async fn provider_ready_not_model_catalogue_and_start_rechecks() {
     *s.api.wire.mode.lock().unwrap() = "unready";
     let c = check(&s).await;
     assert_eq!(c["canSend"], false);
-    assert_eq!(row(&c, "Provider")["status"], "blocked");
+    assert_eq!(row(&c, "AI connection")["status"], "blocked");
     let done = s.finish(&id(&s.start().await)).await;
     assert_eq!(done["error"], "preflight");
     *s.api.wire.mode.lock().unwrap() = "paged";
     let c = check(&s).await;
-    assert_eq!(row(&c, "Provider")["status"], "blocked");
+    assert_eq!(row(&c, "AI connection")["status"], "blocked");
     assert_eq!(s.api.wire.posts(), 0);
 }
 

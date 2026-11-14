@@ -23,11 +23,11 @@ const emptyCopy: Record<Page, { title: string; detail: string }> = {
     detail: 'Agents on this machine and your connected clusters will appear here.',
   },
   Designer: {
-    title: 'A place to shape your agent',
+    title: 'Build and test your agent',
     detail: 'Your agent file, prompt, tools and tests will live here.',
   },
   Clusters: {
-    title: 'A place for your agents to run',
+    title: 'Choose where agents run',
     detail: 'Your local Orka and connected clusters will appear here.',
   },
 };
@@ -166,7 +166,7 @@ export default function App() {
   const { line: setupLine, detail, tone: hostTone } = view;
   const workspaceReady = setup?.localVm === 'ready';
   const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
-    : { local: 'This computer', none: 'No place selected', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
+    : { local: 'This computer', none: 'No cluster selected', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
   const hostDetail = setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
   const agentStatus = checksStale ? 'tests need running' : runUnavailable ? 'test status unavailable' : run?.state === 'unknown' ? 'test result unknown'
@@ -249,7 +249,7 @@ export default function App() {
         {footer.map((part, index) => <span key={index}>{index > 0 && <span aria-hidden="true"> · </span>}<span aria-live={index > 0 ? 'polite' : undefined}>{part}</span></span>)}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
-          page !== 'Clusters' || !localSetupView ? `Local workspace: ${hostDetail === setupLine ? setupLine : `${setupLine} · ${hostDetail}`}` : undefined,
+          page !== 'Clusters' || !localSetupView ? `Local cluster: ${hostDetail === setupLine ? setupLine : `${setupLine} · ${hostDetail}`}` : undefined,
           page !== 'Designer' && checks ? `Checks: ${checks}` : undefined,
         ].filter(Boolean).join(' · ')}</span>
       </footer>

@@ -15,8 +15,8 @@ test('remove is explicit, excludes duplicates and permits connecting again', asy
   expect(invoke).not.toHaveBeenCalled();
   expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText(/Connected with GitHub Copilot/);
-  expect(screen.getByRole('status').textContent).toBe('Connected with GitHub Copilot.');
+  await screen.findByText(/^Connected$/);
+  expect(screen.getByRole('status').textContent).toBe('Connected');
   expect(screen.queryByText(/Use GitHub Copilot with GitHub CLI/)).toBeNull();
   expect(screen.queryByText(/Your sign-in is shared only/)).toBeNull();
   let complete!: (value: unknown) => void;
@@ -30,7 +30,7 @@ test('remove is explicit, excludes duplicates and permits connecting again', asy
   const confirm = screen.getByRole('button', { name: 'Remove sign-in' });
   fireEvent.click(confirm); fireEvent.click(confirm);
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_remove_model')).toEqual([['setup_remove_model']]);
-  expect(screen.queryByText(/Connected with GitHub Copilot/)).toBeNull();
+  expect(screen.queryByText(/^Connected$/)).toBeNull();
   await act(async () => { complete({ ready: false }); });
   expect(screen.getAllByText(/GitHub CLI stays signed in/).length).toBeGreaterThan(0);
   expect(screen.getByRole('button', { name: 'Connect the AI' }).hasAttribute('disabled')).toBe(false);
@@ -62,7 +62,7 @@ test('failed removal retries cleanup rather than Connect and copies its own oper
   invoke.mockResolvedValueOnce({ ready: true });
   render(<Model enabled />);
   await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText(/Connected with GitHub Copilot/);
+  await screen.findByText(/^Connected$/);
   await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
   expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
   await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
@@ -76,7 +76,7 @@ test('failed removal retries cleanup rather than Connect and copies its own oper
   await screen.findByText(/no longer has a saved sign-in/);
   expect(screen.getByRole('button', { name: 'Connect the AI' })).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
-  expect(screen.queryByText(/Connected with GitHub Copilot/)).toBeNull();
+  expect(screen.queryByText(/^Connected$/)).toBeNull();
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_remove_model')).toHaveLength(2);
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_connect_model')).toHaveLength(1);
   expect(document.body.textContent).not.toContain('SECRET');
@@ -86,7 +86,7 @@ test.each(['paused', 'locked'])('removal confirmation cannot bypass the %s crede
   invoke.mockResolvedValueOnce({ ready: true });
   const view = render(<Model enabled />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText(/Connected with GitHub Copilot/);
+  await screen.findByText(/^Connected$/);
   fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
   view.rerender(<Model enabled={gate !== 'locked'} paused={gate === 'paused'} />);
   fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
@@ -111,9 +111,9 @@ test('explicit sign-in uses no renderer arguments, excludes duplicate clicks and
   expect(screen.queryByRole('button', { name: /Connecting model/ })).toBeNull();
   expect(screen.getByText('Connecting the AI…').closest('button')).toBeNull();
   await act(async () => { complete({ ready: true }); });
-  expect(screen.getByText('Connected with GitHub Copilot.')).toBeTruthy();
+  expect(screen.getByText('Connected')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Model connected' })).toBeNull();
-  expect(screen.getByText('Connected with GitHub Copilot.').closest('button')).toBeNull();
+  expect(screen.getByText('Connected').closest('button')).toBeNull();
   expect(screen.queryByText(/inference/)).toBeNull();
   expect(screen.queryByText(/run the example/)).toBeNull();
 });
@@ -124,7 +124,7 @@ test('known native stage error is shown without raw message; unknown errors neve
   expect(screen.queryByText(/synthetic-private-token/)).toBeNull();
   invoke.mockRejectedValue({ kind: 'invented', message: 'synthetic-private-token' });
   const result = await connectModel();
-  expect(result).toMatchObject({ ok: false, message: 'The model connection could not be completed.' });
+  expect(result).toMatchObject({ ok: false, message: 'The AI connection could not be completed.' });
 });
 test('a full Windows credential store explains sign-in failure without exposing the native message', async () => {
   invoke.mockRejectedValue({ kind: 'modelStore', message: 'synthetic-private-token /path/raw-stderr',
@@ -153,7 +153,7 @@ test('late success after runtime closes does not display ready', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   view.rerender(<Model enabled={false} />);
   await act(async () => { complete({ ready: true }); });
-  expect(screen.queryByText(/Connected with GitHub Copilot/)).toBeNull();
+  expect(screen.queryByText(/^Connected$/)).toBeNull();
 });
 test('failed CLI recovery offers install and sign-in help and explicitly reconnects', async () => {
   invoke.mockRejectedValue({ kind: 'modelCaptureUnavailable', message: 'SECRET' });
@@ -161,7 +161,7 @@ test('failed CLI recovery offers install and sign-in help and explicitly reconne
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   const alert = await screen.findByRole('alert');
   expect(alert.textContent).toContain('gh auth login --hostname github.com --web');
-  expect(alert.textContent).toContain('workspace and agent files are kept');
+  expect(alert.textContent).toContain('local cluster and your agent files are kept');
   expect(screen.getByRole('button', { name: 'Install GitHub CLI' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Sign-in help' })).toBeTruthy();
   expect(alert.textContent).not.toContain('SECRET');
@@ -169,7 +169,7 @@ test('failed CLI recovery offers install and sign-in help and explicitly reconne
   invoke.mockResolvedValue({ ready: true });
   const retry = screen.getByRole('button', { name: 'Check again' });
   fireEvent.click(retry); fireEvent.click(retry);
-  await screen.findByText(/Connected with GitHub Copilot/);
+  await screen.findByText(/^Connected$/);
   expect(invoke.mock.calls.filter(([command]) => command === 'setup_connect_model')).toHaveLength(2);
 });
 test('reading sign-in errors show the status command without copying diagnostics', async () => {
@@ -234,7 +234,7 @@ test('a choice while the workspace is starting is queued without any credential 
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect(invoke).not.toHaveBeenCalled();
   expect(screen.getByText('Queued').closest('button')).toBeNull();
-  expect(screen.getByText(/connects automatically when Orka is ready/i)).toBeTruthy();
+  expect(screen.getByText(/connects when the local cluster is ready/i)).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
   expect(onState).toHaveBeenLastCalledWith('queued');
 });
@@ -244,7 +244,7 @@ test('queued intent connects exactly once when the model becomes available, with
   const view = render(<Model enabled={false} queueable />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   view.rerender(<Model enabled paused={false} />);
-  await screen.findByText(/Connected with GitHub Copilot/);
+  await screen.findByText(/^Connected$/);
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_connect_model')).toHaveLength(1);
   view.rerender(<Model enabled={false} />); view.rerender(<Model enabled />);
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_connect_model')).toHaveLength(1);
@@ -262,7 +262,7 @@ test('queued intent survives the readiness transition and fires only once unpaus
   view.rerender(<Model enabled paused />);
   expect(invoke).not.toHaveBeenCalled();
   view.rerender(<Model enabled paused={false} />);
-  await screen.findByText(/Connected with GitHub Copilot/);
+  await screen.findByText(/^Connected$/);
   expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
 });
 
@@ -306,7 +306,7 @@ test('keyboard removal focuses Cancel, its operation, primary retry and then Con
   invoke.mockResolvedValueOnce({ ready: true });
   const user = userEvent.setup(); render(<Model enabled />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText(/Connected with GitHub Copilot/);
+  await screen.findByText(/^Connected$/);
   const remove = screen.getByRole('button', { name: 'Remove sign-in' });
   remove.focus(); await user.keyboard('{Enter}');
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
@@ -336,7 +336,7 @@ test('a mouse-started removal does not steal keyboard focus', async () => {
   invoke.mockResolvedValueOnce({ ready: true });
   render(<Model enabled />);
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText(/Connected with GitHub Copilot/);
+  await screen.findByText(/^Connected$/);
   fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
   fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
   await screen.findByText(/no longer has a saved sign-in/);
@@ -375,7 +375,7 @@ test('a settled connection does not pull focus from another control, on success 
   retry.focus(); await user.keyboard('{Enter}');
   neighbour().focus();
   await act(async () => settle(true));
-  await screen.findByText(/Connected with GitHub Copilot/);
+  await screen.findByText(/^Connected$/);
   expect(document.activeElement).toBe(neighbour());
 });
 
@@ -385,7 +385,7 @@ test('a pending removal does not pull focus from another control once it settles
   invoke.mockResolvedValueOnce({ ready: true });
   const user = userEvent.setup(); render(withNeighbour({ enabled: true }));
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText(/Connected with GitHub Copilot/);
+  await screen.findByText(/^Connected$/);
   screen.getByRole('button', { name: 'Remove sign-in' }).focus(); await user.keyboard('{Enter}');
   await user.tab(); await user.keyboard('{Enter}');
   neighbour().focus();

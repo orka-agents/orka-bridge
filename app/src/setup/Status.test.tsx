@@ -13,9 +13,9 @@ beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 test('a failed test is red in the shared presentation and local page, never Ready', () => {
-  expect(setupView(ready, { model: 'connected', check: 'failed' })).toMatchObject({ done: true, tone: 'bad', line: 'Tests failed' });
+  expect(setupView(ready, { model: 'connected', check: 'failed' })).toMatchObject({ done: true, tone: 'bad', line: 'Its test failed' });
   render(<SetupProgress {...actions} status={ready} modelState="connected" firstCheck="failed" firstTestResult={{ failed: 1 }} />);
-  expect(screen.getByText('Tests failed').className).toContain('status-failed');
+  expect(screen.getByText('Its test failed', { selector: '.pill' }).className).toContain('status-failed');
   expect(screen.queryByText('Ready')).toBeNull();
 });
 
@@ -69,12 +69,12 @@ test('unfinished local row, shell and card agree; finished local page owns Stop 
   expect(await screen.findByRole('heading', { name: 'Local cluster', level: 1 })).toBeTruthy();
   expect(screen.queryByText(/Step 5 of 5/)).toBeNull();
   expect(screen.getByRole('button', { name: 'Stop the local cluster' }).className).toBe('workspace-link');
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
-  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   expect(await screen.findByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
   expect(ipc.mock.calls.some(([cmd]) => cmd === 'setup_change_local')).toBe(false);
   expect(screen.getByRole('contentinfo').textContent?.trim()).not.toBe('');
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
   await user.click(within(screen.getByRole('region', { name: 'This computer' })).getByRole('button', { name: 'Manage' }));
   await user.click(screen.getByRole('button', { name: 'Stop the local cluster' }));
   expect(await screen.findByRole('button', { name: 'Continue' })).toBeTruthy();

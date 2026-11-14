@@ -27,7 +27,7 @@ beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 test.each([
-  ['permission', 'operating system denied', 'workspace'],
+  ['permission', 'does not have permission', 'workspace'],
   ['noSpace', "isn't enough free space", 'workspace'],
   ['integrity', "couldn't be verified", 'workspace'],
   ['inUse', 'still in use', 'workspace'],
@@ -35,7 +35,7 @@ test.each([
   ['preparation', "couldn't be prepared", undefined],
   ['guestConnection', "didn't finish starting", undefined],
   ['services', "services couldn't start", undefined],
-  ['unknown', "couldn't establish", undefined],
+  ['unknown', "couldn't determine", undefined],
 ] as const)('finite %s cause offers recovery and a way out', async (cause, summary, topic) => {
   const { ipc } = native({ cause, operation: cause === 'network' ? 'download' : 'start', codes: [] });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
@@ -54,8 +54,8 @@ test.each([
 
 test('download heading and preservation do not promise rejected bytes are kept', async () => {
   native({ cause: 'network', operation: 'download', codes: [] }); render(<App />); await openLocalSetup();
-  expect(await screen.findByRole('heading', { level: 1, name: "Your workspace files couldn't be downloaded" })).toBeTruthy();
-  expect(screen.getByRole('alert').textContent).toContain('Reusable verified content is kept. Rejected content is not kept.');
+  expect(await screen.findByRole('heading', { level: 1, name: "The local cluster couldn't be downloaded" })).toBeTruthy();
+  expect(screen.getByRole('alert').textContent).toContain('Your agent files are kept. Try again to continue setup.');
 });
 
 test('keyboard retry calls native selection once and returns to progress', async () => {
@@ -63,7 +63,7 @@ test('keyboard retry calls native selection once and returns to progress', async
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const retry = await screen.findByRole('button', { name: 'Try again' });
   retry.focus(); await user.keyboard('{Enter}{Enter}');
-  await screen.findByRole('progressbar', { name: 'Workspace setup progress' });
+  await screen.findByRole('progressbar', { name: 'Local cluster setup progress' });
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toHaveLength(1);
   expect(screen.queryByRole('alert')).toBeNull();
 });
@@ -81,7 +81,7 @@ test('copy includes only native finite metadata, ignoring misleading raw diagnos
 test('raw text can neither classify the error nor supply copied OS codes', async () => {
   native(undefined, 'virtualizationDisabled NoSpace code: 5 startupStopFailed');
   const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(); render(<App />); await openLocalSetup();
-  expect((await screen.findByRole('alert')).textContent).toContain("couldn't establish");
+  expect((await screen.findByRole('alert')).textContent).toContain("couldn't determine");
   await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
   expect(copy.mock.calls[0][0]).not.toContain('code: 5');
 });
@@ -136,7 +136,7 @@ test('AI failure marks its setup step and every shell status without losing the 
   expect(screen.getByText('Needs attention').closest('li')?.className).toBe('step-failed');
   expect(within(screen.getByRole('navigation')).getByText('AI needs attention')).toBeTruthy();
   expect(screen.getByRole('contentinfo').textContent).toContain('AI needs attention');
-  expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('AI connection needs attention');
+  expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('Check the AI connection in Clusters');
   expect(document.querySelector('.host-chip .live-dot')?.className).toContain('bad');
-  expect(screen.getByRole('alert').textContent).toContain('running workspace and agent files are kept');
+  expect(screen.getByRole('alert').textContent).toContain('local cluster and your agent files are kept');
 });

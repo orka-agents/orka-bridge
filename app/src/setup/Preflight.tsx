@@ -50,17 +50,17 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onUncertain 
           ? 'Bridge needs Apple-silicon virtualization support. If this Mac is itself a virtual machine, its host may not provide it. Use a supported Mac or a cluster instead.'
           : virtualization === 'disabled' ? 'Check that your PC supports virtualization, then enable Intel VT-x or AMD-V in its startup settings and restart.'
           : virtualization === 'hypervisorUnavailable' ? 'Turn on Windows Hypervisor Platform in Windows features, then restart this PC.'
-          : "If Bridge couldn't check, starting the workspace will try the actual virtualization backend. You can also use a cluster instead."}</p>}
+          : "If Bridge couldn't check, starting the local cluster will check virtualization. You can also use a cluster instead."}</p>}
       </section>
       <section aria-label="Installed memory">
         <p role={memory === 'insufficient' && !checking ? 'alert' : undefined}><StatusIcon state={checking ? 'running' : memory === 'insufficient' ? 'failed' : memory === 'ready' ? 'passed' : 'not-started'} /><b>Installed memory: </b>{checking ? 'Checking…' : result?.installedMemoryBytes != null
           ? `${formatSize(result.installedMemoryBytes)} installed; ${formatSize(requiredMemoryBytes)} needed${memory === 'insufficient' ? '. Not enough installed memory.' : '.'}`
           : "Couldn't check"}</p>
         <button type="button" className="workspace-disclosure" aria-expanded={memoryHelp} aria-controls="preflight-memory-help" onClick={() => setMemoryHelp(value => !value)}>Show me how</button>
-        {memoryHelp && <p id="preflight-memory-help">This is installed RAM, not currently free memory. Closing apps does not increase installed memory. Use a computer with at least {formatSize(requiredMemoryBytes)} installed, or choose a cluster below. An unreadable check is left to the actual workspace launch; no memory is reserved by this check.</p>}
+        {memoryHelp && <p id="preflight-memory-help">This is installed RAM, not currently free memory. Closing apps does not increase installed memory. Use a computer with at least {formatSize(requiredMemoryBytes)} installed, or choose a cluster below. An unreadable check is left to local cluster startup; no memory is reserved by this check.</p>}
       </section>
     </div>
-    <p className="muted" id="preflight-reason">{checking ? 'Checking this computer before setup.' : failedVirtualization || memory === 'insufficient' ? 'Fix the computer requirements above before continuing.' : uncertain ? 'Some requirements could not be checked. Check again, or continue to try starting the local cluster.' : 'These checks do not download or change workspace files.'}</p>
+    <p className="muted" id="preflight-reason">{checking ? 'Checking this computer before setup.' : failedVirtualization || memory === 'insufficient' ? 'Fix the computer requirements above before continuing.' : uncertain ? 'Some requirements could not be checked. Check again, or continue to try starting the local cluster.' : 'These checks do not change this computer.'}</p>
     <div className="workspace-step-actions">
       <button type="button" className={uncertain ? 'workspace-primary' : 'workspace-secondary'} disabled={checking} onClick={() => { onBlocked(true); setChecking(true); setNotice(''); setAttempt(value => value + 1); }}>Check again</button>
       <button type="button" className="workspace-secondary" disabled={checking} onClick={() => { void copy(); }}>Copy details for help</button>

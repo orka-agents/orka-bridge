@@ -51,23 +51,23 @@ test('first setup shows a running test, opens Designer on its result and never a
   const { ipc, finish } = native(); const user = await completeSetup();
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1));
   expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
-  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testRunning');
+  expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first agentRunning');
   expect(screen.getByText('Step 5 of 5')).toBeTruthy();
-  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.getAttribute('aria-current')).toBe('step');
-  expect(screen.queryByRole('button', { name: 'Open your test result' })).toBeNull();
+  expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.getAttribute('aria-current')).toBe('step');
+  expect(screen.queryByRole('button', { name: 'See what it answered' })).toBeNull();
   finish();
   await waitFor(() => expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page'));
   expect(await screen.findByText('1 of 1 passed')).toBeTruthy();
   await user.click(screen.getByText('checksum', { selector: 'code' }));
   expect(await screen.findByText('Correct checksum', { selector: 'p' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Open your test result' }));
+  await user.click(screen.getByRole('button', { name: 'See what it answered' }));
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample, bundledExample: true }]]);
 });
 
 test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains the latest sample evidence (%s), not the automatic result or another document', async state => {
   const { finish, loseRunStatus, failNext } = native(); const user = await completeSetup();
-  await waitFor(() => expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testRunning')); finish();
+  await waitFor(() => expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first agentRunning')); finish();
   await screen.findByText('1 of 1 passed');
   if (state === 'failed') {
     failNext(); await user.click(screen.getByRole('button', { name: 'Run tests' })); finish();
@@ -80,39 +80,39 @@ test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains 
     await screen.findByText('Saved', { selector: 'span' });
   }
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  const expected = { passed: 'Passed', failed: 'Failed', unreadable: 'Result unknown', edited: 'Needs running' }[state];
-  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe(`Run your first test${expected}`);
+  const expected = { passed: 'Its test passed', failed: 'Its test failed', unreadable: 'Result unknown', edited: 'Needs running' }[state];
+  expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe(`Run your first agent${expected}`);
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open other' }));
   await screen.findByRole('heading', { name: 'other', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe(`Run your first test${expected}`);
-  const card = within(screen.getByRole('region', { name: 'Workspace setup' }));
-  expect(card.queryByText(/\d+ tests? failing/)?.textContent).toBe(state === 'failed' ? '1 test failing' : undefined);
+  expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe(`Run your first agent${expected}`);
+  const card = within(screen.getByRole('region', { name: 'Local cluster setup' }));
+  expect(card.queryByText('Its test failed', { selector: 'p' })?.textContent).toBe(state === 'failed' ? 'Its test failed' : undefined);
   expect(screen.queryByText('Setting up, step 5 of 5')).toBeNull();
   if (state === 'failed') {
-    expect(card.getByText('Tests failed').className).toContain('status-failed');
-    expect(within(screen.getByRole('navigation')).getByText('Tests failed')).toBeTruthy();
-    expect(within(screen.getByRole('contentinfo')).getByText('Tests failed')).toBeTruthy();
+    expect(card.getByText('Its test failed', { selector: '.pill' }).className).toContain('status-failed');
+    expect(within(screen.getByRole('navigation')).getByText('Its test failed')).toBeTruthy();
+    expect(within(screen.getByRole('contentinfo')).getByText('Its test failed')).toBeTruthy();
     expect(document.querySelector('.host-chip .live-dot')?.className).toContain('bad');
-    await user.click(screen.getByRole('button', { name: 'Back to places' }));
-    expect(within(screen.getByRole('region', { name: 'This computer' })).getByText('Tests failed').className).toContain('status-failed');
+    await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+    expect(within(screen.getByRole('region', { name: 'This computer' })).getByText('Its test failed').className).toContain('status-failed');
     await openLocalSetup(user);
   }
   if (state === 'passed' || state === 'failed') {
-    await user.click(card.getByRole('button', { name: 'Open your test result' }));
+    await user.click(card.getByRole('button', { name: 'See what it answered' }));
     await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   }
 });
 
 test.each([false, true])('a manual sample test stays observed across agent switches (blocked return: %s)', async blockedReturn => {
   const { finish, failNext } = native(blockedReturn); const user = await completeSetup();
-  await waitFor(() => expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testRunning')); finish();
+  await waitFor(() => expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first agentRunning')); finish();
   await screen.findByText('1 of 1 passed');
   failNext(); await user.click(screen.getByRole('button', { name: 'Run tests' }));
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.queryByText('Setting up, step 5 of 5')).toBeNull();
-  expect(screen.getByRole('region', { name: 'Workspace setup' }).textContent).toContain('Running test');
+  expect(screen.getByRole('region', { name: 'Local cluster setup' }).textContent).toContain('Running test');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open other' }));
   await screen.findByRole('heading', { name: 'other', level: 1 });
@@ -124,12 +124,12 @@ test.each([false, true])('a manual sample test stays observed across agent switc
   }
   finish();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await waitFor(() => expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testFailed'));
+  await waitFor(() => expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first agentIts test failed'));
 });
 
 test('a failed sample reopen cannot resurrect Passed from a still-readable native run report', async () => {
   const { ipc, finish, loseFileReads, restoreFileReads } = native(); const user = await completeSetup();
-  await waitFor(() => expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testRunning')); finish();
+  await waitFor(() => expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first agentRunning')); finish();
   await screen.findByText('1 of 1 passed'); loseFileReads();
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open other' }));
@@ -139,13 +139,13 @@ test('a failed sample reopen cannot resurrect Passed from a still-readable nativ
   await screen.findByText('Your agent folder could not be opened. Open it again from Designer.');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await new Promise(resolve => setTimeout(resolve, 550));
-  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testResult unknown');
-  expect(screen.queryByRole('button', { name: 'Open your test result' })).toBeNull();
+  expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first agentResult unknown');
+  expect(screen.queryByRole('button', { name: 'See what it answered' })).toBeNull();
   restoreFileReads();
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   await screen.findByRole('button', { name: 'Run tests' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await screen.findByRole('button', { name: 'Open your test result' });
+  await screen.findByRole('button', { name: 'See what it answered' });
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
 });
 
@@ -164,14 +164,14 @@ test('Check again observes status before any report even while the guarded sampl
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(0);
 });
 
-test('Run the test again hands an unsaved sample to the existing disabled Designer Run', async () => {
+test('Run it again hands an unsaved sample to the existing disabled Designer Run', async () => {
   const { ipc, finish } = native(true); const user = await completeSetup();
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1)); finish();
   await screen.findByText('1 of 1 passed');
   await user.click(screen.getByRole('button', { name: 'File' }));
   await user.type(screen.getByRole('textbox', { name: 'Agent file' }), ' Unsaved.');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Run the test again' }));
+  await user.click(screen.getByRole('button', { name: 'Run it again' }));
   expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   expect(screen.getByRole('button', { name: 'Run tests' }).title).toBe('Save your changes before running the test');
   expect(screen.getByRole('textbox', { name: 'Agent file' }).textContent).toContain('Unsaved.');
@@ -190,11 +190,11 @@ test('a newer automatic test replaces retained sample evidence after Designer sw
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1));
-  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testRunning');
+  expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first agentRunning');
   await user.click(screen.getByRole('button', { name: 'Overview' })); finish();
-  await screen.findByText('Workspace stopped', {}, { timeout: 2000 });
+  await screen.findByText('Local cluster stopped', {}, { timeout: 2000 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testPassed');
+  expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first agentIts test passed');
 });
 
 test('a requested document switch does not admit the pending test while the bound sample has unsaved edits', async () => {
@@ -208,7 +208,7 @@ test('a requested document switch does not admit the pending test while the boun
   await user.click(await screen.findByRole('button', { name: 'Open other' }));
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText('Connected with GitHub Copilot.');
+  await screen.findByText('Connected', { selector: '.model-state .pill' });
   await new Promise(resolve => setTimeout(resolve, 550));
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(0);
   expect(localStorage.getItem('bridge.firstTest.v1')).toBe('pending');
@@ -217,7 +217,7 @@ test('a requested document switch does not admit the pending test while the boun
   // A subsequently observed report ends the first-test step without turning unsaved edits into a pass.
   finish();
   await waitFor(() => expect(screen.queryByText('Step 5 of 5')).toBeNull(), { timeout: 2000 });
-  expect(within(screen.getByRole('region', { name: 'Workspace setup' })).getByText('Tests need running').className).toContain('status-needs-you');
+  expect(within(screen.getByRole('region', { name: 'Local cluster setup' })).getByText('Tests need running').className).toContain('status-needs-you');
 });
 
 test.each([false, true])('Overview refreshes after the automatic test releases native admission without mounting Designer (lost replies: %s)', async lostReplies => {
@@ -226,7 +226,7 @@ test.each([false, true])('Overview refreshes after the automatic test releases n
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await screen.findByText('Refresh pending until checks finish');
   finish();
-  expect(await screen.findByText('Workspace stopped', {}, { timeout: 2000 })).toBeTruthy();
+  expect(await screen.findByText('Local cluster stopped', {}, { timeout: 2000 })).toBeTruthy();
   expect(screen.queryByText('Refresh pending until checks finish')).toBeNull();
   expect(screen.getByRole('button', { name: 'Overview' }).getAttribute('aria-current')).toBe('page');
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
@@ -238,11 +238,11 @@ test.each(['Overview', 'Designer', 'cluster', 'Add', 'Places', 'workspace lost']
   if (destination === 'Overview' || destination === 'Designer') await user.click(screen.getByRole('button', { name: destination }));
   else if (destination === 'workspace lost') { loseWorkspace(); window.dispatchEvent(new Event('focus')); await screen.findByRole('button', { name: 'Continue' }); }
   else if (destination === 'Add' || destination === 'Places') {
-    await user.click(screen.getByRole('button', { name: 'Back to places' }));
-    if (destination === 'Add') await user.click(screen.getByRole('button', { name: 'Add a place' }));
+    await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+    if (destination === 'Add') await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   } else {
-    await user.click(screen.getByRole('button', { name: 'Back to places' }));
-    await user.click(screen.getByRole('button', { name: 'Add a place' }));
+    await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+    await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   }
   finish();
   await new Promise(resolve => setTimeout(resolve, 750));
@@ -261,8 +261,8 @@ test('Add retires an automatic first test awaiting its initial observation witho
   const user = await completeSetup();
   await waitFor(() => expect(reads).toBe(1));
   expect(localStorage.getItem('bridge.firstTest.v1')).toBe('pending');
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
-  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
   expect(document.querySelector('.host-chip .host-label')?.textContent).toBe('This computer');
   resolve(idle);

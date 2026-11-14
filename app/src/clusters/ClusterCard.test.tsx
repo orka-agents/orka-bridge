@@ -1,6 +1,6 @@
 import { openLocalSetup } from '../setup/test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
@@ -30,7 +30,7 @@ async function open() {
 }
 async function discover(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
-  await screen.findByText('Orka found');
+  await screen.findByText('Cluster found');
 }
 beforeEach(() => localStorage.clear());
 afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -46,10 +46,10 @@ test('local readiness never enables unconfirmed remote checks, and changing plac
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(await screen.findByRole('button', { name: 'Back to places' }));
-  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  await user.click(await screen.findByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
-  await screen.findByText('Orka found');
+  await screen.findByText('Cluster found');
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   const run = await screen.findByRole('button', { name: 'Run all tests' });
   expect(run.matches(':disabled')).toBe(true);
@@ -95,8 +95,8 @@ test('local results remain explicitly local after confirming cluster access', as
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByText('1 of 1 tests passing', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
-  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await screen.findByRole('combobox', { name: 'kubectl context' }); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   await screen.findAllByText('Access confirmed');
@@ -114,13 +114,13 @@ test('local model acknowledgement survives a cluster round trip', async () => {
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText(/Connected with GitHub Copilot/);
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
-  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  await within(screen.getByRole('region', { name: 'Connect the AI' })).findByText('Connected');
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
   await openLocalSetup(user);
-  expect(await screen.findByText(/Connected with GitHub Copilot/)).toBeTruthy();
+  expect(await within(screen.getByRole('region', { name: 'Connect the AI' })).findByText('Connected')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
 });
 
@@ -139,10 +139,10 @@ test('local-result observation continues while remote access is unconfirmed', as
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByText('Running tests…', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
-  await user.click(screen.getByRole('button', { name: 'Add a place' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
-  await screen.findByText('Orka found');
+  await screen.findByText('Cluster found');
   complete = true;
   expect(await screen.findByText('This computer: 1 of 1 tests passing', { selector: '.checks-status' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
@@ -158,7 +158,7 @@ test('expert_skip_selects_cluster_without_vm', async () => {
 test('v6_cluster_card_keyboard and Use confirms access only after discovery', async () => {
   const ipc = native(); const user = await open();
   const select = screen.getByRole('combobox', { name: 'kubectl context' }); select.focus();
-  await user.selectOptions(select, context.id); await screen.findByText('Orka found');
+  await user.selectOptions(select, context.id); await screen.findByText('Cluster found');
   expect(screen.queryByText('ghcr.io/orka:0.9.4')).toBeNull();
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('cluster_use');
   const use = screen.getByRole('button', { name: 'Use this cluster' }); use.focus(); await user.keyboard('{Enter}');
@@ -183,10 +183,10 @@ test.each(['unsupportedCredential', 'denied', 'unavailable'])('unsupported_acces
   native(undefined, { status, providers: [], failure: { check: status === 'unsupportedCredential' ? 'credentials' : 'providers', result: status === 'denied' ? 'permissionDenied' : status === 'unsupportedCredential' ? 'unsupportedCredential' : 'unknown' } }); const user = await open(); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   const alert = await screen.findByRole('alert');
-  expect(alert).toBeTruthy(); expect(screen.getByText('Orka found')).toBeTruthy();
+  expect(alert).toBeTruthy(); expect(screen.getByText('Cluster found')).toBeTruthy();
   if (status === 'unsupportedCredential') expect(alert.textContent).toMatch(/credential plugin outside Bridge/);
   if (status === 'unavailable') {
-    expect(alert.textContent).toMatch(/Provider reading/);
+    expect(alert.textContent).toMatch(/Reading AI connections/);
     expect(alert.textContent).toMatch(/cause could not be established/);
   }
   expect(screen.queryByRole('textbox', { name: 'ServiceAccount name' })).toBeNull();
@@ -199,7 +199,7 @@ test('failure alternative does not stop or reset a local VM', async () => {
   await waitFor(() => expect(ipc.mock.calls.some(([c]) => c === 'setup_status')).toBe(true));
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_change_local');
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('setup_cancel_local');
-  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
   await openLocalSetup(user);
   expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
 });
@@ -214,7 +214,7 @@ test('empty discovery is not an access error or a made-up version', async () => 
   native(); mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }
     : command === 'cluster_contexts' ? [context] : command === 'cluster_discover' ? [] : Promise.reject('Unsupported'));
   const user = await open(); await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
-  expect(await screen.findByText('No Orka was found on this context.')).toBeTruthy();
+  expect(await screen.findByText('No cluster with Orka was found using this context.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Use this cluster' })).toBeNull();
 });
 
@@ -224,7 +224,7 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 async function selectDirect(user: ReturnType<typeof userEvent.setup>) {
   await waitFor(() => expect(screen.getByRole('combobox', { name: 'kubectl context' }).matches(':disabled')).toBe(false));
   await user.selectOptions(screen.getByRole('combobox', { name: 'kubectl context' }), context.id);
-  await screen.findByText('Orka found');
+  await screen.findByText('Cluster found');
 }
 
 test('deactivating hides the card, clears confirmed access and admitted locks, but keeps remembered context, target and provider; reactivating needs a fresh explicit Use', async () => {
@@ -245,7 +245,7 @@ test('deactivating hides the card, clears confirmed access and admitted locks, b
   view.rerender(<ClusterCard active onPlace={onPlace} onOpenAgent={vi.fn()} />);
   expect(document.querySelector('.cluster-card')?.hasAttribute('hidden')).toBe(false);
   expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe(context.id);
-  expect(screen.getByText('Orka found')).toBeTruthy();
+  expect(screen.getByText('Cluster found')).toBeTruthy();
   expect(screen.queryByText('Access confirmed')).toBeNull();
   const use = screen.getByRole('button', { name: 'Use this cluster' });
   expect(use.matches(':disabled')).toBe(false);
@@ -254,7 +254,7 @@ test('deactivating hides the card, clears confirmed access and admitted locks, b
   await user.click(use);
   await screen.findByText('Access confirmed');
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toHaveLength(2);
-  expect((screen.getByRole('combobox', { name: 'Provider' }) as HTMLSelectElement).value).toBe(provider.id);
+  expect((screen.getByRole('combobox', { name: 'AI connection' }) as HTMLSelectElement).value).toBe(provider.id);
 });
 
 test('a late Use reply after deactivation cannot publish the connected place or resurrect confirmed status', async () => {
@@ -397,7 +397,7 @@ test('reactivating after a provider reconnect remaps the remembered provider nam
   await selectDirect(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   await screen.findByText('Access confirmed');
-  await user.selectOptions(screen.getByRole('combobox', { name: 'Provider' }), providerB.id);
+  await user.selectOptions(screen.getByRole('combobox', { name: 'AI connection' }), providerB.id);
   expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster', target, providers: [providerA, providerB], providerId: providerB.id });
 
   view.rerender(<ClusterCard active={false} onPlace={onPlace} onOpenAgent={vi.fn()} />);
@@ -406,7 +406,7 @@ test('reactivating after a provider reconnect remaps the remembered provider nam
 
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   await screen.findByText('Access confirmed');
-  expect((screen.getByRole('combobox', { name: 'Provider' }) as HTMLSelectElement).value).toBe(providerB2.id);
+  expect((screen.getByRole('combobox', { name: 'AI connection' }) as HTMLSelectElement).value).toBe(providerB2.id);
   expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster', target, providers: [providerA2, providerB2], providerId: providerB2.id });
 });
 
