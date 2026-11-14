@@ -14,6 +14,8 @@ describe('shared control styles', () => {
   it('shares theme-aware field chrome and draws a native select chevron', () => {
     expect(css).toMatch(/\.field\s*\{[^}]*background: var\(--color-card\)/s);
     expect(css).toMatch(/select\.field\s*\{[^}]*appearance: none/s);
+    expect(css).toMatch(/input\.field, select\.field\s*\{\s*height: 32px;/);
+    expect(readFileSync('src/app.css', 'utf8')).toMatch(/\.tool-picker:popover-open\s*\{[^}]*height: fit-content;[^}]*align-content: start;/s);
     expect(css).toContain('background-image: linear-gradient(');
     expect(css).not.toContain('data:');
     expect(css).toContain('var(--color-text-secondary)');

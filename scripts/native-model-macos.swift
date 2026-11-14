@@ -301,6 +301,12 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
     waitForButton("Add a tool")
     _ = try capture("local-controls-fields-\(size)", ["Add a tool", "It thinks with"])
     click("Add a tool", [])
+    let search = nativeElements().filter { element in
+        ["AXTextField", "AXSearchField"].contains(attribute(element, "AXRole") as? String ?? "")
+            && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Find a tool" }
+    }
+    require(search.count == 1, "Expected the labeled picker search field")
+    require(nativeBounds(search[0]).map { abs($0.height - 32) < 2 } == true, "Picker search must be 32px high")
     _ = try capture("local-controls-picker-\(size)", ["Find a tool", "Read a file"])
     guard let close = enabledButton("Close picker"), let bounds = nativeBounds(close) else {
         fatalError("Labeled picker X missing")
