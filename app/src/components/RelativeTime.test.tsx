@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { RelativeTime, relativeTime } from './RelativeTime';
 
 const now = Date.UTC(2026, 10, 13, 12);
@@ -15,6 +16,17 @@ test.each([
 
 test.each([NaN, Infinity, -Infinity, 9e15])('unreadable timestamp %s does not invent an age', value => {
   expect(relativeTime(value, now)).toBe('Time unknown');
+});
+
+test('keyboard users can focus a timestamp with an exact-date text equivalent', async () => {
+  const value = Date.UTC(2026, 10, 13, 11, 58);
+  const exact = new Date(value).toLocaleString();
+  const { container } = render(<RelativeTime value={value} />);
+  const time = container.querySelector('time')!;
+  await userEvent.setup().tab();
+  expect(document.activeElement).toBe(time);
+  expect(time.getAttribute('aria-label')).toContain(exact);
+  expect(time.querySelector('.control-tip')?.textContent).toBe(exact);
 });
 
 test('milliseconds from Overview retain an exact machine-readable and hover date', () => {

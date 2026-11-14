@@ -69,10 +69,10 @@ export function SourceGroups({ cards, files }: { cards: AgentCard[]; files: Save
 }
 export function RecordedAttempts({ attempts }: { attempts: AttemptSummary[] }) {
   if (!attempts.length) return null;
-  return <section className="overview-attempts" aria-label="Earlier Sends"><h2>Earlier Sends</h2><p>These agents are not in the latest cluster check.</p>
+  return <section className="overview-attempts" aria-label="Earlier Sends"><h2>Earlier Sends</h2><p>Saved Send attempts. Current cluster status is unknown.</p>
     {attempts.map(attempt => <details className="card-details" key={attempt.id}>
       <summary>{attempt.targetDisplay} · Checks {attempt.verdict}</summary>
-      <p>{attempt.agentUid ? 'Agent not found in the latest check' : 'Agent creation not confirmed'}</p>
+      <p>{attempt.agentUid ? 'Current agent status unknown' : 'Agent creation not confirmed'}</p>
       <p>Checks {attempt.verdict}</p><p>Last tests: {when(attempt.time * 1000)}</p>
       <p>Planned name: {attempt.plannedAgentName}</p>
       {attempt.agentUid && <p>Recorded UID: {attempt.agentUid}</p>}

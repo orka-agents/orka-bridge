@@ -12,7 +12,10 @@ export function relativeTime(value: number, now = Date.now()): string {
 // Ages refresh with the existing view; the exact timestamp is always available on hover.
 export function RelativeTime({ value }: { value: number }) {
   const date = new Date(value);
+  const exact = date.toLocaleString(), age = relativeTime(value);
   return Number.isFinite(date.getTime())
-    ? <time dateTime={date.toISOString()} title={date.toLocaleString()}>{relativeTime(value)}</time>
+    ? <time className="coming-control" tabIndex={0} dateTime={date.toISOString()} title={exact} aria-label={`${age}. ${exact}`}>
+      {age}<span className="control-tip" aria-hidden="true">{exact}</span>
+    </time>
     : <>Time unknown</>;
 }

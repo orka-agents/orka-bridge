@@ -107,6 +107,8 @@ test('unknown without UID is an attempt, not a counted Agent or association; his
   ipc({ places: [], historyState: 'complete', unobserved: [{ ...record, agentUid: null, verdict: 'unknown' }] });
   render(<Overview {...props} />);
   const attempts = await screen.findByRole('region', { name: 'Earlier Sends' });
+  expect(within(attempts).getByText('Saved Send attempts. Current cluster status is unknown.')).toBeTruthy();
+  expect(within(attempts).queryByText(/not found in the latest check/)).toBeNull();
   expect(within(attempts).getByText('Agent creation not confirmed')).toBeTruthy();
   expect(within(attempts).getByText('Checks unknown')).toBeTruthy();
   expect(within(attempts).queryByRole('button', { name: /Open/ })).toBeNull();
