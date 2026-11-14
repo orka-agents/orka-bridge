@@ -257,9 +257,6 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(20));
             }
             let output = child.wait_with_output().unwrap();
-            if std::env::var_os("BRIDGE_MENU_DIAGNOSTIC").is_some() {
-                eprintln!("{case}: {output:?}");
-            }
             assert_eq!(output.status.code(), Some(code), "{case}: {output:?}");
             assert!(
                 String::from_utf8_lossy(&output.stdout).contains("running 1 test"),
@@ -337,43 +334,12 @@ mod tests {
                 }
             });
             eprintln!("native-session menu_quit: building menu window");
-            let profile = tempfile::tempdir().unwrap();
-            let mode = std::env::var("BRIDGE_MENU_DIAGNOSTIC").unwrap_or_default();
-            let build_start = Instant::now();
-            let native_thread = unsafe { GetCurrentThreadId() };
-            if mode == "kick" {
-                std::thread::spawn(move || {
-                    std::thread::sleep(Duration::from_secs(2));
-                    eprintln!("native-session menu_quit: posting one message-pump wakeup");
-                    assert_ne!(
-                        unsafe { PostThreadMessageW(native_thread, WM_NULL, 0, 0) },
-                        0
-                    );
-                });
-            }
-            let hwnd = if mode == "native" {
-                let window = tauri::WindowBuilder::new(&app, "menu-probe")
-                    .visible(false)
-                    .build()
-                    .unwrap();
-                assert!(window.webviews().is_empty());
-                window.hwnd().unwrap().0 as HWND
-            } else {
-                let mut builder = tauri::WebviewWindowBuilder::new(
-                    &app,
-                    "menu-probe",
-                    tauri::WebviewUrl::External("about:blank".parse().unwrap()),
-                )
-                .visible(false);
-                if mode == "fresh" {
-                    builder = builder.data_directory(profile.path().to_path_buf());
-                }
-                builder.build().unwrap().hwnd().unwrap().0 as HWND
-            };
-            eprintln!(
-                "native-session menu_quit: {mode} build elapsed {:?}",
-                build_start.elapsed()
-            );
+            // Quit is a native-menu contract; WebView2 startup is not part of it.
+            let window = tauri::WindowBuilder::new(&app, "menu-probe")
+                .visible(false)
+                .build()
+                .unwrap();
+            assert!(window.webviews().is_empty());
             eprintln!("native-session menu_quit: menu window built");
             super::super::install(app.handle(), shutdown, true).unwrap();
             tauri::async_runtime::block_on(async {
@@ -386,6 +352,7 @@ mod tests {
                 .await
                 .unwrap();
             });
+            let hwnd = window.hwnd().unwrap().0 as HWND;
             unsafe {
                 let menu = GetMenu(hwnd);
                 assert!(!menu.is_null());
