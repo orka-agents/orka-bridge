@@ -25,8 +25,12 @@ export function changedFiles(current: SourceId | undefined, captured: SourceId |
 export function TestProgress({ stage }: { stage: string }) {
   return <div className="test-progress"><StatusIcon state="running" /><span role="status">{stage}</span><Elapsed /></div>;
 }
-function reason(c: Case) {
-  if (c.phase === 'Failed') return 'The agent could not finish this test. Try running it again.';
+function reason(c: Case, model?: string | null) {
+  if (c.phase === 'CreditLimited' && (model === 'gpt-4.1' || model === 'claude-sonnet-5-5')) {
+    const company = model === 'gpt-4.1' ? 'OpenAI' : 'Anthropic';
+    return `${company} refused the request: this key is out of credit or over its rate limit. Check your ${company} plan.`;
+  }
+  if (c.phase === 'Failed' || c.phase === 'CreditLimited') return 'The agent could not finish this test. Try running it again.';
   if (c.phase === 'Cancelled') return 'The test was cancelled before it finished.';
   const failed = c.assertions.filter(a => a.verdict === 'failed');
   if (failed.length) return failed.map(a => a.kind === 'contains'
@@ -36,7 +40,7 @@ function reason(c: Case) {
   if (unknown) return unknown.kind === 'toolCalled' ? `A call to ${unknown.expected} was not observed; this result is unknown.` : 'No answer was available to evaluate this test.';
   return undefined;
 }
-export function TestResults({ report, stale }: { report: Report | null | undefined; stale: boolean }) {
+export function TestResults({ report, stale, model }: { report: Report | null | undefined; stale: boolean; model?: string | null }) {
   if (!report) return null;
   const order = { failed: 0, unknown: 1, passed: 2 };
   return <div className={stale ? 'test-results result-stale' : 'test-results'}>
@@ -46,7 +50,7 @@ export function TestResults({ report, stale }: { report: Report | null | undefin
       <div className="test-answer">
         <h5 className="section-label">Question</h5><p className="reading">{c.question}</p>
         <h5 className="section-label">Answer</h5><p className="reading">{c.answer ?? 'No answer was observed.'}</p>
-        {reason(c) && <p className="test-reason">{reason(c)}</p>}
+        {reason(c, model) && <p className="test-reason">{reason(c, model)}</p>}
         {!!c.completedTools.length && <p>Tools used: {c.completedTools.map((tool, i) => <span key={`${tool}:${i}`}>{i > 0 && ', '}<code>{tool}</code></span>)}</p>}
         <Details hint="Test expectations and execution">
           <p>Execution: {c.phase}</p>

@@ -13,6 +13,9 @@ use std::{
 
 const SECRET: &[u8] = b"synthetic-model-only";
 
+#[path = "setup_model_key_tests.rs"]
+mod key_tests;
+
 fn permissions(root: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(root, fs::Permissions::from_mode(mode)).unwrap();
@@ -217,6 +220,7 @@ fn invalid_selection_refuses_before_actual_wire_or_os_load() {
 #[derive(Default)]
 struct FakeVault {
     deny_save: bool,
+    secret: Option<&'static [u8]>,
     save_error: Option<StoreError>,
     load_error: Option<StoreError>,
     deny_delete: Mutex<bool>,
@@ -236,7 +240,7 @@ impl FakeVault {
 impl CredentialStore for FakeVault {
     fn save(&self, slot: Uuid, secret: &[u8]) -> Result<(), StoreError> {
         assert!(!slot.is_nil());
-        assert_eq!(secret, SECRET);
+        assert!(secret == self.secret.unwrap_or(SECRET));
         self.calls.lock().unwrap().push(("save", slot));
         if let Some(error) = self.save_error {
             return Err(error);
@@ -689,6 +693,40 @@ fn pending_ready_ack_is_reconciled_without_republishing_or_loading_sign_in() {
     let binding = read_binding(root).unwrap().unwrap();
     assert_eq!(binding.phase, Phase::Connected);
     assert_eq!(binding.connection, Some(conn));
+}
+
+#[test]
+fn pending_wrong_credential_profile_refuses_before_connect_retry() {
+    let (_tmp, setup, install, vault) = associated();
+    let nonce = Uuid::new_v4();
+    let root = setup.root.as_deref().unwrap();
+    let mut binding = read_binding(root).unwrap().unwrap();
+    binding.phase = Phase::Pending;
+    binding.nonce = Some(nonce);
+    write_binding(root, &binding).unwrap();
+    let (mut client, worker) = peer(nonce, |r| {
+        assert!(
+            matches!(r.body, RequestBody::ModelStatus {}),
+            "wrong profile retried Connect"
+        );
+        Some(ResultBody::ModelState(ModelState {
+            retained_cleanup: true,
+            phase: ModelPhase::Unknown,
+            connection: None,
+            credential: CredentialState {
+                profile: MODEL_API_KEY_PROFILE,
+                generation: Some(Uuid::new_v4()),
+                installed: true,
+            },
+            diagnostic: None,
+        }))
+    });
+    assert!(setup
+        .connect_model(install, selection(), &mut client, &vault)
+        .is_err());
+    drop(client);
+    assert_eq!(worker.join().unwrap().frames.len(), 1);
+    assert_eq!(vault.counts(), (1, 0, 0));
 }
 
 #[test]

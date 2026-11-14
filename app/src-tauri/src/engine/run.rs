@@ -76,6 +76,18 @@ fn optional_evidence<T>(result: Result<T, ErrorKind>) -> Result<Option<T>, Error
         other => Ok(other.ok()),
     }
 }
+// Orka's pinned TaskStatus.message is failure context, never a model answer.
+// Reduce recognized evidence to a finite phase; retain no provider diagnostic.
+fn credit_limited(message: Option<&str>) -> bool {
+    let Some(message) = message else { return false };
+    let message = message.to_ascii_lowercase();
+    message
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .any(|token| matches!(token, "429" | "insufficient_quota" | "rate_limit_exceeded"))
+        || message.contains("credit balance too low")
+        || message.contains("rate limit")
+        || message.contains("rate-limit")
+}
 fn aggregate(rows: impl Iterator<Item = Verdict>) -> Verdict {
     let rows: Vec<_> = rows.collect();
     if rows.contains(&Verdict::Failed) {
@@ -521,7 +533,14 @@ impl<'a> NativeRunner<'a> {
                         cases.push(CaseReport {
                             id: case.id.clone(),
                             question: case.input().into(),
-                            phase: phase.into(),
+                            phase: if phase == "Failed"
+                                && credit_limited(value["status"]["message"].as_str())
+                            {
+                                "CreditLimited"
+                            } else {
+                                phase
+                            }
+                            .into(),
                             answer,
                             completed_tools: tools,
                             assertions,

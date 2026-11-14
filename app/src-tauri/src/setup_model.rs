@@ -23,9 +23,45 @@ enum Phase {
     Connected,
     Cleared,
 }
+/// Closed key-company input; provider names and setup models remain native-owned.
+pub type KeyVendor = ModelVendor;
+
+#[derive(Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+enum CredentialKind {
+    #[default]
+    Copilot,
+    Key,
+}
+impl CredentialKind {
+    fn is_copilot(&self) -> bool {
+        *self == Self::Copilot
+    }
+}
+fn default_selection(vendor: Option<KeyVendor>) -> ModelSelection {
+    ModelSelection {
+        vendor,
+        provider: if vendor.is_some() {
+            "bridge-model"
+        } else {
+            "copilot"
+        }
+        .into(),
+        model: match vendor {
+            None => "gpt-5.6-terra",
+            Some(KeyVendor::Openai) => "gpt-4.1",
+            Some(KeyVendor::Anthropic) => "claude-sonnet-5-5",
+        }
+        .into(),
+    }
+}
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Binding {
+    #[serde(default, skip_serializing_if = "CredentialKind::is_copilot")]
+    kind: CredentialKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vendor: Option<KeyVendor>,
     slot: Uuid,
     installation: Uuid,
     phase: Phase,
@@ -36,6 +72,7 @@ fn unavailable() -> SetupError {
     SetupError {
         kind: "modelUnavailable",
         message: "The stored model connection is unavailable or its completion is unknown.",
+        vendor: None,
         diagnostic: None,
         native: None,
     }
@@ -57,7 +94,11 @@ fn read_binding(root: &Path) -> Result<Option<Binding>, SetupError> {
         return Err(unavailable());
     }
     let b: Binding = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
-    if b.slot.is_nil()
+    if (b.kind == CredentialKind::Key) != b.vendor.is_some()
+        || b.connection
+            .as_ref()
+            .is_some_and(|c| c.selection.vendor != b.vendor)
+        || b.slot.is_nil()
         || b.installation.is_nil()
         || b.nonce.is_some_and(|id| id.is_nil())
         || (matches!(b.phase, Phase::Storing | Phase::Stored)
@@ -214,16 +255,59 @@ impl SetupStore {
             })?;
             self.associate_captured(installation, &token, store)?;
         }
-        self.connect_model(
-            installation,
-            ModelSelection {
-                vendor: None,
-                provider: "copilot".into(),
-                model: "gpt-5.6-terra".into(),
-            },
-            client,
-            store,
-        )
+        let selection = {
+            let _access = self.access.lock().map_err(|_| unavailable())?;
+            let b = read_binding(self.root.as_deref().ok_or_else(unavailable)?)?
+                .ok_or_else(unavailable)?;
+            b.connection
+                .map(|c| c.selection)
+                .unwrap_or_else(|| default_selection(b.vendor))
+        };
+        let vendor = selection.vendor;
+        self.connect_model(installation, selection, client, store)
+            .map_err(|mut error| {
+                // Recovery needs the saved company even when no successful reply can name it.
+                error.vendor = vendor;
+                error
+            })
+    }
+    /// One saved connection. Replacement requires explicit, confirmed removal first.
+    pub fn connect_key_model(
+        &self,
+        installation: Uuid,
+        vendor: KeyVendor,
+        key: &str,
+        client: &mut VmClient,
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, SetupError> {
+        let prefix = match vendor {
+            KeyVendor::Openai => "sk-",
+            KeyVendor::Anthropic => "sk-ant-",
+        };
+        if !key.starts_with(prefix)
+            || key.len() <= prefix.len()
+            || key.len() > MAX_CREDENTIAL
+            || !key.bytes().all(|b| (b'!'..=b'~').contains(&b))
+            || (vendor == KeyVendor::Openai && key.starts_with("sk-ant-"))
+        {
+            return Err(SetupError::model("modelKeyInvalid"));
+        }
+        let binding = self.model_binding_status()?;
+        if binding.associated || binding.unknown {
+            return Err(SetupError::model("modelAlreadyAssociated"));
+        }
+        let before = client
+            .model_status()
+            .map_err(|_| SetupError::model("modelGuest"))?;
+        if before.phase != ModelPhase::Idle || before.credential.installed {
+            return Err(SetupError::model("modelGuest"));
+        }
+        self.associate_secret_for_vendor(installation, key.as_bytes(), Some(vendor), store)?;
+        self.connect_model(installation, default_selection(Some(vendor)), client, store)
+            .map_err(|mut error| {
+                error.vendor = Some(vendor);
+                error
+            })
     }
     /// Explicit native intent only. Neither setup status nor reopen captures a sign-in.
     pub fn associate_captured(
@@ -240,6 +324,15 @@ impl SetupStore {
         secret: &[u8],
         store: &impl CredentialStore,
     ) -> Result<ModelSetupState, SetupError> {
+        self.associate_secret_for_vendor(installation, secret, None, store)
+    }
+    fn associate_secret_for_vendor(
+        &self,
+        installation: Uuid,
+        secret: &[u8],
+        vendor: Option<KeyVendor>,
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, SetupError> {
         let _access = self.access.lock().map_err(|_| unavailable())?;
         let root = self.root.as_deref().ok_or_else(unavailable)?;
         if installation.is_nil() || !selected(root)? {
@@ -247,10 +340,16 @@ impl SetupStore {
         }
         let _owner = model_owner(root)?;
         if read_binding(root)?.is_some() {
-            return Err(unavailable());
+            return Err(SetupError::model("modelAlreadyAssociated"));
         }
         CredentialPayload::new(secret).map_err(|_| unavailable())?;
         let mut b = Binding {
+            kind: if vendor.is_some() {
+                CredentialKind::Key
+            } else {
+                CredentialKind::Copilot
+            },
+            vendor,
             slot: Uuid::new_v4(),
             installation,
             phase: Phase::Storing,
@@ -306,6 +405,31 @@ impl SetupStore {
         selected(root)?;
         Ok(state(read_binding(root)?.as_ref(), false))
     }
+    fn finish_model_connect(
+        &self,
+        root: &Path,
+        b: &mut Binding,
+        remote: ModelState,
+        client: &mut VmClient,
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, SetupError> {
+        let result = finish_connect(root, b, remote);
+        if b.kind == CredentialKind::Key
+            && result.as_ref().is_err_and(|e| {
+                matches!(
+                    e.kind,
+                    "modelCredentialRejected"
+                        | "modelProviderUnreachable"
+                        | "modelModelUnavailable"
+                )
+            })
+        {
+            // Reuse sign-out's removal lifecycle without releasing either ownership guard.
+            self.finish_sign_out(root, b, Some(client), store)
+                .map_err(|_| SetupError::model("modelKeyCleanup"))?;
+        }
+        result
+    }
     /// Blocking native worker call. Caller owns the established VM client/lease.
     pub fn connect_model(
         &self,
@@ -321,7 +445,10 @@ impl SetupStore {
         }
         let _owner = model_owner(root)?;
         let mut b = read_binding(root)?.ok_or_else(unavailable)?;
-        if b.installation != installation || matches!(b.phase, Phase::Storing | Phase::Cleared) {
+        if b.installation != installation
+            || b.vendor != selection.vendor
+            || matches!(b.phase, Phase::Storing | Phase::Cleared)
+        {
             return Err(unavailable());
         }
         if matches!(b.phase, Phase::Pending | Phase::Connected)
@@ -337,9 +464,13 @@ impl SetupStore {
             let remote = client
                 .model_status()
                 .map_err(|_| SetupError::model("modelConnect"))?;
-            if remote.connection.as_ref().is_some_and(|c| {
-                c.selection != selection || b.connection.as_ref().is_some_and(|known| known != c)
-            }) {
+            if (remote.credential.installed
+                && remote.credential.profile != selection.credential_profile())
+                || remote.connection.as_ref().is_some_and(|c| {
+                    c.selection != selection
+                        || b.connection.as_ref().is_some_and(|known| known != c)
+                })
+            {
                 return Err(unavailable());
             }
             if remote.phase == ModelPhase::Ready {
@@ -381,7 +512,7 @@ impl SetupStore {
                 let remote = client
                     .connect_model(generation, selection)
                     .map_err(|_| SetupError::model("modelConnect"))?;
-                return finish_connect(root, &mut b, remote);
+                return self.finish_model_connect(root, &mut b, remote, client, store);
             } else if remote.phase != ModelPhase::Idle {
                 return Err(unavailable());
             }
@@ -421,7 +552,11 @@ impl SetupStore {
         b.nonce = Some(client.boot_nonce());
         write_binding(root, &b)?; // durable barrier before either guest mutation
         let delivered = client
-            .deliver_credential(&secret, before.credential.generation)
+            .deliver_credential_for_profile(
+                selection.credential_profile(),
+                &secret,
+                before.credential.generation,
+            )
             .map_err(|_| SetupError::model("modelDelivery"))?;
         let generation = delivered
             .generation
@@ -429,7 +564,7 @@ impl SetupStore {
         let remote = client
             .connect_model(generation, selection)
             .map_err(|_| SetupError::model("modelConnect"))?;
-        finish_connect(root, &mut b, remote)
+        self.finish_model_connect(root, &mut b, remote, client, store)
     }
     /// Explicit sign-out; unavailable/unknown VM cleanup never deletes the host slot.
     pub fn sign_out_model(
@@ -455,15 +590,15 @@ impl SetupStore {
             if b.nonce != Some(client.boot_nonce()) {
                 cleanup_previous_boot(root, &mut b, client)?;
             } else {
-                return self.finish_sign_out(root, b, Some(client), store);
+                return self.finish_sign_out(root, &mut b, Some(client), store);
             }
         }
-        self.finish_sign_out(root, b, None, store)
+        self.finish_sign_out(root, &mut b, None, store)
     }
     fn finish_sign_out(
         &self,
         root: &Path,
-        mut b: Binding,
+        b: &mut Binding,
         client: Option<&mut VmClient>,
         store: &impl CredentialStore,
     ) -> Result<ModelSetupState, SetupError> {
@@ -474,7 +609,7 @@ impl SetupStore {
             }
             let connection = b.connection.clone().ok_or_else(unavailable)?;
             b.phase = Phase::Pending;
-            write_binding(root, &b)?;
+            write_binding(root, b)?;
             let stopped = client
                 .disconnect_model(&connection)
                 .map_err(|_| unavailable())?;
@@ -486,7 +621,7 @@ impl SetupStore {
                 .map_err(|_| unavailable())?;
             // Retain acknowledged cleanup, so a locked OS store does not require RPC replay.
             b.phase = Phase::Cleared;
-            write_binding(root, &b)?;
+            write_binding(root, b)?;
         }
         store.delete(b.slot).map_err(SetupError::store)?;
         fs::remove_file(root.join("model-v1")).map_err(|_| unavailable())?;
@@ -535,6 +670,8 @@ mod catalog_binding_tests {
             write_binding(
                 setup.root.as_deref().unwrap(),
                 &Binding {
+                    kind: CredentialKind::Copilot,
+                    vendor: None,
                     slot: Uuid::from_u128(5),
                     installation: if case == 0 {
                         Uuid::from_u128(6)
@@ -621,6 +758,8 @@ mod tests {
             write_binding(
                 root,
                 &Binding {
+                    kind: CredentialKind::Copilot,
+                    vendor: None,
                     slot: Uuid::new_v4(),
                     installation: install,
                     phase: Phase::Storing,

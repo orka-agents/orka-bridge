@@ -1,6 +1,6 @@
 //! Fixed example Run on the original VM client. Credentials remain in the guest.
 use crate::{
-    agent_folder::{AgentFolder, DocumentId, DocumentRef},
+    agent_folder::{example_for_model, AgentFolder, DocumentId, DocumentRef},
     engine::run::{
         ErrorKind, NativeRunner, ParsedPair, RunFuture, RunHandle, RunLimits, RunReport,
         RunTransport,
@@ -153,10 +153,18 @@ impl ExampleRun {
         vm: Arc<LocalVm>,
         id: DocumentId,
     ) -> Result<RunSnapshot, &'static str> {
-        if id != DocumentId::SAMPLE {
-            return Err("The automatic first test requires the bundled example.");
+        self.start_first_test_with_model(vm, id, "gpt-5.6-terra".into())
+    }
+    pub fn start_first_test_with_model(
+        self: &Arc<Self>,
+        vm: Arc<LocalVm>,
+        id: DocumentId,
+        model: String,
+    ) -> Result<RunSnapshot, &'static str> {
+        if id != DocumentId::SAMPLE || example_for_model(&model).is_none() {
+            return Err("The automatic first test requires the connected bundled example.");
         }
-        Ok(self.start_checked(vm, self.3.clone(), true))
+        Ok(self.start_checked(vm, self.3.clone(), Some(model)))
     }
     pub fn start(self: &Arc<Self>, vm: Arc<LocalVm>) -> RunSnapshot {
         self.start_document(vm, self.3.clone())
@@ -166,13 +174,13 @@ impl ExampleRun {
         vm: Arc<LocalVm>,
         folder: Arc<AgentFolder>,
     ) -> RunSnapshot {
-        self.start_checked(vm, folder, false)
+        self.start_checked(vm, folder, None)
     }
     fn start_checked(
         self: &Arc<Self>,
         vm: Arc<LocalVm>,
         folder: Arc<AgentFolder>,
-        bundled_example: bool,
+        expected_model: Option<String>,
     ) -> RunSnapshot {
         let id = folder.document_id();
         if !self.2 {
@@ -206,13 +214,14 @@ impl ExampleRun {
         let target = vm.clone();
         self.1.spawn(async move {
             let admission = Arc::new(admission);
+            let bundled_example = expected_model.is_some();
             let pair = tokio::task::spawn_blocking(move || {
                 let snapshot = folder.capture().map_err(|_| ())?;
-                if bundled_example {
-                    let example = crate::local_vm::example();
+                if let Some(model) = expected_model {
+                    let (agent, tests) = example_for_model(&model).ok_or(())?;
                     for (slot, expected) in [
-                        (bridge_runtime_protocol::FileSlot::Agent, example.agent),
-                        (bridge_runtime_protocol::FileSlot::Tests, example.tests),
+                        (bridge_runtime_protocol::FileSlot::Agent, agent.as_str()),
+                        (bridge_runtime_protocol::FileSlot::Tests, tests),
                     ] {
                         let actual = std::str::from_utf8(snapshot.file(slot)).map_err(|_| ())?;
                         if actual.replace("\r\n", "\n") != expected.replace("\r\n", "\n") {
@@ -242,7 +251,14 @@ impl ExampleRun {
                             worker.fail(id, "session");
                             return;
                         }
-                        runtime.block_on(worker.execute(id, installation, client, observing, pair));
+                        runtime.block_on(worker.execute(
+                            id,
+                            installation,
+                            client,
+                            observing,
+                            pair,
+                            bundled_example,
+                        ));
                         // Observation is over, but admission and the original client
                         // are still held. Retained results keep their own Agents.
                         worker.cleanup(installation, client);
@@ -315,6 +331,7 @@ impl ExampleRun {
         client: &mut VmClient,
         vm: Arc<LocalVm>,
         pair: ParsedPair,
+        bundled_example: bool,
     ) {
         let model = match client.model_status() {
             Ok(model) if model.phase == ModelPhase::Ready => model,
@@ -332,6 +349,10 @@ impl ExampleRun {
             self.fail(id, "model");
             return;
         };
+        if bundled_example && connection.selection.model != pair.model() {
+            self.fail(id, "model");
+            return;
+        }
         let runner = NativeRunner::with_transport(VmRunTransport {
             client: Mutex::new(client),
             provider: connection.selection.provider,

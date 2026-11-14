@@ -53,7 +53,10 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
       setCheck('running');
       poll();
     };
-    void Promise.all([loadExample(), agentCall('agent_open', undefined, SAMPLE_DOCUMENT_ID), runCall('agent_run_status')]).then(async ([bundled, saved, status]) => {
+    // Preparation can update only the pristine managed sample. Finish it before reading saved bytes.
+    void loadExample(true).then(async bundled => {
+      if (cancelled || !mounted.current || !latest.current.ready || latest.current.sampleDirty) return;
+      const [saved, status] = await Promise.all([agentCall('agent_open', undefined, SAMPLE_DOCUMENT_ID), runCall('agent_run_status')]);
       // StrictMode's abandoned effect must not consume the durable one-shot.
       if (cancelled || !mounted.current || !latest.current.ready || latest.current.sampleDirty || !claim()) return;
       claimed = true;

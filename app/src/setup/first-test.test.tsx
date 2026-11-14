@@ -49,6 +49,20 @@ test('first completion submits the sample once, waits for release, then opens it
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
 });
 
+test('setup prepares the connected example before opening its saved bytes', async () => {
+  vi.stubGlobal('isTauri', true); armFirstTest();
+  let prepared = false;
+  const ipc = vi.fn((command: string, args?: unknown) => {
+    if (command === 'setup_example') { prepared = (args as { prepare?: boolean })?.prepare === true; return pair; }
+    if (command === 'agent_open') return { ...pair, agent: prepared ? pair.agent : 'original wrong model', documentId: sample, name: 'web-reader' };
+    if (command === 'agent_run_status') return idle;
+    if (command === 'agent_run') return { ...idle, error: 'session' };
+  });
+  mockIPC(ipc);
+  renderHook(() => useFirstTest({ ready: true, canOpen: true, sampleDirty: false, onOpen: vi.fn() }));
+  await waitFor(() => expect(ipc.mock.calls.some(([c]) => c === 'agent_run')).toBe(true));
+  expect(ipc.mock.calls.find(([c]) => c === 'setup_example')).toEqual(['setup_example', { prepare: true }]);
+});
 test('observing an existing ready setup or retiring intent never submits a test', async () => {
   const { ipc } = native(); const onOpen = vi.fn();
   const view = renderHook(() => useFirstTest({ ready: true, canOpen: true, sampleDirty: false, onOpen }));

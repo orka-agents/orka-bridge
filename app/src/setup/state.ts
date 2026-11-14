@@ -59,10 +59,10 @@ export const cancelLocal = () => call('setup_cancel_local');
 export const changeLocal = () => call('setup_change_local');
 
 export type ExamplePair = { agent: string; tests: string };
-export async function loadExample(): Promise<{ ok: true; pair: ExamplePair } | { ok: false; message: string }> {
+export async function loadExample(prepare = false): Promise<{ ok: true; pair: ExamplePair } | { ok: false; message: string }> {
   if (!isTauri()) return { ok: false, message: 'The native example is not available in this preview.' };
   try {
-    const value = await invoke<unknown>('setup_example');
+    const value = await (prepare ? invoke<unknown>('setup_example', { prepare: true }) : invoke<unknown>('setup_example'));
     if (typeof value === 'object' && value !== null && !Array.isArray(value)
       && Object.keys(value).sort().join(',') === 'agent,tests'
       && 'agent' in value && typeof value.agent === 'string' && value.agent.length > 0 && value.agent.length <= 65536

@@ -255,6 +255,7 @@ async fn recovery_reads_only_gets_uses_captured_rules_and_preserves_answer_when_
 #[derive(Clone, Copy)]
 struct Behavior {
     phase: &'static str,
+    message: &'static str,
     answer: Option<&'static str>,
     events: &'static str,
     fault: &'static str,
@@ -263,6 +264,7 @@ impl Default for Behavior {
     fn default() -> Self {
         Self {
             phase: "Succeeded",
+            message: "",
             answer: Some("secret-expected"),
             events: "complete",
             fault: "",
@@ -341,7 +343,7 @@ impl Fixture {
                         continue;
                     }
                     status = 201;
-                    response = json!({"apiVersion":"core.orka.ai/v1alpha1", "kind":if path.ends_with("agents") {"Agent"} else {"Task"}, "metadata":{"name":body["name"],"namespace":body["namespace"],"uid":format!("uid-{}",body["name"].as_str().unwrap()),"generation":1},"spec":body["spec"],"status":{"phase":b.phase}});
+                    response = json!({"apiVersion":"core.orka.ai/v1alpha1", "kind":if path.ends_with("agents") {"Agent"} else {"Task"}, "metadata":{"name":body["name"],"namespace":body["namespace"],"uid":format!("uid-{}",body["name"].as_str().unwrap()),"generation":1},"spec":body["spec"],"status":{"phase":b.phase,"message":b.message}});
                     if path.ends_with("agents") {
                         response["spec"]["defaulted"] = json!(true);
                     } else {
@@ -923,6 +925,87 @@ async fn creates_one_task_per_case_without_reusing_inputs_or_expected_values() {
     assert_eq!(requests.len(), 3);
     assert_eq!(requests[2].1["spec"]["prompt"], "distinct input");
     assert!(!requests[2].1.to_string().contains("different-expected"));
+}
+#[tokio::test]
+async fn credit_phase_uses_only_failed_task_status_evidence_and_never_copies_it() {
+    for (phase, message, answer, expected) in [
+        (
+            "Failed",
+            "upstream HTTP 429: private-diagnostic",
+            "wrong",
+            "CreditLimited",
+        ),
+        (
+            "Failed",
+            "status_code=429: private-diagnostic",
+            "wrong",
+            "CreditLimited",
+        ),
+        (
+            "Failed",
+            "insufficient_quota: private-diagnostic",
+            "wrong",
+            "CreditLimited",
+        ),
+        (
+            "Failed",
+            "Credit balance too low: private-diagnostic",
+            "wrong",
+            "CreditLimited",
+        ),
+        (
+            "Failed",
+            "Rate limit exceeded: private-diagnostic",
+            "wrong",
+            "CreditLimited",
+        ),
+        (
+            "Failed",
+            "rate_limit_exceeded: private-diagnostic",
+            "wrong",
+            "CreditLimited",
+        ),
+        (
+            "Failed",
+            "error 1429: private-diagnostic",
+            "wrong",
+            "Failed",
+        ),
+        (
+            "Failed",
+            "request429: private-diagnostic",
+            "wrong",
+            "Failed",
+        ),
+        (
+            "Failed",
+            "prompt failed: private-diagnostic",
+            "429 insufficient_quota",
+            "Failed",
+        ),
+        (
+            "Succeeded",
+            "insufficient_quota: private-diagnostic",
+            "429 credit balance too low",
+            "Succeeded",
+        ),
+    ] {
+        let fixture = Fixture::start(Behavior {
+            phase,
+            message,
+            answer: Some(answer),
+            ..Behavior::default()
+        })
+        .await;
+        let runner = fixture.runner();
+        let handle = runner.submit(pair()).await.unwrap();
+        let report = runner.observe(&handle).await.unwrap();
+        assert_eq!(report.cases[0].phase, expected, "{message}");
+        assert_eq!(report.verdict, Verdict::Failed);
+        assert!(!serde_json::to_string(&report)
+            .unwrap()
+            .contains("private-diagnostic"));
+    }
 }
 #[tokio::test]
 async fn verdicts_depend_on_answer_completion_and_positive_attributable_tool_evidence() {
