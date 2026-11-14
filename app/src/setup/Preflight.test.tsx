@@ -11,12 +11,13 @@ const ready = { platform: 'windows', virtualization: 'ready', memory: 'ready', i
 async function native(preflight: unknown = ready, integrated = true) {
   vi.stubGlobal('isTauri', true);
   localStorage.setItem('bridge.welcomeSeen.v1', '1');
-  let value = preflight;
+  let value = preflight; let started = false;
+  const status = () => ({ selected: started ? 'localVm' : null, localVm: started ? 'starting' : integrated ? 'idle' : 'notIntegrated', model: 'locked' });
   const ipc = vi.fn(command => {
-    if (command === 'setup_status') return { selected: null, localVm: integrated ? 'idle' : 'notIntegrated', model: 'locked' };
+    if (command === 'setup_status') return status();
     if (command === 'setup_requirements') return integrated ? requirements : null;
     if (command === 'setup_preflight') return value;
-    if (command === 'setup_select_local') return { selected: 'localVm', localVm: 'starting', model: 'locked' };
+    if (command === 'setup_select_local') { started = true; return status(); }
     if (command === 'setup_open_help') return Promise.reject('SECRET_MARKER');
     if (command === 'cluster_contexts') return [];
     throw Error('unexpected command');

@@ -78,7 +78,8 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     } else {
         guard let panel = rows.filter({
             let label = $0.topCandidates(1).first?.string ?? ""
-            return (label.contains("Connect the AI") || label.contains("Connect the Al")) && $0.boundingBox.minX > 0.5
+            // The shell now also says Connect the AI. Anchor below the tab bar, in the model column.
+            return (label.contains("Connect the AI") || label.contains("Connect the Al")) && $0.boundingBox.minX > 0.5 && $0.boundingBox.maxY < 0.85
         }).max(by: { $0.boundingBox.maxY < $1.boundingBox.maxY })
             else { fatalError("Model panel heading was not recognized") }
         visible = rows.filter {
