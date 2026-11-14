@@ -1148,12 +1148,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Refresh", in: try capture("overview-probe", "Overview"))
     Thread.sleep(forTimeInterval: 1)
     try overviewShot("overview-fixture-multiple-places-by-place", ["fixture-secondary", "3 agents", "Checks passed here"], heading: "fixture-secondary")
-    let attempt = "fixture-secondary · agents · Checks unknown"
-    try overviewShot("overview-probe", [attempt])
-    guard let attemptBounds = nativeTextBounds(attempt).first else { fail("Recorded attempt disclosure is not visible") }
-    let attemptPoint = CGPoint(x: attemptBounds.midX, y: attemptBounds.midY)
-    mouse(.leftMouseDown, attemptPoint); mouse(.leftMouseUp, attemptPoint)
-    Thread.sleep(forTimeInterval: 0.5)
+    try overviewShot("overview-probe", ["Earlier Sends"])
+    clickButton("fixture-secondary · agents Checks unknown")
     try overviewShot("overview-fixture-unknown-attempt", ["Agent creation not confirmed", "Checks unknown", "Planned name: bridge-run-"])
     scrollMain(12000)
     clickText("By agent", in: try capture("overview-probe", "Overview"))
@@ -1163,11 +1159,11 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     scrollMain(12000)
     clickText("Refresh", in: try capture("overview-probe", "Overview"))
     Thread.sleep(forTimeInterval: 1)
-    try overviewShot("overview-fixture-offline-by-agent", ["fixture-secondary · agents", "Recorded checks passed; observation stale", "agent · stale"])
+    try overviewShot("overview-fixture-offline-by-agent", ["fixture-secondary · agents", "Recorded checks passed; observation stale", "Stale"])
     scrollMain(12000)
     clickText("By cluster", in: try capture("overview-probe", "Overview"))
-    try overviewShot("overview-fixture-offline-by-place", ["fixture-secondary", "Earlier cluster check", "Last seen", "agent · stale"], heading: "fixture-secondary")
-    try overviewShot("overview-fixture-offline-record-by-place", ["Recorded checks passed; observation stale", "agent · stale"])
+    try overviewShot("overview-fixture-offline-by-place", ["fixture-secondary", "Earlier cluster check", "Last seen", "Stale"], heading: "fixture-secondary")
+    try overviewShot("overview-fixture-offline-record-by-place", ["Recorded checks passed; observation stale", "Stale"])
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false])
     // Keep the existing preflight-only cards out of the focused Overview walk.
     // These identities still exercise the same blocked states without a Send.
