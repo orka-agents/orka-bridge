@@ -53,6 +53,7 @@ impl SavedResource {
 pub struct Recovery {
     pub report: Option<RunReport>,
     pub availability: &'static str,
+    pub refreshed: bool,
 }
 impl NativeRunner<'_> {
     async fn read_saved(
@@ -90,6 +91,7 @@ impl NativeRunner<'_> {
             verdict: Verdict::Unknown,
         });
         let mut availability = "available";
+        let mut refreshed = false;
         let agent = resources.iter().find(|r| r.kind == "Agent").cloned();
         let deadline = self.http.deadline();
         let (_tx, mut stop) = watch::channel(false);
@@ -115,22 +117,28 @@ impl NativeRunner<'_> {
                 if matches!(phase,"Pending"|"Running"|"Finalizing"|"Scheduled") { task.terminal=false; return Ok(None); }
                 if !matches!(phase,"Succeeded"|"Failed"|"Cancelled") { return Err(ErrorKind::Response); }
                 task.terminal=true;
-                let result=self.http.request(&format!("{path}/result"),None,None,deadline).await?;
-                let answer=result["result"].as_str().ok_or(ErrorKind::Response)?.to_string();
+                let old=report.cases.iter().find(|r| r.id==case.id);
+                let answer=match self.http.request(&format!("{path}/result"),None,None,deadline).await {
+                    Ok(result)=>result["result"].as_str().map(str::to_owned),
+                    Err(error)=> { availability=if error==ErrorKind::NotFound {"missing"}else{"unavailable"}; None }
+                };
+                let captured=answer.is_some();
+                let answer=answer.or_else(|| old.and_then(|r| r.answer.clone()));
                 let tools=match self.tools(&task.name,&task.namespace,&agent.name,deadline,&mut stop).await {
                     Ok(tools)=>tools,
-                    Err(error)=> { availability=if error==ErrorKind::NotFound {"missing"}else{"unavailable"}; Vec::new() }
+                    Err(error)=> { if availability!="missing" { availability=if error==ErrorKind::NotFound {"missing"}else{"unavailable"}; } old.map(|r|r.completed_tools.clone()).unwrap_or_default() }
                 };
                 let after=self.http.request(&path,None,None,deadline).await?;
                 if !task.matches(&after) || after["status"]["phase"]!=phase {return Err(ErrorKind::Identity);}
                 self.read_saved(agent, deadline).await?;
-                let assertions=case.evaluate(Some(&answer),&tools);
+                let assertions=case.evaluate(answer.as_deref(),&tools);
                 let verdict=if phase=="Succeeded" {aggregate(assertions.iter().map(|r|r.verdict))} else {Verdict::Failed};
-                Ok(Some(CaseReport {id:case.id.clone(),question:case.input().into(),phase:phase.into(),answer:Some(answer),completed_tools:tools,assertions,verdict}))
+                Ok(Some((CaseReport {id:case.id.clone(),question:case.input().into(),phase:phase.into(),answer,completed_tools:tools,assertions,verdict},captured)))
             }.await;
             match read {
                 Ok(None) => (),
-                Ok(Some(row)) => {
+                Ok(Some((row, captured))) => {
+                    refreshed |= captured;
                     if let Some(old) = report.cases.iter_mut().find(|r| r.id == row.id) {
                         *old = row;
                     } else {
@@ -160,6 +168,7 @@ impl NativeRunner<'_> {
         Recovery {
             report: (!report.cases.is_empty()).then_some(report),
             availability,
+            refreshed,
         }
     }
 }

@@ -231,6 +231,25 @@ test('remove saved details removes the local answer only and does not check or d
   expect(screen.getByText('bridge-run-before-restart')).toBeTruthy();
 });
 
+test('removing answers after a status check keeps the newly saved unknown verdict', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => {
+    if (command === 'send_history') return [{ ...summary, verdict: 'passed' }];
+    if (command === 'send_history_details') return saved;
+    if (command === 'send_history_check') return { ...saved, availability: 'missing', report: { ...saved.report, verdict: 'unknown' } };
+    if (command === 'send_history_remove') return { ...saved, detailState: 'removed', report: null, canRemove: false };
+    throw Error('Unexpected operation');
+  });
+  render(<SendHistory revision="same" />); await openSaved();
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole('button', { name: 'Check cluster status' }));
+  await screen.findByText('Saved tests: unknown');
+  await user.click(screen.getByRole('button', { name: 'Remove saved details' }));
+  await screen.findByText('Saved details removed from this computer.');
+  expect(screen.getByText('Saved tests: unknown')).toBeTruthy();
+  expect(screen.queryByText('Saved tests: pass')).toBeNull();
+});
+
 test('legacy summaries do not invent answers or offer recovery without captured identities', async () => {
   detailed(legacy); await openSaved();
   expect(await screen.findByText('This earlier Send has a summary only.')).toBeTruthy();

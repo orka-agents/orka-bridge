@@ -135,6 +135,111 @@ async fn history_recovery_is_get_only_offline_preserving_and_serialized() {
 }
 
 #[tokio::test]
+async fn history_records_terminal_phase_and_tools_without_answer_text() {
+    for (mode, tool_only) in [("failed-empty", false), ("empty-result", true)] {
+        let s = setup().await;
+        if tool_only {
+            std::fs::write(
+                s.agent_path().with_file_name("web-reader.agent.test.md"),
+                TESTS.replace(
+                    "  - id: answer\n    type: contains\n    value: expected answer\n",
+                    "",
+                ),
+            )
+            .unwrap();
+        }
+        *s.api.wire.mode.lock().unwrap() = "running";
+        let started = s.start().await;
+        until(|| s.view(None)["stage"] == "observe").await;
+        s.owner.stop(&id(&started)).await;
+        *s.api.wire.mode.lock().unwrap() = mode;
+        let view = s.owner.history_check(&id(&started)).await.unwrap();
+        assert!(
+            view.report.is_some(),
+            "{mode}: availability {:?}, calls {:?}",
+            view.availability,
+            s.api
+                .wire
+                .calls
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(p, _)| p)
+                .collect::<Vec<_>>()
+        );
+        let report = view.report.unwrap();
+        assert_eq!(
+            report.cases[0].phase,
+            if tool_only { "Succeeded" } else { "Failed" }
+        );
+        assert!(report.cases[0].answer.is_none());
+        assert_eq!(report.cases[0].completed_tools, ["web_fetch"]);
+        assert_eq!(
+            report.cases[0].verdict,
+            if tool_only {
+                Verdict::Passed
+            } else {
+                Verdict::Failed
+            }
+        );
+        assert!(!view.interrupted);
+    }
+}
+
+#[tokio::test]
+async fn history_preserves_capture_time_when_only_cached_answers_remain() {
+    use bridge_engine::send_summary::{AttemptDetails, SummaryStore};
+    let s = setup().await;
+    let started = s.start().await;
+    let send = id(&started);
+    s.finish(&send).await;
+    let root = s.home.path().join("app-local");
+    let mut detail: AttemptDetails = serde_json::from_slice(
+        &std::fs::read(root.join(format!("send-history-v1/{send}.json"))).unwrap(),
+    )
+    .unwrap();
+    detail.captured_at = 1;
+    SummaryStore::new(Some(root))
+        .checkpoint(s.owner.history().unwrap()[0].clone(), detail)
+        .unwrap();
+    *s.api.wire.mode.lock().unwrap() = "result-404";
+    let checked = s.owner.history_check(&send).await.unwrap();
+    assert_eq!(checked.captured_at, Some(1));
+    assert_eq!(
+        checked.report.unwrap().cases[0].answer.as_deref(),
+        Some("expected answer")
+    );
+}
+
+#[tokio::test]
+async fn history_shutdown_waits_for_read_cleanup_and_rejects_later_checks() {
+    let s = setup().await;
+    let started = s.start().await;
+    let send = id(&started);
+    s.finish(&send).await;
+    let before = s.api.wire.calls.lock().unwrap().len();
+    *s.api.wire.mode.lock().unwrap() = "hold-history";
+    let owner = s.owner.clone();
+    let check_id = send.clone();
+    let check = tokio::spawn(async move { owner.history_check(&check_id).await });
+    until(|| s.api.wire.calls.lock().unwrap().len() > before).await;
+    let mut closing = Box::pin(s.owner.shutdown());
+    let pending =
+        std::future::poll_fn(|cx| std::task::Poll::Ready(closing.as_mut().poll(cx).is_pending()))
+            .await;
+    *s.api.wire.mode.lock().unwrap() = "";
+    check.await.unwrap().unwrap();
+    if pending {
+        closing.await;
+    }
+    assert!(pending, "shutdown must await the historical read owner");
+    s.idle_forwards().await;
+    let calls = s.api.wire.calls.lock().unwrap().len();
+    assert!(s.owner.history_check(&send).await.is_err());
+    assert_eq!(s.api.wire.calls.lock().unwrap().len(), calls);
+}
+
+#[tokio::test]
 async fn storage_failure_after_agent_ack_keeps_remote_uncertainty_and_bars_tasks() {
     let s = setup().await;
     let root = s.home.path().join("app-local/send-history-v1");

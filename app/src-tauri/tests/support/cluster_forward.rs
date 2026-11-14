@@ -117,6 +117,9 @@ impl Wire {
                     while ws.read().is_ok() {}
                     return;
                 }
+                while mode == "hold-history" && *self.mode.lock().unwrap() == "hold-history" {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
                 let route = path.split('?').next().unwrap();
                 let mut objects = self.objects.lock().unwrap();
                 let (mut status, mut value) = if method == "POST" {
@@ -226,6 +229,25 @@ impl Wire {
                 if method == "POST" {
                     if let Some(hook) = self.after_post.lock().unwrap().take() {
                         hook();
+                    }
+                }
+                if method == "GET" && route.ends_with("/result") && mode == "empty-result" {
+                    value = json!({"result":null});
+                }
+                if method == "GET"
+                    && mode == "empty-result"
+                    && route.contains("/tasks/")
+                    && !route.ends_with("/result")
+                    && !route.ends_with("/events")
+                {
+                    value["status"]["phase"] = json!("Succeeded");
+                }
+                if method == "GET" && mode == "failed-empty" && route.contains("/tasks/") {
+                    if route.ends_with("/result") {
+                        status = 404;
+                        value = json!({"error":"missing"});
+                    } else if !route.ends_with("/events") {
+                        value["status"]["phase"] = json!("Failed");
                     }
                 }
                 if method == "GET" && route.ends_with("/result") && mode == "large-result" {

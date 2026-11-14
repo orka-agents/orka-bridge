@@ -39,6 +39,30 @@ impl AttemptDetails {
             .iter()
             .any(|r| !r.terminal && (r.kind == "Task" || r.uid.is_none()))
     }
+    fn charge(&self, bytes: u64) -> io::Result<u64> {
+        let receipts = serde_json::to_vec(&self.resources)
+            .map_err(|_| invalid())?
+            .len() as u64;
+        Ok(bytes
+            + if self.unresolved() {
+                CONTROL_RESERVE.saturating_sub(receipts)
+            } else {
+                0
+            })
+    }
+    fn omit_answers(&mut self) {
+        self.detail_state = "omitted".into();
+        if let Some(report) = &mut self.report {
+            report.verdict = crate::engine::run::Verdict::Unknown;
+            for case in &mut report.cases {
+                case.answer = None;
+                case.verdict = crate::engine::run::Verdict::Unknown;
+                for assertion in &mut case.assertions {
+                    assertion.verdict = crate::engine::run::Verdict::Unknown;
+                }
+            }
+        }
+    }
     fn validate(&self) -> io::Result<()> {
         let text = |s: &str| !s.is_empty() && s.len() <= MAX_TEXT && !s.contains('\0');
         let dns = |s: &str| {
@@ -190,17 +214,7 @@ impl SummaryStore {
         details.validate().map_err(|_| "storage")?;
         let mut bytes = serde_json::to_vec(&details).map_err(|_| "storage")?;
         if bytes.len() > ATTEMPT_BYTES {
-            if let Some(report) = &mut details.report {
-                report.verdict = crate::engine::run::Verdict::Unknown;
-                for case in &mut report.cases {
-                    case.answer = None;
-                    case.verdict = crate::engine::run::Verdict::Unknown;
-                    for assertion in &mut case.assertions {
-                        assertion.verdict = crate::engine::run::Verdict::Unknown;
-                    }
-                }
-            }
-            details.detail_state = "omitted".into();
+            details.omit_answers();
             summary.verdict = AttemptVerdict::Unknown;
             bytes = serde_json::to_vec(&details).map_err(|_| "storage")?;
             if bytes.len() > ATTEMPT_BYTES {
@@ -211,10 +225,33 @@ impl SummaryStore {
         if bytes.len() > ATTEMPT_BYTES {
             return Err("storage");
         }
-        self.publish(summary, Some((&details, &bytes)), |root, bytes| {
+        let mut saved = self.publish(summary.clone(), Some((&details, &bytes)), |root, bytes| {
             replace(root, FILE_NAME, bytes)
-        })
-        .map_err(|_| "storage")?;
+        });
+        if saved
+            .as_ref()
+            .is_err_and(|e| e.kind() == io::ErrorKind::QuotaExceeded)
+            && details.report.is_some()
+        {
+            // Retry only local cache publication, never a remote mutation. Receipts stay intact.
+            details.omit_answers();
+            summary.verdict = AttemptVerdict::Unknown;
+            bytes = serde_json::to_vec(&details).map_err(|_| "storage")?;
+            saved = self.publish(summary.clone(), Some((&details, &bytes)), |root, bytes| {
+                replace(root, FILE_NAME, bytes)
+            });
+            if saved
+                .as_ref()
+                .is_err_and(|e| e.kind() == io::ErrorKind::QuotaExceeded)
+            {
+                details.report = None;
+                bytes = serde_json::to_vec(&details).map_err(|_| "storage")?;
+                saved = self.publish(summary, Some((&details, &bytes)), |root, bytes| {
+                    replace(root, FILE_NAME, bytes)
+                });
+            }
+        }
+        saved.map_err(|_| "storage")?;
         Ok(details.detail_state == "saved")
     }
     pub(super) fn publish(
@@ -276,18 +313,18 @@ impl SummaryStore {
                 root.remove_file(name)?;
                 continue;
             }
-            sidecars.insert(key.to_string(), (entry.metadata()?.len(), d.unresolved()));
+            sidecars.insert(
+                key.to_string(),
+                (d.charge(entry.metadata()?.len())?, d.unresolved()),
+            );
         }
         if let Some((d, b)) = details {
-            sidecars.insert(id.clone(), (b.len() as u64, d.unresolved()));
+            sidecars.insert(id.clone(), (d.charge(b.len() as u64)?, d.unresolved()));
         }
         let mut evicted = Vec::new();
         let bytes = loop {
             let bytes = serde_json::to_vec(&ledger).map_err(|_| invalid())?;
-            let total: u64 = sidecars
-                .values()
-                .map(|(n, protected)| n + if *protected { CONTROL_RESERVE } else { 0 })
-                .sum();
+            let total: u64 = sidecars.values().map(|(n, _)| n).sum();
             if ledger.attempts.len() <= MAX_ATTEMPTS
                 && bytes.len() as u64 <= MAX_BYTES
                 && total <= TOTAL_BYTES
@@ -303,7 +340,7 @@ impl SummaryStore {
                 })
                 .min_by_key(|(_, a)| a.time)
                 .map(|(i, _)| i)
-                .ok_or_else(invalid)?;
+                .ok_or_else(|| io::Error::from(io::ErrorKind::QuotaExceeded))?;
             let old = ledger.attempts.remove(index).id;
             sidecars.remove(&old);
             evicted.push(old);
@@ -319,5 +356,33 @@ impl SummaryStore {
         }
         root.remove_file(PENDING)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod quota_tests {
+    use super::*;
+    #[test]
+    fn receipt_reservation_is_consumed_by_acknowledged_uid_bytes() {
+        let mut detail: AttemptDetails = serde_json::from_value(serde_json::json!({
+            "documentId":null,"model":null,"capturedAt":0,"cases":[],"report":null,
+            "detailState":"saved","availability":null,"resources":[{
+                "kind":"Task","name":"bridge-task-pending","namespace":"agents","uid":null,
+                "generation":0,"specDigest":"a".repeat(64),"terminal":false
+            }]
+        }))
+        .unwrap();
+        let before = detail
+            .charge(serde_json::to_vec(&detail).unwrap().len() as u64)
+            .unwrap();
+        detail.resources[0].uid = Some("u".repeat(4096));
+        detail.resources[0].generation = 1;
+        let after = detail
+            .charge(serde_json::to_vec(&detail).unwrap().len() as u64)
+            .unwrap();
+        assert_eq!(
+            before, after,
+            "acknowledgements must consume existing reserved capacity"
+        );
     }
 }

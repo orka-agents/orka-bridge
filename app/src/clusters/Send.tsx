@@ -21,6 +21,7 @@ const words = { passed: 'pass', failed: 'fail', unknown: 'unknown' } as const;
 function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: string }) {
   const [open, setOpen] = useState(false);
   const [detail, setDetail] = useState<SendHistoryDetail>();
+  const [checkedVerdict, setCheckedVerdict] = useState<AttemptSummary['verdict']>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const operation = useRef(false);
@@ -41,11 +42,14 @@ function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: s
     const request = ++epoch.current;
     try {
       const value = await sendHistoryDetail(command, attempt.id);
-      if (request === epoch.current) { setDetail(value); setError(undefined); }
+      if (request === epoch.current) {
+        setDetail(value); setError(undefined);
+        if (command === 'send_history_check') setCheckedVerdict(value.interrupted ? 'unknown' : value.report?.verdict ?? 'unknown');
+      }
     } catch (failure) { if (request === epoch.current) setError((failure as Error).message); }
     finally { operation.current = false; if (request === epoch.current) setBusy(false); }
   }
-  const verdict = detail?.interrupted ? 'unknown' : detail?.report?.verdict ?? attempt.verdict;
+  const verdict = detail?.interrupted ? 'unknown' : detail?.report?.verdict ?? checkedVerdict ?? attempt.verdict;
   return <li>
     <div className="send-history-heading"><strong>{attempt.plannedAgentName}</strong><span>Saved tests: {verdict === 'running' ? 'unknown' : words[verdict]}</span></div>
     <p>{attempt.targetDisplay}</p><p>AI connection: {attempt.provider} · <time dateTime={new Date(attempt.time * 1000).toISOString()}>{new Date(attempt.time * 1000).toLocaleString()}</time></p>

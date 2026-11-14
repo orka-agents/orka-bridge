@@ -195,7 +195,8 @@ impl SendOwner {
     }
     pub fn history_details(&self, id: &str) -> Result<DetailView, &'static str> {
         let mut view = self.summary.details(id)?;
-        if self.inner.lock().unwrap().active.is_some() {
+        let inner = self.inner.lock().unwrap();
+        if inner.active.is_some() || inner.closed {
             view.can_check = false;
             view.can_remove = false;
         }
@@ -203,8 +204,11 @@ impl SendOwner {
     }
     pub async fn history_remove(&self, id: &str) -> Result<DetailView, &'static str> {
         let _gate = self.history_gate.lock().await;
-        if self.inner.lock().unwrap().active.is_some() {
-            return Err("busy");
+        {
+            let inner = self.inner.lock().unwrap();
+            if inner.active.is_some() || inner.closed {
+                return Err("busy");
+            }
         }
         self.summary.remove_details(id)
     }
@@ -218,8 +222,11 @@ impl SendOwner {
     }
     async fn check_saved(&self, id: &str) -> Result<DetailView, &'static str> {
         let _gate = self.history_gate.lock().await;
-        if self.inner.lock().unwrap().active.is_some() {
-            return Err("busy");
+        {
+            let inner = self.inner.lock().unwrap();
+            if inner.active.is_some() || inner.closed {
+                return Err("busy");
+            }
         }
         let (mut summary, details) = self.summary.record(id)?;
         let mut details = details
@@ -258,7 +265,9 @@ impl SendOwner {
             Ok(read) => {
                 details.report = read.report;
                 details.availability = Some(read.availability.into());
-                details.captured_at = unix_seconds();
+                if read.refreshed {
+                    details.captured_at = unix_seconds();
+                }
                 if read.availability == "available"
                     && !details.unresolved()
                     && details
@@ -541,6 +550,8 @@ impl SendOwner {
         if let Some(done) = done {
             finished(done).await;
         }
+        // Historical reads own their forward and durable writeback under this gate.
+        let _history = self.history_gate.lock().await;
     }
     fn update(&self, id: SendId, change: impl FnOnce(&mut SendView)) {
         change(self.inner.lock().unwrap().views.get_mut(&id).unwrap());

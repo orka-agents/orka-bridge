@@ -210,6 +210,43 @@ fn overflow_retains_control_and_saturation_never_evicts_unresolved_receipts() {
 }
 
 #[test]
+fn total_quota_omits_optional_answers_without_losing_protected_receipts() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = SummaryStore::new(Some(dir.path().into()));
+    let mut evidence = details();
+    evidence.resources.push(serde_json::from_value(serde_json::json!({"kind":"Task","name":"bridge-task-pending","namespace":"agents","uid":null,"generation":0,"specDigest":"a".repeat(64),"terminal":false})).unwrap());
+    let report = |size| {
+        serde_json::from_value(serde_json::json!({"cases":[{"id":"one","question":"question","phase":"Succeeded","answer":"x".repeat(size),"completedTools":[],"assertions":[],"verdict":"unknown"}],"verdict":"unknown"})).unwrap()
+    };
+    evidence.report = Some(report(3_900_000));
+    for _ in 0..16 {
+        store
+            .checkpoint(
+                summary(Uuid::new_v4(), AttemptVerdict::Unknown),
+                evidence.clone(),
+            )
+            .unwrap();
+    }
+    let current = summary(Uuid::new_v4(), AttemptVerdict::Running);
+    evidence.report = None;
+    store.checkpoint(current.clone(), evidence.clone()).unwrap();
+    evidence.report = Some(report(2_000_000));
+    assert!(!store
+        .checkpoint(current.clone(), evidence)
+        .expect("optional answers must not consume reserved control capacity"));
+    let view = store.details(&current.id).unwrap();
+    assert_eq!(view.detail_state, "omitted");
+    assert!(view.interrupted);
+    assert!(view.report.unwrap().cases[0].answer.is_none());
+    assert_eq!(store.list().unwrap().len(), 17);
+    let total: u64 = std::fs::read_dir(dir.path().join("send-history-v1"))
+        .unwrap()
+        .map(|e| e.unwrap().metadata().unwrap().len())
+        .sum();
+    assert!(total <= 64 * 1024 * 1024);
+}
+
+#[test]
 fn interrupted_detail_publication_never_exposes_a_saved_pass_after_next_send() {
     let dir = tempfile::tempdir().unwrap();
     let store = SummaryStore::new(Some(dir.path().into()));
