@@ -12,6 +12,7 @@ pub(super) struct Script {
     pub(super) lose_create: AtomicBool,
     pub(super) read_failed: AtomicBool,
     pub(super) bad_task: Mutex<Option<String>>,
+    pub(super) completed_task: Mutex<Option<String>>,
     pub(super) evidence_missing: AtomicBool,
     pub(super) deny_first: AtomicBool,
     pub(super) status: AtomicU16,
@@ -33,6 +34,7 @@ impl Default for Script {
             lose_create: AtomicBool::new(false),
             read_failed: AtomicBool::new(false),
             bad_task: Mutex::default(),
+            completed_task: Mutex::default(),
             evidence_missing: AtomicBool::new(false),
             deny_first: AtomicBool::new(false),
             status: AtomicU16::new(200),
@@ -761,6 +763,103 @@ async fn recheck_merges_missing_evidence_for_the_same_case_and_recomputes_assert
         .assertions
         .iter()
         .all(|a| a.verdict == Verdict::Passed));
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn ordinary_observation_keeps_a_finished_answer_when_cancellation_reads_fail() {
+    let script = Arc::new(Script::default());
+    let (vm, run, home) = cancel_fixture(script.clone(), true).await;
+    let pair = AgentFolder::new(Some(home.path().into())).open().unwrap();
+    let tests = std::path::Path::new(pair.path.as_ref().unwrap())
+        .with_file_name("web-reader.agent.test.md");
+    std::fs::write(tests, format!("{}\n```yaml agent-test\nid: still-running\ninput: Another question\nassertions:\n - id: answer\n   type: contains\n   value: unused\n```\n", pair.tests)).unwrap();
+    run.start(vm.clone());
+    observing(&script).await;
+    let writes = script.posts();
+    let first = writes[1].1.as_ref().unwrap()["name"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let second = writes[2].1.as_ref().unwrap()["name"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    *script.completed_task.lock().unwrap() = Some(first);
+    let second_path = format!("tasks/{second}");
+    for _ in 0..500 {
+        if script
+            .trace
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(path, body)| path == &second_path && body.is_none())
+        {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+    assert!(script
+        .trace
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|(path, body)| path == &second_path && body.is_none()));
+    script.evidence_missing.store(true, Ordering::SeqCst);
+    *script.bad_task.lock().unwrap() = Some(second);
+    run.cancel(vm.clone(), DocumentId::SAMPLE);
+    let done = finished(&run, &vm).await;
+    assert_eq!(
+        serde_json::to_value(&done).unwrap()["cancellation"],
+        "unconfirmed"
+    );
+    let report = done.report.unwrap();
+    assert_eq!(report.cases[0].answer.as_deref(), Some(ANSWER));
+    assert_eq!(report.cases[0].verdict, Verdict::Passed);
+    assert_eq!(report.cases[0].completed_tools, vec!["web_fetch"]);
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn temporary_read_session_contention_keeps_both_recovery_controls_available() {
+    let script = Arc::new(Script::default());
+    script.status.store(403, Ordering::SeqCst);
+    let (vm, run, _home) = cancel_fixture(script.clone(), true).await;
+    run.start(vm.clone());
+    observing(&script).await;
+    run.cancel(vm.clone(), DocumentId::SAMPLE);
+    let first = finished(&run, &vm).await;
+    assert!(first.can_retry_cancellation && first.can_check_cancellation);
+    let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    let reading = vm.clone();
+    let read = tokio::spawn(async move {
+        reading
+            .with_client(move |_, _| {
+                entered_tx.send(()).unwrap();
+                release_rx.recv().unwrap();
+            })
+            .await
+    });
+    entered_rx.await.unwrap();
+    let writes = script.posts().len();
+    run.check_cancellation(vm.clone(), DocumentId::SAMPLE);
+    let busy = finished(&run, &vm).await;
+    release_tx.send(()).unwrap();
+    read.await.unwrap().unwrap();
+    assert_eq!(
+        serde_json::to_value(&busy).unwrap()["cancellation"],
+        "unconfirmed"
+    );
+    assert_eq!(busy.error, None);
+    assert!(busy.can_retry_cancellation && busy.can_check_cancellation);
+    assert_eq!(script.posts().len(), writes);
+    script.status.store(200, Ordering::SeqCst);
+    run.cancel(vm.clone(), DocumentId::SAMPLE);
+    assert_eq!(
+        serde_json::to_value(finished(&run, &vm).await).unwrap()["cancellation"],
+        "cancelled"
+    );
     vm.shutdown().await.unwrap();
 }
 

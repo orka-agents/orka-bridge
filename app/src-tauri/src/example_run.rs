@@ -2,8 +2,8 @@
 use crate::{
     agent_folder::{AgentFolder, DocumentId, DocumentRef},
     engine::run::{
-        ErrorKind, NativeRunner, ParsedPair, RunFuture, RunHandle, RunLimits, RunReport,
-        RunTransport,
+        ErrorKind, NativeRunner, ParsedPair, RunCheckpoint, RunFuture, RunHandle, RunLimits,
+        RunReport, RunTransport,
     },
     local_vm::{LocalVm, LocalVmStatus},
     overview::{LocalRunObservation, ReportSummary},
@@ -256,11 +256,14 @@ impl ExampleRun {
                     runtime.block_on(worker.finish_cancellation(id, &runner, recovery, retry));
                 })
                 .await;
-            if result.is_err() {
+            if result.is_err() && !matches!(&result, Err(crate::runtime::types::RuntimeError::Busy))
+            {
                 owner.recovery_failed(id);
             }
             let mut state = owner.0.lock().unwrap();
-            if state.snapshots[&id].error.is_some() {
+            if state.snapshots[&id].error.is_some()
+                || matches!(&result, Err(crate::runtime::types::RuntimeError::Busy))
+            {
                 state.snapshots.get_mut(&id).unwrap().cancellation = Cancellation::Unconfirmed;
             }
             state.active = None;
@@ -563,7 +566,24 @@ impl ExampleRun {
         };
         self.record(id, installation, &handle, None, None, RunState::Running);
         self.0.lock().unwrap().snapshots.get_mut(&id).unwrap().stage = Some("observe");
-        let observed = runner.observe_stoppable(&handle, stop.clone()).await;
+        let observed = runner
+            .observe_checkpointed(&handle, stop.clone(), &mut |event| {
+                if let RunCheckpoint::Case(_, case) = event {
+                    let mut state = self.0.lock().unwrap();
+                    let report = state
+                        .snapshots
+                        .get_mut(&id)
+                        .unwrap()
+                        .report
+                        .get_or_insert_with(|| RunReport {
+                            cases: Vec::new(),
+                            verdict: crate::engine::run::Verdict::Unknown,
+                        });
+                    report.cases.push(case);
+                }
+                Ok(())
+            })
+            .await;
         // Cancel and normal completion compete under the same lock. Once the
         // worker crosses its final Stop check, no request may claim to cancel it.
         let cancelled = {

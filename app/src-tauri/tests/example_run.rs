@@ -495,7 +495,17 @@ impl Write for Channel {
                             {
                                 status = 404;
                             }
-                            object["status"]["phase"] = json!(*s.phase.lock().unwrap());
+                            object["status"]["phase"] = if s
+                                .completed_task
+                                .lock()
+                                .unwrap()
+                                .as_ref()
+                                .is_some_and(|name| request.path == format!("tasks/{name}"))
+                            {
+                                json!("Succeeded")
+                            } else {
+                                json!(*s.phase.lock().unwrap())
+                            };
                             if s.replaced.load(Ordering::SeqCst) {
                                 object["metadata"]["uid"] = json!("replacement");
                             }
