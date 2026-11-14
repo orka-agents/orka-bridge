@@ -35,7 +35,12 @@ test('creates during setup, previews the native location and both files, and ope
   const calls: string[] = [];
   native((command, args) => { calls.push(command); if (command === 'agent_create') { expect(args).toEqual({ name: 'helper' }); return id; } });
   const user = userEvent.setup(); render(<Example setupPending />);
-  await user.click(await screen.findByRole('button', { name: 'New agent' }));
+  const entry = await screen.findByRole('button', { name: 'New agent' });
+  expect(entry.classList.contains('button-secondary')).toBe(true);
+  await user.click(entry);
+  expect(screen.getByRole('textbox', { name: 'Name' }).classList.contains('field')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Create' }).classList.contains('button-primary')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Cancel' }).classList.contains('button-secondary')).toBe(true);
   await user.type(screen.getByRole('textbox', { name: 'Name' }), 'helper');
   expect(await screen.findByText('/home/creator/Orka/agents/helper/')).toBeTruthy();
   expect(screen.getByText('helper.agent.md')).toBeTruthy();
@@ -95,7 +100,9 @@ test('selector persists identity and opens a different pair', async () => {
   let selected: unknown;
   native((command, args) => { if (command === 'agent_select') { selected = args.documentId; return null; } });
   const user = userEvent.setup(); render(<Example />);
-  await user.selectOptions(await screen.findByRole('combobox', { name: 'Agent' }), id);
+  const selector = await screen.findByRole('combobox', { name: 'Agent' });
+  expect(selector.classList.contains('field')).toBe(true);
+  await user.selectOptions(selector, id);
   expect(await screen.findByRole('heading', { name: 'helper', level: 1 })).toBeTruthy();
   expect(selected).toBe(id);
 });
@@ -365,7 +372,9 @@ test('Overview offers the same creation form without starting setup', async () =
   localStorage.setItem('bridge.welcomeSeen.v1', '1'); native();
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  const entry = screen.getByRole('button', { name: 'New agent' });
+  expect(entry.classList.contains('button-primary')).toBe(true);
+  await user.click(entry);
   expect(await screen.findByRole('textbox', { name: 'Name' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page');
 });

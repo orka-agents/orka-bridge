@@ -1,3 +1,4 @@
+import { Button } from '../components/Button';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { SAMPLE_DOCUMENT_ID, agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
@@ -187,22 +188,22 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
           <button type="button" aria-pressed={view === 'Chat'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('Chat')}>Chat</button>
           <button type="button" aria-pressed={view === 'File'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('File')}>File</button>
         </div>
-        {entries && <label className="agent-selector"><span className="sr-only">Agent</span><select className="part-button" disabled={selecting} title={selecting ? 'Opening your agent' : undefined} value={boundDocument} onChange={event => { setSelectionError(undefined); setWantsCreate(false); onNewAgentHandled?.(); requestDocument(event.target.value); }}>
+        {entries && <label className="agent-selector"><span className="sr-only">Agent</span><select className="field" disabled={selecting} title={selecting ? 'Opening your agent' : undefined} value={boundDocument} onChange={event => { setSelectionError(undefined); setWantsCreate(false); onNewAgentHandled?.(); requestDocument(event.target.value); }}>
           {!entries.some(entry => entry.id === boundDocument) && <option value={boundDocument}>{pair?.name ?? 'Current agent'}</option>}
           {entries.map(entry => <option key={entry.id} value={entry.id}>{entry.name}{entry.available ? '' : ' (unavailable)'}</option>)}
         </select></label>}
-        <button type="button" className="shell-button new-agent-entry" onClick={() => setWantsCreate(true)}>New agent</button>
+        <Button type="button" kind="secondary" className="new-agent-entry" onClick={() => setWantsCreate(true)}>New agent</Button>
         {actions}
         {view !== 'Chat' && <SendEntry blocked={sendBlocked} failingCheck={!stale && localRun?.sourceCurrent !== false ? localRun?.report?.cases.find(c => c.verdict === 'failed')?.id : undefined}
           onProceed={openSend} onFix={() => { setView('Agent'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.instructions-editor')?.focus()); }} />}
       </div>
     </div>
     {selectionError && <p role="alert">{selectionError}</p>}
-    {!pair ? error ? <div className="designer-file card"><p role="alert">{error}</p><div className="heading-actions"><button type="button" className="shell-button" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
+    {!pair ? error ? <div className="designer-file card"><p role="alert">{error}</p><div className="heading-actions"><Button type="button" kind="secondary" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</Button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div hidden={view !== 'Chat'}><Chat key={boundDocument} documentId={boundDocument} blocked={chatBlocked} /></div>
       <div hidden={view === 'Chat'} className={`designer-work${remote ? ' designer-remote' : ''}`}>
       <div className="designer-tests card" hidden={remote}>
-        {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for the local cluster and AI to be ready">Run tests</button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p></div>
+        {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><Button type="button" kind="primary" className="action-spaced" disabled title="Wait for the local cluster and AI to be ready">Run tests</Button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p></div>
           : <Run documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />}
         {!remote && testSource}
       </div>
@@ -216,9 +217,9 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
         </> : null}
         <div hidden={view !== 'Agent'}>
           <AgentParts source={draft} path={pair.path} documentId={boundDocument} readOnly={false} setupPending={setupPending} catalog={currentCatalog?.reply} catalogLoading={catalogEnabled && !currentCatalog} onPendingEdit={observePendingSoul} onChange={edit} />
-          {currentCatalog && (!currentCatalog.reply || currentCatalog.reply.models.state === 'unavailable' || currentCatalog.reply.tools.state === 'unavailable') && <button type="button" className="part-button" onClick={() => setCatalogAttempt(attempt => attempt + 1)}>Refresh tools and models</button>}
+          {currentCatalog && (!currentCatalog.reply || currentCatalog.reply.models.state === 'unavailable' || currentCatalog.reply.tools.state === 'unavailable') && <Button type="button" kind="secondary" onClick={() => setCatalogAttempt(attempt => attempt + 1)}>Refresh tools and models</Button>}
         </div>
-        {error && <div className="save-error"><p role="alert">{error}</p><button className="setup-button" type="button" onClick={() => { void flush(true); }}>Try saving again</button></div>}
+        {error && <div className="save-error"><p role="alert">{error}</p><Button kind="primary" className="action-spaced" type="button" onClick={() => { void flush(true); }}>Try saving again</Button></div>}
       </div>
       <div className="designer-checks card">
         <Send documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
