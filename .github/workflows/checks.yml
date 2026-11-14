@@ -118,6 +118,20 @@ jobs:
       - name: Mac deferred termination (no VM or host logout)
         if: runner.os == 'macOS' && matrix.suite == 'checks'
         run: cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --test native_termination --features custom-protocol
+      - name: Diagnose Windows native menu WebView startup
+        if: runner.os == 'Windows'
+        run: |
+          failed=0
+          for mode in baseline fresh kick; do
+            echo "=== Native menu diagnostic: $mode ==="
+            if BRIDGE_MENU_DIAGNOSTIC="$mode" cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --bin orka-bridge --features custom-protocol lifecycle::windows::tests::native_session_messages_in_subprocesses -- --exact --nocapture; then
+              echo "$mode passed"
+            else
+              echo "$mode failed"
+              failed=1
+            fi
+          done
+          exit "$failed"
       - name: Rust checks
         if: matrix.suite != 'bundle'
         run: |

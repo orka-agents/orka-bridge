@@ -238,6 +238,9 @@ mod tests {
             ("timeout", 1, "cleanup unconfirmed", false),
             ("panic", 1, "session-end handler panicked", false),
         ] {
+            if std::env::var_os("BRIDGE_MENU_DIAGNOSTIC").is_some() && case != "menu_quit" {
+                continue;
+            }
             let marker = temp.path().join(case);
             let mut child = Command::new(std::env::current_exe().unwrap())
                 .args(["--exact", &child_test, "--nocapture"])
@@ -257,6 +260,9 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(20));
             }
             let output = child.wait_with_output().unwrap();
+            if std::env::var_os("BRIDGE_MENU_DIAGNOSTIC").is_some() {
+                eprintln!("{case}: {output:?}");
+            }
             assert_eq!(output.status.code(), Some(code), "{case}: {output:?}");
             assert!(
                 String::from_utf8_lossy(&output.stdout).contains("running 1 test"),
@@ -334,14 +340,34 @@ mod tests {
                 }
             });
             eprintln!("native-session menu_quit: building menu window");
-            let window = tauri::WebviewWindowBuilder::new(
+            let profile = tempfile::tempdir().unwrap();
+            let mode = std::env::var("BRIDGE_MENU_DIAGNOSTIC").unwrap_or_default();
+            let build_start = Instant::now();
+            let native_thread = unsafe { GetCurrentThreadId() };
+            if mode == "kick" {
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(2));
+                    eprintln!("native-session menu_quit: posting one message-pump wakeup");
+                    assert_ne!(
+                        unsafe { PostThreadMessageW(native_thread, WM_NULL, 0, 0) },
+                        0
+                    );
+                });
+            }
+            let mut builder = tauri::WebviewWindowBuilder::new(
                 &app,
                 "menu-probe",
                 tauri::WebviewUrl::External("about:blank".parse().unwrap()),
             )
-            .visible(false)
-            .build()
-            .unwrap();
+            .visible(false);
+            if mode == "fresh" {
+                builder = builder.data_directory(profile.path().to_path_buf());
+            }
+            let window = builder.build().unwrap();
+            eprintln!(
+                "native-session menu_quit: {mode} build elapsed {:?}",
+                build_start.elapsed()
+            );
             eprintln!("native-session menu_quit: menu window built");
             super::super::install(app.handle(), shutdown, true).unwrap();
             tauri::async_runtime::block_on(async {
