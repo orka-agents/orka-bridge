@@ -421,3 +421,10 @@ _ = try capture("local-remove-confirmation-compact", ["saved sign-in?", "Cancel"
 click("Cancel", [])
 click("Back to clusters", [])
 _ = try capture("local-places-compact", ["Choose where agents run", "This computer"])
+// Keep the third top-level page reviewable at both control sizes too.
+click("Overview", [])
+for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
+    localSize(CGFloat(width), CGFloat(height))
+    scroll(4000)
+    _ = try capture("local-controls-overview-\(size)", ["Your agents", "Refresh"])
+}
