@@ -490,6 +490,18 @@ impl AgentFolder {
             },
         ))
     }
+    /// Capture confirmed saved agent bytes without requiring executable tests.
+    pub fn capture_agent(&self) -> Result<Vec<u8>> {
+        self.with(|root| {
+            let pair = self.pair(root)?;
+            git::commit(root, &pair, &self.agent, &self.tests)?;
+            let bytes = read(root, &self.agent, MAX_FILE)?;
+            if bytes != pair.agent.as_bytes() {
+                return Err(invalid());
+            }
+            Ok(bytes)
+        })
+    }
     pub fn capture(&self) -> Result<Snapshot> {
         self.with(|root| {
             let pair = self.pair(root)?;

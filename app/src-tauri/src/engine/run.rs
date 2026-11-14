@@ -1,7 +1,7 @@
 //! Native-only authoring API. Not a renderer command or guest protocol extension.
 #[path = "run_source.rs"]
 mod source;
-pub use source::{Assertion, DeclaredTool, ParsedPair, RunCase, ToolKind};
+pub use source::{Assertion, DeclaredTool, ParsedAgent, ParsedPair, RunCase, ToolKind};
 #[path = "run_http.rs"]
 mod http;
 use bridge_runtime_protocol::{SnapshotId, Uuid};
@@ -84,7 +84,7 @@ pub struct ResourceId {
     kind: &'static str,
 }
 impl ResourceId {
-    fn acknowledge(
+    pub(crate) fn acknowledge(
         value: &Value,
         requested: &Value,
         name: &str,
@@ -136,7 +136,7 @@ impl ResourceId {
             kind,
         })
     }
-    fn unchanged(&self, value: &Value) -> Result<(), ErrorKind> {
+    pub(crate) fn unchanged(&self, value: &Value) -> Result<(), ErrorKind> {
         if value["apiVersion"] != "core.orka.ai/v1alpha1" || value["kind"] != self.kind {
             return Err(ErrorKind::Identity);
         }
@@ -149,7 +149,7 @@ impl ResourceId {
         }
         Ok(())
     }
-    fn path(&self) -> String {
+    pub(crate) fn path(&self) -> String {
         format!(
             "{}/{}",
             if self.kind == "Agent" {
@@ -289,10 +289,7 @@ impl<'a> NativeRunner<'a> {
     pub fn prepare(&self, pair: ParsedPair) -> Result<PreparedRun, ErrorKind> {
         let namespace = self.http.namespace();
         let name = format!("bridge-run-{}", Uuid::new_v4().simple());
-        let mut spec = json!({"providerRef":{"name":self.http.provider()},"model":{"name":pair.model()},"systemPrompt":{"inline":pair.prompt()},"tools":pair.tools().iter().map(|name| json!({"name":name})).collect::<Vec<_>>()});
-        if let Some(soul) = pair.soul() {
-            spec["soul"] = serde_json::to_value(soul).map_err(|_| ErrorKind::Source)?;
-        }
+        let spec = pair.agent().spec(self.http.provider());
         let mut creates = vec![json!({"name":name,"namespace":namespace,"spec":spec})];
         for case in pair.cases() {
             let task = format!("bridge-task-{}", Uuid::new_v4().simple());

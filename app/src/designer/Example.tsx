@@ -177,7 +177,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, persistInitia
           <span className="coming-control" tabIndex={0} role="group" aria-label="Chat: Chat is coming" title="Chat is coming"><button type="button" disabled title="Chat is coming">Chat</button><span className="control-tip" aria-hidden="true">Chat is coming</span></span>
           <button type="button" aria-pressed={view === 'File'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('File')}>File</button>
         </div>
-        {entries && <label className="agent-selector"><span className="sr-only">Agent</span><select className="part-button" disabled={selecting} value={boundDocument} onChange={event => { setSelectionError(undefined); setWantsCreate(false); onNewAgentHandled?.(); requestDocument(event.target.value); }}>
+        {entries && <label className="agent-selector"><span className="sr-only">Agent</span><select className="part-button" disabled={selecting} title={selecting ? 'Opening your agent' : undefined} value={boundDocument} onChange={event => { setSelectionError(undefined); setWantsCreate(false); onNewAgentHandled?.(); requestDocument(event.target.value); }}>
           {!entries.some(entry => entry.id === boundDocument) && <option value={boundDocument}>{pair?.name ?? 'Current agent'}</option>}
           {entries.map(entry => <option key={entry.id} value={entry.id}>{entry.name}{entry.available ? '' : ' (unavailable)'}</option>)}
         </select></label>}
