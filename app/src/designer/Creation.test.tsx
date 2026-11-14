@@ -276,9 +276,10 @@ test('a selector choice replaces New agent queued behind a failed save', async (
   expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
 });
 
-test('a failed personality digest resumes autosave of earlier instructions', async () => {
+test('a failed personality digest retains earlier instructions until the personality is corrected', async () => {
   let reject!: (reason: Error) => void; const writes: string[] = [];
-  vi.stubGlobal('crypto', { subtle: { digest: () => new Promise((_resolve, fail) => { reject = fail; }) } });
+  const digest = vi.fn().mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; })).mockResolvedValue(new Uint8Array(32).buffer);
+  vi.stubGlobal('crypto', { subtle: { digest } });
   const agent = '---\nname: web-reader\nmodel: shipped\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  soul:\n    inline: Old personality\n    digest: sha256:old\n---\nRead a page.';
   native((command, args) => {
     if (command === 'agent_open') return { ...pair, agent };
@@ -291,9 +292,16 @@ test('a failed personality digest resumes autosave of earlier instructions', asy
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)); });
   expect(writes).toHaveLength(0);
   await act(async () => reject(Error('digest failed')));
-  await waitFor(() => expect(writes).toHaveLength(1));
+  await screen.findByRole('alert');
+  expect(writes).toHaveLength(0);
+  expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toBe('Instructions that must save');
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Personality' }), { target: { value: 'Corrected personality' } });
+  await screen.findByRole('textbox', { name: 'Name' });
+  expect(writes).toHaveLength(1);
   expect(writes[0]).toContain('Instructions that must save');
-  expect(writes[0]).toContain('Old personality');
+  expect(writes[0]).toContain('Corrected personality');
 });
 
 test.each(['', 'Upper', 'helper'])('Enter validates the name before native creation (%s)', async name => {

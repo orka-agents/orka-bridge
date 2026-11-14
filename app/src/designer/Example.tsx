@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { SAMPLE_DOCUMENT_ID, agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
+import Chat from './Chat';
 import { readWorkspaceCatalog, type WorkspaceCatalogReply } from '../catalog';
 import AgentParts from './AgentParts';
 import FileEditor from './FileEditor';
@@ -61,7 +62,7 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
   const [reloading, setReloading] = useState(false);
   const reloadAdmitted = useRef(false);
   const reloadEpoch = useRef(0);
-  const [view, setView] = useState<'Agent' | 'File'>('Agent');
+  const [view, setView] = useState<'Agent' | 'Chat' | 'File'>('Agent');
   const [stale, setStale] = useState(false);
   const observePendingSoul = useCallback((pending: boolean) => { pendingSoulCurrent.current = pending; setPendingSoul(pending); if (pending) setStale(true); }, []);
   const [sendOpen, setSendOpen] = useState(false);
@@ -107,7 +108,7 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
     finally { busy.current = false; }
   }, [onPair, boundDocument]);
   useEffect(() => {
-    // A digest failure produces no file edit to restart the deferred autosave.
+    // Resume an earlier autosave when the pending personality edit is resolved.
     if (!pendingSoul && !needsCommit.current && latest.current !== saved.current) {
       clearTimeout(timer.current); timer.current = setTimeout(() => { void flush(); }, 500);
     }
@@ -165,6 +166,12 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
   const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
     : reloading ? 'Wait for your saved files to reload' : setupPending ? 'Wait for the local cluster to be ready before sending'
     : saveState !== 'saved' || pendingSoul ? 'Save your changes first' : undefined;
+  const chatBlocked = remote ? 'Chat runs on the local cluster. Choose This computer in Clusters.'
+    : setupPending ? 'Connect the local cluster and the AI in Clusters before chatting.'
+    : documentId !== boundDocument ? 'Wait for your agent to finish saving before switching.'
+    : reloading ? 'Wait for your saved files to reload.'
+    : pendingSoul ? 'Wait for your personality edit to save. Check Agent view if it needs attention.'
+    : saveState !== 'saved' ? saveState === 'error' ? 'Your changes could not be saved. Try saving again in Agent view.' : 'Wait for your changes to save.' : undefined;
   const testSource = pair && <details className="check-source"><summary>Test file: {pair.name ?? 'web-reader'}.agent.test.md</summary><pre className="example-source" tabIndex={0} aria-label="Test file, read-only">{pair.tests}</pre></details>;
   return <>
     {creating && <NewAgent active={active} onRegistered={() => { if (onRegistered) onRegistered(); else if (mounted.current) setListAttempt(value => value + 1); }} model={currentCatalog?.reply?.defaultModel} onCreated={async id => {
@@ -176,7 +183,7 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
       <div className="heading-actions">
         <div className="view-switch" role="group" aria-label="Designer view">
           <button type="button" aria-pressed={view === 'Agent'} onClick={() => setView('Agent')}>Agent</button>
-          <span className="coming-control" tabIndex={0} role="group" aria-label="Chat: Chat is coming" title="Chat is coming"><button type="button" disabled title="Chat is coming">Chat</button><span className="control-tip" aria-hidden="true">Chat is coming</span></span>
+          <button type="button" aria-pressed={view === 'Chat'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('Chat')}>Chat</button>
           <button type="button" aria-pressed={view === 'File'} disabled={!pair} title={!pair ? 'Wait for your agent folder to open' : undefined} onClick={() => setView('File')}>File</button>
         </div>
         {entries && <label className="agent-selector"><span className="sr-only">Agent</span><select className="part-button" disabled={selecting} title={selecting ? 'Opening your agent' : undefined} value={boundDocument} onChange={event => { setSelectionError(undefined); setWantsCreate(false); onNewAgentHandled?.(); requestDocument(event.target.value); }}>
@@ -185,13 +192,14 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
         </select></label>}
         <button type="button" className="shell-button new-agent-entry" onClick={() => setWantsCreate(true)}>New agent</button>
         {actions}
-        <SendEntry blocked={sendBlocked} failingCheck={!stale && localRun?.sourceCurrent !== false ? localRun?.report?.cases.find(c => c.verdict === 'failed')?.id : undefined}
-          onProceed={openSend} onFix={() => { setView('Agent'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.instructions-editor')?.focus()); }} />
+        {view !== 'Chat' && <SendEntry blocked={sendBlocked} failingCheck={!stale && localRun?.sourceCurrent !== false ? localRun?.report?.cases.find(c => c.verdict === 'failed')?.id : undefined}
+          onProceed={openSend} onFix={() => { setView('Agent'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.instructions-editor')?.focus()); }} />}
       </div>
     </div>
     {selectionError && <p role="alert">{selectionError}</p>}
     {!pair ? error ? <div className="designer-file card"><p role="alert">{error}</p><div className="heading-actions"><button type="button" className="shell-button" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
-      <div className={`designer-work${remote ? ' designer-remote' : ''}`}>
+      <div hidden={view !== 'Chat'}><Chat key={boundDocument} documentId={boundDocument} blocked={chatBlocked} /></div>
+      <div hidden={view === 'Chat'} className={`designer-work${remote ? ' designer-remote' : ''}`}>
       <div className="designer-tests card" hidden={remote}>
         {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for the local cluster and AI to be ready">Run tests</button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p></div>
           : <Run documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} onStart={() => { if (latest.current === draft) setStale(false); }} />}
