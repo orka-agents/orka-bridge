@@ -579,6 +579,11 @@ async fn old_guest_rejects_without_authority_fallback() {
         ChatState::ObservationLost | ChatState::ContextUnavailable
     ));
     assert!(f.guest.lock().unwrap().posts("tasks").is_empty());
+    assert!(
+        f.vm.try_authoring().is_some(),
+        "Agent-only failure is not active execution"
+    );
+    assert!(chat.new_conversation(id).is_ok());
 }
 
 // Task status is absent until the controller first reconciles the created object.
@@ -710,4 +715,27 @@ fn stop_before_preflight_dispatch_preserves_existing_context() {
         .unwrap();
     runtime.block_on(ready(&chat, id));
     assert_eq!(f.guest.lock().unwrap().posts("tasks").len(), 2);
+}
+
+#[tokio::test]
+async fn valid_events_continue_beyond_sixteen_pages_without_reconnect() {
+    let f = Fixture::new().await;
+    f.guest.lock().unwrap().event_total = 18;
+    let chat = owner();
+    let id = f.folder.document_id();
+    chat.send(
+        f.vm.clone(),
+        f.folder.clone(),
+        "Read all observed activity".into(),
+    )
+    .unwrap();
+    let s = ready(&chat, id).await;
+    assert_eq!(s.versions[0].turns[0].tools.len(), 18);
+    assert!(f
+        .guest
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .any(|r| r.after == Some(17)));
 }

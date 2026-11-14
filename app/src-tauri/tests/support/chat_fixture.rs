@@ -29,6 +29,7 @@ pub struct Guest {
     pub delete_applies: bool,
     pub wrong_events: bool,
     pub bad_cursor: bool,
+    pub event_total: u64,
     pub fail_events: bool,
     pub fail_result: bool,
     pub no_result: bool,
@@ -57,6 +58,7 @@ impl Guest {
             delete_applies: true,
             wrong_events: false,
             bad_cursor: false,
+            event_total: 2,
             fail_events: false,
             fail_result: false,
             no_result: false,
@@ -157,7 +159,7 @@ impl Guest {
             let agent = self.objects[&format!("tasks/{name}")]["spec"]["agentRef"]["name"].clone();
             let after = r.after.unwrap();
             // Deliberately paginated: the latest cursor is ahead of the first page.
-            let events = if after < 2 {
+            let events = if after < self.event_total {
                 vec![
                     json!({"namespace":"orka-system","streamType":"task","streamID":name,
                 "seq":if self.bad_cursor {after} else {after+1},"type":if after==0 {"ToolCallStarted"} else {"ToolCallCompleted"},
@@ -169,7 +171,7 @@ impl Guest {
             return (
                 200,
                 json!({"namespace":"orka-system","streamType":"task","streamID":if self.wrong_events {"foreign"} else {name},
-                "afterSeq":after,"latestSeq":2,"events":events}),
+                "afterSeq":after,"latestSeq":self.event_total,"events":events}),
             );
         }
         if r.path.ends_with("/result") {

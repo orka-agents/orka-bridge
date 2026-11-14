@@ -104,6 +104,16 @@ impl Entry {
         }
     }
 }
+impl Entry {
+    fn finish(&mut self, safe: bool, success: bool) {
+        // Publish completion under the same lock as Stop admission.
+        if success && safe {
+            self.view.state = ChatState::Ready;
+        }
+        self.view.busy = false;
+        self.view.can_send = safe && self.view.state == ChatState::Ready;
+    }
+}
 #[derive(Clone, PartialEq)]
 struct Binding {
     installation: Uuid,
@@ -294,8 +304,7 @@ impl ChatOwner {
             } else {
                 Some(worker.lease)
             };
-            e.view.busy = false;
-            e.view.can_send = worker.safe && e.view.state == ChatState::Ready;
+            e.finish(worker.safe, result.is_ok());
         });
     }
 }
@@ -516,7 +525,7 @@ impl Worker {
         if create && !sent {
             let c = self.context.as_mut().unwrap();
             (if agent { &mut c.agent } else { &mut c.task }).sent = true;
-            self.safe = false;
+            self.safe = agent; // An Agent create alone cannot be executing a turn.
             match self
                 .request(request(
                     ChatMethod::Post,
@@ -707,7 +716,7 @@ impl Worker {
         }
     }
     async fn events(&mut self, task: &ResourceId) -> Result<(), ChatError> {
-        for _ in 0..16 {
+        loop {
             let after = self.context.as_ref().unwrap().cursor;
             let reply = self
                 .request(request(
@@ -781,7 +790,6 @@ impl Worker {
                 return Err(ChatError::Response);
             }
         }
-        Err(ChatError::Response)
     }
     async fn session(&mut self, deleted: bool) -> Result<bool, ChatError> {
         let c = self.context.as_ref().unwrap();
@@ -876,5 +884,27 @@ fn request(method: ChatMethod, path: &str, body: Option<Value>, after: Option<u6
         path: path.into(),
         after,
         body,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn completion_overrides_late_stop_without_erasing_interruption_notice() {
+        let mut entry = Entry::new(DocumentId::SAMPLE);
+        entry.view.busy = true;
+        entry.view.state = ChatState::RequestingStop;
+        entry.view.versions.push(ChatVersion {
+            turns: vec![ChatTurn {
+                termination_unconfirmed: true,
+                ..ChatTurn::default()
+            }],
+        });
+        entry.finish(true, true);
+        assert_eq!(entry.view.state, ChatState::Ready);
+        assert!(entry.view.can_send);
+        assert!(!entry.view.busy);
+        assert!(entry.view.versions[0].turns[0].termination_unconfirmed);
     }
 }
