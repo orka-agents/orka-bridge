@@ -82,8 +82,15 @@ loop or UI, and do not update an installed image.
 The serving Hello advertises optional `runCleanup: true`; Early never does.
 Omission means unsupported. The native host must not send the new action to an
 older guest: unknown actions can close that guest's strict control channel.
-Use a rebuilt guest image with the matching app; this does not update image pins
-or installed images. Older apps cannot consume the new guest's Hello field.
+Use a rebuilt guest image with the matching app. Older apps reject the new guest's
+Hello field and fail boot. This does not update image pins or installed images:
+cleanup remains inactive in shipped builds until a compatible guest is pinned.
+
+After a local Run returns, the native host sweeps superseded recorded UIDs while
+still holding authoring admission and its client. Every retained result keeps its
+Agent; Tasks and answers remain. A rotating cursor tries at most eight candidates,
+starting calls for up to five seconds per sweep. An in-flight guest check has its
+own five-second budget, so this is not a hard five-second host limit.
 
 The physical-host-only `cleanupRunAgent` action accepts only a recorded Agent
 `uid` (nonempty, at most 64 bytes), not a name or namespace. The native caller

@@ -315,6 +315,44 @@ async fn sweep_removes_only_superseded_agents_and_keeps_reports_even_when_cleanu
     }
 }
 
+#[tokio::test]
+async fn blocked_cleanup_candidates_do_not_starve_later_recorded_agents() {
+    let (vm, posts, _) = fixture_with_cleanup(false, false, false, Some(false)).await;
+    let home = tempfile::tempdir().unwrap();
+    let root = Some(home.path().join("data"));
+    let installation = vm.with_client(|id, _| id).await.unwrap();
+    let history = bridge_engine::local_results::LocalResults::new(root.clone());
+    for index in 0..10 {
+        history.record(serde_json::from_value(json!({
+            "installation": installation, "documentId": bridge_engine::agent_folder::DocumentId::SAMPLE,
+            "source": SnapshotId::of(b"a", b"b"), "namespace": "orka-system",
+            "agentName": "display-only", "agentUid": format!("queued-{index}"),
+            "observedAt": 1, "state": "unknown", "report": null
+        })).unwrap()).unwrap();
+    }
+    let run = ExampleRun::with_history_root(
+        tokio::runtime::Handle::current(),
+        true,
+        Arc::new(AgentFolder::new(Some(home.path().into()))),
+        root,
+    );
+    run.start(vm.clone());
+    assert_eq!(finished(&run, &vm).await.state, RunState::Complete);
+    assert!(!posts
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|v| v["cleanupUid"] == "queued-8"));
+    run.start(vm.clone());
+    assert_eq!(finished(&run, &vm).await.state, RunState::Complete);
+    assert!(posts
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|v| v["cleanupUid"] == "queued-8"));
+    vm.shutdown().await.unwrap();
+}
+
 const ANSWER: &str = "cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918";
 struct Channel {
     input: std::io::Cursor<Vec<u8>>,
