@@ -122,6 +122,8 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     }
     Thread.sleep(forTimeInterval: 1)
 }
+// A native frame can appear before WebKit has painted the controls.
+waitForButton("Connect the AI")
 // A running VM is not completed setup: its local row offers the current AI action.
 var rows = try capture("local-places-wide", ["Choose where agents run", "This computer", "Connect the AI"])
 require(enabledButton("Connect the AI") != nil && enabledButton("Manage") == nil && enabledButton("Set up") == nil,
@@ -233,7 +235,7 @@ func nativeResultTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
-            (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected)),
+            (text == expected || (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected))),
             let bounds = nativeBounds(element) else { return false }
         return window()!.1.contains(bounds)
     }
