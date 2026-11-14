@@ -80,7 +80,7 @@ $vmData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ai.o
 if (Test-Path $data) { throw "Expected fresh hosted-CI application profile: $data (will not erase it)" }
 if (!(Test-Path $env:BRIDGE_DEV_IMAGE_DIR -PathType Container) -or @(Get-ChildItem -Force $env:BRIDGE_DEV_IMAGE_DIR).Count) { throw 'Expected empty image source directory' }
 if (Get-Process -Name orka-bridge -ErrorAction SilentlyContinue) { throw 'Bridge is already running' }
-$desktop = [System.Windows.Automation.AutomationElement]::RootElement
+$desktop = $null
 $children = [System.Windows.Automation.TreeScope]::Descendants
 function Wait-For([string]$Message, [scriptblock]$Predicate) {
     for ($i = 0; $i -lt 100; $i++) {
@@ -142,7 +142,9 @@ function Start-Bridge {
         # A visible frame does not mean WebView2 or native setup has finished.
         # Let both complete before accessibility queries enter the app's STA.
         if (!(Test-Path $script:startupLog)) { return }
-        $startup = [IO.File]::ReadAllText($script:startupLog)
+        $stream = [IO.File]::Open($script:startupLog, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+        $reader = [IO.StreamReader]::new($stream)
+        try { $startup = $reader.ReadToEnd() } finally { $reader.Dispose() }
         if (!$startup.Contains('bridge-startup: ready') -or !$startup.Contains('bridge-startup: page Finished')) { return }
         $h = [IntPtr]::Zero
         # $null becomes an empty C# string; NullString passes a native null class.
@@ -152,6 +154,7 @@ function Start-Bridge {
             if ($owner -eq $script:app.Id -and [NativeWalk]::IsWindowVisible($h)) { return $h }
         }
     }
+    $script:desktop = [System.Windows.Automation.AutomationElement]::RootElement
     $script:window = [System.Windows.Automation.AutomationElement]::FromHandle($script:hwnd)
     [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
 }
