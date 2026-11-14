@@ -13,47 +13,87 @@ test('remove is explicit, excludes duplicates and permits connecting again', asy
   invoke.mockResolvedValue({ ready: true });
   render(<Model enabled onState={onState} />);
   expect(invoke).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   await screen.findByText(/Connected with GitHub Copilot/);
+  expect(screen.getByRole('status').textContent).toBe('Connected with GitHub Copilot.');
+  expect(screen.queryByText(/Use GitHub Copilot with GitHub CLI/)).toBeNull();
+  expect(screen.queryByText(/Your sign-in is shared only/)).toBeNull();
   let complete!: (value: unknown) => void;
   invoke.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
-  const remove = screen.getByRole('button', { name: 'Remove sign-in' });
-  fireEvent.click(remove); fireEvent.click(remove);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  expect(screen.getByRole('group', { name: 'Remove sign-in confirmation' }).textContent).toContain('GitHub CLI stays signed in');
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_remove_model')).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_remove_model')).toHaveLength(0);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  const confirm = screen.getByRole('button', { name: 'Remove sign-in' });
+  fireEvent.click(confirm); fireEvent.click(confirm);
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_remove_model')).toEqual([['setup_remove_model']]);
   expect(screen.queryByText(/Connected with GitHub Copilot/)).toBeNull();
   await act(async () => { complete({ ready: false }); });
   expect(screen.getAllByText(/GitHub CLI stays signed in/).length).toBeGreaterThan(0);
   expect(screen.getByRole('button', { name: 'Connect the AI' }).hasAttribute('disabled')).toBe(false);
   expect(onState).toHaveBeenLastCalledWith('idle');
+  expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
 });
-test('remove is available before connecting and after connection failure, and never echoes raw failures', async () => {
+test('uncertain connection failure retains explicit cleanup without echoing raw failures', async () => {
   invoke.mockRejectedValue({ kind: 'modelConnect', message: 'synthetic-private-token' });
   const view = render(<Model enabled />);
-  expect(screen.getByRole('button', { name: 'Remove sign-in' }).hasAttribute('disabled')).toBe(false);
+  expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   await screen.findByRole('alert');
+  view.rerender(<Model enabled={false} />);
+  expect(screen.getByRole('button', { name: 'Remove sign-in' }).hasAttribute('disabled')).toBe(true);
+  view.rerender(<Model enabled />);
   invoke.mockRejectedValue({ kind: 'invented', message: 'synthetic-private-token' });
   fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
   await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('could not confirm sign-in removal'));
+  expect(screen.getByRole('alert').textContent).not.toContain('Remove sign-in again');
   expect(document.body.textContent).not.toContain('synthetic-private-token');
   expect(screen.queryByText(/no longer has a saved sign-in/)).toBeNull();
   view.rerender(<Model enabled paused />);
-  expect(screen.getByRole('button', { name: 'Remove sign-in' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Retry removal' }).hasAttribute('disabled')).toBe(true);
 });
 test('failed removal retries cleanup rather than Connect and copies its own operation', async () => {
   const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
   invoke.mockRejectedValue({ kind: 'modelStore', native: { call: 'CredDeleteW', code: 5 }, message: 'SECRET' });
+  invoke.mockResolvedValueOnce({ ready: true });
   render(<Model enabled />);
+  await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText(/Connected with GitHub Copilot/);
   await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
-  expect((await screen.findByRole('alert')).textContent).toContain('Remove sign-in again');
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
+  await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  expect((await screen.findByRole('alert')).textContent).toContain('Retry removal');
+  expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Retry removal' }).className).toContain('workspace-primary');
   await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
   expect(copy.mock.calls[0][0]).toBe('Bridge AI connection\nOperation: Removing sign-in\nCategory: modelStore\nOS code: 5');
   invoke.mockResolvedValue({ ready: false });
-  await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  await user.click(screen.getByRole('button', { name: 'Retry removal' }));
   await screen.findByText(/no longer has a saved sign-in/);
+  expect(screen.getByRole('button', { name: 'Connect the AI' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
+  expect(screen.queryByText(/Connected with GitHub Copilot/)).toBeNull();
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_remove_model')).toHaveLength(2);
-  expect(invoke.mock.calls.some(([cmd]) => cmd === 'setup_connect_model')).toBe(false);
+  expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_connect_model')).toHaveLength(1);
   expect(document.body.textContent).not.toContain('SECRET');
+});
+test.each(['paused', 'locked'])('removal confirmation cannot bypass the %s credential gate', async gate => {
+  invoke.mockResolvedValue({ ready: false });
+  invoke.mockResolvedValueOnce({ ready: true });
+  const view = render(<Model enabled />);
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText(/Connected with GitHub Copilot/);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  view.rerender(<Model enabled={gate !== 'locked'} paused={gate === 'paused'} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
+  // Cancel remains harmless even while the credential operation is blocked.
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
 });
 test('locked model cannot invoke credentials', () => {
   render(<Model enabled={false} />);
@@ -73,7 +113,7 @@ test('explicit sign-in uses no renderer arguments, excludes duplicate clicks and
   await act(async () => { complete({ ready: true }); });
   expect(screen.getByText('Connected with GitHub Copilot.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Model connected' })).toBeNull();
-  expect(screen.getByText('Connected').closest('button')).toBeNull();
+  expect(screen.getByText('Connected with GitHub Copilot.').closest('button')).toBeNull();
   expect(screen.queryByText(/inference/)).toBeNull();
   expect(screen.queryByText(/run the example/)).toBeNull();
 });
@@ -190,7 +230,7 @@ test('a choice while the workspace is starting is queued without any credential 
   const onState = vi.fn();
   render(<Model enabled={false} queueable onState={onState} />);
   expect(screen.getByRole('heading', { name: 'Connect the AI' })).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Remove sign-in' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect(invoke).not.toHaveBeenCalled();
   expect(screen.getByText('Queued').closest('button')).toBeNull();
@@ -260,31 +300,44 @@ test('a failed queued connection is not retried automatically', async () => {
   expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
 });
 
-test('keyboard removal keeps focus with the operation and returns it to Remove sign-in on failure and success', async () => {
+test('keyboard removal focuses Cancel, its operation, primary retry and then Connect without redundant confirmation', async () => {
   let settle!: (value: { ok: boolean }) => void;
   invoke.mockImplementation(() => new Promise((resolve, reject) => { settle = ({ ok }) => ok ? resolve({ ready: false }) : reject({ kind: 'modelStore' }); }));
+  invoke.mockResolvedValueOnce({ ready: true });
   const user = userEvent.setup(); render(<Model enabled />);
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText(/Connected with GitHub Copilot/);
   const remove = screen.getByRole('button', { name: 'Remove sign-in' });
   remove.focus(); await user.keyboard('{Enter}');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }));
+  await user.keyboard('{Enter}');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove sign-in' }));
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
+  await user.keyboard('{Enter}');
+  await user.tab(); await user.keyboard('{Enter}');
   expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
   expect(document.activeElement).not.toBe(document.body);
   expect(document.activeElement).toBe(screen.getByText('Removing sign-in…').closest('[tabindex="-1"]'));
   await act(async () => settle({ ok: false }));
   await screen.findByRole('alert');
-  // Failed removal retries cleanup, so focus must land on Remove sign-in, never on Connect's retry.
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove sign-in' }));
-  expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Connect the AI' }));
+  // Failed removal keeps the confirmed cleanup as the primary action, not Connect.
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Retry removal' }));
+  expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
   await user.keyboard('{Enter}');
   expect(invoke.mock.calls.filter(([cmd]) => cmd === 'setup_remove_model')).toHaveLength(2);
   expect(document.activeElement).not.toBe(document.body);
   await act(async () => settle({ ok: true }));
   await screen.findByText(/no longer has a saved sign-in/);
-  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove sign-in' }));
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Connect the AI' }));
 });
 
 test('a mouse-started removal does not steal keyboard focus', async () => {
   invoke.mockResolvedValue({ ready: false });
+  invoke.mockResolvedValueOnce({ ready: true });
   render(<Model enabled />);
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText(/Connected with GitHub Copilot/);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
   fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
   await screen.findByText(/no longer has a saved sign-in/);
   expect(document.activeElement).toBe(document.body);
@@ -329,13 +382,17 @@ test('a settled connection does not pull focus from another control, on success 
 test('a pending removal does not pull focus from another control once it settles', async () => {
   let settle!: (ok: boolean) => void;
   invoke.mockImplementation(() => new Promise((resolve, reject) => { settle = ok => ok ? resolve({ ready: false }) : reject({ kind: 'modelStore' }); }));
+  invoke.mockResolvedValueOnce({ ready: true });
   const user = userEvent.setup(); render(withNeighbour({ enabled: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText(/Connected with GitHub Copilot/);
   screen.getByRole('button', { name: 'Remove sign-in' }).focus(); await user.keyboard('{Enter}');
+  await user.tab(); await user.keyboard('{Enter}');
   neighbour().focus();
   await act(async () => settle(false));
   await screen.findByRole('alert');
   expect(document.activeElement).toBe(neighbour());
-  screen.getByRole('button', { name: 'Remove sign-in' }).focus(); await user.keyboard('{Enter}');
+  screen.getByRole('button', { name: 'Retry removal' }).focus(); await user.keyboard('{Enter}');
   neighbour().focus();
   await act(async () => settle(true));
   await screen.findByText(/no longer has a saved sign-in/);

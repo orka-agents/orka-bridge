@@ -46,8 +46,8 @@ test('local readiness never enables unconfirmed remote checks, and changing plac
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
+  await user.click(await screen.findByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Add a place' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
   await screen.findByText('Orka found');
   await user.click(screen.getByRole('button', { name: 'Designer' }));
@@ -95,8 +95,8 @@ test('local results remain explicitly local after confirming cluster access', as
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByText('1 of 1 tests passing', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Add a place' }));
   await screen.findByRole('combobox', { name: 'kubectl context' }); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   await screen.findAllByText('Access confirmed');
@@ -115,8 +115,8 @@ test('local model acknowledgement survives a cluster round trip', async () => {
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await screen.findByText(/Connected with GitHub Copilot/);
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Add a place' }));
   await screen.findByRole('combobox', { name: 'kubectl context' });
   await user.click(screen.getByRole('button', { name: 'Back to places' }));
   await openLocalSetup(user);
@@ -139,8 +139,8 @@ test('local-result observation continues while remote access is unconfirmed', as
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByText('Running tests…', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Add a place' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
   await screen.findByText('Orka found');
   complete = true;

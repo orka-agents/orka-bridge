@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import mark from './assets/orka-mark.svg';
 import Setup from './setup/Setup';
-import { useFirstTest } from './setup/first-test';
+import { firstTestPending, useFirstTest } from './setup/first-test';
 import Example from './designer/Example';
 import Overview from './overview/Overview';
 import { SAMPLE_DOCUMENT_ID } from './designer/agent-api';
@@ -77,11 +77,12 @@ export default function App() {
   const [model, setModel] = useState<ModelState>('idle');
   const [catalogEpoch, setCatalogEpoch] = useState(0);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
+  const [workspaceStopping, setWorkspaceStopping] = useState(false);
   const [localSetupView, setLocalSetupView] = useState(false);
   const catalogContext = useRef('');
   const observeModel = useCallback((value: ModelState) => { setModel(value); setCatalogEpoch(epoch => epoch + 1); }, []);
-  const observeWorkspaceAction = useCallback((pending: boolean) => {
-    setWorkspaceBusy(pending);
+  const observeWorkspaceAction = useCallback((pending: boolean, stopping = false) => {
+    setWorkspaceBusy(pending); setWorkspaceStopping(pending && stopping);
     if (pending) setCatalogEpoch(epoch => epoch + 1);
   }, []);
   const choosePlace = useCallback((value: SelectedPlace) => { setPlace(value); setCatalogEpoch(epoch => epoch + 1); }, []);
@@ -159,9 +160,9 @@ export default function App() {
     : !sample || sample.state === 'unknown' ? 'unknown' : sample.state === 'running' ? 'running' : sample.state === 'complete' ? sample.report?.verdict : undefined
     : firstTest;
   // Tab, footer and the Setup card share this derivation. Native selection, not the default radio, names the host.
-  const initialAutomatic = firstTest === 'running';
+  const initialAutomatic = firstTest === 'running' || (model === 'connected' && firstTestPending() && (!sample || sample.state === 'idle'));
   const firstTestResult = sampleSource !== null && sample?.report ? { failed: sample.report.cases.filter(check => check.verdict === 'failed').length } : undefined;
-  const view = setupView(setup, { checking, model, check: firstCheck, initialAutomatic });
+  const view = setupView(setup, { checking, stopping: workspaceStopping, model, check: firstCheck, initialAutomatic });
   const { line: setupLine, detail, tone: hostTone } = view;
   const workspaceReady = setup?.localVm === 'ready';
   const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
@@ -185,6 +186,10 @@ export default function App() {
     if (exampleState === 'failed') { setExampleAttempt(value => value + 1); setExampleState('loading'); }
     setDocumentId(id); setExampleOpen(true); setPage('Designer');
   };
+  const footer = [
+    remote ? place.target ? `Cluster: ${place.target.context_name}` : 'Choose a cluster' : welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' || setup?.model === 'locked' && setup?.localVm === 'ready' ? hostDetail : setupLine,
+    exampleState === 'loaded' ? { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState] : undefined,
+  ].filter(Boolean);
   const checkFirstTest = () => {
     setSampleCheck(value => value + 1);
     // Retry an unreadable source through Designer's existing guarded sample-open path.
@@ -241,9 +246,7 @@ export default function App() {
         </section>}
       </main>
       <footer className="status-bar">
-        {!remote && <span>{welcome ? 'Nothing is set up yet' : !view.done ? setupLine : undefined}</span>}
-        {!remote && !welcome && hostDetail !== setupLine && <span>{hostDetail}</span>}
-        {exampleState === 'loaded' && <><span aria-hidden="true">·</span><span aria-live="polite" aria-atomic="true">{{ saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState]}</span></>}
+        {footer.map((part, index) => <span key={index}>{index > 0 && <span aria-hidden="true"> · </span>}<span aria-live={index > 0 ? 'polite' : undefined}>{part}</span></span>)}
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
           page !== 'Clusters' || !localSetupView ? `Local workspace: ${hostDetail === setupLine ? setupLine : `${setupLine} · ${hostDetail}`}` : undefined,

@@ -1,25 +1,21 @@
 import { StatusPill } from '../components/DesignSystem';
-import type { ModelState } from '../setup/Model';
+import type { SetupView } from '../setup/progress';
 import type { SetupStatus } from '../setup/state';
 import type { ClusterPlaceSnapshot, SelectedPlace } from './api';
 import type { Place } from '../overview/api';
 import './clusters.css';
 
-export default function Places({ snapshot, unavailable, status, model, place, onLocal, onCluster }: {
-  snapshot?: ClusterPlaceSnapshot; unavailable: boolean; status?: SetupStatus; model: ModelState; place: SelectedPlace;
+export default function Places({ snapshot, unavailable, status, view, place, onLocal, onCluster }: {
+  snapshot?: ClusterPlaceSnapshot; unavailable: boolean; status?: SetupStatus; view: SetupView; place: SelectedPlace;
   onLocal: () => void; onCluster: (place: Place, selected: boolean) => void;
 }) {
-  const ready = status?.localVm === 'ready';
   const started = status?.selected === 'localVm';
-  const busy = ['preparing', 'installing', 'starting', 'closing'].includes(status?.localVm ?? '');
-  const localLabel = !status ? 'Status unavailable' : ready ? 'Running' : status?.localVm === 'failed' ? 'Needs you' : status?.localVm === 'closed' ? 'Workspace stopped' : status?.localVm === 'cancelled' ? 'Setup paused' : status?.localVm === 'notIntegrated' ? 'Workspace unavailable' : busy ? status?.localVm === 'closing' ? 'Stopping workspace' : 'Setup in progress' : 'Not set up';
-  const action = !status ? 'View details' : ready ? 'Manage' : started ? 'Continue setup' : 'Set up';
   return <div className="places-list">
     <section className="card place-row" aria-label="This computer">
       <span className="icon-tile" aria-hidden="true"><svg className="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></svg></span>
-      <div className="place-summary"><h2>This computer</h2><p>{!status ? 'Workspace status could not be read' : ready ? 'Workspace running' : started ? 'Workspace setup' : 'A workspace on this computer'}</p><p className="muted">{!status ? 'AI status unknown' : model === 'connected' ? 'AI connected' : model === 'queued' ? 'AI connection queued' : 'AI not connected'}</p></div>
-      <StatusPill state={ready ? 'passed' : status?.localVm === 'failed' ? 'needs-you' : busy ? 'running' : 'not-started'}>{localLabel}</StatusPill>
-      <button type="button" className="workspace-secondary" onClick={onLocal}>{action}</button>
+      <div className="place-summary"><h2>This computer</h2><p>{!status ? 'Workspace status could not be read' : started ? view.detail : 'A workspace on this computer'}</p></div>
+      <StatusPill state={view.status}>{view.line}</StatusPill>
+      <button type="button" className="workspace-secondary" onClick={onLocal}>{!status ? 'View details' : view.action}</button>
     </section>
     {snapshot?.places.map(item => {
       const selected = place.kind === 'cluster' && !!place.target && snapshot.selectedKey === item.key;

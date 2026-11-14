@@ -37,7 +37,7 @@ test('Check again replaces an in-flight sample observation without accepting its
   old({ ...unknown, state: 'running' });
   await new Promise(resolve => setTimeout(resolve, 50));
   expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
-  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toContain('Result unknown');
+  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')?.textContent).toContain('Result unknown');
   expect(ipc.mock.calls.some(([command]) => command === 'agent_run')).toBe(false);
 });
 
@@ -59,8 +59,9 @@ test.each(['unavailable', 'other', 'sample'] as const)('setup keeps %s Run evide
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent)
+  if (kind === 'sample') await user.click(screen.getByText('Completed setup steps', { selector: 'summary' }));
+  await waitFor(() => expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')?.textContent)
     .toContain({ unavailable: 'Result unknown', other: 'Needs you', sample: 'Passed' }[kind]));
   const navigation = within(screen.getByRole('navigation'));
-  expect(navigation.getByText(kind === 'other' ? 'Setting up, step 5 of 5' : 'This computer ready')).toBeTruthy();
+  expect(navigation.getByText({ unavailable: 'Test result unknown', other: 'Local cluster running', sample: 'This computer ready' }[kind])).toBeTruthy();
 });

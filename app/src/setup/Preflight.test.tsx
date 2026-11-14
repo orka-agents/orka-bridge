@@ -38,6 +38,8 @@ test('insufficient installed memory blocks preparation, explains RAM, and can be
   expect(memory.textContent).toMatch(/Closing apps does not increase installed memory/);
   expect(memory.textContent).toMatch(/cluster/);
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
+  expect(screen.getByText('Fix the computer requirements above before continuing.')).toBeTruthy();
+  expect(memory.querySelector('.status-failed')).toBeTruthy();
   update(ready);
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));
@@ -73,6 +75,8 @@ test.each([null, { ...ready, extra: 'SECRET_MARKER' }, { ...ready, requiredMemor
   expect(await screen.findAllByText(/Couldn't check/)).toHaveLength(2);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
+  expect(screen.getByRole('button', { name: 'Check again' }).className).toBe('workspace-primary');
+  expect(screen.getByRole('button', { name: 'Continue' }).className).toBe('workspace-secondary');
 });
 
 test('Mac unsupported virtualization explains platform support without Windows help', async () => {

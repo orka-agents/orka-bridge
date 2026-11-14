@@ -63,7 +63,7 @@ test('an unreadable workspace status stays unknown while retained places remain 
   const local = within(row('This computer'));
   expect(local.queryByText('Not set up')).toBeNull();
   expect(local.queryByText('AI not connected')).toBeNull();
-  expect(local.getByText('Status unavailable')).toBeTruthy();
+  expect(local.getByText('Workspace unavailable')).toBeTruthy();
   expect(local.getByRole('button', { name: 'View details' })).toBeTruthy();
   expect(await screen.findByRole('region', { name: 'team-other' })).toBeTruthy();
   expect(screen.queryByText('Reading your places…')).toBeNull();
@@ -206,11 +206,11 @@ test('Back preserves a queued local Model and its one eventual connection while 
   expect(observe).toHaveBeenLastCalledWith({ kind: 'thisComputer' });
   expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Back to places' }));
-  expect(within(row('This computer')).getByText('AI connection queued')).toBeTruthy();
+  expect(within(row('This computer')).getByText('Getting workspace ready', { selector: '.pill' })).toBeTruthy();
   expect(observe).toHaveBeenCalledTimes(1);
   sim.status = { ...sim.status, localVm: 'ready', model: 'available' };
   await act(async () => window.dispatchEvent(new Event('focus')));
-  await within(row('This computer')).findByText('AI connected');
+  await within(row('This computer')).findByText('Local cluster running');
   await user.click(within(row('This computer')).getByRole('button', { name: 'Manage' }));
   expect(screen.getByText('Connected with GitHub Copilot.')).toBeTruthy();
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_connect_model')).toHaveLength(1);

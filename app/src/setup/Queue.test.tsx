@@ -69,13 +69,13 @@ test('a choice during transfer connects exactly once at readiness, with no secon
   expect(connects()).toBe(1);
   await observe(ipc);
   expect(connects()).toBe(1);
-  expect(within(screen.getByRole('contentinfo')).getByText('AI connected')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Local cluster running')).toBeTruthy();
   expect(screen.getAllByRole('button').filter(button => button.hasAttribute('disabled') && /connect|queued|removing/i.test(button.textContent ?? ''))).toEqual([]);
 });
 
 test.each([false, undefined])('a platform without native model support (%s) offers no early choice and never reaches for credentials', async modelSupported => {
   const { ipc, sim, connects } = native('installing', { modelSupported }); render(<App />); await openLocalSetup();
-  await screen.findAllByText('Setting up, step 1 of 5', {}, wait);
+  await screen.findAllByText('Getting workspace ready', {}, wait);
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
   expect(screen.getAllByText('Waiting').length).toBeGreaterThan(0);
   expect(screen.queryByText('Pick any time')).toBeNull();
@@ -112,7 +112,7 @@ test('the hidden Setup keeps polling and finishes an already-submitted intent fr
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   sim.localVm = 'ready'; sim.model = 'available';
   await waitFor(() => expect(connects()).toBe(1), wait);
-  await within(screen.getByRole('contentinfo')).findByText('AI connected', {}, wait);
+  await within(screen.getByRole('contentinfo')).findByText('Local cluster running', {}, wait);
   await settle(); expect(connects()).toBe(1);
 });
 
@@ -159,8 +159,8 @@ test('choosing a cluster clears the held intent even though the view stays mount
   sim.localVm = 'ready';
   await observe(ipc);
   expect(within(screen.getByRole('navigation')).getByText('AI unavailable')).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Choose a cluster, keep this workspace running' }));
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  await user.click(screen.getByRole('button', { name: 'Add a place' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), '00000000-0000-4000-8000-000000000001');
   await screen.findByText('No Orka was found on this context.');
   sim.model = 'available';
@@ -227,8 +227,8 @@ test('an edit marks the first test stale immediately without putting the ready w
   expect(within(screen.getByRole('navigation')).getByText(/tests need running/)).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(within(screen.getByRole('navigation')).queryByText('Setting up, step 5 of 5')).toBeNull();
-  expect(within(screen.getByRole('navigation')).getByText('This computer ready')).toBeTruthy();
-  expect(within(screen.getByRole('region', { name: 'Workspace setup' })).getByText('Needs running')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText('Tests need running')).toBeTruthy();
+  expect(within(screen.getByRole('region', { name: 'Workspace setup' })).getByText('Tests need running')).toBeTruthy();
 });
 
 test('the single host dot is busy blue while connecting or removing, amber when it is the creator\'s move, and green only when complete', async () => {
@@ -242,16 +242,17 @@ test('the single host dot is busy blue while connecting or removing, amber when 
   expect(dots()).toEqual(['busy']);
   expect(screen.getByText('Step 4 of 5').className).toContain('status-running');
   expect(within(screen.getByRole('contentinfo')).getByText('Connecting the AI…')).toBeTruthy();
-  expect(within(screen.getByRole('navigation')).getByText('Setting up, step 4 of 5')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText('Connecting the AI…')).toBeTruthy();
 });
 
-test('removing the sign-in is busy blue and a connected model with no test yet is amber, not green', async () => {
+test('removing the sign-in is busy blue and a connected model with no test evidence is neutral, not green', async () => {
   native('ready', { model: 'available', remove: 'hang' }); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const dots = () => [...document.querySelectorAll('.live-dot')].map(dot => dot.className.replace('live-dot', '').trim());
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await screen.findByText(/Connected with GitHub Copilot/);
-  expect(dots()).toEqual(['needs-you']);
+  expect(dots()).toEqual(['wait']);
   await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  await user.click(within(screen.getByRole('group', { name: 'Remove sign-in confirmation' })).getByRole('button', { name: 'Remove sign-in' }));
   await screen.findByText('Removing sign-in…');
   expect(dots()).toEqual(['busy']);
 });

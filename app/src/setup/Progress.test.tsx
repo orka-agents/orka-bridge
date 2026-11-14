@@ -29,16 +29,16 @@ beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
 test.each([
-  ['stale', undefined, 'Run the test again', 'Needs running', 'needs-you', undefined],
-  ['stale', 1, 'Run the test again', 'Needs running', 'needs-you', undefined],
-  ['unknown', undefined, 'Check again', 'Result unknown', 'not-started', undefined],
-  ['unknown', 1, 'Check again', 'Result unknown', 'not-started', undefined],
-  ['running', undefined, undefined, 'Running test', 'running', undefined],
-  ['passed', 0, 'Open your test result', 'Ready', 'passed', undefined],
-  ['failed', undefined, 'Check again', 'Ready', 'passed', undefined],
-  ['failed', 0, 'Open your test result', 'Ready', 'passed', undefined],
-  ['failed', 1, 'Open your test result', 'Ready', 'passed', '1 test failing'],
-  ['failed', 2, 'Open your test result', 'Ready', 'passed', '2 tests failing'],
+  ['stale', undefined, 'Run the test again', 'Tests need running', 'needs-you', undefined],
+  ['stale', 1, 'Run the test again', 'Tests need running', 'needs-you', undefined],
+  ['unknown', undefined, 'Check again', 'Test result unknown', 'not-started', undefined],
+  ['unknown', 1, 'Check again', 'Test result unknown', 'not-started', undefined],
+  ['running', undefined, undefined, 'Running tests', 'running', undefined],
+  ['passed', 0, 'Open your test result', 'This computer ready', 'passed', undefined],
+  ['failed', undefined, 'Check again', 'Tests failed', 'failed', undefined],
+  ['failed', 0, 'Open your test result', 'Tests failed', 'failed', undefined],
+  ['failed', 1, 'Open your test result', 'Tests failed', 'failed', '1 test failing'],
+  ['failed', 2, 'Open your test result', 'Tests failed', 'failed', '2 tests failing'],
 ] as const)('workspace card separates %s evidence (%s failures) from setup', (firstCheck, count, primary, badge, tone, summary) => {
   render(<SetupProgress status={{ selected: 'localVm', localVm: 'ready', model: 'available' }} modelState="connected"
     firstCheck={firstCheck} firstTestResult={count === undefined ? undefined : { failed: count }}
@@ -81,8 +81,8 @@ test('five steps show native transfer bytes and ETA in one bar, with expandable 
 
 test('tab, footer and card agree on one step index and the model action is available during transfer', async () => {
   native(); render(<App />); await openLocalSetup();
-  expect(await within(screen.getByRole('navigation')).findByText('Setting up, step 1 of 5')).toBeTruthy();
-  expect(within(screen.getByRole('contentinfo')).getByText('Setting up, step 1 of 5')).toBeTruthy();
+  expect(await within(screen.getByRole('navigation')).findByText('Getting workspace ready')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Getting workspace ready')).toBeTruthy();
   expect(screen.getByText('Step 1 of 5')).toBeTruthy();
   expect(document.body.textContent).not.toMatch(/of 4/);
   expect(screen.getByRole('button', { name: 'Connect the AI' }).hasAttribute('disabled')).toBe(false);
@@ -133,9 +133,9 @@ test('the one bar never completes before native ready and is gone once ready', a
   await screen.findByRole('progressbar');
   ready();
   await waitFor(() => expect(screen.queryByRole('progressbar')).toBeNull(), { timeout: 2000 });
-  const rows = within(screen.getByRole('list', { name: 'Setup steps' })).getAllByRole('listitem');
-  expect(rows.slice(0, 3).map(row => row.className)).toEqual(['step-done', 'step-done', 'step-done']);
-  expect(within(screen.getByRole('navigation')).getByText('Setting up, step 4 of 5')).toBeTruthy();
+  const rows = within(screen.getByRole('list', { name: 'Completed setup steps' })).getAllByRole('listitem');
+  expect(rows.map(row => row.className)).toEqual(['step-done', 'step-done', 'step-done']);
+  expect(within(screen.getByRole('navigation')).getByText('Connect the AI')).toBeTruthy();
 });
 
 test('keyboard Cancel then start again calls native retry and keeps the Meet panel', async () => {
@@ -186,7 +186,7 @@ test('setup readiness does not reopen the already editable document', async () =
   await screen.findByRole('textbox', { name: 'Instructions' });
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
   ready();
-  await within(screen.getByRole('contentinfo')).findByText('Choose the AI', {}, { timeout: 2000 });
+  await within(screen.getByRole('contentinfo')).findByText('Connect the AI', {}, { timeout: 2000 });
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: 'File' }));
   expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).readOnly).toBe(false);
@@ -198,7 +198,7 @@ test('an established Designer stays editable when a running workspace later fail
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'File' }));
   const editor = screen.getByRole('textbox', { name: 'Agent file' }); fail();
-  await within(screen.getByRole('contentinfo')).findByText('Setup failed', {}, { timeout: 2000 });
+  await within(screen.getByRole('contentinfo')).findByText("Bridge couldn't establish why the workspace failed.", {}, { timeout: 2000 });
   expect(screen.getByRole('textbox', { name: 'Agent file' })).toBe(editor);
   expect((editor as HTMLTextAreaElement).readOnly).toBe(false);
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_open')).toHaveLength(1);
@@ -223,7 +223,7 @@ test('Designer opens owned editing while the first native setup observation is p
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   expect(ipc.mock.calls.filter(([command]) => command === 'agent_open')).toHaveLength(1);
   observe({ selected: 'localVm', localVm: 'installing', model: 'locked' });
-  await within(screen.getByRole('contentinfo')).findByText('Setting up, step 1 of 5');
+  await within(screen.getByRole('contentinfo')).findByText('Getting workspace ready');
   expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
 });
 
@@ -238,7 +238,7 @@ test('opening Designer while Continue awaits native admission opens editing but 
   expect(ipc.mock.calls.filter(([command]) => command === 'agent_open')).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   started = true; admit({ selected: 'localVm', localVm: 'installing', model: 'locked' });
-  await within(screen.getByRole('contentinfo')).findByText('Setting up, step 1 of 5');
+  await within(screen.getByRole('contentinfo')).findByText('Getting workspace ready');
 });
 
 test('a failed example read is not presented as an endless load', async () => {
@@ -258,8 +258,8 @@ test.each(['running', 'passed', 'failed', 'unknown'] as const)('the last setup s
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('heading', { name: 'web-reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toContain({ running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown' }[result]));
-  if (result === 'running') expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].getAttribute('aria-current')).toBeNull();
+  await waitFor(() => expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toContain({ running: 'Running', passed: 'Passed', failed: 'Failed', unknown: 'Result unknown' }[result]));
+  if (result === 'running') expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.getAttribute('aria-current')).toBeNull();
 });
 
 test('changing workspace and starting again preserves an owned draft after a failed save', async () => {
@@ -271,8 +271,8 @@ test('changing workspace and starting again preserves an owned draft after a fai
   await user.type(editor, 'Retained draft');
   await screen.findByText('Your changes could not be saved. Your draft is still here.');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
+  await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Stop the local cluster' }));
   await openLocalSetup(user);
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   await screen.findByRole('button', { name: 'Cancel' });
@@ -286,8 +286,9 @@ test('the AI step resets after a connected workspace leaves ready', async () => 
   const { fail } = native('ready'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await screen.findByText('Connected with GitHub Copilot.'); fail();
-  await within(screen.getByRole('contentinfo')).findByText('Setup failed', {}, { timeout: 2000 });
-  await waitFor(() => expect(screen.getByRole('list', { name: 'Setup steps' }).children[3].textContent).not.toContain('Connected'));
+  await within(screen.getByRole('contentinfo')).findByText("Bridge couldn't establish why the workspace failed.", {}, { timeout: 2000 });
+  expect(screen.queryByText('Connected', { selector: 'li span' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
 });
 
 test('a delayed Cancel shows pending stop near the top instead of old byte progress', async () => {
@@ -301,7 +302,7 @@ test('a delayed Cancel shows pending stop near the top instead of old byte progr
   await screen.findByRole('button', { name: 'Start again' });
 });
 
-test('model settling during Change cannot strand subsequent Continue actions', async () => {
+test('a delayed Stop cannot strand subsequent Continue actions', async () => {
   native('ready'); let connect!: (value: unknown) => void; let change!: (value: unknown) => void; let selected: 'localVm' | null = 'localVm';
   mockIPC(command => command === 'setup_status' ? { selected, localVm: selected ? 'ready' : 'cancelled', model: selected ? 'available' : 'locked' }
     : command === 'setup_connect_model' ? new Promise(resolve => { connect = resolve; })
@@ -310,11 +311,17 @@ test('model settling during Change cannot strand subsequent Continue actions', a
     : Promise.reject('unavailable'));
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
+  expect(screen.getByRole('button', { name: 'Stop the local cluster' })).toBeTruthy();
   connect({ ready: true }); await screen.findByText('Connected with GitHub Copilot.');
+  await user.click(await screen.findByRole('button', { name: 'Stop the local cluster' }));
+  expect(within(screen.getByRole('navigation')).getByText('Stopping workspace')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Stopping workspace')).toBeTruthy();
+  expect(within(screen.getByRole('region', { name: 'Workspace setup' })).getByText('Stopping workspace').className).toContain('status-running');
+  await user.click(screen.getByRole('button', { name: 'Back to places' }));
+  expect(within(screen.getByRole('region', { name: 'This computer' })).getAllByText('Stopping workspace').some(node => node.className.includes('status-running'))).toBe(true);
+  await openLocalSetup(user);
   selected = null; change({ selected: null, localVm: 'cancelled', model: 'locked' });
-  await screen.findByRole('heading', { name: 'Places for your agents' });
+  await screen.findByRole('heading', { name: 'Set up this computer' });
   await openLocalSetup(user);
   const next = await screen.findByRole('button', { name: 'Continue' });
   expect(next.matches(':disabled')).toBe(false);
@@ -330,22 +337,23 @@ test('Cancel and Start again restore keyboard focus after replacing the action',
   expect(document.activeElement).toBe(screen.getByRole('heading', { name: 'Getting your workspace ready', level: 1 }));
 });
 
-test('keeping the workspace running returns focus to the confirmation invoker', async () => {
-  native('ready'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  const invoker = await screen.findByRole('button', { name: 'Change where agents run' });
-  await user.click(invoker); await user.click(screen.getByRole('button', { name: 'Keep workspace running' }));
-  expect(document.activeElement).toBe(invoker);
+test('a failed Stop retains the selected local cluster and never offers another setup admission', async () => {
+  const { ipc } = native('ready');
+  mockIPC(command => command === 'setup_change_local' ? Promise.reject('lost reply') : ipc(command));
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Stop the local cluster' }));
+  expect(await screen.findByRole('alert')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Continue' })).toBeNull();
+  expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
 });
 
-test('Change where agents run does not stop until confirmed, and returns to chooser', async () => {
+test('Stop is an explicit local-page action and leaves that page ready to restart', async () => {
   const { ipc } = native('ready'); const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(await screen.findByRole('button', { name: 'Change where agents run' }));
   expect(ipc.mock.calls.some(([c]) => c === 'setup_change_local')).toBe(false);
-  await user.click(screen.getByRole('button', { name: 'Keep workspace running' }));
-  expect(ipc.mock.calls.some(([c]) => c === 'setup_change_local')).toBe(false);
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Stop workspace and choose a place' }));
-  expect(await screen.findByRole('heading', { name: 'Places for your agents' })).toBeTruthy();
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await user.click(await screen.findByRole('button', { name: 'Stop the local cluster' }));
+  expect(await screen.findByRole('heading', { name: 'Set up this computer' })).toBeTruthy();
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_change_local')).toHaveLength(1);
 });
 
@@ -382,10 +390,10 @@ test.each([
   ['a failed AI connection', { selected: 'localVm', localVm: 'ready', model: 'available' }, 'failed'],
 ] as const)('a kept passed result is not shown for %s', (_name, status, modelState) => {
   render(<SetupSteps status={status} busy={false} stopping={false} modelState={modelState} firstCheck="passed" onRestart={() => {}} />);
-  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testWaiting');
+  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testWaiting');
 });
 
 test('a passed result is shown only once the workspace is ready and the AI is connected', () => {
   render(<SetupSteps status={{ selected: 'localVm', localVm: 'ready', model: 'available' }} busy={false} stopping={false} modelState="connected" firstCheck="passed" onRestart={() => {}} />);
-  expect(screen.getByRole('list', { name: 'Setup steps' }).children[4].textContent).toBe('Run your first testPassed');
+  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testPassed');
 });
