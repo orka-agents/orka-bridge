@@ -94,7 +94,7 @@ fn creation_uses_shipped_pair_and_commits_it_without_editing_sample() {
     assert_eq!(owner(home.path(), data.path()).selected().unwrap(), id);
     assert_eq!(
         agents.creation_root().unwrap(),
-        home.path().join("Orka/agents").to_str().unwrap()
+        home.path().join("Orka").join("agents").to_str().unwrap()
     );
 }
 

@@ -568,8 +568,8 @@ do {
             event.flags = []; event.post(tap: .cghidEventTap)
         }
     }
-    try capture("new-agent-form", "Designer")
-    clickButton("Create")
+    let creationForm = try capture("new-agent-form", "Designer")
+    clickText("Create", in: creationForm)
     let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/native-helper")
     let agent = folder.appendingPathComponent("native-helper.agent.md")
     let checks = folder.appendingPathComponent("native-helper.agent.test.md")

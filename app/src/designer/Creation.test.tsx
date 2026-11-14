@@ -236,6 +236,39 @@ test.each([false, true])('Overview open exits the form and wins over an in-fligh
   expect(screen.queryByRole('heading', { name: 'helper', level: 1 })).toBeNull();
 });
 
+test('a selector choice replaces New agent queued behind a failed save', async () => {
+  let fail = true;
+  native((command, args) => { if (command === 'agent_save') { if (fail) throw Error('disk full'); return { ...pair, agent: args.content }; } });
+  const user = userEvent.setup(); render(<Example />);
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Instructions' }), { target: { value: 'Keep draft' } });
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  await screen.findByText('Not saved');
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Agent' }), id);
+  fail = false; await user.click(screen.getByRole('button', { name: 'Try saving again' }));
+  expect(await screen.findByRole('heading', { name: 'helper', level: 1 })).toBeTruthy();
+  expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
+});
+
+test('a failed personality digest resumes autosave of earlier instructions', async () => {
+  let reject!: (reason: Error) => void; const writes: string[] = [];
+  vi.stubGlobal('crypto', { subtle: { digest: () => new Promise((_resolve, fail) => { reject = fail; }) } });
+  const agent = '---\nname: web-reader\nmodel: shipped\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  soul:\n    inline: Old personality\n    digest: sha256:old\n---\nRead a page.';
+  native((command, args) => {
+    if (command === 'agent_open') return { ...pair, agent };
+    if (command === 'agent_save') { writes.push(String(args.content)); return { ...pair, agent: args.content }; }
+  });
+  const user = userEvent.setup(); render(<Example />);
+  fireEvent.change(await screen.findByRole('textbox', { name: 'Instructions' }), { target: { value: 'Instructions that must save' } });
+  await user.click(screen.getByText('More settings'));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Personality' }), { target: { value: 'Pending personality' } });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)); });
+  expect(writes).toHaveLength(0);
+  await act(async () => reject(Error('digest failed')));
+  await waitFor(() => expect(writes).toHaveLength(1));
+  expect(writes[0]).toContain('Instructions that must save');
+  expect(writes[0]).toContain('Old personality');
+});
+
 test('Overview offers the same creation form without starting setup', async () => {
   localStorage.setItem('bridge.welcomeSeen.v1', '1'); native();
   const user = userEvent.setup(); render(<App />);
