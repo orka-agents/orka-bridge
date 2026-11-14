@@ -134,10 +134,16 @@ function Capture([string]$Name, [bool]$Menu = $false) {
 }
 function Start-Bridge {
     if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared; refusing to resume a VM' }
-    $script:app = Start-Process $Executable -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log")
+    $script:startupLog = Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log"
+    $script:app = Start-Process $Executable -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError $script:startupLog
     # Process.MainWindowHandle can select Tao's hidden event target. Identify
     # the real app frame by its configured title and this launch's process ID.
-    $script:hwnd = Wait-For 'Main native window did not appear' {
+    $script:hwnd = Wait-For 'Main native page did not finish loading' {
+        # A visible frame does not mean WebView2 or native setup has finished.
+        # Let both complete before accessibility queries enter the app's STA.
+        if (!(Test-Path $script:startupLog)) { return }
+        $startup = [IO.File]::ReadAllText($script:startupLog)
+        if (!$startup.Contains('bridge-startup: ready') -or !$startup.Contains('bridge-startup: page Finished')) { return }
         $h = [IntPtr]::Zero
         # $null becomes an empty C# string; NullString passes a native null class.
         while (($h = [NativeWalk]::FindWindowEx([IntPtr]::Zero, $h, [NullString]::Value, 'Bridge')) -ne [IntPtr]::Zero) {

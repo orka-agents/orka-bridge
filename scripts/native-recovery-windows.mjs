@@ -229,8 +229,24 @@ try {
     await evaluate(`${action}.click()`);
   }
   async function captureActions(theme, size, name) {
-    ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `actions-${theme}-${size}-${name}` }));
     const first = name.startsWith('first-test-');
+    const initialFrame = (await call('Page.getFrameTree')).frameTree.frame;
+    let frameId = initialFrame.id;
+    if (first) {
+      // Replacing a DOM root does not unmount React in older isolated worlds.
+      // Destroy their polling effects before arming another shared one-shot preference.
+      contextId = undefined;
+      const previous = initialFrame.loaderId;
+      await call('Page.reload');
+      await until(async () => {
+        const current = (await call('Page.getFrameTree')).frameTree.frame;
+        if (current.loaderId === previous) return false;
+        frameId = current.id;
+        try { return await evaluate('document.readyState === "complete" && !!document.querySelector(".app-shell")'); }
+        catch { return false; } // The old execution context can disappear during navigation.
+      }, 'fresh page before automatic-test fixture');
+    }
+    ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId, worldName: `actions-${theme}-${size}-${name}` }));
     const places = name.startsWith('places-') || name.startsWith('local-preflight');
     await evaluate(`(() => {
       const pair = ${JSON.stringify(pair)};
@@ -343,7 +359,9 @@ try {
       return;
     }
     const expected = { 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Data disk, up to', 'local-preflight-missing': 'Data disk, up to', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first agentRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster running', 'local-stopped': 'Set up this computer', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings' };
-    await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])})`), `${name} action state`);
+    await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])})`), `${name} action state`).catch(async error => {
+      throw Error(`${error.message}: ${await evaluate('document.body.innerText')}`);
+    });
     if (places) {
       // Count visible controls: hidden local panels stay mounted under Places.
       const probe = await evaluate(`(() => {
