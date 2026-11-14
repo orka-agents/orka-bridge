@@ -186,7 +186,7 @@ impl ExampleRun {
         let owner = self.clone();
         let target = vm.clone();
         self.1.spawn(async move {
-            let _admission = admission;
+            let admission = Arc::new(admission);
             let pair = tokio::task::spawn_blocking(move || {
                 let snapshot = folder.capture().map_err(|_| ())?;
                 if bundled_example {
@@ -219,6 +219,10 @@ impl ExampleRun {
                 let observing = target.clone();
                 if target
                     .with_client(move |installation, client| {
+                        if !observing.authoring_current(&admission) {
+                            worker.fail(id, "session");
+                            return;
+                        }
                         runtime.block_on(worker.execute(id, installation, client, observing, pair))
                     })
                     .await

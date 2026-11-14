@@ -479,6 +479,13 @@ impl LocalVm {
     pub fn try_authoring(&self) -> Option<tokio::sync::OwnedMutexGuard<()>> {
         self.authoring.lock().unwrap().clone().try_lock_owned().ok()
     }
+    /// Reject a captured operation whose admission belongs to an earlier boot.
+    pub fn authoring_current(&self, lease: &tokio::sync::OwnedMutexGuard<()>) -> bool {
+        Arc::ptr_eq(
+            &self.authoring.lock().unwrap(),
+            tokio::sync::OwnedMutexGuard::mutex(lease),
+        )
+    }
     pub fn status(&self) -> LocalVmStatus {
         self.inner.state.lock().unwrap().phase
     }

@@ -66,6 +66,11 @@ async fn new_workspace_admission_is_not_held_by_an_unresolved_old_boot() {
     vm.cancel().await.unwrap();
     ready(&vm).await;
     let current = vm.try_authoring().expect("new boot must recover admission");
+    assert!(
+        !vm.authoring_current(&old),
+        "old work cannot use the new boot"
+    );
+    assert!(vm.authoring_current(&current));
     drop(old);
     assert!(
         vm.try_authoring().is_none(),
