@@ -545,6 +545,15 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         if buttons.count == 1, let bounds = nativeBounds(buttons[0]), !bodyBounds().contains(bounds) {
             scrollMain(Int32((bodyBounds().minY + 32 - bounds.minY).rounded()))
         }
+        // Shared disclosures expose real button semantics. Use their enabled,
+        // visible hit region instead of OCR-ing the decorative chevron as text.
+        if buttons.count == 1, attribute(buttons[0], "AXEnabled") as? Bool == true,
+            let bounds = nativeBounds(buttons[0]), bodyBounds().contains(bounds) {
+            let point = CGPoint(x: bounds.midX, y: bounds.midY)
+            mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+            Thread.sleep(forTimeInterval: 0.5)
+            return
+        }
         let seen = try capture("send-probe", "Designer")
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.

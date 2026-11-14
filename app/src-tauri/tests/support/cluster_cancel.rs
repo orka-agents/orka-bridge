@@ -108,6 +108,7 @@ async fn shutdown_never_initiates_remote_cancel_and_late_cancel_keeps_completed_
 async fn history_cancel_survives_lost_ipc_waiter_and_updates_live_view() {
     let (s, send) = running().await;
     s.owner.stop(&send).await;
+    s.idle_forwards().await;
     *s.api.wire.mode.lock().unwrap() = "hold-history";
     let owner = s.owner.clone();
     let captured = send.clone();

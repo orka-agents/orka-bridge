@@ -419,5 +419,6 @@ async fn cancel_requires_matching_document_and_storage_before_first_write() {
     let view = s.finish(&send).await;
     assert_eq!(cancels(&s), 0);
     assert!(view["storageError"].as_bool().unwrap());
+    assert_eq!(view["cancellation"], "unconfirmed", "{view}");
     assert_ne!(view["report"]["verdict"], "passed");
 }

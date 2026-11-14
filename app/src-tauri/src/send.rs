@@ -730,7 +730,16 @@ impl SendOwner {
                             }),
                         }
                     }
-                    _ => owner.update(id, |v| v.cancellation = None),
+                    Ok((_, None)) => owner.update(id, |v| v.cancellation = None),
+                    Err(error) => owner.update(id, |v| {
+                        // Before submission there may be no record and no write intent.
+                        if error == "notFound" && v.acknowledged.is_empty() && v.pending.is_none() {
+                            v.cancellation = None;
+                        } else {
+                            v.storage_error = true;
+                            v.cancellation = Some(Cancellation::Unconfirmed);
+                        }
+                    }),
                 }
                 owner.inner.lock().unwrap().finish(id, &mut result, true);
             }
