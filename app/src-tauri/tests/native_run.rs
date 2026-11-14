@@ -252,56 +252,6 @@ async fn recovery_reads_only_gets_uses_captured_rules_and_preserves_answer_when_
     );
 }
 
-#[tokio::test]
-async fn direct_http_cancel_posts_exact_uid_and_distinguishes_control_statuses() {
-    for (fault, outcome) in [
-        ("", Cancellation::Requested),
-        ("cancel404", Cancellation::Unconfirmed),
-        ("cancel405", Cancellation::Unsupported),
-        ("cancel409", Cancellation::Confirmed),
-        ("cancel201", Cancellation::Unconfirmed),
-    ] {
-        let fixture = Fixture::start(Behavior {
-            phase: "Running",
-            fault,
-            ..Behavior::default()
-        })
-        .await;
-        let runner = fixture.runner();
-        let pair = ParsedPair::parse(AGENT.as_bytes(), TESTS.as_bytes()).unwrap();
-        let cases = pair.cases().to_vec();
-        let mut resources = Vec::new();
-        let (_tx, stop) = tokio::sync::watch::channel(false);
-        runner
-            .submit_checkpointed(runner.prepare(pair).unwrap(), stop, &mut |event| {
-                if let RunCheckpoint::Acknowledged(r) = event {
-                    resources.push(r);
-                }
-                Ok(())
-            })
-            .await
-            .unwrap();
-        let mut durable = 0;
-        let result = runner
-            .cancel_saved(&mut resources, &cases, &mut |_| {
-                durable += 1;
-                Ok(())
-            })
-            .await
-            .unwrap();
-        assert_eq!(result, outcome, "{fault}");
-        assert_eq!(durable, 1);
-        let wire = fixture.requests.lock().unwrap();
-        let posts: Vec<_> = wire.iter().filter(|(p, _)| p.starts_with("POST")).collect();
-        assert_eq!(posts.len(), 3, "Agent, Task, cancel only");
-        assert!(posts[2].0.starts_with(&format!(
-            "POST /api/v1/tasks/{}/cancel?namespace=sandbox",
-            resources[1].name
-        )));
-        assert_eq!(posts[2].1, json!({"uid":resources[1].uid}));
-    }
-}
-
 // A Cancelled Task is not a failed assertion, in either live or recovered reports.
 #[tokio::test]
 async fn cancelled_phase_has_distinct_verdict_without_assertion_failures() {
@@ -430,22 +380,7 @@ impl Fixture {
                     .push((format!("{method} {path}"), body.clone()));
                 let mut status = 200;
                 let mut response;
-                if method == "POST" && path.split('?').next().unwrap().ends_with("/cancel") {
-                    let route = path.split('?').next().unwrap().trim_end_matches("/cancel");
-                    let task = objects.get_mut(route).unwrap();
-                    assert_eq!(body, json!({"uid":task["metadata"]["uid"]}));
-                    status = match b.fault {
-                        "cancel404" => 404,
-                        "cancel405" => 405,
-                        "cancel409" => 409,
-                        "cancel201" => 201,
-                        _ => 200,
-                    };
-                    if b.fault == "cancel409" {
-                        task["status"]["phase"] = json!("Succeeded");
-                    }
-                    response = json!({"name":task["metadata"]["name"],"namespace":"sandbox","requested":false,"phase":task["status"]["phase"],"message":"discard this caller identity"});
-                } else if method == "POST" {
+                if method == "POST" {
                     let path = path.split('?').next().unwrap();
                     if b.fault == "lost-agent"
                         || (b.fault == "lost-task" && path.ends_with("tasks"))

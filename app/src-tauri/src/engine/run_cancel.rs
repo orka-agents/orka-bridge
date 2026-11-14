@@ -37,9 +37,9 @@ impl NativeRunner<'_> {
                     *task = SavedResource::acknowledged(&ack);
                 }
                 if !task.matches(&value) { return Err(ErrorKind::Identity); }
-                let phase = value["status"]["phase"].as_str().ok_or(ErrorKind::Response)?;
+                let phase = value["status"]["phase"].as_str().unwrap_or("");
                 if matches!(phase,"Succeeded"|"Failed"|"Cancelled") { task.terminal=true; return Ok(true); }
-                if !matches!(phase,"Pending"|"Scheduled"|"Running"|"Finalizing") { return Err(ErrorKind::Response); }
+                if !matches!(phase,""|"Pending"|"Scheduled"|"Running"|"Finalizing") { return Err(ErrorKind::Response); }
                 Ok(false)
             }.await;
             match checked {

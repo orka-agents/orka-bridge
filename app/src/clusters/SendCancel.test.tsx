@@ -67,6 +67,20 @@ test('confirmed cancellation renders cancelled and Not run separately, keeping c
   expect(screen.queryByText(/Stopped watching/)).toBeNull();
 });
 
+test.each([
+  null,
+  { verdict: 'unknown', cases: [passed] },
+  { verdict: 'unknown', cases: [{ ...passed, phase: 'NotRun', answer: null, verdict: 'unknown' }] },
+])('terminal receipts with incomplete results never invent an outcome (%j)', async incomplete => {
+  native({ ...active, state: 'unknown', stage: 'stopped', report: incomplete, cancellation: 'confirmed' }); render(panel());
+  expect(await screen.findByText('Test results could not be confirmed. Check cluster status.')).toBeTruthy();
+  expect(screen.queryByText('Stopped watching')).toBeNull();
+  expect(screen.queryByText('No tests were submitted.')).toBeNull();
+  expect(screen.queryByText('Tests finished before cancellation.')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Check cluster status' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Retry cancellation' })).toBeNull();
+});
+
 test('a completed race retains its passing result without claiming tests were cancelled', async () => {
   native({ ...active, state: 'complete', stage: 'done', report: { verdict: 'passed', cases: [passed] }, cancellation: 'confirmed' }); render(panel());
   expect(await screen.findByText('Tests finished before cancellation.')).toBeTruthy();

@@ -7,7 +7,7 @@ use crate::{
     clusters::{
         commands::{ClusterSession, SendAccess},
         preflight::{CheckRow, CheckStatus},
-        ProviderId,
+        CheckResult, ClusterError, ProviderId,
     },
     engine::run::{
         Cancellation, CaseReport, ErrorKind, NativeRunner, ParsedPair, RunCheckpoint, RunReport,
@@ -82,6 +82,7 @@ pub struct SendStatus {
     pub busy: Option<DocumentRef>,
 }
 struct Active {
+    cancel_requested: bool,
     document: DocumentRef,
     id: SendId,
     stop: watch::Sender<bool>,
@@ -100,6 +101,62 @@ struct Inner {
     active: Option<Active>,
     closed: bool,
 }
+impl Inner {
+    /// Called only while holding the same mutex used to accept cancellation.
+    fn finish(
+        &mut self,
+        id: SendId,
+        result: &mut Option<Result<RunReport, Stage>>,
+        control_finished: bool,
+    ) -> bool {
+        if !control_finished
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.id == id && active.cancel_requested)
+        {
+            return false;
+        }
+        let view = self.views.get_mut(&id).unwrap();
+        match result.take().unwrap() {
+            Ok(report) => {
+                if view.storage_error {
+                    (view.state, view.stage) = (SendState::Unknown, Stage::Done);
+                    // Keep actual failed/unknown check details in memory;
+                    // a storage error must never become a passing result.
+                    view.report = (report.verdict != Verdict::Passed).then_some(report);
+                } else {
+                    (view.state, view.stage) = (
+                        if view
+                            .cancellation
+                            .is_some_and(|c| c != Cancellation::Confirmed)
+                        {
+                            SendState::Unknown
+                        } else {
+                            SendState::Complete
+                        },
+                        Stage::Done,
+                    );
+                    view.report = Some(report);
+                }
+            }
+            Err(stage) => {
+                view.state = SendState::Unknown;
+                if stage == Stage::Stopped {
+                    view.stage = stage;
+                }
+                view.error = Some(stage);
+            }
+        }
+        // Release admission only after the runner and forward were closed.
+        self.active = None;
+
+        true
+    }
+}
+#[cfg(test)]
+#[path = "send_finalize_tests.rs"]
+mod finalize_tests;
 pub struct SendOwner {
     folder: Arc<AgentFolder>,
     session: ClusterSession,
@@ -145,6 +202,13 @@ fn capture(folder: &AgentFolder) -> Result<ParsedPair, ()> {
     Ok(CapturedPair::from_snapshot(snapshot)
         .map_err(drop)?
         .into_pair())
+}
+fn cancel_access_error(error: ClusterError) -> Cancellation {
+    if error == ClusterError::Denied {
+        Cancellation::Denied
+    } else {
+        Cancellation::Unconfirmed
+    }
 }
 fn unix_seconds() -> u64 {
     SystemTime::now()
@@ -252,7 +316,7 @@ impl SendOwner {
         }
         let read = async {
             let (access, reader) = admission;
-            let access = access.ok_or(())?;
+            let access = access.ok_or(Cancellation::Unconfirmed)?;
             let binding = access.binding();
             let saved = &summary.target_uids;
             if binding.service_namespace != saved.service_namespace
@@ -261,16 +325,24 @@ impl SendOwner {
                 || binding.deployment_uid != saved.deployment_uid
                 || binding.watched_namespace != saved.watched_namespace
             {
-                return Err(());
+                return Err(Cancellation::Unconfirmed);
             }
             let kubeconfig = self
                 .session
                 .read_configuration(reader)
                 .await
-                .map_err(drop)?;
+                .map_err(|error| match error.result {
+                    CheckResult::AuthenticationRejected | CheckResult::PermissionDenied => {
+                        Cancellation::Denied
+                    }
+                    _ => Cancellation::Unconfirmed,
+                })?;
             let fresh = access.fresh_client(kubeconfig);
             if cancel {
-                let control = access.cancel_transport(&fresh).await.map_err(drop)?;
+                let control = access
+                    .cancel_transport(&fresh)
+                    .await
+                    .map_err(cancel_access_error)?;
                 let runner = NativeRunner::with_transport(control);
                 let mut saved = details.clone();
                 let result = runner
@@ -283,7 +355,7 @@ impl SendOwner {
                     })
                     .await;
                 runner.close().await;
-                details.cancellation = Some(result.map_err(|_| ())?);
+                details.cancellation = Some(result.map_err(|_| Cancellation::Unconfirmed)?);
                 let task_count = details
                     .resources
                     .iter()
@@ -307,7 +379,10 @@ impl SendOwner {
                     }
                 }
             }
-            let transport = access.read_transport(&fresh).await.map_err(drop)?;
+            let transport = access
+                .read_transport(&fresh)
+                .await
+                .map_err(cancel_access_error)?;
             let runner = NativeRunner::with_transport(transport);
             Ok(runner
                 .recover(
@@ -341,10 +416,10 @@ impl SendOwner {
                     _ => AttemptVerdict::Unknown,
                 };
             }
-            Err(()) => {
+            Err(cancellation) => {
                 details.availability = Some("unavailable".into());
                 if cancel {
-                    details.cancellation = Some(Cancellation::Unconfirmed);
+                    details.cancellation = Some(cancellation);
                 }
             }
         }
@@ -397,6 +472,7 @@ impl SendOwner {
                     .unwrap_or(usize::MAX)
             });
         }
+        details.report = details.report.filter(|report| !report.cases.is_empty());
         self.summary.checkpoint(summary, details.clone())?;
         let view = details.view(id);
         let mut inner = self.inner.lock().unwrap();
@@ -582,6 +658,7 @@ impl SendOwner {
         let (done_tx, done) = watch::channel(false);
         inner.views.insert(id, view.clone());
         inner.active = Some(Active {
+            cancel_requested: false,
             document: folder.document(),
             id,
             stop,
@@ -591,20 +668,24 @@ impl SendOwner {
         let owner = self.clone();
         tokio::spawn(async move {
             let cancellation_access = admission.clone();
-            let mut result = owner
-                .drive(
-                    id,
-                    folder,
-                    admission,
-                    provider,
-                    &expected_source,
-                    &mut stop_rx,
-                )
-                .await;
-            if owner
-                .status(Some(&id.0.to_string()))
-                .is_some_and(|v| v.cancellation == Some(Cancellation::Cancelling))
-            {
+            let mut result = Some(
+                owner
+                    .drive(
+                        id,
+                        folder,
+                        admission,
+                        provider,
+                        &expected_source,
+                        &mut stop_rx,
+                    )
+                    .await,
+            );
+            let finalized = {
+                let mut inner = owner.inner.lock().unwrap();
+                // Accepting an intent and choosing finalization are one atomic decision.
+                inner.finish(id, &mut result, false)
+            };
+            if !finalized {
                 match owner.summary.record(&id.0.to_string()) {
                     Ok((summary, Some(details))) => {
                         match owner
@@ -619,7 +700,7 @@ impl SendOwner {
                         {
                             Ok(view) => {
                                 if let Some(report) = view.report {
-                                    result = Ok(report);
+                                    result = Some(Ok(report));
                                 }
                             }
                             Err(_) => owner.update(id, |v| {
@@ -630,42 +711,8 @@ impl SendOwner {
                     }
                     _ => owner.update(id, |v| v.cancellation = None),
                 }
+                owner.inner.lock().unwrap().finish(id, &mut result, true);
             }
-            let mut inner = owner.inner.lock().unwrap();
-            let view = inner.views.get_mut(&id).unwrap();
-            match result {
-                Ok(report) => {
-                    if view.storage_error {
-                        (view.state, view.stage) = (SendState::Unknown, Stage::Done);
-                        // Keep actual failed/unknown check details in memory;
-                        // a storage error must never become a passing result.
-                        view.report = (report.verdict != Verdict::Passed).then_some(report);
-                    } else {
-                        (view.state, view.stage) = (
-                            if view
-                                .cancellation
-                                .is_some_and(|c| c != Cancellation::Confirmed)
-                            {
-                                SendState::Unknown
-                            } else {
-                                SendState::Complete
-                            },
-                            Stage::Done,
-                        );
-                        view.report = Some(report);
-                    }
-                }
-                Err(stage) => {
-                    view.state = SendState::Unknown;
-                    if stage == Stage::Stopped {
-                        view.stage = stage;
-                    }
-                    view.error = Some(stage);
-                }
-            }
-            // Release admission only after the runner and forward were closed.
-            inner.active = None;
-            drop(inner);
             let _ = done_tx.send(true);
         });
         view
@@ -696,10 +743,16 @@ impl SendOwner {
                 .get(&id)
                 .filter(|v| v.document_id == document)
                 .ok_or("The Send does not belong to this agent.")?;
-            if view.state == SendState::Running && inner.active.as_ref().is_some_and(|a| a.id == id)
+            if view.state == SendState::Running
+                && inner
+                    .active
+                    .as_ref()
+                    .is_some_and(|a| a.id == id && !a.cancel_requested)
             {
+                let active = inner.active.as_mut().unwrap();
+                active.cancel_requested = true;
+                active.halt();
                 inner.views.get_mut(&id).unwrap().cancellation = Some(Cancellation::Cancelling);
-                inner.active.as_ref().unwrap().halt();
             }
         }
         Ok(self.status_document(document))

@@ -20,6 +20,54 @@ pub(super) fn set_cases(s: &Setup, count: usize) {
 }
 
 #[tokio::test]
+async fn control_open_denial_remains_denied_with_unfinished_work() {
+    let (s, send) = running().await;
+    *s.api.forward_status.lock().unwrap() = Some(403);
+    cancel_active(&s, &send).await;
+    let done = s.finish(&send).await;
+    assert_eq!(done["cancellation"], "denied", "{done}");
+    assert_eq!(done["state"], "unknown");
+    assert_eq!(cancels(&s), 0);
+    assert!(s.owner.history_details(&send).unwrap().interrupted);
+}
+
+#[tokio::test]
+async fn newly_created_task_with_missing_or_empty_phase_is_cancelled() {
+    for phase in [None, Some("")] {
+        let (s, send) = running().await;
+        {
+            let mut objects = s.api.wire.objects.lock().unwrap();
+            let task = objects.values_mut().find(|o| o["kind"] == "Task").unwrap();
+            if let Some(phase) = phase {
+                task["status"]["phase"] = json!(phase);
+            } else {
+                task.as_object_mut().unwrap().remove("status");
+            }
+        }
+        cancel_active(&s, &send).await;
+        let done = s.finish(&send).await;
+        assert_eq!(cancels(&s), 1, "{phase:?}: {done}");
+        assert_eq!(done["cancellation"], "confirmed");
+        assert_eq!(done["report"]["verdict"], "cancelled");
+    }
+}
+
+#[tokio::test]
+async fn confirmed_control_with_failed_read_forward_never_exports_an_empty_report() {
+    let (s, send) = running().await;
+    let api = s.api.clone();
+    *s.api.wire.before_cancel.lock().unwrap() = Some(Box::new(move || {
+        *api.forward_status.lock().unwrap() = Some(503);
+    }));
+    cancel_active(&s, &send).await;
+    let done = s.finish(&send).await;
+    assert_eq!(cancels(&s), 1);
+    assert_eq!(done["cancellation"], "confirmed");
+    assert_eq!(done["report"], Value::Null, "{done}");
+    assert!(s.owner.history_details(&send).unwrap().report.is_none());
+}
+
+#[tokio::test]
 async fn cancel_pending_create_adopts_uid_before_post_keeps_answer_and_marks_unsubmitted_not_run() {
     let s = setup().await;
     set_cases(&s, 3);

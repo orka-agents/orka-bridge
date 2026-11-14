@@ -23,12 +23,13 @@ function CancellationNotice({ cancellation, report }: { cancellation?: Cancellat
   if (!cancellation || cancellation === 'cancelling') return null;
   const messages = {
     requested: 'Cancellation requested. Waiting for the cluster.',
-    confirmed: report?.cases.some(c => c.verdict === 'cancelled') ? 'Tests cancelled on the cluster. Completed answers kept.' : report?.cases.every(c => c.phase === 'NotRun') ? 'No tests were submitted.' : 'Tests finished before cancellation.',
+    confirmed: report?.cases.some(c => c.verdict === 'cancelled') ? 'Tests cancelled on the cluster. Completed answers kept.' : report && report.verdict !== 'unknown' && report.cases.length > 0 ? 'Tests finished before cancellation.' : 'Test results could not be confirmed. Check cluster status.',
     unconfirmed: 'Cancellation not confirmed. Work may still be running.',
     denied: 'Cannot cancel with this cluster identity',
     unsupported: 'This Orka cannot cancel tests. Work may still be running.',
   };
-  return <p role="status">{messages[cancellation]}</p>;
+  return <><p role="status">{messages[cancellation]}</p>
+    {cancellation === 'denied' && <p>Work may still be running.</p>}</>;
 }
 const cancellationDetails = 'Orka marked these tests cancelled. Worker cleanup can continue; actions already taken are not undone.';
 function SavedSend({ attempt, revision }: { attempt: AttemptSummary; revision: string }) {
@@ -216,6 +217,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   const cancellation = snapshot?.cancellation;
   const cancelling = controlCancelling || cancellation === 'cancelling';
   const retryCancel = cancellation && cancellation !== 'confirmed' && !running;
+  const checkCancellation = !running && cancellation && (retryCancel || !snapshot?.report || snapshot.report.verdict === 'unknown');
   const samePlace = snapshot?.targetId === target?.id && snapshot?.providerId === providerId;
   // A temporary reload block must not promote cached editor hashes to fresh evidence.
   const resultSource = remote && target && providerId ? checked?.value?.source ?? undefined : source;
@@ -230,7 +232,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   const resultState: Status = outdated ? 'stale' : running || busy || (checkingEnabled && !checked) ? 'running' : uncertain ? 'not-started' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' || snapshot?.error ? 'failed' : reason ? 'needs-you' : 'not-started';
   const stages = { capture: 'Reading your saved files', access: 'Confirming cluster access', preflight: 'Checking the AI connection and tools', storage: 'Saving the Send summary', submit: 'Starting your tests', observe: 'Waiting for answers and evaluating tests', stopped: 'Stopped watching', done: 'Tests finished' };
   return <><section tabIndex={-1} className="send-panel" aria-label="Send and cluster tests" hidden={!visible && !remote && !running}>
-    <LongCard title={visible ? 'Send your agent' : 'Tests on your cluster'} status={<StatusPill state={resultState}>{outdated ? unconfirmed ? 'Revision not confirmed' : undefined : running || resultState === 'running' ? undefined : cancellation && cancellation !== 'confirmed' ? cancellationLabels[cancellation] : uncertain ? snapshot?.stage === 'stopped' ? 'Stopped watching' : 'Result unknown' : resultLabel(snapshot?.report)}</StatusPill>} summary={<>The saved agent and test files go together{snapshot?.model && <> · <code>{snapshot.model}</code></>}{targetName && <> · <code>{targetName}</code></>}. Each Send creates a new agent, kept on the cluster even if a test fails.</>}
+    <LongCard title={visible ? 'Send your agent' : 'Tests on your cluster'} status={<StatusPill state={resultState}>{outdated ? unconfirmed ? 'Revision not confirmed' : undefined : running || resultState === 'running' ? undefined : cancellation && cancellation !== 'confirmed' ? cancellationLabels[cancellation] : uncertain ? snapshot?.stage === 'stopped' && !cancellation ? 'Stopped watching' : 'Result unknown' : resultLabel(snapshot?.report)}</StatusPill>} summary={<>The saved agent and test files go together{snapshot?.model && <> · <code>{snapshot.model}</code></>}{targetName && <> · <code>{targetName}</code></>}. Each Send creates a new agent, kept on the cluster even if a test fails.</>}
       action={<div className="workspace-step-actions">{!running && <button type="button" className="setup-button" disabled={!!reason || busy || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run tests' : 'Run all tests'}</button>}
       {running && <button type="button" className="workspace-secondary" disabled={busy || cancelling} onClick={() => { void mutate('send_cancel'); }}>Cancel tests</button>}
     </div>}>
@@ -263,9 +265,9 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
     {snapshot?.storageError && snapshot.error !== 'storage' && <p role="alert">Bridge could not save this Send. Its saved summary may be missing or unknown.</p>}
     {(running || controlCancelling) && <TestProgress stage={cancelling ? 'Cancelling tests…' : stages[snapshot!.stage]} />}
     <CancellationNotice cancellation={cancelling ? 'cancelling' : cancellation} report={snapshot?.report ?? null} />
-    {retryCancel && <div className="workspace-step-actions">
+    {checkCancellation && <div className="workspace-step-actions">
       <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void control('send_history_check'); }}>Check cluster status</button>
-      <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void control('send_history_cancel'); }}>Retry cancellation</button>
+      {retryCancel && <button type="button" className="workspace-secondary" disabled={busy} onClick={() => { void control('send_history_cancel'); }}>Retry cancellation</button>}
     </div>}
     {snapshot?.stage === 'stopped' && !cancellation && <p role="status">Stopped watching. The cluster may still be running checks.</p>}
     {snapshot?.error && snapshot.stage !== 'stopped' && !cancellation && <p role="alert">{sendErrors[snapshot.error as keyof typeof sendErrors]}</p>}
