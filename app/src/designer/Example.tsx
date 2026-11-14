@@ -28,9 +28,11 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, persistInitia
   const [entries, setEntries] = useState<AgentEntry[]>();
   const [selectionError, setSelectionError] = useState<string>();
   const [selecting, setSelecting] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { if (observedDocument.current !== documentId) { observedDocument.current = documentId; requestDocument(documentId); } }, [documentId, requestDocument]);
   useEffect(() => { if (newAgentRequest) setWantsCreate(true); }, [newAgentRequest]);
-  const handledOpen = useRef(0);
+  const handledOpen = useRef(openDocumentRequest);
   useEffect(() => {
     if (!openDocumentRequest || handledOpen.current === openDocumentRequest) return;
     handledOpen.current = openDocumentRequest;
@@ -118,7 +120,7 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, persistInitia
     const next = requestedDocument;
     setSelecting(true);
     void selectDocument(next).then(() => {
-      if (requestedNow.current !== next) return;
+      if (!mounted.current || requestedNow.current !== next) return;
       // The editor stays writable during IPC. Re-admit after any newer edit is saved.
       if (busy.current || needsCommit.current || pendingSoulCurrent.current || latest.current !== saved.current) return;
       setSelectionNeeded(false); setSelectionError(undefined);
@@ -128,11 +130,11 @@ export default function Example({ documentId = SAMPLE_DOCUMENT_ID, persistInitia
       setLocalRun(undefined); setStale(false); setError(undefined); setSendOpen(false); setSelectionError(undefined);
       onPair?.(undefined, next); onRun?.(undefined, next); setBoundDocument(next); onDocument?.(next);
     }, () => {
-      if (requestedNow.current !== next) return;
+      if (!mounted.current || requestedNow.current !== next) return;
       setSelectionError('Your agent selection could not be saved. Try choosing it again.');
       requestedNow.current = boundDocument; setRequestedDocument(boundDocument); setSelectionNeeded(false);
     })
-      .finally(() => { setSelecting(false); });
+      .finally(() => { if (mounted.current) setSelecting(false); });
   }, [requestedDocument, boundDocument, wantsCreate, selectionNeeded, pendingSoul, saveState, selecting, flush, onPair, onRun, onDocument, onNewAgentHandled]);
   const edit = (value: string, rawFile = false) => {
     const content = rawFile ? value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current) : value;

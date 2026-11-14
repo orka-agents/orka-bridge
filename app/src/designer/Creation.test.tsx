@@ -283,6 +283,26 @@ test.each(['', 'Upper', 'helper'])('Enter validates the name before native creat
   } else { expect(created).toEqual([]); expect(screen.getByRole('textbox', { name: 'Name' })).toBe(input); }
 });
 
+test('a remounted creation does not replay the previously consumed Open request', async () => {
+  const selected: unknown[] = [];
+  native((command, args) => { if (command === 'agent_select') { selected.push(args.documentId); return null; } });
+  render(<Example openDocumentRequest={7} newAgentRequest={1} />);
+  await screen.findByRole('textbox', { name: 'Name' });
+  await waitFor(() => expect(screen.queryByText('Opening your agent…')).toBeNull());
+  expect(selected).toEqual([]);
+});
+
+test('selection completion cannot update the parent after its editor was unmounted', async () => {
+  let finish!: (value: null) => void; const changed = vi.fn();
+  native(command => { if (command === 'agent_select') return new Promise(resolve => { finish = resolve; }); });
+  const view = render(<Example onDocument={changed} />);
+  await screen.findByRole('heading', { name: 'web-reader', level: 1 });
+  view.rerender(<Example documentId={id} onDocument={changed} />);
+  await waitFor(() => expect(finish).toBeDefined());
+  view.unmount(); await act(async () => finish(null));
+  expect(changed).not.toHaveBeenCalled();
+});
+
 test('Overview offers the same creation form without starting setup', async () => {
   localStorage.setItem('bridge.welcomeSeen.v1', '1'); native();
   const user = userEvent.setup(); render(<App />);
