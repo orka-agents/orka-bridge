@@ -324,6 +324,21 @@ test.each([{ check: 'configuration', result: 'unknown' }, { check: 'orkaIdentity
   expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe('');
 });
 
+test('showing context choices does not strand a pending Manage inventory', async () => {
+  const { ipc } = native(); const old = ipc.getMockImplementation()!; const pending = deferred<unknown>();
+  const fresh = { ...primary, stale: false, agents: [{ name: 'reader', namespace: 'agents', uid: 'uid-reader', agentType: null, model: null, tools: [], record: null }] };
+  let reads = 0;
+  mockIPC(command => command === 'overview_places' ? ++reads === 1 ? pending.promise : { places: [fresh], historyState: 'complete', unobserved: [] } : old(command));
+  const user = userEvent.setup(); render(<Host initial={connected} />);
+  await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Manage' }));
+  await screen.findByText('Reading agents…');
+  await user.click(screen.getByRole('button', { name: 'Change context' }));
+  expect(await screen.findByText('reader')).toBeTruthy();
+  await act(async () => pending.resolve({ places: [{ ...primary, agents: [] }], historyState: 'complete', unobserved: [] }));
+  expect(screen.getByText('reader')).toBeTruthy();
+  expect(reads).toBe(2);
+});
+
 test('returning to Add after reconnect replaces obsolete cached context handles', async () => {
   const { ipc } = native(); const old = ipc.getMockImplementation()!;
   const freshContext = { ...context, id: '00000000-0000-4000-8000-000000000099' };

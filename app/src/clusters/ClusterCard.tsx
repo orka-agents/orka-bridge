@@ -113,7 +113,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
       if (live && request === epoch.current) setSummary(inventory?.places.find(p => p.key === key) ?? null);
     });
     return () => { live = false; };
-  }, [active, connected, access, entry, removing]);
+  }, [active, connected, access, entry, removing, changingContext]);
   useEffect(() => {
     if (!active) return;
     if (confirmRemoval) keepCluster.current?.focus();

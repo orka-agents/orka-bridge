@@ -39,7 +39,8 @@ async fn confirmation_persists_check_time_and_duplicate_identity_replaces_withou
     let access = confirmed();
     let key = Place::new(access.binding().clone()).key;
     inventory.remember(access);
-    let checked = inventory.snapshot()[0].observed_at.unwrap();
+    let checked = inventory.snapshot()[0].checked_at.unwrap();
+    assert!(inventory.snapshot()[0].observed_at.is_none());
     assert!(checked > 0);
     inventory.remember(confirmed());
     assert_eq!(inventory.snapshot().len(), 1);
@@ -47,7 +48,8 @@ async fn confirmation_persists_check_time_and_duplicate_identity_replaces_withou
     let rows = restored.refresh().await;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].key, key);
-    assert_eq!(rows[0].observed_at, inventory.snapshot()[0].observed_at);
+    assert_eq!(rows[0].checked_at, inventory.snapshot()[0].checked_at);
+    assert!(rows[0].observed_at.is_none());
     assert!(rows[0].stale);
     assert!(rows[0].agents.is_empty());
     let bytes = std::fs::read_to_string(root.path().join("clusters-v1.json")).unwrap();

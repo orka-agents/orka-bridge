@@ -111,6 +111,15 @@ impl State {
             .expect("inventory generation exhausted");
         self.generation
     }
+    fn start_read(&mut self, key: &str) -> Option<(u64, Arc<RemoteAccess>)> {
+        let generation = self.next_generation();
+        let entry = self.entries.get_mut(key)?;
+        entry.view.stale = true;
+        let access = entry.access.clone()?;
+        // Both Overview and Manage share one latest-request-wins revision per entry.
+        entry.generation = generation;
+        Some((generation, access))
+    }
     fn save(&mut self, excluding: Option<&str>) -> Result<(), &'static str> {
         let places: Vec<_> = self
             .entries
@@ -221,17 +230,17 @@ impl Inventory {
             let _refresh = self.refreshing.lock().await;
             return self.snapshot();
         };
-        let reads: Vec<_> = self
-            .state
-            .lock()
-            .unwrap()
-            .entries
-            .iter_mut()
-            .filter_map(|(key, e)| {
-                e.view.stale = true;
-                e.access.clone().map(|a| (key.clone(), e.generation, a))
-            })
-            .collect();
+        let reads: Vec<_> = {
+            let mut state = self.state.lock().unwrap();
+            let keys: Vec<_> = state.entries.keys().cloned().collect();
+            keys.into_iter()
+                .filter_map(|key| {
+                    state
+                        .start_read(&key)
+                        .map(|(generation, access)| (key, generation, access))
+                })
+                .collect()
+        };
         for (key, generation, access) in reads {
             self.refresh_entry(&key, generation, access).await;
         }
@@ -239,16 +248,7 @@ impl Inventory {
     }
     pub(crate) async fn refresh_one(&self, key: &str) -> Vec<Place> {
         // A selected cluster must not queue behind unrelated Overview inventory reads.
-        let read = self
-            .state
-            .lock()
-            .unwrap()
-            .entries
-            .get_mut(key)
-            .and_then(|e| {
-                e.view.stale = true;
-                e.access.clone().map(|access| (e.generation, access))
-            });
+        let read = self.state.lock().unwrap().start_read(key);
         if let Some((generation, access)) = read {
             self.refresh_entry(key, generation, access).await;
         }
