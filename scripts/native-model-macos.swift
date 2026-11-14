@@ -328,6 +328,10 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
     }
     Thread.sleep(forTimeInterval: 0.3)
     require(enabledButton("Close picker") == nil, "Outside click did not dismiss picker")
+    _ = try seek("More settings", -150)
+    click("More settings", [])
+    _ = try capture("local-disclosure-settings-\(size)", ["More settings", "Description"])
+    click("More settings", [])
 }
 scroll(4000)
 // Match the fixture's known Instructions value, not a label plus a guessed

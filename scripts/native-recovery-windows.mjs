@@ -163,6 +163,7 @@ try {
   const transfer = { phase: 'materializing', bytes: Math.round(1.1 * GiB), totalBytes: Math.round(2.8 * GiB), elapsedMs: 20000, remainingMs: 30000 };
   const startup = elapsedMs => ({ phase: 'starting', bytes: null, totalBytes: null, elapsedMs, remainingMs: null });
   const setupFixtures = [
+    ['setup-failed', 'failed', null, false, "couldn't determine"],
     ['setup-transfer', 'installing', transfer, false, 'Installing, 1.1 GiB of 2.8 GiB'],
     ['setup-transfer-queued', 'installing', transfer, true, 'Connects when the local cluster is ready.'],
     // A valid first observation, then every later read fails: the card must say unavailable, not keep the old bar.
@@ -202,7 +203,8 @@ try {
       await until(() => evaluate(`!![...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI')`), 'queueable model action');
       await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Connect the AI').click()`);
     }
-    await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && [...document.querySelectorAll('.setup-progress')].some(item => item.getClientRects().length)`), `${name} setup progress`);
+    const panel = localVm === 'failed' ? '.workspace-failure' : '.setup-progress';
+    await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && [...document.querySelectorAll(${JSON.stringify(panel)})].some(item => item.getClientRects().length)`), `${name} setup progress`);
     const chrome = await evaluate(`document.querySelector('header').innerText + document.querySelector('footer').innerText`);
     if (/step \d+ of 5|setting up,? step/i.test(chrome)) throw Error(`${name}: chrome repeats a step counter: ${chrome}`);
     if (localVm === 'ready' && !await evaluate(`document.querySelector('.setup-progress .status-description')?.textContent === 'Step 4 of 5' && !!document.querySelector('.setup-progress .pill.status-needs-you') && !document.querySelector('[aria-label="This computer"] .pill.status-passed')`)) throw Error(`${name}: unfinished local setup must remain step 4`);
@@ -216,6 +218,11 @@ try {
       console.log(`Captured native WebView2 renderer fixture: ${theme}/${size}/${name}${suffix}`);
     };
     await shoot('');
+    if (localVm === 'failed') {
+      await evaluate(`document.querySelector('.workspace-failure summary').click()`);
+      await until(() => evaluate(`!!document.querySelector('.workspace-failure summary[aria-expanded="true"]')`), 'expanded recovery details');
+      await shoot('-details');
+    }
     if (size === 'compact') { // The long step history sits below the model action; show it too.
       await evaluate(`document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight`);
       await shoot('-end');
