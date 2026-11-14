@@ -49,11 +49,17 @@ ORKA_READYZ = '/api/v1/namespaces/orka-system/services/http:orka-api:api/proxy/r
 
 
 def refusal(stderr):
-    """kmx's own closing lines without terminal escapes, its confirmation box, or unbounded text."""
-    text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', stderr.decode(errors='replace')[-4096:])
+    """Bounded kmx context and closing lines, without terminal escapes or its confirmation box."""
+    if len(stderr) > 64 * 1024:
+        stderr = stderr[:48 * 1024] + b'\n... stderr omitted ...\n' + stderr[-16 * 1024:]
+    text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', stderr.decode(errors='replace'))
     lines = [''.join(c for c in line if c.isprintable()).strip() for line in text.splitlines()]
     lines = [line for line in lines if line and line[0] not in '\u2502\u256d\u2570\u250c\u2514\u2500']
-    return ' | '.join(lines[-3:])[-512:]
+    joined = ' | '.join(lines)
+    if len(lines) <= 43 and len(joined) <= 8192:
+        return joined
+    # A kind/kubeadm stack can bury the cause far above kmx's closing summary.
+    return ' | '.join(lines[:40])[:6144] + ' | ... | ' + ' | '.join(lines[-3:])[-2039:]
 
 
 def execute(argv, *, env=None, stdin=None, timeout=600):
