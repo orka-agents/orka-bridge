@@ -297,6 +297,27 @@ impl VmClient {
         }
         serde_json::from_slice(&result.stdout).map_err(|_| invalid())
     }
+    /// Native Chat only. Preserve DELETE/404 status for explicit reconciliation.
+    pub fn chat_request(&mut self, request: ChatRequest) -> io::Result<OrkaReply> {
+        if request.validate().is_err() || self.channel.is_none() {
+            return Err(invalid());
+        }
+        let operation = Uuid::new_v4();
+        match self.call(RequestBody::Execute {
+            operation,
+            action: EngineActionWire::OrkaChat { request },
+            snapshot: None,
+        })? {
+            ResultBody::Operation { operation: id, .. } if id == operation => {}
+            ResultBody::Error { .. } => return Err(io::ErrorKind::Unsupported.into()),
+            _ => return Err(invalid()),
+        }
+        let result = self.result(operation)?;
+        if result.exit != 0 {
+            return Err(io::ErrorKind::Unsupported.into());
+        }
+        serde_json::from_slice(&result.stdout).map_err(|_| invalid())
+    }
     /// Trusted native catalog only; no renderer-owned request or target.
     pub fn workspace_catalog(&mut self) -> io::Result<WorkspaceCatalog> {
         let operation = Uuid::new_v4();
