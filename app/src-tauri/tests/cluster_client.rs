@@ -257,7 +257,7 @@ async fn overview_scoped_refresh_does_not_wait_for_unrelated_global_read() {
     });
     until(|| !orka.calls.lock().unwrap().is_empty()).await;
     let healthy = tokio::select! {
-        result = session.overview_one(&key) => reply(result),
+        result = bridge_engine::overview_places::list_one(&session, None, &key) => reply(result)["places"].clone(),
         _ = &mut blocked => panic!("scoped read waited for the unrelated inventory"),
     };
     assert_eq!(healthy.as_array().unwrap().len(), 1);

@@ -116,9 +116,7 @@ async fn overview_places(
         .ok()
         .and_then(Result::ok);
     Ok(match key {
-        Some(key) => {
-            bridge_engine::overview_places::project(session.overview_one(&key).await, history)
-        }
+        Some(key) => bridge_engine::overview_places::list_one(session.inner(), history, &key).await,
         None => bridge_engine::overview_places::list(session.inner(), history).await,
     })
 }

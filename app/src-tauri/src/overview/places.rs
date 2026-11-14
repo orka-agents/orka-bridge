@@ -311,3 +311,10 @@ pub(crate) fn project(mut places: Vec<Place>, history: Option<Vec<AttemptSummary
 pub async fn list(session: &ClusterSession, history: Option<Vec<AttemptSummary>>) -> Places {
     project(session.overview().await, history)
 }
+pub async fn list_one(
+    session: &ClusterSession,
+    history: Option<Vec<AttemptSummary>>,
+    key: &str,
+) -> Places {
+    project(session.overview_one(key).await, history)
+}
