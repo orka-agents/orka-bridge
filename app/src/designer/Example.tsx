@@ -74,6 +74,7 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
   const latest = useRef(''); const saved = useRef(''); const busy = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lineEnding = useRef('\n'); const needsCommit = useRef(false);
+  const [openAttempt, setOpenAttempt] = useState(0);
   useEffect(() => {
     let mounted = true;
     const open = agentCall('agent_open', undefined, boundDocument);
@@ -83,7 +84,7 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
       lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n'; onPair?.(value, boundDocument);
     }, () => { if (mounted) { setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined, boundDocument); } });
     return () => { mounted = false; };
-  }, [onPair, boundDocument]);
+  }, [onPair, boundDocument, openAttempt]);
   useEffect(() => { onSaveState?.(pendingSoul ? 'dirty' : saveState, boundDocument); }, [saveState, pendingSoul, onSaveState, boundDocument]);
   useEffect(() => { onStale?.(stale, boundDocument); }, [stale, onStale, boundDocument]);
 
@@ -189,7 +190,7 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
       </div>
     </div>
     {selectionError && <p role="alert">{selectionError}</p>}
-    {!pair ? error ? <p role="alert">{error}</p> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
+    {!pair ? error ? <div className="designer-file card"><p role="alert">{error}</p><div className="heading-actions"><button type="button" className="shell-button" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div className={`designer-work${remote ? ' designer-remote' : ''}`}>
       <div className="designer-tests card" hidden={remote}>
         {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for your workspace and AI to be ready" title="Wait for your workspace and AI to be ready"><button type="button" className="setup-button" disabled title="Wait for your workspace and AI to be ready">Run tests</button><span className="control-tip" aria-hidden="true">Wait for your workspace and AI to be ready</span></span><p className="muted">Your workspace is getting ready. Connect the AI in Clusters before running a test.</p></div>

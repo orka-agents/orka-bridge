@@ -330,6 +330,29 @@ test('selection completion cannot update the parent after its editor was unmount
   expect(changed).not.toHaveBeenCalled();
 });
 
+test.each([false, true])('ordinary tabs preserve creation after a restored source failure (%s)', async pending => {
+  let missing = true; let finish!: (value: string) => void;
+  native((command, args) => {
+    if (command === 'agent_open' && args.documentId === SAMPLE_DOCUMENT_ID && missing) throw Error('moved');
+    if (command === 'agent_create') return new Promise(resolve => { finish = resolve; });
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await screen.findByText(/folder could not be opened/);
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'helper');
+  if (pending) { await user.click(screen.getByRole('button', { name: 'Create' })); await waitFor(() => expect(finish).toBeDefined()); }
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  expect((screen.getByRole('textbox', { name: 'Name' }) as HTMLInputElement).value).toBe('helper');
+  if (pending) { await act(async () => finish(id)); await screen.findByRole('heading', { name: 'helper', level: 1 }); }
+  else {
+    await user.click(screen.getByRole('button', { name: 'Cancel' })); missing = false;
+    await user.click(screen.getByRole('button', { name: 'Try opening again' }));
+    await screen.findByRole('heading', { name: 'web-reader', level: 1 });
+  }
+});
+
 test('Overview offers the same creation form without starting setup', async () => {
   localStorage.setItem('bridge.welcomeSeen.v1', '1'); native();
   const user = userEvent.setup(); render(<App />);

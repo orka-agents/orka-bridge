@@ -217,7 +217,7 @@ export default function App() {
               aria-label={name} aria-describedby={`tab-status-${name}`}
               aria-current={page === name ? 'page' : undefined}
               onClick={() => {
-                if (name === 'Designer') openDesigner();
+                if (name === 'Designer' && !exampleOpen) openDesigner();
                 else setPage(name);
               }}>
               <span className={`icon-tile tile-${name.toLowerCase()}`}><PageIcon page={name} /></span>
