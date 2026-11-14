@@ -243,10 +243,16 @@ impl From<bridge_engine::setup::ModelSetupState> for ModelReply {
 }
 #[tauri::command]
 async fn setup_connect_model(
+    vendor: Option<bridge_runtime_protocol::ModelVendor>,
     state: tauri::State<'_, Arc<SetupStore>>,
     vm: tauri::State<'_, Arc<LocalVm>>,
 ) -> Result<ModelReply, SetupError> {
-    let model = vm.connect_model(Arc::clone(state.inner())).await?;
+    let model = if let Some(vendor) = vendor {
+        vm.connect_saved_key_model(Arc::clone(state.inner()), vendor)
+            .await?
+    } else {
+        vm.connect_model(Arc::clone(state.inner())).await?
+    };
     Ok(model.into())
 }
 

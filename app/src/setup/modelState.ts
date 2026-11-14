@@ -49,10 +49,10 @@ export function keyFailure(error: ModelFailure, vendor: KeyVendor): string {
 }
 export type ModelFailure = { message: string; category: keyof typeof errors | 'unknown'; codes: number[]; vendor?: KeyVendor };
 export type ModelResult = { ok: true; connection?: ModelConnection } | ({ ok: false } & ModelFailure);
-export const connectModel = () => call('setup_connect_model', true, 'The AI connection could not be completed.');
+export const connectModel = (vendor?: KeyVendor) => call('setup_connect_model', true, 'The AI connection could not be completed.', vendor ? { vendor } : undefined);
 export const removeModel = () => call('setup_remove_model', false, 'Bridge could not confirm sign-in removal. Try Remove sign-in again.');
 export const connectKey = (vendor: KeyVendor, key: string) => call('setup_connect_key', true, 'The AI connection could not be completed.', { vendor, key });
-async function call(command: string, ready: boolean, fallback: string, args?: { vendor: KeyVendor; key: string }): Promise<ModelResult> {
+async function call(command: string, ready: boolean, fallback: string, args?: { vendor: KeyVendor; key?: string }): Promise<ModelResult> {
   if (!isTauri()) return { ok: false, category: 'unknown', codes: [], message: 'AI setup is not available in this preview.' };
   try {
     const value = await (args ? invoke<unknown>(command, args) : invoke<unknown>(command));

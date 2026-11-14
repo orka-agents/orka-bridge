@@ -271,6 +271,31 @@ impl SetupStore {
                 error
             })
     }
+    /// Key-only retry cannot capture a GitHub token when an earlier attempt never saved.
+    pub fn connect_saved_key_model(
+        &self,
+        installation: Uuid,
+        vendor: KeyVendor,
+        client: &mut VmClient,
+        store: &impl CredentialStore,
+    ) -> Result<ModelSetupState, SetupError> {
+        let selection = {
+            let _access = self.access.lock().map_err(|_| unavailable())?;
+            let root = self.root.as_deref().ok_or_else(unavailable)?;
+            let b = read_binding(root)?.ok_or_else(|| SetupError::model("modelKeyInvalid"))?;
+            if b.vendor != Some(vendor) {
+                return Err(SetupError::model("modelAlreadyAssociated"));
+            }
+            b.connection
+                .map(|c| c.selection)
+                .unwrap_or_else(|| default_selection(Some(vendor)))
+        };
+        self.connect_model(installation, selection, client, store)
+            .map_err(|mut error| {
+                error.vendor = Some(vendor);
+                error
+            })
+    }
     /// One saved connection. Replacement requires explicit, confirmed removal first.
     pub fn connect_key_model(
         &self,

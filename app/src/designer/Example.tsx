@@ -14,8 +14,8 @@ import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
 import Send, { SendEntry, SendHistory } from '../clusters/Send';
 
-export default function Example({ agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
-  agentsRevision?: number; onRegistered?: () => void; documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
+export default function Example({ sampleRevision = 0, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale }: {
+  sampleRevision?: number; agentsRevision?: number; onRegistered?: () => void; documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: AgentPair | undefined, documentId: string) => void; onRun?: (snapshot: RunSnapshot | undefined, documentId: string) => void;
   onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void;
 }) {
@@ -163,6 +163,9 @@ export default function Example({ agentsRevision = 0, onRegistered, documentId =
       setStale(false); onPair?.(value, boundDocument);
     } finally { if (request === reloadEpoch.current) { reloadAdmitted.current = false; setReloading(false); } }
   }
+  useEffect(() => {
+    if (sampleRevision && boundDocument === SAMPLE_DOCUMENT_ID) void reloadSource().catch(() => { /* Keep the current draft on an unreadable refresh. */ });
+  }, [sampleRevision, boundDocument]);
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const saveLabel = pendingSoul ? 'Unsaved changes' : { saved: '', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
   const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'

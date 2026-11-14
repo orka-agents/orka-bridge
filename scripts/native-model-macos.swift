@@ -89,7 +89,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     }
     for value in expected {
         let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI").contains(value)
-        let nativeText = !found && name.hasPrefix("local-") && nativeResultTextIsVisible(value)
+        let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || name.hasPrefix("local-key-") && nativeChatTextIsVisible(value))
         let chatText = !found && name.hasPrefix("chat-") && nativeChatTextIsVisible(value)
         require(found || nativeText || chatText, "Missing \(value) in \(name): \(text)")
     }
@@ -170,7 +170,7 @@ func scroll(_ pixels: Int32) {
 func seek(_ label: String, _ pixels: Int32) throws -> [VNRecognizedTextObservation] {
     for _ in 0..<6 {
         let seen = try capture("local-probe", [])
-        if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(label) }) {
+        if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(label) }) || nativeChatTextIsVisible(label) {
             if label == "Run tests" && enabledButton(label) == nil { Thread.sleep(forTimeInterval: 0.3); continue }
             if ["Connect the AI", "Check again", "Change", "Remove key"].contains(label),
                 enabledButton(label).flatMap(nativeBounds).map({ window()!.1.contains($0) }) != true {

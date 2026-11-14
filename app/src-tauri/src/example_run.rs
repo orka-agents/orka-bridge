@@ -49,6 +49,8 @@ pub struct RunSnapshot {
     pub source: Option<SnapshotId>,
     pub stage: Option<&'static str>,
     pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vendor: Option<bridge_runtime_protocol::ModelVendor>,
     pub report: Option<RunReport>,
     pub acknowledged: Vec<Receipt>,
     pub pending: Option<PendingRef>,
@@ -65,6 +67,7 @@ impl RunSnapshot {
             source: None,
             stage: None,
             model: None,
+            vendor: None,
             report: None,
             acknowledged: Vec::new(),
             pending: None,
@@ -208,6 +211,7 @@ impl ExampleRun {
             snapshot.source = None;
             snapshot.stage = Some("capture");
             snapshot.model = None;
+            snapshot.vendor = None;
             // Keep this document's receipts through preflight failures.
         }
         let owner = self.clone();
@@ -353,6 +357,13 @@ impl ExampleRun {
             self.fail(id, "model");
             return;
         }
+        self.0
+            .lock()
+            .unwrap()
+            .snapshots
+            .get_mut(&id)
+            .unwrap()
+            .vendor = connection.selection.vendor;
         let runner = NativeRunner::with_transport(VmRunTransport {
             client: Mutex::new(client),
             provider: connection.selection.provider,

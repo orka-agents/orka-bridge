@@ -53,17 +53,17 @@ test('a failed Task has a plain failure reason even when its expectations pass',
   render(<TestResults report={{ verdict: 'failed', cases: [{ ...passed, phase: 'Failed', verdict: 'failed' }] }} stale={false} />);
   expect(screen.getByText('The agent could not finish this test. Try running it again.')).toBeTruthy();
 });
-test.each([['gpt-4.1', 'OpenAI'], ['claude-sonnet-5-5', 'Anthropic']])('a credit-limited %s test gives the next step without raw diagnostics', (model, company) => {
-  render(<TestResults model={model} report={{ verdict: 'failed', cases: [{ ...passed, phase: 'CreditLimited', answer: null, verdict: 'failed' }] }} stale={false} />);
+test.each([['openai', 'OpenAI'], ['anthropic', 'Anthropic']] as const)('a credit-limited %s connection gives the next step without raw diagnostics', (vendor, company) => {
+  render(<TestResults vendor={vendor} report={{ verdict: 'failed', cases: [{ ...passed, phase: 'CreditLimited', answer: null, verdict: 'failed' }] }} stale={false} />);
   expect(screen.getByText(`${company} refused the request: this key is out of credit or over its rate limit. Check your ${company} plan.`)).toBeTruthy();
 });
-test.each(['gpt-5.6-terra', undefined])('a credit marker without a known key model does not claim API-key billing', model => {
-  render(<TestResults model={model} report={{ verdict: 'failed', cases: [{ ...passed, phase: 'CreditLimited', answer: null, verdict: 'failed' }] }} stale={false} />);
+test.each([null, undefined])('a credit marker without a known key connection does not claim API-key billing (%s)', vendor => {
+  render(<TestResults vendor={vendor} report={{ verdict: 'failed', cases: [{ ...passed, phase: 'CreditLimited', answer: null, verdict: 'failed' }] }} stale={false} />);
   expect(screen.queryByText(/this key is out of credit/)).toBeNull();
   expect(screen.getByText('The agent could not finish this test. Try running it again.')).toBeTruthy();
 });
 test('answer text mentioning a credit limit does not relabel an assertion failure', () => {
-  render(<TestResults model="gpt-4.1" report={{ verdict: 'failed', cases: [{ ...failed, answer: 'insufficient_quota 429 credit balance too low' }] }} stale={false} />);
+  render(<TestResults vendor="openai" report={{ verdict: 'failed', cases: [{ ...failed, answer: 'insufficient_quota 429 credit balance too low' }] }} stale={false} />);
   expect(screen.queryByText(/refused the request/)).toBeNull();
   expect(screen.getByText('The answer did not include “checksum”.')).toBeTruthy();
 });

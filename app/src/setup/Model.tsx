@@ -76,7 +76,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
     if (!enabled || paused || active.current || (action === 'connect' && ready)) return;
     const key = action === 'connect' && choice === 'key' ? keyField.current?.value ?? '' : '';
     if (action === 'connect' && choice === 'key' && (key || !hasSignIn) && !validKey(vendor, key)) {
-      clearKey(); setError({ category: 'modelKeyInvalid', codes: [], message: 'Paste the whole key.' }); return;
+      clearKey(); setFailedAction('connect'); setError({ category: 'modelKeyInvalid', codes: [], message: 'Paste the whole key.' }); return;
     }
     clearKey();
     active.current = true;
@@ -84,7 +84,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
     setBusy(action); setError(undefined); setRemoved(false); setNotice(''); setFailedAction(action);
     setAttempted(true); setConfirmRemoval(false);
     if (action === 'remove') setConnected(false);
-    const result = await (action === 'remove' ? removeModel() : choice === 'key' && key ? connectKey(vendor, key) : connectModel());
+    const result = await (action === 'remove' ? removeModel() : choice === 'key' && key ? connectKey(vendor, key) : connectModel(choice === 'key' ? vendor : undefined));
     if (request !== epoch.current) return;
     active.current = false; setBusy(undefined);
     if (result.ok) {
@@ -97,7 +97,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
     } else {
       if (result.vendor) { setChoice('key'); setVendor(result.vendor); }
       setError(result);
-      if (['modelCredentialRejected', 'modelProviderUnreachable', 'modelModelUnavailable'].includes(result.category)) setRemoved(true);
+      if ((choice === 'key' || result.vendor) && ['modelCredentialRejected', 'modelProviderUnreachable', 'modelModelUnavailable'].includes(result.category)) setRemoved(true);
     }
     onSettled?.();
   }

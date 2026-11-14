@@ -29,6 +29,26 @@ test('key stays only in its password field and is cleared as soon as native take
   expect(screen.getByRole('button', { name: 'Remove key' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Change' })).toBeTruthy();
 });
+test('retry without a pasted key requests only a saved key, never implicit Copilot capture', async () => {
+  invoke.mockRejectedValue({ kind: 'modelBusy' });
+  render(<Model enabled />); keyChoice(); fireEvent.change(field(), { target: { value: key } });
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' })); await screen.findByRole('alert');
+  fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  expect(invoke.mock.calls[1]).toEqual(['setup_connect_model', { vendor: 'anthropic' }]);
+});
+test('malformed replacement after Change keeps the field and Connect action available', async () => {
+  invoke.mockResolvedValueOnce({ ready: true, connection: anthropic }).mockResolvedValue({ ready: false });
+  render(<Model enabled />); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await screen.findByRole('button', { name: 'Change' }); fireEvent.click(screen.getByRole('button', { name: 'Change' }));
+  await screen.findByLabelText('API key'); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  expect(field()).toBeTruthy(); expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy();
+});
+test('a Copilot credential error does not claim that its saved sign-in was removed', async () => {
+  invoke.mockRejectedValue({ kind: 'modelCredentialRejected' }); render(<Model enabled />);
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' })); await screen.findByRole('alert');
+  expect(screen.getByRole('button', { name: 'Remove sign-in' })).toBeTruthy();
+  expect(screen.queryByText(/no longer has a saved/)).toBeNull();
+});
 test('empty or wrong-company key never crosses IPC; company changes clear the field', () => {
   render(<Model enabled />); keyChoice();
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));

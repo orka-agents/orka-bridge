@@ -21,6 +21,18 @@ function native(save?: (content: string) => unknown) {
     throw Error(`Unexpected command ${command}`);
   });
 }
+test.each([false, true])('prepared sample revision refreshes only a clean mounted draft (dirty: %s)', async dirty => {
+  vi.stubGlobal('isTauri', true); let agent = pair.agent;
+  mockIPC((command, args) => command === 'agent_open' ? { ...pair, agent }
+    : command === 'agent_save' ? { ...pair, agent: (args as { content: string }).content } : idle);
+  const view = render(<Example sampleRevision={0} />); await screen.findByRole('textbox', { name: 'Instructions' });
+  fireEvent.click(screen.getByRole('button', { name: 'File' }));
+  const editor = () => screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement;
+  if (dirty) fireEvent.change(editor(), { target: { value: `${pair.agent}My unsaved instruction.` } });
+  agent = pair.agent.replace('Read the page.', 'Use the prepared model.');
+  view.rerender(<Example sampleRevision={1} />);
+  await waitFor(() => expect(editor().value).toBe(dirty ? `${pair.agent}My unsaved instruction.` : agent));
+});
 test('opening keeps a form-shaped skeleton until the owned document arrives', async () => {
   vi.stubGlobal('isTauri', true); let finish!: (value: unknown) => void;
   mockIPC(command => command === 'agent_open' ? new Promise(resolve => { finish = resolve; }) : idle);

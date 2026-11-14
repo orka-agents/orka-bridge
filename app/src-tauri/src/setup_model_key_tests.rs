@@ -231,6 +231,19 @@ fn key_connect_persists_only_metadata_and_reopens_without_github_capture() {
 }
 
 #[test]
+fn saved_key_retry_without_an_association_never_captures_or_touches_guest() {
+    let (_tmp, setup, install) = selected_setup();
+    let vault = FakeVault::default();
+    let (mut client, worker) = peer(Uuid::new_v4(), |_| panic!("no guest IO"));
+    let error = setup
+        .connect_saved_key_model(install, ModelVendor::Anthropic, &mut client, &vault)
+        .unwrap_err();
+    assert_eq!(error.kind, "modelKeyInvalid");
+    assert_eq!(vault.counts(), (0, 0, 0));
+    drop(client);
+    assert!(worker.join().unwrap().frames.is_empty());
+}
+#[test]
 fn reopened_key_failure_carries_only_the_saved_company_for_recovery() {
     let (tmp, setup, install) = selected_setup();
     let vault = FakeVault {

@@ -116,6 +116,16 @@ async fn first_test_requires_the_expected_template_and_current_connection() {
             .unwrap();
         let done = finished(&run, &vm).await;
         assert_eq!(done.error, error, "{saved}/{expected}/{connected}");
+        if error.is_none() {
+            assert_eq!(
+                serde_json::to_value(&done).unwrap()["vendor"],
+                if connected == "gpt-4.1" {
+                    "openai"
+                } else {
+                    "anthropic"
+                }
+            );
+        }
         assert_eq!(
             posts.lock().unwrap().len(),
             if error.is_none() { 2 } else { 0 }

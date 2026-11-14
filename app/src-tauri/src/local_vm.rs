@@ -655,18 +655,40 @@ impl LocalVm {
         &self,
         setup: Arc<crate::setup::SetupStore>,
     ) -> Result<crate::setup::ModelSetupState, crate::setup::SetupError> {
+        self.connect_model_choice(setup, None).await
+    }
+    pub async fn connect_saved_key_model(
+        &self,
+        setup: Arc<crate::setup::SetupStore>,
+        vendor: bridge_runtime_protocol::ModelVendor,
+    ) -> Result<crate::setup::ModelSetupState, crate::setup::SetupError> {
+        self.connect_model_choice(setup, Some(vendor)).await
+    }
+    async fn connect_model_choice(
+        &self,
+        setup: Arc<crate::setup::SetupStore>,
+        vendor: Option<bridge_runtime_protocol::ModelVendor>,
+    ) -> Result<crate::setup::ModelSetupState, crate::setup::SetupError> {
         if !MODEL_IMAGE_AVAILABLE {
             return Err(crate::setup::SetupError::model("modelGuest"));
         }
         let runtime = tokio::runtime::Handle::current();
         let inner = self.inner.clone();
         self.with_client(move |id, client| {
-            let result = setup.connect_stored_model(
-                id,
-                client,
-                &crate::runtime::credential_store::OsCredentialStore,
-                || runtime.block_on(crate::runtime::credentials::capture_stored_github_token()),
-            );
+            let result =
+                if let Some(vendor) = vendor {
+                    setup.connect_saved_key_model(
+                        id,
+                        vendor,
+                        client,
+                        &crate::runtime::credential_store::OsCredentialStore,
+                    )
+                } else {
+                    setup.connect_stored_model(
+                    id, client, &crate::runtime::credential_store::OsCredentialStore,
+                    || runtime.block_on(crate::runtime::credentials::capture_stored_github_token()),
+                )
+                };
             // The owned worker retains details even if its IPC waiter is dropped.
             inner.model_result(&result);
             result
@@ -736,7 +758,13 @@ impl LocalVm {
             Ok(pair)
         })
         .await
-        .map_err(|_| "The local cluster is busy or unavailable.")?
+        .map_err(|error| {
+            if matches!(error, RuntimeError::Busy) {
+                "exampleBusy"
+            } else {
+                "The local cluster is unavailable."
+            }
+        })?
     }
     pub async fn remove_model(
         &self,
