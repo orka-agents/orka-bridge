@@ -1,6 +1,6 @@
 import { openLocalSetup } from '../setup/test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import AgentParts from './AgentParts';
@@ -161,7 +161,7 @@ test('a failed catalog can be refreshed without changing the file', async () => 
   await screen.findByRole('option', { name: 'listed' });
   expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('unlisted');
 });
-test('confirmed Change invalidates catalog before the stop reply, retaining the editor', async () => {
+test('explicit Stop invalidates catalog before the stop reply, retaining the editor', async () => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   let finish!: (value: unknown) => void;
   const ready = { selected: 'localVm', localVm: 'ready', model: 'available', localVmError: null };
@@ -176,12 +176,11 @@ test('confirmed Change invalidates catalog before the stop reply, retaining the 
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  await screen.findByText('Connected with GitHub Copilot.');
+  await within(screen.getByRole('region', { name: 'Connect the AI' })).findByText('Connected');
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   await screen.findByRole('option', { name: 'listed' });
   await user.click(screen.getByRole('button', { name: /Clusters/ }));
-  await user.click(screen.getByRole('button', { name: 'Change where agents run' }));
-  await user.click(screen.getByRole('button', { name: 'Stop the local cluster and choose a cluster' }));
+  await user.click(screen.getByRole('button', { name: 'Stop the local cluster' }));
   // Designer stays mounted under the inactive page. It must not retain old choices.
   expect(document.querySelector('option[value="listed"]')).toBeNull();
   expect(document.querySelector('.instructions-editor')?.textContent).toBe('Role only.\n');

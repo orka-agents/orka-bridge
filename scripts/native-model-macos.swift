@@ -78,7 +78,8 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     } else {
         guard let panel = rows.filter({
             let label = $0.topCandidates(1).first?.string ?? ""
-            return (label.contains("Connect the AI") || label.contains("Connect the Al")) && $0.boundingBox.minX > 0.5
+            // The shell now also says Connect the AI. Anchor below the tab bar, in the model column.
+            return (label.contains("Connect the AI") || label.contains("Connect the Al")) && $0.boundingBox.minX > 0.5 && $0.boundingBox.maxY < 0.85
         }).max(by: { $0.boundingBox.maxY < $1.boundingBox.maxY })
             else { fatalError("Model panel heading was not recognized") }
         visible = rows.filter {
@@ -120,19 +121,41 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     }
     Thread.sleep(forTimeInterval: 1)
 }
-// A ready workspace opens on Places; the local card's Manage reaches the model controls.
-var rows = try capture("local-places-wide", ["Choose where agents run", "This computer"])
-require(enabledButton("Manage") != nil && enabledButton("Set up") == nil, "Ready local card must offer only Manage")
-click("Manage", rows)
-rows = try capture("before-connect", ["Connect the AI", "Remove sign-in"])
+// A running VM is not completed setup: its local row offers the current AI action.
+var rows = try capture("local-places-wide", ["Choose where agents run", "This computer", "Connect the AI"])
+require(enabledButton("Connect the AI") != nil && enabledButton("Manage") == nil && enabledButton("Set up") == nil,
+        "VM-ready local card must offer Connect the AI, not Manage")
 click("Connect the AI", rows)
-rows = try capture("connected", ["Connected with GitHub Copilot", "Remove sign-in"])
+rows = try capture("before-connect", ["Connect the AI"])
+require(enabledButton("Remove sign-in") == nil, "Remove must be absent before the first sign-in attempt")
+click("Connect the AI", rows)
+rows = try capture("local-completed", ["Local cluster", "Local cluster running", "Stop the local cluster", "Completed setup steps"])
+require(!rows.contains { ($0.topCandidates(1).first?.string ?? "").range(of: "Step [0-9]+ of 5", options: .regularExpression) != nil },
+        "Completed local page must not keep a setup counter")
 click("Remove sign-in", rows)
-rows = try capture("remove-failed", ["Remove sign-in again", "Copy details for help"])
+rows = try capture("local-remove-confirmation", ["saved sign-in?", "Cancel", "Remove sign-in"])
+click("Cancel", rows)
+rows = try capture("connected", ["Connected", "Remove sign-in"])
 click("Remove sign-in", rows)
+rows = try capture("local-remove-confirmed", ["saved sign-in?", "Cancel", "Remove sign-in"])
+click("Remove sign-in", rows)
+rows = try capture("remove-failed", ["Retry removal", "Copy details for help"])
+require(enabledButton("Connect the AI") == nil, "Failed cleanup must offer removal retry, not connection")
+click("Retry removal", rows)
 rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Connect the AI"])
 click("Connect the AI", rows)
-_ = try capture("reconnected", ["Connected with GitHub Copilot", "Remove sign-in"])
+rows = try capture("reconnected", ["Connected", "Remove sign-in"])
+// Only the fixture's finite in-memory state changes; no VM or files are touched.
+click("Stop the local cluster", rows)
+rows = try capture("local-stopped", ["Set up this computer", "This computer", "Continue", "Back to clusters"])
+require(enabledButton("Stop the local cluster") == nil, "Stop must leave the local preflight page")
+click("Continue", rows)
+rows = try capture("before-first-test", ["Connect the AI"])
+click("Connect the AI", rows)
+_ = try seek("Tests on the local cluster", -200)
+_ = try capture("local-first-test-result", ["Tests on the local cluster", "1 of 2 passed"])
+click("Clusters", [])
+rows = try capture("local-first-test-failed", ["Local cluster", "Its test failed", "See what it answered"])
 func scroll(_ pixels: Int32) {
     let rect = window()!.1
     CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: rect.maxX - 20, y: rect.midY), mouseButton: .left)?.post(tap: .cghidEventTap)
@@ -263,5 +286,10 @@ localSize(540, 900)
 scroll(4000)
 click("Clusters", [])
 _ = try capture("local-manage-compact", ["Back to clusters", "Remove sign-in"])
+// Keep the completed local and removal states reviewable at the compact size too.
+_ = try seek("Remove sign-in", -200)
+click("Remove sign-in", [])
+_ = try capture("local-remove-confirmation-compact", ["saved sign-in?", "Cancel", "Remove sign-in"])
+click("Cancel", [])
 click("Back to clusters", [])
 _ = try capture("local-places-compact", ["Choose where agents run", "This computer"])

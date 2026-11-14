@@ -1,6 +1,6 @@
 import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
@@ -34,7 +34,7 @@ test('reopen observes a lost workspace immediately without replaying setup, Conn
   });
   mockIPC(ipc); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  expect(await screen.findByText('Connected with GitHub Copilot.')).toBeTruthy();
+  expect(await within(screen.getByRole('region', { name: 'Connect the AI' })).findByText('Connected')).toBeTruthy();
   lost = true;
   await act(async () => { window.dispatchEvent(new Event('focus')); });
   expect(screen.getByText("The local cluster couldn't start")).toBeTruthy();
@@ -55,7 +55,7 @@ test('running native session unlocks only its explicit model command', async () 
   expect(connect.hasAttribute('disabled')).toBe(false);
   expect(ipc.mock.calls.some(([command]) => command === 'setup_connect_model')).toBe(false);
   await user.click(connect);
-  expect(await screen.findByText('Connected with GitHub Copilot.')).toBeTruthy();
+  expect(await within(screen.getByRole('region', { name: 'Connect the AI' })).findByText('Connected')).toBeTruthy();
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_connect_model')).toEqual([['setup_connect_model', {}]]);
 });
 test('failed Connect refreshes retained guest details without locking the running VM', async () => {
