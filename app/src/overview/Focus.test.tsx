@@ -29,6 +29,8 @@ test('two same-name agents with different UIDs: the exact UID card takes focus, 
   await waitFor(() => expect(focused()).toBe(`${key}/uid-two`));
   expect(calls.mock.calls.some(([command, args]) => command === 'overview_places' && (args as { key?: string } | undefined)?.key === key)).toBe(true);
   expect(calls.mock.calls.some(([command]) => command === 'send_agent_check')).toBe(false);
+  // A concurrent full inventory can remount a balanced card after focus; navigation refreshes only its destination.
+  expect(calls.mock.calls.filter(([command]) => command === 'overview_places').every(([, args]) => (args as { key?: string } | undefined)?.key === key)).toBe(true);
   // Repeated navigation focuses the new exact target again.
   view.rerender(<Overview {...props} focus={{ id: 2, sendId: 's2', target: target('uid-one') }} />);
   await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));

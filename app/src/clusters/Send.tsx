@@ -21,12 +21,17 @@ function SendWarning({ anchor, test, onFix, onSend, onDismiss }: { anchor: HTMLE
   const popover = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState<{ top: number; left: number; width: number }>();
   useLayoutEffect(() => {
-    const element = popover.current; const rect = anchor.getBoundingClientRect();
+    const element = popover.current;
     element?.showPopover?.();
-    const width = Math.min(340, window.innerWidth - 2 * edge); const height = element?.offsetHeight ?? 0;
-    const below = rect.bottom + edge;
-    setBox({ width, left: Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge)), top: Math.max(edge, below + height > window.innerHeight - edge ? rect.top - height - edge : below) });
+    const position = () => {
+      const rect = anchor.getBoundingClientRect();
+      const width = Math.min(340, window.innerWidth - 2 * edge); const height = element?.offsetHeight ?? 0;
+      const below = rect.bottom + edge;
+      setBox({ width, left: Math.max(edge, Math.min(rect.left, window.innerWidth - width - edge)), top: Math.max(edge, below + height > window.innerHeight - edge ? rect.top - height - edge : below) });
+    };
+    position(); window.addEventListener('resize', position);
     element?.querySelector<HTMLElement>('[data-initial-focus]')?.focus();
+    return () => window.removeEventListener('resize', position);
   }, [anchor]);
   return <div role="dialog" aria-label="Local test failed" ref={popover} popover="auto" className="send-warning" style={box}
     onToggle={event => {
@@ -298,15 +303,15 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   // A known failure on exactly the current saved files (the same comparison the "This computer" row uses).
   const failing = localCurrent ? local?.report?.cases.find(c => c.verdict === 'failed') : undefined;
   const panel = useRef<HTMLElement>(null);
-  const [warning, setWarning] = useState<HTMLElement>();
-  const showWarning = !!warning && !!failing && !reason && !busy && !running;
+  const [warning, setWarning] = useState<{ anchor: HTMLElement; separate: boolean }>();
+  const showWarning = !!warning && !!failing && (warning.separate ? canSeparate : !reason) && !busy && !running;
   useEffect(() => {
     if (!warning || showWarning) return;
     // Saving, a source change or a blocked destination invalidates the warning: no enabled Send anyway.
     setWarning(undefined);
-    if (warning.isConnected && !(warning as HTMLButtonElement).disabled) warning.focus(); else panel.current?.focus();
+    if (warning.anchor.isConnected && !(warning.anchor as HTMLButtonElement).disabled) warning.anchor.focus(); else panel.current?.focus();
   }, [warning, showWarning]);
-  const startSend = (anchor: HTMLElement) => { if (failing) setWarning(anchor); else void mutate('send_start'); };
+  const startSend = (anchor: HTMLElement, separate = false) => { if (failing) setWarning({ anchor, separate }); else void mutate('send_start', separate); };
   const seeOverview = !running && !!onSeeInOverview && !!snapshot
     // A reused agent is already owned even when an update's Stop left this view without its receipt; native re-checks the recorded UID.
     && (snapshot.acknowledged.some(r => r.kind === 'Agent' && r.uid) || snapshot.agentAction === 'update' || snapshot.agentAction === 'unchanged');
@@ -333,10 +338,10 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
             <Button type="button" kind="secondary" disabled={!!reason || busy || !!message} title={reason} onClick={event => startSend(event.currentTarget)}>{againLabel}</Button>
           </> : <Button type="button" kind="primary" disabled={!!reason || busy || !!message} title={reason} onClick={event => startSend(event.currentTarget)}>{sendLabel}</Button>}
       </div>}>
-    {showWarning && failing && <SendWarning anchor={warning} test={failing.id}
+    {showWarning && failing && <SendWarning anchor={warning.anchor} test={failing.id}
       onFix={() => { setWarning(undefined); onFixLocal?.(failing.id); }}
-      onSend={() => { setWarning(undefined); void mutate('send_start'); }}
-      onDismiss={focusAnchor => { setWarning(undefined); if (focusAnchor) warning.focus(); }} />}
+      onSend={() => { setWarning(undefined); void mutate('send_start', warning.separate); }}
+      onDismiss={focusAnchor => { setWarning(undefined); if (focusAnchor) warning.anchor.focus(); }} />}
     <p className="sr-only test-announcement" role="status" aria-live="polite" aria-atomic="true">{!running ? outdated ? revisionExplanation : cancellation && cancellation !== 'confirmed' ? `${cancellationLabels[cancellation]}.` : snapshot?.stage === 'stopped' && !cancellation ? 'Stopped watching.' : uncertain ? 'Test result unknown.' : resultAnnouncement(snapshot?.report) : undefined}</p>
     <CardSection title="What you send">
     <dl className="cluster-details"><div><dt>Source</dt><dd>Your saved agent and test files</dd></div>
@@ -345,7 +350,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
       {provider && <div><dt>AI connection</dt><dd>{(checked?.value?.model ?? model) && <><code>{checked?.value?.model ?? model}</code> through </>}<code>{provider.name}</code> · {provider.ready ? 'AI connection ready; the model is checked when tests run' : 'AI connection not ready'}</dd></div>}
     </dl>
     {!running && canSeparate && <div>
-      <Button type="button" kind="secondary" disabled={busy} onClick={() => { void mutate('send_start', true); }}>Send as a separate agent</Button>
+      <Button type="button" kind="secondary" disabled={busy} onClick={event => startSend(event.currentTarget, true)}>Send as a separate agent</Button>
       <p>Creates a new agent here. Previous work may still run; this does not stop or replace it.</p>
     </div>}
     {(!target || !provider) && <Button type="button" kind="secondary" onClick={onChooseCluster} disabled={!onChooseCluster}>Choose a cluster</Button>}

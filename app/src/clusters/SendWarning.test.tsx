@@ -19,12 +19,12 @@ beforeEach(() => {
   Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; } });
 });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
-function native() {
+function native(check: object = allowed) {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn<(command: string, args?: unknown) => unknown>(command => {
     if (command === 'send_status') return { documentId: id, view: null, busy: null };
     if (command === 'send_history') return [];
-    if (command === 'send_preflight') return allowed;
+    if (command === 'send_preflight') return check;
     if (command === 'send_start') return { documentId: id, view: null, busy: null };
     throw Error(`Unsupported ${command}`);
   });
@@ -91,6 +91,33 @@ test('a blocked, changed or saving state closes the warning instead of leaving S
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(screen.queryByRole('button', { name: 'Send anyway' })).toBeNull();
   expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Send and cluster tests' }));
+});
+test.each([true, false])('a separate-agent Send warns and preserves its intent when ordinary Send is allowed=%s', async canSend => {
+  const ipc = native({ ...allowed, canSend, canSeparate: true, action: canSend ? 'create' : 'blocked' });
+  const user = userEvent.setup(); const onFixLocal = vi.fn();
+  render(<Send place={place} source={source} stale={false} local={local} onFixLocal={onFixLocal} />);
+  const separate = await screen.findByRole('button', { name: 'Send as a separate agent' });
+  await user.click(separate);
+  await screen.findByRole('dialog'); expect(sends(ipc)).toBe(0);
+  await user.click(screen.getByRole('button', { name: 'Fix it first' }));
+  expect(onFixLocal).toHaveBeenCalledWith(failedCase.id); expect(sends(ipc)).toBe(0);
+  await user.click(separate);
+  await user.click(await screen.findByRole('button', { name: 'Send anyway' }));
+  await waitFor(() => expect(sends(ipc)).toBe(1));
+  expect(ipc.mock.calls.find(([command]) => command === 'send_start')?.[1]).toMatchObject({ expectedSource: source, separateAgent: true });
+});
+test('an open warning is repositioned inside the viewport after narrowing the window', async () => {
+  native(); const user = userEvent.setup();
+  vi.stubGlobal('innerWidth', 1280); vi.stubGlobal('innerHeight', 900);
+  const { send } = await ready();
+  send.getBoundingClientRect = () => ({ left: 1000, right: 1120, top: 600, bottom: 632, width: 120, height: 32, x: 1000, y: 600, toJSON() { return {}; } });
+  await user.click(send);
+  const warning = await screen.findByRole('dialog');
+  expect(parseFloat(warning.style.left)).toBeGreaterThan(540);
+  vi.stubGlobal('innerWidth', 540);
+  fireEvent(window, new Event('resize'));
+  await waitFor(() => expect(parseFloat(warning.style.left) + parseFloat(warning.style.width)).toBeLessThanOrEqual(532));
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Fix it first' }));
 });
 test('a stale or changed local result sends directly, with no warning step', async () => {
   const ipc = native(); const user = userEvent.setup();

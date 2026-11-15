@@ -322,14 +322,15 @@ async fn stop_while_the_put_is_pending_keeps_the_intent_uncertain() {
         stop.send_replace(true);
     };
     // Bounded so a regression fails instead of hanging on the never-ready PUT.
-    let (result, ()) = tokio::join!(
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            owner.update_deployment(&mut next, &transport, desired.clone(), &rx, &prior)
-        ),
-        stopper
-    );
-    assert!(matches!(result, Ok(Err(Stage::UpdateUnconfirmed))));
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(
+            owner.update_deployment(&mut next, &transport, desired.clone(), &rx, &prior),
+            stopper
+        )
+    })
+    .await
+    .expect("pending PUT and Stop must finish together");
+    assert!(matches!(result, Err(Stage::UpdateUnconfirmed)));
     assert_eq!(transport.puts.load(Ordering::SeqCst), 1);
     let binding = saved(&owner.summary);
     assert_eq!(binding["intent"], desired);

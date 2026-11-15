@@ -508,11 +508,14 @@ async fn send_history_check(
     state.inner().history_check(&send_id).await
 }
 #[tauri::command]
-fn send_agent_focus(
+async fn send_agent_focus(
     send_id: String,
     state: tauri::State<'_, Arc<SendOwner>>,
 ) -> Result<bridge_engine::send::AgentFocus, &'static str> {
-    state.agent_focus(&send_id)
+    let owner = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || owner.agent_focus(&send_id))
+        .await
+        .map_err(|_| "storage")?
 }
 #[tauri::command]
 async fn send_agent_check(

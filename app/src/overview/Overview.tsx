@@ -30,7 +30,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   const [placeError, setPlaceError] = useState(false);
   const compact = useCompact();
   useEffect(() => {
-    if (!active) return;
+    if (!active || focus?.target) return;
     let cancelled = false;
     void readPlaces().then(value => {
       if (cancelled) return;
@@ -38,7 +38,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
       setPlaces(previous => value ?? (previous && { ...previous, places: previous.places.map(p => ({ ...p, stale: true })) }));
     });
     return () => { cancelled = true; };
-  }, [active, refresh]);
+  }, [active, refresh, focus?.target]);
   // See in Overview: refresh only the recorded destination, then focus the exact card (place key + UID, never a name).
   const focusEpoch = useRef(0);
   const toFocus = useRef<string | undefined>(undefined);
