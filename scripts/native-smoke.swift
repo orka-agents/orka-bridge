@@ -537,6 +537,11 @@ func scrollMain(_ pixels: Int32) {
     Thread.sleep(forTimeInterval: 0.3)
 }
 func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
+    if label == "Check again", nativeButtons(label).allSatisfy({ nativeBounds($0).map { $0.width <= 1 || $0.height <= 1 } ?? true }),
+        nativeStrings().contains(where: { $0.contains("Destination ready") }) {
+        // Ready checks are collapsed. Open the real disclosure before asking for its refresh control.
+        try clickSendControl("Destination ready", scrolling: pixels)
+    }
     // Disabling Start during IPC can reset WebKit's keyboard focus. Locate the
     // real control after each state transition instead of counting Tab stops.
     var observed: [String] = []
@@ -560,7 +565,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         let seen = try capture("send-probe", "Designer")
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
-        if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: .regularExpression) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
+        if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: .regularExpression) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) || (label == "Destination ready" && $0.range(of: #"^\W*Destination ready\b"#, options: .regularExpression) != nil) }) {
             if ["Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent", "Cancel tests", "Retry cancellation", "Check cluster status", "Check again", "Reload saved files", "Send to a cluster", "See in Overview"].contains(label) {
                 let enabled = nativeElements().contains { element in
                     attribute(element, "AXRole") as? String == "AXButton"
@@ -976,6 +981,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         try originalConfig.write(to: configURL, options: .atomic)
         try reloadFixture()
     }
+    @discardableResult
     func capturePreflight(_ name: String, _ expected: String) throws -> [VNRecognizedTextObservation] {
         for _ in 0..<8 {
             // Preserve a visible transient state before doing any search work.
@@ -1041,8 +1047,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         mouse(.leftMouseDown, CGPoint(x: bounds.midX, y: bounds.midY))
         mouse(.leftMouseUp, CGPoint(x: bounds.midX, y: bounds.midY))
         Thread.sleep(forTimeInterval: 0.5)
-        // Observe the actual destination, not a screenshot at the restored offset.
-        _ = try capturePreflight("send-probe", "Team cluster")
+        // Observe a real Send control after reflow. Vision can omit the small uppercase section label.
+        let actions = ["See in Overview", "Cancel tests", "Send and run tests", "Update agent and run tests"]
+        guard let action = actions.first(where: { nativeButtons($0).count == 1 }) else { fail("Send panel has no recognized action after reflow") }
+        _ = try capturePreflight("send-probe", action)
     }
     func resultSize(_ width: CGFloat, _ height: CGFloat) throws {
         let frame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height),

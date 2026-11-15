@@ -443,10 +443,13 @@ try {
         const tests = document.querySelector('.designer-tests').getBoundingClientRect();
         const editor = document.querySelector('.designer-file').getBoundingClientRect();
         const send = document.querySelector('.designer-checks').getBoundingClientRect();
-        return { tests: { x: tests.x, y: tests.y, bottom: tests.bottom }, editor: { x: editor.x, y: editor.y, bottom: editor.bottom }, sendY: send.y, width: innerWidth, height: innerHeight, scrollWidth: document.querySelector('main').scrollWidth };
+        return { tests: { x: tests.x, y: tests.y, right: tests.right, bottom: tests.bottom }, editor: { x: editor.x, y: editor.y, right: editor.right, bottom: editor.bottom }, send: { x: send.x, y: send.y, right: send.right, bottom: send.bottom }, sendY: send.y, width: innerWidth, height: innerHeight, scrollWidth: document.querySelector('main').scrollWidth };
       })()`);
-      if (size === 'wide' ? Math.abs(layout.tests.y - layout.editor.y) > 2 || layout.tests.x <= layout.editor.x : layout.tests.bottom > layout.editor.y + 2) throw Error(`Test visibility failed: ${JSON.stringify(layout)}`);
-      if (layout.sendY < layout.editor.bottom || layout.scrollWidth > layout.width + 2) throw Error(`Editor/Send layout failed: ${JSON.stringify(layout)}`);
+      // Local tests and Send share a right-hand stack; compact widths move that stack below the editor.
+      if (size === 'wide' ? Math.abs(layout.tests.y - layout.editor.y) > 2 || layout.tests.x < layout.editor.right - 2
+        : layout.tests.y < layout.editor.bottom - 2 || Math.abs(layout.tests.x - layout.editor.x) > 2 || Math.abs(layout.tests.right - layout.editor.right) > 2) throw Error(`Test visibility failed: ${JSON.stringify(layout)}`);
+      if (Math.abs(layout.send.x - layout.tests.x) > 2 || Math.abs(layout.send.right - layout.tests.right) > 2
+        || layout.send.y < layout.tests.bottom - 2 || layout.scrollWidth > layout.width + 2) throw Error(`Editor/Send layout failed: ${JSON.stringify(layout)}`);
       await writeFile(join(output, `${theme}-${size}-${name}-layout.json`), JSON.stringify(layout, null, 2));
     }
     if (name.startsWith('ai-removal-')) await evaluate(`document.querySelector('.setup-model').scrollIntoView({ block: 'center' })`);
