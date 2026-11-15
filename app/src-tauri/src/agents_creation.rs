@@ -144,7 +144,7 @@ impl Agents {
                 "The default model is invalid. Reload the model catalog or retry without it.",
             );
         }
-        let selection = self.selection.lock().map_err(|_| CREATE_ERROR)?;
+        let mut selection = self.selection.lock().map_err(|_| CREATE_ERROR)?;
         let selected = match repo_selection {
             None => None,
             Some(id) => Some(
@@ -154,7 +154,7 @@ impl Agents {
                     .ok_or("Choose your repo again before creating the agent.")?,
             ),
         };
-        self.mutate(|registry, data| {
+        let result = self.mutate(|registry, data| {
             let destination = selected.map(|s| &s.identity);
             if registry
                 .agents
@@ -241,7 +241,13 @@ impl Agents {
             registry.agents.push(pending.registration());
             registry.pending.retain(|p| p.id != id);
             Ok(id)
-        })
+        });
+        if result.is_ok() && repo_selection.is_some() {
+            // A failed create stays retryable; success releases the selected
+            // directory handle (which otherwise prevents Windows repo moves).
+            *selection = None;
+        }
+        result
     }
 }
 

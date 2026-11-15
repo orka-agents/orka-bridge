@@ -50,6 +50,58 @@ fn pending(data: &Path, repo: &Path, staged: bool) -> bridge_engine::agents::Doc
 }
 
 #[test]
+fn restored_exact_parent_reopens_without_restarting_cached_document() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let data = temp.path().join("data");
+    let id = {
+        let agents = owner(temp.path(), &data);
+        let selected = agents.bind_repo(&path).unwrap();
+        agents
+            .create_with_repo("helper", None, Some(selected.id))
+            .unwrap()
+    };
+    let agents = owner(temp.path(), &data);
+    let away = temp.path().join("away");
+    fs::rename(&path, &away).unwrap();
+    let folder = agents.get(id).unwrap();
+    assert!(folder.open().is_err());
+    fs::rename(&away, &path).unwrap();
+    assert!(agents.list().unwrap()[1].available);
+    assert_eq!(folder.open().unwrap().document_id, id);
+    assert_eq!(
+        folder.save("restored draft".into()).unwrap().agent,
+        "restored draft"
+    );
+}
+
+#[test]
+fn successful_creation_releases_selection_and_does_not_pin_checkout() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let agents = owner(temp.path(), &temp.path().join("data"));
+    let selected = agents.bind_repo(&path).unwrap();
+    let id = agents
+        .create_with_repo("helper", None, Some(selected.id))
+        .unwrap();
+    let folder = agents.get(id).unwrap();
+    folder.open().unwrap();
+    assert_eq!(
+        agents
+            .create_with_repo("other", None, Some(selected.id))
+            .unwrap_err(),
+        "Choose your repo again before creating the agent."
+    );
+    let away = temp.path().join("away");
+    fs::rename(&path, &away).unwrap(); // Also proves no lifetime FILE_SHARE_DELETE blocker on Windows.
+    assert!(folder.open().is_err());
+    fs::rename(&away, &path).unwrap();
+    assert!(folder.open().is_ok());
+}
+
+#[test]
 fn bridge_pair_always_identifies_its_storage() {
     let home = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();
@@ -66,6 +118,7 @@ fn repo_pair_roundtrips_all_entry_points_without_touching_git() {
     let data = temp.path().join("data");
     let path = temp.path().join("repo");
     let repo = checkout(&path);
+    let path = path.canonicalize().unwrap();
     fs::write(
         path.join(".git/index"),
         b"not an index; must never be opened",
@@ -132,7 +185,7 @@ fn repo_pair_roundtrips_all_entry_points_without_touching_git() {
     assert_eq!(fs::read_dir(&source).unwrap().count(), 2);
     assert_eq!(
         agents.list().unwrap()[1].path.as_deref(),
-        path.join("web-reader/web-reader.agent.md").to_str()
+        path.join("web-reader").join("web-reader.agent.md").to_str()
     );
     assert!(agents.list().unwrap()[1].available);
     let inspected = agents
@@ -164,6 +217,8 @@ fn names_are_destination_scoped_and_tokens_latest_only() {
     let b = temp.path().join("b");
     checkout(&a);
     checkout(&b);
+    let a = a.canonicalize().unwrap();
+    let b = b.canonicalize().unwrap();
     let first = agents.bind_repo(&a).unwrap();
     let second = agents.bind_repo(&b).unwrap();
     assert!(agents.bind_repo(&temp.path().join("missing")).is_err());
@@ -434,6 +489,7 @@ fn app_data_document_lock_serializes_owners_without_blocking_registry_recovery()
     let waiting = agents
         .create_with_repo("waiting", None, Some(selected.id))
         .unwrap();
+    let selected = agents.bind_repo(&path).unwrap();
     let id = agents
         .create_with_repo("helper", None, Some(selected.id))
         .unwrap();

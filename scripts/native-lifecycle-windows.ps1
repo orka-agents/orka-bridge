@@ -401,12 +401,10 @@ try {
         [NativeWalk]::SetForegroundWindow([IntPtr]$dialog.Current.NativeWindowHandle) | Out-Null
         # Drive the actual IFileOpenDialog address bar, not a renderer picker reply.
         [System.Windows.Forms.SendKeys]::SendWait('^l')
-        $address = Wait-For 'Native folder chooser address field missing' {
-            $control = [System.Windows.Automation.AutomationElement]::FocusedElement
-            $value = $null
-            if ($control.Current.ProcessId -eq $script:app.Id -and $control.Current.ControlType -eq [System.Windows.Automation.ControlType]::Edit -and $control.TryGetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern, [ref]$value) -and !$value.Current.IsReadOnly) { $value }
-        }
-        $address.SetValue($repo)
+        # The hosted shell exposes the focused address editor as a Pane without
+        # ValuePattern. Type into its Ctrl+L selection, as shown by native capture.
+        if ([NativeWalk]::GetForegroundWindow() -ne [IntPtr]$dialog.Current.NativeWindowHandle) { throw 'Native repo chooser lost focus' }
+        [System.Windows.Forms.SendKeys]::SendWait($repo)
         [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
         Wait-For 'Native folder chooser did not navigate to the disposable repo' {
             (Get-UiNames $dialog) -ccontains (Split-Path $repo -Leaf)
@@ -415,13 +413,15 @@ try {
         # IDOK is the native folder selection action, independent of its system wording.
         $choose = Wait-For 'Native folder chooser selection action missing' {
             $control = $dialog.FindFirst($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, '1'))
-            if ($control -and $control.Current.ControlType -eq $button -and $control.Current.IsEnabled -and !$control.Current.IsOffscreen) { $control }
+            if ($control -and $control.Current.IsEnabled -and !$control.Current.IsOffscreen) { $control }
         }
         Press $choose
         $folder = Join-Path $repo 'web-reader'
+        # Rust's canonicalized drive path includes the extended-length prefix.
+        $displayFolder = "\\?\$folder\"
         $copy = 'Files save automatically. You manage commits in this repo.'
         Wait-For 'Selected repo path or own-repo saving explanation missing' {
-            $path = Find-Control $script:window "$folder\" $null
+            $path = Find-Control $script:window $displayFolder $null
             $explanation = Find-Control $script:window $copy $null
             $change = Find-Control $script:window 'Change repo' $button
             $path -and !$path.Current.IsOffscreen -and $explanation -and !$explanation.Current.IsOffscreen -and $change -and $change.Current.IsEnabled

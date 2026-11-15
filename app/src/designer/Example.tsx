@@ -199,6 +199,8 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     if (sampleRevision && boundDocument === SAMPLE_DOCUMENT_ID) void reloadSource(true).catch(() => { /* Keep the current draft on an unreadable refresh. */ });
   }, [sampleRevision, boundDocument]);
   const info = { ...agentInfo(draft), description: readForm(draft).description };
+  const nameCounts = new Map<string, number>();
+  for (const entry of entries ?? []) nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
   const saveLabel = pendingSoul ? 'Unsaved changes' : { saved: '', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
   const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
     : reloading ? 'Wait for your saved files to reload' : setupPending ? 'Wait for the local cluster to be ready before sending'
@@ -225,7 +227,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
         </div>
         {entries && <label className="agent-selector"><span className="sr-only">Agent</span><select className="field" disabled={selecting} title={selecting ? 'Opening your agent' : undefined} value={boundDocument} onChange={event => { setSelectionError(undefined); setWantsCreate(false); onNewAgentHandled?.(); requestDocument(event.target.value); }}>
           {!entries.some(entry => entry.id === boundDocument) && <option value={boundDocument}>{pair?.name ?? 'Current agent'}</option>}
-          {entries.map(entry => <option key={entry.id} value={entry.id}>{entry.name}{entry.available ? '' : ' (unavailable)'}</option>)}
+          {entries.map(entry => <option key={entry.id} value={entry.id}>{entry.name}{(nameCounts.get(entry.name) ?? 0) > 1 ? ` (${entry.path ?? 'location unavailable'})` : ''}{entry.available ? '' : ' (unavailable)'}</option>)}
         </select></label>}
         <Button type="button" kind="secondary" className="new-agent-entry" onClick={() => setWantsCreate(true)}>New agent</Button>
         {actions}

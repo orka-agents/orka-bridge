@@ -102,28 +102,19 @@ impl Agents {
     }
 }
 
-/// The locks live in app data, never in the creator's checkout. Retain the selected
-/// parent capability; fresh path observations can revoke but never redirect it.
+/// The locks live in app data, never in the creator's checkout. Reopen only the
+/// recorded parent identity; a temporarily missing folder can return without repair.
 pub(crate) struct Access {
     pub(crate) binding: Binding,
-    parent: Option<Dir>,
     locks: Dir,
 }
 impl Access {
     pub(crate) fn new(binding: Binding, locks: Dir) -> Self {
-        Self {
-            parent: binding.open_parent().ok(),
-            binding,
-            locks,
-        }
+        Self { binding, locks }
     }
     pub(crate) fn root(&self, name: &str) -> io::Result<Dir> {
-        self.binding.open_parent()?;
-        let root = self
-            .parent
-            .as_ref()
-            .ok_or_else(invalid)?
-            .open_dir_nofollow(name)?;
+        let parent = self.binding.open_parent()?;
+        let root = parent.open_dir_nofollow(name)?;
         if Identity::read(&root)? != self.binding.child {
             return Err(invalid());
         }

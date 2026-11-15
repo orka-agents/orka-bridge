@@ -126,6 +126,27 @@ test('repo create failure keeps the chosen checkout and name for retry', async (
   await waitFor(() => expect(created).toHaveBeenCalledWith(id));
 });
 
+test('same-named agents show their distinct locations and select by document ID', async () => {
+  const opened: unknown[] = [];
+  native((command, args) => {
+    if (command === 'agents_list') return [
+      { id: SAMPLE_DOCUMENT_ID, name: 'web-reader', path: '/home/creator/Orka/agents/web-reader/web-reader.agent.md', available: true },
+      { id, name: 'web-reader', path: '/repos/team/web-reader/web-reader.agent.md', available: true },
+    ];
+    if (command === 'agent_open') { opened.push(args.documentId); return { ...pair, documentId: args.documentId, storage: args.documentId === id ? 'repo' : 'bridge' }; }
+    if (command === 'agent_select') return null;
+    if (command === 'agent_run_status') return { documentId: args.documentId, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'send_status') return { documentId: args.documentId, view: null, busy: null };
+    if (command === 'send_history') return [];
+  });
+  const user = userEvent.setup(); render(<Example setupPending />);
+  expect(await screen.findByRole('option', { name: 'web-reader (/repos/team/web-reader/web-reader.agent.md)' })).toBeTruthy();
+  expect(screen.getByRole('option', { name: 'web-reader (/home/creator/Orka/agents/web-reader/web-reader.agent.md)' })).toBeTruthy();
+  await user.selectOptions(screen.getByRole('combobox', { name: 'Agent' }), id);
+  await screen.findByText('Files save automatically. You manage commits in this repo.');
+  expect(opened.at(-1)).toBe(id);
+});
+
 test('native storage metadata is preserved and unknown values are rejected', async () => {
   native(() => pair);
   expect((await agentCall('agent_open')).storage).toBe('repo');
