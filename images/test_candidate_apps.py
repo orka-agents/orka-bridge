@@ -6,9 +6,11 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import stat
+import sys
 import tempfile
 import unittest
 import zipfile
@@ -332,12 +334,15 @@ class Workflow(unittest.TestCase):
         job = workflow.split("\n  public-images:\n", 1)[1].split("\n  qemu-inputs:\n", 1)[0]
         step = job.split("- name: Validate future app tag\n", 1)[1].split("\n      - name:", 1)[0]
         command = step.split("run: ", 1)[1].strip()
+        assignment, executable, *arguments = shlex.split(command)
+        self.assertEqual((assignment, executable), ("PYTHONPATH=images", "python3"))
         version = json.loads((c.q.ROOT / "app/src-tauri/tauri.conf.json").read_bytes())["version"]
         for tag, expected in (("v" + version, 0), ("v" + version + "0", 1), ("v" + version + "-rc.1", 1),
                               ("bridge-preview-fixture", 1), ("v0.1.0-01", 1)):
             with self.subTest(tag=tag):
-                result = subprocess.run(command, shell=True, cwd=c.q.ROOT,
-                                        env={**os.environ, "CANDIDATE_TAG": tag}, capture_output=True, text=True)
+                result = subprocess.run([sys.executable, *arguments], cwd=c.q.ROOT,
+                                        env={**os.environ, "PYTHONPATH": "images", "CANDIDATE_TAG": tag},
+                                        capture_output=True, text=True, check=False)
                 self.assertEqual(result.returncode == 0, expected == 0, result.stderr)
 
     def test_app_evidence_upload_is_closed_pinned_and_retained_even_after_failure(self):
@@ -391,8 +396,6 @@ class Workflow(unittest.TestCase):
             self.assertIn(command, mac)
 
     def test_measure_cli_writes_observed_sizes_and_free_space_not_peak(self):
-        import subprocess
-        import sys
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); data = root / "app.zip"; data.write_bytes(b"test")
             report = root / "space.json"
