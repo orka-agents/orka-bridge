@@ -8,8 +8,8 @@ export function validTestTitle(value: unknown): value is string {
 }
 const text = (value: unknown): value is string => typeof value === 'string' && !!value.trim() && !value.includes('\0');
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-function yaml(source: string): unknown {
-  const doc = parseDocument(source);
+function yaml(source: string, strings = false): unknown {
+  const doc = parseDocument(source, { schema: strings ? 'failsafe' : 'core' });
   if (doc.errors.length) throw Error('Unsupported tests');
   return doc.toJS({ maxAliasCount: 100 });
 }
@@ -32,9 +32,12 @@ export function testDefinitions(source: string): TestDefinition[] | undefined {
         if (block) return undefined;
         block = [];
       } else if (line === '```' && block) {
-        const value = yaml(block.join('\n')); block = undefined;
-        if (!object(value) || Object.keys(value).some(key => !['id', 'title', 'input', 'assertions'].includes(key))
-          || !text(value.id) || ids.has(value.id) || !text(value.input)
+        const caseSource = block.join('\n'); block = undefined;
+        // Case id/input retain scalar spelling; titles and buffered assertions stay typed.
+        const value = yaml(caseSource);
+        const strings = yaml(caseSource, true);
+        if (!object(value) || !object(strings) || Object.keys(value).some(key => !['id', 'title', 'input', 'assertions'].includes(key))
+          || !text(strings.id) || ids.has(strings.id) || !text(strings.input)
           || 'title' in value && !validTestTitle(value.title)
           || !Array.isArray(value.assertions) || !value.assertions.length || value.assertions.length > 64) return undefined;
         const assertions = new Set<string>();
@@ -45,8 +48,8 @@ export function testDefinitions(source: string): TestDefinition[] | undefined {
             || !text(a.type === 'contains' ? a.value : a.tool)) return undefined;
           assertions.add(a.id);
         }
-        ids.add(value.id);
-        cases.push({ id: value.id, question: value.input, ...('title' in value ? { title: value.title as string } : {}) });
+        ids.add(strings.id);
+        cases.push({ id: strings.id, question: strings.input, ...('title' in value ? { title: value.title as string } : {}) });
         if (cases.length > 32) return undefined;
       } else if (block) block.push(line);
       else if (line.startsWith('```')) {

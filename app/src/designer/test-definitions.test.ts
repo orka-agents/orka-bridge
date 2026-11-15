@@ -27,6 +27,15 @@ test.each([
 ])('unsupported saved files never fabricate test rows', source => {
   expect(testDefinitions(source)).toBeUndefined();
 });
+test.each(['42', 'true', 'null', '0x2A', '1.20', 'FALSE', '1e+3', '~'])('native string fields preserve the decoded scalar %s', scalar => {
+  const source = file(block('', scalar).replace('input: What did the page say?', `input: ${scalar}`));
+  expect(testDefinitions(source)).toEqual([{ id: scalar, question: scalar }]);
+});
+test.each(['42', 'true', 'null', '0x2A', '1.20', 'FALSE', '1e+3', '~'])('buffered assertion string fields do not coerce %s, like native Run', scalar => {
+  for (const assertion of [`id: ${scalar}, type: contains, value: checksum`, `id: answer, type: contains, value: ${scalar}`, `id: answer, type: toolCalled, tool: ${scalar}`]) {
+    expect(testDefinitions(file(block().replace('id: text, type: contains, value: checksum', assertion)))).toBeUndefined();
+  }
+});
 test('bounded YAML aliases accepted by native Run remain available in the preview', () => {
   expect(testDefinitions(file(block('title: &name Reads the page\n').replace('input: What did the page say?', 'input: *name')))?.[0]).toEqual({ id: 'page', title: 'Reads the page', question: 'Reads the page' });
 });
