@@ -6,12 +6,12 @@ import { Board, GroupSection, useCompact } from './places';
 import './overview.css';
 
 export type OverviewProps = {
-  onNewAgent?: () => void; active: boolean; runBusy: boolean; workspaceKey: string;
+  onNewAgent?: () => void; active: boolean; runBusy: boolean; activeDocumentId?: string; workspaceKey: string;
   onOpenDocument: (id: string) => void; onChatDocument?: (id: string) => void; onRunDocument?: (id: string) => void;
   onOpenExample: () => void; onChooseWorkspace: () => void; onCounts?: (label: string) => void;
 };
 const complete = (v?: LiveAgents): v is CompleteAgents => v?.state === 'complete' && v.installation !== null && v.observedAt !== null;
-export default function Overview({ onNewAgent, active, runBusy, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts }: OverviewProps) {
+export default function Overview({ onNewAgent, active, runBusy, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts }: OverviewProps) {
   // Last good reads are kept so a busy or failed refresh never blanks the page; each is flagged when it is not fresh.
   const [files, setFiles] = useState<SavedFiles>();
   const [filesStale, setFilesStale] = useState(false);
@@ -56,7 +56,7 @@ export default function Overview({ onNewAgent, active, runBusy, workspaceKey, on
     void readFiles().then(value => {
       if (request !== epoch.current) return;
       if (value.state === 'complete') {
-        value.files.forEach(f => { if (f.localResult && (f.localResult.state === 'complete' || f.localResult.state === 'unknown' && !runBusy && !value.runActive)) finals.current.set(f.documentId, f.localResult); });
+        value.files.forEach(f => { if (f.localResult && (f.localResult.state === 'complete' || f.localResult.state === 'unknown' && (!(runBusy || value.runActive) || f.documentId !== activeDocumentId))) finals.current.set(f.documentId, f.localResult); });
         // Cleanup may forget a removed Agent while the cached inventory still contains it.
         value.runAgents.forEach(a => knownRunAgents.current.set(JSON.stringify([a.installation, a.namespace, a.agentUid]), a));
         setFiles({ ...value, runAgents: [...knownRunAgents.current.values()] }); setFilesStale(false);
@@ -69,9 +69,9 @@ export default function Overview({ onNewAgent, active, runBusy, workspaceKey, on
       void list();
     });
     return () => { epoch.current++; clearTimeout(timer); };
-  }, [active, runBusy, workspaceKey, refresh]);
+  }, [active, runBusy, activeDocumentId, workspaceKey, refresh]);
   const observed = complete(live) ? live : last;
-  const inputs: Inputs = { files, filesStale, finals: finals.current, live, observed, pending, places, placeError, chat: !!onChatDocument, run: !!onRunDocument };
+  const inputs: Inputs = { files, filesStale, finals: finals.current, live, observed, pending, activeDocumentId, places, placeError, chat: !!onChatDocument, run: !!onRunDocument };
   const built = buildCards(inputs);
   const empty = isEmpty(inputs, built);
   const partial = filesStale || files?.historyState !== 'complete' || !complete(live) || pending || !places || placeError || places.places.some(p => p.stale || p.observedAt === null);

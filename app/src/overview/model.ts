@@ -15,7 +15,7 @@ export type Group = { key: string; title: string; sub?: string; description?: st
 export type CompleteAgents = LiveAgents & { state: 'complete'; installation: string; observedAt: number };
 export type Inputs = {
   files?: SavedFiles; filesStale: boolean; finals: Map<string, Observation>;
-  live?: LiveAgents; observed?: CompleteAgents; pending: boolean;
+  live?: LiveAgents; observed?: CompleteAgents; pending: boolean; activeDocumentId?: string;
   places?: Places; placeError: boolean; chat: boolean; run: boolean;
 };
 export type Built = ReturnType<typeof buildCards>;
@@ -96,7 +96,7 @@ export function buildCards(i: Inputs) {
   const where = (documentId: string, except?: string) => [...new Set(linked.get(documentId) ?? [])].filter(k => k !== except).map(k => labels.get(k)!);
 
   const local: Card[] = saved.map(file => {
-    const { result, running } = resultFor(file, i.observed, i.finals, i.pending);
+    const { result, running } = resultFor(file, i.observed, i.finals, i.pending && i.activeDocumentId === file.documentId);
     const s = localStatus(file, result, running, history);
     const counts = result?.report && (s.status === 'passed' || s.status === 'failed') ? `${result.report.passed} of ${result.report.total} tests${s.earlier ? ' on earlier files' : ''}` : undefined;
     const details: Detail[] = [];

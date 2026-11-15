@@ -144,7 +144,7 @@ test('a running local result keeps the previous final result, or is Result unkno
 
 test.each(['passed', 'failed'])('native active Unknown keeps the previous %s result, but terminal Unknown replaces it', async verdict => {
   const label = verdict === 'passed' ? 'Passed' : 'Failed';
-  ipc(files([{ ...file, localResult: result(verdict, 1, 2) }])); render(<Overview {...props} />);
+  ipc(files([{ ...file, localResult: result(verdict, 1, 2) }])); render(<Overview {...props} activeDocumentId={id} />);
   expect(within(await card(/^reader/)).getByText(label)).toBeTruthy();
   const unknown = { ...file, localResult: result('unknown', 0, 0, { state: 'unknown', report: null, observedAt: 1234567890001 }) };
   ipc(files([unknown], { runActive: true })); await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
@@ -159,6 +159,18 @@ test.each(['passed', 'failed'])('native active Unknown keeps the previous %s res
   await screen.findByText(/Updating when the test finishes/);
   expect(within(screen.getByRole('article', { name: /^reader/ })).getByText('Result unknown')).toBeTruthy();
   expect(within(screen.getByRole('article', { name: /^reader/ })).queryByText(/1 of 2 tests/)).toBeNull();
+});
+
+test('an unseen terminal Unknown for A is not replaced by a cached pass while B is active', async () => {
+  ipc(); const view = render(<Overview {...props} />);
+  expect(within(await card(/^reader/)).getByText('Passed')).toBeTruthy();
+  view.rerender(<Overview {...props} active={false} />);
+  const unknown = { ...file, localResult: result('unknown', 0, 0, { state: 'unknown', report: null, observedAt: 1234567890001 }) };
+  const other = named(id2, 'other', { localResult: result('unknown', 0, 0, { documentId: id2, state: 'unknown', report: null }) });
+  ipc(files([unknown, other], { runActive: true }));
+  view.rerender(<Overview {...props} activeDocumentId={id2} runBusy />);
+  await waitFor(() => expect(within(screen.getByRole('article', { name: /^reader/ })).getByText('Result unknown')).toBeTruthy());
+  expect(within(screen.getByRole('article', { name: /^reader/ })).queryByText(/of 3 tests/)).toBeNull();
 });
 
 test('file metadata from outside is escaped text', async () => {
