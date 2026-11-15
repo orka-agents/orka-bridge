@@ -46,6 +46,19 @@ test.each(['Chat', 'File'])('Overview Run selects Agent view before starting fro
   expect(screen.getByRole('button', { name: 'Agent', pressed: true })).toBeTruthy();
 });
 
+test.each([false, true])('same-document Overview Run waits for its new selection request (reject: %s)', async reject => {
+  let finish!: () => void;
+  const ipc = native(() => new Promise<void>((resolve, fail) => { finish = () => reject ? fail(Error('selection failed')) : resolve(); }));
+  const view = render(<Example documentId={a} />);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(false));
+  view.rerender(<Example documentId={a} openDocumentRequest={1} actionRequest={{ id: 1, documentId: a, action: 'run' }} />);
+  await waitFor(() => expect(finish).toBeTypeOf('function'));
+  expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run')).toHaveLength(0);
+  await act(async () => finish());
+  if (reject) { await screen.findByText('Your agent selection could not be saved. Try choosing it again.'); expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run')).toHaveLength(0); }
+  else await waitFor(() => expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run')).toHaveLength(1));
+});
+
 test('Overview Run waits for selection, opens only the requested document, and starts once', async () => {
   let selected!: () => void;
   const ipc = native(() => new Promise<void>(resolve => { selected = resolve; }));

@@ -151,7 +151,7 @@ export default function Example({ actionRequest, onActionHandled, agentsRevision
     handledAction.current = actionRequest.id; onActionHandled?.(actionRequest.id);
   };
   const actionReady = !!actionRequest && actionRequest.id !== handledAction.current && active && (actionRequest.action !== 'run' || !setupPending && !remote)
-    && !selectionNeeded && !selecting && !selectionError && !creating && !wantsCreate && !reloading
+    && handledOpen.current === openDocumentRequest && !selectionNeeded && !selecting && !selectionError && !creating && !wantsCreate && !reloading
     && documentId === boundDocument && actionRequest.documentId === boundDocument && pair?.documentId === boundDocument && saveState === 'saved' && !pendingSoul;
   useEffect(() => {
     if (!actionRequest || actionRequest.id === handledAction.current) return;
