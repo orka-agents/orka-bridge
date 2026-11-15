@@ -1,3 +1,4 @@
+import { isTauri } from '@tauri-apps/api/core';
 import { Disclosure } from '../components/Disclosure';
 import { Button } from '../components/Button';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
@@ -262,6 +263,6 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
       </div>
       </div>
     </>}
-    {!pair && remote && <div className="designer-checks card"><SendHistory revision={boundDocument} /></div>}
+    {!pair && (remote || error && isTauri()) && <div className="designer-checks card"><SendHistory revision={boundDocument} /></div>}
   </section></>;
 }

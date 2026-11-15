@@ -64,6 +64,18 @@ test('a newer preparation supersedes an in-flight prepared reload without replac
   await act(async () => reads[0]({ ...pair, agent: pair.agent.replace('Read the page.', 'Use an older model.') }));
   expect(editor().value).toBe(edited);
 });
+test('a failed local open keeps saved Send history accessible without the source folder', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => {
+    if (command === 'agent_open') throw Error('Folder unavailable');
+    if (command === 'send_history') return [];
+    throw Error(`Unexpected command ${command}`);
+  });
+  render(<Example />);
+  await screen.findByRole('button', { name: 'Try opening again' });
+  expect(await screen.findByRole('heading', { name: 'Past Sends' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Send to a cluster' }).hasAttribute('disabled')).toBe(true);
+});
 test('opening keeps a form-shaped skeleton until the owned document arrives', async () => {
   vi.stubGlobal('isTauri', true); let finish!: (value: unknown) => void;
   mockIPC(command => command === 'agent_open' ? new Promise(resolve => { finish = resolve; }) : idle);
