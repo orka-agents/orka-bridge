@@ -32,6 +32,7 @@ class Discovery(BaseHTTPRequestHandler):
     agents = {}
     offline = set()
     lose_receipt = set()
+    unconfirmed_agents = set()
     cancel_modes = {}
     task_counts = {}
     update_modes = {}
@@ -84,6 +85,7 @@ class Discovery(BaseHTTPRequestHandler):
                     self.cancel_modes.clear()
                     self.task_counts.clear()
                     self.update_modes.clear()
+                    self.unconfirmed_agents.clear()
                     self.cancel_ready.set()
                 elif action == "cancel-mode" and control["place"] in ["fixture-cluster", "fixture-secondary"] and control["mode"] in ["cancelling", "requested", "confirmed", "denied", "unsupported", "unconfirmed", "completed"]:
                     self.cancel_modes[control["place"]] = control["mode"]
@@ -292,6 +294,7 @@ class Discovery(BaseHTTPRequestHandler):
                 self.objects[place, route + "/" + body["name"]] = value
                 if kind == "Agent" and place in self.lose_receipt:
                     self.lose_receipt.remove(place)
+                    self.unconfirmed_agents.add((place, route + "/" + body["name"]))
                     return 503, {"error": "Synthetic lost create receipt"}
                 return 201, value
             if route.endswith("/auth/whoami"):
@@ -313,6 +316,8 @@ class Discovery(BaseHTTPRequestHandler):
                 agent = self.objects[place, route.rsplit("/", 1)[0]]["spec"]["agentRef"]["name"]
                 event = {"namespace": "agents", "streamType": "task", "streamID": task, "seq": 1, "type": "ToolCallCompleted", "taskName": task, "agentName": agent, "toolName": "web_fetch", "toolCallID": "fixture-call"}
                 value = {"namespace": "agents", "streamType": "task", "streamID": task, "afterSeq": 0, "latestSeq": 1, "events": [event]}
+            elif (place, route) in self.unconfirmed_agents:
+                return 503, {"error": "Synthetic unconfirmed Agent readback"}
             elif (place, route) in self.objects:
                 value = self.objects[place, route]
             else:

@@ -1253,6 +1253,7 @@ impl SendOwner {
         }
         .map_err(|_| Stage::Submit)?;
         let mut checkpoint = |event| {
+            let task_barrier = matches!(&event, RunCheckpoint::Before(r) if r.kind == "Task");
             match event {
                 RunCheckpoint::AgentAcknowledged(resource) => {
                     bound
@@ -1313,6 +1314,15 @@ impl SendOwner {
             if self
                 .summary
                 .checkpoint(summary.clone(), details.clone())
+                .and_then(|_| {
+                    if task_barrier {
+                        // Preserve the pending identity first, then reserve the
+                        // binding durably before the runner may poll Task POST.
+                        bound.unfinished = true;
+                        self.summary.save_binding(bound.clone())?;
+                    }
+                    Ok(())
+                })
                 .is_ok()
             {
                 Ok(())
@@ -1365,6 +1375,11 @@ impl SendOwner {
                     });
                 }
                 summary.verdict = AttemptVerdict::Unknown;
+                // A definite Task rejection can leave only the Agent. Release
+                // its barrier before publishing details that may be evicted.
+                self.summary
+                    .complete_binding(&summary.id, &details)
+                    .map_err(|_| Stage::Storage)?;
                 if self.summary.checkpoint(summary, details).is_err() {
                     self.update(id, |v| v.storage_error = true);
                 }

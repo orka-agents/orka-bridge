@@ -99,6 +99,45 @@ async fn archived_answers_recover_after_update_and_transient_read_failure() {
     assert_eq!((s.api.wire.posts(), puts(&s).len()), writes);
 }
 #[tokio::test]
+async fn failed_revision_check_cannot_promote_a_task_into_archived_mode() {
+    let s = setup().await;
+    let first = s.finish(&id(&s.start().await)).await;
+    let send = id(&first);
+    let path = s
+        .home
+        .path()
+        .join(format!("app-local/send-history-v1/{send}.json"));
+    use bridge_engine::send_summary::{AttemptDetails, AttemptVerdict, SummaryStore};
+    let mut detail: AttemptDetails =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    detail.report = None;
+    for resource in &mut detail.resources {
+        if resource.kind == "Task" {
+            resource.terminal = false;
+        }
+    }
+    let mut summary = s.owner.history().unwrap().remove(0);
+    summary.verdict = AttemptVerdict::Unknown;
+    SummaryStore::new(Some(s.home.path().join("app-local")))
+        .checkpoint(summary, detail)
+        .unwrap();
+    let api = s.api.clone();
+    *s.api.wire.before_result.lock().unwrap() = Some(Box::new(move || {
+        *api.wire.mode.lock().unwrap() = "agent-generation";
+    }));
+    let writes = (s.api.wire.posts(), puts(&s).len());
+    let rejected = s.owner.history_check(&send).await.unwrap();
+    assert!(
+        rejected.interrupted,
+        "failed final Agent verification cannot prove terminal receipt ownership"
+    );
+    assert_ne!(rejected.report.map(|r| r.verdict), Some(Verdict::Passed));
+    let again = s.owner.history_check(&send).await.unwrap();
+    assert_ne!(again.report.map(|r| r.verdict), Some(Verdict::Passed));
+    assert!(!s.owner.history_details(&send).unwrap().can_remove);
+    assert_eq!((s.api.wire.posts(), puts(&s).len()), writes);
+}
+#[tokio::test]
 async fn acknowledged_binding_repairs_crash_gap_in_preflight_and_history_check() {
     for (preflight, missing) in [(true, false), (false, false), (true, true), (false, true)] {
         let s = setup().await;

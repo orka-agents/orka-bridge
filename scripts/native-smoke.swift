@@ -18,8 +18,10 @@ var restoreTemporaryTests: (() throws -> Void)?
 var restoreTemporaryAgent: (() throws -> Void)?
 func fail(_ message: String) -> Never {
     fputs("\(message)\n", stderr)
-    do { try restoreTemporaryTests?(); try restoreTemporaryAgent?() }
-    catch { fputs("Cannot restore original agent/test files: \(error)\n", stderr) }
+    do { try restoreTemporaryTests?() }
+    catch { fputs("Cannot restore original test file: \(error)\n", stderr) }
+    do { try restoreTemporaryAgent?() }
+    catch { fputs("Cannot restore original agent file: \(error)\n", stderr) }
     restoreDisplay()
     exit(1)
 }
@@ -1376,8 +1378,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 1)
     try capturePreflight("send-secondary-result", "1 of 1 passed")
     // Explicitly request a separate identity without changing the common files.
-    // The fixture withholds that create's UID receipt; the earlier passing agent
-    // remains a valid cross-cluster association, never a name-adopted replacement.
+    // The fixture withholds the UID receipt and individual readback, not inventory;
+    // automatic reconciliation cannot resolve it or adopt it by its visible name.
+    // The earlier passing agent remains a valid cross-cluster association.
     try fixtureControl(["action": "lose-agent-receipt", "place": "fixture-secondary"])
     try clickSendControl("Send as a separate agent", scrolling: 350)
     Thread.sleep(forTimeInterval: 1)

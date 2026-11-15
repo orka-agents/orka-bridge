@@ -174,12 +174,16 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   const targetId = target?.id;
   const agentHash = source?.agent; const testsHash = source?.tests;
   const previousSend = useRef<{ id: string; state: string } | undefined>(undefined);
+  const previousBusy = useRef<string | undefined>(undefined);
+  const busyDocumentId = foreignBusy?.documentId;
   const sendId = snapshot?.id; const sendState = snapshot?.state;
   useEffect(() => {
     const previous = previousSend.current;
     previousSend.current = sendId && sendState ? { id: sendId, state: sendState } : undefined;
-    if (previous?.id === sendId && previous?.state === 'running' && sendState !== 'running') setRefresh(value => value + 1);
-  }, [sendId, sendState]);
+    const foreignFinished = !!previousBusy.current && !busyDocumentId;
+    previousBusy.current = busyDocumentId;
+    if (foreignFinished || (previous?.id === sendId && previous?.state === 'running' && sendState !== 'running')) setRefresh(value => value + 1);
+  }, [sendId, sendState, busyDocumentId]);
   const checkKey = JSON.stringify([documentId, targetId, providerId, agentHash, testsHash, refresh]);
   const checkingEnabled = (visible || remote) && !blocked && !!targetId && !!providerId && !!agentHash && !!testsHash;
   useEffect(() => {

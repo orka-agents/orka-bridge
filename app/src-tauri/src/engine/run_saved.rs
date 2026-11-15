@@ -148,7 +148,6 @@ impl NativeRunner<'_> {
                 let phase=value["status"]["phase"].as_str().ok_or(ErrorKind::Response)?;
                 if matches!(phase,"Pending"|"Running"|"Finalizing"|"Scheduled") { task.terminal=false; return Ok(None); }
                 if !matches!(phase,"Succeeded"|"Failed"|"Cancelled") { return Err(ErrorKind::Response); }
-                task.terminal=true;
                 let old=report.cases.iter().find(|r| r.id==case.id);
                 let needs_answer=case.assertions().iter().any(|a|matches!(a,Assertion::Contains{..}));
                 let answer=match self.http.request(&format!("{path}/result"),None,None,deadline).await {
@@ -165,6 +164,7 @@ impl NativeRunner<'_> {
                 let after=self.http.request(&path,None,None,deadline).await?;
                 if !task.matches(&after) || after["status"]["phase"]!=phase {return Err(ErrorKind::Identity);}
                 if !archived { self.read_saved(agent, deadline).await?; }
+                task.terminal=true;
                 let assertions=if phase=="Cancelled" {Vec::new()} else {case.evaluate(answer.as_deref(),&tools)};
                 let verdict=if phase=="Cancelled" {Verdict::Cancelled} else if phase=="Succeeded" {aggregate(assertions.iter().map(|r|r.verdict))} else {Verdict::Failed};
                 Ok(Some((CaseReport {id:case.id.clone(),question:case.input().into(),phase:phase.into(),answer,completed_tools:tools,assertions,verdict},captured)))

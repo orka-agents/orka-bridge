@@ -15,16 +15,16 @@ const preflight = { documentId: SAMPLE_DOCUMENT_ID, source, targetId: id, provid
 const active = { documentId: SAMPLE_DOCUMENT_ID, id, targetId: id, providerId: id, targetName: 'team-dev', source, model: 'model', agentName: 'bridge-run-frozen', state: 'running', stage: 'observe', acknowledged: [], pending: null, report: null, error: null, storageError: false, cancellation: null };
 function native(check: unknown = preflight, initial: unknown = null) {
   vi.stubGlobal('isTauri', true);
-  let view = initial;
+  let view = initial; let busy: unknown = null;
   const ipc = vi.fn<(command: string, args?: unknown) => unknown>((command) => {
     if (command === 'send_history') return [];
     if (command === 'send_preflight') return check;
     if (command === 'send_start') view = active;
-    if (command === 'send_start' || command === 'send_status') return { documentId: SAMPLE_DOCUMENT_ID, view, busy: null };
+    if (command === 'send_start' || command === 'send_status') return { documentId: SAMPLE_DOCUMENT_ID, view, busy };
     throw Error('PRIVATE_DIAGNOSTIC');
   });
   mockIPC(ipc);
-  return { ipc, setCheck(value: unknown) { check = value; }, setView(value: unknown) { view = value; } };
+  return { ipc, setCheck(value: unknown) { check = value; }, setView(value: unknown) { view = value; }, setBusy(value: unknown) { busy = value; } };
 }
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 const panel = (blocked?: string) => <Send place={place} source={source} stale={false} visible remote blocked={blocked} />;
@@ -83,6 +83,17 @@ test('a finished Send refreshes its native binding decision before another click
   state.setCheck({ ...preflight, action: 'unchanged', canSeparate: true });
   state.setView({ ...active, state: 'complete', stage: 'done', report: { verdict: 'passed', cases: [{ id: 'test', question: 'Question', phase: 'Succeeded', answer: 'Answer', completedTools: [], assertions: [{ id: 'check', kind: 'contains', expected: 'Answer', verdict: 'passed' }], verdict: 'passed' }] } });
   await waitFor(() => expect((screen.getByRole('button', { name: 'Run cluster tests again' }) as HTMLButtonElement).disabled).toBe(false));
+});
+
+test('another document finishing refreshes preflight even with no Send in this document', async () => {
+  const state = native({ ...preflight, action: 'blocked', canSend: false, rows: [{ label: 'Earlier Send', status: 'blocked', message: 'Another Send blocks updates' }] });
+  state.setBusy({ documentId: '00000000-0000-4000-8000-000000000005', name: 'other-agent' });
+  render(panel());
+  await screen.findByText('Another Send blocks updates');
+  state.setCheck(preflight); state.setBusy(null);
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Send and run tests' }) as HTMLButtonElement).disabled).toBe(false));
+  expect(state.ipc.mock.calls.filter(([cmd]) => cmd === 'send_preflight').length).toBeGreaterThan(1);
+  expect(state.ipc.mock.calls.some(([cmd]) => cmd === 'send_start')).toBe(false);
 });
 
 test('read-only Check again refreshes a recovered binding without submitting work', async () => {

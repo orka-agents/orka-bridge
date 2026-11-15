@@ -20,6 +20,7 @@ class SendFixtureTest(unittest.TestCase):
         fixture.Discovery.agents = {}
         fixture.Discovery.offline = set()
         fixture.Discovery.lose_receipt = set()
+        fixture.Discovery.unconfirmed_agents = set()
         fixture.Discovery.cancel_modes = {}
         fixture.Discovery.task_counts = {}
         fixture.Discovery.update_modes = {}
@@ -366,6 +367,9 @@ class SendFixtureTest(unittest.TestCase):
             response.read()
             lost = request("agents", {"name": "unacknowledged", "spec": {}}, expected_status=503)
             self.assertNotIn("metadata", lost)
+            # Keep ownership unconfirmed even after B3's automatic readback;
+            # inventory alone must never associate a UID-less attempt by name.
+            request("agents/unacknowledged", expected_status=503)
             inventory = request("agents")
             self.assertEqual({agent["metadata"]["name"] for agent in inventory["items"]},
                              {"probe", "probe2", "probe3", "unacknowledged", "runtime-reader"})

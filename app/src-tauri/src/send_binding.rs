@@ -60,6 +60,10 @@ impl Binding {
             self.desired = desired;
         }
         self.acknowledged = Some(receipt.value());
+        // Agent acknowledgement (including intent reconciliation) precedes every
+        // Task barrier. Persist this with the cleared intent, not in a later save:
+        // missing/removed Agent-only history cannot strand an unfinished binding.
+        self.unfinished = false;
         Ok(())
     }
     pub fn reconciled(&self, value: &Value) -> Result<ResourceId, Stage> {
@@ -326,17 +330,6 @@ impl SendOwner {
                     .checkpoint(summary, details.clone())
                     .map_err(|_| Stage::Storage)?;
             }
-            if pending {
-                binding.unfinished = details.unresolved();
-            }
-        } else if pending {
-            // Pending Agent intent proves the Task barrier was never crossed.
-            binding.unfinished = false;
-        }
-        if pending {
-            self.summary
-                .save_binding(binding.clone())
-                .map_err(|_| Stage::Storage)?;
         }
         if binding.unfinished {
             if let Ok((_, Some(details))) = self.summary.record(&binding.attempt) {
