@@ -108,6 +108,14 @@ async fn deployment(creator: &Client, binding: &TargetBinding) -> Result<(), Err
     }
     Ok(())
 }
+fn ready(pod: &Pod) -> bool {
+    pod.status.as_ref().is_some_and(|s| {
+        s.phase.as_deref() == Some("Running")
+            && s.conditions
+                .as_ref()
+                .is_some_and(|c| c.iter().any(|c| c.type_ == "Ready" && c.status == "True"))
+    })
+}
 fn pod_peer(
     pod: &Pod,
     binding: &TargetBinding,
@@ -119,12 +127,7 @@ fn pod_peer(
         || !selector
             .iter()
             .all(|(k, v)| pod.metadata.labels.as_ref().and_then(|l| l.get(k)) == Some(v))
-        || !pod.status.as_ref().is_some_and(|s| {
-            s.phase.as_deref() == Some("Running")
-                && s.conditions
-                    .as_ref()
-                    .is_some_and(|c| c.iter().any(|c| c.type_ == "Ready" && c.status == "True"))
-        })
+        || !ready(pod)
     {
         return None;
     }
@@ -194,6 +197,7 @@ pub(super) async fn select(
         .list(&ListParams::default().labels(&labels))
         .await
         .map_err(kube_error)?;
+    let has_ready_pod = pods.iter().any(ready);
     for pod in pods {
         let Some((peer, controller)) = pod_peer(&pod, binding, &selector, &service_port) else {
             continue;
@@ -213,7 +217,11 @@ pub(super) async fn select(
             Err(error) => return Err(error),
         }
     }
-    Err(ErrorKind::Identity)
+    Err(if has_ready_pod {
+        ErrorKind::Identity
+    } else {
+        ErrorKind::Transport
+    })
 }
 pub(super) async fn validate(
     creator: &Client,

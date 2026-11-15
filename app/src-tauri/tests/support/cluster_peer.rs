@@ -124,6 +124,28 @@ async fn bounded_forward_rejects_foreign_or_malformed_owner_chains() {
 }
 
 #[tokio::test]
+async fn bounded_forward_no_ready_pod_is_unavailable_not_an_identity_mismatch() {
+    for empty in [true, false] {
+        let api = Arc::new(ApiFixture::default());
+        *api.response_hook.lock().unwrap() = Some(Box::new(move |path, list| {
+            if path.ends_with("/pods") {
+                if empty {
+                    list["items"] = json!([]);
+                } else {
+                    ready(list)["status"]["conditions"][0]["status"] = json!("False");
+                }
+            }
+        }));
+        assert_eq!(
+            connect(&api).await.err(),
+            Some(failed(Check::OrkaConnection, CheckResult::Unknown))
+        );
+        assert_eq!(api.wire.forwards.load(Ordering::SeqCst), 0);
+        assert!(api.wire.calls.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
 async fn bounded_forward_skips_foreign_pod_before_valid_rollout() {
     let api = Arc::new(ApiFixture::default());
     *api.response_hook.lock().unwrap() = Some(Box::new(|path, list| {

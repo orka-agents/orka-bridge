@@ -130,6 +130,9 @@ owner references can be forged by a Pod creator.
 Saved places and Send ownership include a hash of the API endpoint and configured
 TLS trust. Changing either no longer attaches history or linked Agents merely
 because object UIDs match. Authentication credentials are not part of this hash.
+A changed endpoint or TLS configuration, including CA rotation, is a distinct
+destination: a fresh Send can create a separate Agent there rather than reuse
+the old link. The old Agent and ownership are not deleted or transferred.
 An exact clone preserving the endpoint, trust keys and UIDs is outside this
 guarantee. Existing TLS verification settings are unchanged.
 
