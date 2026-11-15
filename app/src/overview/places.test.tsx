@@ -50,6 +50,15 @@ test('remote cards keep a verdict only from a Bridge record, link a file only on
   expect(within(external).getByText('No agent file on this computer.')).toBeTruthy();
 });
 
+test('a cancelled cluster result remains neutral rather than failed or passed', async () => {
+  ipc(places([{ ...two, agents: [{ ...agent, record: { ...record, verdict: 'cancelled' } }] }]));
+  render(<Overview {...props} />);
+  const remote = await group('team-two');
+  expect(within(remote).getByText('Not tested')).toBeTruthy();
+  expect(remote.querySelector('.status-passed, .status-failed')).toBeNull();
+  expect(remote.querySelector('.status-not-started')).toBeTruthy();
+});
+
 test('identical saved files are ambiguous: the cluster card stays unlinked, local cards stay one per document', async () => {
   ipc(places([two]), saved([file, { ...file, documentId: id2, name: 'copy', summary: { ...file.summary, name: 'copy' } }]));
   render(<Overview {...props} />);

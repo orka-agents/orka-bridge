@@ -116,6 +116,16 @@ test('Bridge test-run Agents are never cards; exact identity only, never the nam
   expect(within(stray).getByText('Name on the cluster')).toBeTruthy(); expect(within(stray).getByText('Namespace')).toBeTruthy();
 });
 
+test('a cancelled local observation keeps the agent list readable with neutral status', async () => {
+  ipc(files([{ ...file, localResult: result('cancelled', 0, 1) }]), live());
+  const counts = vi.fn(); render(<Overview {...props} onCounts={counts} />);
+  const c = await card(/^reader/);
+  expect(within(c).getByText('Not tested')).toBeTruthy();
+  expect(c.querySelector('.status-passed, .status-failed')).toBeNull();
+  expect(c.querySelector('.status-not-started')).toBeTruthy();
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 agent'));
+});
+
 test.each([
   ['unavailable history', files([{ ...file, localResult: null }], { historyState: 'unavailable', runAgents: [] })],
   ['older payload without history', { state: 'complete', runActive: false, files: [{ ...file, localResult: undefined }] }],

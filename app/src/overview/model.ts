@@ -123,7 +123,7 @@ export function buildCards(i: Inputs) {
   const remoteCards: Card[] = remote.map(({ place, agent, record, file }) => {
     const s: { status?: Status; pill?: string } = unavailable ? { status: 'needs-you', pill: "Couldn't check" } : !record ? {}
       : place.stale || record.verdict === 'unknown' ? { status: 'stale', pill: 'Result unknown' }
-        : record.verdict === 'running' ? { status: 'running', pill: 'Running' } : { status: record.verdict, pill: record.verdict === 'passed' ? 'Passed' : 'Failed' };
+        : record.verdict === 'running' ? { status: 'running', pill: 'Running' } : record.verdict === 'cancelled' ? { status: 'not-started', pill: 'Not tested' } : { status: record.verdict, pill: record.verdict === 'passed' ? 'Passed' : 'Failed' };
     const name = labels.get(place.key)!;
     const details: Detail[] = [{ label: 'Name on the cluster', value: agent.name }, { label: 'Namespace', value: place.namespace }, { label: 'Agent ID', value: agent.uid, copy: true }, { label: 'Cluster', value: `${place.context} · ${place.service}` }];
     if (record) details.push({ label: 'Agent file hash', value: record.source.agent, copy: true }, { label: 'Test file hash', value: record.source.tests, copy: true });
