@@ -275,7 +275,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   const resultSource = target && providerId ? checked?.value?.source ?? undefined : source;
   const editorCurrent = sameSource(source, snapshot?.source) === true;
   const current = !stale && editorCurrent && sameSource(resultSource, snapshot?.source) === true;
-  const localCurrent = !stale && sameSource(source, local?.source) === true && sameSource(resultSource, local?.source) === true;
+  const localCurrent = !stale && local?.sourceCurrent !== false && sameSource(source, local?.source) === true && sameSource(resultSource, local?.source) === true;
   const unconfirmed = !!snapshot?.source && !stale && editorCurrent && !resultSource;
   const targetName = snapshot?.targetName ?? (snapshot?.targetId === target?.id ? target?.context_name : undefined);
   const outdated = !!snapshot && (!samePlace || (!!snapshot.source && !current));
@@ -317,7 +317,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
     && (snapshot.acknowledged.some(r => r.kind === 'Agent' && r.uid) || snapshot.agentAction === 'update' || snapshot.agentAction === 'unchanged');
   const stages: Record<string, string> = { ...sendErrors, capture: 'Reading your saved files', access: 'Confirming cluster access', preflight: 'Checking the AI connection and tools', storage: 'Saving the Send summary', submit: 'Starting your tests', observe: 'Waiting for answers and evaluating tests', stopped: 'Stopped watching', done: 'Tests finished' };
   const localEvidence = !local?.report ? 'Not run' : localCurrent ? ({ passed: 'Passed on these files', failed: 'Failed', unknown: 'Result unknown', cancelled: 'Cancelled' })[local.report.verdict]
-    : sameSource(source, local.source) === false ? 'Earlier files' : 'Revision not confirmed';
+    : local.sourceCurrent === false || sameSource(source, local.source) === false ? 'Earlier files' : 'Revision not confirmed';
   const checkRows = checked?.value && !mismatched && <ul>{checked.value.rows.map(row => <li key={`${row.label}-${row.message}`} data-state={row.status}>
     <span className="preflight-state"><StatusIcon state={row.status === 'allowed' ? 'passed' : row.status === 'blocked' ? 'needs-you' : row.status === 'cannotCheck' ? 'needs-you' : 'not-started'} />{{ allowed: 'Ready', blocked: 'Blocked', cannotCheck: 'Can’t check', unverified: 'Unverified' }[row.status]}</span>
     <div><b>{row.label}</b><p>{row.message}</p></div>

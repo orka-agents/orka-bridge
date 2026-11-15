@@ -417,19 +417,26 @@ impl SendOwner {
                     .map_err(|_| Stage::Storage)?;
                 return binding.receipt();
             }
-            Err(ErrorKind::NotFound) => match transport
-                .request(
-                    &format!("agents/{}", binding.name),
-                    None,
-                    None,
-                    transport.deadline(),
-                )
-                .await
-            {
-                Ok(_) => Stage::UpdateUnsupported,
-                Err(ErrorKind::NotFound) => Stage::UpdateMissing,
-                _ => Stage::UpdateUnconfirmed,
-            },
+            Err(ErrorKind::NotFound) => {
+                // The diagnostic only classifies a rejected PUT, so Stop abandons it
+                // as uncertain; a ready definitive answer still wins a simultaneous Stop.
+                let path = format!("agents/{}", binding.name);
+                let diagnostic = tokio::select! {
+                    biased;
+                    result = transport.request(
+                        &path,
+                        None,
+                        None,
+                        transport.deadline(),
+                    ) => result,
+                    _ = stopped(&mut stop) => Err(ErrorKind::Stopped),
+                };
+                match diagnostic {
+                    Ok(_) => Stage::UpdateUnsupported,
+                    Err(ErrorKind::NotFound) => Stage::UpdateMissing,
+                    _ => Stage::UpdateUnconfirmed,
+                }
+            }
             Err(ErrorKind::Unsupported) => Stage::UpdateUnsupported,
             Err(ErrorKind::Conflict) => Stage::UpdateConflict,
             Err(ErrorKind::Authentication | ErrorKind::Permission) => Stage::UpdateDenied,

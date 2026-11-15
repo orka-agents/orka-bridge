@@ -47,19 +47,27 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   // See in Overview: refresh only the recorded destination, then focus the exact card (place key + UID, never a name).
   const focusEpoch = useRef(0);
   const toFocus = useRef<string | undefined>(undefined);
+  const focusedCard = useRef<HTMLElement | undefined>(undefined);
+  useEffect(() => {
+    const moved = (event: FocusEvent) => {
+      if (focusedCard.current && event.target !== focusedCard.current) { toFocus.current = undefined; focusedCard.current = undefined; }
+    };
+    document.addEventListener('focusin', moved);
+    return () => document.removeEventListener('focusin', moved);
+  }, []);
   const [focusTick, setFocusTick] = useState(0);
   const [focusNote, setFocusNote] = useState<string>();
   useEffect(() => {
-    if (!active || !focus) { setFocusNote(undefined); toFocus.current = undefined; return; }
+    if (!active || !focus) { setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined; return; }
     const request = ++focusEpoch.current;
-    setByAgent(false); setFocusNote(undefined); toFocus.current = undefined;
+    setByAgent(false); setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined;
     const { target } = focus;
     void (async () => {
       const value = target ? await readPlaces(target.key) : undefined;
       if (request !== focusEpoch.current) return;
       if (target) setPlaceError(!value);
       const seen = value?.places.find(p => p.key === target?.key);
-      if (value && seen) setPlaces(previous => previous ? { ...previous, historyState: value.historyState, unobserved: value.unobserved, places: previous.places.some(p => p.key === seen.key) ? previous.places.map(p => p.key === seen.key ? seen : p) : [...previous.places, seen] } : value);
+      if (value) setPlaces(value);
       if (target && seen?.agents.some(a => a.uid === target.uid && a.namespace === target.namespace)) { toFocus.current = `${target.key}/${target.uid}`; setFocusTick(v => v + 1); return; }
       const check = target ? await sendAgentCheck(focus.sendId) : 'cannotCheck';
       if (request === focusEpoch.current) setFocusNote(focusNotes[check]);
@@ -69,9 +77,12 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   useEffect(() => {
     // Local reads can rebalance the board and remount a destination in the other stack.
     const key = toFocus.current; if (!active || !localReady || !key) return;
+    if (focusedCard.current?.isConnected) return;
+    if (focusedCard.current && document.activeElement !== document.body) { toFocus.current = undefined; focusedCard.current = undefined; return; }
     const card = [...document.querySelectorAll<HTMLElement>('[data-card-key]')].find(node => node.dataset.cardKey === key);
-    if (card) { toFocus.current = undefined; card.focus(); card.scrollIntoView?.({ block: 'center' }); }
-  }, [active, localReady, focusTick, places, byAgent]);
+    // Retain ownership across post-run rebalancing, but never override a later user focus.
+    if (card) { focusedCard.current = card; card.focus(); card.scrollIntoView?.({ block: 'center' }); }
+  }, [active, localReady, focusTick, places, byAgent, files, live]);
   const epoch = useRef(0);
   const knownWorkspace = useRef(workspaceKey);
   useEffect(() => {

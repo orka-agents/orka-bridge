@@ -20,6 +20,12 @@ function native(current: unknown = null, check: unknown = allowed) {
   mockIPC(command => command === 'send_status' ? { documentId: id, view: current, busy: null } : command === 'send_history' ? [] : command === 'send_preflight' ? check : null);
 }
 const card = () => screen.getByRole('region', { name: 'Send and cluster tests' });
+test('a local freshness rejection is respected despite matching cached hashes', async () => {
+  native(); render(<Send place={place} source={source} stale={false} local={{ state: 'complete', canRun: true, source, sourceCurrent: false, report: { verdict: 'passed', cases: [] }, acknowledged: [], pending: null, error: null }} />);
+  await screen.findByText('Destination ready');
+  expect(screen.queryByText('Passed on these files')).toBeNull();
+  expect(screen.getByText('Earlier files')).toBeTruthy();
+});
 test('a ready destination reads Ready to send with its checks collapsed behind one line', async () => {
   native(); render(<Send place={place} source={source} stale={false} />);
   const toggle = await screen.findByText('Destination ready');

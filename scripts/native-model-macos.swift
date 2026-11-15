@@ -172,7 +172,9 @@ func scroll(_ pixels: Int32) {
 func seek(_ label: String, _ pixels: Int32) throws -> [VNRecognizedTextObservation] {
     for _ in 0..<6 {
         let seen = try capture("local-probe", [])
-        if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(label) }) || nativeChatTextIsVisible(label) {
+        // The large progress label must be visible in the pixels: AX can also report
+        // the hidden setup panel's copy at coordinates inside this same window.
+        if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(label) }) || label != "Waiting for answers" && nativeChatTextIsVisible(label) {
             if label == "Run tests" && enabledButton(label) == nil { Thread.sleep(forTimeInterval: 0.3); continue }
             if ["Connect the AI", "Check again", "Change", "Remove key"].contains(label),
                 enabledButton(label).flatMap(nativeBounds).map({ window()!.1.contains($0) }) != true {

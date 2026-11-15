@@ -233,6 +233,14 @@ struct Updates {
     polled: Notify,
     /// A Stop that arrives in the same poll as the response.
     latch: Option<watch::Sender<bool>>,
+    /// The PUT is rejected as missing, so the update falls back to a diagnostic GET.
+    put_missing: bool,
+    /// None leaves the diagnostic GET pending; Some answers it with that result.
+    diagnostic: Option<Result<(), ErrorKind>>,
+    gets: AtomicUsize,
+    got: Notify,
+    /// A Stop that arrives in the same poll as the diagnostic response.
+    diagnostic_latch: Option<watch::Sender<bool>>,
 }
 impl Updates {
     fn new(ready: bool) -> Self {
@@ -241,6 +249,11 @@ impl Updates {
             puts: AtomicUsize::new(0),
             polled: Notify::new(),
             latch: None,
+            put_missing: false,
+            diagnostic: Some(Err(ErrorKind::Unsupported)),
+            gets: AtomicUsize::new(0),
+            got: Notify::new(),
+            diagnostic_latch: None,
         }
     }
 }
@@ -261,12 +274,25 @@ impl RunTransport for Updates {
         _: Option<&'a Value>,
         _: Instant,
     ) -> RunFuture<'a> {
-        Box::pin(async { Err(ErrorKind::Unsupported) })
+        Box::pin(async move {
+            self.gets.fetch_add(1, Ordering::SeqCst);
+            self.got.notify_one();
+            if let Some(latch) = &self.diagnostic_latch {
+                latch.send_replace(true);
+            }
+            match self.diagnostic {
+                Some(result) => result.map(|()| Value::Null),
+                None => std::future::pending().await,
+            }
+        })
     }
     fn update_agent<'a>(&'a self, _: &'a str, body: &'a Value, _: Instant) -> RunFuture<'a> {
         Box::pin(async move {
             self.puts.fetch_add(1, Ordering::SeqCst);
             self.polled.notify_one();
+            if self.put_missing {
+                return Err(ErrorKind::NotFound);
+            }
             if let Some(latch) = &self.latch {
                 latch.send_replace(true);
             }
@@ -392,4 +418,54 @@ async fn a_ready_receipt_wins_a_simultaneous_stop() {
     assert_eq!(binding["intent"], Value::Null);
     assert_eq!(binding["desired"], desired);
     assert_eq!(binding["acknowledged"]["metadata"]["generation"], 2);
+}
+#[tokio::test]
+async fn stop_while_the_diagnostic_get_is_pending_keeps_the_intent_uncertain() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = owner(&dir);
+    let (prior, mut next, desired) = reserved(&owner.summary);
+    let (stop, rx) = watch::channel(false);
+    let mut transport = Updates::new(false);
+    transport.put_missing = true;
+    transport.diagnostic = None;
+    let stopper = async {
+        transport.got.notified().await;
+        stop.send_replace(true);
+    };
+    // Bounded so a regression fails instead of hanging on the never-ready GET.
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(
+            owner.update_deployment(&mut next, &transport, desired.clone(), &rx, &prior),
+            stopper
+        )
+    })
+    .await
+    .expect("pending diagnostic GET and Stop must finish together");
+    assert!(matches!(result, Err(Stage::UpdateUnconfirmed)));
+    assert_eq!(transport.gets.load(Ordering::SeqCst), 1);
+    let binding = saved(&owner.summary);
+    assert_eq!(binding["intent"], desired);
+    assert_eq!(binding["acknowledged"]["metadata"]["generation"], 1);
+}
+#[tokio::test]
+async fn a_ready_diagnostic_wins_a_simultaneous_stop() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = owner(&dir);
+    let (prior, mut next, desired) = reserved(&owner.summary);
+    let (stop, rx) = watch::channel(false);
+    let mut transport = Updates::new(false);
+    transport.put_missing = true;
+    transport.diagnostic = Some(Err(ErrorKind::NotFound));
+    transport.diagnostic_latch = Some(stop);
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        owner.update_deployment(&mut next, &transport, desired, &rx, &prior),
+    )
+    .await
+    .expect("ready diagnostic must finish");
+    assert!(*rx.borrow());
+    assert!(matches!(result, Err(Stage::UpdateMissing)));
+    let binding = saved(&owner.summary);
+    assert_eq!(binding["intent"], Value::Null);
+    assert_eq!(binding["unfinished"], false);
 }

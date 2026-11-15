@@ -322,5 +322,7 @@ pub async fn list_one(
     history: Option<Vec<AttemptSummary>>,
     key: &str,
 ) -> Places {
-    project(session.overview_one(key).await, history)
+    session.overview_one(key).await;
+    // Refresh only this destination, but keep the other cached places on the board.
+    project(session.places().places, history)
 }

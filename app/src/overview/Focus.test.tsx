@@ -46,6 +46,23 @@ test('a late local inventory cannot drop focus when multiple clusters rebalance'
   expect(before.isConnected).toBe(false);
   await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
 });
+test.each([false, true])('post-run inventory rebalancing restores only an owned focus (user moved: %s)', async moved => {
+  let release!: (value: unknown) => void;
+  const inventory = { ...places([agent('uid-one')]), places: [{ ...place([agent('a'), agent('b'), agent('c')]), key: 'other', context: 'other' }, place([agent('uid-one')])] };
+  mockIPC(command => command === 'overview_places' ? inventory : command === 'overview_files' ? files : new Promise(resolve => { release = resolve; }));
+  const focus = { id: 1, sendId: 's1', target: target('uid-one') };
+  const view = render(<Overview {...props} runBusy onNewAgent={() => undefined} focus={focus} />);
+  await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
+  const before = document.activeElement as HTMLElement;
+  const newAgent = screen.getByRole('button', { name: 'New agent' });
+  if (moved) newAgent.focus();
+  view.rerender(<Overview {...props} onNewAgent={() => undefined} focus={focus} />);
+  await waitFor(() => expect(release).toBeDefined());
+  await act(async () => release({ ...live, agents: Array.from({ length: 6 }, (_, index) => ({ name: `local-${index}`, namespace: 'agents', uid: `local-${index}` })) }));
+  await screen.findByRole('article', { name: /^local-0/ });
+  expect(before.isConnected).toBe(false);
+  await waitFor(() => moved ? expect(document.activeElement).toBe(newAgent) : expect(focused()).toBe(`${key}/uid-one`));
+});
 test('an older focus reply cannot supersede a newer navigation', async () => {
   let release!: (value: unknown) => void;
   let slow = true;
