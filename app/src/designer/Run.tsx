@@ -53,7 +53,8 @@ export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, block
   const failed = snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected);
   const state: Status = outdated ? 'stale' : running ? 'running' : unconfirmed ? 'needs-you' : confirmed || beforeStart ? 'not-started' : uncertain ? 'stale' : failed ? 'failed' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' ? 'failed' : 'not-started';
   const counts = snapshot?.report?.cases;
-  const countLine = counts ? `${counts.filter(c => c.verdict === 'passed').length} passed, ${counts.filter(c => c.verdict === 'failed').length} failed, ${counts.filter(c => c.verdict === 'cancelled').length} cancelled.` : '';
+  const unknownCount = counts?.filter(c => c.verdict === 'unknown').length ?? 0;
+  const countLine = counts ? `${counts.filter(c => c.verdict === 'passed').length} passed, ${counts.filter(c => c.verdict === 'failed').length} failed, ${counts.filter(c => c.verdict === 'cancelled').length} cancelled${unknownCount ? `, ${unknownCount} unknown` : ''}.` : '';
   const cancellationLine = beforeStart ? 'Cancelled before any test started.' : unconfirmed ? 'Cancellation not confirmed. Work may still be running on this computer.'
     : confirmed ? `${counts?.some(c => c.verdict === 'cancelled') ? 'Tests cancelled.' : 'Tests finished before cancellation.'} The test worker on this computer has stopped. ${countLine}` : undefined;
   const stage = { capture: 'Reading your saved files', model: 'Checking the local model', submit: 'Starting your tests', observe: 'Waiting for answers and evaluating tests', cancel: 'Cancelling tests', done: 'Tests finished' };

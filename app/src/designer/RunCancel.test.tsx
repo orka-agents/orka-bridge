@@ -81,6 +81,12 @@ test('tests that finished before cancellation retain a real failure and are neve
   expect(await screen.findByText('Tests finished before cancellation. The test worker on this computer has stopped. 0 passed, 1 failed, 0 cancelled.', { selector: 'p:not(.sr-only)' })).toBeTruthy();
   expect(screen.getByText('Failed', { selector: '.test-result span' })).toBeTruthy();
 });
+test('confirmed cancellation counts retained unknown outcomes as well as passed ones', async () => {
+  native({ ...done, report: { verdict: 'cancelled', cases: [passed, { ...passed, id: 'unobserved', answer: null, verdict: 'unknown', assertions: [{ ...passed.assertions[0], verdict: 'unknown' }] }] } });
+  render(<Run />);
+  expect(await screen.findByText('Tests finished before cancellation. The test worker on this computer has stopped. 1 passed, 0 failed, 0 cancelled, 1 unknown.', { selector: 'p:not(.sr-only)' })).toBeTruthy();
+  expect(document.querySelector('.test-announcement')?.textContent).toContain('1 unknown.');
+});
 test('pre-start cancellation has its own announcement and no invented result rows', async () => {
   native({ ...done, cancellation: 'beforeStart', report: { verdict: 'cancelled', cases: [] } }); render(<Run />);
   await screen.findByText('Cancelled before any test started.', { selector: 'p:not(.sr-only)' });
