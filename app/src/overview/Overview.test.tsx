@@ -82,6 +82,33 @@ test('a workspace transition rearms a cancelled registration refresh while Overv
   await waitFor(() => expect(counts).toHaveBeenLastCalledWith('2 agents shown'));
 });
 
+test.each(['pending', 'unavailable'])('registration refreshes a visited Overview after its first read was %s', async initial => {
+  const counts = vi.fn();
+  mockIPC(command => command === 'overview_files' ? initial === 'pending' ? new Promise(() => {}) : { state: 'unavailable', files: [], runActive: false } : none);
+  const view = render(<Overview {...props} filesRevision={0} onCounts={counts} />);
+  await act(async () => {});
+  view.rerender(<Overview {...props} active={false} filesRevision={0} onCounts={counts} />);
+  ipc(files());
+  view.rerender(<Overview {...props} active={false} filesRevision={1} onCounts={counts} />);
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 agent shown'));
+});
+
+test('hidden test reads preserve the last final verdict and remember a new final for the next run', async () => {
+  const counts = vi.fn(); ipc(files([{ ...file, localResult: result('failed', 0, 1) }]));
+  const view = render(<Overview {...props} filesRevision={1} onCounts={counts} />);
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 agent, 1 failed'));
+  const unknown = { ...file, localResult: result('unknown', 0, 0, { state: 'unknown', report: null }) };
+  ipc(files([unknown], { runActive: true }));
+  view.rerender(<Overview {...props} active={false} filesRevision={1} activeDocumentId={id} runBusy onCounts={counts} />);
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 agent shown, 1 failed'));
+  ipc(files([{ ...file, localResult: result('passed', 1, 1) }]));
+  view.rerender(<Overview {...props} active={false} filesRevision={1} onCounts={counts} />);
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 agent'));
+  ipc(files([unknown], { runActive: true }));
+  view.rerender(<Overview {...props} filesRevision={1} activeDocumentId={id} runBusy onCounts={counts} />);
+  expect(within(await card(/^reader/)).getByText('Passed')).toBeTruthy();
+});
+
 test('registration does not introduce an initial hidden Overview read', async () => {
   let calls = 0; mockIPC(() => { calls++; return files(); });
   const view = render(<Overview {...props} active={false} filesRevision={0} />);

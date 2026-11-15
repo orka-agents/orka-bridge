@@ -171,7 +171,7 @@ export default function App() {
   const workspaceReady = setup?.localVm === 'ready';
   const workspaceTransition = !!setup && ['preparing', 'installing', 'starting', 'closing', 'failed'].includes(setup.localVm);
   const overviewWorkspaceNote = workspaceStopping ? 'Stopping the local cluster'
-    : workspaceBusy && !workspaceTransition ? 'Getting your workspace ready…'
+    : workspaceBusy && (!workspaceTransition || setup?.localVm === 'failed') ? 'Getting your workspace ready…'
       : workspaceTransition ? setupLine : undefined;
   const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
     : { local: 'This computer', none: 'No cluster selected', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];

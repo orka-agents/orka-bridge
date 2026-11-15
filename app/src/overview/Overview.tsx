@@ -16,7 +16,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   // Last good reads are kept so a busy or failed refresh never blanks the page; each is flagged when it is not fresh.
   const [files, setFiles] = useState<SavedFiles>();
   const [filesStale, setFilesStale] = useState(false);
-  const filesLoaded = useRef(false);
+  const filesVisited = useRef(false);
   const finals = useRef(new Map<string, Observation>());
   const knownRunAgents = useRef(new Map<string, RunAgent>());
   const [live, setLive] = useState<LiveAgents>();
@@ -45,6 +45,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
       knownWorkspace.current = workspaceKey; setLive(undefined); setLast(undefined);
     }
     if (!active) return;
+    filesVisited.current = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     setPending(runBusy);
     async function list(retried = false) {
@@ -61,7 +62,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
         value.files.forEach(f => { if (f.localResult && (f.localResult.state === 'complete' || f.localResult.state === 'unknown' && (!(runBusy || value.runActive) || f.documentId !== activeDocumentId))) finals.current.set(f.documentId, f.localResult); });
         // Cleanup may forget a removed Agent while the cached inventory still contains it.
         value.runAgents.forEach(a => knownRunAgents.current.set(JSON.stringify([a.installation, a.namespace, a.agentUid]), a));
-        setFiles({ ...value, runAgents: [...knownRunAgents.current.values()] }); setFilesStale(false); filesLoaded.current = true;
+        setFiles({ ...value, runAgents: [...knownRunAgents.current.values()] }); setFilesStale(false);
       } else {
         setFiles(previous => previous?.state === 'complete' ? previous : value); setFilesStale(true);
         // Keep the last coherent inventory; fresh Agents cannot be filtered against stale run ownership.
@@ -75,12 +76,14 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   // A new saved file updates a previously visited tab without mounting Designer or listing live Agents.
   // The initial hidden inventory read belongs to the app-frame flow, not registration.
   useEffect(() => {
-    if (active || !filesRevision || !filesLoaded.current) return;
+    if (active || !filesRevision || !filesVisited.current) return;
     const request = epoch.current;
     let cancelled = false;
     void readFiles().then(value => {
       if (cancelled || request !== epoch.current) return;
       if (value.state !== 'complete') { setFilesStale(true); return; }
+      value.files.forEach(f => { if (f.localResult && (f.localResult.state === 'complete' || f.localResult.state === 'unknown' && (!(runBusy || value.runActive) || f.documentId !== activeDocumentId))) finals.current.set(f.documentId, f.localResult); });
+      setPending(runBusy || value.runActive);
       value.runAgents.forEach(a => { knownRunAgents.current.set(JSON.stringify([a.installation, a.namespace, a.agentUid]), a); });
       setFiles({ ...value, runAgents: [...knownRunAgents.current.values()] }); setFilesStale(false);
     });
@@ -92,7 +95,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   const empty = isEmpty(inputs, built);
   const partial = !!workspaceNote || filesStale || files?.historyState !== 'complete' || !complete(live) || pending || !places || placeError || places.places.some(p => p.stale || p.observedAt === null);
   const counts = !files ? 'Reading saved files…' : files.state === 'unavailable' ? 'Saved files unavailable' : summaryLabel(built.cards, partial);
-  useEffect(() => { if (active || filesRevision > 0 && filesLoaded.current) onCounts?.(counts); }, [active, filesRevision, counts, onCounts]);
+  useEffect(() => { if (active || filesRevision > 0 && filesVisited.current) onCounts?.(counts); }, [active, filesRevision, counts, onCounts]);
   const clusters = clusterGroups(inputs, built);
   const groups = byAgent ? agentGroups(built.cards, built.saved) : clusters;
   const actions = { onOpen: onOpenDocument, onChat: onChatDocument, onRun: onRunDocument, onCheck: () => setRefresh(v => v + 1), onClusters: onChooseWorkspace };
