@@ -7,6 +7,7 @@ import { errors, type RunSnapshot, runCall } from './run-api';
 export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, blocked = false, stale = false, onStart, source, onStopLocalCluster, onChooseCluster, onEditInstructions, startRequest, onStartRequestHandled }: { documentId?: string; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId; onStopLocalCluster?: () => void; onChooseCluster?: () => void; onEditInstructions?: () => void; startRequest?: number; onStartRequestHandled?: () => void }) {
   const [received, setSnapshot] = useState<RunSnapshot>();
   const snapshot = received?.documentId === documentId ? received : undefined;
+  const canRun = !!snapshot?.canRun && snapshot.modelConnected !== false;
   const [message, setMessage] = useState<string>();
   const [action, setAction] = useState<'agent_run' | 'agent_run_cancel' | 'agent_run_check_cancellation'>();
   const [actionMessage, setActionMessage] = useState<string>();
@@ -32,7 +33,7 @@ export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, block
   }, [documentId]);
   useEffect(() => { if (snapshot || message) onSnapshot?.(message ? undefined : snapshot ? { ...snapshot, sourceCurrent } : undefined); }, [snapshot, message, onSnapshot, sourceCurrent]);
   const act = async (command: NonNullable<typeof action>) => {
-    if (admitted.current || !snapshot || command === 'agent_run' && (blocked || !snapshot.canRun)
+    if (admitted.current || !snapshot || command === 'agent_run' && (blocked || !canRun)
       || command === 'agent_run_cancel' && !(snapshot.canCancel || snapshot.canRetryCancellation)
       || command === 'agent_run_check_cancellation' && !snapshot.canCheckCancellation) return;
     admitted.current = true; observations.current++; setAction(command); setActionMessage(undefined);
@@ -69,7 +70,7 @@ export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, block
   return <section className="example-run" aria-label="Tests on the local cluster">
     <LongCard title="Tests on the local cluster" status={<><StatusPill state={state}>{outdated ? undefined : cancelling ? 'Cancelling' : unconfirmed ? 'Not confirmed' : confirmed || beforeStart ? 'Cancelled' : undefined}</StatusPill><span className="status-description">{outdated ? 'Not run since your edit' : running || cancellationLine ? undefined : uncertain ? 'Result unknown' : resultLabel(snapshot?.report)}</span></>} summary={<>On this computer{snapshot?.model && <> · <code>{snapshot.model}</code></>}.{snapshot?.modelConnected === false && ' Connect the AI in Clusters first.'}</>}
       action={running ? !cancelling && snapshot?.canCancel && <Button type="button" kind="secondary" onClick={() => { void act('agent_run_cancel'); }}>Cancel tests</Button>
-        : (!unconfirmed || !snapshot?.canCheckCancellation) && <div className="workspace-step-actions">{!snapshot?.canRun && snapshot?.modelConnected === false && onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Connect the AI</Button>}<Button type="button" kind={snapshot?.canRun && !blocked ? 'primary' : 'secondary'} disabled={!!action || blocked || !snapshot?.canRun} title={blocked ? 'Save your changes before running the test' : !snapshot?.canRun ? 'Start the local cluster and connect the AI in Clusters first' : undefined} onClick={() => { void act('agent_run'); }}>Run tests</Button></div>}>
+        : (!unconfirmed || !snapshot?.canCheckCancellation) && <div className="workspace-step-actions">{snapshot?.modelConnected === false && onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Connect the AI</Button>}<Button type="button" kind={canRun && !blocked ? 'primary' : 'secondary'} disabled={!!action || blocked || !canRun} title={blocked ? 'Save your changes before running the test' : !canRun ? 'Start the local cluster and connect the AI in Clusters first' : undefined} onClick={() => { void act('agent_run'); }}>Run tests</Button></div>}>
       <p className="sr-only test-announcement" role="status" aria-live="polite" aria-atomic="true">{!running ? cancellationLine ?? (!outdated ? uncertain ? 'Test result unknown.' : resultAnnouncement(snapshot?.report) : undefined) : undefined}</p>
       <CardSection title="What happened">
         {snapshot?.busy && snapshot.busy.documentId !== documentId && <p role="status">{snapshot.busy.name} is running a test.</p>}

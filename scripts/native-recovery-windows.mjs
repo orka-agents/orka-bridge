@@ -294,7 +294,7 @@ try {
           report.verdict = report.cases[0].verdict = report.cases[0].assertions[0].verdict = badge === 'failed' ? 'failed' : 'passed';
           if (submitted && badge === 'unknown') throw Error('Lost sample status');
         }
-        return { documentId, ...(name === 'first-test-badges' ? { source: badge === 'stale' ? { ...source, agent: 'c'.repeat(64) } : source } : {}), busy: running ? { documentId, name: 'web-reader' } : null, state: running ? 'running' : complete ? 'complete' : 'idle', canRun: connected && !running, modelConnected: connected, stage: running ? 'observe' : complete ? 'done' : null, model: connected ? 'fixture-model' : null, report: complete ? report : null, acknowledged: [], pending: null, error: null };
+        return { documentId, ...(name === 'first-test-badges' ? { source: badge === 'stale' ? { ...source, agent: 'c'.repeat(64) } : source } : {}), busy: running ? { documentId, name: 'web-reader' } : null, state: running ? 'running' : complete ? 'complete' : 'idle', canRun: !running, modelConnected: connected, stage: running ? 'observe' : complete ? 'done' : null, model: connected ? 'fixture-model' : null, report: complete ? report : null, acknowledged: [], pending: null, error: null };
       };
       localStorage.setItem('bridge.welcomeSeen.v1', '1');
       localStorage.removeItem('bridge.firstTest.v1');
@@ -375,7 +375,7 @@ try {
       if (name !== 'designer') await until(() => evaluate(`!document.querySelector('.model-select').disabled`), 'connected Designer catalog');
       if (name === 'designer-file') await clickAction('File');
       if (name === 'designer-failed') await until(() => evaluate(`!!document.querySelector('.test-next-step')`), 'failure next action');
-      const state = await evaluate(`({ historyHidden: !document.querySelector('.designer-checks').getClientRects().length, catalog: window.__bridgeCatalogCalls, runPrimary: !!document.querySelector('.example-run button.button-primary') })`);
+      const state = await evaluate(`({ historyHidden: !document.querySelector('.designer-checks').getClientRects().length, catalog: window.__bridgeCatalogCalls, runPrimary: [...document.querySelectorAll('.example-run button')].some(button => button.textContent === 'Run tests' && button.classList.contains('button-primary')) })`);
       if (name === 'designer' && (state.catalog.length || state.runPrimary)) throw Error('Disconnected Designer presents a runnable primary/catalog: ' + JSON.stringify(state));
       if (name !== 'designer-remote' && !state.historyHidden) throw Error('Unopened local Send/history card is visible');
       if (name === 'designer-remote' && (state.historyHidden || !state.catalog.some(call => call.command === 'cluster_catalog' && call.args.targetId === '00000000-0000-4000-8000-000000000002' && call.args.providerId === '00000000-0000-4000-8000-000000000003'))) throw Error('Remote catalog is not scoped to the selected cluster/AI');

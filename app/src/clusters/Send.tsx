@@ -218,6 +218,9 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
     finally { if (request === epoch.current) { admitted.current = false; setBusy(false); setControlCancelling(false); } }
   }
   const running = snapshot?.state === 'running';
+  const [observedSend, setObservedSend] = useState<{ documentId: string; visible: boolean }>();
+  useEffect(() => { setObservedSend(previous => ({ documentId, visible: running || previous?.documentId === documentId && previous.visible })); }, [documentId, running]);
+  const panelVisible = visible || remote || running || observedSend?.documentId === documentId && observedSend.visible;
   const cancellation = snapshot?.cancellation;
   const cancelling = controlCancelling || cancellation === 'cancelling';
   const retryCancel = cancellation && cancellation !== 'confirmed' && !running;
@@ -235,8 +238,8 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   const uncertain = snapshot?.state === 'unknown' || snapshot?.report?.verdict === 'unknown';
   const resultState: Status = outdated ? 'stale' : running || busy || (checkingEnabled && !checked) ? 'running' : uncertain ? 'stale' : snapshot?.report?.verdict === 'passed' ? 'passed' : snapshot?.report?.verdict === 'failed' || snapshot?.error ? 'failed' : reason ? 'needs-you' : 'not-started';
   const stages = { capture: 'Reading your saved files', access: 'Confirming cluster access', preflight: 'Checking the AI connection and tools', storage: 'Saving the Send summary', submit: 'Starting your tests', observe: 'Waiting for answers and evaluating tests', stopped: 'Stopped watching', done: 'Tests finished' };
-  useEffect(() => { onVisibilityChange?.(visible || remote || running); }, [visible, remote, running, onVisibilityChange]);
-  return <><section tabIndex={-1} className="send-panel" aria-label="Send and cluster tests" hidden={!visible && !remote && !running}>
+  useEffect(() => { onVisibilityChange?.(!!panelVisible); }, [panelVisible, onVisibilityChange]);
+  return <><section tabIndex={-1} className="send-panel" aria-label="Send and cluster tests" hidden={!panelVisible}>
     <LongCard title={visible ? 'Send your agent' : 'Tests on your cluster'} status={<><StatusPill state={resultState} /><span className="status-description">{outdated ? unconfirmed ? 'Revision not confirmed' : 'Not run since your edit' : running || resultState === 'running' ? undefined : cancellation && cancellation !== 'confirmed' ? cancellationLabels[cancellation] : uncertain ? snapshot?.stage === 'stopped' && !cancellation ? 'Stopped watching' : 'Result unknown' : resultLabel(snapshot?.report)}</span></>} summary={<>The saved agent and test files go together{snapshot?.model && <> · <code>{snapshot.model}</code></>}{targetName && <> · <code>{targetName}</code></>}. Each Send creates a new agent, kept on the cluster even if a test fails.</>}
       action={<div className="workspace-step-actions">{!running && <Button type="button" kind="primary" disabled={!!reason || busy || !!message} title={reason} onClick={() => { void mutate('send_start'); }}>{visible ? 'Send and run tests' : 'Run all tests'}</Button>}
       {running && <Button type="button" kind="secondary" disabled={busy || cancelling} onClick={() => { void mutate('send_cancel'); }}>Cancel tests</Button>}

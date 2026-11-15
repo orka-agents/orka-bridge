@@ -1423,6 +1423,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             "Removed cluster returned after restart")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
+    try clickSendControl("Send to a cluster", scrolling: -350)
     scrollMain(3000)
     var historyFound = false
     for _ in 0..<12 {

@@ -56,12 +56,19 @@ test.each(['different-model', null])('remote defaults do not claim that a saved 
   if (defaultModel === null) expect(screen.getByText(/No default model is configured for this AI connection/)).toBeTruthy();
 });
 
-test('a restored active Send reveals its mounted card even while local history is normally hidden', async () => {
-  vi.stubGlobal('isTauri', true);
-  mockIPC(command => command === 'agent_open' ? pair : command === 'send_history' ? [] : command === 'send_status' ? { documentId, busy: { documentId, name: 'reader' }, view: { documentId, id: documentId, targetId: documentId, providerId: documentId, targetName: 'team-dev', source: null, model: null, agentName: null, state: 'running', stage: 'capture', acknowledged: [], pending: null, report: null, error: null, storageError: false } } : null);
+test('a restored active Send keeps its completed result and unconfirmed recovery visible', async () => {
+  vi.stubGlobal('isTauri', true); let state = 'running';
+  const report = { verdict: 'passed', cases: [{ id: 'reads', question: 'Read', phase: 'Succeeded', answer: 'Saved completed answer', completedTools: [], verdict: 'passed', assertions: [{ id: 'text', kind: 'contains', expected: 'answer', verdict: 'passed' }] }] };
+  mockIPC(command => command === 'agent_open' ? pair : command === 'send_history' ? [] : command === 'send_status' ? { documentId, busy: state === 'running' ? { documentId, name: 'reader' } : null, view: { documentId, id: documentId, targetId: documentId, providerId: documentId, targetName: 'team-dev', source: null, model: null, agentName: null, state, stage: state === 'running' ? 'capture' : 'done', acknowledged: [], pending: null, report: state === 'complete' ? report : null, error: null, storageError: false, cancellation: state === 'unknown' ? 'unconfirmed' : null } } : null);
   render(<Example />);
-  expect(await screen.findByRole('region', { name: 'Send and cluster tests' })).toBeTruthy();
+  const panel = await screen.findByRole('region', { name: 'Send and cluster tests' });
+  state = 'complete';
+  await waitFor(() => expect(panel.textContent).toContain('Saved completed answer'));
+  expect(screen.getByRole('region', { name: 'Send and cluster tests' })).toBe(panel);
   expect(screen.getByRole('region', { name: 'Past Sends' }).closest('[hidden]')).toBeNull();
+  state = 'unknown';
+  await waitFor(() => expect(panel.textContent).toContain('Cancellation not confirmed'));
+  expect(screen.getByRole('region', { name: 'Send and cluster tests' })).toBe(panel);
 });
 
 test('Personality offers an example without inserting it in the agent file', async () => {
