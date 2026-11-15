@@ -197,7 +197,9 @@ pub(super) async fn select(
         .list(&ListParams::default().labels(&labels))
         .await
         .map_err(kube_error)?;
-    let has_ready_pod = pods.iter().any(ready);
+    let has_ready_pod = pods
+        .iter()
+        .any(|pod| pod.metadata.deletion_timestamp.is_none() && ready(pod));
     for pod in pods {
         let Some((peer, controller)) = pod_peer(&pod, binding, &selector, &service_port) else {
             continue;
