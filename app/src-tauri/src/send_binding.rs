@@ -148,12 +148,15 @@ impl SummaryStore {
         let Some(root) = self.root(false).map_err(|_| "storage")? else {
             return Ok(Vec::new());
         };
+        Self::read_bindings(&root)
+    }
+    fn read_bindings(root: &cap_std::fs::Dir) -> Result<Vec<Binding>, &'static str> {
         match root.symlink_metadata(FILE) {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
             Err(_) => Err("storage"),
             Ok(_) => {
                 let bindings: Vec<Binding> =
-                    serde_json::from_slice(&read(&root, FILE, MAX_BYTES).map_err(|_| "storage")?)
+                    serde_json::from_slice(&read(root, FILE, MAX_BYTES).map_err(|_| "storage")?)
                         .map_err(|_| "storage")?;
                 if bindings.len() > 256 {
                     return Err("storage");
@@ -171,6 +174,16 @@ impl SummaryStore {
                 Ok(bindings)
             }
         }
+    }
+    // Publication already holds the store lock; read through its existing root.
+    pub(crate) fn unfinished_attempts(
+        root: &cap_std::fs::Dir,
+    ) -> Result<std::collections::HashSet<String>, &'static str> {
+        Ok(Self::read_bindings(root)?
+            .into_iter()
+            .filter(|b| b.unfinished)
+            .map(|b| b.attempt)
+            .collect())
     }
     pub(super) fn binding(
         &self,
@@ -216,8 +229,8 @@ impl SummaryStore {
         )
         .map_err(|_| "storage")
     }
-    /// Release the durable barrier before terminal evidence can be removed/evicted.
-    pub(super) fn complete_binding(
+    /// Release only after terminal evidence is durable, or before removing it.
+    pub(crate) fn complete_binding(
         &self,
         attempt: &str,
         details: &AttemptDetails,
@@ -324,10 +337,10 @@ impl SendOwner {
             if binding.repair_agent(&mut details)? {
                 summary.agent_uid = Some(binding.receipt()?.uid);
                 self.summary
-                    .complete_binding(&binding.attempt, &details)
+                    .checkpoint(summary, details.clone())
                     .map_err(|_| Stage::Storage)?;
                 self.summary
-                    .checkpoint(summary, details.clone())
+                    .complete_binding(&binding.attempt, &details)
                     .map_err(|_| Stage::Storage)?;
             }
         }

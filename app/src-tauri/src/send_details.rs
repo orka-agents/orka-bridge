@@ -216,6 +216,7 @@ impl SummaryStore {
         if details.unresolved() {
             return Err("unresolved");
         }
+        self.complete_binding(id, &details)?;
         details.cases.clear();
         details.resources.clear();
         details.report = None;
@@ -309,6 +310,7 @@ impl SummaryStore {
         } else {
             ledger.attempts.push(summary);
         }
+        let protected = Self::unfinished_attempts(&root).map_err(|_| invalid())?;
         let mut sidecars = std::collections::HashMap::new();
         for entry in root.entries()? {
             let entry = entry?;
@@ -330,17 +332,29 @@ impl SummaryStore {
                 continue;
             };
             let d = load(&root, key)?.ok_or_else(invalid)?;
-            if !d.unresolved() && !ledger.attempts.iter().any(|a| a.id == key) {
+            if !d.unresolved()
+                && !protected.contains(key)
+                && !ledger.attempts.iter().any(|a| a.id == key)
+            {
                 root.remove_file(name)?;
                 continue;
             }
             sidecars.insert(
                 key.to_string(),
-                (d.charge(entry.metadata()?.len()), d.unresolved()),
+                (
+                    d.charge(entry.metadata()?.len()),
+                    d.unresolved() || protected.contains(key),
+                ),
             );
         }
         if let Some((d, b)) = details {
-            sidecars.insert(id.clone(), (d.charge(b.len() as u64), d.unresolved()));
+            sidecars.insert(
+                id.clone(),
+                (
+                    d.charge(b.len() as u64),
+                    d.unresolved() || protected.contains(&id),
+                ),
+            );
         }
         let mut evicted = Vec::new();
         let bytes = loop {
@@ -366,7 +380,9 @@ impl SummaryStore {
                 .iter()
                 .enumerate()
                 .filter(|(_, a)| {
-                    a.id != id && !sidecars.get(&a.id).is_some_and(|(_, protected)| *protected)
+                    a.id != id
+                        && !protected.contains(&a.id)
+                        && !sidecars.get(&a.id).is_some_and(|(_, protected)| *protected)
                 })
                 .min_by_key(|(_, a)| a.time)
                 .map(|(i, _)| i)

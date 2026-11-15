@@ -574,8 +574,8 @@ impl SendOwner {
             });
         }
         details.report = details.report.filter(|report| !report.cases.is_empty());
-        self.summary.complete_binding(id, &details)?;
         self.summary.checkpoint(summary, details.clone())?;
+        self.summary.complete_binding(id, &details)?;
         let view = details.view(id);
         let mut inner = self.inner.lock().unwrap();
         let active = inner.active.as_ref().map(|a| a.id);
@@ -1254,6 +1254,7 @@ impl SendOwner {
         .map_err(|_| Stage::Submit)?;
         let mut checkpoint = |event| {
             let task_barrier = matches!(&event, RunCheckpoint::Before(r) if r.kind == "Task");
+            let terminal = matches!(&event, RunCheckpoint::Case(..));
             match event {
                 RunCheckpoint::AgentAcknowledged(resource) => {
                     bound
@@ -1304,9 +1305,6 @@ impl SendOwner {
                         })
                         .cases
                         .push(report);
-                    self.summary
-                        .complete_binding(&summary.id, &details)
-                        .map_err(|_| ErrorKind::Storage)?;
                 }
             }
             self.update(id, |v| v.report = details.report.clone());
@@ -1315,6 +1313,9 @@ impl SendOwner {
                 .summary
                 .checkpoint(summary.clone(), details.clone())
                 .and_then(|_| {
+                    if terminal {
+                        self.summary.complete_binding(&summary.id, &details)?;
+                    }
                     if task_barrier {
                         // Preserve the pending identity first, then reserve the
                         // binding durably before the runner may poll Task POST.
@@ -1375,13 +1376,17 @@ impl SendOwner {
                     });
                 }
                 summary.verdict = AttemptVerdict::Unknown;
-                // A definite Task rejection can leave only the Agent. Release
-                // its barrier before publishing details that may be evicted.
-                self.summary
-                    .complete_binding(&summary.id, &details)
-                    .map_err(|_| Stage::Storage)?;
-                if self.summary.checkpoint(summary, details).is_err() {
+                // Preserve the rejected Task's absence before releasing its barrier.
+                if self
+                    .summary
+                    .checkpoint(summary.clone(), details.clone())
+                    .is_err()
+                {
                     self.update(id, |v| v.storage_error = true);
+                } else {
+                    self.summary
+                        .complete_binding(&summary.id, &details)
+                        .map_err(|_| Stage::Storage)?;
                 }
                 return Err(failed(
                     error.kind,
@@ -1437,13 +1442,17 @@ impl SendOwner {
             }
         };
         details.captured_at = unix_seconds();
-        self.summary
-            .complete_binding(&summary.id, &details)
-            .map_err(|_| Stage::Storage)?;
-        if self.summary.checkpoint(summary, details).is_err() {
+        if self
+            .summary
+            .checkpoint(summary.clone(), details.clone())
+            .is_err()
+        {
             self.update(id, |v| v.storage_error = true);
             return Err(Stage::Observe);
         }
+        self.summary
+            .complete_binding(&summary.id, &details)
+            .map_err(|_| Stage::Storage)?;
         result
     }
 }
