@@ -127,7 +127,7 @@ test.each([
   expect(screen.queryByRole('heading', { name: 'bridge-run-9' })).toBeNull();
   expect(screen.getByText(/Test history is unavailable/)).toBeTruthy();
   expect(screen.queryByText('No agents yet')).toBeNull();
-  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 agent'));
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 agent shown'));
 });
 
 test('a running local result keeps the previous final result, or is Result unknown, and is never Running', async () => {
@@ -154,6 +154,11 @@ test.each(['passed', 'failed'])('native active Unknown keeps the previous %s res
   ipc(files([unknown])); await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
   await waitFor(() => expect(within(screen.getByRole('article', { name: /^reader/ })).getByText('Result unknown')).toBeTruthy());
   expect(screen.queryByText(/1 of 2 tests/)).toBeNull();
+  const other = named(id2, 'other', { localResult: result('unknown', 0, 0, { documentId: id2, state: 'unknown', report: null }) });
+  ipc(files([unknown, other], { runActive: true })); await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByText(/Updating when the test finishes/);
+  expect(within(screen.getByRole('article', { name: /^reader/ })).getByText('Result unknown')).toBeTruthy();
+  expect(within(screen.getByRole('article', { name: /^reader/ })).queryByText(/1 of 2 tests/)).toBeNull();
 });
 
 test('file metadata from outside is escaped text', async () => {
@@ -198,6 +203,17 @@ test('a failed read is unknown, never an empty onboarding card', async () => {
   ipc({ state: 'unavailable', files: [], runActive: false }, live()); await userEvent.click(screen.getAllByRole('button', { name: 'Refresh' })[0]);
   expect((await screen.findAllByText(/Couldn't read your saved files/)).length).toBeGreaterThan(0);
   expect(screen.queryByRole('heading', { name: 'No agents yet' })).toBeNull();
+});
+
+test.each(['loading', 'unavailable', 'unconnected'])('incomplete %s inventory labels the card count as shown, not a confirmed total', async state => {
+  const counts = vi.fn();
+  mockIPC(command => {
+    if (command === 'overview_files') return files([]);
+    if (command === 'overview_places') return state === 'unconnected' ? { ...none, places: [{ key: 'team', context: 'team', service: 'control/orka', namespace: 'agents', stale: true, observedAt: null, agents: [] }] } : none;
+    return state === 'loading' ? new Promise(() => {}) : state === 'unavailable' ? unavailable : live();
+  });
+  render(<Overview {...props} onCounts={counts} />);
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('0 agents shown'));
 });
 
 test('truly empty offers New agent and web-reader, hides grouping and has no Earlier Sends', async () => {
@@ -259,7 +275,7 @@ test('failed file refresh retains ownership-filtered Agents, never classifies a 
   expect(screen.queryByRole('heading', { name: 'new-test-Agent' })).toBeNull();
   expect(screen.queryByRole('heading', { name: 'bridge-run-1' })).toBeNull();
   expect(inventories).toBe(0);
-  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('2 agents'));
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('2 agents shown'));
   expect(buttons(screen.getByRole('article', { name: /^reader/ }))).toEqual(['Open', 'Details']);
 });
 

@@ -176,9 +176,9 @@ export function balance(groups: Group[]): [Group[], Group[]] {
   groups.forEach(g => { const k = load[1] < load[0] ? 1 : 0; stacks[k].push(g); load[k] += 1 + g.cards.length; });
   return stacks;
 }
-export function summaryLabel(cards: Card[]) {
+export function summaryLabel(cards: Card[], partial: boolean) {
   const failed = cards.filter(c => c.status === 'failed').length;
-  return `${cards.length} ${cards.length === 1 ? 'agent' : 'agents'}${failed ? `, ${failed} failed` : ''}`;
+  return `${cards.length} ${cards.length === 1 ? 'agent' : 'agents'}${partial ? ' shown' : ''}${failed ? `, ${failed} failed` : ''}`;
 }
 // Empty means nothing could be hiding: no files, no remembered clusters, no Agents, every read succeeded. A stopped or
 // image-limited local cluster still counts as empty; a failed read, a busy list or hidden unowned Agents do not.

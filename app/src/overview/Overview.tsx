@@ -56,7 +56,7 @@ export default function Overview({ onNewAgent, active, runBusy, workspaceKey, on
     void readFiles().then(value => {
       if (request !== epoch.current) return;
       if (value.state === 'complete') {
-        value.files.forEach(f => { if (f.localResult?.state === 'complete') finals.current.set(f.documentId, f.localResult); });
+        value.files.forEach(f => { if (f.localResult && (f.localResult.state === 'complete' || f.localResult.state === 'unknown' && !runBusy && !value.runActive)) finals.current.set(f.documentId, f.localResult); });
         // Cleanup may forget a removed Agent while the cached inventory still contains it.
         value.runAgents.forEach(a => knownRunAgents.current.set(JSON.stringify([a.installation, a.namespace, a.agentUid]), a));
         setFiles({ ...value, runAgents: [...knownRunAgents.current.values()] }); setFilesStale(false);
@@ -74,7 +74,8 @@ export default function Overview({ onNewAgent, active, runBusy, workspaceKey, on
   const inputs: Inputs = { files, filesStale, finals: finals.current, live, observed, pending, places, placeError, chat: !!onChatDocument, run: !!onRunDocument };
   const built = buildCards(inputs);
   const empty = isEmpty(inputs, built);
-  const counts = !files ? 'Reading saved files…' : files.state === 'unavailable' ? 'Saved files unavailable' : summaryLabel(built.cards);
+  const partial = filesStale || files?.historyState !== 'complete' || !complete(live) || pending || !places || placeError || places.places.some(p => p.stale || p.observedAt === null);
+  const counts = !files ? 'Reading saved files…' : files.state === 'unavailable' ? 'Saved files unavailable' : summaryLabel(built.cards, partial);
   useEffect(() => { if (active) onCounts?.(counts); }, [active, counts, onCounts]);
   const clusters = clusterGroups(inputs, built);
   const groups = byAgent ? agentGroups(built.cards, built.saved) : clusters;
