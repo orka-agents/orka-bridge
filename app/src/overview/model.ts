@@ -44,11 +44,12 @@ function localState(live: LiveAgents | undefined, pending: boolean) {
 }
 // Last result for a file: the native record, or the exact live observation when it is newer. A run in progress keeps
 // the previous final result for the session; with none the result is unknown (Running is never shown for a file).
-function resultFor(file: SavedFile, observed: CompleteAgents | undefined, finals: Map<string, Observation>) {
+function resultFor(file: SavedFile, observed: CompleteAgents | undefined, finals: Map<string, Observation>, active: boolean) {
   let result = file.localResult ?? undefined;
   const live = observed?.observation;
   if (live?.documentId === file.documentId && (!result || live.observedAt >= result.observedAt)) result = live;
-  if (result?.state === 'running') return { result: finals.get(file.documentId), running: true };
+  // Native history reads normalize an in-progress persisted row to Unknown, even while the test is active.
+  if (result?.state === 'running' || active && result?.state === 'unknown') return { result: finals.get(file.documentId), running: true };
   return { result, running: false };
 }
 type Verdict = { status: Status; pill: string; earlier?: boolean };
@@ -78,7 +79,8 @@ const toolText = (tools?: string[] | null) => tools ? tools.join(', ') || 'no to
 export function buildCards(i: Inputs) {
   const files = i.files?.state === 'complete' ? i.files : undefined;
   const saved = files?.files ?? [];
-  const history = !!files && files.historyState === 'complete' && !i.filesStale;
+  const ownershipKnown = !!files && files.historyState === 'complete';
+  const history = ownershipKnown && !i.filesStale;
   const state = localState(i.live, i.pending);
   const acts = state === 'ok' || state === 'image';
   const labels = placeLabels(i.places?.places ?? []);
@@ -94,7 +96,7 @@ export function buildCards(i: Inputs) {
   const where = (documentId: string, except?: string) => [...new Set(linked.get(documentId) ?? [])].filter(k => k !== except).map(k => labels.get(k)!);
 
   const local: Card[] = saved.map(file => {
-    const { result, running } = resultFor(file, i.observed, i.finals);
+    const { result, running } = resultFor(file, i.observed, i.finals, i.pending);
     const s = localStatus(file, result, running, history);
     const counts = result?.report && (s.status === 'passed' || s.status === 'failed') ? `${result.report.passed} of ${result.report.total} tests${s.earlier ? ' on earlier files' : ''}` : undefined;
     const details: Detail[] = [];
@@ -107,11 +109,12 @@ export function buildCards(i: Inputs) {
       documentId: file.state === 'readable' ? file.documentId : undefined, remote: false, actions: localActions(file, s.status, i.chat && acts, i.run && acts), details,
     };
   });
-  // Unknown local Agents show only when ownership is known now. Names never decide: a Bridge test run is an exact
+  // A stale files read keeps its matching cached inventory; Overview never pairs it with newly observed Agents.
+  // Names never decide: a Bridge test run is an exact
   // installation + namespace + UID in the recorded list (or the live observation).
   const owned = new Set([...(files?.runAgents ?? []).map(a => exact(a.installation, a.namespace, a.agentUid)),
     ...(i.observed?.observation ? [exact(i.observed.installation, i.observed.observation.namespace, i.observed.observation.agentUid)] : [])]);
-  const strays: Card[] = !history || !i.observed ? [] : i.observed.agents.filter(a => !owned.has(exact(i.observed!.installation, a.namespace, a.uid))).map(a => ({
+  const strays: Card[] = !ownershipKnown || !i.observed ? [] : i.observed.agents.filter(a => !owned.has(exact(i.observed!.installation, a.namespace, a.uid))).map(a => ({
     key: `local/${exact(a.namespace, a.uid)}`, groupKey: 'local', agentKey: `agent/local/${a.namespace}/${a.uid}`, title: a.name, place: 'This computer', subject: a.name,
     description: 'No agent file on this computer.', meta: { also: [], on: 'This computer' }, remote: false, actions: [],
     details: [{ label: 'Name on the cluster', value: a.name }, { label: 'Namespace', value: a.namespace }, { label: 'Agent ID', value: a.uid, copy: true }, { label: 'Last seen', value: absolute(i.observed!.observedAt) }],
@@ -163,7 +166,7 @@ export function clusterGroups(i: Inputs, built: Built): Group[] {
   return groups;
 }
 export function agentGroups(cards: Card[], files: SavedFile[]): Group[] {
-  const groups: Group[] = files.map(f => ({ key: f.documentId, title: fileTitle(f), description: f.summary?.description || undefined, notes: [], cards: cards.filter(c => c.agentKey === f.documentId) }));
+  const groups: Group[] = files.map(f => ({ key: f.documentId, title: fileTitle(f), description: f.summary?.description || f.reason || undefined, notes: [], cards: cards.filter(c => c.agentKey === f.documentId) }));
   const strays = cards.filter(c => !files.some(f => f.documentId === c.agentKey));
   return [...groups, ...(strays.length ? [{ key: 'unlinked', title: 'Agents without a file', notes: [], cards: strays }] : [])].map(g => ({ ...g, count: g.cards.length }));
 }

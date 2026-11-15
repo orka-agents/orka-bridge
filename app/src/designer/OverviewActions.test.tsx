@@ -10,13 +10,14 @@ const b = '00000000-0000-4000-8000-000000000002';
 const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
 const pair = (documentId: string) => ({ documentId, name: documentId === a ? 'alpha' : 'beta', agent: `---\nname: ${documentId === a ? 'alpha' : 'beta'}\n---\nInstructions`, tests: 'Checks', source });
 const idle = (documentId: string) => ({ documentId, busy: null, state: 'idle', canRun: true, source, report: null, acknowledged: [], pending: null, error: null });
-function native(select: () => unknown = () => null, save: () => unknown = () => { throw Error('save failed'); }) {
+function native(select: () => unknown = () => null, save: () => unknown = () => { throw Error('save failed'); }, onRun?: () => void) {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn((command: string, args: unknown) => {
     const request = args as { documentId: string };
     if (command === 'agent_open') return pair(request.documentId);
     if (command === 'agent_select') return select();
     if (command === 'agent_save') return save();
+    if (command === 'agent_run') onRun?.();
     if (command.startsWith('agent_run')) return idle(request.documentId);
     if (command === 'send_status') return { documentId: request.documentId, view: null, busy: null };
     if (command === 'agent_chat_status') return { documentId: request.documentId, state: 'idle', messages: [] };
@@ -34,6 +35,17 @@ test('Overview Chat and Open select the requested Designer view after guarded se
   view.rerender(<Example documentId={a} setupPending actionRequest={{ id: 2, documentId: a, action: 'open' }} onActionHandled={handled} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Agent', pressed: true })).toBeTruthy());
 });
+test.each(['Chat', 'File'])('Overview Run selects Agent view before starting from %s', async previous => {
+  const visibleViews: string[] = [];
+  const ipc = native(undefined, undefined, () => { visibleViews.push(screen.getByRole('button', { name: 'Agent' }).getAttribute('aria-pressed') ?? ''); });
+  const view = render(<Example documentId={a} />);
+  await userEvent.click(await screen.findByRole('button', { name: previous }));
+  view.rerender(<Example documentId={a} actionRequest={{ id: 1, documentId: a, action: 'run' }} />);
+  await waitFor(() => expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run')).toHaveLength(1));
+  expect(visibleViews).toEqual(['true']);
+  expect(screen.getByRole('button', { name: 'Agent', pressed: true })).toBeTruthy();
+});
+
 test('Overview Run waits for selection, opens only the requested document, and starts once', async () => {
   let selected!: () => void;
   const ipc = native(() => new Promise<void>(resolve => { selected = resolve; }));

@@ -93,11 +93,12 @@ test('By agent: one group per file with a card per cluster, agents without a fil
 });
 
 test('By agent keeps an unreadable saved document in its own group with a cluster title', async () => {
-  ipc(places([]), saved([{ ...file, state: 'unreadable', source: null, summary: null }]));
+  ipc(places([]), saved([{ ...file, state: 'unreadable', source: null, summary: null, reason: 'The saved file is unreadable.' }]));
   render(<Overview {...props} />); await group('This computer');
   await userEvent.click(screen.getByRole('button', { name: 'By agent' }));
   const doc = screen.getByRole('region', { name: 'reader' });
   expect(within(doc).getByRole('heading', { level: 3, name: 'This computer' })).toBeTruthy();
+  expect(within(doc).getByText('The saved file is unreadable.')).toBeTruthy();
   expect(within(doc).queryByRole('button', { name: /^Open/ })).toBeNull();
 });
 

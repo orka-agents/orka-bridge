@@ -142,6 +142,20 @@ test('a running local result keeps the previous final result, or is Result unkno
   expect(screen.queryByText('Running')).toBeNull();
 });
 
+test.each(['passed', 'failed'])('native active Unknown keeps the previous %s result, but terminal Unknown replaces it', async verdict => {
+  const label = verdict === 'passed' ? 'Passed' : 'Failed';
+  ipc(files([{ ...file, localResult: result(verdict, 1, 2) }])); render(<Overview {...props} />);
+  expect(within(await card(/^reader/)).getByText(label)).toBeTruthy();
+  const unknown = { ...file, localResult: result('unknown', 0, 0, { state: 'unknown', report: null, observedAt: 1234567890001 }) };
+  ipc(files([unknown], { runActive: true })); await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByText(/Updating when the test finishes/);
+  expect(within(screen.getByRole('article', { name: /^reader/ })).getByText(label)).toBeTruthy();
+  expect(screen.getByText(/1 of 2 tests/)).toBeTruthy();
+  ipc(files([unknown])); await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(within(screen.getByRole('article', { name: /^reader/ })).getByText('Result unknown')).toBeTruthy());
+  expect(screen.queryByText(/1 of 2 tests/)).toBeNull();
+});
+
 test('file metadata from outside is escaped text', async () => {
   ipc(files([{ ...file, summary: { ...file.summary, description: '<img src=x onerror=alert(1)>', tools: ['x'.repeat(256)] } }]));
   render(<Overview {...props} />);
@@ -218,6 +232,35 @@ test('hidden post-Run completion does not read live, returning does', async () =
 test('brief non-Run Busy retries once, read failure never retries as Busy', async () => {
   let calls = 0; mockIPC(command => command === 'overview_files' ? files() : command === 'overview_places' ? none : (++calls === 1 ? { ...unavailable, state: 'busy', reason: null } : live()));
   render(<Overview {...props} />); await waitFor(() => expect(calls).toBe(2));
+});
+
+test('known test identities remain hidden in a cached inventory after native cleanup forgets removed Agents', async () => {
+  ipc(files(), live([{ name: 'bridge-run-1', namespace: 'orka-system', uid: 'run-uid' }]));
+  render(<Overview {...props} />); await waitFor(() => expect(screen.queryByText('Reading agents…')).toBeNull());
+  ipc(files([file], { runActive: true, runAgents: [] }));
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByText(/Updating when the test finishes/);
+  expect(screen.queryByRole('heading', { name: 'bridge-run-1' })).toBeNull();
+});
+
+test('failed file refresh retains ownership-filtered Agents, never classifies a new inventory with stale ownership', async () => {
+  const counts = vi.fn();
+  ipc(files(), live([{ name: 'mine', namespace: 'orka-system', uid: 'mine-uid' }, { name: 'bridge-run-1', namespace: 'orka-system', uid: 'run-uid' }]));
+  render(<Overview {...props} onCounts={counts} />); await screen.findByRole('heading', { name: 'mine' });
+  let inventories = 0;
+  mockIPC(command => {
+    if (command === 'overview_files') throw Error('file read failed');
+    if (command === 'overview_places') return none;
+    inventories++; return live([{ name: 'new-test-Agent', namespace: 'orka-system', uid: 'new-uid' }]);
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await screen.findByText(/Couldn't read your saved files just now/);
+  expect(screen.getByRole('heading', { name: 'mine' })).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'new-test-Agent' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: 'bridge-run-1' })).toBeNull();
+  expect(inventories).toBe(0);
+  await waitFor(() => expect(counts).toHaveBeenLastCalledWith('2 agents'));
+  expect(buttons(screen.getByRole('article', { name: /^reader/ }))).toEqual(['Open', 'Details']);
 });
 
 test('same workspace failure keeps what Bridge saw; a new workspace lifetime clears it and ignores late replies', async () => {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '../components/Button';
-import { type LiveAgents, type Observation, type Places, readAgents, readFiles, readPlaces, type SavedFiles } from './api';
+import { type LiveAgents, type Observation, type Places, type RunAgent, readAgents, readFiles, readPlaces, type SavedFiles, unavailableAgents } from './api';
 import { agentGroups, balance, buildCards, clusterGroups, type CompleteAgents, type Inputs, isEmpty, summaryLabel } from './model';
 import { Board, GroupSection, useCompact } from './places';
 import './overview.css';
@@ -16,6 +16,7 @@ export default function Overview({ onNewAgent, active, runBusy, workspaceKey, on
   const [files, setFiles] = useState<SavedFiles>();
   const [filesStale, setFilesStale] = useState(false);
   const finals = useRef(new Map<string, Observation>());
+  const knownRunAgents = useRef(new Map<string, RunAgent>());
   const [live, setLive] = useState<LiveAgents>();
   const [last, setLast] = useState<CompleteAgents>();
   const [pending, setPending] = useState(false);
@@ -56,8 +57,14 @@ export default function Overview({ onNewAgent, active, runBusy, workspaceKey, on
       if (request !== epoch.current) return;
       if (value.state === 'complete') {
         value.files.forEach(f => { if (f.localResult?.state === 'complete') finals.current.set(f.documentId, f.localResult); });
-        setFiles(value); setFilesStale(false);
-      } else { setFiles(previous => previous?.state === 'complete' ? previous : value); setFilesStale(true); }
+        // Cleanup may forget a removed Agent while the cached inventory still contains it.
+        value.runAgents.forEach(a => knownRunAgents.current.set(JSON.stringify([a.installation, a.namespace, a.agentUid]), a));
+        setFiles({ ...value, runAgents: [...knownRunAgents.current.values()] }); setFilesStale(false);
+      } else {
+        setFiles(previous => previous?.state === 'complete' ? previous : value); setFilesStale(true);
+        // Keep the last coherent inventory; fresh Agents cannot be filtered against stale run ownership.
+        setLive(unavailableAgents); return;
+      }
       if (runBusy || value.runActive) { setPending(true); return; }
       void list();
     });
