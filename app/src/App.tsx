@@ -56,7 +56,7 @@ export default function App() {
   // Navigation never changes the Send destination or the local VM; native derives the target from that Send's own record.
   const seeInOverview = useCallback(async (sendId: string) => {
     const id = ++focusRequest.current;
-    setDocumentAction(undefined); setOverviewFocus(undefined); setOverviewPending(true); setPage('Overview');
+    setDocumentAction(undefined); setOverviewFocus({ id, sendId }); setOverviewPending(true); setPage('Overview');
     const target = await sendAgentFocus(sendId);
     if (id !== focusRequest.current) return;
     setOverviewFocus({ id, sendId, target }); setOverviewPending(false);

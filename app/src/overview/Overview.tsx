@@ -48,9 +48,11 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   const focusEpoch = useRef(0);
   const toFocus = useRef<string | undefined>(undefined);
   const focusedCard = useRef<HTMLElement | undefined>(undefined);
+  const autofocusRequest = useRef<string | undefined>(undefined);
+  const ownsFocus = useRef(false);
   useEffect(() => {
     const moved = (event: FocusEvent) => {
-      if (focusedCard.current && event.target !== focusedCard.current) { toFocus.current = undefined; focusedCard.current = undefined; }
+      if (ownsFocus.current && event.target !== focusedCard.current) { ownsFocus.current = false; toFocus.current = undefined; focusedCard.current = undefined; }
     };
     document.addEventListener('focusin', moved);
     return () => document.removeEventListener('focusin', moved);
@@ -58,9 +60,12 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   const [focusTick, setFocusTick] = useState(0);
   const [focusNote, setFocusNote] = useState<string>();
   useEffect(() => {
-    if (!active || !focus) { setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined; return; }
+    if (!active || !focus) { setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined; autofocusRequest.current = undefined; ownsFocus.current = false; return; }
     const request = ++focusEpoch.current;
+    const identity = `${focus.id}/${focusRetry}`;
+    if (autofocusRequest.current !== identity) { autofocusRequest.current = identity; ownsFocus.current = true; }
     setByAgent(false); setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined;
+    if (focusPending) return;
     const { target } = focus;
     void (async () => {
       const value = target ? await readPlaces(target.key) : undefined;
@@ -73,16 +78,16 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
       if (request === focusEpoch.current) setFocusNote(focusNotes[check]);
     })();
     return () => { focusEpoch.current++; };
-  }, [active, focus, focusRetry]);
+  }, [active, focus, focusRetry, focusPending]);
   useEffect(() => {
     // Local reads can rebalance the board and remount a destination in the other stack.
-    const key = toFocus.current; if (!active || !localReady || !key) return;
+    const key = toFocus.current; if (!active || !localReady || !ownsFocus.current || !key) return;
     if (focusedCard.current?.isConnected) return;
     if (focusedCard.current && document.activeElement !== document.body) { toFocus.current = undefined; focusedCard.current = undefined; return; }
     const card = [...document.querySelectorAll<HTMLElement>('[data-card-key]')].find(node => node.dataset.cardKey === key);
     // Retain ownership across post-run rebalancing, but never override a later user focus.
     if (card) { focusedCard.current = card; card.focus(); card.scrollIntoView?.({ block: 'center' }); }
-  }, [active, localReady, focusTick, places, byAgent, files, live]);
+  }, [active, localReady, focusTick, places, byAgent, files, live, compact]);
   const epoch = useRef(0);
   const knownWorkspace = useRef(workspaceKey);
   useEffect(() => {

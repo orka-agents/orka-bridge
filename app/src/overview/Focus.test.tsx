@@ -63,6 +63,32 @@ test.each([false, true])('post-run inventory rebalancing restores only an owned 
   expect(before.isConnected).toBe(false);
   await waitFor(() => moved ? expect(document.activeElement).toBe(newAgent) : expect(focused()).toBe(`${key}/uid-one`));
 });
+test.each(['lookup', 'destination', 'local'] as const)('a later focus choice wins while the %s read is pending', async slow => {
+  let release!: (value: unknown) => void;
+  mockIPC(command => command === 'overview_places' ? slow === 'destination' ? new Promise(resolve => { release = resolve; }) : places([agent('uid-one')]) : command === 'overview_files' ? slow === 'local' ? new Promise(resolve => { release = resolve; }) : files : live);
+  const focus = { id: 1, sendId: 's1', target: target('uid-one') };
+  const view = render(<Overview {...props} onNewAgent={() => undefined} focus={slow === 'lookup' ? { id: 1, sendId: 's1' } : focus} focusPending={slow === 'lookup'} />);
+  if (slow !== 'lookup') await waitFor(() => expect(release).toBeDefined());
+  const control = await screen.findByRole('button', { name: 'New agent' });
+  control.focus();
+  if (slow === 'lookup') view.rerender(<Overview {...props} onNewAgent={() => undefined} focus={focus} />);
+  else await act(async () => release(slow === 'local' ? files : places([agent('uid-one')])));
+  await within(await screen.findByRole('region', { name: 'team' })).findByRole('article', { name: /^same-name/ });
+  expect(document.activeElement).toBe(control);
+});
+test.each([false, true])('compact resize restores only an owned exact-agent focus (user moved: %s)', async moved => {
+  let compact = false; let change!: () => void;
+  vi.stubGlobal('matchMedia', () => ({ get matches() { return compact; }, addEventListener: (_: string, handler: () => void) => { change = handler; }, removeEventListener: () => {} }));
+  ipc(places([agent('uid-one')]));
+  render(<Overview {...props} onNewAgent={() => undefined} focus={{ id: 1, sendId: 's1', target: target('uid-one') }} />);
+  await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
+  const before = document.activeElement as HTMLElement;
+  const control = screen.getByRole('button', { name: 'New agent' });
+  if (moved) control.focus();
+  act(() => { compact = true; change(); });
+  expect(before.isConnected).toBe(false);
+  await waitFor(() => moved ? expect(document.activeElement).toBe(control) : expect(focused()).toBe(`${key}/uid-one`));
+});
 test('an older focus reply cannot supersede a newer navigation', async () => {
   let release!: (value: unknown) => void;
   let slow = true;
