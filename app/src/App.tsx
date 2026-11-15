@@ -50,15 +50,16 @@ export default function App() {
   useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);
   const [overviewFocus, setOverviewFocus] = useState<ComponentProps<typeof Overview>['focus']>();
+  const [overviewPending, setOverviewPending] = useState(false);
   const focusRequest = useRef(0);
-  useEffect(() => { if (page !== 'Overview') { focusRequest.current++; setOverviewFocus(undefined); } }, [page]);
+  useEffect(() => { if (page !== 'Overview') { focusRequest.current++; setOverviewFocus(undefined); setOverviewPending(false); } }, [page]);
   // Navigation never changes the Send destination or the local VM; native derives the target from that Send's own record.
   const seeInOverview = useCallback(async (sendId: string) => {
     const id = ++focusRequest.current;
-    setDocumentAction(undefined); setPage('Overview');
+    setDocumentAction(undefined); setOverviewFocus(undefined); setOverviewPending(true); setPage('Overview');
     const target = await sendAgentFocus(sendId);
     if (id !== focusRequest.current) return;
-    setOverviewFocus({ id, sendId, target });
+    setOverviewFocus({ id, sendId, target }); setOverviewPending(false);
   }, []);
   const [documentId, setDocumentId] = useState(SAMPLE_DOCUMENT_ID);
   const [newAgentRequest, setNewAgentRequest] = useState(0);
@@ -275,7 +276,7 @@ export default function App() {
           onChatDocument={id => openOverviewDocument(id, 'chat')}
           onRunDocument={id => openOverviewDocument(id, 'run')}
           onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)}
-          focus={overviewFocus}
+          focus={overviewFocus} focusPending={overviewPending}
           onChooseWorkspace={() => setPage('Clusters')} />
         {page === 'Designer' && !exampleOpen && <p role="status">Opening your agent…</p>}
       </main>

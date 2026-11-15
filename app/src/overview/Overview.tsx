@@ -12,10 +12,11 @@ export type OverviewProps = {
   onOpenExample: () => void; onChooseWorkspace: () => void; onCounts?: (label: string) => void;
   /** Newest request wins. target is absent when native has no recorded agent for that Send. */
   focus?: { id: number; sendId: string; target?: AgentFocus };
+  focusPending?: boolean;
 };
 const focusNotes = { present: 'Not shown in Overview yet.', gone: 'The original agent is no longer available. Your saved result is unchanged.', cannotCheck: 'Cannot check this agent. Your saved result is unchanged.' };
 const complete = (v?: LiveAgents): v is CompleteAgents => v?.state === 'complete' && v.installation !== null && v.observedAt !== null;
-export default function Overview({ onNewAgent, active, runBusy, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, focus: navigationFocus }: OverviewProps) {
+export default function Overview({ onNewAgent, active, runBusy, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, focus: navigationFocus, focusPending = false }: OverviewProps) {
   const [dismissedFocus, setDismissedFocus] = useState<number>();
   const focus = navigationFocus?.id === dismissedFocus ? undefined : navigationFocus;
   const [focusRetry, setFocusRetry] = useState(0);
@@ -27,13 +28,14 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   const [live, setLive] = useState<LiveAgents>();
   const [last, setLast] = useState<CompleteAgents>();
   const [pending, setPending] = useState(false);
+  const [localReady, setLocalReady] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [byAgent, setByAgent] = useState(false);
   const [places, setPlaces] = useState<Places>();
   const [placeError, setPlaceError] = useState(false);
   const compact = useCompact();
   useEffect(() => {
-    if (!active || focus?.target) return;
+    if (!active || focusPending || focus?.target) return;
     let cancelled = false;
     void readPlaces().then(value => {
       if (cancelled) return;
@@ -41,7 +43,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
       setPlaces(previous => value ?? (previous && { ...previous, places: previous.places.map(p => ({ ...p, stale: true })) }));
     });
     return () => { cancelled = true; };
-  }, [active, refresh, focus?.target]);
+  }, [active, refresh, focusPending, focus?.target]);
   // See in Overview: refresh only the recorded destination, then focus the exact card (place key + UID, never a name).
   const focusEpoch = useRef(0);
   const toFocus = useRef<string | undefined>(undefined);
@@ -65,10 +67,11 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
     return () => { focusEpoch.current++; };
   }, [active, focus, focusRetry]);
   useEffect(() => {
-    const key = toFocus.current; if (!active || !key) return;
+    // Local reads can rebalance the board and remount a destination in the other stack.
+    const key = toFocus.current; if (!active || !localReady || !key) return;
     const card = [...document.querySelectorAll<HTMLElement>('[data-card-key]')].find(node => node.dataset.cardKey === key);
     if (card) { toFocus.current = undefined; card.focus(); card.scrollIntoView?.({ block: 'center' }); }
-  }, [active, focusTick, places, byAgent]);
+  }, [active, localReady, focusTick, places, byAgent]);
   const epoch = useRef(0);
   const knownWorkspace = useRef(workspaceKey);
   useEffect(() => {
@@ -78,14 +81,15 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
     }
     if (!active) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    setPending(runBusy);
+    setPending(runBusy); setLocalReady(false);
     async function list(retried = false) {
       const value = await readAgents();
       if (request !== epoch.current) return;
       setLive(value);
-      if (complete(value)) { setLast(value); setPending(false); }
-      else if (value.state === 'busy' && value.runActive) setPending(true);
+      if (complete(value)) { setLast(value); setPending(false); setLocalReady(true); }
+      else if (value.state === 'busy' && value.runActive) { setPending(true); setLocalReady(true); }
       else if (value.state === 'busy' && !retried) timer = setTimeout(() => { void list(true); }, 250);
+      else setLocalReady(true);
     }
     void readFiles().then(value => {
       if (request !== epoch.current) return;
@@ -97,9 +101,9 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
       } else {
         setFiles(previous => previous?.state === 'complete' ? previous : value); setFilesStale(true);
         // Keep the last coherent inventory; fresh Agents cannot be filtered against stale run ownership.
-        setLive(unavailableAgents); return;
+        setLive(unavailableAgents); setLocalReady(true); return;
       }
-      if (runBusy || value.runActive) { setPending(true); return; }
+      if (runBusy || value.runActive) { setPending(true); setLocalReady(true); return; }
       void list();
     });
     return () => { epoch.current++; clearTimeout(timer); };

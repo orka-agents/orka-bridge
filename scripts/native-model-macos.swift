@@ -393,7 +393,7 @@ func nativeResultTextIsVisible(_ expected: String) -> Bool {
             let text = attribute(element, "AXValue") as? String,
             (text == expected || (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected))),
             let bounds = nativeBounds(element) else { return false }
-        return window()!.1.contains(bounds)
+        return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
     }
 }
 func nativeChatTextIsVisible(_ expected: String) -> Bool {
@@ -401,7 +401,8 @@ func nativeChatTextIsVisible(_ expected: String) -> Bool {
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
             text.contains(expected), let bounds = nativeBounds(element) else { return false }
-        return window()!.1.contains(bounds)
+        // WebKit exposes clipped or screen-reader-only text with zero/one-pixel bounds.
+        return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
     }
 }
 func waitForButton(_ label: String) {

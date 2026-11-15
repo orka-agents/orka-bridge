@@ -612,27 +612,30 @@ test('Clusters reads setup without engine diagnostics or legacy IPC', async () =
   expect(fetch).not.toHaveBeenCalled();
 });
 
-test('a delayed See in Overview lookup cannot override a later page choice', async () => {
+test.each([true, false])('pending See in Overview skips unrelated reads and respects later navigation (leave: %s)', async leave => {
   vi.stubGlobal('isTauri', true);
   const id = '9b2b93c4-375c-4815-9717-39852a96e411';
   const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
   let release!: (value: unknown) => void;
-  mockIPC(command => {
+  const placeReads: unknown[] = [];
+  mockIPC((command, args) => {
     if (command === 'setup_status') return { selected: null, localVm: 'notIntegrated', model: 'locked' };
     if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks', source };
     if (command === 'agent_run_status') return { documentId: id, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null, busy: null };
     if (command === 'send_status') return { documentId: id, busy: null, view: { documentId: id, id: '00000000-0000-4000-8000-000000000004', targetId: '00000000-0000-4000-8000-000000000002', providerId: '00000000-0000-4000-8000-000000000003', targetName: 'team', source, model: 'm', agentName: 'bridge-run-one', state: 'unknown', stage: 'stopped', report: null, acknowledged: [], pending: null, error: 'stopped', storageError: false, agentAction: 'update' } };
     if (command === 'send_history') return [];
     if (command === 'send_agent_focus') return new Promise(resolve => { release = resolve; });
-    if (command === 'overview_places') return { places: [], historyState: 'complete', unobserved: [] };
+    if (command === 'overview_places') { placeReads.push(args); return { places: [], historyState: 'complete', unobserved: [] }; }
     return null;
   });
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   await user.click(await screen.findByRole('button', { name: 'See in Overview' }));
   await waitFor(() => expect(release).toBeDefined());
-  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  expect(placeReads).toEqual([]);
+  if (leave) await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await act(async () => release({ key: 'team', name: 'bridge-run-one', namespace: 'agents', uid: 'uid-one' }));
-  await waitFor(() => expect(screen.getByRole('main').getAttribute('aria-labelledby')).toBe('page-title'));
-  expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
+  if (!leave) await waitFor(() => expect(placeReads).toEqual([{ key: 'team' }]));
+  expect(screen.getByRole('button', { name: leave ? 'Clusters' : 'Overview' }).getAttribute('aria-current')).toBe('page');
+  if (leave) expect(placeReads).toEqual([]);
 });

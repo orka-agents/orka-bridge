@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import Overview from './Overview';
 import { sendAgentCheck, sendAgentFocus } from '../clusters/send-api';
@@ -33,6 +33,17 @@ test('two same-name agents with different UIDs: the exact UID card takes focus, 
   expect(calls.mock.calls.filter(([command]) => command === 'overview_places').every(([, args]) => (args as { key?: string } | undefined)?.key === key)).toBe(true);
   // Repeated navigation focuses the new exact target again.
   view.rerender(<Overview {...props} focus={{ id: 2, sendId: 's2', target: target('uid-one') }} />);
+  await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
+});
+test('a late local inventory cannot drop focus when multiple clusters rebalance', async () => {
+  let release!: (value: unknown) => void;
+  const inventory = { ...places([agent('uid-one')]), places: [{ ...place([agent('a'), agent('b'), agent('c')]), key: 'other', context: 'other' }, place([agent('uid-one')])] };
+  mockIPC(command => command === 'overview_places' ? inventory : command === 'overview_files' ? new Promise(resolve => { release = resolve; }) : live);
+  render(<Overview {...props} focus={{ id: 1, sendId: 's1', target: target('uid-one') }} />);
+  const before = within(await screen.findByRole('region', { name: 'team' })).getByRole('article', { name: /^same-name/ });
+  await act(async () => release({ ...files, files: Array.from({ length: 6 }, (_, index) => ({ documentId: `00000000-0000-4000-8000-00000000001${index}`, name: `saved-${index}`, state: 'readable', source, summary: null, reason: null, localResult: null })) }));
+  await screen.findByRole('article', { name: /^saved-0/ });
+  expect(before.isConnected).toBe(false);
   await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
 });
 test('an older focus reply cannot supersede a newer navigation', async () => {
