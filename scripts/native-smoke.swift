@@ -1208,7 +1208,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try clickSendControl("published-checksum", scrolling: 250)
     try focusSend()
     try clickSendControl("Cancel tests", scrolling: -350)
-    scrollMain(-500)
+    // The verified Cancel control is already in view. The old below-editor offset would overscroll into history.
     // Release the synthetic response as soon as pixels are captured. OCR is
     // deliberately outside the existing five-second fixture hold window.
     let cancellingFrame = try capture("send-cancelling", "Designer") {
