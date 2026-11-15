@@ -1,5 +1,7 @@
 use bridge_engine::agents::Agents;
-use bridge_runtime_protocol::{FileSlot, Uuid, MAX_FILE};
+#[cfg(unix)]
+use bridge_runtime_protocol::MAX_FILE;
+use bridge_runtime_protocol::{FileSlot, Uuid};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
