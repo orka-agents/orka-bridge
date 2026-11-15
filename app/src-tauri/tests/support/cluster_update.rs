@@ -150,7 +150,32 @@ async fn initial_checkpoint_failure_restores_binding_before_any_mutation() {
             edit(&s);
         }
         let root = s.home.path().join("app-local/send-history-v1");
-        std::fs::create_dir_all(&root).unwrap();
+        if action == "create" {
+            // Let the store create its private directory/Windows ACL; an ambient
+            // mkdir would test an invalid store on ordinary contributor umasks.
+            use bridge_engine::send_summary::{
+                AttemptSummary, AttemptVerdict, SummaryStore, TargetUids,
+            };
+            SummaryStore::new(Some(s.home.path().join("app-local")))
+                .begin(AttemptSummary {
+                    id: bridge_runtime_protocol::Uuid::new_v4().to_string(),
+                    source: s.source(),
+                    target_display: "earlier · agents".into(),
+                    target_uids: TargetUids {
+                        service_namespace: "control".into(),
+                        service_uid: "old-service".into(),
+                        deployment_namespace: "control".into(),
+                        deployment_uid: "old-deployment".into(),
+                        watched_namespace: "agents".into(),
+                    },
+                    provider: "earlier-model".into(),
+                    planned_agent_name: "bridge-run-earlier".into(),
+                    agent_uid: None,
+                    verdict: AttemptVerdict::Unknown,
+                    time: 1,
+                })
+                .unwrap();
+        }
         let bindings = || -> Value {
             std::fs::read(root.join("bindings.json"))
                 .map(|bytes| serde_json::from_slice(&bytes).unwrap())
