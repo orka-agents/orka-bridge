@@ -1061,6 +1061,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         _ = try capturePreflight("send-probe", action)
     }
     func resultSize(_ width: CGFloat, _ height: CGFloat) throws {
+        // History proof restarts Bridge; resolve this process's window, not the pre-restart AX handle.
+        guard let nativeWindow = nativeElements().first(where: { attribute($0, "AXRole") as? String == "AXWindow" }) else {
+            fail("No current native result window")
+        }
         let frame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable])
         var size = frame.size
