@@ -1573,6 +1573,11 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try clickSendControl("published-checksum", scrolling: -100)
     try capture("send-history-answer", "Designer")
     try resultSize(1280, 800)
+    // Anchor the entire saved result before looking for answer pixels, not whichever tail survived reflow.
+    guard let provenance = nativeTextBounds("Saved on this computer", visibleOnly: false).first else {
+        fail("Saved answer provenance has no native bounds")
+    }
+    scrollMain(Int32((bodyBounds().minY + 64 - provenance.minY).rounded()))
     // Vision can omit the small provenance line; qualify answer pixels plus its visible native text bounds.
     let savedWide = try capturePreflight("send-history-answer-wide", "Fixture answer:")
     require(savedWide.contains { ($0.topCandidates(1).first?.string ?? "").contains("What SHA-256 checksum does") }
