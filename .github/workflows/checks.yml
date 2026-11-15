@@ -41,7 +41,7 @@ jobs:
         timeout-minutes: 3
         run: |
           $env:KUBECONFIG = Join-Path $env:RUNNER_TEMP 'unreachable-kubeconfig.json'
-          '{"apiVersion":"v1","kind":"Config","current-context":"unreachable-loopback","clusters":[{"name":"nowhere","cluster":{"server":"http://127.0.0.1:9"}}],"contexts":[{"name":"unreachable-loopback","context":{"cluster":"nowhere","user":"empty"}}],"users":[{"name":"empty","user":{}}]}' | Set-Content -Encoding utf8NoBOM $env:KUBECONFIG
+          '{"apiVersion":"v1","kind":"Config","current-context":"unreachable-loopback","clusters":[{"name":"nowhere","cluster":{"server":"http://127.0.0.1:9"}}],"contexts":[{"name":"unreachable-loopback","context":{"cluster":"nowhere","user":"empty"}}],"users":[{"name":"empty","user":{"token":"synthetic-loopback-only-not-a-real-credential"}}]}' | Set-Content -Encoding utf8NoBOM $env:KUBECONFIG
           $env:BRIDGE_DEV_IMAGE_DIR = Join-Path $env:RUNNER_TEMP 'empty-image'
           New-Item -ItemType Directory $env:BRIDGE_DEV_IMAGE_DIR | Out-Null
           New-Item -ItemType Directory evidence | Out-Null
