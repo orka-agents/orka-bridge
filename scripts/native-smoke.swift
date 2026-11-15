@@ -312,7 +312,14 @@ func key(_ code: CGKeyCode, shift: Bool = false) {
     Thread.sleep(forTimeInterval: 0.3)
 }
 @discardableResult
-func capture(_ name: String, _ page: String, afterFrame: (() throws -> Void)? = nil) throws -> [VNRecognizedTextObservation] {
+func sendFrameVisible(_ observations: [VNRecognizedTextObservation]) -> Bool {
+    let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    let markers = ["Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
+        "What you send", "What happened", "Send needs attention", "Running tests",
+        "Cancelling tests", "Cancellation requested.", "Cannot cancel with this cluster identity", "This Orka cannot cancel tests.", "Cancellation not confirmed.", "Tests cancelled on the cluster.", "Tests finished before cancellation."]
+    return markers.contains { text.localizedCaseInsensitiveContains($0) }
+}
+func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame: (() throws -> Void)? = nil) throws -> [VNRecognizedTextObservation] {
     let file = "\(output)/\(name).png"
     let command = Process()
     command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
@@ -422,9 +429,9 @@ func capture(_ name: String, _ page: String, afterFrame: (() throws -> Void)? = 
     }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        let markers = ["Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
-            "Cancelling tests", "Cancellation requested.", "Cannot cancel with this cluster identity", "This Orka cannot cancel tests.", "Cancellation not confirmed.", "Tests cancelled on the cluster.", "Tests finished before cancellation."]
-        require(markers.contains { text.localizedCaseInsensitiveContains($0) }, "Send panel not visible: \(text)")
+        // A raw navigation probe can land below the card after reflow. It guides scrolling, not proof.
+        if searching && name == "send-probe" { return observations }
+        require(sendFrameVisible(observations), "Send panel not visible: \(text)")
         print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
         return observations
     }
@@ -562,7 +569,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
             Thread.sleep(forTimeInterval: 0.5)
             return
         }
-        let seen = try capture("send-probe", "Designer")
+        let seen = try capture("send-probe", "Designer", searching: true)
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
         if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: .regularExpression) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) || (label == "Destination ready" && $0.range(of: #"^\W*Destination ready\b"#, options: .regularExpression) != nil) }) {
@@ -985,9 +992,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     func capturePreflight(_ name: String, _ expected: String) throws -> [VNRecognizedTextObservation] {
         for _ in 0..<8 {
             // Preserve a visible transient state before doing any search work.
-            let seen = try capture("send-probe", "Designer")
+            let seen = try capture("send-probe", "Designer", searching: true)
             let text = seen.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-            if text.localizedCaseInsensitiveContains(expected) {
+            if text.localizedCaseInsensitiveContains(expected) && sendFrameVisible(seen) {
                 // Section labels are uppercased by CSS; accessibility retains their source case.
                 // Keep the frame we verified. A transient state can end between
                 // two screenshots; a second OCR pass would test a different frame.
@@ -997,6 +1004,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
                             .write(to: URL(fileURLWithPath: "\(output)/\(name).\(ext)"), options: .atomic)
                     }
                 }
+                print("PASS \(name): frozen native Send frame shows \(expected)")
                 return seen
             }
             // Reflow and result updates preserve a scroll offset, not a row.
