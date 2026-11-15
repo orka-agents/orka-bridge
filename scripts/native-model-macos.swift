@@ -93,7 +93,9 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         }.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
     for value in expected {
-        let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI").contains(value)
+        // Vision renders the capital I as a lowercase l in this exact observed label.
+        let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI")
+            .replacingOccurrences(of: "APl key", with: "API key").contains(value)
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || name.hasPrefix("local-key-") && nativeChatTextIsVisible(value))
         let chatText = !found && name.hasPrefix("chat-") && nativeChatTextIsVisible(value)
         require(found || nativeText || chatText, "Missing \(value) in \(name): \(text)")
@@ -152,6 +154,13 @@ require(enabledButton("Connect the AI") != nil && enabledButton("Manage") == nil
         "VM-ready local card must offer Connect the AI, not Manage")
 click("Connect the AI", rows)
 rows = try capture("before-connect", ["Connect the AI"])
+localSize(540, 640)
+scroll(4000)
+_ = try capture("local-setup-ai-minimum-top", ["Where agents run", "Get your workspace ready"])
+_ = try seek("Connect the AI", -200)
+_ = try capture("local-setup-ai-minimum", ["GitHub Copilot", "Connect the AI"])
+localSize(1280, 800)
+scroll(4000)
 require(enabledButton("Remove sign-in") == nil, "Remove must be absent before the first sign-in attempt")
 click("Connect the AI", rows)
 rows = try capture("local-completed", ["Local cluster", "Local cluster ready", "Stop the local cluster", "Run your first test"])

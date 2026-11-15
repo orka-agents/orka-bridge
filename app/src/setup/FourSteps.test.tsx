@@ -47,6 +47,13 @@ test('the same four rows stay in place across setup with progress inside the wor
   }
 });
 
+test.each([['installing', 'Getting ready'], ['starting', 'Starting']] as const)('unreadable %s status retains its observed label, not Waiting', (phase, label) => {
+  render(<SetupProgress {...actions} status={status(phase)} error="Unavailable" />);
+  expect(screen.getByText(`Last known: ${label}`)).toBeTruthy();
+  expect(screen.queryByRole('progressbar')).toBeNull();
+  expect(document.querySelector('[aria-current="step"]')).toBeNull();
+});
+
 test('unreadable status suppresses progress and current step without dropping rows', () => {
   render(<SetupProgress {...actions} status={status('starting')} error="Unavailable" />);
   expect(screen.queryByRole('progressbar')).toBeNull();

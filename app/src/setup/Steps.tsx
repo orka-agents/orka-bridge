@@ -24,7 +24,7 @@ function stepRows({ status, stopping, error, modelState = 'idle', firstCheck, in
   const failed = status.localVm === 'failed';
   const paused = status.localVm === 'cancelled' || status.localVm === 'closed';
   const connected = modelState === 'connected';
-  const infra = stopping || error ? null : infraProgress(status);
+  const infra = stopping ? null : infraProgress(status);
   const workspace: [Status, string] = status.localVm === 'ready' ? ['passed', 'Ready']
     : failed ? ['failed', 'Needs attention'] : paused ? ['not-started', 'Paused']
     : stopping || status.localVm === 'closing' ? ['running', 'Stopping']
