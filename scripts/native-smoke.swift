@@ -1593,6 +1593,7 @@ do {
     }
     setContent(1280, 900)
     clickTab("Designer", [])
+    scrollMain(1000) // The preceding saved Send detail can leave the heading below the viewport.
     clickDesignerView("Agent")
     clickButton("New agent")
     typeText("web-reader")
