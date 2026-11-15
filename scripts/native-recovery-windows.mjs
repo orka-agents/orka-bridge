@@ -535,7 +535,7 @@ try {
       })()`);
       if (name !== 'designer-remote' && (size === 'wide' ? Math.abs(layout.tests.y - layout.editor.y) > 2 || layout.tests.x <= layout.editor.x : layout.editor.bottom > layout.tests.y + 2)) throw Error(`Editor-first layout failed: ${JSON.stringify(layout)}`);
       if (layout.scrollWidth > layout.width + 2) throw Error(`Designer overflow: ${JSON.stringify(layout)}`);
-      await writeFile(join(output, `${theme}-${size}-${name}-layout.json`), JSON.stringify(layout, null, 2));
+      await writeFile(join(output, `${theme}-${size}-${name}-columns.json`), JSON.stringify(layout, null, 2));
     }
     if (name === 'designer-failed') await evaluate(`document.querySelector('.example-run').scrollIntoView({ block: 'start' })`);
     if (name.startsWith('ai-removal-')) await evaluate(`document.querySelector('.setup-model').scrollIntoView({ block: 'center' })`);
