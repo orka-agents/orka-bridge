@@ -135,11 +135,12 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .view-switch button[aria-pressed="true"] { background: var(--color-card); color: var(--color-text); box-shadow: 0 1px 3px var(--color-border-strong); }
 .view-switch button:disabled { cursor: not-allowed; }
 .designer-file, .designer-checks, .designer-tests { margin-top: 16px; display: grid; gap: 12px; }
-.designer-work { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 24px; align-items: start; }
+.designer-work { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 16px; }
 /* One right-hand stack: This computer above Team cluster. Neither moves when the other's card grows. */
-.designer-side { grid-column: 2; grid-row: 1; min-width: 0; display: grid; gap: 0; }
+.designer-side { grid-column: 2; grid-row: 1; min-width: 0; display: grid; gap: 16px; }
 .designer-side > section > h2 { margin-bottom: 8px; }
 .designer-work[hidden] { display: none; }
+.designer-work :is(.designer-file, .designer-tests, .designer-checks) { margin-top: 0; }
 .chat-panel { margin-top: var(--space-4); display: grid; gap: var(--space-4); }
 .chat-heading, .chat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .chat-heading { justify-content: space-between; }
@@ -192,8 +193,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .tool-picker::backdrop { background: rgb(0 0 0 / .12); }
 .picker-close { justify-self: end; }
 .tool-picker ul { margin: 0; padding: 0; list-style: none; }
-.tool-picker li button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 100px; gap: var(--space-2); text-align: left; overflow-wrap: anywhere; padding: var(--space-2); border: 0; border-radius: var(--radius-row); background: transparent; color: var(--color-text); font: inherit; }
-.tool-picker .tool-description { grid-column: 1 / -1; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.tool-picker li button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-2); text-align: left; overflow-wrap: anywhere; padding: var(--space-2); border: 0; border-radius: var(--radius-row); background: transparent; color: var(--color-text); font: inherit; }
+.tool-option-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.tool-picker .tool-description { color: var(--color-text-secondary); overflow-wrap: anywhere; }
 .field.model-select { min-width: 12rem; }
 .soul-reference-field { display: grid; gap: 8px; }
 .soul-reference-field input { width: 100%; font: 400 13px/18px var(--font-mono); }

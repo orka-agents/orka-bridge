@@ -121,7 +121,7 @@ test('global history refreshes when another document’s Send releases admission
   expect(await screen.findByText('bridge-run-before-restart')).toBeTruthy();
 });
 
-test.each(['pending', 'failed'])('saved Sends are readable while the document open is %s', async state => {
+test.each(['pending', 'failed'])('remote saved Sends are readable while the document open is %s', async state => {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn((command: string) => {
     if (command === 'agent_open') {
@@ -131,7 +131,7 @@ test.each(['pending', 'failed'])('saved Sends are readable while the document op
     if (command === 'send_history') return [summary];
     throw Error('Unexpected operation');
   });
-  mockIPC(ipc); render(<Example />);
+  mockIPC(ipc); render(<Example remote />);
   expect(await screen.findByText('bridge-run-before-restart')).toBeTruthy();
   if (state === 'failed') expect(screen.getByText('Your agent folder could not be opened. Open it again from Designer.')).toBeTruthy();
   expect(document.body.textContent).not.toContain('PRIVATE_SOURCE_FAILURE');
@@ -242,8 +242,11 @@ test('interrupted evidence is unknown without a live spinner and requires an exp
 });
 
 test('remove saved details removes the local answer only and does not check or delete cluster work', async () => {
-  const ipc = detailed(); await openSaved();
+  const ipc = detailed({ ...saved, canCancel: true }); await openSaved();
   await screen.findByText('Saved on this computer');
+  const remove = screen.getByRole('button', { name: 'Remove saved details' });
+  expect(remove.classList.contains('button-quiet')).toBe(true);
+  expect(remove.parentElement!.querySelectorAll('.button-secondary')).toHaveLength(2);
   const user = userEvent.setup();
   await user.click(screen.getByRole('button', { name: 'Remove saved details' }));
   expect(ipc.mock.calls.some(([command]) => command === 'send_history_remove')).toBe(false);

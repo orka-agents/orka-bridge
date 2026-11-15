@@ -21,7 +21,7 @@ function native(run: object = localResult) {
     if (command === 'agent_run_status' || command === 'agent_run') return run;
     if (command === 'send_status') return { documentId: id, view: null, busy: null };
     if (command === 'send_history') return [];
-    if (command === 'workspace_catalog') return { defaultModel: 'literal-model', models: { state: 'ready', items: [{ id: 'literal-model' }] }, tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Read a page' }] } };
+    if (command === 'workspace_catalog' || command === 'cluster_catalog') return { defaultModel: 'literal-model', models: { state: 'ready', items: [{ id: 'literal-model' }] }, tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Read a page' }] } };
     if (command === 'send_preflight') return { documentId: id, source, targetId: target.id, providerId: provider.id, model: 'literal-model', rows: [{ label: 'AI connection', status: 'allowed', message: 'Ready.' }], canSend: true, action: 'create', canSeparate: false };
     throw Error(`Unexpected ${command}`);
   });
@@ -38,7 +38,10 @@ test('a selected cluster keeps independent local tests and the always-visible Se
   const editor = container.querySelector('.designer-editing')!;
   expect(editor.contains(local) || editor.contains(cluster)).toBe(false);
   expect(editor.compareDocumentPosition(local) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(within(cluster).getByRole('region', { name: 'Send and cluster tests' }).hasAttribute('hidden')).toBe(false);
+  const sendPanel = within(cluster).getByRole('region', { name: 'Send and cluster tests' });
+  expect(sendPanel.hasAttribute('hidden')).toBe(false);
+  expect(sendPanel.classList.contains('card')).toBe(true);
+  expect(sendPanel.parentElement).toBe(cluster);
   // The earlier local result survives the cluster selection and Run is not gated by it.
   expect(await within(local).findByText('reads-the-title')).toBeTruthy();
   const run = within(local).getByRole('button', { name: 'Run tests' }) as HTMLButtonElement;
@@ -81,11 +84,12 @@ test('the page-head Send control only brings the Send card into view', async () 
   expect(ipc.mock.calls.some(([command]) => command === 'send_start')).toBe(false);
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Send and cluster tests' })));
 });
-test('a team Send destination does not disable the ready local model and tool catalog', async () => {
+test('a team Send destination supplies its catalog without disabling local tests', async () => {
   const ipc = native();
   render(<Example remote place={place} catalogKey={1} />);
   const tool = await screen.findByRole('button', { name: 'Add a tool' });
   await waitFor(() => expect((tool as HTMLButtonElement).disabled).toBe(false));
   expect((screen.getByRole('combobox', { name: 'It thinks with' }) as HTMLSelectElement).disabled).toBe(false);
-  expect(ipc.mock.calls.some(([command]) => command === 'workspace_catalog')).toBe(true);
+  expect(ipc.mock.calls.some(([command]) => command === 'cluster_catalog')).toBe(true);
+  expect((within(screen.getByRole('region', { name: 'This computer' })).getByRole('button', { name: 'Run tests' }) as HTMLButtonElement).disabled).toBe(false);
 });

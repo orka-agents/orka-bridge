@@ -66,6 +66,18 @@ test('a newer preparation supersedes an in-flight prepared reload without replac
   await act(async () => reads[0]({ ...pair, agent: pair.agent.replace('Read the page.', 'Use an older model.') }));
   expect(editor().value).toBe(edited);
 });
+test('a failed local open keeps saved Send history accessible without the source folder', async () => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => {
+    if (command === 'agent_open') throw Error('Folder unavailable');
+    if (command === 'send_history') return [];
+    throw Error(`Unexpected command ${command}`);
+  });
+  render(<Example />);
+  await screen.findByRole('button', { name: 'Try opening again' });
+  expect(await screen.findByRole('heading', { name: 'Past Sends' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Send to a cluster' }).hasAttribute('disabled')).toBe(true);
+});
 test('opening keeps a form-shaped skeleton until the owned document arrives', async () => {
   vi.stubGlobal('isTauri', true); let finish!: (value: unknown) => void;
   mockIPC(command => command === 'agent_open' ? new Promise(resolve => { finish = resolve; }) : idle);
@@ -107,6 +119,7 @@ test('setup-pending local tests stay disabled, and a selected cluster keeps both
   const pending = screen.getByRole('button', { name: 'Run tests' });
   expect(pending.hasAttribute('disabled')).toBe(true);
   expect(container.querySelector('.designer-file')!.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(pending.classList.contains('button-primary')).toBe(false);
   rerender(<Example remote />);
   expect(await screen.findByRole('region', { name: 'Tests on the local cluster' })).toBeTruthy();
   expect(screen.getByRole('region', { name: 'Team cluster' })).toBeTruthy();
@@ -270,6 +283,6 @@ test.each([null, {}, { agent: 'SECRET_MARKER', tests: '', extra: 'secret' }])('m
 test('browser preview does not fabricate a native folder', async () => {
   vi.stubGlobal('isTauri', false); const ipc = vi.fn(); mockIPC(ipc); render(<Example />);
   expect((await screen.findByText('Your agent folder could not be opened. Open it again from Designer.')).getAttribute('role')).toBe('alert');
-  expect(await screen.findByText(/Saved Send summaries could not be read/)).toBeTruthy();
+  expect(screen.queryByText(/Saved Send summaries could not be read/)).toBeNull();
   expect(ipc).not.toHaveBeenCalled();
 });

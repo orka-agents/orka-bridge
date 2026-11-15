@@ -67,6 +67,8 @@ pub enum Stage {
     UpdateInvalid,
     UpdateUnconfirmed,
     EarlierWork,
+    LegacyDestination,
+    DestinationMismatch,
 }
 /// Renderer view: IDs, display names, hashes and receipts; never a credential or endpoint.
 #[derive(Clone, Serialize)]
@@ -229,6 +231,8 @@ fn deployment_row(stage: Stage) -> CheckRow {
         Stage::EarlierWork => {
             "Earlier work for this agent is unfinished. Check its status or cancel its tests."
         }
+        Stage::DestinationMismatch => "The Orka destination could not be verified. Bridge did not send the Orka credential.",
+        Stage::LegacyDestination => "Saved ownership predates destination verification. Bridge cannot reuse it or create a duplicate agent.",
         Stage::Storage => "Bridge cannot read or save the deployment binding.",
         _ => "The agent update outcome is not confirmed. Check status before sending again.",
     };
@@ -377,12 +381,7 @@ impl SendOwner {
             let access = access.ok_or(Cancellation::Unconfirmed)?;
             let binding = access.binding();
             let saved = &summary.target_uids;
-            if binding.service_namespace != saved.service_namespace
-                || binding.service_uid != saved.service_uid
-                || binding.deployment_namespace != saved.deployment_namespace
-                || binding.deployment_uid != saved.deployment_uid
-                || binding.watched_namespace != saved.watched_namespace
-            {
+            if !saved.pinned_matches(&binding::target(binding)) {
                 return Err(Cancellation::Unconfirmed);
             }
             let kubeconfig = self
@@ -677,12 +676,16 @@ impl SendOwner {
                 )
             })?;
             let fresh = access.fresh_client(kubeconfig);
-            let transport = access.transport(&fresh, provider).await.map_err(|_| {
-                CheckRow::new(
-                    "Installation",
-                    CannotCheck,
-                    "Bridge cannot check the selected cluster. Reconnect in Clusters.",
-                )
+            let transport = access.transport(&fresh, provider).await.map_err(|error| {
+                if error == ClusterError::DestinationMismatch {
+                    deployment_row(Stage::DestinationMismatch)
+                } else {
+                    CheckRow::new(
+                        "Installation",
+                        CannotCheck,
+                        "Bridge cannot check the selected cluster. Reconnect in Clusters.",
+                    )
+                }
             })?;
             let mut rows = vec![CheckRow::new(
                 "Installation",
@@ -1051,10 +1054,13 @@ impl SendOwner {
         // Revalidates the fresh kubeconfig binding. Not raced with Stop, so the
         // one opened forward is always explicitly closed (and joined) below,
         // including when Stop drops a recheck GET on it.
-        let transport = access
-            .transport(&fresh, provider)
-            .await
-            .map_err(|_| Stage::Preflight)?;
+        let transport = access.transport(&fresh, provider).await.map_err(|error| {
+            if error == ClusterError::DestinationMismatch {
+                Stage::DestinationMismatch
+            } else {
+                Stage::Preflight
+            }
+        })?;
         let checked = until_stop(stop, Stage::Preflight, async {
             Ok::<_, ()>(access.check(&transport, provider, &pair).await)
         })
@@ -1067,7 +1073,7 @@ impl SendOwner {
                 // An explicit recovery still validates the store, source and destination.
                 self.summary
                     .binding(document, &destination)
-                    .map_err(|_| Stage::Storage)?
+                    .map_err(binding::lookup_stage)?
                     .ok_or(Stage::Preflight)?;
                 return Ok(None);
             }
@@ -1094,13 +1100,7 @@ impl SendOwner {
         let seed = AttemptSeed {
             source: pair.snapshot().clone(),
             target_display: format!("{} · {}", binding.context_name, binding.watched_namespace),
-            target_uids: TargetUids {
-                service_namespace: binding.service_namespace.clone(),
-                service_uid: binding.service_uid.clone(),
-                deployment_namespace: binding.deployment_namespace.clone(),
-                deployment_uid: binding.deployment_uid.clone(),
-                watched_namespace: binding.watched_namespace.clone(),
-            },
+            target_uids: binding::target(binding),
             provider: provider_name,
             time: unix_seconds(),
         };
