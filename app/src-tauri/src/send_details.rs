@@ -135,7 +135,7 @@ impl AttemptDetails {
             captured_at: Some(self.captured_at),
             report: self.report.clone(),
             interrupted: self.unresolved(),
-            can_check: !self.cases.is_empty() && self.resources.iter().any(|r| r.kind == "Task"),
+            can_check: !self.cases.is_empty() && !self.resources.is_empty(),
             can_cancel: self
                 .resources
                 .iter()

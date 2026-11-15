@@ -1,7 +1,10 @@
 //! Native remote Send owner. One admitted attempt at a time; credentials, the
 //! runner and its handles stay here beyond any IPC waiter. Shutdown stops local
 //! observation; only explicit cancellation intent opens a control transport.
+use crate::clusters::preflight::SendAction;
 pub use crate::clusters::preflight::SendCheck;
+#[path = "send_binding.rs"]
+mod binding;
 use crate::{
     agent_folder::{AgentFolder, DocumentId, DocumentRef},
     clusters::{
@@ -20,6 +23,7 @@ use crate::{
         TargetUids,
     },
 };
+use binding::Binding;
 use bridge_runtime_protocol::{SnapshotId, Uuid};
 use serde::Serialize;
 use std::{
@@ -48,10 +52,18 @@ pub enum Stage {
     Access,
     Preflight,
     Submit,
+    SubmitRejected,
     Storage,
     Observe,
     Stopped,
     Done,
+    UpdateConflict,
+    UpdateUnsupported,
+    UpdateMissing,
+    UpdateDenied,
+    UpdateInvalid,
+    UpdateUnconfirmed,
+    EarlierWork,
 }
 /// Renderer view: IDs, display names, hashes and receipts; never a credential or endpoint.
 #[derive(Clone, Serialize)]
@@ -65,6 +77,7 @@ pub struct SendView {
     pub source: Option<SnapshotId>,
     pub model: Option<String>,
     pub agent_name: Option<String>,
+    pub agent_action: Option<SendAction>,
     pub state: SendState,
     pub stage: Stage,
     pub acknowledged: Vec<Receipt>,
@@ -202,6 +215,21 @@ fn capture(folder: &AgentFolder) -> Result<ParsedPair, ()> {
     Ok(CapturedPair::from_snapshot(snapshot)
         .map_err(drop)?
         .into_pair())
+}
+fn deployment_row(stage: Stage) -> CheckRow {
+    let message = match stage {
+        Stage::UpdateConflict => "This agent changed outside Bridge. Your files are unchanged.",
+        Stage::UpdateUnsupported => "This Orka can't safely update this agent",
+        Stage::UpdateMissing => "The linked agent is missing from this cluster.",
+        Stage::UpdateDenied => "This cluster identity cannot update this agent.",
+        Stage::UpdateInvalid => "Orka rejected this agent spec. Your files are unchanged.",
+        Stage::EarlierWork => {
+            "Earlier work for this agent is unfinished. Check its status or cancel its tests."
+        }
+        Stage::Storage => "Bridge cannot read or save the deployment binding.",
+        _ => "The agent update outcome is not confirmed. Check status before sending again.",
+    };
+    CheckRow::new("Agent", CheckStatus::Blocked, message)
 }
 fn cancel_access_error(error: ClusterError) -> Cancellation {
     if error == ClusterError::Denied {
@@ -388,6 +416,47 @@ impl SendOwner {
                 .read_transport(&fresh)
                 .await
                 .map_err(cancel_access_error)?;
+            if let Some(mut bound) = self
+                .summary
+                .attempt_binding(id)
+                .map_err(|_| Cancellation::Unconfirmed)?
+            {
+                if bound.intent.is_some() {
+                    let recovered = async {
+                        let value = transport
+                            .request(
+                                &format!("agents/{}", bound.name),
+                                None,
+                                None,
+                                transport.deadline(),
+                            )
+                            .await
+                            .map_err(|_| Cancellation::Unconfirmed)?;
+                        let receipt = bound
+                            .reconciled(&value)
+                            .map_err(|_| Cancellation::Unconfirmed)?;
+                        bound
+                            .acknowledge(receipt.value())
+                            .map_err(|_| Cancellation::Unconfirmed)?;
+                        self.summary
+                            .save_binding(bound)
+                            .map_err(|_| Cancellation::Unconfirmed)?;
+                        let saved = crate::engine::run::SavedResource::acknowledged(&receipt);
+                        if let Some(old) = details.resources.iter_mut().find(|r| r.kind == "Agent")
+                        {
+                            *old = saved;
+                        } else {
+                            details.resources.insert(0, saved);
+                        }
+                        Ok::<_, Cancellation>(())
+                    }
+                    .await;
+                    if let Err(error) = recovered {
+                        transport.close().await;
+                        return Err(error);
+                    }
+                }
+            }
             let runner = NativeRunner::with_transport(transport);
             Ok(runner
                 .recover(
@@ -536,6 +605,8 @@ impl SendOwner {
         provider: &str,
     ) -> SendCheck {
         use CheckStatus::*;
+        let _history = self.history_gate.lock().await;
+        let document = folder.document_id();
         let target = parse(target).map(|id| id.to_string()).unwrap_or_default();
         let provider = parse(provider).map(ProviderId);
         let mut check = SendCheck {
@@ -546,6 +617,8 @@ impl SendOwner {
             model: None,
             rows: Vec::new(),
             can_send: false,
+            action: SendAction::Create,
+            can_separate: false,
         };
         let pair = tokio::task::spawn_blocking(move || capture(&folder)).await;
         let Ok(Ok(pair)) = pair else {
@@ -602,6 +675,34 @@ impl SendOwner {
                 "The selected cluster and required resources were checked.",
             )];
             rows.extend(access.check(&transport, provider, &pair).await);
+            if rows.iter().all(CheckRow::permits) {
+                let target = binding::target(access.binding());
+                let desired = pair.agent().spec(transport.provider());
+                check.can_separate = self
+                    .summary
+                    .binding(document, &target)
+                    .is_ok_and(|b| b.is_some());
+                let decision = if self.inner.lock().unwrap().active.is_some() {
+                    Err(Stage::EarlierWork)
+                } else {
+                    self.deployment(document, &target, &transport).await
+                };
+                match decision {
+                    Ok(Some(bound)) => {
+                        check.action = bound.action(&desired);
+                        if check.action == SendAction::Update
+                            && access
+                                .check_agent_patch(&fresh, &transport, &bound.name)
+                                .await
+                                .is_err()
+                        {
+                            rows.push(deployment_row(Stage::UpdateDenied));
+                        }
+                    }
+                    Ok(None) => (),
+                    Err(stage) => rows.push(deployment_row(stage)),
+                }
+            }
             transport.close().await;
             Ok::<_, CheckRow>(rows)
         }
@@ -620,8 +721,14 @@ impl SendOwner {
         provider_id: &str,
         expected_source: SnapshotId,
     ) -> SendView {
-        self.start_folder(self.folder.clone(), target_id, provider_id, expected_source)
-            .await
+        self.start_folder(
+            self.folder.clone(),
+            target_id,
+            provider_id,
+            expected_source,
+            false,
+        )
+        .await
     }
     pub async fn start_document(
         self: &Arc<Self>,
@@ -631,7 +738,21 @@ impl SendOwner {
         expected: SnapshotId,
     ) -> SendStatus {
         let id = folder.document_id();
-        self.start_folder(folder, target, provider, expected).await;
+        self.start_folder(folder, target, provider, expected, false)
+            .await;
+        self.status_document(id)
+    }
+    pub async fn start_document_separate(
+        self: &Arc<Self>,
+        folder: Arc<AgentFolder>,
+        target: &str,
+        provider: &str,
+        expected: SnapshotId,
+        separate_agent: bool,
+    ) -> SendStatus {
+        let id = folder.document_id();
+        self.start_folder(folder, target, provider, expected, separate_agent)
+            .await;
         self.status_document(id)
     }
     async fn start_folder(
@@ -640,6 +761,7 @@ impl SendOwner {
         target_id: &str,
         provider_id: &str,
         expected_source: SnapshotId,
+        separate_agent: bool,
     ) -> SendView {
         let _history = self.history_gate.lock().await;
         let target = parse(target_id).map(|u| u.to_string()).unwrap_or_default();
@@ -658,6 +780,7 @@ impl SendOwner {
             source: None,
             model: None,
             agent_name: None,
+            agent_action: None,
             state: SendState::Running,
             stage: Stage::Capture,
             acknowledged: Vec::new(),
@@ -696,7 +819,7 @@ impl SendOwner {
                         folder,
                         admission,
                         provider,
-                        &expected_source,
+                        (&expected_source, separate_agent),
                         &mut stop_rx,
                     )
                     .await,
@@ -870,9 +993,10 @@ impl SendOwner {
         folder: Arc<AgentFolder>,
         admission: SendAccess,
         provider: Option<ProviderId>,
-        expected_source: &SnapshotId,
+        request: (&SnapshotId, bool),
         stop: &mut watch::Receiver<bool>,
     ) -> Result<RunReport, Stage> {
+        let (expected_source, separate_agent) = request;
         // Freeze the pair once, before any network wait; later edits never reach this attempt.
         let pair = until_stop(stop, Stage::Capture, async move {
             tokio::task::spawn_blocking(move || capture(&folder))
@@ -920,6 +1044,36 @@ impl SendOwner {
             Ok::<_, ()>(access.check(&transport, provider, &pair).await)
         })
         .await;
+        let document = self.inner.lock().unwrap().views[&id].document_id;
+        let destination = binding::target(access.binding());
+        let desired = pair.agent().spec(transport.provider());
+        let deployment = async {
+            if separate_agent {
+                // An explicit recovery still validates the store, source and destination.
+                self.summary
+                    .binding(document, &destination)
+                    .map_err(|_| Stage::Storage)?
+                    .ok_or(Stage::Preflight)?;
+                return Ok(None);
+            }
+            let bound = self.deployment(document, &destination, &transport).await?;
+            if let Some(bound) = &bound {
+                if bound.action(&desired) == SendAction::Update {
+                    access
+                        .check_agent_patch(&fresh, &transport, &bound.name)
+                        .await
+                        .map_err(|e| {
+                            if e == ClusterError::Denied {
+                                Stage::UpdateDenied
+                            } else {
+                                Stage::UpdateUnconfirmed
+                            }
+                        })?;
+                }
+            }
+            Ok(bound)
+        }
+        .await;
         let runner = NativeRunner::with_transport(transport);
         let binding = access.binding();
         let seed = AttemptSeed {
@@ -936,13 +1090,17 @@ impl SendOwner {
             time: unix_seconds(),
         };
         let result = match checked {
-            Ok(rows) if rows.iter().all(CheckRow::permits) => {
-                self.run(id, &runner, pair, seed, stop).await
-            }
+            Ok(rows) if rows.iter().all(CheckRow::permits) => match deployment {
+                Ok(bound) => self.run(id, &runner, pair, seed, bound, stop).await,
+                Err(stage) => Err(stage),
+            },
             Ok(_) => Err(Stage::Preflight),
             Err(stage) => Err(stage),
         };
         runner.close().await;
+        if matches!(result, Err(Stage::Storage)) {
+            self.update(id, |v| v.storage_error = true);
+        }
         result
     }
     async fn run(
@@ -951,6 +1109,7 @@ impl SendOwner {
         runner: &NativeRunner<'_>,
         pair: ParsedPair,
         seed: AttemptSeed,
+        bound: Option<Binding>,
         stop: &watch::Receiver<bool>,
     ) -> Result<RunReport, Stage> {
         if *stop.borrow() {
@@ -972,8 +1131,51 @@ impl SendOwner {
             availability: None,
             cancellation: None,
         };
-        let prepared = runner.prepare(pair).map_err(|_| Stage::Submit)?;
-        let planned_agent_name = prepared.agent_name().to_string();
+        let desired = pair.agent().spec(runner.transport().provider());
+        let action = bound
+            .as_ref()
+            .map(|b| b.action(&desired))
+            .unwrap_or(SendAction::Create);
+        self.update(id, |v| v.agent_action = Some(action));
+        let mut bound = match bound {
+            Some(mut bound) => {
+                bound.attempt = id.0.to_string();
+                bound.unfinished = true;
+                bound
+            }
+            None => {
+                let planned = runner.prepare(pair.clone()).map_err(|_| Stage::Submit)?;
+                Binding {
+                    document: self.inner.lock().unwrap().views[&id].document_id,
+                    target: seed.target_uids.clone(),
+                    current: true,
+                    name: planned.agent_name().into(),
+                    desired: desired.clone(),
+                    acknowledged: None,
+                    intent: Some(desired.clone()),
+                    attempt: id.0.to_string(),
+                    unfinished: true,
+                }
+            }
+        };
+        if action == SendAction::Update {
+            bound.intent = Some(desired.clone());
+        }
+        // Binding intent precedes attempt details; both precede the mutation.
+        self.summary
+            .save_binding(bound.clone())
+            .map_err(|_| Stage::Storage)?;
+        let planned_agent_name = bound.name.clone();
+        details.resources.push(if action == SendAction::Unchanged {
+            crate::engine::run::SavedResource::acknowledged(&bound.receipt()?)
+        } else {
+            crate::engine::run::SavedResource::planned(
+                "Agent",
+                &bound.name,
+                &bound.target.watched_namespace,
+                &desired,
+            )
+        });
         self.update(id, |v| {
             v.agent_name = Some(planned_agent_name.clone());
             v.stage = Stage::Submit;
@@ -994,9 +1196,55 @@ impl SendOwner {
             self.update(id, |v| v.storage_error = true);
             return Err(Stage::Storage);
         }
+        let prepared = if bound.acknowledged.is_some() {
+            let receipt = if action == SendAction::Update {
+                match self
+                    .update_deployment(&mut bound, runner.transport(), desired)
+                    .await
+                {
+                    Ok(receipt) => receipt,
+                    Err(stage) => {
+                        summary.verdict = AttemptVerdict::Unknown;
+                        if bound.intent.is_none() {
+                            details.resources[0] =
+                                crate::engine::run::SavedResource::acknowledged(&bound.receipt()?);
+                        }
+                        self.summary
+                            .checkpoint(summary, details)
+                            .map_err(|_| Stage::Storage)?;
+                        return Err(stage);
+                    }
+                }
+            } else {
+                bound.receipt()?
+            };
+            runner.prepare_reuse(pair, receipt)
+        } else {
+            runner.prepare_named(pair, &bound.name)
+        }
+        .map_err(|_| Stage::Submit)?;
         let mut checkpoint = |event| {
             match event {
-                RunCheckpoint::Before(resource) => details.resources.push(resource),
+                RunCheckpoint::AgentAcknowledged(resource) => {
+                    bound
+                        .acknowledge(resource.value())
+                        .map_err(|_| ErrorKind::Identity)?;
+                    self.summary
+                        .save_binding(bound.clone())
+                        .map_err(|_| ErrorKind::Storage)?;
+                    return Ok(());
+                }
+                RunCheckpoint::Before(resource) => {
+                    if let Some(old) = details
+                        .resources
+                        .iter_mut()
+                        .find(|r| r.name == resource.name)
+                    {
+                        *old = resource;
+                    } else {
+                        details.resources.push(resource);
+                    }
+                }
                 RunCheckpoint::Acknowledged(resource) => {
                     if resource.kind == "Agent" {
                         summary.agent_uid = resource.uid.clone();
@@ -1047,9 +1295,32 @@ impl SendOwner {
         {
             Ok(handle) => handle,
             Err(error) => {
+                let rejected = matches!(
+                    error.kind,
+                    ErrorKind::Authentication
+                        | ErrorKind::Permission
+                        | ErrorKind::Invalid
+                        | ErrorKind::Conflict
+                        | ErrorKind::NotFound
+                        | ErrorKind::Unsupported
+                );
+                if rejected {
+                    if let Some(pending) = &error.pending {
+                        details.resources.retain(|resource| {
+                            resource.kind != pending.kind || resource.name != pending.name
+                        });
+                        if pending.kind == "Agent"
+                            && error.handle.agent().is_none()
+                            && self.summary.reject_creation(&bound).is_err()
+                        {
+                            self.update(id, |v| v.storage_error = true);
+                            return Err(Stage::Storage);
+                        }
+                    }
+                }
                 self.update(id, |v| {
                     v.acknowledged = receipts(&error.handle);
-                    v.pending = error.pending.map(|p| PendingRef {
+                    v.pending = error.pending.filter(|_| !rejected).map(|p| PendingRef {
                         kind: p.kind,
                         name: p.name,
                     });
@@ -1065,7 +1336,14 @@ impl SendOwner {
                 if self.summary.checkpoint(summary, details).is_err() {
                     self.update(id, |v| v.storage_error = true);
                 }
-                return Err(failed(error.kind, Stage::Submit));
+                return Err(failed(
+                    error.kind,
+                    if rejected {
+                        Stage::SubmitRejected
+                    } else {
+                        Stage::Submit
+                    },
+                ));
             }
         };
         self.update(id, |v| {
@@ -1112,9 +1390,16 @@ impl SendOwner {
             }
         };
         details.captured_at = unix_seconds();
+        let unresolved = details.unresolved();
         if self.summary.checkpoint(summary, details).is_err() {
             self.update(id, |v| v.storage_error = true);
             return Err(Stage::Observe);
+        }
+        if !unresolved {
+            bound.unfinished = false;
+            self.summary
+                .save_binding(bound)
+                .map_err(|_| Stage::Storage)?;
         }
         result
     }

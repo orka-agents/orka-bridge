@@ -15,10 +15,11 @@ func restoreDisplay() {
     }
 }
 var restoreTemporaryTests: (() throws -> Void)?
+var restoreTemporaryAgent: (() throws -> Void)?
 func fail(_ message: String) -> Never {
     fputs("\(message)\n", stderr)
-    do { try restoreTemporaryTests?() }
-    catch { fputs("Cannot restore original test file: \(error)\n", stderr) }
+    do { try restoreTemporaryTests?(); try restoreTemporaryAgent?() }
+    catch { fputs("Cannot restore original agent/test files: \(error)\n", stderr) }
     restoreDisplay()
     exit(1)
 }
@@ -558,7 +559,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
         if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: .regularExpression) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
-            if ["Send and run tests", "Cancel tests", "Retry cancellation", "Check cluster status", "Check again", "Reload saved files", "Send to a cluster"].contains(label) {
+            if ["Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent", "Cancel tests", "Retry cancellation", "Check cluster status", "Check again", "Reload saved files", "Send to a cluster"].contains(label) {
                 let enabled = nativeElements().contains { element in
                     attribute(element, "AXRole") as? String == "AXButton"
                         && attribute(element, "AXEnabled") as? Bool == true
@@ -840,7 +841,8 @@ let compactFile = try capture("file-compact", "Designer")
 clickTab("Clusters", compactFile)
 print("PASS native walk: pointer, Shift-Tab/Tab, Space, Enter and minimum window")
 if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
-    func fixtureControl(_ value: [String: Any]) throws {
+    @discardableResult
+    func fixtureControl(_ value: [String: Any]) throws -> [String: Any] {
         let config = try Data(contentsOf: URL(fileURLWithPath: ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"]!))
         let parsed = try JSONSerialization.jsonObject(with: config) as! [String: Any]
         let clusters = parsed["clusters"] as! [[String: Any]]
@@ -856,8 +858,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             "-H", "Content-Type: application/json", "--data-binary",
             String(data: try JSONSerialization.data(withJSONObject: value), encoding: .utf8)!,
             "http://127.0.0.1:\(server.port!)/fixture-control"]
-        try command.run(); command.waitUntilExit()
+        let reply = Pipe(); command.standardOutput = reply
+        try command.run()
+        let data = reply.fileHandleForReading.readDataToEndOfFile()
+        command.waitUntilExit()
         require(command.terminationStatus == 0, "Fixture control failed: \(value)")
+        return try JSONSerialization.jsonObject(with: data) as! [String: Any]
     }
     // CI runs both themes against one fixture process; keep each Send sequence deterministic.
     try fixtureControl(["action": "reset"])
@@ -1055,6 +1061,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         let text = answer.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("What SHA-256 checksum does") && text.contains("Fixture answer:"), "Question and answer are not visible together")
     }
+    try capturePreflight("send-first", "Send and run tests")
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
     let result = try capturePreflight("send-result", "1 of 1 passed")
@@ -1083,6 +1090,53 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let passedUID = try recordShot("overview-fixture-versions-passed-by-place", "Checks passed here")
     clickTab("Designer", [])
     try resultSize(540, 900)
+    // Read side effects only from the loopback fixture after real native IPC/HTTP.
+    func assertDeployment(_ uid: String, generation: Int, tasks: Int) throws {
+        let state = try fixtureControl(["action": "snapshot", "place": "fixture-cluster"])
+        let agents = state["agents"] as! [[String: Any]]
+        require(agents.count == 1 && agents[0]["uid"] as? String == uid
+            && agents[0]["generation"] as? Int == generation && state["tasks"] as? Int == tasks,
+            "Repeated Send changed identity, revision or Task count: \(state)")
+    }
+    try assertDeployment(passedUID, generation: 1, tasks: 1)
+    try capturePreflight("send-unchanged", "Run cluster tests again")
+    try clickSendControl("Run cluster tests again", scrolling: -350)
+    try capturePreflight("send-unchanged-result", "1 of 1 passed")
+    try assertDeployment(passedUID, generation: 1, tasks: 2)
+    let originalAgent = try Data(contentsOf: ownedFile)
+    restoreTemporaryAgent = { try originalAgent.write(to: ownedFile, options: .atomic) }
+    defer {
+        do { try restoreTemporaryAgent?(); restoreTemporaryAgent = nil }
+        catch { fail("Cannot restore original agent file: \(error)") }
+    }
+    func changeAgent(_ note: String) throws {
+        var edited = originalAgent
+        edited.append(Data("\n\(note)\n".utf8))
+        try edited.write(to: ownedFile, options: .atomic)
+        try clickSendControl("Check again", scrolling: -250)
+        try clickSendControl("Reload saved files", scrolling: -250)
+        try focusSend()
+    }
+    try changeAgent("Keep answers concise.")
+    try capturePreflight("send-update", "Update agent and run tests")
+    try clickSendControl("Update agent and run tests", scrolling: -350)
+    try capturePreflight("send-update-result", "1 of 1 passed")
+    try assertDeployment(passedUID, generation: 2, tasks: 3)
+    // Older Orka refuses the distinct conditional route. Only an explicit
+    // recovery creates the second identity needed by the Overview evidence.
+    try changeAgent("Keep answers concise and quote the source.")
+    try fixtureControl(["action": "update-mode", "place": "fixture-cluster", "mode": "old-404"])
+    try clickSendControl("Update agent and run tests", scrolling: -350)
+    try capturePreflight("send-older-orka", "This Orka can't safely update this agent")
+    try assertDeployment(passedUID, generation: 2, tasks: 3)
+    try clickSendControl("Send as a separate agent", scrolling: -250)
+    try capturePreflight("send-separate-result", "1 of 1 passed")
+    let separateState = try fixtureControl(["action": "snapshot", "place": "fixture-cluster"])
+    let separateAgents = separateState["agents"] as! [[String: Any]]
+    require(separateAgents.count == 2 && Set(separateAgents.compactMap { $0["uid"] as? String }).count == 2
+        && separateAgents.contains { $0["uid"] as? String == passedUID && $0["generation"] as? Int == 2 }
+        && separateState["tasks"] as? Int == 4, "Separate recovery did not retain the old deployment: \(separateState)")
+    try fixtureControl(["action": "update-mode", "place": "fixture-cluster", "mode": "supported"])
     // Add a distinct failing test to the CI-owned saved file. Reload through the
     // existing preflight flow; the earlier pass must turn stale, not stay green.
     let testsURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/web-reader/web-reader.agent.test.md")
@@ -1103,7 +1157,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try capturePreflight("send-stale", "Not run since your edit")
     try resultSize(1280, 800)
     try capturePreflight("send-stale-wide", "Not run since your edit")
-    try clickSendControl("Send and run tests", scrolling: 350)
+    try clickSendControl("Run cluster tests again", scrolling: 350)
     Thread.sleep(forTimeInterval: 1)
     try capturePreflight("send-mixed-wide", "1 of 2 passed")
     let failed = try capturePreflight("send-failed-wide", "The answer did not include")
@@ -1113,7 +1167,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Arm only the loopback fixture: first answer completes, second Task stays
     // live. Hold the cancel reply until its in-flight state has been captured.
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "cancelling"])
-    try clickSendControl("Send and run tests", scrolling: 350)
+    try clickSendControl("Run cluster tests again", scrolling: 350)
     Thread.sleep(forTimeInterval: 0.5)
     try capturePreflight("send-running", "Waiting for answers and evaluating tests")
     try resultSize(1280, 800)
@@ -1210,7 +1264,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickTab("Overview", returnedResult)
     Thread.sleep(forTimeInterval: 1)
     let unknownUID = try recordShot("overview-fixture-versions-unknown-by-place", "Checks unknown")
-    require(passedUID != unknownUID, "Repeated Send did not retain distinct Agent UIDs")
+    require(passedUID != unknownUID, "Explicit separate-agent recovery did not retain distinct Agent UIDs")
     try overviewShot("overview-fixture-external-by-place", ["runtime-reader", "Not tested by Bridge", "Model on cluster: external-model", "Tools on cluster: web_fetch"])
     // Explicit retries reuse this attempt's exact Task UID. Neither an HTTP
     // acknowledgement nor a lost response may manufacture a terminal result.
@@ -1239,7 +1293,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // fails normally; cancellation must not replace it with a Cancelled result.
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "completed"])
     try focusSend()
-    try clickSendControl("Send and run tests", scrolling: -350)
+    try clickSendControl("Run cluster tests again", scrolling: -350)
     Thread.sleep(forTimeInterval: 0.5)
     try capturePreflight("send-race-running", "Waiting for answers and evaluating tests")
     try focusSend()
@@ -1252,8 +1306,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickTab("Overview", [])
     // The primary-place captures retain the changed two-test revision. Restore
     // the original pair before the separate place/provenance scenarios.
-    try restoreTemporaryTests?()
-    restoreTemporaryTests = nil
+    try restoreTemporaryTests?(); try restoreTemporaryAgent?()
+    restoreTemporaryTests = nil; restoreTemporaryAgent = nil
     // Overview's explicit refresh gives the primary place its historical observation.
     // Places shows it later without refreshing again; the secondary has none yet.
     scrollMain(12000)
@@ -1309,10 +1363,16 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
     try capturePreflight("send-secondary-result", "1 of 1 passed")
-    // The fixture accepts the create but withholds its UID receipt. Overview
+    // Block a changed update before explicitly requesting a separate identity.
+    // The fixture accepts that create but withholds its UID receipt. Overview
     // must keep this unknown attempt separate, never name-join it to inventory.
+    restoreTemporaryAgent = { try originalAgent.write(to: ownedFile, options: .atomic) }
+    try changeAgent("Quote the source in secondary-place answers.")
+    try fixtureControl(["action": "update-mode", "place": "fixture-secondary", "mode": "old-404"])
+    try clickSendControl("Update agent and run tests", scrolling: -350)
+    try capturePreflight("send-secondary-older-orka", "This Orka can't safely update this agent")
     try fixtureControl(["action": "lose-agent-receipt", "place": "fixture-secondary"])
-    try clickSendControl("Send and run tests", scrolling: 350)
+    try clickSendControl("Send as a separate agent", scrolling: 350)
     Thread.sleep(forTimeInterval: 1)
     let noReceipt = try capturePreflight("send-no-agent-receipt", "Result unknown")
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": true])
