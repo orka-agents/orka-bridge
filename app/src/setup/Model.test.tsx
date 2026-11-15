@@ -104,7 +104,7 @@ test('CLI recovery puts retry before copy and quiet help in one action row', asy
   const retry = screen.getByRole('button', { name: 'Check again' });
   const row = retry.closest('.workspace-step-actions')!;
   const buttons = [...row.querySelectorAll('button')];
-  expect(buttons.map(button => button.textContent)).toEqual(['Check again', 'Copy details for help', 'Install GitHub CLI', 'Sign-in help', 'Remove sign-in']);
+  expect(buttons.map(button => button.textContent)).toEqual(['Check again', 'Copy details for help', 'Install GitHub CLI', 'Sign-in help']);
   expect(row.querySelectorAll('.button-primary')).toHaveLength(1);
   expect(row.querySelectorAll('.button-secondary')).toHaveLength(1);
   expect(screen.getByRole('button', { name: 'Install GitHub CLI' }).classList.contains('button-quiet')).toBe(true);
