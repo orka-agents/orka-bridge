@@ -42,25 +42,24 @@ test('opens the owned pair without a VM and exposes a keyboard File switch', asy
   screen.getByRole('button', { name: 'File' }).focus(); await user.keyboard('{Enter}');
   expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).value).toBe(pair.agent);
 });
-test('local tests have a separate leading column while Send stays after the editor', async () => {
+test('the editor leads local tests in reading order and hides unopened Send history', async () => {
   native(); const user = userEvent.setup(); const { container } = render(<Example />);
   const run = await screen.findByRole('region', { name: 'Tests on the local cluster' });
   const editor = container.querySelector('.designer-file')!;
-  const history = screen.getByRole('region', { name: 'Past Sends' });
-  expect(run.compareDocumentPosition(editor) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(editor.compareDocumentPosition(history) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Past Sends' })).toBeNull();
+  expect(editor.compareDocumentPosition(run) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(run.closest('.designer-tests')).toBeTruthy();
-  expect(history.closest('.designer-tests')).toBeNull();
   await user.click(screen.getByRole('button', { name: 'File' }));
   expect(screen.getByRole('textbox', { name: 'Agent file' })).toBeTruthy();
   expect(screen.getByRole('region', { name: 'Tests on the local cluster' })).toBe(run);
 });
-test('setup-pending tests lead the editor and remote places keep only the Send area', async () => {
+test('setup-pending editor leads tests and remote places keep the Send history', async () => {
   native(); const { container, rerender } = render(<Example setupPending />);
   await screen.findByRole('textbox', { name: 'Instructions' });
   const pending = screen.getByRole('button', { name: 'Run tests' });
   expect(pending.hasAttribute('disabled')).toBe(true);
-  expect(pending.compareDocumentPosition(container.querySelector('.designer-file')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(container.querySelector('.designer-file')!.compareDocumentPosition(pending) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(pending.classList.contains('button-primary')).toBe(false);
   rerender(<Example remote />);
   expect(screen.queryByRole('region', { name: 'Tests on the local cluster' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Run tests' })).toBeNull();
@@ -224,6 +223,6 @@ test.each([null, {}, { agent: 'SECRET_MARKER', tests: '', extra: 'secret' }])('m
 test('browser preview does not fabricate a native folder', async () => {
   vi.stubGlobal('isTauri', false); const ipc = vi.fn(); mockIPC(ipc); render(<Example />);
   expect((await screen.findByText('Your agent folder could not be opened. Open it again from Designer.')).getAttribute('role')).toBe('alert');
-  expect(await screen.findByText(/Saved Send summaries could not be read/)).toBeTruthy();
+  expect(screen.queryByText(/Saved Send summaries could not be read/)).toBeNull();
   expect(ipc).not.toHaveBeenCalled();
 });
