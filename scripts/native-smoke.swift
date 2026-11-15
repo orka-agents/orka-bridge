@@ -1573,8 +1573,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try clickSendControl("published-checksum", scrolling: -100)
     try capture("send-history-answer", "Designer")
     try resultSize(1280, 800)
-    let savedWide = try capturePreflight("send-history-answer-wide", "Saved on this computer")
-    require(savedWide.contains { ($0.topCandidates(1).first?.string ?? "").contains("Fixture answer:") },
-            "Wide saved answer must remain visible after reopening offline")
+    // Vision can omit the small provenance line; qualify answer pixels plus its visible native text bounds.
+    let savedWide = try capturePreflight("send-history-answer-wide", "Fixture answer:")
+    require(savedWide.contains { ($0.topCandidates(1).first?.string ?? "").contains("What SHA-256 checksum does") }
+        && nativeTextIsVisible("Saved on this computer"),
+            "Wide saved question, answer and local provenance must remain visible after reopening offline")
 }
 requireNoLocalWorkspace()
