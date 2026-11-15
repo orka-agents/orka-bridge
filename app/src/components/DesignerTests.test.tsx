@@ -31,6 +31,21 @@ test('failed stories open first, passed stories stay folded and show only record
   expect(screen.queryByText('Copies the checksum')).toBeNull();
   expect(screen.getByText('The test passed.')).toBeTruthy();
 });
+test('recorded tool names cannot resolve inherited object properties', () => {
+  const { container } = render(<DesignerTests report={{ verdict: 'failed', cases: [{ ...passed, verdict: 'failed', completedTools: ['__proto__', 'constructor', 'toString'] }] }} stale={false} />);
+  expect([...container.querySelectorAll('.story-tools li')].map(node => node.textContent)).toEqual(['__proto__ __proto__', 'constructor constructor', 'toString toString']);
+});
+test('a cancelled test has a neutral Cancelled pill, never Not started', () => {
+  const { container } = render(<DesignerTests report={{ verdict: 'cancelled', cases: [{ ...passed, phase: 'Cancelled', assertions: [], verdict: 'cancelled' }] }} stale={false} />);
+  expect(container.querySelector('.test-result > summary .pill')?.textContent).toBe('Cancelled');
+  expect(container.querySelector('.test-result > summary .status-not-started')).toBeTruthy();
+});
+test('missing tool evidence does not claim that a tool was used', () => {
+  render(<DesignerTests report={{ verdict: 'failed', cases: [{ ...passed, verdict: 'failed', completedTools: [] }] }} stale={false} />);
+  expect(screen.queryByText('Used a tool')).toBeNull();
+  expect(screen.getByText('Tool activity')).toBeTruthy();
+  expect(screen.getByText('No completed tool call was observed.')).toBeTruthy();
+});
 test('stale evidence keeps its captured title and never has a current pass pill', () => {
   const { container } = render(<DesignerTests definitions={tests} report={{ verdict: 'passed', cases: [passed] }} stale />);
   expect(screen.getByText('Captured title')).toBeTruthy();

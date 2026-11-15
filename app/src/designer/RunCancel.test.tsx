@@ -26,7 +26,7 @@ test('an Overview-started run can be cancelled without replaying its start reque
   }); mockIPC(ipc);
   const view = render(<Run startRequest={1} onStartRequestHandled={handled} />);
   await userEvent.click(await screen.findByRole('button', { name: 'Stop' }));
-  await screen.findByText('Cancelled', { selector: '.pill' });
+  await screen.findByText('Cancelled', { selector: '.long-card-head .pill' });
   view.rerender(<Run startRequest={1} onStartRequestHandled={handled} />);
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run')).toEqual([['agent_run', { documentId }]]);
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run_cancel')).toEqual([['agent_run_cancel', { documentId }]]);
@@ -56,17 +56,17 @@ test.each(['agent_run_cancel', 'agent_run_check_cancellation'] as const)('unconf
   vi.stubGlobal('isTauri', true); let value = unconfirmed;
   const ipc = vi.fn(cmd => { if (cmd === command) value = cancelling; return value; }); mockIPC(ipc);
   const { unmount } = render(<Run />); await screen.findByText('Cancellation not confirmed. Work may still be running on this computer.', { selector: 'p:not(.sr-only)' });
-  expect(screen.getByText('Not confirmed', { selector: '.pill' }).className).toContain('status-needs-you');
+  expect(screen.getByText('Not confirmed', { selector: '.long-card-head .pill' }).className).toContain('status-needs-you');
   expect(ipc.mock.calls.every(([cmd]) => cmd === 'agent_run_status')).toBe(true);
   await userEvent.click(screen.getByRole('button', { name: command === 'agent_run_cancel' ? 'Retry cancellation' : 'Check again' }));
   expect(ipc.mock.calls.filter(([cmd]) => cmd === command)).toEqual([[command, { documentId }]]);
-  expect(await screen.findByText('Cancelling', { selector: '.pill' })).toBeTruthy();
-  unmount(); render(<Run />); await screen.findByText('Cancelling', { selector: '.pill' });
+  expect(await screen.findByText('Cancelling', { selector: '.long-card-head .pill' })).toBeTruthy();
+  unmount(); render(<Run />); await screen.findByText('Cancelling', { selector: '.long-card-head .pill' });
   expect(ipc.mock.calls.filter(([cmd]) => cmd === command)).toHaveLength(1);
 });
 test('unconfirmed overrides error and unknown verdict even without recovery authority', async () => {
   native({ ...unconfirmed, error: 'session', canRetryCancellation: false, canCheckCancellation: false }); render(<Run />);
-  await screen.findByText('Not confirmed', { selector: '.pill' });
+  await screen.findByText('Not confirmed', { selector: '.long-card-head .pill' });
   expect(screen.queryByRole('button', { name: 'Retry cancellation' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Check again' })).toBeNull();
   expect(screen.getByRole('button', { name: 'Stop the local cluster' })).toBeTruthy();
@@ -80,7 +80,7 @@ test('Check alone follows its native permission, without inferring Retry from ca
 test('confirmed cancellation keeps finished evidence before neutral Cancelled rows and shows counts', async () => {
   native(done); render(<Run />);
   expect(await screen.findByText('Tests cancelled. The test worker on this computer has stopped. 1 passed, 0 failed, 1 cancelled.', { selector: 'p:not(.sr-only)' })).toBeTruthy();
-  expect(screen.getByText('Cancelled', { selector: '.pill' }).className).toContain('status-not-started');
+  expect(screen.getByText('Cancelled', { selector: '.long-card-head .pill' }).className).toContain('status-not-started');
   const rows = [...document.querySelectorAll('.test-result')];
   expect([...document.querySelectorAll('.test-result > summary code')].map(node => node.textContent)).toEqual(['finished', 'cancelled']);
   await userEvent.click(rows[0].querySelector('summary')!);
@@ -138,7 +138,7 @@ test('an old poll cannot restore Cancel after its action response', async () => 
   mockIPC(command => command === 'agent_run_cancel' ? cancelling : ++reads === 1 ? running : poll.promise);
   render(<Run />); const cancel = await screen.findByRole('button', { name: 'Stop' });
   await waitFor(() => expect(reads).toBeGreaterThan(1));
-  await userEvent.click(cancel); await screen.findByText('Cancelling', { selector: '.pill' });
+  await userEvent.click(cancel); await screen.findByText('Cancelling', { selector: '.long-card-head .pill' });
   await act(async () => poll.resolve(running));
   expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
 });
@@ -150,5 +150,5 @@ test('a previous document action reply cannot replace the current document', asy
   view.rerender(<Run documentId={other} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(false));
   await act(async () => reply.resolve(cancelling));
-  expect(screen.queryByText('Cancelling', { selector: '.pill' })).toBeNull();
+  expect(screen.queryByText('Cancelling', { selector: '.long-card-head .pill' })).toBeNull();
 });

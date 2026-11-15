@@ -283,6 +283,26 @@ try {
     await until(() => evaluate(`!!${action}`), label);
     await evaluate(`${action}.click()`);
   }
+  const designerReferences = Object.fromEntries(await Promise.all(['light', 'dark'].map(async theme => [theme,
+    (await readFile(new URL(`../docs/images/designer-reference-${theme}.png`, import.meta.url))).toString('base64')])));
+  async function compareDesigner(data, theme, size, name) {
+    const comparison = await evaluate(`(async () => {
+      const decode = async text => createImageBitmap(new Blob([Uint8Array.from(atob(text), c => c.charCodeAt(0))], { type: 'image/png' }));
+      const actual = await decode(${JSON.stringify(data)}), reference = await decode(${JSON.stringify(designerReferences[theme])});
+      const width = actual.width, referenceHeight = Math.round(reference.height * width / reference.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = width * 2 + 48; canvas.height = Math.max(actual.height, referenceHeight) + 58;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = ${JSON.stringify(theme === 'dark' ? '#1f2226' : '#f2f1ed')}; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(actual, 16, 42); ctx.drawImage(reference, width + 32, 42, width, referenceHeight);
+      ctx.fillStyle = ${JSON.stringify(theme === 'dark' ? '#e6e4df' : '#1b2026')}; ctx.font = '14px sans-serif';
+      ctx.fillText('Native Bridge, synthetic test data', 16, 26);
+      ctx.fillText('Approved Designer frame (wide reference)', width + 32, 26);
+      actual.close(); reference.close();
+      return canvas.toDataURL('image/png').split(',')[1];
+    })()`);
+    await writeFile(join(output, `${theme}-${size}-${name}-comparison.png`), Buffer.from(comparison, 'base64'));
+  }
   async function captureActions(theme, size, name) {
     const first = name.startsWith('first-test-');
     const initialFrame = (await call('Page.getFrameTree')).frameTree.frame;
@@ -381,7 +401,7 @@ try {
         if (name === 'designer-remote' && command === 'cluster_discover') return [target];
         if (name === 'designer-remote' && command === 'cluster_use') return { status: 'connected', providers: [provider], failure: null };
         if (command === 'send_status') return { documentId, view: null, busy: null };
-        if (command === 'agent_open') return { ...pair, documentId, name: 'web-reader', ...(name === 'first-test-badges' || localCancel ? { source } : {}) };
+        if (command === 'agent_open') return { ...pair, documentId, name: 'web-reader', ...(name === 'first-test-badges' || name === 'designer-stale' || localCancel ? { source } : {}) };
         if (localCancel && (command === 'agent_run_cancel' || command === 'agent_run_check_cancellation')) {
           if (args?.documentId !== documentId) throw Error('Wrong cancellation document');
           window.__bridgeCancelCalls.push(command); window.__bridgeCancellation = 'cancelling'; return snapshot();
@@ -507,7 +527,7 @@ try {
       if (await evaluate('window.__bridgeRuns') !== 1) throw Error('A sample state submitted a run other than the automatic test');
       return;
     }
-    const expected = { 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Data disk, up to', 'local-preflight-missing': 'Data disk, up to', 'ai-cli-missing': 'gh auth login --hostname github.com --web', 'designer-loading': 'Opening your agent', 'designer-open-error': 'Your agent folder could not be opened.', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first agentRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster ready', 'local-stopped': 'Set up this computer', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings', 'designer-connected': 'Instructions and settings', 'designer-file': 'web-reader.agent.md', 'designer-failed': 'checks failed', 'designer-remote': 'Instructions and settings' };
+    const expected = { 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Data disk, up to', 'local-preflight-missing': 'Data disk, up to', 'ai-cli-missing': 'gh auth login --hostname github.com --web', 'designer-loading': 'Opening your agent', 'designer-open-error': 'Your agent folder could not be opened.', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first agentRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster ready', 'local-stopped': 'Set up this computer', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings', 'designer-connected': 'Instructions and settings', 'designer-file': 'web-reader.agent.md', 'designer-failed': 'checks failed', 'designer-passed': 'The test passed.', 'designer-stale': 'Not run since your edit', 'designer-running': 'Waiting for answers and evaluating tests', 'designer-remote': 'Instructions and settings' };
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])}) && ${['designer-loading', 'designer-open-error'].includes(name) ? "!!document.querySelector('.designer > .designer-file')?.getClientRects().length" : 'true'}`), `${name} action state`).catch(async error => {
       throw Error(`${error.message}: ${await evaluate('document.body.innerText')}`);
     });
@@ -538,11 +558,19 @@ try {
       if (layout.scrollWidth > layout.width + 2) throw Error(`Designer overflow: ${JSON.stringify(layout)}`);
       await writeFile(join(output, `${theme}-${size}-${name}-columns.json`), JSON.stringify(layout, null, 2));
     }
-    if (name === 'designer-failed') await evaluate(`document.querySelector('.example-run').scrollIntoView({ block: 'start' })`);
+    if (['designer-connected', 'designer-running', 'designer-failed', 'designer-passed', 'designer-stale'].includes(name)) await evaluate(`document.querySelector('.example-run').scrollIntoView({ block: 'start' })`);
     if (name.startsWith('ai-removal-')) await evaluate(`document.querySelector('.setup-model').scrollIntoView({ block: 'center' })`);
     await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     const image = await call('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
+    if (['designer-connected', 'designer-running', 'designer-failed', 'designer-passed', 'designer-stale'].includes(name)) await compareDesigner(image.data, theme, size, name);
+    if (name === 'designer-passed') {
+      await evaluate(`document.querySelector('.example-run .test-result > summary').click()`);
+      await until(() => evaluate(`document.querySelector('.example-run').innerText.includes('Read a web page')`), 'passed story opens recorded tool evidence');
+      const story = await call('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(output, `${theme}-${size}-${name}-story.png`), Buffer.from(story.data, 'base64'));
+      await compareDesigner(story.data, theme, size, name + '-story');
+    }
     if (['ai-connected', 'local-completed'].includes(name)) {
       const complete = await evaluate(`({ heading: document.querySelector('h1').textContent, pill: document.querySelector('.setup-progress .pill')?.textContent, details: !!document.querySelector('.setup-history details:not([open])'), text: document.body.innerText, model: document.querySelector('.setup-model').innerText })`);
       if (complete.heading !== 'Local cluster' || complete.pill !== 'Ready' || /step \d+ of 5/i.test(complete.text) || !complete.details || !complete.text.includes('Stop the local cluster') || complete.model.includes('GitHub CLI must be installed')) throw Error(`Completed local page is not collapsed: ${JSON.stringify(complete)}`);
