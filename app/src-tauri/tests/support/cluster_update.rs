@@ -330,13 +330,27 @@ async fn outside_edits_and_replacements_block_before_put() {
 async fn lost_agent_responses_reconcile_read_only_but_old_or_missing_never_authorize_replay() {
     for mode in ["lose-agent", "update-lost", "update-lost-old", "broken"] {
         let s = setup().await;
-        if mode.starts_with("update") {
-            s.finish(&id(&s.start().await)).await;
+        let known_uid = if mode.starts_with("update") {
+            let first = s.finish(&id(&s.start().await)).await;
             edit(&s);
-        }
+            Some(
+                first["acknowledged"][0]["uid"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            )
+        } else {
+            None
+        };
         *s.api.wire.mode.lock().unwrap() = mode;
         let failed = s.finish(&id(&s.start().await)).await;
         assert_eq!(failed["state"], "unknown");
+        let history = s.owner.history().unwrap();
+        let attempted = history.iter().find(|row| row.id == id(&failed)).unwrap();
+        assert_eq!(
+            attempted.agent_uid, known_uid,
+            "an uncertain update must supersede the earlier UID's passing association"
+        );
         let writes = (s.api.wire.posts(), puts(&s).len());
         *s.api.wire.mode.lock().unwrap() = "";
         let check = reply(s.owner.preflight(&s.target, &s.provider).await);

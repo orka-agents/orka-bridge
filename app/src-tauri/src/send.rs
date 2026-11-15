@@ -1174,10 +1174,13 @@ impl SendOwner {
         if action == SendAction::Update {
             bound.intent = Some(desired.clone());
         }
-        // Binding intent precedes attempt details; both precede the mutation.
-        self.summary
-            .save_binding(bound.clone())
-            .map_err(|_| Stage::Storage)?;
+        // Mutation intent precedes history. An unchanged run has no mutation:
+        // publish its history first, then reserve it at AgentAcknowledged, before Tasks.
+        if action != SendAction::Unchanged {
+            self.summary
+                .save_binding(bound.clone())
+                .map_err(|_| Stage::Storage)?;
+        }
         let planned_agent_name = bound.name.clone();
         details.resources.push(if action == SendAction::Unchanged {
             crate::engine::run::SavedResource::acknowledged(&bound.receipt()?)
@@ -1200,7 +1203,13 @@ impl SendOwner {
             target_uids: seed.target_uids,
             provider: seed.provider,
             planned_agent_name,
-            agent_uid: None,
+            // Ownership is already known for reuse/update, even if the new revision
+            // is not acknowledged. Its unknown attempt must supersede the old pass.
+            agent_uid: bound
+                .acknowledged
+                .as_ref()
+                .and_then(|agent| agent["metadata"]["uid"].as_str())
+                .map(str::to_owned),
             verdict: AttemptVerdict::Running,
             time: seed.time,
         };

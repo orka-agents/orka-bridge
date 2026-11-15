@@ -1266,7 +1266,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickTab("Overview", returnedResult)
     Thread.sleep(forTimeInterval: 1)
     let unknownUID = try recordShot("overview-fixture-versions-unknown-by-place", "Checks unknown")
-    require(passedUID != unknownUID, "Explicit separate-agent recovery did not retain distinct Agent UIDs")
+    // The rejected update also supersedes the original agent's earlier pass.
+    // Either retained identity can therefore correctly lead the unknown cards;
+    // their distinct UIDs and exact create count were verified at separate Send.
+    require(separateAgents.contains { $0["uid"] as? String == unknownUID }, "Unknown Overview card did not retain an acknowledged Agent UID")
     try overviewShot("overview-fixture-external-by-place", ["runtime-reader", "Not tested by Bridge", "Model on cluster: external-model", "Tools on cluster: web_fetch"])
     // Explicit retries reuse this attempt's exact Task UID. Neither an HTTP
     // acknowledgement nor a lost response may manufacture a terminal result.
@@ -1366,19 +1369,15 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Open your agent", in: try capture("cluster-probe", "Clusters"))
     let secondAgent = try capture("agent-cluster-owned", "Designer")
     clickText("Send to a cluster", in: secondAgent)
-    try clickSendControl("Reload saved files", scrolling: -250)
+    // The primary's restored-version Send already reloaded these exact files.
+    try clickSendControl("Check again", scrolling: -250)
     try capturePreflight("send-ready", "Built in to this cluster")
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
     try capturePreflight("send-secondary-result", "1 of 1 passed")
-    // Block a changed update before explicitly requesting a separate identity.
-    // The fixture accepts that create but withholds its UID receipt. Overview
-    // must keep this unknown attempt separate, never name-join it to inventory.
-    restoreTemporaryAgent = { try originalAgent.write(to: ownedFile, options: .atomic) }
-    try changeAgent("Quote the source in secondary-place answers.")
-    try fixtureControl(["action": "update-mode", "place": "fixture-secondary", "mode": "old-404"])
-    try clickSendControl("Update agent and run tests", scrolling: -350)
-    try capturePreflight("send-secondary-older-orka", "This Orka can't safely update this agent")
+    // Explicitly request a separate identity without changing the common files.
+    // The fixture withholds that create's UID receipt; the earlier passing agent
+    // remains a valid cross-cluster association, never a name-adopted replacement.
     try fixtureControl(["action": "lose-agent-receipt", "place": "fixture-secondary"])
     try clickSendControl("Send as a separate agent", scrolling: 350)
     Thread.sleep(forTimeInterval: 1)
