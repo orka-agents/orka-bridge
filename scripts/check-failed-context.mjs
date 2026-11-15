@@ -39,7 +39,7 @@ try {
     });
   }
   evaluate = async (expression, world = contextId) => {
-    const r = await call('Runtime.evaluate', { expression, contextId: world, awaitPromise: true, returnByValue: true });
+    const r = await call('Runtime.evaluate', { expression, ...(world == null ? {} : { contextId: world }), awaitPromise: true, returnByValue: true });
     if (r.exceptionDetails) throw Error(JSON.stringify(r.exceptionDetails));
     return r.result.value;
   };
@@ -65,6 +65,7 @@ try {
   const pair = { agent: await readFile('app/src-tauri/example-agent/web-reader.agent.md', 'utf8'), tests: await readFile('app/src-tauri/example-agent/web-reader.agent.test.md', 'utf8') };
   const { frameTree } = await call('Page.getFrameTree');
   ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'failed-context-check' }));
+  await call('Runtime.enable');
   await call('Runtime.addBinding', { name: 'nativeCluster', executionContextId: contextId });
   await evaluate(`(() => {
     const pair = ${JSON.stringify(pair)};
@@ -152,7 +153,9 @@ try {
   if (!remoteChat.buttons.some(b=>b.label==='Send message' && b.disabled)) throw Error('Expected disabled Chat send');
   if (before !== await evaluate('window.fixtureCalls.filter(c=>c.command === "agent_run" || c.command === "agent_chat_send").length')) throw Error('Unexpected Run/Chat submission after failure');
   await click('Clusters'); await click('Back to clusters'); await capture('07-return-options');
-  await click('Manage'); await capture('08-local-restored');
+  await evaluate(`document.querySelector('.places-list [aria-label="This computer"] button').click()`);
+  await capture('08-local-details-not-yet-selected');
+  await click('Use this computer'); await capture('08-local-restored');
   await click('Designer'); await click('Agent'); await click('Run tests'); await capture('09-recovered-run');
   await click('Chat'); await message('After returning to This computer'); await click('Send message');
   await until(() => evaluate('document.body.innerText.includes("After returning to This computer")'), 'recovered synthetic chat');
