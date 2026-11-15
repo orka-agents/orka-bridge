@@ -92,7 +92,7 @@ export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, block
           <p>{snapshot.report.cases.some(c => c.verdict === 'failed' && c.phase !== 'Succeeded') ? 'The task did not finish successfully. Review its answer and tool activity in Details before trying again.' : 'The agent answered, but its checks failed. Compare the answer with the test, then adjust the instructions or test file.'}</p>
           {onEditInstructions && <Button type="button" kind="secondary" onClick={onEditInstructions}>Edit instructions</Button>}
         </div>}
-        {(!running || cancelling) && <TestResults report={snapshot?.report} stale={outdated} />}
+        {(!running || cancelling) && <TestResults report={snapshot?.report} stale={outdated} vendor={snapshot?.vendor} />}
       </CardSection>
       {(!!snapshot?.acknowledged.length || snapshot?.pending || snapshot?.source) && <Details hint="Resources and file hashes">
         {snapshot.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Test file hash" value={snapshot.source.tests} /></>}
