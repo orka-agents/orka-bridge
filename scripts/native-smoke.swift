@@ -981,7 +981,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             // Preserve a visible transient state before doing any search work.
             let seen = try capture("send-probe", "Designer")
             let text = seen.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-            if text.contains(expected) {
+            // Vision can capitalize the lowercase l in this monospaced test ID.
+            // Keep the exact native text and viewport-bound check as the fallback.
+            if text.contains(expected) || (expected == "published-checksum" && nativeTextIsVisible(expected)) {
                 // Keep the frame we verified. A transient state can end between
                 // two screenshots; a second OCR pass would test a different frame.
                 if name != "send-probe" {
