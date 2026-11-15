@@ -51,7 +51,7 @@ test('local readiness never enables unconfirmed remote checks, and changing plac
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
   await screen.findByText('Cluster found');
   await user.click(screen.getByRole('button', { name: 'Designer' }));
-  const run = await screen.findByRole('button', { name: 'Run all tests' });
+  const run = await screen.findByRole('button', { name: 'Send and run tests' });
   expect(run.matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.getByRole('combobox', { name: 'kubectl context' })).toBeTruthy();
@@ -146,7 +146,7 @@ test('local-result observation continues while remote access is unconfirmed', as
   complete = true;
   expect(await screen.findByText('This computer: 1 of 1 tests passing', { selector: '.checks-status' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
-  expect(screen.getByRole('button', { name: 'Run all tests' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Send and run tests' }).matches(':disabled')).toBe(true);
 });
 
 test('expert_skip_selects_cluster_without_vm', async () => {

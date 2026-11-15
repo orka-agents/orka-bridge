@@ -396,7 +396,7 @@ func capture(_ name: String, _ page: String, afterFrame: (() throws -> Void)? = 
         print("PASS \(name): native fixture access state, no real credentials")
         return observations
     }
-    if let expected = ["send-ready": "Built in to this cluster", "send-blocked": "Blocked", "send-cannot-check": "Bridge cannot check"][name] {
+    if let expected = ["send-ready": "Ready to send", "send-blocked": "Blocked", "send-cannot-check": "Bridge cannot check"][name] {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains(expected), "Native preflight evidence missing: \(expected); observed: \(text)")
         print("PASS \(name): observed native preflight evidence; no workload submitted")
@@ -422,7 +422,7 @@ func capture(_ name: String, _ page: String, afterFrame: (() throws -> Void)? = 
     }
     if name.hasPrefix("send-") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        let markers = ["Send your agent", "Tests on your cluster", "passed", "evaluating tests", "Planned Agent", "question", "answer", "Not run since your edit", "Stopped watching",
+        let markers = ["Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
             "Cancelling tests", "Cancellation requested.", "Cannot cancel with this cluster identity", "This Orka cannot cancel tests.", "Cancellation not confirmed.", "Tests cancelled on the cluster.", "Tests finished before cancellation."]
         require(markers.contains { text.localizedCaseInsensitiveContains($0) }, "Send panel not visible: \(text)")
         print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
@@ -561,7 +561,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
         if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: .regularExpression) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
-            if ["Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent", "Cancel tests", "Retry cancellation", "Check cluster status", "Check again", "Reload saved files", "Send to a cluster"].contains(label) {
+            if ["Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent", "Cancel tests", "Retry cancellation", "Check cluster status", "Check again", "Reload saved files", "Send to a cluster", "See in Overview"].contains(label) {
                 let enabled = nativeElements().contains { element in
                     attribute(element, "AXRole") as? String == "AXButton"
                         && attribute(element, "AXEnabled") as? Bool == true
@@ -981,7 +981,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             // Preserve a visible transient state before doing any search work.
             let seen = try capture("send-probe", "Designer")
             let text = seen.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-            if text.contains(expected) {
+            if text.localizedCaseInsensitiveContains(expected) {
+                // Section labels are uppercased by CSS; accessibility retains their source case.
                 // Keep the frame we verified. A transient state can end between
                 // two screenshots; a second OCR pass would test a different frame.
                 if name != "send-probe" {
@@ -1017,8 +1018,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let ownedAgent = try capture("agent-cluster-owned", "Designer")
     clickText("Send to a cluster", in: ownedAgent)
     Thread.sleep(forTimeInterval: 1)
-    let allowed = try capturePreflight("send-ready", "Built in to this cluster")
-    require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Built in to this cluster") }, "Allowed preflight evidence is missing")
+    let allowed = try capturePreflight("send-ready", "Ready to send")
+    require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Ready to send") }
+        && !nativeButtons("Send and run tests").isEmpty, "Ready destination must expose the Send action")
     func focusSend() throws {
         // Pixel scroll offsets are not stable across responsive reflow. Focus
         // the real entry button, then pointer-click its verified native bounds.
@@ -1040,7 +1042,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         mouse(.leftMouseUp, CGPoint(x: bounds.midX, y: bounds.midY))
         Thread.sleep(forTimeInterval: 0.5)
         // Observe the actual destination, not a screenshot at the restored offset.
-        _ = try capturePreflight("send-probe", "Send your agent")
+        _ = try capturePreflight("send-probe", "Team cluster")
     }
     func resultSize(_ width: CGFloat, _ height: CGFloat) throws {
         let frame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height),
@@ -1063,31 +1065,34 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         let text = answer.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("What SHA-256 checksum does") && text.contains("Fixture answer:"), "Question and answer are not visible together")
     }
+    try resultSize(1280, 800)
+    try capturePreflight("send-ready-wide", "Ready to send")
+    try resultSize(540, 900)
     try capturePreflight("send-first", "Send and run tests")
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
-    let result = try capturePreflight("send-result", "1 of 1 passed")
-    require(result.contains { ($0.topCandidates(1).first?.string ?? "").contains("1 of 1 passed") }, "Fixture-backed Send did not pass its real tests")
+    let result = try capturePreflight("send-result", "1 of 1 tests passed")
+    require(result.contains { ($0.topCandidates(1).first?.string ?? "").contains("1 of 1 tests passed") }, "Fixture-backed Send did not pass its real tests")
     try resultSize(1280, 800)
-    try capturePreflight("send-result-wide", "1 of 1 passed")
+    try capturePreflight("send-result-wide", "1 of 1 tests passed")
     try clickSendControl("published-checksum", scrolling: -250)
     try captureAnswer("send-answer-wide")
     try resultSize(540, 900)
     try captureAnswer("send-answer")
     try clickSendControl("published-checksum", scrolling: 250)
     try clickSendControl("Details", scrolling: -350)
-    let details = try capturePreflight("send-result-details", "Planned Agent")
+    let details = try capturePreflight("send-result-details", "Planned agent")
     let detailsText = details.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-    require(detailsText.contains("Planned Agent"), "Short Agent identity missing in native Send details")
+    require(detailsText.contains("Planned agent"), "Short agent identity missing in native Send details")
     require(nativeElements().contains { element in
         attribute(element, "AXRole") as? String == "AXButton"
-            && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Copy Planned Agent" }
+            && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Copy Planned agent" }
             && nativeBounds(element).map { window()!.1.contains($0) } == true
     }, "Labeled Copy icon missing from native Send details")
     try clickSendControl("Details", scrolling: 350)
     // Observe the passing revision before the result walk changes its test file.
     try resultSize(1220, 900)
-    clickTab("Overview", [])
+    try clickSendControl("See in Overview", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
     let passedUID = try recordShot("overview-fixture-versions-passed-by-place", "Passed")
     clickTab("Designer", [])
@@ -1103,7 +1108,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try assertDeployment(passedUID, generation: 1, tasks: 1)
     try capturePreflight("send-unchanged", "Run cluster tests again")
     try clickSendControl("Run cluster tests again", scrolling: -350)
-    try capturePreflight("send-unchanged-result", "1 of 1 passed")
+    try capturePreflight("send-unchanged-result", "1 of 1 tests passed")
     try assertDeployment(passedUID, generation: 1, tasks: 2)
     let originalAgent = try Data(contentsOf: ownedFile)
     restoreTemporaryAgent = { try originalAgent.write(to: ownedFile, options: .atomic) }
@@ -1122,7 +1127,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try changeAgent("Keep answers concise.")
     try capturePreflight("send-update", "Update agent and run tests")
     try clickSendControl("Update agent and run tests", scrolling: -350)
-    try capturePreflight("send-update-result", "1 of 1 passed")
+    try capturePreflight("send-update-result", "1 of 1 tests passed")
     try assertDeployment(passedUID, generation: 2, tasks: 3)
     // Older Orka refuses the distinct conditional route. Only an explicit
     // recovery creates the second identity needed by the Overview evidence.
@@ -1130,11 +1135,14 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try fixtureControl(["action": "update-mode", "place": "fixture-cluster", "mode": "old-404"])
     try clickSendControl("Update agent and run tests", scrolling: -350)
     try capturePreflight("send-older-orka", "This Orka can't safely update this agent")
+    try resultSize(1280, 800)
+    try capturePreflight("send-older-orka-wide", "This Orka can't safely update this agent")
+    try resultSize(540, 900)
     try focusSend()
     try capturePreflight("send-older-orka-action", "Send as a separate agent")
     try assertDeployment(passedUID, generation: 2, tasks: 3)
     try clickSendControl("Send as a separate agent", scrolling: -250)
-    try capturePreflight("send-separate-result", "1 of 1 passed")
+    try capturePreflight("send-separate-result", "1 of 1 tests passed")
     let separateState = try fixtureControl(["action": "snapshot", "place": "fixture-cluster"])
     let separateAgents = separateState["agents"] as! [[String: Any]]
     require(separateAgents.count == 2 && Set(separateAgents.compactMap { $0["uid"] as? String }).count == 2
@@ -1155,15 +1163,15 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try mixedTests.write(to: testsURL, options: .atomic)
     try clickSendControl("Check again", scrolling: -250)
     try focusSend()
-    try capturePreflight("send-disk-stale", "Not run since your edit")
+    try capturePreflight("send-disk-stale", "Earlier files")
     try clickSendControl("Reload saved files", scrolling: -250)
     try focusSend()
-    try capturePreflight("send-stale", "Not run since your edit")
+    try capturePreflight("send-stale", "Earlier files")
     try resultSize(1280, 800)
-    try capturePreflight("send-stale-wide", "Not run since your edit")
+    try capturePreflight("send-stale-wide", "Earlier files")
     try clickSendControl("Run cluster tests again", scrolling: 350)
     Thread.sleep(forTimeInterval: 1)
-    try capturePreflight("send-mixed-wide", "1 of 2 passed")
+    try capturePreflight("send-mixed-wide", "1 of 2 tests passed")
     let failed = try capturePreflight("send-failed-wide", "The answer did not include")
     require(failed.contains { ($0.topCandidates(1).first?.string ?? "").contains("2099-12-31") }, "Plain test failure reason missing")
     try resultSize(540, 900)
@@ -1196,7 +1204,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let requested = try capturePreflight("send-cancel-requested", "Cancellation requested. Waiting for the cluster.")
     clickTab("Clusters", requested); clickTab("Designer", requested)
     try focusSend()
-    let returnedResult = try capturePreflight("send-page-return", "Cancellation requested. Waiting for the cluster.")
+    try capturePreflight("send-page-return", "Cancellation requested. Waiting for the cluster.")
     // Widen the CI-owned native window for the real Overview board. This does
     // not change app state; the earlier compact captures remain 540x900.
     let overviewFrame = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: 1220, height: 900),
@@ -1265,7 +1273,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         print("PASS \(name): \(checks), retained \(uid)")
         return uid
     }
-    clickTab("Overview", returnedResult)
+    try clickSendControl("See in Overview", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
     let unknownUID = try recordShot("overview-fixture-versions-unknown-by-place", "Result unknown")
     // The rejected update also supersedes the original agent's earlier pass.
@@ -1308,7 +1316,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 0.5)
     try capturePreflight("send-cancel-completion-race", "Tests finished before cancellation.")
     try focusSend()
-    try capturePreflight("send-cancel-race-result", "1 of 2 passed")
+    try capturePreflight("send-cancel-race-result", "1 of 2 tests passed")
     try capturePreflight("send-cancel-race-failure", "The answer did not include")
     // Restore and actually Send the common file version on the primary cluster
     // before comparing it with the secondary. Merely restoring local bytes does
@@ -1319,7 +1327,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try clickSendControl("Reload saved files", scrolling: -250)
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "completed"])
     try clickSendControl("Update agent and run tests", scrolling: -350)
-    try capturePreflight("send-restored-shared-version", "1 of 1 passed")
+    try capturePreflight("send-restored-shared-version", "1 of 1 tests passed")
     clickTab("Overview", [])
     // Overview's explicit refresh gives the primary place its historical observation.
     // Places shows it later without refreshing again; the secondary has none yet.
@@ -1373,10 +1381,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Send to a cluster", in: secondAgent)
     // The primary's restored-version Send already reloaded these exact files.
     try clickSendControl("Check again", scrolling: -250)
-    try capturePreflight("send-ready", "Built in to this cluster")
+    try capturePreflight("send-ready", "Ready to send")
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
-    try capturePreflight("send-secondary-result", "1 of 1 passed")
+    try capturePreflight("send-secondary-result", "1 of 1 tests passed")
     // Explicitly request a separate identity without changing the common files.
     // The fixture withholds the UID receipt and individual readback, not inventory;
     // automatic reconciliation cannot resolve it or adopt it by its visible name.
@@ -1541,5 +1549,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     require(savedOpened, "Saved passing Send details were not reachable")
     try clickSendControl("published-checksum", scrolling: -100)
     try capture("send-history-answer", "Designer")
+    try resultSize(1280, 800)
+    let savedWide = try capturePreflight("send-history-answer-wide", "Saved on this computer")
+    require(savedWide.contains { ($0.topCandidates(1).first?.string ?? "").contains("Fixture answer:") },
+            "Wide saved answer must remain visible after reopening offline")
 }
 requireNoLocalWorkspace()

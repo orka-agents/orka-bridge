@@ -4,7 +4,7 @@ import { CardSection, Details, GeneratedValue, LongCard, StatusPill, type Status
 import { changedFiles, resultAnnouncement, resultLabel, TestProgress, TestResults } from '../components/TestResults';
 import { SAMPLE_DOCUMENT_ID, type SourceId, sameSource } from './agent-api';
 import { errors, type RunSnapshot, runCall } from './run-api';
-export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, blocked = false, stale = false, onStart, source, onStopLocalCluster, startRequest, onStartRequestHandled }: { documentId?: string; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId; onStopLocalCluster?: () => void; startRequest?: number; onStartRequestHandled?: () => void }) {
+export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, blocked = false, stale = false, onStart, source, onStopLocalCluster, startRequest, onStartRequestHandled, onEditInstructions }: { documentId?: string; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId; onStopLocalCluster?: () => void; startRequest?: number; onStartRequestHandled?: () => void; onEditInstructions?: () => void }) {
   const [received, setSnapshot] = useState<RunSnapshot>();
   const snapshot = received?.documentId === documentId ? received : undefined;
   const [message, setMessage] = useState<string>();
@@ -87,7 +87,7 @@ export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, block
         {actionMessage && <p role="status">{actionMessage}</p>}
         {message && <p role="status">{message}</p>}
         {snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected) && <p role="alert">{errors[snapshot.error]}</p>}
-        {(!running || cancelling) && <TestResults report={snapshot?.report} stale={outdated} />}
+        {(!running || cancelling) && <TestResults report={snapshot?.report} stale={outdated} onEdit={onEditInstructions} />}
       </CardSection>
       {(!!snapshot?.acknowledged.length || snapshot?.pending || snapshot?.source) && <Details hint="Resources and file hashes">
         {snapshot.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Test file hash" value={snapshot.source.tests} /></>}

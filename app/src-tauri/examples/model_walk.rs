@@ -133,6 +133,12 @@ fn main() {
     let selected = std::sync::atomic::AtomicBool::new(true);
     let connected = std::sync::atomic::AtomicBool::new(false);
     let first_test_pending = std::sync::atomic::AtomicBool::new(false);
+    let cluster_selected = std::sync::atomic::AtomicBool::new(false);
+    let target = json!({"id":"42345678-1234-4234-8234-123456789abc",
+        "context_id":"52345678-1234-4234-8234-123456789abc", "context_name":"team-dev",
+        "service_name":"orka", "service_namespace":"control", "watched_namespace":"agents", "image":"orka:fixture"});
+    let providers =
+        json!([{"id":"62345678-1234-4234-8234-123456789abc", "name":"team-model", "ready":true}]);
     let original = include_str!("../example-agent/web-reader.agent.md");
     let agent = std::sync::Mutex::new(original.to_owned());
     let tests = "---\nschemaVersion: 1\n---\n```yaml agent-test\nid: reads-page\ninput: What did the page say?\nassertions:\n - id: text\n   type: contains\n   value: checksum\n```\n```yaml agent-test\nid: has-a-date\ninput: Which date is shown on the page?\nassertions:\n - id: date\n   type: contains\n   value: '2099-12-31'\n```\n";
@@ -219,7 +225,25 @@ fn main() {
                         {"kind":"builtin", "name":"file_read", "description":"Read a file"}
                     ]}
                 }),
-                "cluster_places" => json!({"places":[], "selectedKey":null, "persistenceState":"complete"}),
+                // Only a synthetic destination for the failed-local-test popover walk.
+                // No Send command is implemented: Fix it first and Escape must not submit.
+                "cluster_places" => json!({"places":[{
+                    "key":"team-observed", "context":"team-dev", "service":"control/orka", "namespace":"agents",
+                    "stale":false, "observedAt":1234567890000_u64, "agents":[]
+                }], "selectedKey":cluster_selected.load(std::sync::atomic::Ordering::SeqCst).then_some("team-observed"), "persistenceState":"complete"}),
+                "cluster_reconnect" => target.clone(),
+                "cluster_use" => {
+                    cluster_selected.store(true, std::sync::atomic::Ordering::SeqCst);
+                    json!({"status":"connected", "providers":providers, "failure":null})
+                }
+                "send_preflight" => {
+                    let content = agent.lock().unwrap();
+                    json!({"documentId":bridge_engine::agent_folder::DocumentId::SAMPLE,
+                        "targetId":target["id"], "providerId":providers[0]["id"],
+                        "source":bridge_runtime_protocol::SnapshotId::of(content.as_bytes(), tests.as_bytes()),
+                        "model":"gpt-5.6-terra", "canSend":true, "action":"create", "canSeparate":false,
+                        "rows":[{"label":"Destination", "status":"allowed", "message":"Synthetic destination ready"}]})
+                }
                 "send_history" => json!([]),
                 "send_status" => json!({"documentId":"9b2b93c4-375c-4815-9717-39852a96e411", "view":null, "busy":null}),
                 command @ ("agent_chat_status" | "agent_chat_send" | "agent_chat_reconnect" | "agent_chat_stop" | "agent_chat_new") => {

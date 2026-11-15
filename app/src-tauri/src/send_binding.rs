@@ -364,17 +364,34 @@ impl SendOwner {
         binding: &mut Binding,
         transport: &dyn RunTransport,
         desired: Value,
+        stop: &watch::Receiver<bool>,
+        prior: &Binding,
     ) -> Result<ResourceId, Stage> {
         let old = binding.receipt()?;
         binding.intent = Some(desired.clone());
         self.summary
             .save_binding(binding.clone())
             .map_err(|_| Stage::Storage)?;
+        // Stop before the first poll is definite: nothing was submitted, so give
+        // back exactly the binding this attempt reserved over. A failed restore is
+        // Storage; the persisted intent then still guards the uncertain state.
+        if *stop.borrow() {
+            self.summary
+                .save_binding(prior.clone())
+                .map_err(|_| Stage::Storage)?;
+            *binding = prior.clone();
+            return Err(Stage::Stopped);
+        }
         let body =
             json!({"expectedUID":old.uid,"expectedGeneration":old.generation,"spec":desired});
-        let result = transport
-            .update_agent(&binding.name, &body, transport.deadline())
-            .await;
+        let mut stop = stop.clone();
+        let result = tokio::select! {
+            // A ready acknowledgment wins a simultaneous Stop. Once polled, a
+            // dropped PUT may still land, so Stop leaves the intent uncertain.
+            biased;
+            result = transport.update_agent(&binding.name, &body, transport.deadline()) => result,
+            _ = stopped(&mut stop) => return Err(Stage::UpdateUnconfirmed),
+        };
         let stage = match result {
             Ok(value) => {
                 binding.acknowledge(value)?;

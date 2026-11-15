@@ -3,15 +3,19 @@ import { Button } from '../components/Button';
 import { type LiveAgents, type Observation, type Places, type RunAgent, readAgents, readFiles, readPlaces, type SavedFiles, unavailableAgents } from './api';
 import { agentGroups, balance, buildCards, clusterGroups, type CompleteAgents, type Inputs, isEmpty, summaryLabel } from './model';
 import { Board, GroupSection, useCompact } from './places';
+import { type AgentFocus, sendAgentCheck } from '../clusters/send-api';
 import './overview.css';
 
 export type OverviewProps = {
   onNewAgent?: () => void; active: boolean; runBusy: boolean; activeDocumentId?: string; workspaceKey: string;
   onOpenDocument: (id: string) => void; onChatDocument?: (id: string) => void; onRunDocument?: (id: string) => void;
   onOpenExample: () => void; onChooseWorkspace: () => void; onCounts?: (label: string) => void;
+  /** Newest request wins. target is absent when native has no recorded agent for that Send. */
+  focus?: { id: number; sendId: string; target?: AgentFocus };
 };
+const focusNotes = { present: 'Not shown in Overview yet.', gone: 'The original agent is no longer available. Your saved result is unchanged.', cannotCheck: 'Cannot check this agent. Your saved result is unchanged.' };
 const complete = (v?: LiveAgents): v is CompleteAgents => v?.state === 'complete' && v.installation !== null && v.observedAt !== null;
-export default function Overview({ onNewAgent, active, runBusy, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts }: OverviewProps) {
+export default function Overview({ onNewAgent, active, runBusy, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, focus }: OverviewProps) {
   // Last good reads are kept so a busy or failed refresh never blanks the page; each is flagged when it is not fresh.
   const [files, setFiles] = useState<SavedFiles>();
   const [filesStale, setFilesStale] = useState(false);
@@ -35,6 +39,32 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
     });
     return () => { cancelled = true; };
   }, [active, refresh]);
+  // See in Overview: refresh only the recorded destination, then focus the exact card (place key + UID, never a name).
+  const focusEpoch = useRef(0);
+  const toFocus = useRef<string | undefined>(undefined);
+  const [focusTick, setFocusTick] = useState(0);
+  const [focusNote, setFocusNote] = useState<string>();
+  useEffect(() => {
+    if (!active || !focus) return;
+    const request = ++focusEpoch.current;
+    setByAgent(false); setFocusNote(undefined); toFocus.current = undefined;
+    const { target } = focus;
+    void (async () => {
+      const value = target ? await readPlaces(target.key) : undefined;
+      if (request !== focusEpoch.current) return;
+      const seen = value?.places.find(p => p.key === target?.key);
+      if (value && seen) setPlaces(previous => previous ? { ...previous, historyState: value.historyState, unobserved: value.unobserved, places: previous.places.some(p => p.key === seen.key) ? previous.places.map(p => p.key === seen.key ? seen : p) : [...previous.places, seen] } : value);
+      if (target && seen?.agents.some(a => a.uid === target.uid && a.namespace === target.namespace)) { toFocus.current = `${target.key}/${target.uid}`; setFocusTick(v => v + 1); return; }
+      const check = target ? await sendAgentCheck(focus.sendId) : 'cannotCheck';
+      if (request === focusEpoch.current) setFocusNote(focusNotes[check]);
+    })();
+    return () => { focusEpoch.current++; };
+  }, [active, focus, refresh]);
+  useEffect(() => {
+    const key = toFocus.current; if (!active || !key) return;
+    const card = [...document.querySelectorAll<HTMLElement>('[data-card-key]')].find(node => node.dataset.cardKey === key);
+    if (card) { toFocus.current = undefined; card.focus(); card.scrollIntoView?.({ block: 'center' }); }
+  }, [active, focusTick, places, byAgent]);
   const epoch = useRef(0);
   const knownWorkspace = useRef(workspaceKey);
   useEffect(() => {
@@ -86,6 +116,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
       {onNewAgent && !empty && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}
       {!empty && <div className="view-switch" role="group" aria-label="Group agents"><button type="button" aria-pressed={!byAgent} onClick={() => setByAgent(false)}>By cluster</button><button type="button" aria-pressed={byAgent} onClick={() => setByAgent(true)}>By agent</button></div>}
       <Button kind="quiet" onClick={actions.onCheck}>Refresh</Button></div></div>
+    {focusNote && <div className="overview-note" role="status"><p>{focusNote}</p><Button kind="quiet" onClick={actions.onCheck}>Refresh</Button></div>}
     {placeError && <div className="overview-note" role="status"><p>Couldn't read clusters just now.{places && ' Showing what Bridge last saw.'}</p><Button kind="quiet" onClick={actions.onCheck}>Check again</Button></div>}
     {places?.historyState === 'unavailable' && <p role="alert" className="overview-note">Saved Send results are unavailable, so cluster agents show no test result.</p>}
     {byAgent && !empty && <div className="overview-stack">{clusters.filter(g => g.notes.some(n => !n.text.startsWith('No agents'))).map(g => <GroupSection key={g.key} group={{ ...g, cards: [], count: undefined, notes: g.notes.filter(n => !n.text.startsWith('No agents')) }} byAgent={false} actions={actions} />)}</div>}

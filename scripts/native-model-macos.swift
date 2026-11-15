@@ -203,6 +203,74 @@ _ = try seek("Tests on the local cluster", -250)
 _ = try capture("local-result", ["Tests on the local cluster", "1 of 2 passed"])
 _ = try seek("The answer did not include", -150)
 _ = try capture("local-answer", ["Which date is shown", "No date was given", "2099-12-31"])
+// Both local results and the cluster Send stay visible. This separate fixture
+// has no send_start handler; opening/dismissing the warning cannot mutate anything.
+localSize(1280, 800)
+click("Clusters", [])
+scroll(4000)
+if enabledButton("Back to clusters") != nil { click("Back to clusters", []) }
+_ = try seek("Connect", -150)
+click("Connect", [])
+_ = try seek("Use this cluster", -150)
+click("Use this cluster", [])
+_ = try seek("Open your agent", -150)
+click("Open your agent", [])
+func focusedButtonTitle() -> String? {
+    var focused: CFTypeRef?
+    let app = AXUIElementCreateApplication(child.processIdentifier)
+    guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+        let focused else { return nil }
+    let element = focused as! AXUIElement
+    return attribute(element, "AXTitle") as? String ?? attribute(element, "AXDescription") as? String
+}
+for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
+    localSize(CGFloat(width), CGFloat(height))
+    scroll(4000)
+    _ = try seek("Send and run tests", -200)
+    guard let send = enabledButton("Send and run tests"), let before = nativeBounds(send) else {
+        fatalError("Ready Send action missing beside local results")
+    }
+    click("Send and run tests", [])
+    _ = try capture("local-send-warning-\(size)", ["Local test", "failed", "Fix it first", "Send anyway"])
+    require(focusedButtonTitle() == "Fix it first", "Warning must initially focus Fix it first")
+    guard let after = nativeBounds(send) else { fatalError("Send action lost its bounds") }
+    require(abs(before.minY - after.minY) < 2 && abs(before.minX - after.minX) < 2,
+            "Warning must overlay, not shift the Send control")
+    for down in [true, false] {
+        CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: down)?.post(tap: .cghidEventTap)
+    }
+    Thread.sleep(forTimeInterval: 0.3)
+    require(focusedButtonTitle() == "Send and run tests", "Escape must return focus to Send")
+    click("Send and run tests", [])
+    click("Fix it first", [])
+    _ = try capture("local-send-fix-result-\(size)", ["Which date is shown", "No date was given", "Edit instructions"])
+}
+// Return through the local row, without stopping either destination. The
+// remaining pre-existing editor/Chat walk continues on This computer.
+click("Clusters", [])
+scroll(4000)
+if enabledButton("Back to clusters") != nil { click("Back to clusters", []) }
+let localAction = nativeElements().first { element in
+    guard attribute(element, "AXRole") as? String == "AXButton" else { return false }
+    var parent = element
+    for _ in 0..<12 {
+        if attribute(parent, "AXDescription") as? String == "This computer" { return true }
+        guard let next = attribute(parent, "AXParent") else { break }
+        parent = next as! AXUIElement
+    }
+    return false
+}
+guard let localAction, let localBounds = nativeBounds(localAction), window()!.1.contains(localBounds) else {
+    fatalError("This computer's action was not visible after warning proof")
+}
+for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+    CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: CGPoint(x: localBounds.midX, y: localBounds.midY), mouseButton: .left)?.post(tap: .cghidEventTap)
+}
+Thread.sleep(forTimeInterval: 0.5)
+_ = try seek("Use this computer", -150)
+click("Use this computer", [])
+click("Designer", [])
+scroll(4000)
 // Edit the fixture's Instructions field through the native text control. Its
 // writer is in-memory only, so no creator file or credential can be changed.
 scroll(4000)

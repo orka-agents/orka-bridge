@@ -17,11 +17,11 @@ import Send, { SendEntry, SendHistory } from '../clusters/Send';
 
 export type DocumentAction = { id: number; documentId: string; action: 'open' | 'chat' | 'run' };
 
-export default function Example({ actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, onStopLocalCluster, actions, onPair, onRun, onSaveState, onStale }: {
+export default function Example({ actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, remote = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, onStopLocalCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview }: {
   actionRequest?: DocumentAction; onActionHandled?: (id: number) => void;
   agentsRevision?: number; onRegistered?: () => void; documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; remote?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; onStopLocalCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: AgentPair | undefined, documentId: string) => void; onRun?: (snapshot: RunSnapshot | undefined, documentId: string) => void;
-  onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void;
+  onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void; onSeeInOverview?: (sendId: string) => void;
 }) {
   const [boundDocument, setBoundDocument] = useState(documentId);
   const [requestedDocument, setRequestedDocument] = useState(documentId);
@@ -47,7 +47,7 @@ export default function Example({ actionRequest, onActionHandled, agentsRevision
   }, [openDocumentRequest, documentId, requestDocument]);
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [catalog, setCatalog] = useState<{ key: number; attempt: number; reply?: WorkspaceCatalogReply }>();
-  const catalogEnabled = catalogKey !== undefined && !setupPending && !remote;
+  const catalogEnabled = catalogKey !== undefined && !setupPending;
   useEffect(() => {
     if (!catalogEnabled || catalogKey === undefined) return;
     const controller = new AbortController();
@@ -70,13 +70,17 @@ export default function Example({ actionRequest, onActionHandled, agentsRevision
   const [view, setView] = useState<'Agent' | 'Chat' | 'File'>('Agent');
   const [stale, setStale] = useState(false);
   const observePendingSoul = useCallback((pending: boolean) => { pendingSoulCurrent.current = pending; setPendingSoul(pending); if (pending) setStale(true); }, []);
-  const [sendOpen, setSendOpen] = useState(false);
   const [localRun, setLocalRun] = useState<RunSnapshot>();
   const observeRun = useCallback((value: RunSnapshot | undefined) => { setLocalRun(value); onRun?.(value, boundDocument); }, [onRun, boundDocument]);
   const openSend = () => {
-    setSendOpen(true);
     requestAnimationFrame(() => { const panel = document.querySelector<HTMLElement>('.send-panel'); panel?.focus(); panel?.scrollIntoView?.({ block: 'start' }); });
   };
+  const editInstructions = () => { setView('Agent'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.instructions-editor')?.focus()); };
+  // One keyboard target: the failing local result, which then offers Edit instructions.
+  const focusLocalResult = (testId: string) => requestAnimationFrame(() => {
+    const result = [...document.querySelectorAll<HTMLElement>('.designer-tests [data-result-id]')].find(node => node.dataset.resultId === testId);
+    result?.querySelector<HTMLElement>('summary')?.focus();
+  });
   const latest = useRef(''); const saved = useRef(''); const busy = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lineEnding = useRef('\n'); const needsCommit = useRef(false);
@@ -135,7 +139,7 @@ export default function Example({ actionRequest, onActionHandled, agentsRevision
       if (next === boundDocument) return;
       reloadEpoch.current++; reloadAdmitted.current = false; setReloading(false);
       setPair(undefined); setDraft(''); latest.current = saved.current = '';
-      setLocalRun(undefined); setStale(false); setError(undefined); setSendOpen(false); setSelectionError(undefined);
+      setLocalRun(undefined); setStale(false); setError(undefined); setSelectionError(undefined);
       onPair?.(undefined, next); onRun?.(undefined, next); setBoundDocument(next); onDocument?.(next);
     }, () => {
       if (!mounted.current || requestedNow.current !== next) return;
@@ -150,12 +154,12 @@ export default function Example({ actionRequest, onActionHandled, agentsRevision
     if (!actionRequest || handledAction.current === actionRequest.id) return;
     handledAction.current = actionRequest.id; onActionHandled?.(actionRequest.id);
   };
-  const actionReady = !!actionRequest && actionRequest.id !== handledAction.current && active && (actionRequest.action !== 'run' || !setupPending && !remote)
+  const actionReady = !!actionRequest && actionRequest.id !== handledAction.current && active && (actionRequest.action !== 'run' || !setupPending)
     && handledOpen.current === openDocumentRequest && !selectionNeeded && !selecting && !selectionError && !creating && !wantsCreate && !reloading
     && documentId === boundDocument && actionRequest.documentId === boundDocument && pair?.documentId === boundDocument && saveState === 'saved' && !pendingSoul;
   useEffect(() => {
     if (!actionRequest || actionRequest.id === handledAction.current) return;
-    if (!active || actionRequest.action === 'run' && (setupPending || remote) || actionRequest.documentId !== documentId || creating || wantsCreate || selectionError || saveState === 'error' || error && !pair) { finishAction(); return; }
+    if (!active || actionRequest.action === 'run' && setupPending || actionRequest.documentId !== documentId || creating || wantsCreate || selectionError || saveState === 'error' || error && !pair) { finishAction(); return; }
     if (!actionReady) return;
     setView(actionRequest.action === 'chat' ? 'Chat' : 'Agent');
     if (actionRequest.action !== 'run') finishAction();
@@ -213,19 +217,13 @@ export default function Example({ actionRequest, onActionHandled, agentsRevision
         </select></label>}
         <Button type="button" kind="secondary" className="new-agent-entry" onClick={() => setWantsCreate(true)}>New agent</Button>
         {actions}
-        {view !== 'Chat' && <SendEntry blocked={sendBlocked} failingCheck={!stale && localRun?.sourceCurrent !== false ? localRun?.report?.cases.find(c => c.verdict === 'failed')?.id : undefined}
-          onProceed={openSend} onFix={() => { setView('Agent'); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>('.instructions-editor')?.focus()); }} />}
+        {view !== 'Chat' && <SendEntry blocked={sendBlocked} onProceed={openSend} />}
       </div>
     </div>
     {selectionError && <p role="alert">{selectionError}</p>}
     {!pair ? error ? <div className="designer-file card"><p role="alert">{error}</p><div className="heading-actions"><Button type="button" kind="secondary" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</Button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div hidden={view !== 'Chat'}><Chat key={boundDocument} documentId={boundDocument} blocked={chatBlocked} /></div>
-      <div hidden={view === 'Chat'} className={`designer-work${remote ? ' designer-remote' : ''}`}>
-      <div className="designer-tests card" hidden={remote}>
-        {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><Button type="button" kind="primary" className="action-spaced" disabled title="Wait for the local cluster and AI to be ready">Run tests</Button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p></div>
-          : <Run onStopLocalCluster={onStopLocalCluster} documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={remote || pendingSoul || saveState !== 'saved'} stale={stale} startRequest={actionReady && view === 'Agent' && actionRequest?.action === 'run' ? actionRequest.id : undefined} onStartRequestHandled={finishAction} onStart={() => { if (latest.current === draft) setStale(false); }} />}
-        {!remote && testSource}
-      </div>
+      <div hidden={view === 'Chat'} className="designer-work">
       <div className="designer-editing">
       <div className="designer-file card">
         <div className="file-toolbar"><h2>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2><span className="muted" role="status">{saveLabel}</span></div>
@@ -240,10 +238,16 @@ export default function Example({ actionRequest, onActionHandled, agentsRevision
         </div>
         {error && <div className="save-error"><p role="alert">{error}</p><Button kind="primary" className="action-spaced" type="button" onClick={() => { void flush(true); }}>Try saving again</Button></div>}
       </div>
-      <div className="designer-checks card">
-        <Send documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} visible={sendOpen} remote={remote} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
-        {remote && testSource}
       </div>
+      <div className="designer-side">
+      <section className="designer-tests" aria-label="This computer"><h2 className="section-label">This computer</h2><div className="card">
+        {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><Button type="button" kind="primary" className="action-spaced" disabled title="Wait for the local cluster and AI to be ready">Run tests</Button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p></div>
+          : <Run onStopLocalCluster={onStopLocalCluster} onEditInstructions={editInstructions} documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={pendingSoul || saveState !== 'saved'} stale={stale} startRequest={actionReady && view === 'Agent' && actionRequest?.action === 'run' ? actionRequest.id : undefined} onStartRequestHandled={finishAction} onStart={() => { if (latest.current === draft) setStale(false); }} />}
+        {testSource}
+      </div></section>
+      <section className="designer-checks" aria-label="Team cluster"><h2 className="section-label">Team cluster</h2><div className="card">
+        <Send documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
+      </div></section>
       </div>
       </div>
     </>}

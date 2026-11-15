@@ -271,6 +271,10 @@ impl Inventory {
         }
     }
 }
+/// Overview's key for the destination an attempt recorded, from the same identity fields `Place` uses.
+pub fn attempt_key(attempt: &AttemptSummary) -> Option<String> {
+    metadata::attempt_key(attempt)
+}
 pub(crate) fn project(mut places: Vec<Place>, history: Option<Vec<AttemptSummary>>) -> Places {
     let Some(history) = history else {
         return Places {

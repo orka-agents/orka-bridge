@@ -442,7 +442,7 @@ test('a transient setup read failure does not invalidate an admitted model conne
   expect(screen.queryByRole('button', { name: 'Model connected' })).toBeNull();
 });
 
-test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remembered cluster needs a fresh successful Use before preflight', async origin => {
+test.each(['saved file', 'cluster Agent'])('%s Open keeps the selected cluster and shows local tests beside Send, without a second Use or a Send', async origin => {
   vi.stubGlobal('isTauri', true);
   const id = '12345678-1234-1234-1234-123456789abc';
   const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' };
@@ -450,17 +450,19 @@ test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remem
   const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-model', ready: true };
   const connected = { status: 'connected', providers: [provider], failure: null };
   const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
-  const calls: string[] = []; let uses = 0; let finish!: (value: unknown) => void;
+  const calls: string[] = []; let uses = 0;
   mockIPC(command => {
     calls.push(command);
-    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_connect_model') return { ready: true };
+    if (command === 'workspace_catalog') return { defaultModel: 'literal-model', models: { state: 'ready', items: [{ id: 'literal-model' }] }, tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Read a page' }] } };
     if (command === 'cluster_contexts') return [context];
     if (command === 'cluster_discover') return [target];
-    if (command === 'cluster_use') return ++uses === 1 ? connected : new Promise(resolve => { finish = resolve; });
+    if (command === 'cluster_use') return ++uses === 1 ? connected : connected;
     if (command === 'overview_places') return { historyState: 'complete', unobserved: [], places: origin === 'saved file' ? [] : [{ key: 'team-place', context: 'team-dev', service: 'control/orka', namespace: 'agents', stale: false, observedAt: 123, agents: [{ name: 'bridge-reader', namespace: 'agents', uid: 'remote-uid', agentType: null, model: null, tools: null, record: { id, source, targetDisplay: 'team-dev · agents', targetUids: { serviceNamespace: 'control', serviceUid: 'svc', deploymentNamespace: 'control', deploymentUid: 'dep', watchedNamespace: 'agents' }, provider: 'team-model', plannedAgentName: 'bridge-reader', agentUid: 'remote-uid', verdict: 'passed', time: 123 } }] }] };
     if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'reader', source, state: 'readable', summary: null, reason: null }] };
     if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
-    if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\nmodel: literal-model\n---\nRead.', tests: 'Checks', source };
+    if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\nmodel: literal-model\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools: []\n---\nRead.', tests: 'Checks', source };
     if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
     if (command === 'send_status') return { documentId: id, view: null, busy: null };
     if (command === 'send_history') return [];
@@ -468,6 +470,7 @@ test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remem
     return null;
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(await screen.findByRole('button', { name: 'Back to clusters' }));
   await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await user.selectOptions(await screen.findByRole('combobox', { name: 'kubectl context' }), context.id);
@@ -477,19 +480,13 @@ test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remem
   const originRegion = await screen.findByRole('region', { name: origin === 'saved file' ? 'This computer' : 'team-dev' });
   await user.click(await within(originRegion).findByRole('button', { name: origin === 'saved file' ? 'Open reader' : 'Open reader on team-dev' }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
-  expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');
-  await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  expect((screen.getByRole('combobox', { name: 'kubectl context' }) as HTMLSelectElement).value).toBe(context.id);
-  expect(uses).toBe(1); expect(calls).not.toContain('send_preflight'); expect(calls).not.toContain('send_start');
-  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
-  expect(calls).not.toContain('send_preflight');
-  await act(async () => { finish(connected); });
-  await screen.findByRole('button', { name: 'Open your agent' });
-  await act(async () => {});
-  expect(calls.filter(c => c === 'send_preflight')).toHaveLength(1);
-  expect(calls).not.toContain('send_start');
-  await user.click(screen.getByRole('button', { name: 'Open your agent' }));
-  expect(await screen.findByRole('heading', { name: 'reader', level: 1 })).toBeTruthy();
+  // Opening a file or its agent from Overview keeps the selected Send destination; local tests are independent of it.
+  expect(document.querySelector('.host-chip')?.textContent).toContain('team-dev');
+  expect(await screen.findByRole('region', { name: 'Team cluster' })).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'This computer' })).toBeTruthy();
+  await waitFor(() => expect((screen.getByRole('button', { name: 'Add a tool' }) as HTMLButtonElement).disabled).toBe(false));
+  expect(calls).toContain('workspace_catalog');
+  expect(uses).toBe(1); expect(calls).not.toContain('send_start');
 });
 
 test('setup Open example restores the sample after Overview opened another document', async () => {
@@ -594,4 +591,29 @@ test('Clusters reads setup without engine diagnostics or legacy IPC', async () =
   expect(screen.queryByRole('heading', { name: 'Engine available' })).toBeNull();
   expect(ipc.mock.calls.filter(call => call[0] === 'engine_call')).toHaveLength(0);
   expect(fetch).not.toHaveBeenCalled();
+});
+
+test('a delayed See in Overview lookup cannot override a later page choice', async () => {
+  vi.stubGlobal('isTauri', true);
+  const id = '9b2b93c4-375c-4815-9717-39852a96e411';
+  const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
+  let release!: (value: unknown) => void;
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: null, localVm: 'notIntegrated', model: 'locked' };
+    if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks', source };
+    if (command === 'agent_run_status') return { documentId: id, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null, busy: null };
+    if (command === 'send_status') return { documentId: id, busy: null, view: { documentId: id, id: '00000000-0000-4000-8000-000000000004', targetId: '00000000-0000-4000-8000-000000000002', providerId: '00000000-0000-4000-8000-000000000003', targetName: 'team', source, model: 'm', agentName: 'bridge-run-one', state: 'unknown', stage: 'stopped', report: null, acknowledged: [], pending: null, error: 'stopped', storageError: false, agentAction: 'update' } };
+    if (command === 'send_history') return [];
+    if (command === 'send_agent_focus') return new Promise(resolve => { release = resolve; });
+    if (command === 'overview_places') return { places: [], historyState: 'complete', unobserved: [] };
+    return null;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await user.click(await screen.findByRole('button', { name: 'See in Overview' }));
+  await waitFor(() => expect(release).toBeDefined());
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await act(async () => release({ key: 'team', name: 'bridge-run-one', namespace: 'agents', uid: 'uid-one' }));
+  await waitFor(() => expect(screen.getByRole('main').getAttribute('aria-labelledby')).toBe('page-title'));
+  expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
 });
