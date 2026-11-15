@@ -110,6 +110,31 @@ test('Overview reads saved documents without opening, setup or VM commands; Open
   expect(calls.filter(c => c === 'agent_open')).toHaveLength(1);
 });
 
+test.each(['Chat', 'Run tests'] as const)('Overview %s routes to the saved document on This computer', async action => {
+  vi.stubGlobal('isTauri', true);
+  const id = '12345678-1234-4234-8234-123456789abc';
+  const installation = '22345678-1234-4234-8234-123456789abc';
+  const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
+  const calls: { command: string; args: unknown }[] = [];
+  mockIPC((command, args) => {
+    calls.push({ command, args });
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'overview_files') return { state: 'complete', runActive: false, historyState: 'complete', runAgents: [], files: [{ documentId: id, name: 'reader', source, state: 'readable', summary: { name: 'reader', description: 'Reads a page', model: 'model', tools: [] }, reason: null, localResult: { installation, documentId: id, source, namespace: 'orka-system', agentName: 'generated-reader', agentUid: 'run-id', observedAt: 123, state: 'complete', report: { verdict: 'passed', passed: 1, total: 1 } } }] };
+    if (command === 'overview_agents') return { state: 'complete', installation, agents: [], observation: null, observedAt: 123, runActive: false, reason: null };
+    if (command === 'overview_places') return { places: [], historyState: 'complete', unobserved: [] };
+    if (command === 'agent_open') { expect(args).toEqual({ documentId: id }); return { documentId: id, name: 'reader', source, agent: '---\nname: reader\n---\nRead.', tests: 'Checks' }; }
+    if (command === 'agent_run_status' || command === 'agent_run') return { documentId: id, busy: null, state: command === 'agent_run' ? 'running' : 'idle', canRun: command !== 'agent_run', source, report: null, acknowledged: [], pending: null, error: null };
+    return null;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: `${action} reader` }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 });
+  if (action === 'Chat') await waitFor(() => expect(screen.getByRole('button', { name: 'Chat', pressed: true })).toBeTruthy());
+  else await waitFor(() => expect(calls.filter(call => call.command === 'agent_run')).toEqual([{ command: 'agent_run', args: { documentId: id } }]));
+  expect(calls.some(call => call.command === 'send_start')).toBe(false);
+});
+
 test('saved sample Open edits the actual file during setup without admitting Run', async () => {
   vi.stubGlobal('isTauri', true); const calls: string[] = [];
   const id = '9b2b93c4-375c-4815-9717-39852a96e411';
@@ -240,9 +265,9 @@ test('model acknowledgment and observed check counts survive navigation', async 
   expect(screen.queryByRole('button', { name: /Model connected|Connecting/ })).toBeNull();
 });
 
-test.each(['cancelled', 'beforeStart', 'unconfirmed'] as const)('a %s run never announces tests passing', async cancellation => {
+test.each(['cancelling', 'cancelled', 'beforeStart', 'unconfirmed'] as const)('a %s run never announces tests passing', async cancellation => {
   const empty = cancellation !== 'cancelled';
-  const snapshot = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'complete', canRun: true, cancellation,
+  const snapshot = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: cancellation === 'cancelling' ? 'running' : 'complete', canRun: cancellation !== 'cancelling', cancellation,
     report: { verdict: cancellation === 'unconfirmed' ? 'unknown' : 'cancelled', cases: empty ? [] : [{ id: 'one', question: 'Question', phase: 'Cancelled', answer: null, completedTools: [], assertions: [], verdict: 'cancelled' }] }, acknowledged: [], pending: null, error: null };
   mockIPC(command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
@@ -253,9 +278,41 @@ test.each(['cancelled', 'beforeStart', 'unconfirmed'] as const)('a %s run never 
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
-  const label = cancellation === 'unconfirmed' ? 'test result unknown' : 'tests cancelled';
-  await within(screen.getByRole('navigation')).findByTitle(`reader, ${label}`);
+  const label = cancellation === 'unconfirmed' ? 'cancellation not confirmed' : cancellation === 'cancelling' ? 'cancelling tests' : 'tests cancelled';
+  const tab = await within(screen.getByRole('navigation')).findByTitle(`reader, ${label}`);
+  if (cancellation === 'unconfirmed') expect(tab.querySelector('.tab-status-word')?.className).toContain('status-needs-you');
+  expect(within(screen.getByRole('contentinfo')).getByText(label[0].toUpperCase() + label.slice(1))).toBeTruthy();
   expect(within(screen.getByRole('contentinfo')).queryByText(/tests passing/i)).toBeNull();
+});
+
+test('Stop from cancellation shares Setup busy/status and leaves a restarted cluster usable', async () => {
+  vi.stubGlobal('isTauri', true);
+  const documentId = '9b2b93c4-375c-4815-9717-39852a96e411';
+  let status = { selected: 'localVm' as string | null, localVm: 'ready', model: 'locked' };
+  let finish!: (value: unknown) => void;
+  const ipc = vi.fn(command => {
+    if (command === 'setup_status') return status;
+    if (command === 'setup_change_local') return new Promise(resolve => { finish = resolve; });
+    if (command === 'agent_open') return { documentId, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
+    if (command === 'agent_run_status') return { documentId, busy: null, state: 'complete', canRun: true, cancellation: 'unconfirmed', canRetryCancellation: false, canCheckCancellation: false, report: { verdict: 'unknown', cases: [] }, acknowledged: [], pending: null, error: 'session' };
+    return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
+  }); mockIPC(ipc);
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
+  await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
+  await user.click(await screen.findByRole('button', { name: 'Stop the local cluster' }));
+  expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
+  expect(within(screen.getByRole('contentinfo')).getByText(/Stopping the local cluster/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Stop the local cluster' })?.hasAttribute('disabled')).not.toBe(false);
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBeNull();
+  status = { selected: null, localVm: 'cancelled', model: 'locked' };
+  await act(async () => finish(status));
+  await screen.findByRole('heading', { name: 'Set up this computer' });
+  status = { selected: 'localVm', localVm: 'ready', model: 'locked' };
+  fireEvent.focus(window);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(false));
+  expect(ipc.mock.calls.filter(([cmd]) => cmd === 'setup_change_local')).toHaveLength(1);
+  expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run')).toHaveLength(0);
 });
 
 test('a running check finishes in the footer after leaving Designer', async () => {
@@ -417,8 +474,8 @@ test.each(['saved file', 'cluster Agent'])('%s Open selects This computer; remem
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   await screen.findByRole('button', { name: 'Open your agent' });
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  const originRegion = await screen.findByRole('region', { name: origin === 'saved file' ? 'This computer' : 'team-dev · agents · control/orka' });
-  await user.click(await within(originRegion).findByRole('button', { name: 'Open reader' }));
+  const originRegion = await screen.findByRole('region', { name: origin === 'saved file' ? 'This computer' : 'team-dev' });
+  await user.click(await within(originRegion).findByRole('button', { name: origin === 'saved file' ? 'Open reader' : 'Open reader on team-dev' }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
   expect(document.querySelector('.host-chip')?.textContent).toContain('This computer');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
@@ -513,11 +570,11 @@ test('Overview waits for native busy release even when the report is already com
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await within(screen.getByRole('contentinfo')).findByText('1 of 1 tests passing');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await screen.findByText('Refresh pending until checks finish');
+  await screen.findByText('Updating when the test finishes.');
   await user.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(lists).toBe(0);
   busy = false;
-  await within(screen.getByRole('region', { name: 'This computer' })).findByText('Local cluster stopped', {}, { timeout: 2000 });
+  await within(screen.getByRole('region', { name: 'This computer' })).findByText('The local cluster is stopped. Start it to test or chat.', {}, { timeout: 2000 });
   expect(lists).toBe(1);
 });
 
