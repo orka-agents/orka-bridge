@@ -20,6 +20,7 @@ pub(super) struct Wire {
     objects: Mutex<HashMap<String, Value>>,
     after_post: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     before_cancel: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    before_result: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     lose_task_reply: AtomicUsize,
 }
 impl Wire {
@@ -290,6 +291,9 @@ impl Wire {
                 } else if route.ends_with("/agents") {
                     (200, json!({"items":[],"metadata":{}}))
                 } else if route.ends_with("/result") {
+                    if let Some(hook) = self.before_result.lock().unwrap().take() {
+                        hook();
+                    }
                     if mode == "result-404" {
                         (404, json!({"error":"missing"}))
                     } else if mode == "result-403" {

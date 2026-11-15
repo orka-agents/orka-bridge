@@ -421,7 +421,13 @@ impl SendOwner {
                 .attempt_binding(id)
                 .map_err(|_| Cancellation::Unconfirmed)?
             {
-                if bound.intent.is_some() {
+                if bound.intent.is_some()
+                    || details
+                        .resources
+                        .iter()
+                        .find(|r| r.kind == "Agent")
+                        .is_none_or(|r| r.uid.is_none())
+                {
                     let recovered = async {
                         let value = transport
                             .request(
@@ -432,21 +438,26 @@ impl SendOwner {
                             )
                             .await
                             .map_err(|_| Cancellation::Unconfirmed)?;
-                        let receipt = bound
-                            .reconciled(&value)
+                        if bound.intent.is_some() {
+                            let receipt = bound
+                                .reconciled(&value)
+                                .map_err(|_| Cancellation::Unconfirmed)?;
+                            bound
+                                .acknowledge(receipt.value())
+                                .map_err(|_| Cancellation::Unconfirmed)?;
+                            self.summary
+                                .save_binding(bound.clone())
+                                .map_err(|_| Cancellation::Unconfirmed)?;
+                        }
+                        let receipt = bound.receipt().map_err(|_| Cancellation::Unconfirmed)?;
+                        receipt
+                            .unchanged(&value)
                             .map_err(|_| Cancellation::Unconfirmed)?;
-                        bound
-                            .acknowledge(receipt.value())
-                            .map_err(|_| Cancellation::Unconfirmed)?;
-                        self.summary
-                            .save_binding(bound)
-                            .map_err(|_| Cancellation::Unconfirmed)?;
-                        let saved = crate::engine::run::SavedResource::acknowledged(&receipt);
-                        if let Some(old) = details.resources.iter_mut().find(|r| r.kind == "Agent")
+                        if bound
+                            .repair_agent(&mut details)
+                            .map_err(|_| Cancellation::Unconfirmed)?
                         {
-                            *old = saved;
-                        } else {
-                            details.resources.insert(0, saved);
+                            summary.agent_uid = Some(receipt.uid);
                         }
                         Ok::<_, Cancellation>(())
                     }
@@ -563,6 +574,7 @@ impl SendOwner {
             });
         }
         details.report = details.report.filter(|report| !report.cases.is_empty());
+        self.summary.complete_binding(id, &details)?;
         self.summary.checkpoint(summary, details.clone())?;
         let view = details.view(id);
         let mut inner = self.inner.lock().unwrap();
@@ -1137,6 +1149,7 @@ impl SendOwner {
             .map(|b| b.action(&desired))
             .unwrap_or(SendAction::Create);
         self.update(id, |v| v.agent_action = Some(action));
+        let previous = bound.clone();
         let mut bound = match bound {
             Some(mut bound) => {
                 bound.attempt = id.0.to_string();
@@ -1193,6 +1206,13 @@ impl SendOwner {
         };
         let initial = self.summary.checkpoint(summary.clone(), details.clone());
         if initial.is_err() {
+            // No mutation was polled: undo only this attempt's local reservation.
+            if let Some(previous) = previous {
+                self.summary.save_binding(previous)
+            } else {
+                self.summary.reject_creation(&bound)
+            }
+            .map_err(|_| Stage::Storage)?;
             self.update(id, |v| v.storage_error = true);
             return Err(Stage::Storage);
         }
@@ -1274,6 +1294,9 @@ impl SendOwner {
                         })
                         .cases
                         .push(report);
+                    self.summary
+                        .complete_binding(&summary.id, &details)
+                        .map_err(|_| ErrorKind::Storage)?;
                 }
             }
             self.update(id, |v| v.report = details.report.clone());
@@ -1390,16 +1413,12 @@ impl SendOwner {
             }
         };
         details.captured_at = unix_seconds();
-        let unresolved = details.unresolved();
+        self.summary
+            .complete_binding(&summary.id, &details)
+            .map_err(|_| Stage::Storage)?;
         if self.summary.checkpoint(summary, details).is_err() {
             self.update(id, |v| v.storage_error = true);
             return Err(Stage::Observe);
-        }
-        if !unresolved {
-            bound.unfinished = false;
-            self.summary
-                .save_binding(bound)
-                .map_err(|_| Stage::Storage)?;
         }
         result
     }

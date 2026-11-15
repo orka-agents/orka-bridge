@@ -83,6 +83,154 @@ async fn repeated_send_reuses_uid_updates_conditionally_and_preserves_archived_a
     assert_eq!(puts(&s).len(), 1);
 }
 #[tokio::test]
+async fn archived_answers_recover_after_update_and_transient_read_failure() {
+    let s = setup().await;
+    let first = s.finish(&id(&s.start().await)).await;
+    edit(&s);
+    assert_eq!(s.finish(&id(&s.start().await)).await["state"], "complete");
+    let writes = (s.api.wire.posts(), puts(&s).len());
+    *s.api.wire.mode.lock().unwrap() = "result-403";
+    let unavailable = s.owner.history_check(&id(&first)).await.unwrap();
+    assert_eq!(unavailable.report.unwrap().verdict, Verdict::Unknown);
+    *s.api.wire.mode.lock().unwrap() = "";
+    let recovered = s.owner.history_check(&id(&first)).await.unwrap();
+    assert_eq!(recovered.availability.as_deref(), Some("available"));
+    assert_eq!(recovered.report.unwrap().verdict, Verdict::Passed);
+    assert_eq!((s.api.wire.posts(), puts(&s).len()), writes);
+}
+#[tokio::test]
+async fn acknowledged_binding_repairs_crash_gap_in_preflight_and_history_check() {
+    for (preflight, missing) in [(true, false), (false, false), (true, true), (false, true)] {
+        let s = setup().await;
+        let first = s.finish(&id(&s.start().await)).await;
+        let send = id(&first);
+        let root = s.home.path().join("app-local/send-history-v1");
+        let path = root.join(format!("{send}.json"));
+        let mut detail: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let tasks = detail["resources"].as_array().unwrap()[1..].to_vec();
+        if missing {
+            detail["resources"].as_array_mut().unwrap().remove(0);
+        } else {
+            detail["resources"][0]["uid"] = Value::Null;
+            detail["resources"][0]["generation"] = json!(0);
+        }
+        std::fs::write(&path, serde_json::to_vec(&detail).unwrap()).unwrap();
+        let fresh = SendOwner::with_history_root(
+            Arc::new(AgentFolder::new(Some(s.home.path().into()))),
+            s.session.clone(),
+            Some(s.home.path().join("app-local")),
+        );
+        let writes = (s.api.wire.posts(), puts(&s).len());
+        if preflight {
+            let check = reply(fresh.preflight(&s.target, &s.provider).await);
+            assert_eq!(check["action"], "unchanged");
+            assert_eq!(check["canSend"], true);
+        } else {
+            let recovered = fresh.history_check(&send).await.unwrap();
+            assert!(!recovered.interrupted);
+            assert_eq!(recovered.report.unwrap().verdict, Verdict::Passed);
+        }
+        let repaired: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(
+            repaired["resources"][0]["uid"],
+            first["acknowledged"][0]["uid"]
+        );
+        assert_eq!(&repaired["resources"].as_array().unwrap()[1..], tasks);
+        assert_eq!((s.api.wire.posts(), puts(&s).len()), writes);
+    }
+}
+#[tokio::test]
+async fn initial_checkpoint_failure_restores_binding_before_any_mutation() {
+    for action in ["create", "unchanged", "update", "separate"] {
+        let s = setup().await;
+        if action != "create" {
+            s.finish(&id(&s.start().await)).await;
+        }
+        if action == "update" {
+            edit(&s);
+        }
+        let root = s.home.path().join("app-local/send-history-v1");
+        std::fs::create_dir_all(&root).unwrap();
+        let bindings = || -> Value {
+            std::fs::read(root.join("bindings.json"))
+                .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+                .unwrap_or(json!([]))
+        };
+        let before = bindings();
+        let writes = (s.api.wire.posts(), puts(&s).len());
+        std::fs::create_dir(root.join("saving")).unwrap();
+        let started = if action == "separate" {
+            separate(&s).await
+        } else {
+            s.start().await
+        };
+        let failed = s.finish(&id(&started)).await;
+        assert_eq!(failed["storageError"], true, "{action}: {failed}");
+        assert_eq!((s.api.wire.posts(), puts(&s).len()), writes);
+        std::fs::remove_dir(root.join("saving")).unwrap();
+        assert_eq!(bindings(), before, "{action}");
+        let check = reply(s.owner.preflight(&s.target, &s.provider).await);
+        assert_eq!(check["canSend"], true, "{action}: {check}");
+        assert_eq!(s.finish(&id(&s.start().await)).await["state"], "complete");
+    }
+}
+#[tokio::test]
+async fn terminal_details_wait_for_durable_completion_before_removal_and_next_send() {
+    for refresh in [false, true] {
+        let s = setup().await;
+        let root = s.home.path().join("app-local/send-history-v1");
+        let blocked = root.clone();
+        let hook: Box<dyn FnOnce() + Send> = Box::new(move || {
+            std::fs::rename(
+                blocked.join("bindings.json"),
+                blocked.join("bindings-backup"),
+            )
+            .unwrap();
+            std::fs::create_dir(blocked.join("bindings.json")).unwrap();
+        });
+        let send = if refresh {
+            let send = id(&s.start().await);
+            s.finish(&send).await;
+            let path = root.join(format!("{send}.json"));
+            let mut detail: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            detail["resources"][1]["terminal"] = json!(false);
+            std::fs::write(path, serde_json::to_vec(&detail).unwrap()).unwrap();
+            let path = root.join("bindings.json");
+            let mut bindings: Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            bindings[0]["unfinished"] = json!(true);
+            std::fs::write(path, serde_json::to_vec(&bindings).unwrap()).unwrap();
+            *s.api.wire.before_result.lock().unwrap() = Some(hook);
+            let _ = s.owner.history_check(&send).await;
+            send
+        } else {
+            *s.api.wire.before_result.lock().unwrap() = Some(hook);
+            let send = id(&s.start().await);
+            s.finish(&send).await;
+            send
+        };
+        assert!(
+            s.owner.history_details(&send).unwrap().interrupted,
+            "refresh={refresh}"
+        );
+        assert!(s.owner.history_remove(&send).await.is_err());
+        std::fs::remove_dir(root.join("bindings.json")).unwrap();
+        std::fs::rename(root.join("bindings-backup"), root.join("bindings.json")).unwrap();
+        let recovered = s.owner.history_check(&send).await.unwrap();
+        assert!(!recovered.interrupted);
+        let bindings: Value =
+            serde_json::from_slice(&std::fs::read(root.join("bindings.json")).unwrap()).unwrap();
+        assert_eq!(bindings[0]["unfinished"], false);
+        s.owner.history_remove(&send).await.unwrap();
+        assert_eq!(
+            reply(s.owner.preflight(&s.target, &s.provider).await)["action"],
+            "unchanged"
+        );
+        assert_eq!(s.finish(&id(&s.start().await)).await["state"], "complete");
+        assert_eq!(s.agent_posts().len(), 1);
+    }
+}
+#[tokio::test]
 async fn definite_create_rejections_do_not_leave_uncertain_bindings_or_tasks() {
     for mode in [
         "reject-agent400",

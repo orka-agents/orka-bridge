@@ -1128,6 +1128,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try fixtureControl(["action": "update-mode", "place": "fixture-cluster", "mode": "old-404"])
     try clickSendControl("Update agent and run tests", scrolling: -350)
     try capturePreflight("send-older-orka", "This Orka can't safely update this agent")
+    try focusSend()
+    try capturePreflight("send-older-orka-action", "Send as a separate agent")
     try assertDeployment(passedUID, generation: 2, tasks: 3)
     try clickSendControl("Send as a separate agent", scrolling: -250)
     try capturePreflight("send-separate-result", "1 of 1 passed")
@@ -1303,11 +1305,17 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try focusSend()
     try capturePreflight("send-cancel-race-result", "1 of 2 passed")
     try capturePreflight("send-cancel-race-failure", "The answer did not include")
-    clickTab("Overview", [])
-    // The primary-place captures retain the changed two-test revision. Restore
-    // the original pair before the separate place/provenance scenarios.
+    // Restore and actually Send the common file version on the primary cluster
+    // before comparing it with the secondary. Merely restoring local bytes does
+    // not undo the live spec updates exercised above.
     try restoreTemporaryTests?(); try restoreTemporaryAgent?()
     restoreTemporaryTests = nil; restoreTemporaryAgent = nil
+    try clickSendControl("Check again", scrolling: -250)
+    try clickSendControl("Reload saved files", scrolling: -250)
+    try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "completed"])
+    try clickSendControl("Update agent and run tests", scrolling: -350)
+    try capturePreflight("send-restored-shared-version", "1 of 1 passed")
+    clickTab("Overview", [])
     // Overview's explicit refresh gives the primary place its historical observation.
     // Places shows it later without refreshing again; the secondary has none yet.
     scrollMain(12000)

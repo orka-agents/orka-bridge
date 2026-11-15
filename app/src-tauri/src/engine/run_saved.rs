@@ -110,13 +110,13 @@ impl NativeRunner<'_> {
         cases: &[RunCase],
         previous: Option<RunReport>,
     ) -> Recovery {
-        let archived = resources
-            .iter()
-            .filter(|r| r.kind == "Task")
-            .all(|r| r.terminal)
-            && previous
-                .as_ref()
-                .is_some_and(|r| r.verdict != Verdict::Unknown && r.cases.len() == cases.len());
+        // Availability/verdict can change after a failed read; terminal UID-bound
+        // Task receipts remain tied to the captured Agent revision.
+        let archived = resources.iter().any(|r| r.kind == "Task")
+            && resources
+                .iter()
+                .filter(|r| r.kind == "Task")
+                .all(|r| r.terminal && r.uid.is_some());
         let mut report = previous.unwrap_or(RunReport {
             cases: Vec::new(),
             verdict: Verdict::Unknown,

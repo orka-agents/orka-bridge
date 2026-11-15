@@ -103,6 +103,19 @@ impl Binding {
         }
         self.identity(value, desired)
     }
+    pub fn repair_agent(&self, details: &mut AttemptDetails) -> Result<bool, Stage> {
+        let old = details.resources.iter_mut().find(|r| r.kind == "Agent");
+        if old.as_ref().is_some_and(|r| r.uid.is_some()) {
+            return Ok(false); // An acknowledged archived revision is never replaced.
+        }
+        let saved = crate::engine::run::SavedResource::acknowledged(&self.receipt()?);
+        if let Some(old) = old {
+            *old = saved;
+        } else {
+            details.resources.insert(0, saved);
+        }
+        Ok(true)
+    }
     fn validate(&self) -> Result<(), &'static str> {
         let text = |s: &str| !s.is_empty() && s.len() <= 4096 && !s.contains('\0');
         let dns = |s: &str| crate::engine::run::valid_cancel_identity(s, "uid");
@@ -199,6 +212,26 @@ impl SummaryStore {
         )
         .map_err(|_| "storage")
     }
+    /// Release the durable barrier before terminal evidence can be removed/evicted.
+    pub(super) fn complete_binding(
+        &self,
+        attempt: &str,
+        details: &AttemptDetails,
+    ) -> Result<(), &'static str> {
+        if details.unresolved()
+            || details.resources.is_empty()
+            || details.resources.iter().any(|r| r.uid.is_none())
+        {
+            return Ok(());
+        }
+        if let Some(mut binding) = self.attempt_binding(attempt)? {
+            if binding.unfinished {
+                binding.unfinished = false;
+                self.save_binding(binding)?;
+            }
+        }
+        Ok(())
+    }
     pub(super) fn save_binding(&self, binding: Binding) -> Result<(), &'static str> {
         let _lock = self.lock.lock().map_err(|_| "storage")?;
         binding.validate()?;
@@ -270,29 +303,11 @@ impl SendOwner {
                     }
                 }
             })?;
-        if binding.intent.is_some() {
+        let pending = binding.intent.is_some();
+        if pending {
             let receipt = binding.reconciled(&current)?;
             binding.acknowledge(receipt.value())?;
             // Agent acknowledgement is durable before repairing attempt details.
-            self.summary
-                .save_binding(binding.clone())
-                .map_err(|_| Stage::Storage)?;
-            if let Ok((mut summary, Some(mut details))) = self.summary.record(&binding.attempt) {
-                let saved = crate::engine::run::SavedResource::acknowledged(&receipt);
-                if let Some(old) = details.resources.iter_mut().find(|r| r.kind == "Agent") {
-                    *old = saved;
-                } else {
-                    details.resources.insert(0, saved);
-                }
-                summary.agent_uid = Some(receipt.uid.clone());
-                self.summary
-                    .checkpoint(summary, details.clone())
-                    .map_err(|_| Stage::Storage)?;
-                binding.unfinished = details.unresolved();
-            } else {
-                // Pending Agent intent proves the Task barrier was never crossed.
-                binding.unfinished = false;
-            }
             self.summary
                 .save_binding(binding.clone())
                 .map_err(|_| Stage::Storage)?;
@@ -301,6 +316,28 @@ impl SendOwner {
             .receipt()?
             .unchanged(&current)
             .map_err(|_| Stage::UpdateConflict)?;
+        if let Ok((mut summary, Some(mut details))) = self.summary.record(&binding.attempt) {
+            if binding.repair_agent(&mut details)? {
+                summary.agent_uid = Some(binding.receipt()?.uid);
+                self.summary
+                    .complete_binding(&binding.attempt, &details)
+                    .map_err(|_| Stage::Storage)?;
+                self.summary
+                    .checkpoint(summary, details.clone())
+                    .map_err(|_| Stage::Storage)?;
+            }
+            if pending {
+                binding.unfinished = details.unresolved();
+            }
+        } else if pending {
+            // Pending Agent intent proves the Task barrier was never crossed.
+            binding.unfinished = false;
+        }
+        if pending {
+            self.summary
+                .save_binding(binding.clone())
+                .map_err(|_| Stage::Storage)?;
+        }
         if binding.unfinished {
             if let Ok((_, Some(details))) = self.summary.record(&binding.attempt) {
                 if !details.unresolved() && !details.resources.is_empty() {
