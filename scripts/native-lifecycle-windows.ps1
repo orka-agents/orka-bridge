@@ -390,7 +390,10 @@ try {
         $name = Wait-For 'New agent Name field missing' { Find-Control $script:window 'Name' ([System.Windows.Automation.ControlType]::Edit) }
         Press $name
         [System.Windows.Forms.SendKeys]::SendWait('web-reader')
-        Press (Find-Control $script:window 'Your own repo' ([System.Windows.Automation.ControlType]::RadioButton))
+        Press (Wait-For 'Own-repo choice did not settle' {
+            $control = Find-Control $script:window 'Your own repo' ([System.Windows.Automation.ControlType]::RadioButton)
+            if ($control -and $control.Current.IsEnabled -and !$control.Current.IsOffscreen) { $control }
+        })
         $create = Wait-For 'Own-repo Create missing' { Find-Control $script:window 'Create' $button }
         if ($create.Current.IsEnabled) { throw 'Own-repo Create must wait for a native folder selection' }
         Press (Wait-For 'Choose repo button missing' { Find-Control $script:window 'Choose repo' $button })
