@@ -229,7 +229,7 @@ export default function Send({ documentId = SAMPLE_DOCUMENT_ID, place, source, m
   // unchanged agent is a result action (below), never the card's primary wording.
   const action = checked?.value?.action;
   const sendLabel = !action || action === 'create' ? 'Send and run tests' : 'Update agent and run tests';
-  const againLabel = action === 'update' || action === 'blocked' ? 'Update agent and run tests' : 'Run cluster tests again';
+  const againLabel = action === 'unchanged' ? 'Run cluster tests again' : sendLabel;
   async function mutate(command: 'send_start' | 'send_cancel', separateAgent = false) {
     if (admitted.current) return;
     let args: Record<string, unknown>;

@@ -87,6 +87,18 @@ test('an acknowledged agent makes See in Overview the one primary, and the rerun
   await user.click(open);
   expect(seen).toHaveBeenCalledWith(sendId);
 });
+test('an earlier result from another destination never labels a first Send there as a rerun', async () => {
+  native(finished('passed'));
+  const other = { ...target, id: '00000000-0000-4000-8000-000000000005', context_name: 'other-team' };
+  const calls = vi.fn((command: string) => command === 'send_status' ? { documentId: id, view: finished('passed'), busy: null } : command === 'send_history' ? [] : command === 'send_preflight' ? { ...allowed, targetId: other.id } : null);
+  mockIPC(calls);
+  render(<Send place={{ ...place, target: other }} source={source} stale={false} onSeeInOverview={() => undefined} />);
+  await screen.findByText('Earlier result', { selector: '.pill' });
+  const send = await screen.findByRole('button', { name: 'Send and run tests' });
+  await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(false));
+  expect(screen.queryByRole('button', { name: 'Run cluster tests again' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'See in Overview' })).toBeTruthy();
+});
 test('without an acknowledged agent there is no See in Overview link', async () => {
   native(view('unknown', null, { acknowledged: [], stage: 'submit', error: 'submit' }));
   render(<Send place={place} source={source} stale={false} onSeeInOverview={() => undefined} />);
