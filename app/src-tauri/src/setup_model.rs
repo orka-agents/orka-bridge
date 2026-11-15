@@ -526,7 +526,11 @@ impl SetupStore {
                     .disconnect_model(connection)
                     .map_err(|_| SetupError::model("modelConnect"))?;
                 if stopped.phase != ModelPhase::Idle {
-                    return Err(SetupError::connect(stopped.diagnostic));
+                    let mut error = SetupError::connect(stopped.diagnostic);
+                    if b.kind == CredentialKind::Key {
+                        error.kind = "modelKeyCleanup";
+                    }
+                    return Err(error);
                 }
                 client
                     .clear_credential_file(connection.generation)

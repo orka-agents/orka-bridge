@@ -62,6 +62,15 @@ test.each(['modelCredentialRejected', 'modelProviderUnreachable', 'modelModelUna
   expect(screen.queryByText(/no longer has a saved/)).toBeNull();
   expect(screen.getByRole('alert').textContent).not.toContain('this key');
 });
+test.each(['modelCaptureUnavailable', 'modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'])('Copilot %s before storage leaves the key choice available', async kind => {
+  invoke.mockRejectedValueOnce({ kind }).mockResolvedValueOnce({ ready: true, connection: anthropic });
+  render(<Model enabled />); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' })); await screen.findByRole('alert');
+  expect(screen.getByRole('radio', { name: /Your own API key/ }).matches(':disabled')).toBe(false);
+  expect(screen.queryByRole('button', { name: 'Remove sign-in' })).toBeNull();
+  keyChoice(); fireEvent.change(field(), { target: { value: key } }); fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await screen.findByRole('button', { name: 'Change' });
+  expect(invoke.mock.calls[1]).toEqual(['setup_connect_key', { vendor: 'anthropic', key }]);
+});
 test('empty or wrong-company key never crosses IPC; company changes clear the field', () => {
   render(<Model enabled />); keyChoice();
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));

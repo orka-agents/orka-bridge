@@ -98,6 +98,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
     } else {
       if (result.vendor) { setChoice('key'); setVendor(result.vendor); }
       if (action === 'connect' && result.category === 'modelBusy') { setAttempted(before.attempted); setRemoved(before.removed); }
+      if (['modelCaptureUnavailable', 'modelCaptureFailed', 'modelCaptureInvalid', 'modelCaptureTimedOut'].includes(result.category)) setAttempted(false);
       setError(result);
       if ((choice === 'key' || result.vendor) && ['modelCredentialRejected', 'modelProviderUnreachable', 'modelModelUnavailable'].includes(result.category)) setRemoved(true);
     }

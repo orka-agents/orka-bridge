@@ -151,8 +151,8 @@ export default function Example({ sampleRevision = 0, agentsRevision = 0, onRegi
     setSaveState('dirty'); clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush(); }, 500);
   };
-  async function reloadSource() {
-    if (reloadAdmitted.current || busy.current || needsCommit.current || pendingSoulCurrent.current || latest.current !== saved.current) return;
+  async function reloadSource(prepared = false) {
+    if ((reloadAdmitted.current && !prepared) || busy.current || needsCommit.current || pendingSoulCurrent.current || latest.current !== saved.current) return;
     reloadAdmitted.current = true; setReloading(true);
     const request = ++reloadEpoch.current;
     const before = latest.current;
@@ -172,7 +172,7 @@ export default function Example({ sampleRevision = 0, agentsRevision = 0, onRegi
     } finally { if (request === reloadEpoch.current) { reloadAdmitted.current = false; setReloading(false); } }
   }
   useEffect(() => {
-    if (sampleRevision && boundDocument === SAMPLE_DOCUMENT_ID) void reloadSource().catch(() => { /* Keep the current draft on an unreadable refresh. */ });
+    if (sampleRevision && boundDocument === SAMPLE_DOCUMENT_ID) void reloadSource(true).catch(() => { /* Keep the current draft on an unreadable refresh. */ });
   }, [sampleRevision, boundDocument]);
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const saveLabel = pendingSoul ? 'Unsaved changes' : { saved: '', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];

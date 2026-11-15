@@ -429,6 +429,68 @@ fn definitive_key_failures_disconnect_clear_delete_and_cleanup_uncertainty_wins(
 }
 
 #[test]
+fn pending_key_disconnect_validation_failure_never_reports_credential_removal() {
+    for code in [
+        ModelErrorCode::CredentialRejected,
+        ModelErrorCode::ProviderUnreachable,
+        ModelErrorCode::ModelUnavailable,
+    ] {
+        let (_tmp, setup, install) = selected_setup();
+        let vault = FakeVault {
+            secret: Some(KEY.as_bytes()),
+            ..FakeVault::default()
+        };
+        setup
+            .associate_secret_for_vendor(
+                install,
+                KEY.as_bytes(),
+                Some(ModelVendor::Anthropic),
+                &vault,
+            )
+            .unwrap();
+        let conn = ModelConnection {
+            selection: key_selection(ModelVendor::Anthropic),
+            ..connection()
+        };
+        let nonce = Uuid::new_v4();
+        let root = setup.root.as_ref().unwrap();
+        let mut binding = read_binding(root).unwrap().unwrap();
+        binding.phase = Phase::Pending;
+        binding.nonce = Some(nonce);
+        binding.connection = Some(conn.clone());
+        write_binding(root, &binding).unwrap();
+        let (mut client, worker) = peer(nonce, move |r| {
+            Some(match &r.body {
+                RequestBody::ModelStatus {} => key_remote(
+                    Some(conn.clone()),
+                    conn.generation,
+                    ModelPhase::Unknown,
+                    None,
+                ),
+                RequestBody::ModelDisconnect { .. } => key_remote(
+                    Some(conn.clone()),
+                    conn.generation,
+                    ModelPhase::Unknown,
+                    Some(code),
+                ),
+                _ => panic!("failed Disconnect cannot clear or publish credentials"),
+            })
+        });
+        let error = setup
+            .connect_saved_key_model(install, ModelVendor::Anthropic, &mut client, &vault)
+            .unwrap_err();
+        assert_eq!(error.kind, "modelKeyCleanup");
+        assert_eq!(error.vendor, Some(ModelVendor::Anthropic));
+        assert!(error.diagnostic.is_some());
+        assert_eq!(vault.counts(), (1, 0, 0));
+        assert_eq!(read_binding(root).unwrap().unwrap().phase, Phase::Pending);
+        assert!(vault.slots.lock().unwrap().contains_key(&binding.slot));
+        drop(client);
+        assert_eq!(worker.join().unwrap().frames.len(), 2);
+    }
+}
+
+#[test]
 fn identityless_key_failure_is_uncertain_and_retries_only_the_installed_attempt() {
     let (_tmp, setup, install) = selected_setup();
     let vault = FakeVault {
