@@ -154,6 +154,11 @@ test('Manage Change context focuses its selector after a delayed kubeconfig read
   change.focus(); await user.keyboard('{Enter}');
   const select = await screen.findByRole('combobox', { name: 'kubectl context' });
   expect(select.matches(':disabled')).toBe(true);
+  const remove = screen.getByRole('button', { name: 'Remove' });
+  remove.focus(); await user.keyboard('{Enter}');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep cluster' }));
+  await user.keyboard('{Enter}');
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove' }));
   await act(async () => contexts.resolve([context]));
   await waitFor(() => expect(select.matches(':disabled')).toBe(false));
   expect(document.activeElement).toBe(select);
