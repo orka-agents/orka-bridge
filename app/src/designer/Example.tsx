@@ -79,7 +79,8 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   // One keyboard target: the failing local result, which then offers Edit instructions.
   const focusLocalResult = (testId: string) => requestAnimationFrame(() => {
     const result = [...document.querySelectorAll<HTMLElement>('.designer-tests [data-result-id]')].find(node => node.dataset.resultId === testId);
-    result?.querySelector<HTMLElement>('summary')?.focus();
+    const summary = result?.querySelector<HTMLElement>('summary');
+    if (summary) summary.focus(); else editInstructions();
   });
   const latest = useRef(''); const saved = useRef(''); const busy = useRef(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

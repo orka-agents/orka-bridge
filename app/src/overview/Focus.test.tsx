@@ -66,6 +66,17 @@ test('Refresh retries a present-but-unlisted target and clears the stale absence
   await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
   expect(screen.queryByText('Not shown in Overview yet.')).toBeNull();
 });
+test('leaving an agent-specific request clears its warning before ordinary Overview navigation', async () => {
+  const calls = ipc(places([]), 'gone');
+  const view = render(<Overview {...props} focus={{ id: 1, sendId: 's1', target: target('uid-one') }} />);
+  await screen.findByText(/The original agent is no longer available/);
+  view.rerender(<Overview {...props} active={false} />);
+  view.rerender(<Overview {...props} />);
+  await waitFor(() => expect(screen.queryByText(/The original agent is no longer available/)).toBeNull());
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  expect(screen.queryByText(/The original agent is no longer available/)).toBeNull();
+  expect(calls.mock.calls.filter(([command]) => command === 'send_agent_check')).toHaveLength(1);
+});
 test('a Send with no recorded agent says so without any check', async () => {
   const calls = ipc(places([agent('uid-one')]));
   render(<Overview {...props} focus={{ id: 1, sendId: 's1' }} />);

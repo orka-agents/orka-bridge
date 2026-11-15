@@ -45,7 +45,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   const [focusTick, setFocusTick] = useState(0);
   const [focusNote, setFocusNote] = useState<string>();
   useEffect(() => {
-    if (!active || !focus) return;
+    if (!active || !focus) { setFocusNote(undefined); toFocus.current = undefined; return; }
     const request = ++focusEpoch.current;
     setByAgent(false); setFocusNote(undefined); toFocus.current = undefined;
     const { target } = focus;

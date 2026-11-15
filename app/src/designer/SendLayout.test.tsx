@@ -14,11 +14,11 @@ const failed = { id: 'reads-the-title', question: 'What is the title?', phase: '
 const localResult = { documentId: id, busy: null, state: 'complete', stage: 'done', canRun: true, modelConnected: true, source, report: { verdict: 'failed', cases: [failed] }, acknowledged: [], pending: null, error: null };
 beforeEach(() => { Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; } }); });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
-function native() {
+function native(run: object = localResult) {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn((command: string) => {
     if (command === 'agent_open') return pair;
-    if (command === 'agent_run_status' || command === 'agent_run') return localResult;
+    if (command === 'agent_run_status' || command === 'agent_run') return run;
     if (command === 'send_status') return { documentId: id, view: null, busy: null };
     if (command === 'send_history') return [];
     if (command === 'workspace_catalog') return { defaultModel: 'literal-model', models: { state: 'ready', items: [{ id: 'literal-model' }] }, tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Read a page' }] } };
@@ -60,6 +60,16 @@ test('Fix it first moves keyboard focus to the single failing local result, whic
   expect(local.contains(document.activeElement)).toBe(true);
   await user.click(within(local).getByRole('button', { name: 'Edit instructions' }));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Instructions' })));
+});
+test('Fix it first falls back to Instructions when an active local suite hides partial failed results', async () => {
+  native({ ...localResult, state: 'running', stage: 'observe', canRun: false, busy: { documentId: id, name: 'web-reader' } });
+  const user = userEvent.setup(); render(<Example remote place={place} />);
+  const send = await screen.findByRole('button', { name: 'Send and run tests' });
+  await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(false));
+  await user.click(send);
+  await user.click(await screen.findByRole('button', { name: 'Fix it first' }));
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Instructions' })));
+  expect(screen.queryByRole('dialog')).toBeNull();
 });
 test('the page-head Send control only brings the Send card into view', async () => {
   const ipc = native(); const user = userEvent.setup();
