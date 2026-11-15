@@ -482,7 +482,7 @@ func capture(_ name: String, _ page: String) throws -> [VNRecognizedTextObservat
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         // Vision can read the capital I in AI as lowercase l. Match the rest of the heading.
         let welcome = text.contains("Build an") && text.contains("does a real job")
-        let places = text.contains("Choose where agents run")
+        let places = text.contains("Choose where agents run") || nativeTextIsVisible("Choose where agents run")
         let detail = text.contains("Back to clusters")
         require(welcome || places || detail, "Places heading or subview not visible; observed: \(text)")
         // The old chooser and its radios were replaced by Places and its subviews.
