@@ -231,7 +231,13 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
         fatalError("Ready Send action missing beside local results")
     }
     click("Send and run tests", [])
-    _ = try capture("local-send-warning-\(size)", ["Local test", "failed", "Fix it first", "Send anyway"])
+    let warning = try capture("local-send-warning-\(size)", ["Local test", "failed", "Fix it first", "Send anyway"])
+    guard let message = warning.first(where: { ($0.topCandidates(1).first?.string ?? "").contains("Local test") }),
+        let fix = warning.first(where: { ($0.topCandidates(1).first?.string ?? "").contains("Fix it first") }) else {
+        fatalError("Warning message and primary action need visible native bounds")
+    }
+    require((message.boundingBox.minY - fix.boundingBox.maxY) * window()!.1.height < 160,
+            "Warning must fit its content rather than stretch to viewport height")
     require(focusedButtonTitle() == "Fix it first", "Warning must initially focus Fix it first")
     guard let after = nativeBounds(send) else { fatalError("Send action lost its bounds") }
     require(abs(before.minY - after.minY) < 2 && abs(before.minX - after.minX) < 2,
