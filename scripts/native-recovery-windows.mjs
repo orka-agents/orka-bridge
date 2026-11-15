@@ -221,7 +221,7 @@ try {
     ['setup-startup-slow', 'starting', startup(45000), false, 'Taking longer than the rough 30-second estimate'],
     ['setup-ready', 'ready', null, false, 'The local cluster is running on this computer.'],
   ];
-  const pair = { agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\n---\nFetch before answering.', tests: 'The checksum check.' };
+  const pair = { agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\n---\nFetch before answering.', tests: '---\nschemaVersion: 1\n---\n```yaml agent-test\nid: page-checksum\ntitle: Copies the checksum from the page\ninput: What checksum does the page show?\nassertions: [{id: checksum, type: contains, value: fixture-checksum}]\n```\n' };
   async function captureSetup(theme, size, [name, localVm, progress, queue, expected, failLater, modelSupported = true]) {
     ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `setup-${theme}-${size}-${name}` }));
     await evaluate(`(() => {
@@ -277,7 +277,7 @@ try {
     }
   }
   // Setup actions and the first test use the compiled app and synthetic IPC only.
-  const actionFixtures = ['places-empty', 'places-populated', 'local-preflight', 'local-preflight-missing', 'ai-idle', 'ai-cli-missing', 'ai-connecting', 'ai-connected', 'local-completed', 'local-stopped', 'ai-removal-confirmation', 'ai-removal-retry', 'first-test-running', 'first-test-result', 'first-test-badges', 'switch-place', 'designer', 'designer-loading', 'designer-open-error', 'designer-connected', 'designer-file', 'designer-failed', 'designer-remote', 'local-cancel-running', 'local-cancel-cancelling', 'local-cancel-cancelled', 'local-cancel-unconfirmed', 'local-cancel-before-start'];
+  const actionFixtures = ['places-empty', 'places-populated', 'local-preflight', 'local-preflight-missing', 'ai-idle', 'ai-cli-missing', 'ai-connecting', 'ai-connected', 'local-completed', 'local-stopped', 'ai-removal-confirmation', 'ai-removal-retry', 'first-test-running', 'first-test-result', 'first-test-badges', 'switch-place', 'designer', 'designer-loading', 'designer-open-error', 'designer-connected', 'designer-file', 'designer-failed', 'designer-passed', 'designer-stale', 'designer-running', 'designer-remote', 'local-cancel-running', 'local-cancel-cancelling', 'local-cancel-cancelled', 'local-cancel-unconfirmed', 'local-cancel-before-start'];
   async function clickAction(label) {
     const action = `[...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(label)} && !button.disabled && button.getClientRects().length)`;
     await until(() => evaluate(`!!${action}`), label);
@@ -327,7 +327,7 @@ try {
       window.__bridgeRuns = 0;
       const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
       const status = () => ({ selected: selected ? 'localVm' : null, localVm: selected ? 'ready' : window.__bridgeStops ? 'cancelled' : 'idle', model: selected ? 'available' : 'locked' });
-      const report = { verdict: 'failed', cases: [{ id: 'page-checksum', question: 'What checksum does the page show?', phase: 'Succeeded', answer: 'No checksum was given.', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', expected: 'fixture-checksum', verdict: 'failed' }], verdict: 'failed' }] };
+      const report = { verdict: 'failed', cases: [{ id: 'page-checksum', title: 'Copies the checksum from the page', question: 'What checksum does the page show?', phase: 'Succeeded', answer: 'No checksum was given.', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', expected: 'fixture-checksum', verdict: 'failed' }], verdict: 'failed' }] };
       const snapshot = () => {
         if (localCancel) {
           const state = window.__bridgeCancellation;
@@ -335,14 +335,15 @@ try {
           const cancellation = state === 'running' ? 'none' : state === 'before-start' ? 'beforeStart' : state;
           return { documentId, source, busy: running ? { documentId, name: 'web-reader' } : null, state: running ? 'running' : 'complete', stage: running ? state === 'running' ? 'observe' : 'cancel' : 'done', canRun: !running, modelConnected: true, model: 'fixture-model', cancellation, canCancel: state === 'running', canRetryCancellation: state === 'unconfirmed', canCheckCancellation: state === 'unconfirmed', report: { verdict: state === 'unconfirmed' || state === 'running' || state === 'cancelling' ? 'unknown' : 'cancelled', cases: state === 'before-start' ? [] : state === 'cancelled' ? [cancelled, finished] : [finished] }, acknowledged: [], pending: null, error: null };
         }
-        const running = submitted && name === 'first-test-running';
-        const complete = name === 'designer-failed' || submitted && (name === 'first-test-result' || name === 'first-test-badges');
+        const running = name === 'designer-running' || submitted && name === 'first-test-running';
+        const complete = ['designer-failed', 'designer-passed', 'designer-stale'].includes(name) || submitted && (name === 'first-test-result' || name === 'first-test-badges');
+        if (name === 'designer-passed') { report.verdict = report.cases[0].verdict = report.cases[0].assertions[0].verdict = 'passed'; report.cases[0].answer = 'fixture-checksum'; }
         const badge = window.__bridgeBadgeState;
         if (name === 'first-test-badges') {
           report.verdict = report.cases[0].verdict = report.cases[0].assertions[0].verdict = badge === 'failed' ? 'failed' : 'passed';
           if (submitted && badge === 'unknown') throw Error('Lost sample status');
         }
-        return { documentId, ...(name === 'first-test-badges' ? { source: badge === 'stale' ? { ...source, agent: 'c'.repeat(64) } : source } : {}), busy: running ? { documentId, name: 'web-reader' } : null, state: running ? 'running' : complete ? 'complete' : 'idle', canRun: !running, modelConnected: connected, stage: running ? 'observe' : complete ? 'done' : null, model: connected ? 'fixture-model' : null, report: complete ? report : null, acknowledged: [], pending: null, error: null };
+        return { documentId, canCancel: running, ...(name === 'designer-stale' ? { source: { ...source, tests: 'c'.repeat(64) } } : {}), ...(name === 'first-test-badges' ? { source: badge === 'stale' ? { ...source, agent: 'c'.repeat(64) } : source } : {}), busy: running ? { documentId, name: 'web-reader' } : null, state: running ? 'running' : complete ? 'complete' : 'idle', canRun: !running, modelConnected: connected, stage: running ? 'observe' : complete ? 'done' : null, model: connected ? 'fixture-model' : null, report: complete ? report : null, acknowledged: [], pending: null, error: null };
       };
       localStorage.setItem('bridge.welcomeSeen.v1', '1');
       localStorage.removeItem('bridge.firstTest.v1');
@@ -446,8 +447,8 @@ try {
         return { buttons: [...card.querySelectorAll('button')].map(b => b.textContent.trim()), text: card.innerText, rows: [...card.querySelectorAll('.test-result > summary code')].map(c => c.textContent), width: innerWidth, scrollWidth: document.querySelector('main').scrollWidth };
       })()`);
       if (probe.scrollWidth > probe.width + 2) throw Error('Cancellation layout overflows: ' + JSON.stringify(probe));
-      if (state === 'running' && !probe.buttons.includes('Cancel tests')) throw Error('Missing local Cancel');
-      if (state === 'cancelling' && probe.buttons.includes('Cancel tests')) throw Error('Cancelling is a status, not a button');
+      if (state === 'running' && !probe.buttons.includes('Stop')) throw Error('Missing local Stop');
+      if (state === 'cancelling' && probe.buttons.includes('Stop')) throw Error('Cancelling is a status, not a button');
       if (state === 'cancelled' && (probe.rows.join('|') !== 'finished-answer|unfinished-test' || !probe.text.includes('1 passed, 0 failed, 1 cancelled.'))) throw Error('Lost results/order/counts: ' + JSON.stringify(probe));
       if (state === 'unconfirmed' && !['Retry cancellation', 'Check again', 'Stop the local cluster'].every(b => probe.buttons.includes(b))) throw Error('Missing cancellation recovery');
       if (state === 'before-start' && (!probe.text.includes('Cancelled before any test started.') || probe.rows.length)) throw Error('Incorrect before-start result');
@@ -459,7 +460,7 @@ try {
       await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
       if (await evaluate('window.__bridgeCancelCalls.length') !== 0) throw Error('Cancellation replayed on mount');
       if (state === 'running') {
-        await clickAction('Cancel tests');
+        await clickAction('Stop');
         await until(() => evaluate(`document.querySelector('.example-run .pill')?.textContent === 'Cancelling' && window.__bridgeCancelCalls.join() === 'agent_run_cancel'`), 'explicit native renderer Cancel');
       }
       if (state === 'unconfirmed') {
@@ -558,7 +559,7 @@ try {
   }
   // Resize the real native window so its client area is 540x900, as a user would. Win32 SetWindowPos through
   // PowerShell, then verify what the embedded WebView actually reports; never assume the resize worked.
-  const target = { width: 540, height: 900 };
+  async function resizeContent(target) {
   const resizeScript = `
 $ErrorActionPreference = 'Stop'
 Add-Type @'
@@ -598,10 +599,17 @@ $c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
     reported = await viewport();
   }
   notes.push(`Compact captures: ${mode}. Requested content area ${target.width}x${target.height}; WebView reported ${reported.width}x${reported.height} CSS px at devicePixelRatio ${reported.dpr}. ${resized.stdout.trim()}`);
+  }
+  await resizeContent({ width: 540, height: 900 });
   for (const theme of ['light', 'dark']) {
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
     for (const fixture of setupFixtures) await captureSetup(theme, 'compact', fixture);
     for (const name of actionFixtures) await captureActions(theme, 'compact', name);
+  }
+  await resizeContent({ width: 540, height: 640 });
+  for (const theme of ['light', 'dark']) {
+    await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
+    for (const name of ['designer-connected', 'designer-running', 'designer-failed', 'designer-passed', 'designer-stale']) await captureActions(theme, 'minimum', name);
   }
   await writeFile(join(output, 'compact-window.txt'), notes.join('\n') + '\n');
   await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*), completed local/Stop pages (local-completed, local-stopped), removal confirmation/retry (ai-removal-*), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Local Cancel states (local-cancel-*) exercise renderer controls with synthetic cancellation/worker results, not native cancellation proof. Layout JSON records setup stacks, form widths, row alignment, card insets, Designer priority and loading/open-error fallback spacing. compact-window.txt says whether 540x900 was a real native window resize or renderer viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');

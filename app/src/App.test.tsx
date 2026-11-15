@@ -273,7 +273,7 @@ test('model acknowledgment and observed check counts survive navigation', async 
   expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('AI connected');
   expect(document.querySelector('.host-chip')?.textContent).toBe('This computer: AI connected');
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
-  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 tests passing')).toBeTruthy();
+  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 passed')).toBeTruthy();
   expect(screen.queryByText(/Connect the AI in Clusters first\./)).toBeNull();
   expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'page-reader, 1 test failing')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('Its test failed')).toBeTruthy();
@@ -348,7 +348,7 @@ test('a running check finishes in the footer after leaving Designer', async () =
   await within(screen.getByRole('contentinfo')).findByText('Running tests…');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   complete = true;
-  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 1 tests passing')).toBeTruthy();
+  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 1 passed')).toBeTruthy();
   expect(document.querySelectorAll('#page-title')).toHaveLength(1);
 });
 
@@ -408,7 +408,7 @@ test('a retained native report for older source is stale in the shared chrome', 
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('Tests not run since your edit')).toBeTruthy();
-  expect(within(screen.getByRole('contentinfo')).queryByText('1 of 1 tests passing')).toBeNull();
+  expect(within(screen.getByRole('contentinfo')).queryByText('1 of 1 passed')).toBeNull();
 });
 test('Open example retries a failed read without discarding successful runs', async () => {
   let fail = true;
@@ -586,7 +586,7 @@ test('Overview waits for native busy release even when the report is already com
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
-  await within(screen.getByRole('contentinfo')).findByText('1 of 1 tests passing');
+  await within(screen.getByRole('contentinfo')).findByText('1 of 1 passed');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await screen.findByText('Updating when the test finishes.');
   await user.click(screen.getByRole('button', { name: 'Refresh' }));

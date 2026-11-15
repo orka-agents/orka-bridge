@@ -25,7 +25,7 @@ test('an Overview-started run can be cancelled without replaying its start reque
     return value;
   }); mockIPC(ipc);
   const view = render(<Run startRequest={1} onStartRequestHandled={handled} />);
-  await userEvent.click(await screen.findByRole('button', { name: 'Cancel tests' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Stop' }));
   await screen.findByText('Cancelled', { selector: '.pill' });
   view.rerender(<Run startRequest={1} onStartRequestHandled={handled} />);
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run')).toEqual([['agent_run', { documentId }]]);
@@ -37,11 +37,11 @@ test('Cancel is explicit, document-bound, single-flight and becomes a status, no
   vi.stubGlobal('isTauri', true); const reply = deferred<RunSnapshot>(); let value = running;
   const ipc = vi.fn(command => command === 'agent_run_cancel' ? reply.promise : value); mockIPC(ipc);
   render(<Run blocked stale />); // Unsaved edits do not block stopping already-started work.
-  const cancel = await screen.findByRole('button', { name: 'Cancel tests' });
+  const cancel = await screen.findByRole('button', { name: 'Stop' });
   expect(cancel.className).toContain('button-secondary'); expect(cancel.closest('.long-card-head')).toBeTruthy();
   await userEvent.dblClick(cancel);
   expect(ipc.mock.calls.filter(([cmd]) => cmd === 'agent_run_cancel')).toEqual([['agent_run_cancel', { documentId }]]);
-  expect(screen.queryByRole('button', { name: 'Cancel tests' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
   expect(await screen.findByText(/Cancelling tests · waiting for the test worker to stop/)).toBeTruthy();
   value = cancelling; await act(async () => reply.resolve(value));
   expect(screen.queryByRole('button', { name: 'Run tests' })).toBeNull();
@@ -50,7 +50,7 @@ test.each([false, undefined])('older image canCancel=%s never offers cancellatio
   const value = { ...running, canCancel }; if (canCancel === undefined) delete value.canCancel;
   native(value); render(<Run />);
   await screen.findByText('Waiting for answers and evaluating tests');
-  expect(screen.queryByRole('button', { name: 'Cancel tests' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
 });
 test.each(['agent_run_cancel', 'agent_run_check_cancellation'] as const)('unconfirmed recovery %s is explicit and returns to Cancelling', async command => {
   vi.stubGlobal('isTauri', true); let value = unconfirmed;
@@ -125,9 +125,9 @@ test('status slower than the polling interval still loads and reaches cancellati
   });
   await act(async () => { render(<Run />); });
   await act(async () => { await vi.advanceTimersByTimeAsync(620); });
-  expect(screen.queryByRole('button', { name: 'Cancel tests' })).not.toBeNull();
+  expect(screen.queryByRole('button', { name: 'Stop' })).not.toBeNull();
   expect(reads).toBe(1);
-  fireEvent.click(screen.getByRole('button', { name: 'Cancel tests' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
   await act(async () => { await vi.advanceTimersByTimeAsync(10); });
   value = unconfirmed;
   await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
@@ -136,17 +136,17 @@ test('status slower than the polling interval still loads and reaches cancellati
 test('an old poll cannot restore Cancel after its action response', async () => {
   vi.stubGlobal('isTauri', true); const poll = deferred<RunSnapshot>(); let reads = 0;
   mockIPC(command => command === 'agent_run_cancel' ? cancelling : ++reads === 1 ? running : poll.promise);
-  render(<Run />); const cancel = await screen.findByRole('button', { name: 'Cancel tests' });
+  render(<Run />); const cancel = await screen.findByRole('button', { name: 'Stop' });
   await waitFor(() => expect(reads).toBeGreaterThan(1));
   await userEvent.click(cancel); await screen.findByText('Cancelling', { selector: '.pill' });
   await act(async () => poll.resolve(running));
-  expect(screen.queryByRole('button', { name: 'Cancel tests' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
 });
 test('a previous document action reply cannot replace the current document', async () => {
   vi.stubGlobal('isTauri', true); const reply = deferred<RunSnapshot>();
   const other = '00000000-0000-4000-8000-000000000001';
   mockIPC((command, args) => command === 'agent_run_cancel' ? reply.promise : args && 'documentId' in args && args.documentId === documentId ? running : { ...running, documentId: other, busy: null, state: 'idle', stage: null, canRun: true, canCancel: false });
-  const view = render(<Run />); await userEvent.click(await screen.findByRole('button', { name: 'Cancel tests' }));
+  const view = render(<Run />); await userEvent.click(await screen.findByRole('button', { name: 'Stop' }));
   view.rerender(<Run documentId={other} />);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(false));
   await act(async () => reply.resolve(cancelling));
