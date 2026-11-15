@@ -356,7 +356,7 @@ try {
       await until(() => evaluate(`document.querySelector('.example-run .pill')?.textContent === ${JSON.stringify(label)}`), name);
       const probe = await evaluate(`(() => {
         const card = document.querySelector('.example-run');
-        return { buttons: [...card.querySelectorAll('button')].map(b => b.textContent.trim()), text: card.innerText, rows: [...card.querySelectorAll('.test-result code')].map(c => c.textContent), width: innerWidth, scrollWidth: document.querySelector('main').scrollWidth };
+        return { buttons: [...card.querySelectorAll('button')].map(b => b.textContent.trim()), text: card.innerText, rows: [...card.querySelectorAll('.test-result > summary code')].map(c => c.textContent), width: innerWidth, scrollWidth: document.querySelector('main').scrollWidth };
       })()`);
       if (probe.scrollWidth > probe.width + 2) throw Error('Cancellation layout overflows: ' + JSON.stringify(probe));
       if (state === 'running' && !probe.buttons.includes('Cancel tests')) throw Error('Missing local Cancel');

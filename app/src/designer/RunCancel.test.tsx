@@ -8,7 +8,7 @@ import type { RunSnapshot } from './run-api';
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 const running: RunSnapshot = { documentId, busy: { documentId, name: 'reader' }, state: 'running', canRun: false, canCancel: true, cancellation: 'none', stage: 'observe', report: null, acknowledged: [], pending: null, error: null };
 const cancelling: RunSnapshot = { ...running, canCancel: false, cancellation: 'cancelling', stage: 'cancel' };
-const passed = { id: 'finished', question: 'What did it say?', phase: 'Succeeded', answer: 'Kept answer', completedTools: [], assertions: [{ id: 'a', kind: 'contains' as const, expected: 'Kept', verdict: 'passed' as const }], verdict: 'passed' as const };
+const passed = { id: 'finished', question: 'What did it say?', phase: 'Succeeded', answer: 'Kept answer', completedTools: ['web_fetch'], assertions: [{ id: 'a', kind: 'contains' as const, expected: 'Kept', verdict: 'passed' as const }], verdict: 'passed' as const };
 const cancelled = { ...passed, id: 'cancelled', phase: 'Cancelled', answer: null, assertions: [], verdict: 'cancelled' as const };
 const done: RunSnapshot = { ...running, busy: null, state: 'complete', stage: 'done', canRun: true, canCancel: false, cancellation: 'cancelled', report: { verdict: 'cancelled', cases: [cancelled, passed] } };
 const unconfirmed: RunSnapshot = { ...done, cancellation: 'unconfirmed', canRetryCancellation: true, canCheckCancellation: true, report: { verdict: 'unknown', cases: [passed] } };
@@ -64,12 +64,17 @@ test('confirmed cancellation keeps finished evidence before neutral Cancelled ro
   expect(await screen.findByText('Tests cancelled. The test worker on this computer has stopped. 1 passed, 0 failed, 1 cancelled.', { selector: 'p:not(.sr-only)' })).toBeTruthy();
   expect(screen.getByText('Cancelled', { selector: '.pill' }).className).toContain('status-not-started');
   const rows = [...document.querySelectorAll('.test-result')];
-  expect(rows.map(row => row.querySelector('code')?.textContent)).toEqual(['finished', 'cancelled']);
+  expect([...document.querySelectorAll('.test-result > summary code')].map(node => node.textContent)).toEqual(['finished', 'cancelled']);
   await userEvent.click(rows[0].querySelector('summary')!);
   expect(screen.getByText('Kept answer')).toBeTruthy();
   expect(within(rows[1] as HTMLElement).getByText(/Actions already taken are not undone/)).toBeTruthy();
   expect(rows[1].querySelector('.status-not-started')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(false);
+});
+test.each([done, unconfirmed, { ...done, cancellation: 'beforeStart' as const, report: { verdict: 'cancelled' as const, cases: [] } }])('cancellation $cancellation is announced even when the edited files make results stale', async snapshot => {
+  native(snapshot); render(<Run stale />);
+  await screen.findByText('Not run since your edit');
+  await waitFor(() => expect(document.querySelector('.test-announcement')?.textContent).toMatch(/Tests cancelled\.|Cancellation not confirmed\.|Cancelled before any test started\./));
 });
 test('tests that finished before cancellation retain a real failure and are never called a pass', async () => {
   native({ ...done, report: { verdict: 'cancelled', cases: [{ ...passed, verdict: 'failed', assertions: [{ ...passed.assertions[0], verdict: 'failed' }] }] } }); render(<Run />);
