@@ -560,7 +560,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         let seen = try capture("send-probe", "Designer")
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
         // Vision includes the native disclosure triangle as a bullet in this label.
-        if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: .regularExpression) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
+        if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: [.regularExpression, .caseInsensitive]) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) }) {
             if ["Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent", "Cancel tests", "Retry cancellation", "Check cluster status", "Check again", "Reload saved files", "Send to a cluster"].contains(label) {
                 let enabled = nativeElements().contains { element in
                     attribute(element, "AXRole") as? String == "AXButton"
