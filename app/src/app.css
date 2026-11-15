@@ -213,7 +213,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   .designer-work .designer-editing, .designer-work .designer-checks { display: contents; }
   .designer-tests { grid-column: auto; grid-row: auto; order: 2; }
   .designer-work .send-panel { order: 1; }
-  .designer-work:has(.send-panel:not([hidden])) .send-panel { order: -1; }
+  .designer-work .send-panel[data-send-open="true"] { order: -1; }
   .designer-work .send-history { order: 3; }
   .designer-work .check-source { order: 4; }
   .designer-heading { flex-wrap: wrap; }

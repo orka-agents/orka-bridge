@@ -216,8 +216,10 @@ test('send_anyway_explicit and duplicate clicks submit only once', async () => {
 test('Send entry returns keyboard focus to an already open panel without submitting', async () => {
   const ipc = native(); const user = userEvent.setup(); render(<Example remote place={place} />);
   const entry = await screen.findByRole('button', { name: 'Send to a cluster' });
-  await user.click(entry);
   const panel = screen.getByRole('region', { name: 'Send and cluster tests' });
+  expect(panel.getAttribute('data-send-open')).toBe('false');
+  await user.click(entry);
+  expect(panel.getAttribute('data-send-open')).toBe('true');
   await waitFor(() => expect(document.activeElement).toBe(panel));
   await user.click(entry);
   await waitFor(() => expect(document.activeElement).toBe(panel));

@@ -982,8 +982,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             let seen = try capture("send-probe", "Designer")
             let text = seen.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
             // Vision can capitalize the lowercase l in this fixed fixture ID.
-            // Its summary is a button, not a text node; other expectations stay exact.
-            let checksumVisible = expected == "published-checksum" && (text.localizedCaseInsensitiveContains(expected) || visibleButtons(expected).count == 1)
+            // Validate only this captured frame, never later accessibility state.
+            let checksumVisible = expected == "published-checksum" && text.localizedCaseInsensitiveContains(expected)
             if text.contains(expected) || checksumVisible {
                 // Keep the frame we verified. A transient state can end between
                 // two screenshots; a second OCR pass would test a different frame.

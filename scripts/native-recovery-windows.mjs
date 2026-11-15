@@ -169,7 +169,7 @@ try {
         rows: shown('.place-row').map(row => ({ name: rect(row.querySelector('.place-summary')), pill: rect(row.querySelector('.pill')), action: rect(row.querySelector('button')), row: rect(row) })),
         checks: shown('.cluster-checks li').map(row => ({ row: rect(row), card: rect(row.closest('.cluster-card')) })),
         setup: (() => { const root = shown('.workspace-setup-grid')[0]; if (!root) return null; const get = selector => rect(root.querySelector(selector)); return { priority: root.classList.contains('setup-action-model'), progress: get('.setup-progress'), model: get('.setup-model-slot'), history: get('.setup-history'), meet: get('.workspace-meet') }; })(),
-        designer: (() => { const root = shown('.designer-work')[0]; if (!root) return null; const get = selector => rect(root.querySelector(selector)); return { tests: get('.designer-tests:not([hidden])'), editor: get('.designer-file'), send: get('.send-panel:not([hidden])'), history: get('.send-history') }; })(),
+        designer: (() => { const root = shown('.designer-work')[0]; if (!root) return null; const get = selector => rect(root.querySelector(selector)); return { tests: get('.designer-tests:not([hidden])'), editor: get('.designer-file'), send: get('.send-panel[data-send-open="true"]:not([hidden])'), history: get('.send-history') }; })(),
         fallback: { file: rect(shown('.designer > .designer-file')[0]), history: rect(shown('.designer > .designer-checks .send-history')[0]) },
       };
     })()`);
