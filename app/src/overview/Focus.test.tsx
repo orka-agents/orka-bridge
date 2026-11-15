@@ -79,6 +79,24 @@ test('leaving an agent-specific request clears its warning before ordinary Overv
   expect(screen.queryByText(/The original agent is no longer available/)).toBeNull();
   expect(calls.mock.calls.filter(([command]) => command === 'send_agent_check')).toHaveLength(1);
 });
+test('explicit inventory Refresh after navigation reads all clusters instead of refocusing the original target', async () => {
+  const calls = ipc(places([agent('uid-one')]));
+  render(<Overview {...props} focus={{ id: 1, sendId: 's1', target: target('uid-one') }} />);
+  await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(calls.mock.calls.some(([command, args]) => command === 'overview_places' && !(args as { key?: string } | undefined)?.key)).toBe(true));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(calls.mock.calls.filter(([command, args]) => command === 'overview_places' && !(args as { key?: string } | undefined)?.key)).toHaveLength(2));
+});
+test('successful navigation clears an earlier inventory read error even when the target is absent', async () => {
+  ipc(undefined);
+  const view = render(<Overview {...props} />);
+  await screen.findByText(/Couldn't read clusters just now/);
+  ipc(places([]), 'present');
+  view.rerender(<Overview {...props} focus={{ id: 1, sendId: 's1', target: target('uid-one') }} />);
+  await screen.findByText('Not shown in Overview yet.');
+  expect(screen.queryByText(/Couldn't read clusters just now/)).toBeNull();
+});
 test('a Send with no recorded agent says so without any check', async () => {
   const calls = ipc(places([agent('uid-one')]));
   render(<Overview {...props} focus={{ id: 1, sendId: 's1' }} />);
