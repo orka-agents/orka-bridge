@@ -316,6 +316,11 @@ try {
           if (name === 'ai-connecting') return new Promise(() => {});
           connected = true; return { ready: true };
         }
+        if (designer && command === 'agent_select') {
+          if (args?.documentId !== documentId) throw Error('Wrong selected document');
+          return null;
+        }
+        if (designer && command === 'agent_selected') return documentId;
         if (designer && (command === 'workspace_catalog' || command === 'cluster_catalog')) {
           window.__bridgeCatalogCalls.push({ command, args });
           return { defaultModel: 'fixture-model', models: { state: 'ready', items: [{ id: 'fixture-model' }, ...command === 'workspace_catalog' ? [{ id: 'other-model' }] : []] }, tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Fetch a page' }] } };
@@ -376,6 +381,7 @@ try {
       if (name === 'designer-file') await clickAction('File');
       if (name === 'designer-failed') await until(() => evaluate(`!!document.querySelector('.test-next-step')`), 'failure next action');
       const state = await evaluate(`({ historyHidden: !document.querySelector('.designer-checks').getClientRects().length, catalog: window.__bridgeCatalogCalls, runPrimary: [...document.querySelectorAll('.example-run button')].some(button => button.textContent === 'Run tests' && button.classList.contains('button-primary')) })`);
+      if (await evaluate(`document.body.innerText.includes('Your agent selection could not be saved')`)) throw Error('Designer fixture failed to acknowledge document selection');
       if (name === 'designer' && (state.catalog.length || state.runPrimary)) throw Error('Disconnected Designer presents a runnable primary/catalog: ' + JSON.stringify(state));
       if (name !== 'designer-remote' && !state.historyHidden) throw Error('Unopened local Send/history card is visible');
       if (name === 'designer-remote' && (state.historyHidden || !state.catalog.some(call => call.command === 'cluster_catalog' && call.args.targetId === '00000000-0000-4000-8000-000000000002' && call.args.providerId === '00000000-0000-4000-8000-000000000003'))) throw Error('Remote catalog is not scoped to the selected cluster/AI');
