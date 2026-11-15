@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { agentCall, SAMPLE_DOCUMENT_ID } from './agent-api';
@@ -145,6 +145,62 @@ test('same-named agents show their distinct locations and select by document ID'
   await user.selectOptions(screen.getByRole('combobox', { name: 'Agent' }), id);
   await screen.findByText('Files save automatically. You manage commits in this repo.');
   expect(opened.at(-1)).toBe(id);
+});
+
+test('queued repo autosaves use the last confirmed agent fingerprint, including the preceding acknowledgement', async () => {
+  const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
+  const next = { ...source, agent: 'c'.repeat(64) };
+  const own = { ...pair, documentId: id, source };
+  const saves: Record<string, unknown>[] = [];
+  let acknowledge!: (value: unknown) => void;
+  native((command, args) => {
+    if (command === 'agent_open') return own;
+    if (command === 'agent_save') {
+      saves.push(args);
+      if (saves.length === 1) return new Promise(resolve => { acknowledge = resolve; });
+      return { ...own, agent: args.content, source: { ...source, agent: 'd'.repeat(64) } };
+    }
+    if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'send_status') return { documentId: id, view: null, busy: null };
+    if (command === 'send_history') return [];
+  });
+  const user = userEvent.setup(); render(<Example documentId={id} />);
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  const editor = screen.getByRole('textbox', { name: 'Agent file' });
+  const first = `${pair.agent}\nFirst draft`; const second = `${pair.agent}\nSecond draft`;
+  fireEvent.change(editor, { target: { value: first } });
+  await waitFor(() => expect(saves).toHaveLength(1));
+  fireEvent.change(editor, { target: { value: second } });
+  await act(async () => acknowledge({ ...own, agent: first, source: next }));
+  await waitFor(() => expect(saves).toHaveLength(2));
+  expect(saves[0]).toEqual({ documentId: id, content: first, expectedSource: source });
+  expect(saves[1]).toEqual({ documentId: id, content: second, expectedSource: next });
+  expect(editor).toHaveProperty('value', second);
+});
+
+test('repo conflict retains the draft and its expected fingerprint on retry', async () => {
+  const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
+  const saves: Record<string, unknown>[] = [];
+  native((command, args) => {
+    if (command === 'agent_open') return { ...pair, documentId: id, source };
+    if (command === 'agent_save') { saves.push(args); throw Error('The agent file changed on disk.'); }
+    if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'send_status') return { documentId: id, view: null, busy: null };
+    if (command === 'send_history') return [];
+  });
+  const user = userEvent.setup(); render(<Example documentId={id} />);
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  const editor = screen.getByRole('textbox', { name: 'Agent file' });
+  const draft = `${pair.agent}\nKeep this draft`;
+  fireEvent.change(editor, { target: { value: draft } });
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('changed on disk'));
+  expect(editor).toHaveProperty('value', draft);
+  await user.click(screen.getByRole('button', { name: 'Try saving again' }));
+  await waitFor(() => expect(saves).toHaveLength(2));
+  expect(saves).toEqual(Array.from({ length: 2 }, () => ({ documentId: id, content: draft, expectedSource: source })));
+  expect(editor).toHaveProperty('value', draft);
 });
 
 test('native storage metadata is preserved and unknown values are rejected', async () => {

@@ -231,12 +231,17 @@ async fn agent_open(
 async fn agent_save(
     document_id: DocumentId,
     content: String,
+    expected_source: Option<bridge_runtime_protocol::SnapshotId>,
     state: tauri::State<'_, Arc<Agents>>,
 ) -> Result<AgentPair, &'static str> {
     let agents = state.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || agents.get(document_id)?.save(content))
-        .await
-        .map_err(|_| "The local agent folder is unavailable.")?
+    tauri::async_runtime::spawn_blocking(move || {
+        agents
+            .get(document_id)?
+            .save_with_source(content, expected_source)
+    })
+    .await
+    .map_err(|_| "The local agent folder is unavailable.")?
 }
 
 #[tauri::command]

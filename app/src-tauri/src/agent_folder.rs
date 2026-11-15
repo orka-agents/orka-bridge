@@ -515,10 +515,30 @@ impl AgentFolder {
         })
     }
     pub fn save(&self, content: String) -> Result<AgentPair> {
+        self.save_with_source(content, None)
+    }
+    pub fn save_with_source(
+        &self,
+        content: String,
+        expected_source: Option<SnapshotId>,
+    ) -> Result<AgentPair> {
         if content.len() > MAX_FILE {
             return Err("The agent file is too large to save.");
         }
-        self.with(|root| self.save_pair(root, self.pair(root)?, content))
+        self.with(|root| {
+            let pair = self.pair(root)?;
+            // Repo edits have no Bridge history backup. Compare under the same
+            // document/cross-process lock as replacement; check-file edits are independent.
+            if self.repo.is_some()
+                && !expected_source.as_ref().is_some_and(|expected| {
+                    expected.valid()
+                        && (expected.agent == pair.source.agent || content == pair.agent)
+                })
+            {
+                return Ok(Err("The agent file changed on disk."));
+            }
+            self.save_pair(root, pair, content).map(Ok)
+        })?
     }
     /// Setup-only: never rewrite edited files or an already prepared example.
     pub fn prepare_example_model(&self, model: &str) -> Result<AgentPair> {

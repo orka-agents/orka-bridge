@@ -394,7 +394,10 @@ try {
             $control = Find-Control $script:window 'Your own repo' ([System.Windows.Automation.ControlType]::RadioButton)
             if ($control -and $control.Current.IsEnabled -and !$control.Current.IsOffscreen) { $control }
         })
-        $create = Wait-For 'Own-repo Create missing' { Find-Control $script:window 'Create' $button }
+        $create = Wait-For 'Own-repo Create did not disable' {
+            $control = Find-Control $script:window 'Create' $button
+            if ($control -and !$control.Current.IsEnabled) { $control }
+        }
         if ($create.Current.IsEnabled) { throw 'Own-repo Create must wait for a native folder selection' }
         Press (Wait-For 'Choose repo button missing' { Find-Control $script:window 'Choose repo' $button })
         $dialog = Wait-For 'Native repo folder chooser missing' {

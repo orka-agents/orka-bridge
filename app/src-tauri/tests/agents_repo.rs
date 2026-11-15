@@ -1,7 +1,7 @@
 use bridge_engine::agents::Agents;
 #[cfg(unix)]
 use bridge_runtime_protocol::MAX_FILE;
-use bridge_runtime_protocol::{FileSlot, Uuid};
+use bridge_runtime_protocol::{FileSlot, SnapshotId, Uuid};
 use serde_json::{json, Value};
 use std::{
     collections::BTreeMap,
@@ -52,6 +52,325 @@ fn pending(data: &Path, repo: &Path, staged: bool) -> bridge_engine::agents::Doc
 }
 
 #[test]
+fn repo_save_without_expected_source_rejects_external_edit_without_writing() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let agents = owner(temp.path(), &temp.path().join("data"));
+    let selected = agents.bind_repo(&path).unwrap();
+    let id = agents
+        .create_with_repo("helper", None, Some(selected.id))
+        .unwrap();
+    let folder = agents.get(id).unwrap();
+    folder.open().unwrap();
+    fs::write(path.join("helper/helper.agent.md"), b"external edit").unwrap();
+    let before = tree(&path);
+
+    let result = folder.save("local draft".into());
+
+    assert!(result.is_err(), "repo save must require an expected source");
+    assert_eq!(tree(&path), before);
+}
+
+#[test]
+fn repo_save_rejects_stale_agent_source_without_writing_files_or_git() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let agents = owner(temp.path(), &temp.path().join("data"));
+    let selected = agents.bind_repo(&path).unwrap();
+    let id = agents
+        .create_with_repo("helper", None, Some(selected.id))
+        .unwrap();
+    let folder = agents.get(id).unwrap();
+    let original = folder.open().unwrap();
+    fs::write(path.join("helper/helper.agent.md"), b"external edit").unwrap();
+    let before = tree(&path);
+
+    let error = folder
+        .save_with_source("local draft".into(), Some(original.source))
+        .err()
+        .unwrap();
+
+    assert_eq!(error, "The agent file changed on disk.");
+    assert_eq!(tree(&path), before);
+}
+
+#[test]
+fn repo_save_requires_expected_source_even_when_content_matches() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let agents = owner(temp.path(), &temp.path().join("data"));
+    let selected = agents.bind_repo(&path).unwrap();
+    let id = agents
+        .create_with_repo("helper", None, Some(selected.id))
+        .unwrap();
+    let folder = agents.get(id).unwrap();
+    let pair = folder.open().unwrap();
+    let before = tree(&path);
+
+    for content in [pair.agent, "local draft".into()] {
+        assert_eq!(
+            folder.save_with_source(content, None).err().unwrap(),
+            "The agent file changed on disk."
+        );
+        assert_eq!(tree(&path), before);
+    }
+}
+
+#[test]
+fn repo_save_rejects_invalid_snapshot_ids_even_when_content_matches() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let agents = owner(temp.path(), &temp.path().join("data"));
+    let selected = agents.bind_repo(&path).unwrap();
+    let id = agents
+        .create_with_repo("helper", None, Some(selected.id))
+        .unwrap();
+    let folder = agents.get(id).unwrap();
+    let pair = folder.open().unwrap();
+    let before = tree(&path);
+
+    for invalid in [String::new(), "a".repeat(65), "A".repeat(64)] {
+        for source in [
+            SnapshotId {
+                agent: invalid.clone(),
+                tests: pair.source.tests.clone(),
+            },
+            SnapshotId {
+                agent: pair.source.agent.clone(),
+                tests: invalid.clone(),
+            },
+        ] {
+            assert_eq!(
+                folder
+                    .save_with_source(pair.agent.clone(), Some(source))
+                    .err()
+                    .unwrap(),
+                "The agent file changed on disk."
+            );
+            assert_eq!(tree(&path), before);
+        }
+    }
+}
+
+#[test]
+fn repo_save_accepts_fresh_agent_source_without_touching_git() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let agents = owner(temp.path(), &temp.path().join("data"));
+    let selected = agents.bind_repo(&path).unwrap();
+    let id = agents
+        .create_with_repo("helper", None, Some(selected.id))
+        .unwrap();
+    let folder = agents.get(id).unwrap();
+    let original = folder.open().unwrap();
+    let git = tree(&path.join(".git"));
+
+    let saved = folder
+        .save_with_source("local draft".into(), Some(original.source.clone()))
+        .unwrap();
+
+    assert_eq!(saved.agent, "local draft");
+    assert_ne!(saved.source.agent, original.source.agent);
+    assert_eq!(saved.source.tests, original.source.tests);
+    assert_eq!(saved.tests, original.tests);
+    assert_eq!(
+        fs::read(path.join("helper/helper.agent.md")).unwrap(),
+        b"local draft"
+    );
+    assert_eq!(folder.open().unwrap().source, saved.source);
+    assert_eq!(tree(&path.join(".git")), git);
+}
+
+#[test]
+fn repo_save_preserves_independent_test_edit_without_rejecting_agent_draft() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let agents = owner(temp.path(), &temp.path().join("data"));
+    let selected = agents.bind_repo(&path).unwrap();
+    let id = agents
+        .create_with_repo("helper", None, Some(selected.id))
+        .unwrap();
+    let folder = agents.get(id).unwrap();
+    let original = folder.open().unwrap();
+    let git = tree(&path.join(".git"));
+    fs::write(
+        path.join("helper/helper.agent.test.md"),
+        b"external test edit",
+    )
+    .unwrap();
+
+    let saved = folder
+        .save_with_source("local draft".into(), Some(original.source.clone()))
+        .unwrap();
+
+    assert_eq!(saved.agent, "local draft");
+    assert_eq!(saved.tests, "external test edit");
+    assert_ne!(saved.source.tests, original.source.tests);
+    assert_eq!(
+        fs::read(path.join("helper/helper.agent.md")).unwrap(),
+        b"local draft"
+    );
+    assert_eq!(
+        fs::read(path.join("helper/helper.agent.test.md")).unwrap(),
+        b"external test edit"
+    );
+    assert_eq!(tree(&path.join(".git")), git);
+}
+
+#[test]
+fn repo_save_lost_ack_retry_is_idempotent_but_different_draft_still_conflicts() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let agents = owner(temp.path(), &temp.path().join("data"));
+    let selected = agents.bind_repo(&path).unwrap();
+    let id = agents
+        .create_with_repo("helper", None, Some(selected.id))
+        .unwrap();
+    let folder = agents.get(id).unwrap();
+    let original = folder.open().unwrap();
+    folder
+        .save_with_source("local draft".into(), Some(original.source.clone()))
+        .unwrap(); // Its ACK is lost; retry still carries the original source.
+    fs::write(
+        path.join("helper/helper.agent.test.md"),
+        b"external test edit",
+    )
+    .unwrap();
+    let before = tree(&path);
+
+    let retried = folder
+        .save_with_source("local draft".into(), Some(original.source.clone()))
+        .unwrap();
+
+    assert_eq!(retried.agent, "local draft");
+    assert_eq!(retried.tests, "external test edit");
+    assert_eq!(retried.source, folder.open().unwrap().source);
+    assert_eq!(tree(&path), before);
+    assert_eq!(
+        folder
+            .save_with_source("different draft".into(), Some(original.source))
+            .err()
+            .unwrap(),
+        "The agent file changed on disk."
+    );
+    assert_eq!(tree(&path), before);
+}
+
+#[test]
+fn repo_save_compares_source_after_waiting_for_cross_process_lock() {
+    use std::{sync::mpsc, time::Duration};
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let data = temp.path().join("data");
+    let agents = owner(temp.path(), &data);
+    let selected = agents.bind_repo(&path).unwrap();
+    let id = agents
+        .create_with_repo("helper", None, Some(selected.id))
+        .unwrap();
+    let folder = agents.get(id).unwrap();
+    let source = folder.open().unwrap().source;
+    let lock_name = format!(
+        "agents-v1/repo-{}.lock",
+        serde_json::to_value(id).unwrap().as_str().unwrap()
+    );
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(data.join(lock_name))
+        .unwrap();
+    lock.lock().unwrap();
+    let (started, ready) = mpsc::channel();
+    let (done, completed) = mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        started.send(()).unwrap();
+        done.send(
+            folder
+                .save_with_source("local draft".into(), Some(source))
+                .err(),
+        )
+        .unwrap();
+    });
+    ready.recv_timeout(Duration::from_secs(5)).unwrap();
+    let blocked = completed.recv_timeout(Duration::from_millis(50)).is_err();
+    fs::write(
+        path.join("helper/helper.agent.md"),
+        b"external edit while waiting",
+    )
+    .unwrap();
+    let before = tree(&path);
+    drop(lock);
+
+    assert!(blocked);
+    assert_eq!(
+        completed.recv_timeout(Duration::from_secs(5)).unwrap(),
+        Some("The agent file changed on disk.")
+    );
+    writer.join().unwrap();
+    assert_eq!(tree(&path), before);
+}
+
+#[test]
+fn repo_concurrent_owners_with_same_source_allow_only_one_different_draft() {
+    use std::sync::{Arc, Barrier};
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("repo");
+    checkout(&path);
+    let data = temp.path().join("data");
+    let agents = owner(temp.path(), &data);
+    let selected = agents.bind_repo(&path).unwrap();
+    let id = agents
+        .create_with_repo("helper", None, Some(selected.id))
+        .unwrap();
+    let first = agents.get(id).unwrap();
+    let source = first.open().unwrap().source;
+    let second = owner(temp.path(), &data).get(id).unwrap();
+    let before = tree(&path.join(".git"));
+    let tests = fs::read(path.join("helper/helper.agent.test.md")).unwrap();
+    let barrier = Arc::new(Barrier::new(3));
+    let writers: Vec<_> = [(first.clone(), "first draft"), (second, "second draft")]
+        .into_iter()
+        .map(|(folder, content)| {
+            let barrier = barrier.clone();
+            let source = source.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                folder.save_with_source(content.into(), Some(source))
+            })
+        })
+        .collect();
+    barrier.wait();
+    let results: Vec<_> = writers
+        .into_iter()
+        .map(|writer| writer.join().unwrap())
+        .collect();
+
+    assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+    let saved = results
+        .iter()
+        .find_map(|result| result.as_ref().ok())
+        .unwrap();
+    let error = results
+        .iter()
+        .find_map(|result| result.as_ref().err())
+        .unwrap();
+    assert_eq!(*error, "The agent file changed on disk.");
+    assert_eq!(first.open().unwrap().agent, saved.agent);
+    assert_eq!(
+        fs::read(path.join("helper/helper.agent.test.md")).unwrap(),
+        tests
+    );
+    assert_eq!(tree(&path.join(".git")), before);
+}
+
+#[test]
 fn restored_exact_parent_reopens_without_restarting_cached_document() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("repo");
@@ -71,9 +390,13 @@ fn restored_exact_parent_reopens_without_restarting_cached_document() {
     assert!(folder.open().is_err());
     fs::rename(&away, &path).unwrap();
     assert!(agents.list().unwrap()[1].available);
-    assert_eq!(folder.open().unwrap().document_id, id);
+    let pair = folder.open().unwrap();
+    assert_eq!(pair.document_id, id);
     assert_eq!(
-        folder.save("restored draft".into()).unwrap().agent,
+        folder
+            .save_with_source("restored draft".into(), Some(pair.source))
+            .unwrap()
+            .agent,
         "restored draft"
     );
 }
@@ -172,7 +495,10 @@ fn repo_pair_roundtrips_all_entry_points_without_touching_git() {
     assert!(pair.agent.contains("model: \"provider/model\""));
     assert_eq!(pair.document_id, id);
     let saved = folder
-        .save(pair.agent.replace("fetch", "retrieve"))
+        .save_with_source(
+            pair.agent.replace("fetch", "retrieve"),
+            Some(pair.source.clone()),
+        )
         .unwrap();
     assert_ne!(saved.source, pair.source);
     assert_eq!(folder.inspect().unwrap().unwrap().source, saved.source);
@@ -397,7 +723,7 @@ fn retained_selection_and_registered_handles_reject_replaced_parent_and_child() 
             .create_with_repo("helper", None, Some(selected.id))
             .unwrap();
         let folder = agents.get(id).unwrap();
-        folder.open().unwrap();
+        let source = folder.open().unwrap().source;
         let old = if replace_parent {
             path.clone()
         } else {
@@ -406,7 +732,7 @@ fn retained_selection_and_registered_handles_reject_replaced_parent_and_child() 
         fs::rename(&old, temp.path().join("retained")).unwrap();
         fs::create_dir(&old).unwrap();
         assert!(folder.open().is_err());
-        assert!(folder.save("no".into()).is_err());
+        assert!(folder.save_with_source("no".into(), Some(source)).is_err());
         assert!(folder.source().is_err());
         assert!(folder.capture().is_err());
         assert!(folder.capture_agent().is_err());
@@ -496,7 +822,7 @@ fn app_data_document_lock_serializes_owners_without_blocking_registry_recovery()
         .create_with_repo("helper", None, Some(selected.id))
         .unwrap();
     let folder = agents.get(id).unwrap();
-    folder.open().unwrap();
+    let source = folder.open().unwrap().source;
     pending(&data, &path, true);
     let lock_name = format!(
         "agents-v1/repo-{}.lock",
@@ -512,7 +838,7 @@ fn app_data_document_lock_serializes_owners_without_blocking_registry_recovery()
     let (done, completed) = mpsc::channel();
     let writer = std::thread::spawn(move || {
         started.send(()).unwrap();
-        let result = folder.save("changed".into());
+        let result = folder.save_with_source("changed".into(), Some(source));
         done.send(result.is_ok()).unwrap();
     });
     ready.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -547,6 +873,8 @@ fn repo_pair_rejects_symlink_hardlink_and_oversize_content_without_clobbering() 
         let id = agents
             .create_with_repo("helper", None, Some(selected.id))
             .unwrap();
+        let folder = agents.get(id).unwrap();
+        let source = folder.open().unwrap().source;
         let bound = path.join("helper/helper.agent.md");
         fs::remove_file(&bound).unwrap();
         let outside = temp.path().join("outside");
@@ -556,9 +884,8 @@ fn repo_pair_rejects_symlink_hardlink_and_oversize_content_without_clobbering() 
             "hardlink" => fs::hard_link(&outside, &bound).unwrap(),
             _ => fs::write(&bound, vec![b'x'; MAX_FILE + 1]).unwrap(),
         }
-        let folder = agents.get(id).unwrap();
         assert!(folder.open().is_err());
-        assert!(folder.save("no".into()).is_err());
+        assert!(folder.save_with_source("no".into(), Some(source)).is_err());
         assert!(folder.capture().is_err());
         assert_eq!(fs::read(&outside).unwrap(), b"untouched");
     }
