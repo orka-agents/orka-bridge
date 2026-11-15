@@ -1,11 +1,11 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Run from './Run';
 import { SAMPLE_DOCUMENT_ID as documentId } from './agent-api';
 import type { RunSnapshot } from './run-api';
-afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 const running: RunSnapshot = { documentId, busy: { documentId, name: 'reader' }, state: 'running', canRun: false, canCancel: true, cancellation: 'none', stage: 'observe', report: null, acknowledged: [], pending: null, error: null };
 const cancelling: RunSnapshot = { ...running, canCancel: false, cancellation: 'cancelling', stage: 'cancel' };
 const passed = { id: 'finished', question: 'What did it say?', phase: 'Succeeded', answer: 'Kept answer', completedTools: [], assertions: [{ id: 'a', kind: 'contains' as const, expected: 'Kept', verdict: 'passed' as const }], verdict: 'passed' as const };
@@ -87,6 +87,22 @@ test('unconfirmed recovery can use the native-admitted Run after a restart witho
   render(<Run />);
   const run = await screen.findByRole('button', { name: 'Run tests' });
   await waitFor(() => expect(run.hasAttribute('disabled')).toBe(false));
+});
+test('status slower than the polling interval still loads and reaches cancellation recovery', async () => {
+  vi.useFakeTimers(); vi.stubGlobal('isTauri', true); let value = running; let reads = 0;
+  mockIPC(command => {
+    if (command === 'agent_run_status') { reads++; return new Promise(resolve => setTimeout(() => resolve(value), 600)); }
+    value = cancelling; return value;
+  });
+  await act(async () => { render(<Run />); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(620); });
+  expect(screen.queryByRole('button', { name: 'Cancel tests' })).not.toBeNull();
+  expect(reads).toBe(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel tests' }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+  value = unconfirmed;
+  await act(async () => { await vi.advanceTimersByTimeAsync(1600); });
+  expect(screen.queryByRole('button', { name: 'Retry cancellation' })).not.toBeNull();
 });
 test('an old poll cannot restore Cancel after its action response', async () => {
   vi.stubGlobal('isTauri', true); const poll = deferred<RunSnapshot>(); let reads = 0;

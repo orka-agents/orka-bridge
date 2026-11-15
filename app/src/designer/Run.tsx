@@ -17,10 +17,13 @@ export default function Run({ documentId = SAMPLE_DOCUMENT_ID, onSnapshot, block
   useEffect(() => {
     const request = ++epoch.current;
     setMessage(undefined); setAction(undefined); setActionMessage(undefined); admitted.current = false;
+    let polling = false;
     const observe = async () => {
-      if (admitted.current) return;
+      if (admitted.current || polling) return;
+      polling = true;
       const observation = ++observations.current;
       const result = await runCall('agent_run_status', documentId);
+      polling = false;
       if (request !== epoch.current || observation !== observations.current || admitted.current) return;
       if (result.ok) { setSnapshot(result.snapshot); setMessage(undefined); } else setMessage(result.message);
     };
