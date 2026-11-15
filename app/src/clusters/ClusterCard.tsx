@@ -40,7 +40,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   const accountField = useRef<HTMLInputElement>(null);
   const providerField = useRef<HTMLSelectElement>(null);
   const contextField = useRef<HTMLSelectElement>(null);
-  useEffect(() => { if (active && changingContext && !busy) contextField.current?.focus(); }, [active, changingContext, busy]);
+  useEffect(() => { if (active && changingContext && !busy && !confirmRemoval) contextField.current?.focus(); }, [active, changingContext, busy, confirmRemoval]);
   function readContexts() {
     const request = ++epoch.current; setBusy(true); setError(undefined);
     void contexts().then(v => { if (request === epoch.current) { setChoices(v); initialLoaded.current = true; } }, error => {
@@ -119,10 +119,10 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     return () => { live = false; };
   }, [active, connected, access, entry, removing, changingContext]);
   useEffect(() => {
-    if (!active) return;
+    if (!active || busy) return;
     if (confirmRemoval) keepCluster.current?.focus();
     else if (focusRemoval.current) { removeButton.current?.focus(); focusRemoval.current = false; }
-  }, [confirmRemoval, active]);
+  }, [confirmRemoval, active, busy]);
   async function reconnect(key: string) {
     const request = ++epoch.current; setBusy(true); setError(undefined);
     initialLoaded.current = false; setChoices([]);

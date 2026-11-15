@@ -329,6 +329,8 @@ test('Manage refreshes confirmed agents and offers cancellable removal, finite f
   await screen.findByRole('heading', { name: 'Agents on this cluster' });
   expect(await screen.findByText('reader')).toBeTruthy();
   expect(screen.getByText('Last checked ' + new Date(fresh.observedAt).toLocaleString())).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Change context' }));
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('combobox', { name: 'kubectl context' })));
   await user.click(screen.getByRole('button', { name: 'Remove' }));
   const confirmation = screen.getByRole('group', { name: 'Remove cluster confirmation' });
   expect(confirmation.textContent).toMatch(/only forgets.*Bridge/);
@@ -339,6 +341,8 @@ test('Manage refreshes confirmed agents and offers cancellable removal, finite f
   await user.click(screen.getByRole('button', { name: 'Remove' }));
   await user.click(screen.getByRole('button', { name: 'Remove cluster' }));
   expect((await screen.findByRole('alert')).textContent).toContain("Couldn't confirm removal");
+  expect(confirmation.contains(document.activeElement)).toBe(true);
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep cluster' }));
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
   expect(observe).not.toHaveBeenCalled();
   fail = false;
