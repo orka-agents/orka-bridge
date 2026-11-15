@@ -315,7 +315,7 @@ func key(_ code: CGKeyCode, shift: Bool = false) {
 func sendFrameVisible(_ observations: [VNRecognizedTextObservation]) -> Bool {
     let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     let markers = ["Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
-        "What you send", "What happened", "Send needs attention", "Running tests",
+        "What you send", "What happened", "Earlier result", "Send needs attention", "Running tests",
         "Cancelling tests", "Cancellation requested.", "Cannot cancel with this cluster identity", "This Orka cannot cancel tests.", "Cancellation not confirmed.", "Tests cancelled on the cluster.", "Tests finished before cancellation."]
     return markers.contains { text.localizedCaseInsensitiveContains($0) }
 }
@@ -1398,7 +1398,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Send to a cluster", in: secondAgent)
     // The primary's restored-version Send already reloaded these exact files.
     try clickSendControl("Check again", scrolling: -250)
-    try capturePreflight("send-ready", "Ready to send")
+    // The primary's result remains visible as Earlier result; destination readiness is a collapsed disclosure.
+    try focusSend()
+    try capturePreflight("send-secondary-ready", "Send and run tests")
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
     try capturePreflight("send-secondary-result", "1 of 1 tests passed")
