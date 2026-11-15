@@ -141,7 +141,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
         </fieldset>
         <label htmlFor="model-api-key">API key</label>
         <input ref={keyField} id="model-api-key" type="password" autoComplete="off" spellCheck={false} autoCapitalize="none" disabled={!enabled || paused || !!busy} aria-describedby="model-key-help" aria-invalid={error?.category === 'modelKeyInvalid' || error?.category === 'modelCredentialRejected'} />
-        <p id="model-key-help" className="muted">Saved in this computer’s Keychain or Windows Credential Manager and given only to the local cluster. Never written to a file.</p>
+        <p id="model-key-help" className="muted">Saved in this computer’s Keychain or Windows Credential Manager and given only to the local cluster. Never written to your agent files.</p>
         <Button type="button" kind="quiet" onClick={() => { void help(vendor === 'openai' ? 'openaiKey' : 'anthropicKey'); }}>Where do I get a key?</Button>
         <p>Model <code>{company.model}</code>, a good default.</p>
       </div> : <p className="muted">Use GitHub Copilot. GitHub CLI must be installed and signed in to github.com.</p>}
