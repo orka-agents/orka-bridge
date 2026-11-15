@@ -2,7 +2,7 @@ import { isTauri } from '@tauri-apps/api/core';
 import { Disclosure } from '../components/Disclosure';
 import { Button } from '../components/Button';
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { SAMPLE_DOCUMENT_ID, agentCall, agentInfo, type AgentPair, type SaveState } from './agent-api';
+import { SAMPLE_DOCUMENT_ID, agentCall, agentInfo, storageCopy, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
 import Chat from './Chat';
 import { readWorkspaceCatalog, type WorkspaceCatalogReply } from '../catalog';
@@ -249,6 +249,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
           <AgentParts source={draft} path={pair.path} documentId={boundDocument} readOnly={false} setupPending={setupPending} catalog={currentCatalog?.reply} catalogLoading={catalogEnabled && !currentCatalog} remote={remote} onPendingEdit={observePendingSoul} onChange={edit} />
           {currentCatalog && (!currentCatalog.reply || currentCatalog.reply.models.state === 'unavailable' || currentCatalog.reply.tools.state === 'unavailable') && <Button type="button" kind="secondary" onClick={() => setCatalogAttempt(attempt => attempt + 1)}>Refresh tools and models</Button>}
         </div>
+        {pair.storage && <p className="muted">{storageCopy[pair.storage]}</p>}
         {error && <div className="save-error"><p role="alert">{error}</p><Button kind="primary" className="action-spaced" type="button" onClick={() => { void flush(true); }}>Try saving again</Button></div>}
       </div>
       <div className="designer-checks" hidden={!remote && !sendOpen && !sendVisible}>
