@@ -64,11 +64,12 @@ fn malformed_or_credential_shaped_titles_are_not_display_metadata() {
 #[test]
 fn string_fields_preserve_yaml_scalar_spelling_without_coercing_titles() {
     for scalar in ["42", "true", "null", "0x2A", "1.20", "FALSE", "1e+3", "~"] {
-        let tests = format!("---\nschemaVersion: 1\n---\n\x60\x60\x60yaml agent-test\nid: {scalar}\ninput: {scalar}\nassertions: [{{id: answer, type: contains, value: checksum}}]\n\x60\x60\x60\n");
+        let tests = format!("---\nschemaVersion: 1\n---\n\x60\x60\x60yaml agent-test\nid: {scalar}\ntitle: Reads the page\ninput: {scalar}\nassertions: [{{id: answer, type: contains, value: checksum}}]\n\x60\x60\x60\n");
         let pair = ParsedPair::parse(AGENT.as_bytes(), tests.as_bytes()).unwrap();
         let saved = serde_json::to_value(&pair.cases()[0]).unwrap();
         assert_eq!(saved["id"], scalar);
         assert_eq!(saved["input"], scalar);
+        assert_eq!(saved["title"], "Reads the page");
         // Internally tagged assertions buffer typed YAML values before reading String.
         for assertion in [
             format!("{{id: {scalar}, type: contains, value: checksum}}"),

@@ -222,7 +222,7 @@ test.each([
   const footer = screen.getByRole('contentinfo');
   expect(await within(footer).findByText(detail)).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText(tabLine)).toBeTruthy();
-  expect(within(footer).queryByText(/saved|GPT|tests passing/i)).toBeNull();
+  expect(within(footer).queryByText(/saved|GPT|tests passing|\d+ of \d+ passed/i)).toBeNull();
 });
 
 test('unbuilt controls are disabled with discoverable reasons', async () => {
@@ -300,7 +300,7 @@ test.each(['cancelling', 'cancelled', 'beforeStart', 'unconfirmed'] as const)('a
   const tab = await within(screen.getByRole('navigation')).findByTitle(`reader, ${label}`);
   if (cancellation === 'unconfirmed') expect(tab.querySelector('.tab-status-word')?.className).toContain('status-needs-you');
   expect(within(screen.getByRole('contentinfo')).getByText(label[0].toUpperCase() + label.slice(1))).toBeTruthy();
-  expect(within(screen.getByRole('contentinfo')).queryByText(/tests passing/i)).toBeNull();
+  expect(within(screen.getByRole('contentinfo')).queryByText(/tests passing|\d+ of \d+ passed/i)).toBeNull();
 });
 
 test('Stop from cancellation shares Setup busy/status and leaves a restarted cluster usable', async () => {

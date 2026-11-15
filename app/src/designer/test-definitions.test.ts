@@ -28,8 +28,8 @@ test.each([
   expect(testDefinitions(source)).toBeUndefined();
 });
 test.each(['42', 'true', 'null', '0x2A', '1.20', 'FALSE', '1e+3', '~'])('native string fields preserve the decoded scalar %s', scalar => {
-  const source = file(block('', scalar).replace('input: What did the page say?', `input: ${scalar}`));
-  expect(testDefinitions(source)).toEqual([{ id: scalar, question: scalar }]);
+  const source = file(block('title: Reads the page\n', scalar).replace('input: What did the page say?', `input: ${scalar}`));
+  expect(testDefinitions(source)).toEqual([{ id: scalar, title: 'Reads the page', question: scalar }]);
 });
 test.each(['42', 'true', 'null', '0x2A', '1.20', 'FALSE', '1e+3', '~'])('buffered assertion string fields do not coerce %s, like native Run', scalar => {
   for (const assertion of [`id: ${scalar}, type: contains, value: checksum`, `id: answer, type: contains, value: ${scalar}`, `id: answer, type: toolCalled, tool: ${scalar}`]) {
