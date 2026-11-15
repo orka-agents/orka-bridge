@@ -74,7 +74,7 @@ export function SetupProgress(props: Props) {
   </>;
   return <section className="card workspace-steps setup-progress" aria-label="Local cluster setup">
     {view.done && <div className="steps-head"><h2>Local cluster</h2><StatusPill state={pill}>{pill === 'passed' ? 'Ready' : undefined}</StatusPill><span className="status-description">{error ? 'Unavailable' : view.line}</span></div>}
-    <p role="status" className={view.done || paused || error ? undefined : 'sr-only'}>{view.done || paused || error || ready || stopping || status.localVm === 'notIntegrated' ? stateLine : failed ? 'Setup needs attention' : view.line}</p>
+    <p role="status" className={view.done || paused || error || status.localVm === 'notIntegrated' ? undefined : 'sr-only'}>{view.done || paused || error || ready || stopping || status.localVm === 'notIntegrated' ? stateLine : failed ? 'Setup needs attention' : view.line}</p>
     {ready && !error && props.modelState === 'connected' && props.firstCheck === 'failed' && !!props.firstTestResult?.failed && <p>Its test failed</p>}
     <SetupSteps {...props} workspaceDetails={workspaceDetails} />
     {!failed && <div className="workspace-step-actions">

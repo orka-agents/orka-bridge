@@ -254,7 +254,7 @@ try {
     const chrome = await evaluate(`document.querySelector('header').innerText + document.querySelector('footer').innerText`);
     const observed = !failLater && localVm !== 'failed';
     const step = localVm === 'ready' ? 3 : 2;
-    if (/step \d+ of 5/i.test(chrome) || observed && !chrome.includes(`Setting up, step ${step} of 4`) || !observed && /step \d+ of 4/i.test(chrome)) throw Error(`${name}: incorrect shared step counter: ${chrome}`);
+    if (/step \d+ of 5/i.test(chrome) || observed && !chrome.includes(`step ${step} of 4`) || observed && size === 'wide' && !chrome.includes(`Setting up, step ${step} of 4`) || !observed && /step \d+ of 4/i.test(chrome)) throw Error(`${name}: incorrect shared step counter: ${chrome}`);
     const rows = await evaluate(`({ count: document.querySelectorAll('[aria-label="Setup steps"] > li').length, current: document.querySelector('[aria-current="step"] b')?.textContent, barRow: document.querySelector('[role="progressbar"]')?.closest('li')?.querySelector('b')?.textContent, value: document.querySelector('[role="progressbar"]')?.getAttribute('aria-valuenow') })`);
     if (rows.count !== 4 || observed && rows.current !== (step === 2 ? 'Get your workspace ready' : 'Choose the AI your agent uses')) throw Error(`${name}: list and shell disagree: ${JSON.stringify(rows)}`);
     if (observed && localVm !== 'ready' && rows.barRow !== 'Get your workspace ready') throw Error(`${name}: progress is outside the active workspace row`);

@@ -54,6 +54,13 @@ test.each([['installing', 'Getting ready'], ['starting', 'Starting']] as const)(
   expect(document.querySelector('[aria-current="step"]')).toBeNull();
 });
 
+test('a saved selection on an unsupported build keeps its explanation visible', () => {
+  render(<SetupProgress {...actions} status={status('notIntegrated')} />);
+  const explanation = screen.getByRole('status');
+  expect(explanation.textContent).toContain('Nothing will be downloaded or started.');
+  expect(explanation.classList.contains('sr-only')).toBe(false);
+});
+
 test('unreadable status suppresses progress and current step without dropping rows', () => {
   render(<SetupProgress {...actions} status={status('starting')} error="Unavailable" />);
   expect(screen.queryByRole('progressbar')).toBeNull();
