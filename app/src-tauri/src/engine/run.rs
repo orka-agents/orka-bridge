@@ -160,6 +160,7 @@ impl ResourceId {
             kind,
         })
     }
+    #[cfg_attr(test, allow(dead_code))] // Direct-source chat/example harnesses omit SendOwner.
     pub(crate) fn value(&self) -> Value {
         json!({"apiVersion":"core.orka.ai/v1alpha1","kind":self.kind,
             "metadata":{"name":self.name,"namespace":self.namespace,"uid":self.uid,"generation":self.generation},"spec":self.spec})
@@ -395,6 +396,7 @@ impl<'a> NativeRunner<'a> {
     pub fn prepare(&self, pair: ParsedPair) -> Result<PreparedRun, ErrorKind> {
         self.prepare_agent(pair, None)
     }
+    #[cfg_attr(test, allow(dead_code))] // Direct-source chat/example harnesses omit SendOwner.
     pub(crate) fn prepare_named(
         &self,
         pair: ParsedPair,
