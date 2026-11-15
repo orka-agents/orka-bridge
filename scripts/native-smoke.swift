@@ -1077,7 +1077,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             else { fail("Question heading missing after native search") }
         let y = (1 - question.boundingBox.maxY) * window()!.1.height
         scrollMain(-Int32(max(0, y - 180)))
-        let answer = try capture(name, "Designer")
+        // A partial result can reflow while scrolling. Re-anchor before qualifying the frozen answer frame.
+        let answer = try capturePreflight(name, "What SHA-256 checksum does")
         let text = answer.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("What SHA-256 checksum does") && text.contains("Fixture answer:"), "Question and answer are not visible together")
     }
@@ -1520,7 +1521,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     scrollMain(3000)
     var historyFound = false
     for _ in 0..<12 {
-        let seen = try capture("send-probe", "Designer")
+        let seen = try capture("send-probe", "Designer", searching: true)
         if let heading = seen.first(where: { $0.topCandidates(1).first?.string == "Past Sends" }) {
             // Position the heading near the top so the two newest summaries fit
             // even when the dark walk also retains the light walk's history.
@@ -1536,7 +1537,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Prove the earlier passing summary remains reachable after restart.
     var savedPass = false
     for _ in 0..<6 {
-        let seen = try capture("send-probe", "Designer")
+        let seen = try capture("send-probe", "Designer", searching: true)
         if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains("Saved tests: pass") }) {
             try capture("send-history-passed", "Designer")
             savedPass = true
@@ -1549,7 +1550,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // interrupted Send. Keep its saved label in view for the native capture.
     var savedOpened = false
     for _ in 0..<6 {
-        let seen = try capture("send-probe", "Designer")
+        let seen = try capture("send-probe", "Designer", searching: true)
         if let passed = seen.first(where: { ($0.topCandidates(1).first?.string ?? "").contains("Saved tests: pass") }),
            let disclosure = seen.filter({
                ($0.topCandidates(1).first?.string ?? "").contains("Show saved details")
