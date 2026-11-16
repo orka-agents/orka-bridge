@@ -1004,11 +1004,11 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     setFileText(originalFile)
 }
 scroll(4000)
-// Match the fixture's known Instructions value, not a label plus a guessed
-// offset which can land outside the editor after responsive reflow.
+// Match the known prompt, ignoring separator blank lines exposed by File edits,
+// not a label plus a guessed offset after responsive reflow.
 let editors = nativeElements().filter {
     attribute($0, "AXRole") as? String == "AXTextArea"
-        && (attribute($0, "AXValue") as? String)?.hasPrefix("Answer from the web page named in the request.") == true
+        && (attribute($0, "AXValue") as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("Answer from the web page named in the request.") == true
 }
 require(editors.count == 1, "Expected the fixture Instructions editor")
 let editor = editors[0]
