@@ -504,7 +504,10 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         // Add opens a blank context choice and keeps the Designer destination,
         // so only a confirmation inside the page body would make this entry non-blank.
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        let bodyConfirmed = nativeTextBounds("Access confirmed").contains { bodyBounds().intersects($0) }
+        let headings = nativeTextBounds("Add a cluster", heading: true)
+        require(headings.count == 1, "Add a cluster heading must be visible")
+        // Header destination metadata can remain confirmed; only inspect content below this page's heading.
+        let bodyConfirmed = nativeTextBounds("Access confirmed").contains { $0.minY >= headings[0].maxY }
         require(text.contains("Back to clusters") && !text.contains("Cluster found") && !bodyConfirmed
             && nativeButtons("Open your agent").isEmpty && nativeButtons("Check access again").isEmpty
             && nativeStrings().contains { $0.contains("Choose a context") }, "Add a cluster did not open a blank Places subview: \(text)")
