@@ -124,6 +124,36 @@ test('Remove is not offered during Connect and removal failure names removal', a
   expect(await screen.findByRole('heading', { name: "Couldn't remove the saved sign-in" })).toBeTruthy();
 });
 
+test('place-card recovery keeps provider choice visible when its capture error is cleared', async () => {
+  const destination = render(<div data-testid="destination" />).getByTestId('destination');
+  invoke.mockRejectedValueOnce({ kind: 'modelCaptureUnavailable' });
+  const view = render(<Model enabled onPlaceCard recoveryTarget={destination} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await within(destination).findByRole('alert');
+  fireEvent.click(within(destination).getByRole('radio', { name: /Your own API key/ }));
+  expect(within(destination).getByLabelText('API key')).toBeTruthy();
+  view.rerender(<Model enabled recoveryTarget={destination} />);
+  view.rerender(<Model enabled onPlaceCard recoveryTarget={destination} />);
+  expect(destination.childElementCount).toBe(0);
+});
+
+test('place-card recovery keeps removal progress and completion in its destination', async () => {
+  const destination = render(<div data-testid="destination" />).getByTestId('destination');
+  invoke.mockResolvedValueOnce({ ready: true });
+  render(<Model enabled onPlaceCard recoveryTarget={destination} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await screen.findByText('Connected');
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  invoke.mockRejectedValueOnce({ kind: 'modelBusy' });
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  await within(destination).findByRole('button', { name: 'Retry removal' });
+  let finish!: (value: unknown) => void; invoke.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  fireEvent.click(within(destination).getByRole('button', { name: 'Retry removal' }));
+  expect(within(destination).getByText('Removing')).toBeTruthy();
+  await act(async () => { finish({ ready: false }); });
+  expect(within(destination).getByText(/Bridge no longer has a saved sign-in/)).toBeTruthy();
+});
+
 test('one Model preserves pending reset, details and no stolen focus when its portal destination changes', async () => {
   const one = document.createElement('div'), two = document.createElement('div'); document.body.append(one, two);
   const user = userEvent.setup(); const view = render(<><button>Other control</button><Model enabled recoveryTarget={one} /></>);

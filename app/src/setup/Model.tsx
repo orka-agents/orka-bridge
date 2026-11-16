@@ -39,6 +39,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
   const [confirmReset, setConfirmReset] = useState(false);
   const [anotherProvider, setAnotherProvider] = useState(false);
   const [resetDone, setResetDone] = useState(false);
+  const [cardRecovery, setCardRecovery] = useState(false);
   const [resetAttempts, setResetAttempts] = useState(0);
   const [details, setDetails] = useState(false);
   const [removed, setRemoved] = useState(false);
@@ -50,6 +51,11 @@ export default function Model({ enabled, queueable = false, paused = false, away
   const [notice, setNotice] = useState('');
   const [failedAction, setFailedAction] = useState<'connect' | 'remove' | 'reset'>('connect');
   const removalFailed = !!error && (failedAction === 'remove' || error.category === 'modelKeyCleanup');
+  // Clearing an error advances the same card flow; it must not hide that flow's next state.
+  useEffect(() => {
+    if (!onPlaceCard) setCardRecovery(false);
+    else if (error) setCardRecovery(true);
+  }, [onPlaceCard, error]);
   const epoch = useRef(0);
   const active = useRef(false);
   useEffect(() => {
@@ -201,7 +207,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
     </section>;
     return recoveryTarget ? createPortal(content, recoveryTarget) : content;
   }
-  const portaled = !!recoveryTarget && (!!error || resetDone && onPlaceCard);
+  const portaled = !!recoveryTarget && (!!error || onPlaceCard && (resetDone || cardRecovery));
   const content = <section ref={root} className={portaled ? "setup-model" : "card setup-model"} aria-labelledby="model-title" aria-busy={!!busy}>
     <h2 id="model-title" ref={heading} tabIndex={-1}>{removalFailed ? `Couldn't remove the saved ${keyMode ? 'key' : 'sign-in'}` : 'Connect the AI'}</h2>
     {!ready && busy !== 'remove' && !removalFailed && <>
