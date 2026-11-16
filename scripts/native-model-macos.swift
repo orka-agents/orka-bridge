@@ -825,8 +825,10 @@ func resetCapture(_ state: String, _ expected: [String], anchor: String) throws 
         localSize(width, height)
         scroll(4000)
         for _ in 0..<10 {
-            if let button = enabledButton(anchor) { if reachable(nativeBounds(button)) { break } }
-            else if nativeChatTextIsVisible(anchor) { break }
+            let anchorVisible = enabledButton(anchor).map { reachable(nativeBounds($0)) } ?? nativeChatTextIsVisible(anchor)
+            // Wrapped secondary actions may sit below the primary at the minimum size.
+            let actionsVisible = expected.compactMap(enabledButton).allSatisfy { reachable(nativeBounds($0)) }
+            if anchorVisible && actionsVisible { break }
             scroll(-200)
         }
         _ = try capture("local-reset-\(state)-\(size)", expected + [anchor])

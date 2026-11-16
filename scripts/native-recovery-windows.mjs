@@ -262,6 +262,7 @@ try {
         if (command === 'setup_status' && ${JSON.stringify(!!failLater)} && reads++ > 0) throw Error('Fixture status unreadable');
         if (command === 'setup_status') return { selected: 'localVm', localVm: ${JSON.stringify(localVm)}, model: ${JSON.stringify(localVm === 'ready' ? 'available' : 'locked')}, modelSupported: ${JSON.stringify(modelSupported)}, workspaceProgress: ${JSON.stringify(progress)}, localVmError: null, ...${JSON.stringify(failure ? { workspaceFailure: failure } : {})} };
         if (command === 'setup_example') return pair;
+        if (command === 'overview_files') return { state: 'complete', files: [], runActive: false, historyState: 'complete', runAgents: [] };
         if (command === 'setup_requirements') return null;
         if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
         if (command === 'engine_call') throw { kind: 'unavailable' };
@@ -282,6 +283,7 @@ try {
     const panel = localVm === 'failed' ? '.workspace-failure' : '.setup-progress';
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && [...document.querySelectorAll(${JSON.stringify(panel)})].some(item => item.getClientRects().length)`), `${name} setup progress`);
     if (!await evaluate(`document.querySelector('h1')?.textContent === 'This computer'`)) throw Error(`${name}: local page lost its stable title`);
+    await until(() => evaluate(`document.querySelector('#tab-status-Overview')?.textContent === 'No agents yet'`), 'initial saved-only empty count');
     const chrome = await evaluate(`document.querySelector('header').innerText + document.querySelector('footer').innerText`);
     const observed = !failLater && localVm !== 'failed';
     const step = localVm === 'ready' ? 3 : 2;
