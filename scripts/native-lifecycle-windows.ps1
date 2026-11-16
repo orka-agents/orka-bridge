@@ -459,7 +459,7 @@ input: ""
 assertions: []
 ```
 '@
-        if ($checks.Trim() -cne $expectedChecks.Trim()) { throw 'Own-repo empty test skeleton has incorrect contents' }
+        if ($checks.Trim() -cne $expectedChecks.Replace("`r`n", "`n").Trim()) { throw 'Own-repo empty test skeleton has incorrect contents' }
         $instructions = Find-Control $script:window 'Instructions' ([System.Windows.Automation.ControlType]::Edit)
         $value = $instructions.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
         if ($value -cne '') { throw 'Created agent must open blank Instructions, not the previous File view' }

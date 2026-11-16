@@ -72,6 +72,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   const [pendingSoul, setPendingSoul] = useState(false);
   const pendingSoulCurrent = useRef(false);
   const [reloading, setReloading] = useState(false);
+  const [sourceReloadError, setSourceReloadError] = useState(false);
   const reloadAdmitted = useRef(false);
   const reloadEpoch = useRef(0);
   const [view, setView] = useState<'Agent' | 'Chat' | 'File'>('Agent');
@@ -97,7 +98,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   useEffect(() => {
     let mounted = true;
     const request = ++reloadEpoch.current;
-    reloadAdmitted.current = false; setReloading(false);
+    reloadAdmitted.current = false; setReloading(false); setSourceReloadError(false);
     const open = agentCall('agent_open', undefined, boundDocument);
     void open.then(value => {
       if (!mounted || request !== reloadEpoch.current) return;
@@ -174,7 +175,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     if (!active || actionRequest.action === 'run' && setupPending || actionRequest.documentId !== documentId || creating || wantsCreate || selectionError || saveState === 'error' || error && !pair) { finishAction(); return; }
     if (!actionReady) return;
     setView(actionRequest.action === 'chat' ? 'Chat' : 'Agent');
-    if (actionRequest.action !== 'run') finishAction();
+    if (actionRequest.action !== 'run' || pair && isTestDraft(pair.tests)) finishAction();
   });
   const edit = (value: string, rawFile = false) => {
     const content = rawFile ? value.replace(/\r\n/g, '\n').replaceAll('\n', lineEnding.current) : value;
@@ -185,7 +186,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   };
   async function reloadSource(prepared = false) {
     if ((reloadAdmitted.current && !prepared) || busy.current || needsCommit.current || pendingSoulCurrent.current || latest.current !== saved.current) return;
-    reloadAdmitted.current = true; setReloading(true);
+    reloadAdmitted.current = true; setReloading(true); setSourceReloadError(false);
     const request = ++reloadEpoch.current;
     const before = latest.current;
     try {
@@ -197,6 +198,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
       lineEnding.current = value.agent.includes('\r\n') ? '\r\n' : '\n';
       setStale(false); onPair?.(value, boundDocument);
     } catch (failure) {
+      if (request === reloadEpoch.current) setSourceReloadError(true);
       if (request === reloadEpoch.current && !pair) {
         setError('Your agent folder could not be opened. Open it again from Designer.'); onPair?.(undefined, boundDocument);
       }
@@ -247,7 +249,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     </div>
     {selectionError && <p role="alert">{selectionError}</p>}
     {!pair ? error ? <div className="designer-file card"><p role="alert">{error}</p><div className="heading-actions"><Button type="button" kind="secondary" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</Button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
-      <div hidden={view !== 'Chat'}><Chat key={boundDocument} documentId={boundDocument} blocked={chatBlocked} /></div>
+      <div hidden={view !== 'Chat'}><Chat key={boundDocument} documentId={boundDocument} blocked={chatBlocked} active={active && !creating && view === 'Chat'} /></div>
       <div hidden={view === 'Chat'} className="designer-work">
       <div className="designer-editing">
       <div className="designer-file card">
@@ -268,7 +270,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
       <div className="designer-side">
       <section className="designer-tests" aria-label="This computer"><h2 className="section-label">This computer</h2><div className="card">
         {instructionsMissing && !testDraft && <p>Write instructions in Agent view before running tests.</p>}
-        {testDraft ? <div><h3>Tests</h3><p>Your first test is incomplete. Write instructions in Agent view, then add a question and at least one assertion to the test file on disk before running tests or sending to a cluster.</p><Button type="button" kind="secondary" disabled title="Complete your instructions and test file first">Run tests</Button><Details hint="Test file">{testSource}</Details></div>
+        {testDraft ? <div><h3>Tests</h3><p>Your first test is incomplete. Write instructions in Agent view, then add a question and at least one assertion to the test file on disk before running tests or sending to a cluster.</p><div className="heading-actions"><Button type="button" kind="secondary" disabled title="Complete your instructions and test file first">Run tests</Button><Button type="button" kind="secondary" disabled={reloading || pendingSoul || saveState !== 'saved'} title={pendingSoul || saveState !== 'saved' ? 'Wait for your changes to save before reloading.' : undefined} onClick={() => { void reloadSource().catch(() => undefined); }}>{reloading ? 'Reloading…' : 'Reload saved files'}</Button></div>{sourceReloadError && <p role="alert">Your saved files could not be read. Your current instructions are kept. Try reloading again.</p>}<Details hint="Test file">{testSource}</Details></div>
           : setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><Button type="button" kind="secondary" className="action-spaced" disabled title="Wait for the local cluster and AI to be ready">Run tests</Button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p>{onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Go to Clusters</Button>}</div>
           : <Run tests={pair.tests} onChooseCluster={onChooseCluster} onStopLocalCluster={onStopLocalCluster} onEditInstructions={editInstructions} documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={instructionsMissing || pendingSoul || saveState !== 'saved'} stale={stale} startRequest={actionReady && view === 'Agent' && actionRequest?.action === 'run' ? actionRequest.id : undefined} onStartRequestHandled={finishAction} onStart={() => { if (latest.current === draft) setStale(false); }} />}
         {/* Run shows the test list and test file itself; this copy is only for the not-ready state. */}

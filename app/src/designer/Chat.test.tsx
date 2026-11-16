@@ -254,6 +254,19 @@ test('polling is single-flight even when the previous read has not replied', asy
   render(<Chat documentId={id} />); await poll(); await poll(); expect(reads).toBe(1);
   await act(async () => finish(idle)); await poll(); expect(reads).toBe(2);
 });
+test('hidden Chat never follows or tracks the shared page scroll', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  const view = render(<main className="page-content"><Chat documentId={id} active={false} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 200, configurable: true }, scrollTop: { value: 800, writable: true } });
+  await poll(); expect(page.scrollTop).toBe(800);
+  view.rerender(<main className="page-content"><Chat documentId={id} active /></main>); await act(async () => {});
+  expect(page.scrollTop).toBe(1000);
+  view.rerender(<main className="page-content"><Chat documentId={id} active={false} /></main>);
+  page.scrollTop = 400; fireEvent.scroll(page); await poll(); expect(page.scrollTop).toBe(400);
+  view.rerender(<main className="page-content"><Chat documentId={id} active /></main>); await poll();
+  expect(page.scrollTop).toBe(1000);
+});
 test('conversation follows the page scroll only while the reader stays near its end', async () => {
   snapshot = { ...idle, versions: [{ turns: [turn] }] };
   render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});

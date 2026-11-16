@@ -13,7 +13,7 @@ const states: Record<ChatSnapshot['state'], string> = {
   stopUnconfirmed: 'Stop request unconfirmed. Execution may still be running.',
   contextUnavailable: 'Earlier messages could not be confirmed. Start a new conversation when available.',
 };
-export default function Chat({ documentId, blocked }: { documentId: string; blocked?: string }) {
+export default function Chat({ documentId, blocked, active = true }: { documentId: string; blocked?: string; active?: boolean }) {
   const [snapshot, setSnapshot] = useState<ChatSnapshot>();
   const [draft, setDraft] = useState(''); const draftRef = useRef('');
   const [error, setError] = useState<{ message: string; uncertainSend?: boolean }>(); const [readError, setReadError] = useState<string>();
@@ -58,16 +58,17 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
     return () => { mounted = false; alive.current = false; epoch.current++; clearTimeout(timer); };
   }, [documentId]);
   useEffect(() => {
+    if (!active) return;
     const area = transcript.current?.closest<HTMLElement>('.page-content');
     if (!area) return;
     scrollArea.current = area;
     const track = () => { follow.current = area.scrollHeight - area.clientHeight - area.scrollTop < 48; };
     area.addEventListener('scroll', track);
     return () => { area.removeEventListener('scroll', track); scrollArea.current = null; };
-  }, []);
+  }, [active]);
   useEffect(() => {
-    if (snapshot && follow.current && scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
-  }, [snapshot]);
+    if (active && snapshot && follow.current && scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
+  }, [active, snapshot]);
   useEffect(() => {
     const field = composer.current;
     if (!field) return;

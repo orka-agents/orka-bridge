@@ -1031,6 +1031,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let configURL = URL(fileURLWithPath: ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"]!)
     let originalConfig = try Data(contentsOf: configURL)
     func reloadFixture() throws {
+        // Failed checks mount Reload only inside their expanded error Details.
+        if nativeButtons("Reload kubeconfig").isEmpty { clickButton("Details") }
         for _ in 0..<6 {
             let seen = try capture("cluster-probe", "Clusters")
             if seen.contains(where: { $0.topCandidates(1).first?.string == "Reload kubeconfig" }) {
@@ -1046,6 +1048,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         defer { try? originalConfig.write(to: configURL, options: .atomic) }
         try Data("invalid kubeconfig: [".utf8).write(to: configURL, options: .atomic)
         try reloadFixture()
+        // Reload resets Details; expose the new configuration error's copy action.
+        clickButton("Details")
         try capture("cluster-reload-failed", "Clusters")
         var corrected = try JSONSerialization.jsonObject(with: originalConfig) as! [String: Any]
         var configuredContexts = corrected["contexts"] as! [[String: Any]]

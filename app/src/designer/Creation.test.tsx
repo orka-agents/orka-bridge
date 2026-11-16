@@ -75,6 +75,40 @@ test.each(['Chat', 'File'])('creation from %s opens empty Instructions with an i
   expect(calls).not.toContain('agent_chat_start');
 });
 
+test('an incomplete draft reloads a completed test file and keeps instructions on a read failure', async () => {
+  let disk = { ...other, agent: other.agent + 'Answer briefly.\n' }; let fail = false;
+  native(command => { if (command === 'agent_open') { if (fail) throw Error('/private/read/failure'); return disk; } });
+  const user = userEvent.setup(); render(<Example documentId={id} />);
+  await screen.findByText(/test is incomplete/i);
+  const editor = screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement;
+  fail = true; await user.click(screen.getByRole('button', { name: 'Reload saved files' }));
+  expect(await screen.findByRole('alert')).toHaveProperty('textContent', expect.stringContaining('saved files could not be read'));
+  expect(editor.value).toBe('Answer briefly.\n');
+  expect(screen.queryByText('/private/read/failure')).toBeNull();
+  fail = false; disk = { ...disk, tests: '---\nschemaVersion: 1\n---\n\n```yaml agent-test\nid: first-test\ntitle: Checks the greeting\ninput: Hi\nassertions:\n  - id: greeting\n    type: contains\n    value: Hi\n```\n' };
+  await user.click(screen.getByRole('button', { name: 'Reload saved files' }));
+  expect(await screen.findByText('Checks the greeting')).toBeTruthy();
+  expect(screen.queryByText(/test is incomplete/i)).toBeNull();
+  expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toBe('Answer briefly.\n');
+});
+test('an Overview Run request is consumed when its test is still incomplete', async () => {
+  native(); const handled = vi.fn();
+  render(<Example documentId={id} actionRequest={{ id: 99, documentId: id, action: 'run' }} onActionHandled={handled} />);
+  await screen.findByText(/test is incomplete/i);
+  await waitFor(() => expect(handled.mock.calls).toEqual([[99]]));
+});
+test('draft saved-file reload is disabled while instructions have unsaved edits', async () => {
+  let opens = 0;
+  native(command => { if (command === 'agent_open') { opens++; return other; } });
+  const user = userEvent.setup(); render(<Example documentId={id} />);
+  const editor = await screen.findByRole('textbox', { name: 'Instructions' });
+  fireEvent.change(editor, { target: { value: 'Keep my draft.' } });
+  const reload = screen.getByRole('button', { name: 'Reload saved files' });
+  expect(reload.matches(':disabled')).toBe(true);
+  await user.click(reload); expect(opens).toBe(1);
+  expect((editor as HTMLTextAreaElement).value).toBe('Keep my draft.');
+});
+
 test('naming details are available on request without hiding either storage choice', async () => {
   native(); const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: 'New agent' }));
