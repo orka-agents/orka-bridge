@@ -30,3 +30,10 @@
 .overview-details .generated-value > span:first-child { min-width: 9rem; }
 .overview-empty { display: grid; gap: var(--space-3); max-width: 36rem; }
 .overview-empty h2, .overview-empty p { margin: 0; }
+.overview-activity { margin-top: var(--space-6); }
+.overview-activity-filter { margin-left: auto; }
+.overview-activity-list, .overview-activity-tools { display: grid; gap: var(--space-3); margin: 0; padding: 0; list-style: none; }
+.overview-activity-tools { gap: var(--space-1); font: var(--type-small); color: var(--color-text-secondary); }
+.overview-activity-tools code { font-family: var(--font-mono); font-variant-ligatures: none; }
+.overview-activity-entry h3 { font-family: var(--font-mono); font-variant-ligatures: none; }
+@media (max-width: 820px) { .overview-activity-filter { margin-left: 0; } .overview-activity .overview-group-head { flex-wrap: wrap; } }

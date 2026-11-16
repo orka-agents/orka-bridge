@@ -3,6 +3,7 @@ import { Button } from '../components/Button';
 import { type LiveAgents, type Observation, type Places, type RunAgent, readAgents, readFiles, readPlaces, type SavedFiles, unavailableAgents } from './api';
 import { agentGroups, balance, buildCards, clusterGroups, type CompleteAgents, type Inputs, isEmpty, summaryLabel } from './model';
 import { Board, GroupSection, useCompact } from './places';
+import { RecentActivity } from './Activity';
 import { type AgentFocus, sendAgentCheck } from '../clusters/send-api';
 import './overview.css';
 
@@ -174,6 +175,9 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       {!!trouble.notes.length && <GroupSection group={trouble} byAgent={false} actions={actions} />}
       <div className="card overview-empty"><h2>No agents yet</h2><p>Make an agent, or start from web-reader, the example that answers from a web page. Agents you test or send show up here, one card per cluster.</p>
         <div className="overview-card-actions">{onNewAgent && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}<Button onClick={onOpenExample}>Open web-reader</Button></div></div>
-    </> : <Board stacks={compact ? [groups, []] : balance(groups)} byAgent={byAgent} actions={actions} />}
+    </> : <>
+      <Board stacks={compact ? [groups, []] : balance(groups)} byAgent={byAgent} actions={actions} />
+      <RecentActivity active={active} places={places} />
+    </>}
   </section>;
 }
