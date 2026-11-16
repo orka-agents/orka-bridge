@@ -12,6 +12,7 @@ const MAX_CAPTURE: usize = 16 * 1024;
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
 /// A GitHub login is at most 39 bytes; allow a CRLF and a little slack, nothing more.
 const MAX_ACCOUNT: usize = 64;
+const ACCOUNT_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum CaptureError {
@@ -137,9 +138,10 @@ fn gh_command(path: &Path, args: &[&str]) -> tokio::process::Command {
 /// the same CLI names one valid login before and after it; any failure leaves it unknown.
 /// An account switched away and back between the reads cannot be detected.
 async fn run_capture(path: &Path, timeout: Duration) -> Result<CapturedGithubToken, CaptureError> {
-    let before = read_account(path, timeout).await;
+    let account_timeout = timeout.min(ACCOUNT_TIMEOUT);
+    let before = read_account(path, account_timeout).await;
     let mut token = read_token(path, timeout).await?;
-    if before.is_some() && read_account(path, timeout).await == before {
+    if before.is_some() && read_account(path, account_timeout).await == before {
         token.1 = before;
     }
     Ok(token)

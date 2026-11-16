@@ -226,6 +226,12 @@ async fn actual_child_captures_private_stdout_and_discards_large_stderr() {
     let result = run_capture(&exe, CAPTURE_TIMEOUT).await.unwrap();
     assert_eq!(result.as_bytes(), b"FIXTURE_ONLY_credential");
     assert_eq!(result.account(), Some("fixture-login"));
+    let token_pid = std::fs::read_to_string(exe.with_extension("pid")).unwrap();
+    let account_pid = std::fs::read_to_string(exe.with_extension("account-pid")).unwrap();
+    assert_ne!(
+        token_pid, account_pid,
+        "token and account proofs must name distinct children"
+    );
     assert_eq!(format!("{result:?}"), "CapturedGithubToken([REDACTED])");
 }
 
@@ -247,6 +253,17 @@ async fn account_read_failure_or_change_around_capture_is_unavailable_without_fa
     run_capture(&exe, CAPTURE_TIMEOUT).await.unwrap();
     assert_eq!(std::fs::read(exe.with_extension("count")).unwrap().len(), 2);
     drop(dir);
+}
+
+#[tokio::test]
+async fn optional_account_lookup_cannot_consume_the_token_capture_budget() {
+    let (_dir, exe) = executable("account-hang");
+    let result = tokio::time::timeout(Duration::from_secs(2), run_capture(&exe, CAPTURE_TIMEOUT))
+        .await
+        .expect("optional account lookup held up credential capture")
+        .unwrap();
+    assert_eq!(result.as_bytes(), b"FIXTURE_ONLY_credential");
+    assert_eq!(result.account(), None);
 }
 
 #[tokio::test]
@@ -313,22 +330,24 @@ async fn wait_for_exit(pid: i32) {
 #[cfg(unix)]
 #[tokio::test]
 async fn dropping_capture_kills_the_observed_owned_direct_child() {
-    let (_dir, exe) = executable("hang");
-    let pid_path = exe.with_extension("pid");
-    let task = tokio::spawn(async move { run_capture(&exe, Duration::from_secs(60)).await });
-    let pid: i32 = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            if let Ok(text) = std::fs::read_to_string(&pid_path) {
-                break text.parse().unwrap();
+    for (mode, extension) in [("hang", "pid"), ("account-hang", "account-pid")] {
+        let (_dir, exe) = executable(mode);
+        let pid_path = exe.with_extension(extension);
+        let task = tokio::spawn(async move { run_capture(&exe, Duration::from_secs(60)).await });
+        let pid: i32 = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let Ok(text) = std::fs::read_to_string(&pid_path) {
+                    break text.parse().unwrap();
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-    })
-    .await
-    .expect("fixture did not start");
-    task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
-    wait_for_exit(pid).await;
+        })
+        .await
+        .expect("fixture did not start");
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        wait_for_exit(pid).await;
+    }
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]

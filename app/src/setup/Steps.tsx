@@ -17,6 +17,7 @@ export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stal
 
 type Props = {
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
+  modelUnavailable?: boolean;
   firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void; onChooseProvider?: () => void;
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onChange: (button: HTMLButtonElement) => void; onOpenExample: () => void;
 };
@@ -53,6 +54,7 @@ export function SetupProgress(props: Props) {
   const { view, failed: failedStatus, paused, infra } = stepRows(props);
   const failed = failedStatus && !error;
   const ready = status.localVm === 'ready';
+  const needsModel = props.modelUnavailable && props.firstCheck === 'unknown';
   const progress = status.workspaceProgress;
   const copying = !stopping && status.localVm === 'installing' && progress?.phase === 'materializing';
   const stateLine = error ? 'Local cluster status is unavailable.' : stopping ? 'Stopping the local cluster…' : ready ? 'Your workspace is ready on this computer.'
@@ -80,7 +82,7 @@ export function SetupProgress(props: Props) {
     <p role="status" className={view.done || paused || error || status.localVm === 'notIntegrated' ? undefined : 'sr-only'}>{view.done || paused || error || ready || stopping || status.localVm === 'notIntegrated' ? stateLine : failed ? 'Setup needs attention' : view.line}</p>
     {ready && !error && props.modelState === 'connected' && props.firstCheck === 'failed' && !!props.firstTestResult?.failed && <p>Its test failed</p>}
     <SetupSteps {...props} workspaceDetails={workspaceDetails} />
-    {ready && !error && props.onChooseProvider && props.modelState === 'connected' && props.firstCheck === 'unknown' && <div className="first-test-recovery">
+    {ready && !error && props.onChooseProvider && props.modelState === 'connected' && needsModel && <div className="first-test-recovery">
       <p>The first test could not be confirmed. If the AI could not be reached, check your connection or choose another provider.</p>
       <p className="muted">Changing provider first asks you to remove the current sign-in or key. Your agent files are kept.</p>
       <div className="workspace-step-actions"><Button type="button" kind="primary" disabled={busy} onClick={onOpenExample}>Try again in Designer</Button>
@@ -90,12 +92,12 @@ export function SetupProgress(props: Props) {
       {['preparing', 'installing', 'starting'].includes(status.localVm) && <><Button type="button" kind="secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</Button><span className="muted">Cancel pauses setup. Your downloaded files are kept.</span></>}
       {status.localVm === 'notIntegrated' && onCluster && <Button type="button" kind="quiet" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</Button>}
       {paused && <Button type="button" kind="primary" disabled={busy || !!error} onClick={onRestart}>Start again</Button>}
-      {ready && <>{props.modelState === 'connected' && <>
+      {ready && <>{props.modelState === 'connected' && !needsModel && <>
         {props.firstCheck === 'stale' ? <Button type="button" kind="primary" disabled={busy || !!error} onClick={onOpenExample}>Run it again</Button>
-          : (props.firstCheck === 'unknown' || ((props.firstCheck === 'passed' || props.firstCheck === 'failed') && !props.firstTestResult)) ? <Button type="button" kind={props.onChooseProvider && props.firstCheck === 'unknown' ? 'secondary' : 'primary'} disabled={busy || !!error || !props.onCheckFirstTest} onClick={props.onCheckFirstTest}>Check again</Button>
+          : (props.firstCheck === 'unknown' || ((props.firstCheck === 'passed' || props.firstCheck === 'failed') && !props.firstTestResult)) ? <Button type="button" kind="primary" disabled={busy || !!error || !props.onCheckFirstTest} onClick={props.onCheckFirstTest}>Check again</Button>
           : !props.firstCheck && <Button type="button" kind="primary" disabled={busy || !!error} onClick={onOpenExample}>Open your first agent</Button>}
         {props.firstTestResult && <Button type="button" kind={props.firstCheck === 'stale' || props.firstCheck === 'unknown' || props.firstCheck === 'running' ? 'secondary' : 'primary'} disabled={busy || !!error} onClick={onOpenExample}>See what it answered</Button>}
-      </>}<Button type="button" kind="quiet" disabled={busy || !!error} onClick={onOpenExample}>Read its instructions</Button></>}
+      </>}{!needsModel && <Button type="button" kind="quiet" disabled={busy || !!error} onClick={onOpenExample}>Read its instructions</Button>}</>}
     </div>}
     {ready && !failed && <div className="workspace-management"><Button type="button" kind="quiet" disabled={busy || !!error} onClick={event => onChange(event.currentTarget)}>Stop the local cluster</Button></div>}
   </section>;

@@ -8,9 +8,9 @@ fn main() {
     std::io::stdin().read_to_end(&mut input).unwrap();
     assert!(input.is_empty());
     let exe = std::env::current_exe().unwrap();
-    let pending = exe.with_extension("pending");
+    let pending = exe.with_extension(if account { "account-pending" } else { "pending" });
     std::fs::write(&pending, std::process::id().to_string()).unwrap();
-    std::fs::rename(pending, exe.with_extension("pid")).unwrap();
+    std::fs::rename(pending, exe.with_extension(if account { "account-pid" } else { "pid" })).unwrap();
     let name = exe.file_stem().unwrap().to_str().unwrap();
     if account {
         match name {
@@ -24,7 +24,7 @@ fn main() {
                 std::fs::write(&count, vec![b'x'; seen + 1]).unwrap();
                 return print!("{}\n", if seen == 0 { "first-login" } else { "second-login" });
             }
-            _ => {}
+            _ => return print!("fixture-login\n"),
         }
     }
     match name {

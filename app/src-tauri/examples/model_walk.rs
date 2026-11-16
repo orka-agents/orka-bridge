@@ -154,6 +154,7 @@ fn main() {
     let tests = "---\nschemaVersion: 1\n---\n```yaml agent-test\nid: reads-page\ntitle: Copies the checksum from the page\ninput: What did the page say?\nassertions:\n - id: text\n   type: contains\n   value: checksum\n```\n```yaml agent-test\nid: has-a-date\ntitle: Says which date is on the page\ninput: Which date is shown on the page?\nassertions:\n - id: date\n   type: contains\n   value: '2099-12-31'\n```\n";
     let source = bridge_runtime_protocol::SnapshotId::of(original.as_bytes(), tests.as_bytes());
     let run_source = std::sync::Mutex::new(source.clone());
+    let run_attempt = std::sync::Mutex::new(None::<String>);
     tauri::Builder::default()
         .setup(|app| {
             app.get_webview_window("main")
@@ -252,6 +253,10 @@ fn main() {
                 "agent_run_status" | "agent_run" | "agent_run_cancel" => {
                     if invoke.message.command() == "agent_run_cancel" { cancelling.store(true, std::sync::atomic::Ordering::SeqCst); }
                     if invoke.message.command() == "agent_run" {
+                        *run_attempt.lock().unwrap() = match invoke.message.payload() {
+                            tauri::ipc::InvokeBody::Json(args) => args["attemptId"].as_str().map(str::to_owned),
+                            _ => None,
+                        };
                         *run_source.lock().unwrap() = bridge_runtime_protocol::SnapshotId::of(agent.lock().unwrap().as_bytes(), tests.as_bytes());
                         cancelling.store(false, std::sync::atomic::Ordering::SeqCst);
                         // The automatic first test finishes with the fixed failed report.
@@ -279,7 +284,7 @@ fn main() {
                             {"id":"has-a-date", "title":"Says which date is on the page", "question":"Which date is shown on the page?", "phase":"Succeeded", "answer":"No date was given.", "completedTools":[], "verdict":"failed", "assertions":[{"id":"date", "kind":"contains", "expected":"2099-12-31", "verdict":"failed"}]}
                         ]}),
                     };
-                    json!({"documentId":"9b2b93c4-375c-4815-9717-39852a96e411", "busy":null,
+                    json!({"documentId":"9b2b93c4-375c-4815-9717-39852a96e411", "busy":null, "attemptId":run_attempt.lock().unwrap().clone(),
                         "canCancel":active && !cancelling.load(std::sync::atomic::Ordering::SeqCst), "cancellation":if cancelling.load(std::sync::atomic::Ordering::SeqCst) {"cancelling"} else {"none"},
                         "state":if active {"running"} else if waiting {"idle"} else {"complete"}, "stage":if active {json!(if cancelling.load(std::sync::atomic::Ordering::SeqCst) {"cancel"} else {"observe"})} else if waiting {json!(null)} else {json!("done")},
                         "model":if credit_limited {"claude-sonnet-5-5"} else {"gpt-5.6-terra"}, "vendor":if credit_limited {json!("anthropic")} else {json!(null)}, "modelConnected":connected.load(std::sync::atomic::Ordering::SeqCst), "canRun":!active, "source":run_source.lock().unwrap().clone(),

@@ -37,13 +37,25 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
     let claimed = false;
     let submitted = false;
     let submittedSource: SourceId | undefined;
-    const finish = (snapshot?: RunSnapshot) => {
+    let attemptId: string | undefined;
+    const finish = async (snapshot?: RunSnapshot) => {
       if (cancelled || !mounted.current) return;
-      latest.current.onSnapshot?.(snapshot);
       const verdict = snapshot?.state === 'complete' ? snapshot.report?.verdict ?? 'unknown' : 'unknown';
+      const ownedPass = submitted && verdict === 'passed' && snapshot?.attemptId === attemptId && sameSource(submittedSource, snapshot?.source) === true;
+      if (ownedPass && latest.current.ready && latest.current.canOpen && snapshot) {
+        // A run's frozen source is not proof that its files are still readable/current.
+        let sourceCurrent = false;
+        try {
+          const current = await agentCall('agent_open', undefined, SAMPLE_DOCUMENT_ID);
+          sourceCurrent = sameSource(current.source, snapshot.source) === true;
+        } catch { /* An unreadable current file cannot prove a fresh result. */ }
+        if (cancelled || !mounted.current) return;
+        snapshot = { ...snapshot, sourceCurrent };
+      }
+      latest.current.onSnapshot?.(snapshot);
       setCheck(verdict === 'cancelled' ? 'unknown' : verdict);
       if (latest.current.ready && latest.current.canOpen) {
-        if (submitted && verdict === 'passed' && snapshot && !snapshot.error && snapshot.sourceCurrent !== false && sameSource(submittedSource, snapshot.source) === true && snapshot.report?.cases.every(result => result.verdict === 'passed')) latest.current.onPassed?.(snapshot);
+        if (ownedPass && snapshot && !snapshot.error && snapshot.sourceCurrent !== false && sameSource(submittedSource, snapshot.source) === true && snapshot.report?.cases.every(result => result.verdict === 'passed')) latest.current.onPassed?.(snapshot);
         else if (snapshot?.error === 'model' && latest.current.onUnavailable) latest.current.onUnavailable();
         else latest.current.onOpen();
       }
@@ -56,7 +68,7 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
     };
     const observe = (snapshot: RunSnapshot) => {
       if (cancelled || !mounted.current) return;
-      if (snapshot.state !== 'running' && snapshot.busy?.documentId !== SAMPLE_DOCUMENT_ID) { finish(snapshot); return; }
+      if (snapshot.state !== 'running' && snapshot.busy?.documentId !== SAMPLE_DOCUMENT_ID) { void finish(snapshot); return; }
       latest.current.onSnapshot?.(snapshot);
       setCheck('running');
       poll();
@@ -79,10 +91,11 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
       // Claim is persisted before submission: an interrupted/unknown attempt is never replayed.
       setCheck('running');
       submittedSource = saved.source;
-      const result = await runCall('agent_run', SAMPLE_DOCUMENT_ID, true);
+      try { attemptId = crypto.randomUUID(); } catch { void finish(); return; }
+      const result = await runCall('agent_run', SAMPLE_DOCUMENT_ID, true, attemptId);
       // Only a readable reply from our submission can own the one-time payoff.
       // Lost replies still reconcile normally, but never invent attempt provenance.
-      submitted = result.ok;
+      submitted = result.ok && result.snapshot.attemptId === attemptId;
       if (cancelled || !mounted.current) return;
       // A lost reply may still own native busy; reconcile read-only until release.
       if (result.ok) void observe(result.snapshot); else poll();

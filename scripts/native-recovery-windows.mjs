@@ -362,6 +362,7 @@ try {
       if (designer) pair.agent = ${JSON.stringify('---\nname: web-reader\nmodel: fixture-model\nkmx:\n  runtime: orka\n  schemaVersion: 1\n  tools: []\n---\nFetch before answering.')};
       let connected = designer && name !== 'designer';
       let submitted = false;
+      let attemptId = null;
       const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev' };
       const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name, service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'fixture-image' };
       const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-ai', ready: true };
@@ -396,7 +397,7 @@ try {
           report.verdict = report.cases[0].verdict = report.cases[0].assertions[0].verdict = badge === 'failed' ? 'failed' : 'passed';
           if (submitted && badge === 'unknown') throw Error('Lost sample status');
         }
-        return { documentId, canCancel: running, ...(name === 'designer-stale' ? { source: { ...source, tests: 'c'.repeat(64) } } : {}), ...(name === 'first-test-badges' ? { source: badge === 'stale' ? { ...source, agent: 'c'.repeat(64) } : source } : {}), ...(outcome ? { source } : {}), busy: running ? { documentId, name: 'web-reader' } : null, state: running ? 'running' : complete ? 'complete' : 'idle', canRun: !running, modelConnected: connected, stage: running ? 'observe' : complete ? 'done' : null, model: connected ? 'fixture-model' : null, report: complete ? report : null, acknowledged: [], pending: null, error: null };
+        return { documentId, ...(attemptId ? { attemptId } : {}), canCancel: running, ...(name === 'designer-stale' ? { source: { ...source, tests: 'c'.repeat(64) } } : {}), ...(name === 'first-test-badges' ? { source: badge === 'stale' ? { ...source, agent: 'c'.repeat(64) } : source } : {}), ...(outcome ? { source } : {}), busy: running ? { documentId, name: 'web-reader' } : null, state: running ? 'running' : complete ? 'complete' : 'idle', canRun: !running, modelConnected: connected, stage: running ? 'observe' : complete ? 'done' : null, model: connected ? 'fixture-model' : null, report: complete ? report : null, acknowledged: [], pending: null, error: null };
       };
       localStorage.setItem('bridge.welcomeSeen.v1', '1');
       localStorage.removeItem('bridge.firstTest.v1');
@@ -440,7 +441,7 @@ try {
           window.__bridgeCancelCalls.push(command); window.__bridgeCancellation = 'cancelling'; return snapshot();
         }
         if (command === 'agent_run') {
-          if (args?.bundledExample !== true) throw Error('Fixture automatic test requires native source guard'); if (submitted) throw Error('Fixture automatic test replayed'); submitted = true; window.__bridgeRuns++;
+          if (args?.bundledExample !== true) throw Error('Fixture automatic test requires native source guard'); if (submitted) throw Error('Fixture automatic test replayed'); submitted = true; attemptId = args?.attemptId ?? null; window.__bridgeRuns++;
           // Native accepted the run, but its reply never reached the renderer.
           if (name === 'first-test-lost-reply') throw Error('Synthetic lost run reply');
           return snapshot();

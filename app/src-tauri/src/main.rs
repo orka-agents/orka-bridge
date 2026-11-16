@@ -375,6 +375,7 @@ fn agent_run_check_cancellation(
 async fn agent_run(
     document_id: DocumentId,
     bundled_example: Option<bool>,
+    attempt_id: Option<bridge_runtime_protocol::Uuid>,
     setup: tauri::State<'_, Arc<SetupStore>>,
     agents: tauri::State<'_, Arc<Agents>>,
     state: tauri::State<'_, Arc<bridge_engine::example_run::ExampleRun>>,
@@ -399,7 +400,12 @@ async fn agent_run(
         })
         .await
         .map_err(|_| "The AI connection is unavailable.")??;
-        return state.start_first_test_with_model(vm.inner().clone(), document_id, model);
+        return state.start_first_test_with_model(
+            vm.inner().clone(),
+            document_id,
+            model,
+            attempt_id,
+        );
     }
     let folder = document_folder(agents.inner().clone(), document_id).await?;
     Ok(state.start_document(vm.inner().clone(), folder))

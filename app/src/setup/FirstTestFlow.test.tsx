@@ -12,6 +12,7 @@ const idle = { documentId: sample, busy: null, state: 'idle', canRun: true, mode
 function native(holdSave = false, lostReplies = false) {
   vi.stubGlobal('isTauri', true);
   let selected = false; let running = false; let finished = false;
+  let attemptId: unknown;
   let unreadable = false; let unreadableFiles = false; let verdict = 'passed'; let saved = pair; let modelUnavailable = false;
   const status = () => ({ selected: selected ? 'localVm' : null, localVm: selected ? 'ready' : 'idle', model: selected ? 'available' : 'locked' });
   const ipc = vi.fn((command: string, payload?: unknown) => {
@@ -25,19 +26,19 @@ function native(holdSave = false, lostReplies = false) {
     if (command === 'agent_select') return null;
     if (command === 'agent_open') { if (unreadableFiles) throw Error('Lost file read'); return args?.documentId === other ? { ...pair, documentId: other, name: 'other', agent: '---\nname: other\n---\nOther instructions.' } : { ...saved, documentId: sample, name: 'web-reader' }; }
     if (command === 'agent_save') { if (holdSave) return new Promise(() => {}); saved = { ...pair, agent: String(args?.content), source: { ...pair.source, agent: 'c'.repeat(64) } }; return { ...saved, documentId: sample, name: 'web-reader' }; }
-    if (command === 'agent_run') { running = true; finished = false; if (lostReplies) throw Error('Lost run reply'); return { ...idle, state: 'running', canRun: false, busy: { documentId: sample, name: 'web-reader' } }; }
+    if (command === 'agent_run') { attemptId = args?.attemptId; running = true; finished = false; if (lostReplies) throw Error('Lost run reply'); return { ...idle, ...(attemptId ? { attemptId } : {}), state: 'running', canRun: false, busy: { documentId: sample, name: 'web-reader' } }; }
     if (command === 'agent_run_status') {
       if (args?.documentId === other) return { ...idle, documentId: other };
       if (unreadable) throw Error('Lost sample status');
       if (modelUnavailable) return { ...idle, state: 'unknown', error: 'model' };
-      return finished ? { ...idle, source: pair.source, state: 'complete', report: { verdict, cases: [{ id: 'checksum', question: 'What checksum is on the page?', phase: 'Succeeded', answer: 'Correct checksum', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', expected: 'Correct checksum', verdict }], verdict }] } } : running ? { ...idle, state: 'running', canRun: false, busy: { documentId: sample, name: 'web-reader' } } : idle;
+      return finished ? { ...idle, ...(attemptId ? { attemptId } : {}), source: pair.source, state: 'complete', report: { verdict, cases: [{ id: 'checksum', question: 'What checksum is on the page?', phase: 'Succeeded', answer: 'Correct checksum', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', expected: 'Correct checksum', verdict }], verdict }] } } : running ? { ...idle, state: 'running', canRun: false, busy: { documentId: sample, name: 'web-reader' } } : idle;
     }
     if (command === 'send_history' || command === 'cluster_contexts') return [];
     if (command === 'overview_files') return { state: 'complete', files: [{ documentId: other, name: 'other', state: 'readable', source: null, summary: null, reason: null }], runActive: running && !finished };
     if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
     throw Error('Unexpected command: ' + command);
   });
-  mockIPC(ipc); return { ipc, unavailable: () => { modelUnavailable = true; }, finish: () => { finished = true; }, loseWorkspace: () => { selected = false; }, loseRunStatus: () => { unreadable = true; }, loseFileReads: () => { unreadableFiles = true; }, restoreFileReads: () => { unreadableFiles = false; }, failNext: () => { verdict = 'failed'; } };
+  mockIPC(ipc); return { ipc, unavailable: () => { modelUnavailable = true; }, finish: () => { finished = true; }, loseWorkspace: () => { selected = false; }, loseRunStatus: () => { unreadable = true; }, restoreRunStatus: () => { unreadable = false; }, loseFileReads: () => { unreadableFiles = true; }, restoreFileReads: () => { unreadableFiles = false; }, failNext: () => { verdict = 'failed'; } };
 }
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
@@ -64,7 +65,24 @@ test('first setup stays for its first-pass story, opens only on request and neve
   expect(screen.getByText('Read a web page', { exact: false })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Open web-reader' }));
   expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page');
-  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample, bundledExample: true }]]);
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample, bundledExample: true, attemptId: expect.any(String) }]]);
+});
+
+test('reading instructions before completion does not dismiss the later payoff', async () => {
+  const { finish } = native(); const user = await completeSetup();
+  await screen.findByText('Setting up, step 4 of 4');
+  await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' })); finish();
+  expect(await screen.findByRole('heading', { name: 'Your first agent passed its test' })).toBeTruthy();
+});
+
+test('a shown payoff cannot replay after its evidence becomes unavailable and recovers', async () => {
+  const { finish, loseRunStatus, restoreRunStatus } = native(); await completeSetup();
+  await screen.findByText('Setting up, step 4 of 4'); finish();
+  await screen.findByRole('heading', { name: 'Your first agent passed its test' });
+  loseRunStatus(); await screen.findByRole('button', { name: 'Check again' });
+  restoreRunStatus(); await screen.findByRole('button', { name: 'See what it answered' });
+  expect(screen.queryByRole('heading', { name: 'Your first agent passed its test' })).toBeNull();
 });
 
 test('an unreachable model stays in setup with explicit recovery and never replays automatically', async () => {
@@ -98,6 +116,7 @@ test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains 
   }
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.queryByRole('heading', { name: 'Your first agent passed its test' })).toBeNull();
+  if (state === 'unreadable') expect(screen.queryByRole('button', { name: 'Choose another provider' })).toBeNull();
   const expected = { passed: 'Its test passed', failed: 'Its test failed', unreadable: 'Result unknown', edited: 'Needs running' }[state];
   expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe(`Run your first test${expected}`);
   await user.click(screen.getByRole('button', { name: 'Overview' }));

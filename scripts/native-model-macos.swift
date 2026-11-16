@@ -183,8 +183,10 @@ click("Connect the AI", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("Connects when", -200)
+    reveal("Cancel queued connection")
     _ = try capture("local-setup-queued-\(size)", ["Queued", "Cancel"])
 }
+reveal("Cancel queued connection")
 click("Cancel queued connection", [])
 localSize(1280, 800); scroll(4000)
 click("Show details", [])
@@ -368,7 +370,7 @@ try keyCapture("checking", ["Checking", "Asking Anthropic"])
 try Data().write(to: keyCheckRelease, options: .atomic)
 waitForButton("Check again")
 for (state, message) in [("rejected", "Anthropic didn't accept this key"),
-                         ("unreachable", "local cluster couldn't reach Anthropic"),
+                         ("unreachable", "workspace couldn't reach Anthropic"),
                          ("model-unavailable", "isn't listed for this key")] {
     try keyCapture(state, [message])
     fillMessage("sk-ant-synthetic-only-not-a-real-key", secure: true)
