@@ -138,10 +138,11 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
       <div className="agent-tool-row">
         <select id={`${id}-model`} className="field model-select" disabled={!!modelReason} title={modelReason} value={form.model ?? ''} onChange={event => change(changeModel(source, event.target.value))}>
           {!listed && <option value={form.model ?? ''}>{form.model ? `${form.model}${unlistedLabel}` : 'No model in this file'}</option>}
-          {models?.map(model => <option key={model.id} value={model.id}>{model.id}</option>)}
+          {models?.map(model => <option key={model.id} value={model.id}>{!remote && model.id === catalog?.defaultModel ? `Workspace default: ${model.id}` : model.id}</option>)}
         </select>
         <span className="muted">{catalogLoading ? 'The model saved in your file is shown while choices load.' : modelReason ?? (remote ? models?.length ? 'The selected AI connection’s configured default. Other models can be entered in File view.' : 'No default model is configured for this AI connection. Enter a model in File view.' : models?.length ? `Default model: ${catalog?.defaultModel}` : 'No models listed by the local cluster.')}</span>
       </div>
+      {!remote && catalog?.models.state === 'ready' && catalog.models.items.length === 1000 && <p className="muted">Showing up to 1,000 models; more may be available.</p>}
       {!remote && !listed && models && form.model && <p className="muted">{knownModel ? 'This model is not offered for chat by the connected AI. Choose another model to use it here.' : 'This model is saved in your file but is not listed by the connected AI. It may not run here. Choose a listed model or check your AI connection.'}</p>}
     </div>
     <Disclosure className="agent-settings" label="More settings">

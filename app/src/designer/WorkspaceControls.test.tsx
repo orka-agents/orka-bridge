@@ -28,6 +28,29 @@ test('catalog model choices retain unlisted file model and never substitute the 
   fireEvent.change(model, { target: { value: 'listed' } });
   expect(readForm(changed.mock.calls[0][0]).model).toBe('listed');
 });
+test('workspace default follows the connection without replacing a saved model until chosen', () => {
+  const changed = vi.fn();
+  const withDefault = { ...catalog, defaultModel: 'listed' };
+  const view = render(<AgentParts source={source} readOnly={false} catalog={withDefault} onChange={changed} />);
+  expect(screen.getByRole('option', { name: 'Workspace default: listed' }).getAttribute('value')).toBe('listed');
+  const next = { ...catalog, defaultModel: 'another', models: { state: 'ready' as const, items: [{ id: 'listed' }, { id: 'another' }] } };
+  view.rerender(<AgentParts source={source} readOnly={false} catalog={next} onChange={changed} />);
+  expect((screen.getByRole('combobox') as HTMLSelectElement).value).toBe('unlisted');
+  expect(screen.getByRole('option', { name: 'Workspace default: another' })).toBeTruthy();
+  expect(changed).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: 'another' } });
+  expect(changed).toHaveBeenCalledExactlyOnceWith(source.replace('model: unlisted', 'model: "another"'));
+});
+test('bounded first-page notice counts returned rows, including excluded models', () => {
+  const rows = Array.from({ length: 1000 }, (_, i) => ({ id: `m-${i}`, pickerEnabled: false }));
+  const changed = vi.fn();
+  const view = render(<AgentParts source={source} readOnly={false} catalog={{ ...catalog, models: { state: 'ready', items: rows } }} onChange={changed} />);
+  expect(screen.getByText('Showing up to 1,000 models; more may be available.')).toBeTruthy();
+  expect(screen.getAllByRole('option')).toHaveLength(1);
+  view.rerender(<AgentParts source={source} readOnly={false} catalog={{ ...catalog, models: { state: 'ready', items: rows.slice(0, 999) } }} onChange={changed} />);
+  expect(screen.queryByText(/more may be available/)).toBeNull();
+  expect(changed).not.toHaveBeenCalled();
+});
 test('an existing incompatible model stays visible without calling it unlisted', () => {
   const changed = vi.fn(); render(<AgentParts source={source.replace('model: unlisted', 'model: hidden')} readOnly={false} catalog={catalog} onChange={changed} />);
   expect(screen.getByRole('option', { name: 'hidden (not offered for chat)' })).toBeTruthy();
