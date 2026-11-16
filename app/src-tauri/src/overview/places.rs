@@ -134,7 +134,6 @@ impl State {
     fn start_read(&mut self, key: &str) -> Option<(u64, Arc<RemoteAccess>)> {
         let generation = self.next_generation();
         let entry = self.entries.get_mut(key)?;
-        entry.view.stale = true;
         let access = entry.access.clone()?;
         // Both Overview and Manage share one latest-request-wins revision per entry.
         entry.generation = generation;
@@ -286,11 +285,11 @@ impl Inventory {
         if let Some(entry) = state.entries.get_mut(key) {
             // Reload/re-Use while a read was in flight revokes that response.
             if entry.generation == generation {
+                entry.view.stale = result.is_err();
                 if let Ok(agents) = result {
                     entry.view.agents = agents;
                     entry.view.observed_at = Some(crate::overview::now());
                     entry.view.checked_at = entry.view.observed_at;
-                    entry.view.stale = false;
                     let _ = state.save(None);
                 }
             }

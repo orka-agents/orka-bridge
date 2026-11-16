@@ -147,7 +147,10 @@ fn place_key_ignores_ephemeral_handles_and_image_but_not_installation_or_namespa
 fn evidence() -> crate::send_summary::AttemptDetails {
     serde_json::from_value(serde_json::json!({
         "documentId":"01234567-89ab-4cde-8fab-0123456789ab", "model":"model", "capturedAt":1,
-        "cases":[], "resources":[], "detailState":"saved", "availability":null,
+        "cases":[
+            {"id":"one","input":"private question","assertions":[{"id":"answer","type":"contains","value":"private"}]},
+            {"id":"two","input":"private question","assertions":[{"id":"answer","type":"contains","value":"private"}]}
+        ], "resources":[], "detailState":"saved", "availability":null,
         "report":{"verdict":"passed","cases":[
             {"id":"one","question":"private question","phase":"Succeeded","answer":"private answer","completedTools":[],"assertions":[],"verdict":"passed"},
             {"id":"two","question":"private question","phase":"Succeeded","answer":"private answer","completedTools":[],"assertions":[],"verdict":"passed"}
@@ -204,6 +207,50 @@ fn overview_matching_failed_report_keeps_counts_and_unavailable_store_keeps_plac
     assert!(unavailable["places"][0]["agents"][0]["record"].is_null());
 }
 #[test]
+fn overview_saved_final_counts_survive_unavailable_reachability() {
+    for failed in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let store = crate::send_summary::SummaryStore::new(Some(root.path().into()));
+        let mut summary = record();
+        let mut details = evidence();
+        details.availability = Some("unavailable".into());
+        if failed {
+            summary.verdict = AttemptVerdict::Failed;
+            let report = details.report.as_mut().unwrap();
+            report.verdict = crate::engine::run::Verdict::Failed;
+            report.cases[1].verdict = crate::engine::run::Verdict::Failed;
+        }
+        store.checkpoint(summary, details).unwrap();
+        assert_eq!(
+            projected(&store)["places"][0]["agents"][0]["record"]["report"],
+            if failed {
+                serde_json::json!({"verdict":"failed","passed":1,"total":2})
+            } else {
+                serde_json::json!({"verdict":"passed","passed":2,"total":2})
+            }
+        );
+    }
+}
+#[test]
+fn overview_partial_recovered_failure_does_not_shrink_the_test_total() {
+    let root = tempfile::tempdir().unwrap();
+    let store = crate::send_summary::SummaryStore::new(Some(root.path().into()));
+    let mut summary = record();
+    summary.verdict = AttemptVerdict::Failed;
+    let mut details = evidence();
+    details.availability = Some("unavailable".into());
+    let report = details.report.as_mut().unwrap();
+    report.verdict = crate::engine::run::Verdict::Failed;
+    report.cases.truncate(1);
+    report.cases[0].verdict = crate::engine::run::Verdict::Failed;
+    store.checkpoint(summary, details).unwrap();
+    let view = projected(&store);
+    let record = &view["places"][0]["agents"][0]["record"];
+    assert_eq!(record["verdict"], "failed");
+    assert_eq!(record["documentId"], "01234567-89ab-4cde-8fab-0123456789ab");
+    assert!(record["report"].is_null());
+}
+#[test]
 fn overview_never_borrows_older_counts_or_exports_untrusted_sidecars() {
     use crate::send_summary::SummaryStore;
     for state in [
@@ -211,7 +258,6 @@ fn overview_never_borrows_older_counts_or_exports_untrusted_sidecars() {
         "corrupt",
         "removed",
         "omitted",
-        "unavailable",
         "mismatch",
         "running",
         "unknown",
@@ -237,7 +283,6 @@ fn overview_never_borrows_older_counts_or_exports_untrusted_sidecars() {
             }
             _ => {
                 match state {
-                    "unavailable" => details.availability = Some("unavailable".into()),
                     "mismatch" => {
                         details.report.as_mut().unwrap().verdict =
                             crate::engine::run::Verdict::Failed

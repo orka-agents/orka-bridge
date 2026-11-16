@@ -316,7 +316,7 @@ async fn overview_pagination_failure_keeps_the_last_complete_inventory() {
 }
 
 #[tokio::test]
-async fn overview_coalesces_refresh_and_fences_results_after_reload() {
+async fn overview_coalesces_refresh_preserves_selectable_access_and_fences_reload() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());
     let (session, _) = reading_session(
@@ -343,6 +343,12 @@ async fn overview_coalesces_refresh_and_fences_results_after_reload() {
         async move { session.overview().await }
     });
     tokio::task::yield_now().await;
+    let key = session.places().places[0].key.clone();
+    assert!(
+        session.select(&key).await.is_ok(),
+        "a pending refresh must preserve previously observed selectable access"
+    );
+    assert!(!session.places().places[0].stale);
     session.reload().await.unwrap();
     gate.notify_waiters();
     let first = reply(first.await.unwrap());
@@ -350,6 +356,7 @@ async fn overview_coalesces_refresh_and_fences_results_after_reload() {
     assert_eq!(first[0]["stale"], true);
     assert_eq!(first[0]["observedAt"], initial[0]["observedAt"]);
     assert_eq!(first, second);
+    assert!(session.select(&key).await.is_err());
     assert_eq!(
         orka.calls.lock().unwrap().len(),
         1,

@@ -248,6 +248,7 @@ export default function App() {
         choosePlace({ kind: 'cluster' });
         notice = 'Connect this cluster again in Clusters to send or run its tests. Your file is still available here.';
       }
+      localCluster.current?.showPlaces();
       openDesigner(id); setOverviewNotice(notice);
       setDocumentAction({ id: ++actionSequence.current, documentId: id, action: action === 'run' ? 'send' : 'open' });
       return;

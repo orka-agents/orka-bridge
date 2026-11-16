@@ -219,11 +219,10 @@ impl SummaryStore {
             }
             // Pending publication is already Unknown in read_ledger. Never combine that
             // summary (or a live/interrupted attempt) with an older final report.
-            if record.detail_state == "saved"
-                && details.availability.as_deref() != Some("unavailable")
-            {
+            if record.detail_state == "saved" {
                 if let Some(report) = details.report.filter(|r| {
                     (1..=32).contains(&r.cases.len())
+                        && r.cases.len() == details.cases.len()
                         && matches!(
                             (record.summary.verdict, r.verdict),
                             (AttemptVerdict::Passed, Verdict::Passed)

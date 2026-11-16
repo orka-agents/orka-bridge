@@ -11,14 +11,16 @@ const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-model
 const pair = { documentId, name: 'reader', source, agent: '---\nname: reader\nmodel: literal-model\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools: []\n---\nRead a page.', tests: '---\nschemaVersion: 1\n---\n\n```yaml agent-test\nid: first\ninput: Read\nassertions:\n  - id: answer\n    type: contains\n    value: page\n```\n' };
 const record = { id: documentId, source, targetDisplay: 'team-one · agents', targetUids: { serviceNamespace: 'control', serviceUid: 'svc', deploymentNamespace: 'control', deploymentUid: 'dep', watchedNamespace: 'agents' }, provider: 'team-model', plannedAgentName: 'bridge-reader', agentUid: 'uid', verdict: 'passed', time: 123, documentId, detailState: 'saved', report: { verdict: 'passed', passed: 1, total: 1 } };
 const calls: { command: string; args: unknown }[] = [];
-function ipc(select: () => unknown = () => ({ target, providers: [provider] })) {
+const inventory = ['one', 'two'].map(key => ({ key, context: `team-${key}`, service: 'control/orka', namespace: 'agents', stale: false, observedAt: 123, agents: [{ name: 'bridge-reader', namespace: 'agents', uid: 'uid', agentType: null, model: null, tools: null, record }] }));
+function ipc(select: (args: unknown) => unknown = () => ({ target, providers: [provider] }), extra: (command: string) => unknown = () => undefined) {
   mockIPC((command, args) => {
     calls.push({ command, args });
+    const other = extra(command); if (other !== undefined) return other;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'closed', model: 'locked' };
     if (command === 'overview_files') return { state: 'complete', runActive: false, historyState: 'complete', runAgents: [], files: [{ documentId, name: 'reader', state: 'readable', source, summary: null, reason: null, localResult: null }] };
-    if (command === 'overview_places') return { historyState: 'complete', unobserved: [], places: ['one', 'two'].map(key => ({ key, context: `team-${key}`, service: 'control/orka', namespace: 'agents', stale: false, observedAt: 123, agents: [{ name: 'bridge-reader', namespace: 'agents', uid: 'uid', agentType: null, model: null, tools: null, record }] })) };
+    if (command === 'overview_places') return { historyState: 'complete', unobserved: [], places: inventory };
     if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
-    if (command === 'cluster_select') return select();
+    if (command === 'cluster_select') return select(args);
     if (command === 'agent_open') return pair;
     if (command === 'agent_selected') return documentId;
     if (command === 'agents_list') return [{ documentId, name: 'reader' }];
@@ -46,6 +48,30 @@ test.each(['Open', 'Run tests'])('cluster %s selects the exact destination and n
   if (action === 'Run tests') await waitFor(() => expect(document.activeElement).toBe(panel));
   expect(actions()).toEqual([]);
   expect(within(panel).queryByText(/Choose a cluster in Clusters/)).toBeNull();
+});
+
+test('opening another cluster resets an old management subview before returning to Clusters', async () => {
+  let selectedKey = 'one';
+  const second = { ...target, id: '00000000-0000-4000-8000-000000000004', context_name: 'team-two' };
+  ipc(args => {
+    selectedKey = (args as { key: string }).key;
+    return { target: selectedKey === 'one' ? target : second, providers: [provider] };
+  }, command => command === 'cluster_places' ? { places: inventory, selectedKey, persistenceState: 'complete' }
+    : command === 'setup_status' ? { selected: 'localVm', localVm: 'ready', model: 'locked' } : undefined);
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open reader on team-one' }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 });
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(await within(await screen.findByRole('region', { name: 'team-one' })).findByRole('button', { name: 'Manage' }));
+  await screen.findByRole('heading', { name: 'Manage your cluster', level: 1 });
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Run tests reader on team-two' }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 });
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  expect(await screen.findByRole('heading', { name: 'Clusters', level: 1 })).toBeTruthy();
+  expect(await within(screen.getByRole('region', { name: 'team-two' })).findByRole('button', { name: 'Manage' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
 });
 
 test('lost access opens the file with no admitted destination and reconnect guidance', async () => {
