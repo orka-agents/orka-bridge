@@ -15,6 +15,26 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// Display-only evidence. The persisted v1 summary remains unchanged.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordedAttempt {
+    #[serde(flatten)]
+    pub summary: AttemptSummary,
+    pub document_id: Option<String>,
+    pub report: Option<crate::overview::ReportSummary>,
+    pub detail_state: &'static str,
+}
+impl From<AttemptSummary> for RecordedAttempt {
+    fn from(summary: AttemptSummary) -> Self {
+        Self {
+            summary,
+            document_id: None,
+            report: None,
+            detail_state: "legacy",
+        }
+    }
+}
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAgent {
@@ -24,7 +44,7 @@ pub struct RemoteAgent {
     pub agent_type: Option<String>,
     pub model: Option<String>,
     pub tools: Option<Vec<String>>,
-    pub record: Option<AttemptSummary>,
+    pub record: Option<RecordedAttempt>,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -174,6 +194,12 @@ impl Inventory {
             .get(key)
             .map(|e| e.view.clone())
     }
+    /// Retained access is selectable only after a successful current-session observation.
+    pub(crate) fn connected_access(&self, key: &str) -> Option<Arc<RemoteAccess>> {
+        let state = self.state.lock().unwrap();
+        let entry = state.entries.get(key)?;
+        (!entry.view.stale).then(|| entry.access.clone()).flatten()
+    }
     pub(crate) fn forget(&self, key: &str) -> Result<(), &'static str> {
         let mut state = self.state.lock().unwrap();
         if !state.entries.contains_key(key) {
@@ -301,7 +327,7 @@ pub(crate) fn project(mut places: Vec<Place>, history: Option<Vec<AttemptSummary
                     && agent.namespace == b.watched_namespace
             }) {
                 matched.insert(record.id.clone());
-                agent.record = Some(record.clone());
+                agent.record = Some(record.clone().into());
             }
         }
     }

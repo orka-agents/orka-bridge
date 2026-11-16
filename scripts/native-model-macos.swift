@@ -1078,6 +1078,27 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 
     scroll(4000)
     _ = try capture("local-overview-by-agent-\(size)", ["Your agents", "web-reader", "This computer"])
 }
+// Native UI with synthetic Overview IPC, not a cluster Send. Capture below-fold
+// evidence separately: top-of-page screenshots do not prove these cards are visible.
+for (grouping, label) in [("By cluster", "by-cluster"), ("By agent", "by-agent")] {
+    scroll(4000)
+    click(grouping, [])
+    for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+        localSize(CGFloat(width), CGFloat(height))
+        for (scene, anchor, expected) in [
+            ("earlier-pass", "2 of 2 tests on earlier files", ["Earlier files", "2 of 2 tests on earlier files"]),
+            ("earlier-failed", "1 of 2 tests on earlier files", ["Failed", "1 of 2 tests on earlier files"]),
+            ("draft", "Add instructions and a test to get started.", ["Draft", "Add instructions and a test to get started."])
+        ] {
+            scroll(4000)
+            _ = try seek(anchor, -300)
+            let proof = try capture("local-overview-\(label)-\(scene)-\(size)", expected)
+            let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            require(expected.allSatisfy { pixels.contains($0) }, "Overview evidence must be visible in OCR, not merely in AX")
+        }
+    }
+}
+scroll(4000)
 click("By cluster", [])
 click("Designer", [])
 scroll(4000)
