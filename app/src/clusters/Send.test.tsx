@@ -32,6 +32,19 @@ function native(local: unknown = idle, initial: unknown = null, preflight: unkno
   });
   mockIPC(ipc); return ipc;
 }
+test.each([
+  { state: 'running', stage: 'observe', error: null },
+  { state: 'unknown', stage: 'stopped', error: null },
+  { state: 'unknown', stage: 'done', error: 'storage' },
+  { state: 'unknown', stage: 'stopped', error: null, cancellation: 'unconfirmed' },
+  { state: 'failed', stage: 'submit', error: 'connection' },
+])('an existing Send remains visible without explicitly opening it: %j', async snapshot => {
+  native(idle, { ...running, ...snapshot });
+  render(<Send expanded={false} place={{ kind: 'thisComputer' }} source={source} stale={false} />);
+  expect(await screen.findByRole('region', { name: 'Send and cluster tests' })).toBeTruthy();
+  if (snapshot.state === 'running') expect(screen.getByRole('button', { name: 'Cancel tests' })).toBeTruthy();
+});
+
 test.each(['blocked', 'cannotCheck'])('preflight %s explains the problem and prevents submission', async status => {
   const ipc = native(idle, null, { ...allowed, rows: [{ label: 'page-reader', status, message: status === 'blocked' ? 'Create page-reader on team-dev.' : 'Bridge cannot check page-reader.' }], canSend: false });
   render(<Send place={place} source={source} stale={false} />);
