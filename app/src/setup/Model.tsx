@@ -10,8 +10,8 @@ import type { HelpTopic } from './recovery-info';
 export type ModelState = 'idle' | 'queued' | 'connecting' | 'removing' | 'resetting' | 'resetFailed' | 'removalFailed' | 'connected' | 'failed';
 // `enabled` is native permission to touch credentials. `queueable` only permits remembering the
 // creator's choice while the workspace is still arriving. `away` means another place was chosen.
-export default function Model({ enabled, queueable = false, paused = false, away = false, primary = true, recoveryTarget, onState, onSettled, onConnectRequest }: {
-  enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; primary?: boolean; recoveryTarget?: HTMLElement | null; onState?: (state: ModelState) => void; onSettled?: () => void; onConnectRequest?: () => void;
+export default function Model({ enabled, queueable = false, paused = false, away = false, primary = true, recoveryTarget, onPlaceCard = false, onState, onSettled, onConnectRequest }: {
+  enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; primary?: boolean; recoveryTarget?: HTMLElement | null; onPlaceCard?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void; onConnectRequest?: () => void;
 }) {
   // In-memory consent only. It never carries a credential and is consumed once.
   const [queued, setQueued] = useState(false);
@@ -126,7 +126,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
     try {
       await navigator.clipboard.writeText(['Bridge AI connection', `Operation: ${failedAction === 'reset' ? 'Resetting AI connection' : failedAction === 'remove' ? 'Removing sign-in' : 'Connecting AI'}`, `Category: ${error.category}`,
         ...error.codes.map(code => `OS code: ${code}`),
-        ...(recovery ? [`Installation: ${recovery.installation}`, `Saved installation: ${recovery.savedInstallation}`, `Native credential slot: ${recovery.credentialSlot}`, `Reset stage: ${recovery.resetStage ?? 'Not started'}`] : [])].join('\n'));
+        ...(recovery ? [`Installation: ${recovery.installation}`, `Saved installation: ${recovery.savedInstallation}`, `Native credential slot: ${recovery.credentialSlot}`, `Reset stage: ${recovery.resetStage ?? (failedAction === 'reset' ? 'Unconfirmed' : 'Not started')}`] : [])].join('\n'));
       setNotice('Details copied. No keys or sign-in tokens are included.');
     } catch { setNotice("Couldn't copy. Share the visible error message for help."); }
   }
@@ -172,7 +172,8 @@ export default function Model({ enabled, queueable = false, paused = false, away
     </section>;
     return recoveryTarget ? createPortal(content, recoveryTarget) : content;
   }
-  const content = <section ref={root} className={error && recoveryTarget ? "setup-model" : "card setup-model"} aria-labelledby="model-title" aria-busy={!!busy}>
+  const portaled = !!recoveryTarget && (!!error || resetDone && onPlaceCard);
+  const content = <section ref={root} className={portaled ? "setup-model" : "card setup-model"} aria-labelledby="model-title" aria-busy={!!busy}>
     <h2 id="model-title">{removalFailed ? `Couldn't remove the saved ${keyMode ? 'key' : 'sign-in'}` : 'Connect the AI'}</h2>
     {!ready && busy !== 'remove' && !removalFailed && <>
       <fieldset className="model-choice" disabled={!!busy || hasSignIn}>
@@ -246,5 +247,5 @@ export default function Model({ enabled, queueable = false, paused = false, away
     {removed && !resetDone && <p role="status">{keyMode ? 'No AI connection. Bridge no longer has a saved key.' : 'Bridge no longer has a saved sign-in. GitHub CLI stays signed in.'}</p>}
     {notice && <p role="status">{notice}</p>}
   </section>;
-  return error && recoveryTarget ? createPortal(content, recoveryTarget) : content;
+  return portaled && recoveryTarget ? createPortal(content, recoveryTarget) : content;
 }

@@ -70,6 +70,7 @@ test.each(['credentialRemovalUnconfirmed', 'recordRemovalUnconfirmed'])('reset f
 });
 
 test('a later unclassified reset failure does not reuse an earlier custody confirmation', async () => {
+  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
   render(<Model enabled />); await mismatch();
   fireEvent.click(screen.getByRole('button', { name: 'Reset AI connection' }));
   invoke.mockRejectedValueOnce({ kind: 'modelUnavailable', recovery: { ...recovery, resetStage: 'recordRemovalUnconfirmed' } });
@@ -81,6 +82,9 @@ test('a later unclassified reset failure does not reuse an earlier custody confi
   fireEvent.click(screen.getByRole('button', { name: 'Show details' }));
   expect(screen.queryByText('Native credential removed; saved record removal not confirmed.')).toBeNull();
   expect(screen.getByText('Bridge could not check what is still saved. The identifiers below are from the last confirmed record.')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
+  expect(copy.mock.calls[0][0]).toContain('Reset stage: Unconfirmed');
+  expect(copy.mock.calls[0][0]).not.toContain('Reset stage: Not started');
 });
 
 test('reset completion message disappears when a new connection starts', async () => {

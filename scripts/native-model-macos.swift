@@ -219,7 +219,16 @@ try resetCapture("failed", ["couldn't reset the AI connection", "Try once more",
 press("Copy details for help")
 waitForNativeText(["Details copied.", "Couldn't copy."])
 try resetCapture("copy-notice", [nativeTextExists("Details copied.") ? "No keys or sign-in tokens are included." : "Couldn't copy."], anchor: "Copy details for help")
-pressLowest("Show details")
+// The reset Copy button precedes its disclosure in keyboard order. Re-focus it
+// after size captures, then activate the next control instead of guessing between two disclosures.
+press("Copy details for help")
+CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: true)?.post(tap: .cghidEventTap)
+CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: false)?.post(tap: .cghidEventTap)
+Thread.sleep(forTimeInterval: 0.1)
+CGEvent(keyboardEventSource: nil, virtualKey: 49, keyDown: true)?.post(tap: .cghidEventTap)
+CGEvent(keyboardEventSource: nil, virtualKey: 49, keyDown: false)?.post(tap: .cghidEventTap)
+Thread.sleep(forTimeInterval: 0.3)
+_ = try capture("local-reset-details-opened", [])
 waitForNativeText(["Native credential removal not confirmed; saved record kept."])
 try resetCapture("details", ["Native credential removal not confirmed; saved record kept.", "20000000-0000-4000-8000-000000000002"], anchor: "30000000-0000-4000-8000-000000000003")
 try "reset-fail-record".write(to: setupProgress, atomically: true, encoding: .utf8)
@@ -550,25 +559,6 @@ func press(_ label: String) {
         scroll(-200)
     }
     click(label, [])
-}
-// Setup keeps the workspace row's own Show details; the AI row's control is the lower one.
-func pressLowest(_ label: String) {
-    scroll(4000)
-    for _ in 0..<10 {
-        let lowest = nativeElements().filter { element in
-            attribute(element, "AXRole") as? String == "AXButton" && attribute(element, "AXEnabled") as? Bool == true
-                && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
-        }.compactMap(nativeBounds).max(by: { $0.minY < $1.minY })
-        if let bounds = lowest, reachable(bounds) {
-            for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-                CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: CGPoint(x: bounds.midX, y: bounds.midY), mouseButton: .left)?.post(tap: .cghidEventTap)
-            }
-            Thread.sleep(forTimeInterval: 1)
-            return
-        }
-        scroll(-200)
-    }
-    require(false, "Native control is not reachable: \(label)")
 }
 // Each reset state at the wide size and the exact 540x640 minimum, beside its approved frame.
 func resetCapture(_ state: String, _ expected: [String], anchor: String) throws {

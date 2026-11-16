@@ -118,6 +118,48 @@ fn reset_refuses_current_nil_malformed_and_locked_records_without_mutation() {
 }
 
 #[test]
+fn malformed_connection_identity_never_offers_mismatch_reset_or_touches_credentials() {
+    for case in 0..3 {
+        let (_tmp, setup, old) = selected_setup();
+        let root = setup.root.as_ref().unwrap();
+        let vault = FakeVault::default();
+        setup.associate_secret(old, SECRET, &vault).unwrap();
+        let mut b = read_binding(root).unwrap().unwrap();
+        b.phase = Phase::Connected;
+        b.nonce = Some(Uuid::new_v4());
+        let mut connection = ModelConnection {
+            id: Uuid::new_v4(),
+            generation: Uuid::new_v4(),
+            selection: selection(),
+        };
+        match case {
+            0 => connection.id = Uuid::nil(),
+            1 => connection.generation = Uuid::nil(),
+            _ => connection.selection.model.clear(),
+        }
+        b.connection = Some(connection);
+        write_binding(root, &b).unwrap();
+        let current = Uuid::new_v4();
+        let (mut client, worker) = peer(Uuid::new_v4(), |_| {
+            panic!("malformed binding contacted guest")
+        });
+        let error = setup
+            .connect_stored_model(current, &mut client, &vault, || panic!("captured"))
+            .unwrap_err();
+        assert_eq!(error.kind, "modelUnavailable");
+        assert!(error.recovery.is_none());
+        let error = setup
+            .sign_out_model(current, Some(&mut client), &vault)
+            .unwrap_err();
+        assert!(error.recovery.is_none());
+        assert!(setup.reset_mismatched_model(current, &vault).is_err());
+        assert_eq!(vault.counts(), (1, 0, 0));
+        drop(client);
+        worker.join().unwrap().assert_empty();
+    }
+}
+
+#[test]
 fn reset_delete_failure_retains_exact_record_then_retries_same_slot() {
     let (_tmp, setup, install) = selected_setup();
     let root = setup.root.as_ref().unwrap();

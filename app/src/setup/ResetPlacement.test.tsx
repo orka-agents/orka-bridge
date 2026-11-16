@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import Setup from './Setup';
 
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
-test('AI recovery is on the failing step and the same running-place card, preserving pending reset across navigation', async () => {
+test.each(['stay', 'navigate'])('AI recovery keeps reset completion visible after %s on the running-place card', async destination => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   let finish!: (value: unknown) => void;
   const ipc = vi.fn((command: string) => {
@@ -33,10 +33,16 @@ test('AI recovery is on the failing step and the same running-place card, preser
   expect(within(place).getByText('Workspace running')).toBeTruthy();
   await user.click(within(place).getByRole('button', { name: 'Reset AI connection' }));
   await user.click(within(place).getByRole('button', { name: 'Reset' }));
-  await user.click(within(place).getByRole('button', { name: 'Connect the AI' }));
-  const heading = screen.getByRole('heading', { level: 1 }); heading.focus();
+  if (destination === 'navigate') {
+    await user.click(within(place).getByRole('button', { name: 'Connect the AI' }));
+    screen.getByRole('heading', { level: 1 }).focus();
+  }
+  const focused = document.activeElement;
   await act(async () => { finish({ ready: false }); });
-  expect(screen.getByText('Connection reset. Choose the AI again.')).toBeTruthy();
+  const area = destination === 'stay' ? within(place) : screen;
+  expect(area.getByText('Connection reset. Choose the AI again.')).toBeTruthy();
+  expect(area.getByRole('radio', { name: 'GitHub Copilot' }).matches(':disabled')).toBe(false);
   expect(ipc.mock.calls.filter(([name]) => name === 'setup_reset_model')).toHaveLength(1);
-  expect(document.activeElement).toBe(heading);
+  if (destination === 'stay') expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Clusters');
+  else expect(document.activeElement).toBe(focused);
 });

@@ -78,7 +78,15 @@ fn unavailable() -> SetupError {
         recovery: None,
     }
 }
+fn valid_saved_connection(b: &Binding) -> bool {
+    b.connection
+        .as_ref()
+        .is_none_or(|c| !c.id.is_nil() && !c.generation.is_nil() && c.selection.valid())
+}
 fn mismatch(installation: Uuid, b: &Binding) -> SetupError {
+    if !valid_saved_connection(b) {
+        return unavailable();
+    }
     SetupError {
         recovery: Some(Box::new(ModelRecovery {
             installation,
@@ -261,11 +269,7 @@ impl SetupStore {
         let Some(b) = read_binding(root)? else {
             return Ok(state(None, false));
         };
-        if b.installation == installation
-            || b.connection
-                .as_ref()
-                .is_some_and(|c| c.id.is_nil() || c.generation.is_nil() || !c.selection.valid())
-        {
+        if b.installation == installation || !valid_saved_connection(&b) {
             return Err(unavailable());
         }
         let failure = |mut error: SetupError, stage| {
