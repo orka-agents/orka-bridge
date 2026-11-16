@@ -110,7 +110,7 @@ test('typed unconfirmed stop cannot admit a second workspace', async () => {
   native({ cause: 'stopUnconfirmed', operation: 'stop', codes: [] }); render(<App />); await openLocalSetup();
   expect((await screen.findByRole('alert')).textContent).toContain("couldn't be stopped safely");
   expect(screen.getByRole('button', { name: 'Try again' }).matches(':disabled')).toBe(true);
-  expect(screen.getByRole('button', { name: 'Try again' }).title).toBe('Quit Bridge and reopen it before trying again. The local cluster may still be stopping.');
+  expect(screen.getByRole('button', { name: 'Try again' }).title).toBe('Quit Bridge and reopen it before trying again');
 });
 
 test.each(['workspaceUpdateRequired', 'workspaceVersionUnsupported'] as const)('version refusal %s cannot retry or replace the workspace', async cause => {
