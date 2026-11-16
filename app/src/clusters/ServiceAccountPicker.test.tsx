@@ -77,10 +77,15 @@ test('empty listing is not denied and truncated results do not claim completenes
   await screen.findByText('No ServiceAccounts were found in agents.');
   expect(screen.queryByText(/cannot list/)).toBeNull();
   expect(screen.getByRole('textbox', { name: 'ServiceAccount name' })).toBeTruthy();
-  cleanup(); fixture({ names: ['team-runner'], truncated: true });
+  cleanup(); const truncatedIpc = fixture({ names: ['team-runner'], truncated: true });
   render(<ClusterCard onPlace={vi.fn()} onOpenAgent={vi.fn()} />);
   await chooseContext(user, 'team-dev'); await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   await screen.findByText('Showing up to 1,000 accounts. More may exist.');
+  expect(screen.getByRole('button', { name: 'ServiceAccount' })).toBeTruthy();
+  await user.type(screen.getByRole('textbox', { name: 'ServiceAccount name' }), 'omitted-runner');
+  expect(truncatedIpc.mock.calls.some(([c]) => c === 'cluster_service_account_preview')).toBe(false);
+  await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
+  await waitFor(() => expect(truncatedIpc.mock.calls).toContainEqual(['cluster_use', { targetId: target.id, saName: 'omitted-runner' }]));
 });
 
 test('a late permission result cannot replace the newly selected account result', async () => {

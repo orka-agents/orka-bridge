@@ -65,6 +65,10 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
       </Button>
       {accounts?.truncated && <p className="muted">Showing up to 1,000 accounts. More may exist.</p>}
     </>}
+    {accounts?.truncated && <>
+      <label htmlFor={`${id}-name`}>ServiceAccount name</label>
+      <input id={`${id}-name`} className="field" value={value} disabled={disabled} autoComplete="off" spellCheck={false} onChange={event => { ++previewEpoch.current; setPreview(undefined); onChange(event.target.value); }} />
+    </>}
     {open && active && !disabled && <div ref={popover} popover="auto" role="dialog" aria-label="Choose a ServiceAccount" id={`${id}-picker`} className="context-picker"
       onToggle={event => { if (event.newState === 'closed') close(popover.current?.contains(document.activeElement) === true || document.activeElement === document.body); }}
       onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
