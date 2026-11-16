@@ -31,9 +31,11 @@ function actions(chosen) {
   return names;
 }
 const all = actions(selection()), core = actions(selection('core')), ui = actions(selection('chat-agent-clusters'));
-assert.equal(all.length, 58);
-assert.equal(core.length, 45);
+assert.equal(all.length, 59);
+assert.equal(core.length, 46);
 assert.equal(ui.length, 13);
+assert.ok(core.includes('designer-reply-saved'), 'saved reply captures belong to the core scope');
+assert.ok(!ui.includes('designer-reply-saved'), 'UI scope must not repeat saved reply captures');
 assert.equal(new Set([...core, ...ui]).size, all.length, 'scopes must partition, not repeat or omit cases');
 assert.deepEqual([...core, ...ui], all);
 assert.deepEqual(ui, ['chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure', 'cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination']);
@@ -57,7 +59,7 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
   let injection;
   const stop = new Error('injection captured');
   const capture = vm.runInNewContext(`(${captureActions})`, {
-    pair: { agent: '', tests: '' }, GiB: 1024 ** 3, fixtureAccount: 'synthetic-user',
+    pair: { agent: '', tests: '' }, replySavedAgent: '', GiB: 1024 ** 3, fixtureAccount: 'synthetic-user',
     call: async () => ({ frameTree: { frame: { id: 'fixture' } }, executionContextId: 1 }),
     evaluate: async script => { injection = script; throw stop; },
   });
@@ -83,4 +85,4 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
     await assert.rejects(invoke('cluster_service_account_preview', { ...args, saName: 'task-reader' }), /Only the selected account/);
   }
 }
-console.log('PASS real scope parsing; 45+13 unique action cases; disjoint CI scopes with unchanged three-minute ceilings');
+console.log('PASS real scope parsing; 46+13 unique action cases; disjoint CI scopes with unchanged three-minute ceilings');
