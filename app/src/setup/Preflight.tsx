@@ -59,7 +59,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }:
           <p>{`Required: ${requiredMemoryBytes.toLocaleString()} bytes.${result?.installedMemoryBytes != null ? ` Installed: ${result.installedMemoryBytes.toLocaleString()} bytes.` : ''}`}</p></div>}</Disclosure>
       </section>}
     </div>
-    <p className={!checking && !failedVirtualization && memory === 'ready' && !uncertain ? 'sr-only' : 'muted'} id="preflight-reason" role="status" ref={reason} tabIndex={-1}>{checking ? 'Checking this computer before setup.' : failedVirtualization || memory === 'insufficient' ? 'Fix the computer requirements above before continuing.' : uncertain ? "Bridge couldn't check this computer yet. It checks again when the workspace starts." : 'These checks do not change this computer.'}</p>
+    <p className={!checking && !failedVirtualization && memory === 'ready' && !uncertain && attempt === 0 ? 'sr-only' : 'muted'} id="preflight-reason" role="status" ref={reason} tabIndex={-1}>{checking ? 'Checking this computer before setup.' : failedVirtualization || memory === 'insufficient' ? 'Fix the computer requirements above before continuing.' : uncertain ? "Bridge couldn't check this computer yet. It checks again when the workspace starts." : 'These checks do not change this computer.'}</p>
     {uncertain && (failedVirtualization || memory === 'insufficient') && <p className="muted">Bridge couldn't check this computer yet. It checks again when the workspace starts.</p>}
     {!checking && (failedVirtualization || memory === 'insufficient') && <div className="workspace-step-actions">
       <Button type="button" kind="secondary" onClick={onCluster}>Use a cluster instead</Button>

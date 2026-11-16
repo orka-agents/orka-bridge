@@ -106,6 +106,8 @@ test('insufficient installed memory blocks preparation, explains RAM, and can be
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(false));
   expect(within(panel).getByRole('status').textContent).toBe('These checks do not change this computer.');
+  expect(document.activeElement).toBe(within(panel).getByRole('status'));
+  expect(within(panel).getByRole('status').className).toBe('muted');
   expect(within(panel).queryByRole('region', { name: 'Installed memory' })).toBeNull();
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_preflight')).toHaveLength(2);
   expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
