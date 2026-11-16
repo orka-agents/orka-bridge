@@ -382,7 +382,9 @@ try {
             Capture 'first-close-notice' $true
             $copy = (Get-UiNames $notice) -join ' '
             if (!$copy.Contains('system tray') -or !$copy.Contains('Stop the local cluster and quit')) { throw 'Close notice lost reopen/Quit guidance' }
-            Press (Wait-For 'Close notice OK missing' { Find-Control $notice 'OK' $button })
+            # TaskDialog exposes its OK action as a Pane on this runner. Keep the exact
+            # label scoped to the already verified same-process notice; Press uses its native clickable point.
+            Press (Wait-For 'Close notice OK missing' { Find-Control $notice 'OK' $null })
         }
         Wait-For 'Native Close did not hide' { ![NativeWalk]::IsWindowVisible($script:hwnd) } | Out-Null
         if (!(Test-Path $noticeMarker) -or (Find-Control $desktop 'Bridge is still running' $null)) { throw 'Acknowledged notice was not remembered/dismissed' }

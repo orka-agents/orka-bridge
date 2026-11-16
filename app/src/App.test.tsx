@@ -230,6 +230,27 @@ test('switching the owned example to a registered document opens each identity o
   expect(opened).toEqual(['9b2b93c4-375c-4815-9717-39852a96e411', id]);
 });
 
+test('first opening the sample refreshes the hidden saved count without live discovery', async () => {
+  vi.stubGlobal('isTauri', true);
+  const id = '9b2b93c4-375c-4815-9717-39852a96e411';
+  const pair = { documentId: id, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks' };
+  let created = false; const live: string[] = [];
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
+    if (command === 'overview_files') return { state: 'complete', runActive: false, historyState: 'complete', runAgents: [], files: created ? [{ documentId: id, name: 'reader', state: 'readable', source: { agent: 'a'.repeat(64), tests: 'b'.repeat(64) }, summary: { name: 'reader', description: null, model: 'fixture-model', tools: [] }, reason: null, localResult: null }] : [] };
+    if (command === 'overview_agents' || command === 'overview_places') live.push(command);
+    if (command === 'agent_open') { created = true; return pair; }
+    if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
+    throw { kind: 'unavailable' };
+  });
+  render(<App />);
+  await within(screen.getByRole('navigation')).findByText('No agents yet');
+  await userEvent.click(screen.getByRole('button', { name: 'Designer' }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 });
+  await within(screen.getByRole('navigation')).findByText('1 saved agent');
+  expect(live).toEqual([]);
+});
+
 test('Designer opens the owned agent without workspace setup and shares its saved state', async () => {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => command === 'setup_status' ? { selected: null, localVm: 'idle', model: 'locked' }

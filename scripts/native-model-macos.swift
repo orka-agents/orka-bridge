@@ -219,7 +219,8 @@ var rows = try capture("local-places-wide", ["Choose where agents run", "This co
 require(enabledButton("Connect the AI") != nil && enabledButton("Manage") == nil && enabledButton("Set up") == nil,
         "VM-ready local card must offer Connect the AI, not Manage")
 click("Connect the AI", rows)
-rows = try capture("before-connect", ["Connect the AI", "3 saved agents"])
+rows = try capture("before-connect", ["Connect the AI"])
+require(exactTextIsVisible("3 saved agents"), "Hidden Overview must report the saved-file count")
 localSize(540, 640)
 scroll(4000)
 _ = try capture("local-setup-ai-minimum-top", ["This computer", "Get your workspace ready"])

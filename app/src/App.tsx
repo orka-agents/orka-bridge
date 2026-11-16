@@ -157,10 +157,15 @@ export default function App() {
       setSetupReadOnly(status.selected === 'localVm' && !workspaceAdmitted.current);
     }
   }, []);
+  const sampleFilesObserved = useRef(false);
   const observePair = useCallback((pair: (ExamplePair & { source?: SourceId }) | undefined, id: string) => {
     setExampleState(pair ? 'loaded' : 'failed');
     setAgentName(agentInfo(pair?.agent).name);
-    if (id === SAMPLE_DOCUMENT_ID) setSampleSource(pair ? pair.source : null);
+    if (id === SAMPLE_DOCUMENT_ID) {
+      setSampleSource(pair ? pair.source : null);
+      // Native first-open creates the sample files; refresh the hidden saved-only inventory once.
+      if (pair && !sampleFilesObserved.current) { sampleFilesObserved.current = true; setAgentsRevision(value => value + 1); }
+    }
   }, []);
   const cases = run?.report?.cases;
   const checksStale = stale || (run?.sourceCurrent === false && !!run.report);
