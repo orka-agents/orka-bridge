@@ -27,7 +27,7 @@ test('empty Chat teaches the next action and discloses bounded, memory-only hist
   await open(); expect(screen.getByText(/Ask your agent a question/)).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true);
   fireEvent.click(screen.getByText('About this conversation'));
-  expect(screen.getByText(/50 messages/)).toBeTruthy(); expect(screen.getByText(/new worker/)).toBeTruthy();
+  expect(screen.getByText(/50 messages/)).toBeTruthy(); expect(screen.queryByText(/new worker/)).toBeNull();
   expect(screen.getByText(/quit Bridge/)).toBeTruthy(); expect(screen.getByText(/remain in the local cluster/)).toBeTruthy();
 });
 test('Enter sends exactly once and only an appended turn consumes its matching composer', async () => {
@@ -166,6 +166,28 @@ test.each(['Pending', 'Queued', ''])('a working snapshot with phase %s shows wai
   snapshot = { ...idle, state: 'working', busy: true, canSend: false, versions: [{ turns: [{ ...turn, answer: null, phase }] }] };
   await open(); expect(screen.getByText('Waiting to start…')).toBeTruthy();
 });
+test.each(['Pending', 'Queued', 'Running'])('pending %s reply reads as waiting, not missing history', async phase => {
+  snapshot = { ...idle, state: 'working', busy: true, canSend: false, versions: [{ turns: [{ ...turn, answer: null, contextRetained: false, phase }] }] };
+  await open();
+  const conversation = screen.getByRole('region', { name: 'Conversation' });
+  expect(within(conversation).queryAllByText(/No answer observed|not confirmed in later context/)).toHaveLength(0);
+  expect(within(conversation).getByText(phase === 'Running' ? 'Waiting for your agent’s reply…' : 'Waiting for your agent to start…')).toBeTruthy();
+  expect(conversation.querySelector('.status-running')).toBeTruthy();
+});
+test('terminal unconfirmed history remains distinct from an in-progress reply', async () => {
+  snapshot = { ...idle, versions: [{ turns: [{ ...turn, contextRetained: false }] }] };
+  await open(); expect(screen.getByText(/not confirmed in later context/)).toBeTruthy();
+});
+test('composer grows with text and shrinks again after acceptance', async () => {
+  await open();
+  Object.defineProperty(field(), 'scrollHeight', { configurable: true, value: 144 });
+  fireEvent.change(field(), { target: { value: 'A long message' } });
+  expect(field().style.height).toBe('144px');
+  snapshot = { ...idle, versions: [{ turns: [{ ...turn, message: 'A long message' }] }] };
+  enter('A long message'); await act(async () => {});
+  expect(field().value).toBe('');
+  expect(field().style.height).toBe('auto');
+});
 test('a failed turn with an observed answer does not look like a successful turn', async () => {
   snapshot = { ...idle, versions: [{ turns: [{ ...turn, phase: 'Failed' }] }] };
   await open(); expect(screen.getByText('This turn failed.')).toBeTruthy(); expect(screen.getByText('Hello back')).toBeTruthy();
@@ -225,10 +247,14 @@ test('polling is single-flight even when the previous read has not replied', asy
   render(<Chat documentId={id} />); await poll(); await poll(); expect(reads).toBe(1);
   await act(async () => finish(idle)); await poll(); expect(reads).toBe(2);
 });
-test('new answers do not drag a reader away from older transcript text', async () => {
-  snapshot = { ...idle, versions: [{ turns: [turn] }] }; await open();
-  const transcript = screen.getByRole('region', { name: 'Conversation' });
-  Object.defineProperties(transcript, { scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 200, configurable: true }, scrollTop: { value: 100, writable: true } });
-  fireEvent.scroll(transcript); snapshot.versions[0].turns.push({ ...turn, message: 'Later' }); await poll();
-  expect(transcript.scrollTop).toBe(100);
+test('conversation follows the page scroll only while the reader stays near its end', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 200, configurable: true }, scrollTop: { value: 800, writable: true } });
+  fireEvent.scroll(page); snapshot.versions[0].turns.push({ ...turn, message: 'Later' }); await poll();
+  expect(page.scrollTop).toBe(1000);
+  page.scrollTop = 100; fireEvent.scroll(page);
+  snapshot.versions[0].turns.push({ ...turn, message: 'Still later' }); await poll();
+  expect(page.scrollTop).toBe(100);
 });

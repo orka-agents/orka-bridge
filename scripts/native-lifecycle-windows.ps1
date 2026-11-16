@@ -439,11 +439,30 @@ try {
         $agent = Join-Path $folder 'web-reader.agent.md'
         $tests = Join-Path $folder 'web-reader.agent.test.md'
         Wait-For 'Own-repo web-reader pair or created editor missing' {
-            $editor = Find-Control $script:window 'Agent file' ([System.Windows.Automation.ControlType]::Edit)
+            $editor = Find-Control $script:window 'Instructions' ([System.Windows.Automation.ControlType]::Edit)
             $explanation = Find-Control $script:window $copy $null
             (Test-Path $agent) -and (Test-Path $tests) -and $editor -and !$editor.Current.IsOffscreen -and $explanation -and !(Find-Control $script:window 'Create' $button)
         } | Out-Null
-        if (![IO.File]::ReadAllText($agent).Contains('name: "web-reader"') -or ![IO.File]::ReadAllText($tests).Contains('web_fetch')) { throw 'Own-repo starter pair has incorrect contents' }
+        $draft = [IO.File]::ReadAllText($agent).Replace("`r`n", "`n")
+        $checks = [IO.File]::ReadAllText($tests).Replace("`r`n", "`n")
+        if (!$draft.Contains('name: "web-reader"') -or $draft.Contains('tools:') -or $draft -notmatch '(?s)\A---\n.*?\n---\n\s*\z' -or $draft.Contains('web_fetch')) { throw 'Own-repo draft must have empty instructions and no tools' }
+        $expectedChecks = @'
+---
+schemaVersion: 1
+---
+
+# web-reader tests
+
+```yaml agent-test
+id: first-test
+input: ""
+assertions: []
+```
+'@
+        if ($checks.Trim() -cne $expectedChecks.Trim()) { throw 'Own-repo empty test skeleton has incorrect contents' }
+        $instructions = Find-Control $script:window 'Instructions' ([System.Windows.Automation.ControlType]::Edit)
+        $value = $instructions.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
+        if ($value -cne '') { throw 'Created agent must open blank Instructions, not the previous File view' }
         if ((@(Get-ChildItem -Force $folder | Sort-Object Name | ForEach-Object Name) -join ',') -cne 'web-reader.agent.md,web-reader.agent.test.md') { throw 'Own-repo agent folder must contain only the pair, no nested .git or marker' }
         if ((@(Get-ChildItem -Force $repo | Sort-Object Name | ForEach-Object Name) -join ',') -cne '.git,web-reader') { throw 'Creation added unexpected repo-root files or markers' }
         Capture 'new-agent-repo-created'

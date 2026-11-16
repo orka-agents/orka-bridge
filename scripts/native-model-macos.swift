@@ -45,7 +45,10 @@ let firstTestOutcome = URL(fileURLWithPath: output).appendingPathComponent("firs
 defer { try? FileManager.default.removeItem(at: firstTestOutcome) }
 try "installing".write(to: setupProgress, atomically: true, encoding: .utf8)
 defer { try? FileManager.default.removeItem(at: setupProgress) }
-child.environment = ProcessInfo.processInfo.environment.merging(["BRIDGE_MODEL_CHECK_RELEASE": keyCheckRelease.path, "BRIDGE_SETUP_PROGRESS": setupProgress.path, "BRIDGE_FIRST_TEST_OUTCOME": firstTestOutcome.path]) { _, fixture in fixture }
+let chatPhase = URL(fileURLWithPath: output).appendingPathComponent("chat-phase-\(UUID().uuidString)")
+try "pending".write(to: chatPhase, atomically: true, encoding: .utf8)
+defer { try? FileManager.default.removeItem(at: chatPhase) }
+child.environment = ProcessInfo.processInfo.environment.merging(["BRIDGE_MODEL_CHECK_RELEASE": keyCheckRelease.path, "BRIDGE_SETUP_PROGRESS": setupProgress.path, "BRIDGE_FIRST_TEST_OUTCOME": firstTestOutcome.path, "BRIDGE_CHAT_PHASE": chatPhase.path]) { _, fixture in fixture }
 try child.run()
 defer { if child.isRunning { child.terminate(); child.waitUntilExit() } }
 func window() -> (CGWindowID, CGRect)? {
@@ -81,7 +84,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     // Vision can interleave the adjacent setup column between wrapped lines.
     // Check phrases within the model panel, not the whole window's reading order.
     let visible: String
-    if name.hasPrefix("local-") || name.hasPrefix("chat-") {
+    if name.hasPrefix("local-") || name.hasPrefix("chat-") || name.hasPrefix("cluster-") {
         visible = rows.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     } else {
         guard let panel = rows.filter({
@@ -100,7 +103,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI")
             .replacingOccurrences(of: "APl key", with: "API key").contains(value)
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || name.hasPrefix("local-key-") && nativeChatTextIsVisible(value))
-        let chatText = !found && name.hasPrefix("chat-") && nativeChatTextIsVisible(value)
+        let chatText = !found && (name.hasPrefix("chat-") || name.hasPrefix("cluster-")) && nativeChatTextIsVisible(value)
         require(found || nativeText || chatText, "Missing \(value) in \(name): \(text)")
     }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
@@ -110,7 +113,9 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     require(theme == "dark" ? brightness < 0.25 : brightness > 0.8, "Wrong system theme")
     // Setup frames 1c, 1d (cropped) and 1e exist only in light; dark captures use them as layout references.
     let frame: (file: String, label: String)? =
-        ["local-result", "local-answer", "local-story", "local-running", "local-stopping"].contains(where: { name.hasPrefix($0) }) ? ("designer-reference-\(theme)", "Approved Designer frame (wide reference)")
+        name.hasPrefix("chat-") ? ("designer-reference-\(theme)", "Designer design system (no dedicated Chat frame)")
+        : name.hasPrefix("cluster-") ? ("cluster-reference-light", "Approved cluster cards (wide reference)")
+        : ["local-result", "local-answer", "local-story", "local-running", "local-stopping"].contains(where: { name.hasPrefix($0) }) ? ("designer-reference-\(theme)", "Approved Designer frame (wide reference)")
         : name.hasPrefix("local-first-pass") ? ("setup-reference-first-pass", "Approved frame 1e, light (wide reference)")
         : name.hasPrefix("local-setup-installing") || name.hasPrefix("local-setup-meet") ? ("setup-reference-meet", "Approved frame 1c, light (wide reference)")
         : ["before-connect", "connected"].contains(name) || name.hasPrefix("local-setup-ai") || name.hasPrefix("local-setup-queued") || name.hasPrefix("local-setup-connected") || name.hasPrefix("local-key-anthropic-empty") ? ("setup-reference-ai", "Approved frame 1d, light (wide reference, cropped)")
@@ -767,16 +772,36 @@ _ = try capture("local-stale", ["Not run since your edit"])
 localSize(1280, 800)
 scroll(4000)
 click("Chat", [])
-_ = try capture("chat-empty-wide", ["Chat on local cluster", "Message"])
-localSize(540, 900)
-_ = try capture("chat-empty-compact", ["Chat on local cluster", "Message"])
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    _ = try seek("Ask your agent a question", -100)
+    _ = try capture("chat-empty-\(size)", ["Ask your agent a question"])
+}
 fillMessage("Remember the checksum ALPHA.")
 waitForButton("Send message")
 click("Send message", [])
+localSize(1280, 800); scroll(4000)
+_ = try seek("Waiting for your agent to start…", -100)
+waitForChatText("Waiting for your agent to start…")
+for (phase, expected) in [("pending", "Waiting for your agent to start…"), ("running", "Waiting for your agent’s reply…")] {
+    try phase.write(to: chatPhase, atomically: true, encoding: .utf8)
+    waitForChatText(expected)
+    for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+        localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+        _ = try seek(expected, -100)
+        _ = try capture("chat-\(phase)-\(size)", [expected])
+        require(!nativeChatTextIsVisible("This turn is not confirmed in later context."), "Waiting Chat must not show a context fault")
+    }
+}
+try "answer".write(to: chatPhase, atomically: true, encoding: .utf8)
 waitForChatText("The checksum is ALPHA.")
-_ = try capture("chat-first-compact", ["You", "Agent", "The checksum is ALPHA.", "<script>fixture</script>"])
+try FileManager.default.removeItem(at: chatPhase)
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    _ = try seek("The checksum is ALPHA.", -100)
+    _ = try capture("chat-answer-\(size)", ["The checksum is ALPHA.", "<script>fixture</script>"])
+}
 localSize(1280, 800)
-_ = try capture("chat-first-wide", ["The checksum is ALPHA.", "<script>fixture</script>"])
 fillMessage("What checksum did I ask you to remember?")
 waitForButton("Send message")
 click("Send message", [])
@@ -849,3 +874,36 @@ _ = try capture("local-remove-confirmation-compact", ["saved sign-in?", "Cancel"
 click("Cancel", [])
 click("Back to clusters", [])
 _ = try capture("local-places-compact", ["Choose where agents run", "This computer"])
+// Explicit context actions only: opening the picker never starts discovery.
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    _ = try capture("cluster-list-\(size)", ["Choose where agents run", "This computer", "team-dev"])
+}
+localSize(1280, 800); scroll(4000)
+click("Add a cluster", [])
+click("kubectl context", [])
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height))
+    _ = try capture("cluster-picker-open-\(size)", ["Find a context", "team-dev", "team-west"])
+}
+click("Close picker", [])
+localSize(1280, 800); scroll(4000)
+click("kubectl context", [])
+try "cluster-checking".write(to: setupProgress, atomically: true, encoding: .utf8)
+click("team-west", [])
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    _ = try capture("cluster-checking-\(size)", ["Checking"])
+}
+try "cluster-failure".write(to: setupProgress, atomically: true, encoding: .utf8)
+waitForChatText("Couldn't reach this cluster. The connection could not be opened.")
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    _ = try capture("cluster-failure-\(size)", ["Couldn't reach this cluster."])
+    if size == "minimum" {
+        _ = try seek("Check again", -100)
+        guard let bounds = enabledButton("Check again").flatMap(nativeBounds) else { fatalError("Missing recovery action") }
+        require(window()!.1.contains(bounds) && bounds.maxY <= window()!.1.maxY - 32, "Recovery action overlaps the footer")
+        _ = try capture("cluster-failure-minimum-end", ["Check again"])
+    }
+}

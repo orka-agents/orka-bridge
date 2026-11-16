@@ -9,7 +9,8 @@ import { SAMPLE_DOCUMENT_ID } from './agent-api';
 
 const id = '12345678-1234-4234-8234-123456789abc';
 const pair = { documentId: SAMPLE_DOCUMENT_ID, name: 'web-reader', agent: '---\nname: web-reader\nmodel: shipped\n---\nRead a page.', tests: '# Checks', path: '/home/creator/Orka/agents/web-reader/web-reader.agent.md' };
-const other = { ...pair, documentId: id, name: 'helper', agent: pair.agent.replaceAll('web-reader', 'helper') };
+const draftTests = '---\nschemaVersion: 1\n---\n\n# helper tests\n\n```yaml agent-test\nid: first-test\ninput: ""\nassertions: []\n```\n';
+const other = { ...pair, documentId: id, name: 'helper', agent: '---\nname: "helper"\nmodel: "gpt-5.6-terra"\nkmx:\n  schemaVersion: 1\n  runtime: orka\n---\n\n', tests: draftTests };
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 function native(extra?: (command: string, args: Record<string, unknown>) => unknown) {
   vi.stubGlobal('isTauri', true);
@@ -51,6 +52,37 @@ test('creates during setup, previews the native location and both files, and ope
   expect(await screen.findByRole('heading', { name: 'helper', level: 1 })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   expect(calls).not.toContain('agent_run'); expect(calls).not.toContain('workspace_catalog');
+});
+
+test.each(['Chat', 'File'])('creation from %s opens empty Instructions with an incomplete test, never a format error', async previousView => {
+  const calls: string[] = [];
+  native(command => { calls.push(command); if (command === 'agent_create') return id; });
+  const user = userEvent.setup(); render(<Example />);
+  await user.click(await screen.findByRole('button', { name: previousView }));
+  await user.click(screen.getByRole('button', { name: 'New agent' }));
+  await user.type(screen.getByRole('textbox', { name: 'Name' }), 'helper');
+  await user.click(screen.getByRole('button', { name: 'Create' }));
+  await screen.findByRole('heading', { name: 'helper', level: 1 });
+  expect(screen.getByRole('button', { name: 'Agent' }).getAttribute('aria-pressed')).toBe('true');
+  expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value.trim()).toBe('');
+  expect(screen.getByText(/test is incomplete/i)).toBeTruthy();
+  expect(screen.queryByText(/test list could not be read/i)).toBeNull();
+  expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Send to a cluster' }).matches(':disabled')).toBe(true);
+  await user.click(screen.getByRole('button', { name: 'Chat' }));
+  expect(screen.getByText(/write instructions in Agent view before chatting/i)).toBeTruthy();
+  expect(calls).not.toContain('agent_run');
+  expect(calls).not.toContain('agent_chat_start');
+});
+
+test('naming details are available on request without hiding either storage choice', async () => {
+  native(); const user = userEvent.setup(); render(<Example />);
+  await user.click(await screen.findByRole('button', { name: 'New agent' }));
+  const naming = screen.getByText('Naming details').closest('details')!;
+  expect(naming.open).toBe(false);
+  expect(screen.getAllByRole('radio')).toHaveLength(2);
+  await user.click(screen.getByText('Naming details'));
+  expect(naming.open).toBe(true);
 });
 
 test('cancel preserves the mounted draft and creates nothing', async () => {

@@ -496,7 +496,7 @@ fn repo_pair_roundtrips_all_entry_points_without_touching_git() {
     assert_eq!(pair.document_id, id);
     let saved = folder
         .save_with_source(
-            pair.agent.replace("fetch", "retrieve"),
+            format!("{}Answer briefly.\n", pair.agent),
             Some(pair.source.clone()),
         )
         .unwrap();

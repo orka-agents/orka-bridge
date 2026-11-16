@@ -6,7 +6,7 @@ import { SAMPLE_DOCUMENT_ID, REPO_SAVE_CONFLICT, agentCall, agentInfo, storageCo
 import Run from './Run';
 import { Details } from '../components/DesignSystem';
 import { DesignerTests } from '../components/DesignerTests';
-import { testDefinitions } from './test-definitions';
+import { isTestDraft, testDefinitions } from './test-definitions';
 import Chat from './Chat';
 import { readWorkspaceCatalog, type WorkspaceCatalogReply } from '../catalog';
 import AgentParts from './AgentParts';
@@ -207,13 +207,16 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     if (sampleRevision && boundDocument === SAMPLE_DOCUMENT_ID) void reloadSource(true).catch(() => { /* Keep the current draft on an unreadable refresh. */ });
   }, [sampleRevision, boundDocument]);
   const info = { ...agentInfo(draft), description: readForm(draft).description };
+  const instructionsMissing = !!pair && !readForm(draft).instructions.trim();
+  const testDraft = !!pair && isTestDraft(pair.tests);
   const nameCounts = new Map<string, number>();
   for (const entry of entries ?? []) nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
   const saveLabel = pendingSoul ? 'Unsaved changes' : { saved: '', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState];
   const sendBlocked = !pair ? error ? 'Reopen your agent before sending' : 'Wait for your agent folder to open'
+    : instructionsMissing || testDraft ? 'Write instructions in Agent view and complete the test file on disk before sending.'
     : reloading ? 'Wait for your saved files to reload' : setupPending ? 'Wait for the local cluster to be ready before sending'
     : saveState !== 'saved' || pendingSoul ? 'Save your changes first' : undefined;
-  const chatBlocked = remote ? 'Chat runs on the local cluster. Choose This computer in Clusters.'
+  const chatBlocked = instructionsMissing ? 'Write instructions in Agent view before chatting.' : remote ? 'Chat runs on the local cluster. Choose This computer in Clusters.'
     : setupPending ? 'Connect the local cluster and the AI in Clusters before chatting.'
     : documentId !== boundDocument ? 'Wait for your agent to finish saving before switching.'
     : reloading ? 'Wait for your saved files to reload.'
@@ -222,7 +225,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   const testSource = pair && <Disclosure className="check-source" label={<>Test file: {pair.name ?? 'web-reader'}.agent.test.md</>}><pre className="example-source" tabIndex={0} aria-label="Test file, read-only">{pair.tests}</pre></Disclosure>;
   return <>
     {creating && <NewAgent active={active} onRegistered={() => { if (onRegistered) onRegistered(); else if (mounted.current) setListAttempt(value => value + 1); }} model={currentCatalog?.reply?.defaultModel ?? undefined} onCreated={async id => {
-      setCreating(false); requestDocument(id);
+      setCreating(false); setView('Agent'); requestDocument(id);
     }} onCancel={() => { setCreating(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.new-agent-entry')?.focus()); }} />}
     <section className="designer" hidden={creating} aria-labelledby={active && !creating ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
@@ -264,10 +267,12 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
       </div>
       <div className="designer-side">
       <section className="designer-tests" aria-label="This computer"><h2 className="section-label">This computer</h2><div className="card">
-        {setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><Button type="button" kind="secondary" className="action-spaced" disabled title="Wait for the local cluster and AI to be ready">Run tests</Button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p>{onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Go to Clusters</Button>}</div>
-          : <Run tests={pair.tests} onChooseCluster={onChooseCluster} onStopLocalCluster={onStopLocalCluster} onEditInstructions={editInstructions} documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={pendingSoul || saveState !== 'saved'} stale={stale} startRequest={actionReady && view === 'Agent' && actionRequest?.action === 'run' ? actionRequest.id : undefined} onStartRequestHandled={finishAction} onStart={() => { if (latest.current === draft) setStale(false); }} />}
+        {instructionsMissing && !testDraft && <p>Write instructions in Agent view before running tests.</p>}
+        {testDraft ? <div><h3>Tests</h3><p>Your first test is incomplete. Write instructions in Agent view, then add a question and at least one assertion to the test file on disk before running tests or sending to a cluster.</p><Button type="button" kind="secondary" disabled title="Complete your instructions and test file first">Run tests</Button><Details hint="Test file">{testSource}</Details></div>
+          : setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the local cluster and AI to be ready" title="Wait for the local cluster and AI to be ready"><Button type="button" kind="secondary" className="action-spaced" disabled title="Wait for the local cluster and AI to be ready">Run tests</Button><span className="control-tip" aria-hidden="true">Wait for the local cluster and AI to be ready</span></span><p className="muted">The local cluster is getting ready. Connect the AI in Clusters before running a test.</p>{onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Go to Clusters</Button>}</div>
+          : <Run tests={pair.tests} onChooseCluster={onChooseCluster} onStopLocalCluster={onStopLocalCluster} onEditInstructions={editInstructions} documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={instructionsMissing || pendingSoul || saveState !== 'saved'} stale={stale} startRequest={actionReady && view === 'Agent' && actionRequest?.action === 'run' ? actionRequest.id : undefined} onStartRequestHandled={finishAction} onStart={() => { if (latest.current === draft) setStale(false); }} />}
         {/* Run shows the test list and test file itself; this copy is only for the not-ready state. */}
-        {setupPending && <><DesignerTests definitions={testDefinitions(pair.tests)} stale={false} /><Details hint="Test file">{testSource}</Details></>}
+        {setupPending && !testDraft && <><DesignerTests definitions={testDefinitions(pair.tests)} stale={false} /><Details hint="Test file">{testSource}</Details></>}
       </div></section>
       <section className="designer-checks" aria-label="Team cluster"><h2 className="section-label">Team cluster</h2>
         <Send documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />

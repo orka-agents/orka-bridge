@@ -328,6 +328,24 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture Bridge")
     try afterFrame?()
+    if name.hasPrefix("new-agent-") && name != "new-agent-probe" || name.hasPrefix("cluster-") && name != "cluster-probe" || name.hasPrefix("places-") {
+        let designer = name.hasPrefix("new-agent-")
+        let referenceFile = designer ? "designer-reference-\(theme)" : "cluster-reference-light"
+        guard let actual = NSImage(contentsOfFile: file), let reference = NSImage(contentsOfFile: "../docs/images/\(referenceFile).png") else { fail("Missing native comparison reference") }
+        let width = actual.size.width, referenceHeight = reference.size.height * actual.size.width / reference.size.width
+        let height = max(actual.size.height, referenceHeight) + 42
+        let comparison = NSImage(size: NSSize(width: width * 2 + 48, height: height + 16))
+        comparison.lockFocus()
+        NSColor.windowBackgroundColor.setFill(); NSRect(origin: .zero, size: comparison.size).fill()
+        actual.draw(in: NSRect(x: 16, y: height - 42 - actual.size.height, width: width, height: actual.size.height))
+        reference.draw(in: NSRect(x: width + 32, y: height - 42 - referenceHeight, width: width, height: referenceHeight))
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.labelColor]
+        ("Native Bridge, disposable fixture" as NSString).draw(at: NSPoint(x: 16, y: height - 26), withAttributes: attributes)
+        ((designer ? "Designer design system (no dedicated New agent frame)" : "Approved cluster cards (wide reference)") as NSString).draw(at: NSPoint(x: width + 32, y: height - 26), withAttributes: attributes)
+        comparison.unlockFocus()
+        guard let tiff = comparison.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) else { fail("Cannot compose native comparison") }
+        try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
+    }
     // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
         let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
@@ -356,10 +374,14 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     }.joined(separator: "\n")
     try recognized.write(toFile: "\(output)/\(name).ocr.txt", atomically: true, encoding: .utf8)
     if name == "new-agent-probe" || name == "send-probe" || name == "cluster-probe" || name == "overview-probe" || name.hasPrefix("overview-fixture-") { return observations }
+    if name.hasPrefix("new-agent-") && name.hasSuffix("-end") {
+        require(visibleButtons("Create").count == 1 && visibleButtons("Cancel").count == 1, "Creation actions overlap the fixed chrome")
+        return observations
+    }
     if name.hasPrefix("new-agent-") {
-        let expected = name == "new-agent-created" ? "native-helper" : name == "new-agent-repo-created" ? "web-reader" : "New agent"
+        let expected = name.hasPrefix("new-agent-created") ? "native-helper" : name == "new-agent-repo-created" ? "web-reader" : "New agent"
         let heading: Bool
-        if name.hasPrefix("new-agent-repo-") {
+        if name.hasPrefix("new-agent-repo-") || name.hasSuffix("minimum") {
             // These captures use 900pt content: bind the actual visible page heading,
             // not a normalized band inherited from the 800pt creation screenshots.
             heading = nativeTextBounds(expected, heading: true).count == 1
@@ -642,6 +664,15 @@ func localPreflight(_ name: String) throws {
     requireNoLocalWorkspace() // the size screen must never start the VM
     clickButton("Back to clusters")
 }
+func requireBlankPair(_ agent: URL, _ tests: URL, _ name: String) throws {
+    let content = try String(contentsOf: agent, encoding: .utf8)
+    let parts = content.components(separatedBy: "---")
+    require(parts.count == 3 && parts[2].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        && !content.contains("web_fetch") && !content.contains("tools:"), "Created draft must have empty instructions and no tools")
+    let expected = "---\nschemaVersion: 1\n---\n\n# \(name) tests\n\n```yaml agent-test\nid: first-test\ninput: \"\"\nassertions: []\n```"
+    let checks = try String(contentsOf: tests, encoding: .utf8).replacingOccurrences(of: "\r\n", with: "\n")
+    require(checks.trimmingCharacters(in: .whitespacesAndNewlines) == expected, "Created empty test skeleton differs from the draft contract")
+}
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 setContent(1280, 800)
 var initial = try capture("initial", "Clusters")
@@ -681,6 +712,15 @@ do {
     }
     // Blur the identifier before submission so macOS text correction cannot hide in focus.
     key(48)
+    for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+        setContent(width, height); scrollMain(4000)
+        try capture("new-agent-form-\(size)", "Designer")
+        if size == "minimum" {
+            scrollMain(-4000)
+            try capture("new-agent-form-\(size)-end", "Designer")
+        }
+    }
+    setContent(1280, 800); scrollMain(4000)
     let creationForm = try capture("new-agent-form", "Designer")
     clickText("Create", in: creationForm)
     let folder = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Orka/agents/native-helper")
@@ -696,7 +736,12 @@ do {
         fail("Creation did not publish its pair; native screen: \(text)")
     }
     require(try String(contentsOf: agent, encoding: .utf8).contains("name: \"native-helper\"\n"), "Created agent metadata missing")
-    require(try String(contentsOf: checks, encoding: .utf8).contains("web_fetch"), "Created starter lost its tool assertion")
+    try requireBlankPair(agent, checks, "native-helper")
+    for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+        setContent(width, height); scrollMain(4000)
+        try capture("new-agent-created-\(size)", "Designer")
+    }
+    setContent(1280, 800); scrollMain(4000)
     let created = try capture("new-agent-created", "Designer")
     requireNoLocalWorkspace()
     clickTab("Overview", created)
@@ -934,17 +979,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // No local selection exists in this no-VM walk. Add a cluster offers only an existing cluster.
     clickButton("Add a cluster")
     Thread.sleep(forTimeInterval: 1)
-    // The label focuses its native select. Choose the first synthetic context.
-    let chooserFile = "\(output)/cluster-chooser.png"
-    let command = Process()
-    command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-    command.arguments = ["-x", "-o", "-l", String(window()!.0), chooserFile]
-    try command.run(); command.waitUntilExit()
-    let request = VNRecognizeTextRequest()
-    try VNImageRequestHandler(url: URL(fileURLWithPath: chooserFile)).perform([request])
-    clickText("kubectl context", in: request.results ?? [])
-    // Move past the placeholder whether the first Down opens the popup or advances it.
-    key(125); key(125); key(36)
+    // Context choices are ordinary buttons in the accessible popover, not native select options.
+    clickButton("kubectl context")
+    try capture("cluster-picker-open-compact", "Clusters")
+    clickButton("fixture-cluster")
     Thread.sleep(forTimeInterval: 2)
     // Capture discovery before the explicit access confirmation.
     try capture("cluster-card-compact", "Clusters")
@@ -963,7 +1001,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(-200)
     }
     require(detailsOpened, "Discovered Orka has no visible Details control")
-    // Keep the current select while a result stage shows it; otherwise go back through Places and Add a cluster.
+    // Keep the current picker while a result stage shows it; otherwise reopen Add a cluster.
     func showContextSelect() {
         scrollMain(1000)
         if nativeTextIsVisible("kubectl context") { return }
@@ -974,11 +1012,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Exercise the existing conditional field and a denial, without issuing a token.
     func chooseFixture(_ index: Int) throws -> [VNRecognizedTextObservation] {
         showContextSelect()
-        let chooser = try capture("cluster-probe", "Clusters")
-        clickText("kubectl context", in: chooser)
-        key(49); key(115) // Open the native select; Home selects its placeholder.
-        for _ in 0..<index { key(125) }
-        key(36)
+        let names = ["fixture-cluster", "conditional-fixture", "denied-fixture", "missing-tools-fixture", "unreadable-tools-fixture", "fixture-secondary"]
+        require((1...names.count).contains(index), "Unknown fixture context index")
+        clickButton("kubectl context")
+        clickButton(names[index - 1])
         Thread.sleep(forTimeInterval: 1)
         return try capture("cluster-card-selected", "Clusters")
     }
@@ -1018,11 +1055,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         try JSONSerialization.data(withJSONObject: corrected).write(to: configURL, options: .atomic)
         try reloadFixture()
         showContextSelect()
-        let reread = try capture("cluster-reload-cleared", "Clusters")
-        clickText("kubectl context", in: reread)
-        key(49)
+        try capture("cluster-reload-cleared", "Clusters")
+        clickButton("kubectl context")
         try capture("cluster-reload-options", "Clusters")
-        key(53) // Close the native context popup without selecting or using it.
+        clickButton("Close picker")
         try originalConfig.write(to: configURL, options: .atomic)
         try reloadFixture()
     }
@@ -1734,7 +1770,7 @@ do {
         Thread.sleep(forTimeInterval: 0.1)
     }
     require(try String(contentsOf: agent, encoding: .utf8).contains("name: \"web-reader\"\n"), "Own-repo web-reader was not created")
-    require(try String(contentsOf: tests, encoding: .utf8).contains("web_fetch"), "Own-repo starter check missing")
+    try requireBlankPair(agent, tests, "web-reader")
     require(try FileManager.default.contentsOfDirectory(atPath: folder.path).sorted() == ["web-reader.agent.md", "web-reader.agent.test.md"],
             "Own-repo agent folder must contain only the pair, no nested .git or marker")
     require(try FileManager.default.contentsOfDirectory(atPath: selectedRepo.path).sorted() == [".git", "web-reader"],

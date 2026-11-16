@@ -1,6 +1,7 @@
-import { Disclosure } from '../components/Disclosure';
-import { Button } from '../components/Button';
 import { useEffect, useRef, useState } from 'react';
+import { Button } from '../components/Button';
+import { StatusIcon } from '../components/DesignSystem';
+import { Disclosure } from '../components/Disclosure';
 import { type ChatCommand, type ChatSnapshot, chatCall, chatErrors } from './chat-api';
 
 const states: Record<ChatSnapshot['state'], string> = {
@@ -21,7 +22,7 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
   const pending = useRef<{ message: string; count: number; uncertain?: boolean } | undefined>(undefined);
   const [awaitingTurn, setAwaitingTurn] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null); const composing = useRef(false);
-  const transcript = useRef<HTMLElement>(null); const follow = useRef(true);
+  const transcript = useRef<HTMLElement>(null); const scrollArea = useRef<HTMLElement | null>(null); const follow = useRef(true);
   const receive = (value: ChatSnapshot) => {
     const turns = value.versions.flatMap(version => version.turns);
     const submitted = pending.current;
@@ -57,8 +58,22 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
     return () => { mounted = false; alive.current = false; epoch.current++; clearTimeout(timer); };
   }, [documentId]);
   useEffect(() => {
-    if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight;
+    const area = transcript.current?.closest<HTMLElement>('.page-content');
+    if (!area) return;
+    scrollArea.current = area;
+    const track = () => { follow.current = area.scrollHeight - area.clientHeight - area.scrollTop < 48; };
+    area.addEventListener('scroll', track);
+    return () => { area.removeEventListener('scroll', track); scrollArea.current = null; };
+  }, []);
+  useEffect(() => {
+    if (snapshot && follow.current && scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
   }, [snapshot]);
+  useEffect(() => {
+    const field = composer.current;
+    if (!field) return;
+    field.style.height = 'auto';
+    if (draft) field.style.height = `${field.scrollHeight}px`;
+  }, [draft]);
   const act = async (action: ChatCommand) => {
     if (mutation.current || !snapshot) return;
     if (action === 'agent_chat_send' && (blocked || !snapshot.canSend || awaitingTurn || !draftRef.current.trim())) return;
@@ -96,27 +111,33 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
   return <section className="chat-panel card" aria-label="Chat on local cluster">
     <div className="chat-heading"><h2>Chat on local cluster</h2><Button type="button" kind="secondary" disabled={!canReset || !!command} title={!canReset ? 'Wait for the current turn to finish or reconnect to check it.' : undefined} onClick={() => { void act('agent_chat_new'); }}>New conversation</Button></div>
     <p className="muted">Talk to your saved agent. Chat does not run tests or change their results.</p>
-    <section ref={transcript} className="chat-transcript" aria-label="Conversation" tabIndex={0} onScroll={event => {
-      const area = event.currentTarget; follow.current = area.scrollHeight - area.clientHeight - area.scrollTop < 48;
-    }}>
+    <section ref={transcript} className="chat-transcript" aria-label="Conversation">
       {!snapshot?.versions.some(version => version.turns.length) && <p className="muted">Ask your agent a question to start a conversation.</p>}
       {snapshot?.versions.map((version, index) => <section key={index} className="chat-version" aria-label={`Conversation ${index + 1}`}>
         <h3>Conversation {index + 1}</h3>
         {index > 0 && <p className="muted">New conversation. Earlier turns are shown for reference, not sent as history.</p>}
-        {version.turns.map((turn, i) => <article className="chat-turn" key={i}>
-          <h4>You</h4><p className="reading">{turn.message}</p>
-          <h4>Agent</h4>{turn.phase === 'Failed' && <p>This turn failed.</p>}{turn.phase === 'Cancelled' && <p>The cluster reported this turn cancelled; worker termination is unconfirmed.</p>}{turn.answer !== null ? <p className="reading">{turn.answer}</p> : <p className="muted">{turn.phase === 'Failed' ? 'The turn failed without an answer.' : 'No answer observed yet.'}</p>}
-          {turn.stopUnconfirmed ? <p className="chat-notice">{states.stopUnconfirmed}</p> : turn.terminationUnconfirmed && <p className="chat-notice">{states.stopRequested}</p>}
-          {!turn.contextRetained && <p className="muted">This turn is not confirmed in later context.</p>}
-          {!!turn.tools.length && <Disclosure className="card-details" label="Tool activity"><ul className="chat-tools">{turn.tools.map((tool, t) => <li key={t}><code>{tool.name}</code> · {tool.phase}</li>)}</ul></Disclosure>}
-        </article>)}
+        {version.turns.map((turn, i) => {
+          const waiting = turn === latestTurn && snapshot.state === 'working' && ['', 'Pending', 'Queued', 'Running'].includes(turn.phase) && turn.answer === null;
+          return <article className="chat-turn" key={i}>
+            <div className="chat-question"><h4>You</h4><p className="reading">{turn.message}</p></div>
+            <div className="chat-response"><h4>Agent</h4>
+              {turn.phase === 'Failed' && <p>This turn failed.</p>}{turn.phase === 'Cancelled' && <p>The cluster reported this turn cancelled; worker termination is unconfirmed.</p>}
+              {turn.answer !== null ? <p className="reading">{turn.answer}</p> : waiting
+                ? <p className="chat-waiting"><StatusIcon state="running" />{turn.phase === 'Running' ? 'Waiting for your agent’s reply…' : 'Waiting for your agent to start…'}</p>
+                : <p className="muted">{turn.phase === 'Failed' ? 'The turn failed without an answer.' : 'No answer was received.'}</p>}
+              {turn.stopUnconfirmed ? <p className="chat-notice">{states.stopUnconfirmed}</p> : turn.terminationUnconfirmed && <p className="chat-notice">{states.stopRequested}</p>}
+              {!turn.contextRetained && !waiting && <p className="muted">This turn is not confirmed in later context.</p>}
+              {!!turn.tools.length && <Disclosure className="card-details" label="Tool activity"><ul className="chat-tools">{turn.tools.map((tool, t) => <li key={t}><code>{tool.name}</code> · {tool.phase}</li>)}</ul></Disclosure>}
+            </div>
+          </article>;
+        })}
       </section>)}
     </section>
     <p role="status" aria-live="polite" aria-atomic="true">{status}</p>
     {(error || readError || snapshotError) && <p role="alert">{error?.message ?? readError ?? snapshotError}</p>}
     <form className="chat-composer" onSubmit={event => { event.preventDefault(); void act('agent_chat_send'); }}>
       <label htmlFor={`message-${documentId}`}>Message</label>
-      <textarea className="field" ref={composer} id={`message-${documentId}`} rows={3} value={draft} aria-describedby={`chat-hint-${documentId}`}
+      <textarea className="field" ref={composer} id={`message-${documentId}`} rows={1} value={draft} aria-describedby={`chat-hint-${documentId}`}
         onChange={event => { draftRef.current = event.target.value; setDraft(event.target.value); }}
         onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
         onKeyDown={event => {
@@ -132,9 +153,9 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
       </div>
     </form>
     <Disclosure className="card-details" label="About this conversation">
-      <p>Orka remembers the latest 50 messages, not unlimited history. Each turn starts a new worker. Tool activity is separate from remembered questions and final answers; an interrupted turn is remembered only when confirmed.</p>
-      <p>Conversation history is kept in memory and lost when you quit Bridge. Agents, Sessions and transcripts remain in the local cluster; New conversation does not delete them.</p>
-      <p>Stop is best-effort. A tool call may still finish, a later turn may overlap with it, and earlier effects are not undone. A long or externally changed history may need a local cluster restart before continuing.</p>
+      <p>Your agent remembers up to 50 messages. Interrupted replies may not be remembered; tool activity is shown separately.</p>
+      <p>This view clears when you quit Bridge. Agents and transcripts remain in the local cluster; New conversation does not delete them.</p>
+      <p>Stop requests an end to the reply. A tool may still finish while you continue, and its effects are not undone. If the conversation cannot continue, start a new one. You may need to restart the local cluster if its history has changed elsewhere.</p>
     </Disclosure>
   </section>;
 }
