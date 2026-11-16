@@ -272,6 +272,7 @@ try {
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-${name}${suffix}.png`), Buffer.from(image.data, 'base64'));
       console.log(`Captured native WebView2 renderer fixture: ${theme}/${size}/${name}${suffix}`);
+      return image.data;
     };
     if (name === 'setup-transfer') {
       const meet = await evaluate(`(() => { const card = document.querySelector('.workspace-meet'); return { tools: [...card.querySelectorAll('.workspace-tool code')].map(code => code.textContent), text: card.innerText }; })()`);
@@ -294,7 +295,10 @@ try {
     }
     if (size === 'compact') { // Also show controls below the fixed step list.
       await evaluate(`document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight`);
-      await shoot('-end');
+      const end = await shoot('-end');
+      if (name === 'setup-transfer' || name === 'setup-transfer-queued') {
+        await compareReference(end, theme, size, `${name}-end`, name === 'setup-transfer' ? 'meet' : 'ai');
+      }
     }
   }
   // Setup actions and the first test use the compiled app and synthetic IPC only.
