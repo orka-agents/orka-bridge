@@ -281,18 +281,19 @@ try {
     }
   }
   // Setup actions and the first test use the compiled app and synthetic IPC only.
-  const actionFixtures = ['welcome', 'places-empty', 'places-populated', 'local-preflight', 'local-preflight-missing', 'local-preflight-unknown', 'local-preflight-blocked', 'local-preflight-cluster', 'ai-idle', 'ai-cli-missing', 'ai-connecting', 'ai-connected', 'local-completed', 'local-stopped', 'ai-removal-confirmation', 'ai-removal-retry', 'first-test-running', 'first-test-result', 'first-test-badges', 'switch-place', 'designer', 'designer-loading', 'designer-open-error', 'designer-connected', 'designer-file', 'designer-failed', 'designer-passed', 'designer-stale', 'designer-running', 'designer-remote', 'local-cancel-running', 'local-cancel-cancelling', 'local-cancel-cancelled', 'local-cancel-unconfirmed', 'local-cancel-before-start'];
+  const actionFixtures = ['welcome', 'places-empty', 'places-populated', 'local-preflight', 'local-preflight-missing', 'local-preflight-unknown', 'local-preflight-blocked', 'local-preflight-memory', 'local-preflight-mixed', 'local-preflight-cluster', 'ai-idle', 'ai-cli-missing', 'ai-connecting', 'ai-connected', 'local-completed', 'local-stopped', 'ai-removal-confirmation', 'ai-removal-retry', 'first-test-running', 'first-test-result', 'first-test-badges', 'switch-place', 'designer', 'designer-loading', 'designer-open-error', 'designer-connected', 'designer-file', 'designer-failed', 'designer-passed', 'designer-stale', 'designer-running', 'designer-remote', 'local-cancel-running', 'local-cancel-cancelling', 'local-cancel-cancelled', 'local-cancel-unconfirmed', 'local-cancel-before-start'];
   async function clickAction(label) {
     const action = `[...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(label)} && !button.disabled && button.getClientRects().length)`;
     await until(() => evaluate(`!!${action}`), label);
     await evaluate(`${action}.click()`);
   }
-  const designerReferences = Object.fromEntries(await Promise.all(['light', 'dark'].map(async theme => [theme,
-    (await readFile(new URL(`../docs/images/designer-reference-${theme}.png`, import.meta.url))).toString('base64')])));
-  async function compareDesigner(data, theme, size, name) {
+  const frameReferences = Object.fromEntries(await Promise.all(['designer', 'setup-choices'].map(async surface => [surface,
+    Object.fromEntries(await Promise.all(['light', 'dark'].map(async theme => [theme,
+      (await readFile(new URL(`../docs/images/${surface}-reference-${theme}.png`, import.meta.url))).toString('base64')])))])));
+  async function compareFrame(data, theme, size, name, surface = 'designer') {
     const comparison = await evaluate(`(async () => {
       const decode = async text => createImageBitmap(new Blob([Uint8Array.from(atob(text), c => c.charCodeAt(0))], { type: 'image/png' }));
-      const actual = await decode(${JSON.stringify(data)}), reference = await decode(${JSON.stringify(designerReferences[theme])});
+      const actual = await decode(${JSON.stringify(data)}), reference = await decode(${JSON.stringify(frameReferences[surface][theme])});
       const width = actual.width, referenceHeight = Math.round(reference.height * width / reference.width);
       const canvas = document.createElement('canvas');
       canvas.width = width * 2 + 48; canvas.height = Math.max(actual.height, referenceHeight) + 58;
@@ -301,7 +302,7 @@ try {
       ctx.drawImage(actual, 16, 42); ctx.drawImage(reference, width + 32, 42, width, referenceHeight);
       ctx.fillStyle = ${JSON.stringify(theme === 'dark' ? '#e6e4df' : '#1b2026')}; ctx.font = '14px sans-serif';
       ctx.fillText('Native Bridge, synthetic test data', 16, 26);
-      ctx.fillText('Approved Designer frame (wide reference)', width + 32, 26);
+      ctx.fillText(${JSON.stringify(surface === 'designer' ? 'Approved Designer frame (wide reference)' : 'Approved setup choices (wide reference)')}, width + 32, 26);
       actual.close(); reference.close();
       return canvas.toDataURL('image/png').split(',')[1];
     })()`);
@@ -383,7 +384,7 @@ try {
         if (command === 'setup_remove_model') { window.__bridgeRemovals++; throw { kind: 'modelBusy' }; }
         // Known and missing size facts: fixture IPC, not the native catalog.
         if (command === 'setup_requirements') return name.startsWith('local-preflight') && name !== 'local-preflight-missing' ? ${JSON.stringify({ memoryBytes: 4 * GiB, imageBytes: Math.round(2.8 * GiB), stateDiskBytes: 20 * GiB })} : null;
-        if (command === 'setup_preflight') return { platform: 'windows', virtualization: name === 'local-preflight-unknown' ? 'unknown' : ['local-preflight-blocked', 'local-preflight-cluster'].includes(name) ? 'disabled' : 'ready', memory: name === 'local-preflight-unknown' ? 'unknown' : 'ready', installedMemoryBytes: name === 'local-preflight-unknown' ? null : ${16 * GiB}, requiredMemoryBytes: ${4 * GiB} };
+        if (command === 'setup_preflight') return { platform: 'windows', virtualization: ['local-preflight-unknown', 'local-preflight-mixed'].includes(name) ? 'unknown' : ['local-preflight-blocked', 'local-preflight-cluster'].includes(name) ? 'disabled' : 'ready', memory: name === 'local-preflight-unknown' ? 'unknown' : ['local-preflight-memory', 'local-preflight-mixed'].includes(name) ? 'insufficient' : 'ready', installedMemoryBytes: name === 'local-preflight-unknown' ? null : ['local-preflight-memory', 'local-preflight-mixed'].includes(name) ? ${2 * GiB} : ${16 * GiB}, requiredMemoryBytes: ${4 * GiB} };
         if (command === 'cluster_places') return name === 'places-populated' ? { selectedKey: null, persistenceState: 'complete', places: [
           { key: 'fixture-a', context: 'fixture-cluster', service: 'control / orka', namespace: 'agents', stale: false, observedAt: Date.now() - 600000, agents: [] },
           { key: 'fixture-b', context: 'fixture-secondary-with-a-long-cluster-name-to-wrap-without-clipping', service: 'control / orka', namespace: 'agents', stale: true, observedAt: null, agents: [] }] }
@@ -445,11 +446,11 @@ try {
       }
     }
     if (name === 'switch-place') {
-      await clickAction('Back to clusters');
+      await evaluate(`document.querySelector('button[aria-label="Clusters"]').click()`);
       await clickAction('Add a cluster');
     }
     if (name === 'designer-remote') {
-      await clickAction('Back to clusters'); await clickAction('Add a cluster');
+      await evaluate(`document.querySelector('button[aria-label="Clusters"]').click()`); await clickAction('Add a cluster');
       await until(() => evaluate(`!!document.querySelector('select')`), 'cluster context');
       await evaluate(`(() => { const select = document.querySelector('select'); select.value = '00000000-0000-4000-8000-000000000001'; select.dispatchEvent(new Event('change', { bubbles: true })); })()`);
       await clickAction('Use this cluster');
@@ -534,7 +535,7 @@ try {
       if (await evaluate('window.__bridgeRuns') !== 1) throw Error('A sample state submitted a run other than the automatic test');
       return;
     }
-    const expected = { welcome: 'About 5 minutes, mostly a download', 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Step 1 of 4', 'local-preflight-missing': 'Step 1 of 4', 'local-preflight-unknown': 'Not checked', 'local-preflight-blocked': 'Fix the computer requirements above', 'local-preflight-cluster': 'Fix the computer requirements above', 'ai-cli-missing': 'gh auth login --hostname github.com --web', 'designer-loading': 'Opening your agent', 'designer-open-error': 'Your agent folder could not be opened.', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster ready', 'local-stopped': 'Where should your agents run?', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings', 'designer-connected': 'Instructions and settings', 'designer-file': 'web-reader.agent.md', 'designer-failed': 'checks failed', 'designer-passed': 'The test passed.', 'designer-stale': 'Not run since your edit', 'designer-running': 'Waiting for answers and evaluating tests', 'designer-remote': 'Instructions and settings' };
+    const expected = { welcome: 'About 5 minutes, mostly a download', 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Step 1 of 4', 'local-preflight-missing': 'Step 1 of 4', 'local-preflight-unknown': "Bridge couldn't check this computer yet.", 'local-preflight-blocked': 'Fix the computer requirements above', 'local-preflight-memory': 'Fix the computer requirements above', 'local-preflight-mixed': 'Fix the computer requirements above', 'local-preflight-cluster': 'Fix the computer requirements above', 'ai-cli-missing': 'gh auth login --hostname github.com --web', 'designer-loading': 'Opening your agent', 'designer-open-error': 'Your agent folder could not be opened.', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster ready', 'local-stopped': 'Where should your agents run?', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings', 'designer-connected': 'Instructions and settings', 'designer-file': 'web-reader.agent.md', 'designer-failed': 'checks failed', 'designer-passed': 'The test passed.', 'designer-stale': 'Not run since your edit', 'designer-running': 'Waiting for answers and evaluating tests', 'designer-remote': 'Instructions and settings' };
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])}) && ${['designer-loading', 'designer-open-error'].includes(name) ? "!!document.querySelector('.designer > .designer-file')?.getClientRects().length" : 'true'}`), `${name} action state`).catch(async error => {
       throw Error(`${error.message}: ${await evaluate('document.body.innerText')}`);
     });
@@ -556,15 +557,18 @@ try {
         return { text: root.innerText, radios: [...root.querySelectorAll('input[type=radio]')].map(radio => ({ value: radio.value, checked: radio.checked })), next: { disabled: next.disabled, primary: next.classList.contains('button-primary') }, again: again && { primary: again.classList.contains('button-primary'), after: !!(next.compareDocumentPosition(again) & Node.DOCUMENT_POSITION_FOLLOWING) }, unknown: checks?.querySelectorAll('.status-not-started').length, openHelp: !!checks?.querySelector('[aria-expanded="true"]') };
       })()`);
       const fail = reason => { throw Error(name + ': ' + reason + ': ' + JSON.stringify(probe)); };
-      if (!await evaluate(`[...document.querySelectorAll('button')].some(button => button.textContent === 'Back to clusters' && button.getClientRects().length)`)) fail('local choice must keep Back to clusters');
+      if (await evaluate(`[...document.querySelectorAll('button')].some(button => ['Back to clusters', 'Choose where agents run'].includes(button.textContent) && button.getClientRects().length)`)) fail('local choice must not have a header Back link');
       if (probe.radios.length !== 2 || !probe.radios[0].checked || probe.radios[1].checked || !/recommended/i.test(probe.text) || !probe.text.includes('On a cluster you already have')) fail('local choice must default to recommended and retain the cluster alternative');
-      if (!probe.next.primary || probe.next.disabled !== ['local-preflight-blocked', 'local-preflight-cluster'].includes(name)) fail('Continue must be the primary, blocked only by known local failures');
-      if (probe.again && (probe.again.primary || !probe.again.after)) fail('Check again must be secondary after Continue');
+      if (!probe.next.primary || probe.next.disabled !== ['local-preflight-blocked', 'local-preflight-memory', 'local-preflight-mixed', 'local-preflight-cluster'].includes(name)) fail('Continue must be the primary, blocked only by known local failures');
+      if (probe.again?.primary) fail('Check again must remain secondary');
       if (name === 'local-preflight-missing' ? !probe.text.includes('not available yet') : !probe.text.includes('4.3 GB') || /GiB|Cluster download/.test(probe.text)) fail('requirements must be explicit, native-derived decimal GB or unavailable');
-      if (name === 'local-preflight-unknown' && (probe.unknown !== 2 || probe.openHelp || !probe.text.includes('Bridge checks this when it starts'))) fail('unknown checks need plain rings, closed help and truthful startup copy');
+      if (['local-preflight', 'local-preflight-unknown'].includes(name) && (probe.unknown || probe.again || /Virtualization:|Installed memory:|Not checked/.test(probe.text))) fail('nonfailed checks must not draw rows or retry actions');
+      if (['local-preflight-unknown', 'local-preflight-mixed'].includes(name) && (probe.openHelp || !probe.text.includes("Bridge couldn't check this computer yet. It checks again when the workspace starts."))) fail('unknown checks need one quiet startup explanation');
+      if (['local-preflight-memory', 'local-preflight-mixed'].includes(name) && (!probe.text.includes('Not enough installed memory') || probe.text.includes('Virtualization:'))) fail('only the failed RAM check gets a row');
       if (name === 'local-preflight-blocked' && !await evaluate(`[...document.querySelectorAll('[aria-label="Virtualization"] [role="button"]')].some(button => button.textContent.includes('Show me how'))`)) fail('known Windows virtualization failure must keep native fix help');
       if (name === 'local-preflight-cluster') {
-        await evaluate(`document.querySelector('.local-preflight #workspace-cluster').click()`);
+        await clickAction('Use a cluster instead');
+        if (!await evaluate(`document.activeElement?.id === 'workspace-cluster'`)) fail('fallback must focus the cluster radio');
         await until(() => evaluate(`document.querySelector('#workspace-cluster')?.checked && !document.querySelector('[aria-label="Computer requirements"]') && [...document.querySelectorAll('.local-preflight button')].some(button => button.textContent === 'Continue' && !button.disabled)`), 'cluster choice bypasses local blocker');
       }
       if (await evaluate('window.__bridgeLocalSelections || window.__bridgeClusterUses')) fail('opening or choosing a setup route must not start local setup or admit a cluster');
@@ -620,13 +624,14 @@ try {
       }
       if (await evaluate('window.__bridgeLocalSelections || window.__bridgeClusterUses')) throw Error(name + ': navigation started local setup or admitted a cluster');
     }
-    if (['designer-connected', 'designer-running', 'designer-failed', 'designer-passed', 'designer-stale'].includes(name)) await compareDesigner(image.data, theme, size, name);
+    if (preflight) await compareFrame(image.data, theme, size, name, 'setup-choices');
+    if (['designer-connected', 'designer-running', 'designer-failed', 'designer-passed', 'designer-stale'].includes(name)) await compareFrame(image.data, theme, size, name);
     if (name === 'designer-passed') {
       await evaluate(`document.querySelector('.example-run .test-result > summary').click()`);
       await until(() => evaluate(`document.querySelector('.example-run').innerText.includes('Read a web page')`), 'passed story opens recorded tool evidence');
       const story = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-${name}-story.png`), Buffer.from(story.data, 'base64'));
-      await compareDesigner(story.data, theme, size, name + '-story');
+      await compareFrame(story.data, theme, size, name + '-story');
     }
     if (['ai-connected', 'local-completed'].includes(name)) {
       const complete = await evaluate(`({ heading: document.querySelector('h1').textContent, pill: document.querySelector('.setup-progress .pill')?.textContent, rows: document.querySelectorAll('[aria-label="Setup steps"] > li').length, text: document.body.innerText, model: document.querySelector('.setup-model').innerText })`);
