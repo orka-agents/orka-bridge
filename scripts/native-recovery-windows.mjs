@@ -1276,9 +1276,14 @@ try {
       await evaluate(`document.querySelector('main').scrollTo(0, 0)`);
       await shoot('-' + mode);
       if (variant !== 'clusters') return;
-      for (const [scene, key] of [['earlier-pass', 'fixture-remote/remote-uid-1'], ['earlier-failed', 'fixture-remote/remote-uid-2'], ['draft', 'local/cccccccc-cccc-4ccc-8ccc-cccccccccccc']]) {
-        await evaluate(`document.querySelector('[data-card-key="' + ${JSON.stringify(key)} + '"]').scrollIntoView({ block: 'center' })`);
-        const visible = await evaluate(`(() => { const r = document.querySelector('[data-card-key="' + ${JSON.stringify(key)} + '"]').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; })()`);
+      // These are fixed expressions, not data interpolated into executable JavaScript.
+      for (const [scene, card] of [
+        ['earlier-pass', `document.querySelector('[data-card-key="fixture-remote/remote-uid-1"]')`],
+        ['earlier-failed', `document.querySelector('[data-card-key="fixture-remote/remote-uid-2"]')`],
+        ['draft', `document.querySelector('[data-card-key="local/cccccccc-cccc-4ccc-8ccc-cccccccccccc"]')`],
+      ]) {
+        await evaluate(`${card}.scrollIntoView({ block: 'center' })`);
+        const visible = await evaluate(`(() => { const r = ${card}.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight; })()`);
         if (!visible) throw Error('Overview evidence card is outside the viewport: ' + scene);
         await shoot('-' + mode + '-' + scene);
       }
