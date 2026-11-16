@@ -123,6 +123,29 @@ impl ChatFixture {
     }
 }
 
+// Returning-workspace transitions are action-owned; the existing selector only
+// settles an in-flight transition (or injects an unreadable status).
+#[cfg(all(target_os = "macos", feature = "custom-protocol"))]
+struct WorkspaceFixture {
+    selected: bool,
+    phase: &'static str,
+    returning: bool,
+}
+#[cfg(all(target_os = "macos", feature = "custom-protocol"))]
+impl WorkspaceFixture {
+    fn status(&self) -> serde_json::Value {
+        let mut status = serde_json::json!({"selected":self.selected.then_some("localVm"), "localVm":self.phase,
+            "model":if self.phase == "ready" {"available"} else {"locked"}, "modelSupported":true,
+            "workspaceProgress":(self.phase == "starting").then(|| serde_json::json!({
+                "phase":"starting", "bytes":null, "totalBytes":null, "elapsedMs":18000, "remainingMs":null}))});
+        if self.phase == "failed" {
+            status["workspaceFailure"] =
+                serde_json::json!({"operation":"start", "cause":"permission", "codes":[13]});
+        }
+        status
+    }
+}
+
 #[cfg(all(target_os = "macos", feature = "custom-protocol"))]
 fn main() {
     use serde_json::json;
@@ -131,7 +154,11 @@ fn main() {
     let running = std::sync::atomic::AtomicBool::new(false);
     let cancelling = std::sync::atomic::AtomicBool::new(false);
     let chat = std::sync::Mutex::new(ChatFixture::new());
-    let selected = std::sync::atomic::AtomicBool::new(true);
+    let workspace = std::sync::Arc::new(std::sync::Mutex::new(WorkspaceFixture {
+        selected: true,
+        phase: "ready",
+        returning: false,
+    }));
     let connected = std::sync::atomic::AtomicBool::new(false);
     let key_connected = std::sync::atomic::AtomicBool::new(false);
     let key_attempt = std::sync::atomic::AtomicUsize::new(0);
@@ -209,6 +236,7 @@ fn main() {
                 }]}),
                 "agents_list" => json!([{"id":bridge_engine::agent_folder::DocumentId::SAMPLE,
                     "name":"web-reader", "path":null, "available":true}]),
+                "agent_creation_root" => json!("/Users/you/Orka/agents"),
                 "agent_selected" => json!(bridge_engine::agent_folder::DocumentId::SAMPLE),
                 "agent_select" => {
                     if !matches!(invoke.message.payload(), tauri::ipc::InvokeBody::Json(args)
@@ -266,9 +294,14 @@ fn main() {
                             {"id":"has-a-date", "title":"Says which date is on the page", "question":"Which date is shown on the page?", "phase":"Succeeded", "answer":"No date was given.", "completedTools":[], "verdict":"failed", "assertions":[{"id":"date", "kind":"contains", "expected":"2099-12-31", "verdict":"failed"}]}
                         ]})}})
                 }
-                "setup_status" | "setup_change_local" | "setup_select_local" => {
+                "setup_status" | "setup_change_local" | "setup_select_local" | "setup_cancel_local" => {
+                    let command = invoke.message.command();
                     let phase = setup_progress.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
-                    if invoke.message.command() == "setup_status" {
+                    if command == "setup_status" && phase.as_deref() == Some("workspace-unavailable") {
+                        invoke.resolver.reject("Synthetic workspace status unreadable");
+                        return true;
+                    }
+                    if command == "setup_status" {
                         let progress = match phase.as_deref() {
                             Some("installing") => Some(json!({"selected":"localVm", "localVm":"installing", "model":"locked", "modelSupported":true,
                                 "workspaceProgress":{"phase":"materializing", "bytes":1073741824_u64, "totalBytes":2147483648_u64, "elapsedMs":20000, "remainingMs":30000}})),
@@ -281,20 +314,64 @@ fn main() {
                             return true;
                         }
                     }
-                    if invoke.message.command() == "setup_change_local" {
-                        selected.store(false, std::sync::atomic::Ordering::SeqCst);
+                    let mut state = workspace.lock().unwrap();
+                    if command == "setup_status" && phase.as_deref().is_some_and(|s| s.starts_with("preflight-")) {
+                        // Preserve the earlier independent preflight captures without using Stop
+                        // as a shortcut back to first-run setup.
+                        state.selected = false;
+                        state.phase = "cancelled";
                         connected.store(false, std::sync::atomic::Ordering::SeqCst);
-                    } else if invoke.message.command() == "setup_select_local" {
-                        cancelling.store(false, std::sync::atomic::Ordering::SeqCst);
-                        selected.store(true, std::sync::atomic::Ordering::SeqCst);
-                        first_test_pending.store(true, std::sync::atomic::Ordering::SeqCst);
-                        running.store(false, std::sync::atomic::Ordering::SeqCst);
                     }
-                    if selected.load(std::sync::atomic::Ordering::SeqCst) {
-                        json!({"selected":"localVm", "localVm":"ready", "model":"available"})
-                    } else {
-                        json!({"selected":null, "localVm":"cancelled", "model":"locked"})
+                    match command {
+                        "setup_change_local" => {
+                            if state.returning || phase.as_deref().is_some_and(|s| s.starts_with("workspace-")) {
+                                invoke.resolver.reject("Stop must preserve the fixture's local selection");
+                                return true;
+                            }
+                            state.selected = false;
+                            state.phase = "cancelled";
+                            connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        "setup_select_local" => {
+                            cancelling.store(false, std::sync::atomic::Ordering::SeqCst);
+                            state.selected = true;
+                            state.phase = if state.returning { "starting" } else { "ready" };
+                            if !state.returning { first_test_pending.store(true, std::sync::atomic::Ordering::SeqCst); }
+                            running.store(false, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        "setup_cancel_local" => {
+                            assert!(state.selected, "Cancel must retain the selected workspace");
+                            state.returning = true;
+                            state.phase = "closing";
+                            connected.store(false, std::sync::atomic::Ordering::SeqCst);
+                            running.store(false, std::sync::atomic::Ordering::SeqCst);
+                            let workspace = workspace.clone();
+                            let selector = setup_progress.clone();
+                            let resolver = invoke.resolver;
+                            tauri::async_runtime::spawn(async move {
+                                loop {
+                                    let phase = selector.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
+                                    if matches!(phase.as_deref(), Some("workspace-stopped" | "workspace-closed")) {
+                                        let mut state = workspace.lock().unwrap();
+                                        state.phase = if phase.as_deref() == Some("workspace-closed") { "closed" } else { "cancelled" };
+                                        resolver.resolve(state.status());
+                                        break;
+                                    }
+                                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                                }
+                            });
+                            return true;
+                        }
+                        _ => {}
                     }
+                    if command == "setup_status" && state.phase == "starting" {
+                        match phase.as_deref() {
+                            Some("workspace-failed") => state.phase = "failed",
+                            Some("workspace-running") => state.phase = "ready",
+                            _ => {}
+                        }
+                    }
+                    state.status()
                 }
                 "setup_example" => json!({"agent":original, "tests":tests}),
                 // Sizing is synthetic, distinct from transfer progress above. The renderer

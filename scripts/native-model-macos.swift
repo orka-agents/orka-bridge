@@ -105,9 +105,10 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         else { fatalError("Cannot sample native theme") }
     let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
     require(theme == "dark" ? brightness < 0.25 : brightness > 0.8, "Wrong system theme")
-    if ["local-result", "local-answer", "local-story", "local-running", "local-stopping"].contains(where: { name.hasPrefix($0) }) {
+    let workspaceCapture = name.hasPrefix("local-workspace-") || name == "local-stopped"
+    if workspaceCapture || ["local-result", "local-answer", "local-story", "local-running", "local-stopping"].contains(where: { name.hasPrefix($0) }) {
         guard let actual = NSImage(contentsOfFile: file),
-            let reference = NSImage(contentsOfFile: "../docs/images/designer-reference-\(theme).png") else {
+            let reference = NSImage(contentsOfFile: "../docs/images/\(workspaceCapture ? "workspace" : "designer")-reference-\(theme).png") else {
             fatalError("Missing Designer comparison image")
         }
         let width = actual.size.width
@@ -121,7 +122,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         reference.draw(in: NSRect(x: width + 32, y: height - 42 - referenceHeight, width: width, height: referenceHeight))
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.labelColor]
         ("Native Bridge, synthetic test data" as NSString).draw(at: NSPoint(x: 16, y: height - 26), withAttributes: attributes)
-        ("Approved Designer frame (wide reference)" as NSString).draw(at: NSPoint(x: width + 32, y: height - 26), withAttributes: attributes)
+        ((workspaceCapture ? "Approved workspace frame (wide reference)" : "Approved Designer frame (wide reference)") as NSString).draw(at: NSPoint(x: width + 32, y: height - 26), withAttributes: attributes)
         comparison.unlockFocus()
         guard let tiff = comparison.tiffRepresentation,
             let bitmap = NSBitmapImageRep(data: tiff),
@@ -202,10 +203,7 @@ click("Retry removal", rows)
 rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Connect the AI"])
 click("Connect the AI", rows)
 rows = try capture("reconnected", ["Connected", "Remove sign-in"])
-// Only the fixture's finite in-memory state changes; no VM or files are touched.
-click("Stop the local cluster", rows)
-rows = try capture("local-stopped", ["Where should your agents run?", "On this computer", "Back to clusters"])
-require(enabledButton("Stop the local cluster") == nil, "Stop must leave the local preflight page")
+// Workspace Stop is exercised after the original baseline coverage below.
 // Reuse the setup-progress selector and the existing Places entry to remount real
 // preflight for each bounded synthetic result. No native admission command runs.
 for state in ["ready", "unknown", "blocked", "cluster"] {
@@ -678,3 +676,71 @@ _ = try capture("local-remove-confirmation-compact", ["saved sign-in?", "Cancel"
 click("Cancel", [])
 click("Back to clusters", [])
 _ = try capture("local-places-compact", ["Choose where agents run", "This computer"])
+// Stop/restart uses real UI actions. The existing selector settles only pending
+// synthetic IPC; no VM, credentials or provider is accessed.
+localSize(1280, 800)
+scroll(4000)
+click("Manage", [])
+func workspacePhase(_ phase: String) throws {
+    try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
+    Thread.sleep(forTimeInterval: 1.2)
+}
+func workspaceCapture(_ state: String, _ expected: [String]) throws {
+    for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+        localSize(width, height)
+        scroll(4000)
+        _ = try capture("local-workspace-\(state)-\(size)", expected)
+    }
+    localSize(1280, 800)
+    scroll(4000)
+}
+try workspacePhase("workspace-wait")
+click("Stop the local cluster", [])
+try workspaceCapture("confirmation", ["Stop the workspace?", "Stop workspace", "Keep running"])
+click("Keep running", [])
+require(enabledButton("Stop the local cluster") != nil, "Keep running must not stop the workspace")
+click("Stop the local cluster", [])
+click("Stop workspace", [])
+try workspaceCapture("stopping", ["This computer", "Workspace", "Stopping"])
+require(enabledButton("Start") == nil, "Start must be disabled until stop acknowledgement")
+try workspacePhase("workspace-stopped")
+waitForButton("Start")
+try workspaceCapture("stopped", ["This computer", "Workspace", "Stopped", "Start"])
+_ = try capture("local-stopped", ["This computer", "Stopped", "Start"])
+require(!nativeElements().contains { attribute($0, "AXRole") as? String == "AXRadioButton" }, "Stop must not return to first-run choices")
+click("Start", [])
+waitForButton("Cancel")
+try workspaceCapture("starting", ["This computer", "Starting", "0:18 so far", "Cancel"])
+try workspacePhase("workspace-wait")
+click("Cancel", [])
+try workspacePhase("workspace-stopped")
+waitForButton("Start")
+try workspaceCapture("cancelled", ["This computer", "Stopped", "Start"])
+click("Start", [])
+try workspacePhase("workspace-failed")
+waitForButton("Try again")
+try workspaceCapture("failed", ["This computer", "Couldn't start", "Try again"])
+try workspacePhase("workspace-wait")
+click("Try again", [])
+try workspacePhase("workspace-running")
+waitForButton("Stop")
+try workspaceCapture("running", ["This computer", "Running", "Stop"])
+try workspacePhase("workspace-wait")
+click("Stop", [])
+click("Stop workspace", [])
+try workspacePhase("workspace-stopped")
+waitForButton("Start")
+try workspacePhase("workspace-unavailable")
+try workspaceCapture("unavailable", ["This computer", "Status unavailable"])
+require(enabledButton("Start") == nil, "Unreadable status must not authorize Start")
+try workspacePhase("workspace-stopped")
+waitForButton("Start")
+click("Start", [])
+try workspacePhase("workspace-running")
+waitForButton("Stop")
+try workspacePhase("workspace-wait")
+click("Stop", [])
+click("Stop workspace", [])
+try workspacePhase("workspace-closed")
+try workspaceCapture("closed", ["This computer", "Stopped", "Quit Bridge and reopen it"])
+require(enabledButton("Start") == nil, "Terminal closed state must not offer an inert Start")

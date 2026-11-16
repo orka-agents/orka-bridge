@@ -289,10 +289,12 @@ try {
   }
   const designerReferences = Object.fromEntries(await Promise.all(['light', 'dark'].map(async theme => [theme,
     (await readFile(new URL(`../docs/images/designer-reference-${theme}.png`, import.meta.url))).toString('base64')])));
-  async function compareDesigner(data, theme, size, name) {
+  const workspaceReferences = Object.fromEntries(await Promise.all(['light', 'dark'].map(async theme => [theme,
+    (await readFile(new URL(`../docs/images/workspace-reference-${theme}.png`, import.meta.url))).toString('base64')])));
+  async function compareDesigner(data, theme, size, name, workspace = false) {
     const comparison = await evaluate(`(async () => {
       const decode = async text => createImageBitmap(new Blob([Uint8Array.from(atob(text), c => c.charCodeAt(0))], { type: 'image/png' }));
-      const actual = await decode(${JSON.stringify(data)}), reference = await decode(${JSON.stringify(designerReferences[theme])});
+      const actual = await decode(${JSON.stringify(data)}), reference = await decode(${JSON.stringify((workspace ? workspaceReferences : designerReferences)[theme])});
       const width = actual.width, referenceHeight = Math.round(reference.height * width / reference.width);
       const canvas = document.createElement('canvas');
       canvas.width = width * 2 + 48; canvas.height = Math.max(actual.height, referenceHeight) + 58;
@@ -301,11 +303,71 @@ try {
       ctx.drawImage(actual, 16, 42); ctx.drawImage(reference, width + 32, 42, width, referenceHeight);
       ctx.fillStyle = ${JSON.stringify(theme === 'dark' ? '#e6e4df' : '#1b2026')}; ctx.font = '14px sans-serif';
       ctx.fillText('Native Bridge, synthetic test data', 16, 26);
-      ctx.fillText('Approved Designer frame (wide reference)', width + 32, 26);
+      ctx.fillText(${JSON.stringify(workspace ? 'Approved workspace frame (wide reference)' : 'Approved Designer frame (wide reference)')}, width + 32, 26);
       actual.close(); reference.close();
       return canvas.toDataURL('image/png').split(',')[1];
     })()`);
     await writeFile(join(output, `${theme}-${size}-${name}-comparison.png`), Buffer.from(comparison, 'base64'));
+  }
+  async function captureWorkspace(theme, size) {
+    const card = '.returning-workspace';
+    const capture = async (state, word, action, disabled = false) => {
+      await until(() => evaluate(`document.querySelector('${card} .pill')?.textContent === ${JSON.stringify(word)}`), state);
+      const probe = await evaluate(`(() => {
+        const card = document.querySelector('${card}');
+        const button = [...card.querySelectorAll('button')].find(b => b.textContent === ${JSON.stringify(action)});
+        return { heading: document.querySelector('h1').textContent, text: card.innerText, disabled: button?.disabled,
+          firstTest: localStorage.getItem('bridge.firstTest.v1'), bar: !!card.querySelector('[role=progressbar]'),
+          choices: !!document.querySelector('.local-preflight input[type=radio]'), runs: window.__bridgeRuns,
+          start: [...card.querySelectorAll('button')].some(b => b.textContent === 'Start'), width: innerWidth, height: innerHeight };
+      })()`);
+      if (probe.heading !== 'This computer' || probe.bar || probe.choices || probe.runs || probe.firstTest === 'pending' ||
+          (action ? probe.disabled !== disabled : probe.start)) throw Error(state + ': invalid returning workspace: ' + JSON.stringify(probe));
+      if (size === 'compact' && (probe.width !== 540 || probe.height !== 640)) throw Error('Workspace minimum viewport is not 540x640');
+      if (state === 'starting' && !probe.text.includes('0:18 so far')) throw Error('Missing native-observed elapsed time');
+      if (state === 'closed' && !probe.text.includes('Quit Bridge and reopen it')) throw Error('Closed workspace needs reopen remedy');
+      await evaluate(`document.querySelector('main').scrollTop = 0`);
+      await checkLayout(theme, size, 'local-workspace-' + state);
+      const image = await call('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(output, `${theme}-${size}-local-workspace-${state}.png`), Buffer.from(image.data, 'base64'));
+      if (state === 'stopped') await writeFile(join(output, `${theme}-${size}-local-stopped.png`), Buffer.from(image.data, 'base64'));
+      await compareDesigner(image.data, theme, size, 'local-workspace-' + state, true);
+    };
+    await clickAction('Stop the local cluster');
+    await until(() => evaluate(`!!document.querySelector('[aria-label="Stop the workspace?"]')`), 'inline Stop confirmation');
+    if (await evaluate('window.__bridgeStops') !== 0) throw Error('Opening Stop confirmation stopped the workspace');
+    const confirmation = await call('Page.captureScreenshot', { format: 'png' });
+    await writeFile(join(output, `${theme}-${size}-local-workspace-confirmation.png`), Buffer.from(confirmation.data, 'base64'));
+    await compareDesigner(confirmation.data, theme, size, 'local-workspace-confirmation', true);
+    await clickAction('Keep running');
+    if (await evaluate('window.__bridgeStops') !== 0) throw Error('Keep running stopped the workspace');
+    await clickAction('Stop the local cluster'); await clickAction('Stop workspace');
+    await capture('stopping', 'Stopping', 'Start', true);
+    await evaluate(`window.__bridgeSettleWorkspace('cancelled')`);
+    await capture('stopped', 'Stopped', 'Start');
+    await clickAction('Start');
+    await capture('starting', 'Starting', 'Cancel');
+    await clickAction('Cancel');
+    await until(() => evaluate(`document.querySelector('${card} .pill')?.textContent === 'Stopping'`), 'restart cancellation');
+    await evaluate(`window.__bridgeSettleWorkspace('cancelled')`);
+    await capture('cancelled', 'Stopped', 'Start');
+    await clickAction('Start'); await evaluate(`window.__bridgeSettleWorkspace('failed')`);
+    await capture('failed', "Couldn't start", 'Try again');
+    await clickAction('Try again'); await evaluate(`window.__bridgeSettleWorkspace('ready')`);
+    await capture('running', 'Running', 'Stop');
+    await clickAction('Stop'); await clickAction('Stop workspace');
+    await evaluate(`window.__bridgeSettleWorkspace('cancelled')`);
+    await capture('stopped-again', 'Stopped', 'Start');
+    await evaluate(`window.__bridgeWorkspaceUnreadable = true; window.dispatchEvent(new Event('focus'))`);
+    await capture('unavailable', 'Status unavailable', 'Start', true);
+    await evaluate(`window.__bridgeWorkspaceUnreadable = false; window.dispatchEvent(new Event('focus'))`);
+    await capture('readable-again', 'Stopped', 'Start');
+    await clickAction('Start'); await evaluate(`window.__bridgeSettleWorkspace('ready')`);
+    await capture('running-again', 'Running', 'Stop');
+    await clickAction('Stop'); await clickAction('Stop workspace');
+    await evaluate(`window.__bridgeSettleWorkspace('closed')`);
+    await capture('closed', 'Stopped', null);
+    if (await evaluate('window.__bridgeStops') !== 4 || await evaluate('window.__bridgeLocalSelections') !== 4) throw Error('Workspace action sequence changed');
   }
   async function captureActions(theme, size, name) {
     const first = name.startsWith('first-test-');
@@ -353,7 +415,22 @@ try {
       window.__bridgeBadgeState = 'passed';
       window.__bridgeRuns = 0;
       const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
-      const status = () => ({ selected: selected ? 'localVm' : null, localVm: selected ? 'ready' : window.__bridgeStops ? 'cancelled' : 'idle', model: selected ? 'available' : 'locked' });
+      let workspacePhase = 'ready';
+      let finishStop;
+      window.__bridgeWorkspaceUnreadable = false;
+      window.__bridgeSettleWorkspace = next => {
+        if (workspacePhase === 'closing' && ['cancelled', 'closed'].includes(next)) {
+          workspacePhase = next; finishStop(status()); finishStop = undefined;
+        } else if (workspacePhase === 'starting' && ['failed', 'ready'].includes(next)) workspacePhase = next;
+        else throw Error('Invalid synthetic workspace transition: ' + workspacePhase + ' -> ' + next);
+      };
+      const status = () => {
+        if (window.__bridgeWorkspaceUnreadable) throw Error('Synthetic workspace status unreadable');
+        const localVm = selected ? workspacePhase : window.__bridgeStops ? 'cancelled' : 'idle';
+        return { selected: selected ? 'localVm' : null, localVm, model: localVm === 'ready' ? 'available' : 'locked', modelSupported: true,
+          workspaceProgress: localVm === 'starting' ? { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 18000, remainingMs: null } : null,
+          ...(localVm === 'failed' ? { workspaceFailure: { operation: 'start', cause: 'permission', codes: [5] } } : {}) };
+      };
       const report = { verdict: 'failed', cases: [{ id: 'page-checksum', title: 'Copies the checksum from the page', question: 'What checksum does the page show?', phase: 'Succeeded', answer: 'No checksum was given.', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', expected: 'fixture-checksum', verdict: 'failed' }], verdict: 'failed' }] };
       const snapshot = () => {
         if (localCancel) {
@@ -378,8 +455,19 @@ try {
       window.isTauri = true;
       window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
         if (command === 'setup_status') return status();
-        if (command === 'setup_select_local') { window.__bridgeLocalSelections++; selected = true; return status(); }
-        if (command === 'setup_change_local') { window.__bridgeStops++; selected = false; connected = false; return status(); }
+        if (command === 'setup_select_local') { window.__bridgeLocalSelections++; selected = true; workspacePhase = name === 'local-stopped' ? 'starting' : 'ready'; return status(); }
+        if (command === 'setup_cancel_local') {
+          window.__bridgeStops++; connected = false;
+          if (!selected) throw Error('Stop must retain the selected workspace');
+          workspacePhase = name === 'local-stopped' ? 'closing' : 'cancelled';
+          return name === 'local-stopped' ? new Promise(resolve => { finishStop = resolve; }) : status();
+        }
+        if (command === 'setup_change_local') {
+          if (name === 'local-stopped' || localCancel) throw Error('Stop must use setup_cancel_local');
+          window.__bridgeStops++; selected = false; connected = false; return status();
+        }
+        if (command === 'agents_list') return [{ id: documentId, name: 'web-reader', path: null, available: true }];
+        if (command === 'agent_creation_root') return 'C:\\\\Users\\\\you\\\\Orka\\\\agents';
         if (command === 'setup_remove_model') { window.__bridgeRemovals++; throw { kind: 'modelBusy' }; }
         // Known and missing size facts: fixture IPC, not the native catalog.
         if (command === 'setup_requirements') return name.startsWith('local-preflight') && name !== 'local-preflight-missing' ? ${JSON.stringify({ memoryBytes: 4 * GiB, imageBytes: Math.round(2.8 * GiB), stateDiskBytes: 20 * GiB })} : null;
@@ -428,8 +516,8 @@ try {
     if (first) await clickAction('Continue');
     if (first || ['ai-cli-missing', 'ai-connecting', 'ai-connected', 'local-completed', 'local-stopped', 'ai-removal-confirmation', 'ai-removal-retry'].includes(name)) await clickAction('Connect the AI');
     if (name === 'local-stopped') {
-      await clickAction('Stop the local cluster');
-      await until(() => evaluate(`!!document.querySelector('.local-preflight #workspace-local') && window.__bridgeStops === 1`), 'Stop returns to local preflight');
+      await captureWorkspace(theme, size);
+      return;
     }
     if (name.startsWith('ai-removal-')) {
       await clickAction('Remove sign-in');
@@ -500,7 +588,7 @@ try {
         }
         // Scope the click to Tests because Setup's hidden Stop stays mounted.
         await evaluate(`[...document.querySelectorAll('.example-run button')].find(b => b.textContent === 'Stop the local cluster').click()`);
-        await until(() => evaluate(`window.__bridgeStops === 1 && document.querySelector('button[aria-label="Clusters"]').getAttribute('aria-current') === 'page' && !!document.querySelector('.local-preflight #workspace-local')`), 'explicit local Stop');
+        await until(() => evaluate(`window.__bridgeStops === 1 && document.querySelector('button[aria-label="Clusters"]').getAttribute('aria-current') === 'page' && [...document.querySelectorAll('button')].some(b => b.textContent === 'Start' && b.getClientRects().length)`), 'explicit local Stop');
       }
       console.log(`Captured native WebView2 local cancellation fixture: ${theme}/${size}/${name}`);
       return;
@@ -534,7 +622,7 @@ try {
       if (await evaluate('window.__bridgeRuns') !== 1) throw Error('A sample state submitted a run other than the automatic test');
       return;
     }
-    const expected = { welcome: 'About 5 minutes, mostly a download', 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Step 1 of 4', 'local-preflight-missing': 'Step 1 of 4', 'local-preflight-unknown': 'Not checked', 'local-preflight-blocked': 'Fix the computer requirements above', 'local-preflight-cluster': 'Fix the computer requirements above', 'ai-cli-missing': 'gh auth login --hostname github.com --web', 'designer-loading': 'Opening your agent', 'designer-open-error': 'Your agent folder could not be opened.', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster ready', 'local-stopped': 'Where should your agents run?', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings', 'designer-connected': 'Instructions and settings', 'designer-file': 'web-reader.agent.md', 'designer-failed': 'checks failed', 'designer-passed': 'The test passed.', 'designer-stale': 'Not run since your edit', 'designer-running': 'Waiting for answers and evaluating tests', 'designer-remote': 'Instructions and settings' };
+    const expected = { welcome: 'About 5 minutes, mostly a download', 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Step 1 of 4', 'local-preflight-missing': 'Step 1 of 4', 'local-preflight-unknown': 'Not checked', 'local-preflight-blocked': 'Fix the computer requirements above', 'local-preflight-cluster': 'Fix the computer requirements above', 'ai-cli-missing': 'gh auth login --hostname github.com --web', 'designer-loading': 'Opening your agent', 'designer-open-error': 'Your agent folder could not be opened.', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster ready', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings', 'designer-connected': 'Instructions and settings', 'designer-file': 'web-reader.agent.md', 'designer-failed': 'checks failed', 'designer-passed': 'The test passed.', 'designer-stale': 'Not run since your edit', 'designer-running': 'Waiting for answers and evaluating tests', 'designer-remote': 'Instructions and settings' };
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])}) && ${['designer-loading', 'designer-open-error'].includes(name) ? "!!document.querySelector('.designer > .designer-file')?.getClientRects().length" : 'true'}`), `${name} action state`).catch(async error => {
       throw Error(`${error.message}: ${await evaluate('document.body.innerText')}`);
     });
@@ -785,7 +873,7 @@ $c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
     for (const name of ['designer-connected', 'designer-running', 'designer-failed', 'designer-passed', 'designer-stale']) await captureActions(theme, 'minimum', name);
   }
   await writeFile(join(output, 'compact-window.txt'), notes.join('\n') + '\n');
-  await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*, including ready, unknown, blocked and cluster-selected choices), Welcome (welcome*), completed local/Stop pages (local-completed, local-stopped), removal confirmation/retry (ai-removal-*), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Local Cancel states (local-cancel-*) exercise renderer controls with synthetic cancellation/worker results, not native cancellation proof. Layout JSON records setup stacks, form widths, row alignment, card insets, Designer priority and loading/open-error fallback spacing. Overview states (overview-*, including 540x640 minimum) use synthetic overview_* IPC. compact-window.txt says whether 540x640 compact and minimum captures were a real native window resize or renderer viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
+  await writeFile(join(output, 'README.txt'), 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*, including ready, unknown, blocked and cluster-selected choices), Welcome (welcome*), completed local/Stop pages (local-completed, local-stopped) and action-driven returning-workspace lifecycle states (local-workspace-*, compared with the approved workspace reference), removal confirmation/retry (ai-removal-*), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Local Cancel states (local-cancel-*) exercise renderer controls with synthetic cancellation/worker results, not native cancellation proof. Layout JSON records setup stacks, form widths, row alignment, card insets, Designer priority and loading/open-error fallback spacing. Overview states (overview-*, including 540x640 minimum) use synthetic overview_* IPC. compact-window.txt says whether 540x640 compact and minimum captures were a real native window resize or renderer viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
   // Keep the source identity next to images without inferring it from branch names.
   await writeFile(join(output, 'head.txt'), await readFile(join(output, '..', 'native-lifecycle', 'head.txt')));
 } finally {
