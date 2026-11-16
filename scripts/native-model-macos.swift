@@ -98,7 +98,8 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
             .replacingOccurrences(of: "APl key", with: "API key").contains(value)
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || name.hasPrefix("local-key-") && nativeChatTextIsVisible(value))
         let chatText = !found && name.hasPrefix("chat-") && nativeChatTextIsVisible(value)
-        require(found || nativeText || chatText, "Missing \(value) in \(name): \(text)")
+        let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
+        require(found || nativeText || chatText || workspaceControl, "Missing \(value) in \(name): \(text)")
     }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
@@ -443,6 +444,16 @@ func nativeResultTextIsVisible(_ expected: String) -> Bool {
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
             (text == expected || (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected))),
+            let bounds = nativeBounds(element) else { return false }
+        return window()!.1.contains(bounds)
+    }
+}
+// Vision read the visible Stop workspace button with a lowercase initial.
+// Exact, in-window accessibility controls prove the same property independently.
+func nativeWorkspaceButtonIsVisible(_ expected: String) -> Bool {
+    nativeElements().contains { element in
+        guard ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? ""),
+            ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == expected }),
             let bounds = nativeBounds(element) else { return false }
         return window()!.1.contains(bounds)
     }
