@@ -855,9 +855,6 @@ func fillMessage(_ text: String, secure: Bool = false) {
         require(actual == text, "Native keystrokes did not fill Chat Message: expected \(text.debugDescription), got \(String(describing: actual))")
     }
 }
-// BASELINE: current main blocks only Ask for approval locally, so Reply in a conversation is still enabled with no
-// saved-file warning. Switch this one flag to true when asserting the fixed behavior.
-let replyToolBlocked = false
 let replyReason = "Conversation replies need an authenticated gateway conversation, which local tests and Chat do not have."
 func typeUnicode(_ text: String) {
     let characters = Array(text.utf16)
@@ -904,13 +901,9 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
             && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("reply_in_conversation") == true }
     }
     require(replyButtons.count == 1, "Search must leave exactly the reply tool row")
-    require(attribute(replyButtons[0], "AXEnabled") as? Bool == !replyToolBlocked, "Reply tool enabled state does not match the expected \(replyToolBlocked ? "blocked" : "baseline") state")
-    if replyToolBlocked {
-        require(nativeResultTextIsVisible(replyReason), "Reply reason must be fully visible in the picker")
-    } else {
-        require(!nativeTextExists(replyReason), "Baseline must not show a reply reason")
-    }
-    _ = try capture("local-reply-tool-\(size)", ["Find a tool", "Reply in a conversation"] + (replyToolBlocked ? [replyReason] : []))
+    require(attribute(replyButtons[0], "AXEnabled") as? Bool == false, "Reply tool must stay disabled locally")
+    require(nativeResultTextIsVisible(replyReason), "Reply reason must be fully visible in the picker")
+    _ = try capture("local-reply-tool-\(size)", ["Find a tool", "Reply in a conversation", replyReason])
     guard let close = enabledButton("Close picker"), let bounds = nativeBounds(close) else {
         fatalError("Labeled picker X missing")
     }
@@ -972,6 +965,7 @@ func setFileText(_ text: String) {
     for down in [true, false] { CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: down)?.post(tap: .cghidEventTap) }
     Thread.sleep(forTimeInterval: 0.5)
     require(attribute(editor, "AXValue") as? String == text, "File view text was not applied")
+    scroll(4000) // Editing can scroll the caret into view below the header.
     click("Agent", []) // Leaving File view saves in memory.
     Thread.sleep(forTimeInterval: 1)
 }
@@ -988,7 +982,7 @@ func replyWarningVisible() -> Bool { visibleStaticTexts { $0.contains("reply_in_
 func requireSavedReply(_ present: Bool, _ label: String) {
     Thread.sleep(forTimeInterval: 0.5)
     require(replyChipVisible() == present, "\(label): reply chip should be \(present ? "present" : "absent")")
-    require(replyWarningVisible() == (present && replyToolBlocked), "\(label): saved reply warning should be \(present && replyToolBlocked)")
+    require(replyWarningVisible() == present, "\(label): saved reply warning should be \(present)")
 }
 let originalFile = currentFileText()
 let toolAnchor = "      name: web_fetch\n"

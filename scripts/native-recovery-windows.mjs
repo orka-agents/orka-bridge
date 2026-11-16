@@ -19,9 +19,6 @@ for (const root of [process.env.APPDATA, process.env.LOCALAPPDATA]) {
 const source = process.env.BRIDGE_DEV_IMAGE_DIR;
 if (!source || !(await stat(source)).isDirectory() || (await readdir(source)).length) throw Error('Expected empty development image source');
 await mkdir(output, { recursive: true });
-// BASELINE: current main blocks only Ask for approval locally, so Reply in a conversation is still enabled with no
-// saved-file warning. Switch this one flag to true when capturing/asserting the fixed behavior.
-const REPLY_TOOL_BLOCKED = false;
 const replyReason = 'Conversation replies need an authenticated gateway conversation, which local tests and Chat do not have.';
 const replySavedAgent = '---\nname: web-reader\nmodel: fixture-model\nkmx:\n  runtime: orka\n  schemaVersion: 1\n  tools:\n    - kind: builtin\n      name: reply_in_conversation\n---\nFetch before answering.';
 let socket;
@@ -978,10 +975,8 @@ try {
         return { named: button.textContent.includes('reply_in_conversation'), disabled: button.disabled, reason: reason?.textContent ?? null, rowInside: inside(button.parentElement), reasonInside: reason ? inside(reason) : null,
           described: button.parentElement.getAttribute('aria-describedby') === reason?.id };
       })()`);
-      const replyOk = reply.named && reply.rowInside && (REPLY_TOOL_BLOCKED
-        ? reply.disabled && reply.reason === replyReason && reply.reasonInside && reply.described
-        : !reply.disabled && reply.reason === null);
-      if (!replyOk) throw Error(`Reply tool picker state is wrong (blocked expected: ${REPLY_TOOL_BLOCKED}): ${JSON.stringify(reply)}`);
+      const replyOk = reply.named && reply.rowInside && reply.disabled && reply.reason === replyReason && reply.reasonInside && reply.described;
+      if (!replyOk) throw Error(`Reply tool is offered without its visible reason: ${JSON.stringify(reply)}`);
       const replyImage = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-reply-tool.png`), Buffer.from(replyImage.data, 'base64'));
       await evaluate(`document.querySelector('button[aria-label="Close picker"]').click()`);
@@ -997,7 +992,7 @@ try {
       };
       const expectSaved = async (present, label) => {
         await until(async () => await chip() === present, `${label} chip`);
-        if (await warned() !== (present && REPLY_TOOL_BLOCKED)) throw Error(`${label}: saved reply warning must be ${present && REPLY_TOOL_BLOCKED}`);
+        if (await warned() !== present) throw Error(`${label}: saved reply warning must be ${present}`);
       };
       await expectSaved(true, 'preserved');
       await settleShot('saved-reply-tool');
