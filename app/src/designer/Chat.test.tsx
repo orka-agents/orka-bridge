@@ -174,6 +174,13 @@ test.each(['Pending', 'Queued', 'Running'])('pending %s reply reads as waiting, 
   expect(within(conversation).getByText(phase === 'Running' ? 'Waiting for your agent’s reply…' : 'Waiting for your agent to start…')).toBeTruthy();
   expect(conversation.querySelector('.status-running')).toBeTruthy();
 });
+test('a newly admitted turn stays waiting while the saved agent is preparing', async () => {
+  snapshot = { ...idle, state: 'preparing', busy: true, canSend: false, versions: [{ turns: [{ ...turn, answer: null, contextRetained: false, phase: '' }] }] };
+  await open();
+  const conversation = screen.getByRole('region', { name: 'Conversation' });
+  expect(within(conversation).queryAllByText(/No answer was received|not confirmed in later context/)).toHaveLength(0);
+  expect(within(conversation).getByText('Waiting for your agent to start…')).toBeTruthy();
+});
 test('terminal unconfirmed history remains distinct from an in-progress reply', async () => {
   snapshot = { ...idle, versions: [{ turns: [{ ...turn, contextRetained: false }] }] };
   await open(); expect(screen.getByText(/not confirmed in later context/)).toBeTruthy();

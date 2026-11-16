@@ -117,7 +117,7 @@ export default function Chat({ documentId, blocked }: { documentId: string; bloc
         <h3>Conversation {index + 1}</h3>
         {index > 0 && <p className="muted">New conversation. Earlier turns are shown for reference, not sent as history.</p>}
         {version.turns.map((turn, i) => {
-          const waiting = turn === latestTurn && snapshot.state === 'working' && ['', 'Pending', 'Queued', 'Running'].includes(turn.phase) && turn.answer === null;
+          const waiting = turn === latestTurn && ['preparing', 'working'].includes(snapshot.state) && ['', 'Pending', 'Queued', 'Running'].includes(turn.phase) && turn.answer === null;
           return <article className="chat-turn" key={i}>
             <div className="chat-question"><h4>You</h4><p className="reading">{turn.message}</p></div>
             <div className="chat-response"><h4>Agent</h4>

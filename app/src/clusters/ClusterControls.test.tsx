@@ -44,6 +44,7 @@ test('keyboard context picker searches native metadata without selecting or disc
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'kubectl context' }));
   expect(ipc.mock.calls).toEqual([['cluster_contexts', {}], ['cluster_discover', { contextId: context.id }]]);
   expect(onPlace).toHaveBeenLastCalledWith({ kind: 'cluster' });
+  expect(screen.getByRole('button', { name: 'kubectl context', description: context.name })).toBeTruthy();
   expect(screen.queryByText('Access confirmed')).toBeNull();
 });
 
@@ -82,6 +83,33 @@ test('Orka found is session discovery evidence only, cleared when reload returns
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_discover')).toEqual([
     ['cluster_discover', { contextId: context.id }], ['cluster_discover', { contextId: other.id }],
   ]);
+});
+
+test('retrying a context-list read preserves a remembered working connection', async () => {
+  vi.stubGlobal('isTauri', true);
+  const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-ai', ready: true };
+  const remembered = { key: 'team', context: context.name, service: 'control / orka', namespace: 'agents', stale: false, observedAt: 123, agents: [] };
+  let reads = 0;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'cluster_reconnect') return target;
+    if (command === 'cluster_use') return { status: 'connected', providers: [provider], failure: null };
+    if (command === 'cluster_places') return { places: [remembered], selectedKey: remembered.key, persistenceState: 'complete' };
+    if (command === 'overview_places') return { places: [remembered], unobserved: [], historyState: 'complete' };
+    if (command === 'cluster_contexts') { if (++reads === 1) throw { check: 'configuration', result: 'unknown' }; return [context]; }
+    throw Error('Unexpected command ' + command);
+  });
+  mockIPC(ipc); const onPlace = vi.fn(); const user = userEvent.setup();
+  render(<ClusterCard entry={{ revision: 1, remembered }} onPlace={onPlace} onOpenAgent={vi.fn()} />);
+  await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
+  await screen.findByText('Access confirmed');
+  const confirmedPlace = onPlace.mock.lastCall;
+  await user.click(screen.getByRole('button', { name: 'Change context' }));
+  await screen.findByRole('alert');
+  await user.click(screen.getByRole('button', { name: 'Check again' }));
+  await waitFor(() => expect(reads).toBe(2));
+  expect(ipc.mock.calls.map(([command]) => command)).not.toContain('cluster_reload');
+  expect(onPlace.mock.lastCall).toEqual(confirmedPlace);
+  expect(screen.getByRole('button', { name: 'Open your agent' }).matches(':disabled')).toBe(false);
 });
 
 test('pending discovery uses Running and a failed check leaves one primary retry with secondary reload in Details', async () => {

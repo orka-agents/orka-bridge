@@ -221,7 +221,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
         <option value="">Choose an installation</option>{targets.map(t => <option key={t.id} value={t.id}>{t.service_namespace} / {t.service_name} · {t.watched_namespace}</option>)}
       </select></>}
     {error && recovery && <div className="workspace-failure cluster-failure" role="alert"><div className="workspace-failure-explanation">
-      <p className="failure-summary">{recovery.cause}</p><p>{recovery.next}</p>
+      <p className="failure-summary">{recovery.cause}</p><p>{error.operation === 'Read kubeconfig' ? 'Check again to read your contexts. If you changed kubeconfig, use Reload kubeconfig in Details.' : recovery.next}</p>
       <p>Your local cluster and agent files are kept. Connection checks do not create an agent or run tests.</p>
     </div></div>}
     {target && <>
@@ -265,6 +265,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
         if (error.operation === 'Reconnect cluster' && retained) void reconnect(retained.key);
         else if (error.operation === 'Use cluster') void confirm();
         else if (error.operation === 'Discover Orka') void check(contextId);
+        else if (error.operation === 'Read kubeconfig') readContexts();
         else void reload();
       }}>Check again</Button>}
       {!error && target && (connected ? <>

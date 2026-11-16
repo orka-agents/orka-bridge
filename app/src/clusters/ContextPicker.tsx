@@ -17,9 +17,9 @@ export default function ContextPicker({ choices, value, found, disabled, active,
   const matches = choices.filter(choice => choice.name.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return <>
     <label htmlFor="cluster-context">kubectl context</label>
-    <Button ref={trigger} id="cluster-context" type="button" kind="secondary" className="context-trigger" aria-label="kubectl context" aria-haspopup="dialog" aria-expanded={open && active && !disabled} aria-controls="cluster-context-picker" disabled={disabled}
+    <Button ref={trigger} id="cluster-context" type="button" kind="secondary" className="context-trigger" aria-label="kubectl context" aria-describedby="cluster-context-value" aria-haspopup="dialog" aria-expanded={open && active && !disabled} aria-controls="cluster-context-picker" disabled={disabled}
       onClick={() => { if (open) close(); else setOpen(true); }}>
-      <span>{choices.find(choice => choice.id === value)?.name ?? 'Choose a context'}</span><span aria-hidden="true">⌄</span>
+      <span id="cluster-context-value">{choices.find(choice => choice.id === value)?.name ?? 'Choose a context'}</span><span aria-hidden="true">⌄</span>
     </Button>
     {open && active && !disabled && <div ref={popover} popover="auto" role="dialog" aria-label="Choose a context" id="cluster-context-picker" className="context-picker"
       onToggle={event => { if (event.newState === 'closed') close(popover.current?.contains(document.activeElement) === true || document.activeElement === document.body); }}
