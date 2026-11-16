@@ -154,7 +154,9 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
 }
 func enabledButton(_ label: String) -> AXUIElement? {
     let buttons = nativeElements().filter { element in
-        ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? "")
+        guard let role = attribute(element, "AXRole") as? String else { return false }
+        // Keep ordinary controls distinct from the context's native popup trigger.
+        return (["AXButton", "AXCheckBox"].contains(role) || label == "kubectl context" && role == "AXPopUpButton")
             && attribute(element, "AXEnabled") as? Bool == true
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
     }

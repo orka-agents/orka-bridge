@@ -195,7 +195,9 @@ func clickDesignerView(_ name: String) {
 // Places actions are native buttons; a row action may carry the row name after its verb.
 func nativeButtons(_ label: String) -> [AXUIElement] {
     nativeElements().filter { element in
-        attribute(element, "AXRole") as? String == "AXButton"
+        guard let role = attribute(element, "AXRole") as? String else { return false }
+        // WebKit exposes the context's aria-haspopup trigger as a popup button.
+        return (role == "AXButton" || label == "kubectl context" && role == "AXPopUpButton")
             && ["AXTitle", "AXDescription"].contains { key in
                 guard let value = attribute(element, key) as? String else { return false }
                 return value == label || value.hasPrefix(label + " ")
