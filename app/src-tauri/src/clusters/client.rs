@@ -869,15 +869,17 @@ async fn permissions(client: Client, namespace: &str) -> Result<(), AccessOutcom
     Ok(())
 }
 fn dns_label(s: &str) -> bool {
+    s.len() <= 63 && dns_part(s)
+}
+fn dns_part(s: &str) -> bool {
     !s.is_empty()
-        && s.len() <= 63
         && s.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
         && s.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric)
         && s.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 fn dns_subdomain(s: &str) -> bool {
-    s.len() <= 253 && s.split('.').all(dns_label)
+    s.len() <= 253 && s.split('.').all(dns_part)
 }
 pub(super) fn items(page: &Value) -> Result<&Vec<Value>, AccessOutcome> {
     page["items"].as_array().ok_or(AccessOutcome::Unavailable)

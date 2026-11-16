@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import ClusterCard from './ClusterCard';
+import ServiceAccountPicker from './ServiceAccountPicker';
 import { chooseContext } from './test-context';
 
 const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev', current: false };
@@ -37,6 +38,10 @@ test('choosing a listed account previews only it, and only explicit Use sends it
   expect(use.matches(':disabled')).toBe(true);
   await user.click(await screen.findByRole('button', { name: 'ServiceAccount' }));
   expect(screen.getAllByText('Not checked').length).toBe(3);
+  for (const name of ['default', 'team-runner', 'task-reader']) {
+    const description = screen.getByRole('button', { name }).getAttribute('aria-describedby');
+    expect(description && document.getElementById(description)?.textContent).toBe('Not checked');
+  }
   await user.type(screen.getByRole('searchbox', { name: 'Find an account' }), 'runner');
   expect(screen.queryByRole('button', { name: 'default' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'team-runner' }));
@@ -51,6 +56,15 @@ test('choosing a listed account previews only it, and only explicit Use sends it
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toEqual([
     ['cluster_use', { targetId: target.id, saName: null }], ['cluster_use', { targetId: target.id, saName: 'team-runner' }],
   ]));
+});
+
+test('disabled account controls do not start a list until enabled', async () => {
+  const ipc = fixture();
+  const view = render(<ServiceAccountPicker target={target} active disabled value="" onChange={vi.fn()} />);
+  expect(ipc.mock.calls.some(([c]) => c === 'cluster_service_accounts')).toBe(false);
+  view.rerender(<ServiceAccountPicker target={target} active disabled={false} value="" onChange={vi.fn()} />);
+  await screen.findByRole('button', { name: 'ServiceAccount' });
+  expect(ipc.mock.calls.filter(([c]) => c === 'cluster_service_accounts')).toHaveLength(1);
 });
 
 test.each(['denied', 'unknown'])('advisory %s does not prevent explicit Use', async status => {

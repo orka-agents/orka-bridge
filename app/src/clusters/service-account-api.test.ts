@@ -10,6 +10,16 @@ test('account IPC sends only target/name and validates finite full replies', asy
   await expect(previewServiceAccount(targetId, 'team-runner')).resolves.toEqual({ status: 'allowed', checks });
   expect(ipc.mock.calls).toEqual([['cluster_service_accounts', { targetId }], ['cluster_service_account_preview', { targetId, saName: 'team-runner' }]]);
 });
+test('Kubernetes subdomain names allow long parts but retain the total bound', async () => {
+  vi.stubGlobal('isTauri', true);
+  for (const name of ['a'.repeat(64), `${'a'.repeat(64)}.runner`, 'a'.repeat(253)]) {
+    mockIPC(() => ({ names: [name], truncated: false }));
+    await expect(serviceAccounts(targetId)).resolves.toEqual({ names: [name], truncated: false });
+  }
+  mockIPC(() => ({ names: ['a'.repeat(254)], truncated: false }));
+  await expect(serviceAccounts(targetId)).rejects.toThrow();
+});
+
 test.each([
   { names: ['team-runner', 'team-runner'], truncated: false }, { names: ['bad/name'], truncated: false },
   { names: ['team'], truncated: false, token: 'PRIVATE' }, { names: Array(1001).fill('team'), truncated: true },

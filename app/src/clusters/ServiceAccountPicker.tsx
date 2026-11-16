@@ -16,7 +16,7 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
   const [details, setDetails] = useState(false);
   function close(focus = true) { setOpen(false); setQuery(''); if (focus) trigger.current?.focus(); }
   useEffect(() => {
-    if (!active || accounts || reason) return;
+    if (!active || disabled || accounts || reason) return;
     const request = ++listEpoch.current;
     void serviceAccounts(target.id).then(result => {
       if (request === listEpoch.current) setAccounts(result);
@@ -29,7 +29,7 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
         : "Couldn't list ServiceAccounts. Check the cluster connection and try again.");
     });
     return () => { ++listEpoch.current; };
-  }, [target.id, target.watched_namespace, active, attempt]);
+  }, [target.id, target.watched_namespace, active, disabled, attempt]);
   useEffect(() => {
     if (!active || disabled) { ++previewEpoch.current; setPreview(undefined); setOpen(false); setQuery(''); }
   }, [active, disabled]);
@@ -76,8 +76,8 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
       <Button kind="icon" className="picker-close" aria-label="Close picker" title="Close picker" onClick={() => close()}><CloseIcon /></Button>
       <label htmlFor={`${id}-search`}>Find an account</label>
       <input id={`${id}-search`} type="search" className="field" value={query} onChange={event => setQuery(event.target.value)} />
-      <ul>{matches?.map(name => <li key={name}><button type="button" aria-label={name} aria-current={value === name ? 'true' : undefined} onClick={() => { void choose(name); }}>
-        <code>{name}</code><span className="muted">{name === value ? status : 'Not checked'}</span>
+      <ul>{matches?.map(name => <li key={name}><button type="button" aria-label={name} aria-describedby={`${id}-${name}-status`} aria-current={value === name ? 'true' : undefined} onClick={() => { void choose(name); }}>
+        <code>{name}</code><span id={`${id}-${name}-status`} className="muted">{name === value ? status : 'Not checked'}</span>
       </button></li>)}</ul>
       {!matches?.length && <p className="muted">No matching accounts.</p>}
     </div>}

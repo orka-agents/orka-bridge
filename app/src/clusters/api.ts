@@ -54,7 +54,7 @@ export type ServiceAccounts = { names: string[]; truncated: boolean };
 export const orkaPermissions = [['agents', 'create'], ['agents', 'get'], ['agents', 'list'], ['tasks', 'create'], ['tasks', 'get'], ['tasks', 'list'], ['providers', 'get'], ['providers', 'list'], ['tools', 'get'], ['tools', 'list']] as const;
 export type PermissionCheck = { resource: typeof orkaPermissions[number][0]; verb: typeof orkaPermissions[number][1]; status: 'allowed' | 'denied' | 'unknown' | 'notChecked' };
 export type AccountPreview = { status: 'allowed' | 'denied' | 'unknown'; checks: PermissionCheck[] };
-const accountName = (v: unknown): v is string => typeof v === 'string' && v.length <= 253 && v.split('.').every(part => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(part));
+const accountName = (v: unknown): v is string => typeof v === 'string' && v.length <= 253 && v.split('.').every(part => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(part));
 function accountPreview(v: unknown): v is AccountPreview {
   if (!object(v) || !keys(v, ['status', 'checks']) || !Array.isArray(v.checks) || v.checks.length !== 10) return false;
   if (!v.checks.every((c: unknown, i: number) => object(c) && keys(c, ['resource', 'verb', 'status']) && c.resource === orkaPermissions[i][0] && c.verb === orkaPermissions[i][1] && ['allowed', 'denied', 'unknown', 'notChecked'].includes(c.status as string))) return false;

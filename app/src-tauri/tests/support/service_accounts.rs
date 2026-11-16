@@ -23,6 +23,52 @@ fn page(names: &[&str], after: &str) -> Value {
 }
 
 #[tokio::test]
+async fn service_account_list_and_preview_accept_kubernetes_long_subdomain_parts() {
+    for name in [
+        "a".repeat(64),
+        format!("{}.runner", "a".repeat(64)),
+        "a".repeat(253),
+    ] {
+        let api = Arc::new(ApiFixture::default());
+        let orka = Arc::new(OrkaFixture::default());
+        let mut client = client(&api, &orka, json!({"token":"static-fixture"}));
+        let id = target(&mut client).await;
+        *api.override_response.lock().unwrap() = Some((LIST.into(), 200, page(&[&name], "")));
+        assert_eq!(
+            reply(client.service_accounts(id, deadline()).await.unwrap())["names"],
+            json!([name])
+        );
+        *api.override_response.lock().unwrap() = None;
+        assert_eq!(
+            reply(
+                client
+                    .service_account_preview(id, &name, deadline())
+                    .await
+                    .unwrap()
+            )["status"],
+            "allowed"
+        );
+    }
+}
+
+#[tokio::test]
+async fn service_account_list_never_exports_an_echoed_creator_bearer() {
+    for name in ["static-fixture", "prefix-static-fixture-suffix"] {
+        let api = Arc::new(ApiFixture::default());
+        let orka = Arc::new(OrkaFixture::default());
+        let mut client = client(&api, &orka, json!({"token":"static-fixture"}));
+        let id = target(&mut client).await;
+        api.calls.lock().unwrap().clear();
+        *api.override_response.lock().unwrap() = Some((LIST.into(), 200, page(&[name], "")));
+        assert_eq!(
+            reply(client.service_accounts(id, deadline()).await.unwrap_err()),
+            unknown()
+        );
+        assert_no_credentials_or_orka(&api, &orka);
+    }
+}
+
+#[tokio::test]
 async fn service_account_list_preserves_discovery_revalidation_failure() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());

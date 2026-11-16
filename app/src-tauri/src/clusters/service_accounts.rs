@@ -14,7 +14,7 @@ impl ClusterClient {
         &self,
         id: TargetId,
         deadline: Instant,
-    ) -> Result<(Client, &TargetBinding), AccessOutcome> {
+    ) -> Result<(Client, &TargetBinding, Credential), AccessOutcome> {
         let binding = self
             .targets
             .get(&id)
@@ -26,10 +26,11 @@ impl ClusterClient {
         if super::super::destination::fingerprint(&resolved.config)? != binding.cluster_identity {
             return Err(Check::ServiceAccount.unknown());
         }
+        let credential = resolved.credential;
         let creator =
             Client::try_from(resolved.config).map_err(|_| Check::ServiceAccount.unknown())?;
         self.check_binding(binding, &creator, deadline).await?;
-        Ok((creator, binding))
+        Ok((creator, binding, credential))
     }
 
     pub async fn service_accounts(
@@ -38,7 +39,11 @@ impl ClusterClient {
         deadline: Instant,
     ) -> Result<ServiceAccountsView, ClusterFailure> {
         within(deadline, Check::ServiceAccount, async {
-            let (creator, binding) = self.account_creator(id, deadline).await?;
+            let (creator, binding, credential) = self.account_creator(id, deadline).await?;
+            let bearer = match &credential {
+                Credential::Bearer { value, .. } => value.as_str(),
+                Credential::CertificateOnly => "",
+            };
             let request = Request::new(format!(
                 "/api/v1/namespaces/{}/serviceaccounts",
                 binding.watched_namespace
@@ -64,6 +69,7 @@ impl ClusterClient {
                         .as_str()
                         .ok_or(Check::ServiceAccount.unknown())?;
                     if !dns_subdomain(name)
+                        || echoed(&item["metadata"]["name"], bearer)
                         || item["metadata"]["namespace"].as_str()
                             != Some(&binding.watched_namespace)
                         || !seen_names.insert(name.to_owned())
@@ -102,7 +108,7 @@ impl ClusterClient {
             if !dns_subdomain(name) {
                 return Err(Check::ServiceAccount.unknown());
             }
-            let (creator, binding) = self.account_creator(id, deadline).await?;
+            let (creator, binding, _) = self.account_creator(id, deadline).await?;
             let namespace = &binding.watched_namespace;
             let request = Request::new(format!(
                 "/apis/authorization.k8s.io/v1/namespaces/{namespace}/localsubjectaccessreviews"

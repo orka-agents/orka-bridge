@@ -68,7 +68,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
   const knownModel = catalog?.models.state === 'ready' && catalog.models.items.some(model => model.id === form.model);
   const unlistedLabel = !remote && models ? knownModel ? ' (not offered for chat)' : ' (unlisted)' : '';
   const catalogReason = catalogAvailability === 'needsConnection' ? 'Choose an AI connection in Clusters to load tools and models'
-    : catalogAvailability === 'unavailable' ? 'Connect a cluster in Clusters to load tools and models'
+    : catalogAvailability === 'unavailable' ? remote ? 'Connect a cluster in Clusters to load tools and models' : 'Open Clusters to load tools and models on This computer.'
     : catalogAvailability === 'paused' ? 'Tools and models are paused while another operation finishes.' : undefined;
   const toolReason = readOnly ? 'You can change tools after setup.' : !form.toolsEditable ? 'Edit this agent’s tools in File view.'
     : setupPending ? 'Tools will be available when the local cluster is ready.' : catalogLoading ? 'Loading tools…' : catalogReason ?? (tools === undefined ? `Couldn't read tools from ${catalogDestination}. Check Clusters or edit File view.` : undefined);
