@@ -111,8 +111,9 @@ test('reading instructions before completion does not dismiss the later payoff',
 });
 
 test('a shown payoff cannot replay after its evidence becomes unavailable and recovers', async () => {
-  const { finish, loseRunStatus, restoreRunStatus } = native(); await completeSetup();
-  await screen.findByText('Setting up, step 4 of 4'); finish();
+  const { ipc, finish, loseRunStatus, restoreRunStatus } = native(); await completeSetup();
+  await waitFor(() => expect(ipc.mock.calls.filter(([command]) => command === 'agent_run')).toHaveLength(1));
+  finish();
   await screen.findByRole('heading', { name: 'Your first agent passed its test' });
   loseRunStatus(); await screen.findByRole('button', { name: 'Check again' });
   restoreRunStatus(); await screen.findByRole('button', { name: 'See what it answered' });
