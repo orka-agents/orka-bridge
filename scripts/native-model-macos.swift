@@ -855,6 +855,22 @@ func fillMessage(_ text: String, secure: Bool = false) {
         require(actual == text, "Native keystrokes did not fill Chat Message: expected \(text.debugDescription), got \(String(describing: actual))")
     }
 }
+// BASELINE: current main blocks only Ask for approval locally, so Reply in a conversation is still enabled with no
+// saved-file warning. Switch this one flag to true when asserting the fixed behavior.
+let replyToolBlocked = false
+let replyReason = "Conversation replies need an authenticated gateway conversation, which local tests and Chat do not have."
+func typeUnicode(_ text: String) {
+    let characters = Array(text.utf16)
+    for start in stride(from: 0, to: characters.count, by: 16) {
+        let units = Array(characters[start..<min(start + 16, characters.count)])
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
+            units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress!) }
+            event.flags = []; event.post(tap: .cghidEventTap)
+        }
+    }
+    Thread.sleep(forTimeInterval: 0.3)
+}
 // Controls use the compiled frontend with a synthetic catalog, not real tools.
 for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 900, "compact")] {
     localSize(CGFloat(width), CGFloat(height))
@@ -880,6 +896,21 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     require(approvalButtons.count == 1 && attribute(approvalButtons[0], "AXEnabled") as? Bool == false, "Approval tool must stay disabled locally")
     require(nativeResultTextIsVisible(approvalReason), "Approval reason must be fully visible in the picker")
     _ = try capture("local-approval-tool-\(size)", ["Find a tool", "Ask for approval", approvalReason])
+    // Filter after the approval frame so the reply row and any reason must fit at every size, minimum included.
+    require(AXUIElementSetAttributeValue(search[0], kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus picker search")
+    typeUnicode("reply")
+    let replyButtons = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("reply_in_conversation") == true }
+    }
+    require(replyButtons.count == 1, "Search must leave exactly the reply tool row")
+    require(attribute(replyButtons[0], "AXEnabled") as? Bool == !replyToolBlocked, "Reply tool enabled state does not match the expected \(replyToolBlocked ? "blocked" : "baseline") state")
+    if replyToolBlocked {
+        require(nativeResultTextIsVisible(replyReason), "Reply reason must be fully visible in the picker")
+    } else {
+        require(!nativeTextExists(replyReason), "Baseline must not show a reply reason")
+    }
+    _ = try capture("local-reply-tool-\(size)", ["Find a tool", "Reply in a conversation"] + (replyToolBlocked ? [replyReason] : []))
     guard let close = enabledButton("Close picker"), let bounds = nativeBounds(close) else {
         fatalError("Labeled picker X missing")
     }
@@ -915,6 +946,66 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     click("More settings", [])
     _ = try capture("local-disclosure-settings-\(size)", ["More settings", "Description"])
     click("More settings", [])
+}
+// Saved reply declaration, edited through File view (the existing in-memory fixture writer) so it works while the
+// picker blocks adding the tool. Each size ends with the original file text restored.
+func fileEditor() -> AXUIElement {
+    let found = nativeElements().filter { attribute($0, "AXRole") as? String == "AXTextArea" && (attribute($0, "AXValue") as? String)?.hasPrefix("---") == true }
+    require(found.count == 1, "Expected the File view editor")
+    return found[0]
+}
+func currentFileText() -> String {
+    scroll(4000); click("File", [])
+    let text = attribute(fileEditor(), "AXValue") as? String ?? ""
+    click("Agent", [])
+    return text
+}
+func setFileText(_ text: String) {
+    scroll(4000); click("File", [])
+    let editor = fileEditor()
+    require(AXUIElementSetAttributeValue(editor, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus File view")
+    require(AXUIElementSetAttributeValue(editor, kAXValueAttribute as CFString, text as CFString) == .success, "Cannot set File view text")
+    // A real key pair makes the page observe the edit whichever way AX set the value.
+    typeUnicode(" ")
+    for down in [true, false] { CGEvent(keyboardEventSource: nil, virtualKey: 51, keyDown: down)?.post(tap: .cghidEventTap) }
+    Thread.sleep(forTimeInterval: 0.5)
+    require(attribute(editor, "AXValue") as? String == text, "File view text was not applied")
+    click("Agent", []) // Leaving File view saves in memory.
+    Thread.sleep(forTimeInterval: 1)
+}
+func visibleStaticTexts(_ matches: (String) -> Bool) -> Bool {
+    nativeElements().contains { element in
+        guard attribute(element, "AXRole") as? String == "AXStaticText", let text = attribute(element, "AXValue") as? String, matches(text),
+            let bounds = nativeBounds(element) else { return false }
+        return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
+    }
+}
+func replyChipVisible() -> Bool { visibleStaticTexts { $0 == "reply_in_conversation" } }
+// The warning's wording is shared with other tools; require only that it names this tool beyond the chip itself.
+func replyWarningVisible() -> Bool { visibleStaticTexts { $0.contains("reply_in_conversation") && $0 != "reply_in_conversation" } }
+func requireSavedReply(_ present: Bool, _ label: String) {
+    Thread.sleep(forTimeInterval: 0.5)
+    require(replyChipVisible() == present, "\(label): reply chip should be \(present ? "present" : "absent")")
+    require(replyWarningVisible() == (present && replyToolBlocked), "\(label): saved reply warning should be \(present && replyToolBlocked)")
+}
+let originalFile = currentFileText()
+let toolAnchor = "      name: web_fetch\n"
+require(originalFile.contains(toolAnchor), "Fixture agent must declare web_fetch")
+let replyFile = originalFile.replacingOccurrences(of: toolAnchor, with: toolAnchor + "    - kind: builtin\n      name: reply_in_conversation\n")
+for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 900, "compact")] {
+    localSize(CGFloat(width), CGFloat(height))
+    setFileText(replyFile)
+    _ = try seek("It can use", -150)
+    requireSavedReply(true, "preserved \(size)")
+    _ = try capture("local-saved-reply-tool-\(size)", ["It can use", "Reply in a conversation"])
+    click("Remove Reply in a conversation", [])
+    requireSavedReply(false, "removed \(size)")
+    _ = try capture("local-saved-reply-tool-removed-\(size)", ["It can use"])
+    setFileText(replyFile)
+    _ = try seek("It can use", -150)
+    requireSavedReply(true, "restored \(size)")
+    _ = try capture("local-saved-reply-tool-restored-\(size)", ["It can use", "Reply in a conversation"])
+    setFileText(originalFile)
 }
 scroll(4000)
 // Match the fixture's known Instructions value, not a label plus a guessed
