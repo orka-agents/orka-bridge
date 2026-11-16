@@ -148,6 +148,23 @@ fn allocated(root: &Path, journal: Option<&Journal>) -> Result<u64, RuntimeError
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let kind = entry.file_type()?;
+        #[cfg(windows)]
+        if journal.is_some()
+            && kind.is_dir()
+            && entry
+                .file_name()
+                .to_str()
+                .and_then(|name| name.strip_prefix("c-"))
+                .is_some_and(|nonce| {
+                    nonce.len() == 32 && nonce.bytes().all(|b| b.is_ascii_hexdigit())
+                })
+        {
+            // Only top-level native control namespaces admit AF_UNIX reparses;
+            // the endpoint owner rechecks their exact tag, principals and ACL.
+            let n = crate::runtime::windows::control::retained_allocation(&entry.path())?;
+            bytes = bytes.checked_add(n).ok_or(ImageError::NoSpace)?;
+            continue;
+        }
         let n = if kind.is_dir() {
             allocated(&entry.path(), None)?
         } else if kind.is_file() {

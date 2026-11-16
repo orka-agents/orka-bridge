@@ -354,6 +354,25 @@ fn replacement_retains_a_real_stale_windows_control_socket_without_reading_it() 
     let retained = s.local.join(intent.retained).join(relative);
     assert_eq!(file_identity(&metadata(&retained)).unwrap(), before);
 }
+#[cfg(windows)]
+#[test]
+fn ordinary_files_in_native_socket_slots_are_refused_before_archival() {
+    let mut s = Scene::new(ImageTarget::WindowsAmd64);
+    let root = s.local.join("local-vm-v1");
+    let endpoint = crate::runtime::windows::control::ControlEndpoint::create(&root).unwrap();
+    fs::write(endpoint.path(), b"not an AF_UNIX endpoint").unwrap();
+    drop(endpoint);
+    let before = fs::read(s.data.join("setup-v1/model-v1")).unwrap();
+    assert!(matches!(s.replace(None), Err(RuntimeError::Io(_))));
+    assert_eq!(fs::read(s.data.join("setup-v1/model-v1")).unwrap(), before);
+    assert_eq!(
+        WorkspaceUpgrade::open(&s.data, &s.local)
+            .unwrap()
+            .inspect()
+            .unwrap(),
+        UpgradeStatus::None
+    );
+}
 #[test]
 fn failed_upgrade_parent_flush_refuses_before_archiving_source_metadata() {
     let s = Scene::new(ImageTarget::WindowsAmd64);
