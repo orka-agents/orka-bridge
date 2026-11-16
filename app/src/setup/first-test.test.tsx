@@ -49,6 +49,25 @@ test('first completion submits the sample once, waits for release, then opens it
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
 });
 
+test.each(['submitted', 'existing', 'changed', 'lost-reply', 'left', 'failed', 'unknown', 'cancelled'] as const)('only current successful owned completion offers the first-pass moment (%s)', async scenario => {
+  const existing = scenario === 'existing';
+  vi.stubGlobal('isTauri', true); armFirstTest();
+  const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
+  const passed = { ...idle, source: scenario === 'changed' ? { ...source, agent: 'c'.repeat(64) } : source, state: 'complete', report: { verdict: ['failed', 'unknown', 'cancelled'].includes(scenario) ? scenario : 'passed', cases: [{ id: 'checksum', question: 'Read the checksum', phase: 'Succeeded', answer: 'checksum', completedTools: ['web_fetch'], assertions: [{ id: 'a', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' }] } };
+  const ipc = vi.fn((command: string) => {
+    if (command === 'setup_example') return pair;
+    if (command === 'agent_open') return { ...pair, source, documentId: sample, name: 'web-reader' };
+    if (command === 'agent_run_status') return existing || scenario === 'lost-reply' && ipc.mock.calls.some(([c]) => c === 'agent_run') ? passed : idle;
+    if (command === 'agent_run') { if (scenario === 'lost-reply') throw Error('Lost reply'); return passed; }
+  });
+  mockIPC(ipc); const onOpen = vi.fn(); const onPassed = vi.fn();
+  const view = renderHook(() => useFirstTest({ ready: true, canOpen: scenario !== 'left', sampleDirty: false, onOpen, onPassed }));
+  await waitFor(() => expect(view.result.current).toBe(['failed', 'unknown'].includes(scenario) ? scenario : scenario === 'cancelled' ? 'unknown' : 'passed'));
+  expect(onPassed).toHaveBeenCalledTimes(scenario === 'submitted' ? 1 : 0);
+  expect(onOpen).toHaveBeenCalledTimes(scenario === 'submitted' || scenario === 'left' ? 0 : 1);
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(existing ? 0 : 1);
+});
+
 test('setup prepares the connected example before opening its saved bytes', async () => {
   vi.stubGlobal('isTauri', true); armFirstTest();
   let prepared = false;

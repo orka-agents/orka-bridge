@@ -32,8 +32,48 @@ fn exact_raw_output_bound_is_accepted() {
 
 #[test]
 fn credential_debug_never_contains_bytes() {
-    let token = CapturedGithubToken(b"FIXTURE_ONLY_credential".to_vec());
+    let token = CapturedGithubToken(b"FIXTURE_ONLY_credential".to_vec(), Some("octocat".into()));
     assert_eq!(format!("{token:?}"), "CapturedGithubToken([REDACTED])");
+}
+
+#[test]
+fn account_output_is_one_github_login_or_unavailable() {
+    assert_eq!(parse_account(b"octo-cat1\n").as_deref(), Some("octo-cat1"));
+    assert_eq!(parse_account(b"octocat\r\n").as_deref(), Some("octocat"));
+    let longest = "a".repeat(39);
+    assert_eq!(
+        parse_account(longest.as_bytes()).as_deref(),
+        Some(longest.as_str())
+    );
+    for raw in [
+        &b""[..],
+        b"\n",
+        b"-leading\n",
+        b"two words\n",
+        b"first\nsecond\n",
+        b"under_score\n",
+        b"\xff\n",
+        "ünicode\n".as_bytes(),
+        &[b'a'; 40],
+        &[b'a'; MAX_ACCOUNT + 1],
+    ] {
+        assert_eq!(parse_account(raw), None, "{raw:?}");
+    }
+}
+
+#[test]
+fn account_command_has_fixed_argv_and_removes_ambient_token_overrides() {
+    let path = Path::new("/fixture only/not installed gh");
+    let cmd = account_command(path);
+    let std = cmd.as_std();
+    assert_eq!(std.get_program(), path);
+    assert_eq!(
+        std.get_args().collect::<Vec<_>>(),
+        ["config", "get", "user", "--host", "github.com"]
+    );
+    for key in ["GH_TOKEN", "GITHUB_TOKEN"] {
+        assert!(std.get_envs().any(|(k, v)| k == key && v.is_none()));
+    }
 }
 
 use std::{
@@ -185,7 +225,28 @@ async fn actual_child_captures_private_stdout_and_discards_large_stderr() {
     let (_dir, exe) = executable("valid");
     let result = run_capture(&exe, CAPTURE_TIMEOUT).await.unwrap();
     assert_eq!(result.as_bytes(), b"FIXTURE_ONLY_credential");
+    assert_eq!(result.account(), Some("fixture-login"));
     assert_eq!(format!("{result:?}"), "CapturedGithubToken([REDACTED])");
+}
+
+#[tokio::test]
+async fn account_read_failure_or_change_around_capture_is_unavailable_without_failing_capture() {
+    for (mode, timeout) in [
+        ("account-fail", CAPTURE_TIMEOUT),
+        ("account-invalid", CAPTURE_TIMEOUT),
+        ("account-switch", CAPTURE_TIMEOUT),
+        ("account-hang", Duration::from_millis(300)),
+    ] {
+        let (_dir, exe) = executable(mode);
+        let result = run_capture(&exe, timeout).await.unwrap();
+        assert_eq!(result.as_bytes(), b"FIXTURE_ONLY_credential", "{mode}");
+        assert_eq!(result.account(), None, "{mode}");
+    }
+    // The switch fixture really answered twice: once before and once after the token read.
+    let (dir, exe) = executable("account-switch");
+    run_capture(&exe, CAPTURE_TIMEOUT).await.unwrap();
+    assert_eq!(std::fs::read(exe.with_extension("count")).unwrap().len(), 2);
+    drop(dir);
 }
 
 #[tokio::test]

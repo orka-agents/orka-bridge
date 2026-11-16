@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { agentCall, SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
-import { runCall, type RunSnapshot } from '../designer/run-api';
+import { agentCall, SAMPLE_DOCUMENT_ID, type SourceId, sameSource } from '../designer/agent-api';
+import { type RunSnapshot, runCall } from '../designer/run-api';
 import type { CheckStepState } from './Steps';
 import { loadExample } from './state';
 
@@ -20,7 +20,7 @@ function claim() {
 }
 const text = (value: string) => value.replaceAll('\r\n', '\n');
 
-export function useFirstTest(options: { ready: boolean; canOpen: boolean; sampleDirty: boolean; onOpen: () => void; onPrepared?: () => void; onSnapshot?: (snapshot: RunSnapshot | undefined) => void }): CheckStepState | undefined {
+export function useFirstTest(options: { ready: boolean; canOpen: boolean; sampleDirty: boolean; onOpen: () => void; onPrepared?: () => void; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; onPassed?: (snapshot: RunSnapshot) => void; onUnavailable?: () => void }): CheckStepState | undefined {
   const latest = useRef(options);
   useEffect(() => { latest.current = options; });
   const [check, setCheck] = useState<CheckStepState>();
@@ -35,12 +35,18 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
     if (!options.ready || options.sampleDirty || !firstTestPending()) return;
     let cancelled = false;
     let claimed = false;
+    let submitted = false;
+    let submittedSource: SourceId | undefined;
     const finish = (snapshot?: RunSnapshot) => {
       if (cancelled || !mounted.current) return;
       latest.current.onSnapshot?.(snapshot);
       const verdict = snapshot?.state === 'complete' ? snapshot.report?.verdict ?? 'unknown' : 'unknown';
       setCheck(verdict === 'cancelled' ? 'unknown' : verdict);
-      if (latest.current.ready && latest.current.canOpen) latest.current.onOpen();
+      if (latest.current.ready && latest.current.canOpen) {
+        if (submitted && verdict === 'passed' && snapshot && !snapshot.error && snapshot.sourceCurrent !== false && sameSource(submittedSource, snapshot.source) === true && snapshot.report?.cases.every(result => result.verdict === 'passed')) latest.current.onPassed?.(snapshot);
+        else if (snapshot?.error === 'model' && latest.current.onUnavailable) latest.current.onUnavailable();
+        else latest.current.onOpen();
+      }
     };
     const poll = () => {
       timer.current = setTimeout(() => { void runCall('agent_run_status').then(result => {
@@ -72,7 +78,11 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
       if (!status.snapshot.canRun || status.snapshot.busy) { finish(); return; }
       // Claim is persisted before submission: an interrupted/unknown attempt is never replayed.
       setCheck('running');
+      submittedSource = saved.source;
       const result = await runCall('agent_run', SAMPLE_DOCUMENT_ID, true);
+      // Only a readable reply from our submission can own the one-time payoff.
+      // Lost replies still reconcile normally, but never invent attempt provenance.
+      submitted = result.ok;
       if (cancelled || !mounted.current) return;
       // A lost reply may still own native busy; reconcile read-only until release.
       if (result.ok) void observe(result.snapshot); else poll();

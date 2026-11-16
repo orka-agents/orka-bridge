@@ -12,7 +12,7 @@ const idle = { documentId: sample, busy: null, state: 'idle', canRun: true, mode
 function native(holdSave = false, lostReplies = false) {
   vi.stubGlobal('isTauri', true);
   let selected = false; let running = false; let finished = false;
-  let unreadable = false; let unreadableFiles = false; let verdict = 'passed'; let saved = pair;
+  let unreadable = false; let unreadableFiles = false; let verdict = 'passed'; let saved = pair; let modelUnavailable = false;
   const status = () => ({ selected: selected ? 'localVm' : null, localVm: selected ? 'ready' : 'idle', model: selected ? 'available' : 'locked' });
   const ipc = vi.fn((command: string, payload?: unknown) => {
     const args = payload as Record<string, unknown> | undefined;
@@ -29,6 +29,7 @@ function native(holdSave = false, lostReplies = false) {
     if (command === 'agent_run_status') {
       if (args?.documentId === other) return { ...idle, documentId: other };
       if (unreadable) throw Error('Lost sample status');
+      if (modelUnavailable) return { ...idle, state: 'unknown', error: 'model' };
       return finished ? { ...idle, source: pair.source, state: 'complete', report: { verdict, cases: [{ id: 'checksum', question: 'What checksum is on the page?', phase: 'Succeeded', answer: 'Correct checksum', completedTools: ['web_fetch'], assertions: [{ id: 'checksum', kind: 'contains', expected: 'Correct checksum', verdict }], verdict }] } } : running ? { ...idle, state: 'running', canRun: false, busy: { documentId: sample, name: 'web-reader' } } : idle;
     }
     if (command === 'send_history' || command === 'cluster_contexts') return [];
@@ -36,7 +37,7 @@ function native(holdSave = false, lostReplies = false) {
     if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
     throw Error('Unexpected command: ' + command);
   });
-  mockIPC(ipc); return { ipc, finish: () => { finished = true; }, loseWorkspace: () => { selected = false; }, loseRunStatus: () => { unreadable = true; }, loseFileReads: () => { unreadableFiles = true; }, restoreFileReads: () => { unreadableFiles = false; }, failNext: () => { verdict = 'failed'; } };
+  mockIPC(ipc); return { ipc, unavailable: () => { modelUnavailable = true; }, finish: () => { finished = true; }, loseWorkspace: () => { selected = false; }, loseRunStatus: () => { unreadable = true; }, loseFileReads: () => { unreadableFiles = true; }, restoreFileReads: () => { unreadableFiles = false; }, failNext: () => { verdict = 'failed'; } };
 }
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
@@ -48,7 +49,7 @@ async function completeSetup() {
   return user;
 }
 
-test('first setup shows a running test, opens Designer on its result and never auto-runs on another visit', async () => {
+test('first setup stays for its first-pass story, opens only on request and never replays the moment or run', async () => {
   const { ipc, finish } = native(); const user = await completeSetup();
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1));
   expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
@@ -57,18 +58,33 @@ test('first setup shows a running test, opens Designer on its result and never a
   expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.getAttribute('aria-current')).toBe('step');
   expect(screen.queryByRole('button', { name: 'See what it answered' })).toBeNull();
   finish();
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page'));
-  expect(await screen.findByText('1 of 1 passed')).toBeTruthy();
-  await user.click(screen.getByText('checksum', { selector: 'code' }));
-  expect(await screen.findByText('Correct checksum', { selector: 'p' })).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'See what it answered' }));
+  expect(await screen.findByRole('heading', { name: 'Your first agent passed its test' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
+  expect(screen.getByText('Correct checksum', { selector: 'p' })).toBeTruthy();
+  expect(screen.getByText('Read a web page', { exact: false })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Open web-reader' }));
+  expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page');
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample, bundledExample: true }]]);
+});
+
+test('an unreachable model stays in setup with explicit recovery and never replays automatically', async () => {
+  const { ipc, unavailable } = native(); const user = await completeSetup();
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1));
+  unavailable();
+  await screen.findByText('The first test could not be confirmed. If the AI could not be reached, check your connection or choose another provider.');
+  expect(screen.queryByRole('heading', { name: 'Your first agent passed its test' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
+  expect(screen.getByRole('button', { name: 'Try again in Designer' })).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Choose another provider' }));
+  await screen.findByRole('group', { name: 'Remove sign-in confirmation' });
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
 });
 
 test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains the latest sample evidence (%s), not the automatic result or another document', async state => {
   const { finish, loseRunStatus, failNext } = native(); const user = await completeSetup();
   await waitFor(() => expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testRunning')); finish();
+  await user.click(await screen.findByRole('button', { name: 'Open web-reader' }));
   await screen.findByText('1 of 1 passed');
   if (state === 'failed') {
     failNext(); await user.click(screen.getByRole('button', { name: 'Run tests' })); finish();
@@ -81,6 +97,7 @@ test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains 
     await screen.findByText('Saved', { selector: 'span' });
   }
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  expect(screen.queryByRole('heading', { name: 'Your first agent passed its test' })).toBeNull();
   const expected = { passed: 'Its test passed', failed: 'Its test failed', unreadable: 'Result unknown', edited: 'Needs running' }[state];
   expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe(`Run your first test${expected}`);
   await user.click(screen.getByRole('button', { name: 'Overview' }));
@@ -109,6 +126,7 @@ test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains 
 test.each([false, true])('a manual sample test stays observed across agent switches (blocked return: %s)', async blockedReturn => {
   const { finish, failNext } = native(blockedReturn); const user = await completeSetup();
   await waitFor(() => expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testRunning')); finish();
+  await user.click(await screen.findByRole('button', { name: 'Open web-reader' }));
   await screen.findByText('1 of 1 passed');
   failNext(); await user.click(screen.getByRole('button', { name: 'Run tests' }));
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
@@ -131,6 +149,7 @@ test.each([false, true])('a manual sample test stays observed across agent switc
 test('a failed sample reopen cannot resurrect Passed from a still-readable native run report', async () => {
   const { ipc, finish, loseFileReads, restoreFileReads } = native(); const user = await completeSetup();
   await waitFor(() => expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first testRunning')); finish();
+  await user.click(await screen.findByRole('button', { name: 'Open web-reader' }));
   await screen.findByText('1 of 1 passed'); loseFileReads();
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: 'Open other' }));
@@ -168,6 +187,7 @@ test('Check again observes status before any report even while the guarded sampl
 test('Run it again hands an unsaved sample to the existing disabled Designer Run', async () => {
   const { ipc, finish } = native(true); const user = await completeSetup();
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1)); finish();
+  await user.click(await screen.findByRole('button', { name: 'Open web-reader' }));
   await screen.findByText('1 of 1 passed');
   await user.click(screen.getByRole('button', { name: 'File' }));
   await user.type(screen.getByRole('textbox', { name: 'Agent file' }), ' Unsaved.');

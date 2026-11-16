@@ -1,7 +1,9 @@
 use std::{io::{Read, Write}, time::Duration};
 
 fn main() {
-    assert_eq!(std::env::args().skip(1).collect::<Vec<_>>(), ["auth", "token", "--hostname", "github.com"]);
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let account = args == ["config", "get", "user", "--host", "github.com"];
+    assert!(account || args == ["auth", "token", "--hostname", "github.com"]);
     let mut input = Vec::new();
     std::io::stdin().read_to_end(&mut input).unwrap();
     assert!(input.is_empty());
@@ -10,6 +12,21 @@ fn main() {
     std::fs::write(&pending, std::process::id().to_string()).unwrap();
     std::fs::rename(pending, exe.with_extension("pid")).unwrap();
     let name = exe.file_stem().unwrap().to_str().unwrap();
+    if account {
+        match name {
+            "valid" => return print!("fixture-login\r\n"),
+            "account-fail" => std::process::exit(1),
+            "account-invalid" => return print!("two words\n"),
+            "account-hang" => std::thread::sleep(Duration::from_secs(60)),
+            "account-switch" => {
+                let count = exe.with_extension("count");
+                let seen = std::fs::read(&count).map_or(0, |raw| raw.len());
+                std::fs::write(&count, vec![b'x'; seen + 1]).unwrap();
+                return print!("{}\n", if seen == 0 { "first-login" } else { "second-login" });
+            }
+            _ => {}
+        }
+    }
     match name {
         "nonzero" => {
             print!("FIXTURE_ONLY_credential");
