@@ -99,8 +99,11 @@ test('requirements render the native build values rather than fixed image or mem
   render(<App />); await openLocalSetup();
   expect(screen.getByText(/at least 8.6 GB of installed memory/)).toBeTruthy();
   await userEvent.setup().click(screen.getByRole('button', { name: "What's inside" }));
-  expect(screen.getByText(/image size is 18.3 GB/)).toBeTruthy();
+  const imageDetails = screen.getByText(/image size is 18.3 GB/);
+  expect(imageDetails).toBeTruthy();
   expect(screen.getByText(/data disk can grow to 68.7 GB/)).toBeTruthy();
+  // WebKit exposes interpolated sibling text nodes as separate AXStaticText values.
+  expect(imageDetails.childNodes).toHaveLength(1);
   expect(screen.queryByText(/GiB|free disk|18.3 GB download/)).toBeNull();
 });
 

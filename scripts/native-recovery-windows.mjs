@@ -556,12 +556,13 @@ try {
         return { text: root.innerText, radios: [...root.querySelectorAll('input[type=radio]')].map(radio => ({ value: radio.value, checked: radio.checked })), next: { disabled: next.disabled, primary: next.classList.contains('button-primary') }, again: again && { primary: again.classList.contains('button-primary'), after: !!(next.compareDocumentPosition(again) & Node.DOCUMENT_POSITION_FOLLOWING) }, unknown: checks?.querySelectorAll('.status-not-started').length, openHelp: !!checks?.querySelector('[aria-expanded="true"]') };
       })()`);
       const fail = reason => { throw Error(name + ': ' + reason + ': ' + JSON.stringify(probe)); };
+      if (!await evaluate(`[...document.querySelectorAll('button')].some(button => button.textContent === 'Back to clusters' && button.getClientRects().length)`)) fail('local choice must keep Back to clusters');
       if (probe.radios.length !== 2 || !probe.radios[0].checked || probe.radios[1].checked || !/recommended/i.test(probe.text) || !probe.text.includes('On a cluster you already have')) fail('local choice must default to recommended and retain the cluster alternative');
       if (!probe.next.primary || probe.next.disabled !== ['local-preflight-blocked', 'local-preflight-cluster'].includes(name)) fail('Continue must be the primary, blocked only by known local failures');
       if (probe.again && (probe.again.primary || !probe.again.after)) fail('Check again must be secondary after Continue');
       if (name === 'local-preflight-missing' ? !probe.text.includes('not available yet') : !probe.text.includes('4.3 GB') || /GiB|Cluster download/.test(probe.text)) fail('requirements must be explicit, native-derived decimal GB or unavailable');
       if (name === 'local-preflight-unknown' && (probe.unknown !== 2 || probe.openHelp || !probe.text.includes('Bridge checks this when it starts'))) fail('unknown checks need plain rings, closed help and truthful startup copy');
-      if (name === 'local-preflight-blocked' && !await evaluate(`[...document.querySelectorAll('[aria-label="Virtualization"] button')].some(button => button.textContent.includes('Show me how'))`)) fail('known Windows virtualization failure must keep native fix help');
+      if (name === 'local-preflight-blocked' && !await evaluate(`[...document.querySelectorAll('[aria-label="Virtualization"] [role="button"]')].some(button => button.textContent.includes('Show me how'))`)) fail('known Windows virtualization failure must keep native fix help');
       if (name === 'local-preflight-cluster') {
         await evaluate(`document.querySelector('.local-preflight #workspace-cluster').click()`);
         await until(() => evaluate(`document.querySelector('#workspace-cluster')?.checked && !document.querySelector('[aria-label="Computer requirements"]') && [...document.querySelectorAll('.local-preflight button')].some(button => button.textContent === 'Continue' && !button.disabled)`), 'cluster choice bypasses local blocker');
@@ -598,7 +599,7 @@ try {
     const image = await call('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
     if (name === 'welcome' || preflight) {
-      // At the true minimum, preserve both the choice and the reachable action below it.
+      // The compact loop uses 540×640; preserve the choice and its scrolled action.
       await evaluate(`document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight`);
       await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const actionLabel = name === 'welcome' ? 'Get started' : 'Continue';

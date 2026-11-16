@@ -322,7 +322,7 @@ try {
         Press (Wait-For 'Workspace details disclosure missing' { Find-Control $script:window "What's inside" $button })
         Wait-For 'Local size facts did not settle' {
             $names = Get-UiNames $script:window
-            $text = $names -join ' '
+            $text = ($names -join ' ') -replace '\s+', ' '
             ($text -cmatch 'at least \d+\.\d GB of installed memory') -and ($text -cmatch 'image size is \d+\.\d GB after installation, not the amount downloaded') -and ($text -cmatch 'data disk can grow to \d+\.\d GB') -and !($names -cmatch '^Reading|Unavailable in this build')
         } | Out-Null
         # Observe the real runner; never inject Ready or select a local workspace.
