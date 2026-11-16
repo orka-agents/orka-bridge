@@ -1586,22 +1586,13 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
     try clickSendControl("Send to a cluster", scrolling: -350)
-    scrollMain(3000)
-    var historyFound = false
-    for _ in 0..<12 {
-        let seen = try capture("send-probe", "Designer", searching: true)
-        if let heading = seen.first(where: { $0.topCandidates(1).first?.string == "Past Sends" }) {
-            // Position the heading near the top so the two newest summaries fit
-            // even when the dark walk also retains the light walk's history.
-            let y = (1 - heading.boundingBox.maxY) * window()!.1.height
-            scrollMain(-Int32(max(0, y - 110)))
-            historyFound = true
-            break
-        }
-        scrollMain(-250)
-    }
-    require(historyFound, "Saved Send history was not reachable after restart")
     clickButton("Past Sends")
+    guard let historyHeading = nativeButtons("Past Sends").compactMap({ nativeBounds($0) }).first else {
+        fail("Saved Send history was not reachable after restart")
+    }
+    // The label is now a disclosure control, not a standalone OCR heading.
+    // Put it near the top so the newest saved summaries fit in the frame.
+    scrollMain(Int32((bodyBounds().minY + 24 - historyHeading.minY).rounded()))
     try capture("send-history-restarted", "Designer")
     // Prove the earlier passing summary remains reachable after restart.
     var savedPass = false
