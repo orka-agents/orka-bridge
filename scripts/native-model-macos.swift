@@ -772,13 +772,14 @@ func nativeWorkspaceButtonIsVisible(_ expected: String) -> Bool {
         return window()!.1.contains(bounds)
     }
 }
-func nativeChatTextIsVisible(_ expected: String) -> Bool {
+func nativeChatTextIsVisible(_ expected: String, aboveFooter: Bool = false) -> Bool {
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText",
             let text = attribute(element, "AXValue") as? String,
             text.contains(expected), let bounds = nativeBounds(element) else { return false }
         // WebKit exposes clipped or screen-reader-only text with zero/one-pixel bounds.
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
+            && (!aboveFooter || bounds.maxY <= window()!.1.maxY - 32)
     }
 }
 func waitForButton(_ label: String) {
@@ -824,13 +825,20 @@ func resetCapture(_ state: String, _ expected: [String], anchor: String) throws 
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
         localSize(width, height)
         scroll(4000)
+        var contentVisible = false
         for _ in 0..<10 {
-            let anchorVisible = enabledButton(anchor).map { reachable(nativeBounds($0)) } ?? nativeChatTextIsVisible(anchor)
+            let anchorVisible = enabledButton(anchor).map { reachable(nativeBounds($0)) } ?? nativeChatTextIsVisible(anchor, aboveFooter: true)
             // Wrapped secondary actions may sit below the primary at the minimum size.
             let actionsVisible = expected.compactMap(enabledButton).allSatisfy { reachable(nativeBounds($0)) }
-            if anchorVisible && actionsVisible { break }
+            if anchorVisible && actionsVisible {
+                let probe = try capture("local-probe", [])
+                let text = probe.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+                // Copy notices and disclosure text can also wrap below the last action.
+                if expected.allSatisfy({ text.contains($0) || nativeChatTextIsVisible($0, aboveFooter: true) }) { contentVisible = true; break }
+            }
             scroll(-200)
         }
+        require(contentVisible, "Reset capture content must be visible above the footer: \(state)-\(size)")
         _ = try capture("local-reset-\(state)-\(size)", expected + [anchor])
     }
     localSize(1280, 800)
