@@ -271,7 +271,7 @@ impl Journal {
             mac: self.record.mac,
         }
     }
-    pub(super) fn require_fresh_creation(&self) -> Result<(), RuntimeError> {
+    pub(crate) fn require_fresh_creation(&self) -> Result<(), RuntimeError> {
         if !self.creation_live {
             return Err(RuntimeError::RetainedState);
         }
