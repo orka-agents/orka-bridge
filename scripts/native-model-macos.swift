@@ -368,7 +368,7 @@ for outcome in ["passed", "unknown"] {
         require(enabledButton("Open web-reader") == nil, "The first-pass story replayed")
     } else {
         waitForNativeText("Result unknown")
-        click("Clusters", []); scroll(4000)
+        scroll(4000)
         for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
             localSize(CGFloat(width), CGFloat(height)); scroll(4000)
             _ = try seek("Result unknown", -200)
