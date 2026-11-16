@@ -75,7 +75,7 @@ test.each(['Chat', 'File'])('creation from %s opens empty Instructions with an i
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'Chat' }));
   expect(screen.getByText(/write instructions in Agent view before chatting/i)).toBeTruthy();
-  await screen.findByText('Ready for your message.');
+  await screen.findByText('Chat is unavailable.');
   await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Hello{Enter}');
   expect(calls).not.toContain('agent_run');
   expect(calls).not.toContain('agent_chat_send');
@@ -200,7 +200,7 @@ test('creation uses an already loaded catalog default without inheriting the sam
     if (command === 'agent_create') { expect(args).toEqual({ name: 'helper', model: 'workspace-model' }); return id; }
   });
   const user = userEvent.setup(); render(<Example catalogKey={1} />);
-  await screen.findByText('Default model: workspace-model');
+  await screen.findByRole('option', { name: 'workspace-model' });
   await user.click(screen.getByRole('button', { name: 'New agent' }));
   await user.type(screen.getByRole('textbox', { name: 'Name' }), 'helper');
   await user.click(screen.getByRole('button', { name: 'Create' }));
