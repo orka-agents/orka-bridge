@@ -549,7 +549,7 @@ try {
           if (workspace || localCancel) throw Error('Stop must use setup_cancel_local');
           window.__bridgeStops++; selected = false; connected = false; return status();
         }
-        if (command === 'agents_list') return [{ id: documentId, name: 'web-reader', path: null, available: true }];
+        if (command === 'agents_list') return [{ id: documentId, name: documentName, path: null, available: true }];
         if (command === 'agent_creation_root') return 'C:\\\\Users\\\\you\\\\Orka\\\\agents';
         if (command === 'setup_remove_model') { window.__bridgeRemovals++; throw { kind: 'modelBusy' }; }
         // Known and missing size facts: fixture IPC, not the native catalog.
@@ -589,7 +589,6 @@ try {
         if (name === 'designer-remote' && command === 'cluster_discover') return [target];
         if (command === 'cluster_use') { window.__bridgeClusterUses++; if (name === 'designer-remote') return { status: 'connected', providers: [provider], failure: null }; }
         if (command === 'send_status') return { documentId, view: null, busy: null };
-        if (command === 'agent_creation_root') return ${JSON.stringify('C:\\Users\\runner\\Orka\\agents')};
         if (command === 'agent_create') {
           if (args.name !== 'native-helper') throw Error('Wrong fixture creation name');
           // Example rebinds only for a new identity; all document replies follow it.
@@ -599,7 +598,6 @@ try {
           pair.tests = ${JSON.stringify('---\nschemaVersion: 1\n---\n\n# native-helper tests\n\n```yaml agent-test\nid: first-test\ninput: ""\nassertions: []\n```\n')};
           return documentId;
         }
-        if (command === 'agents_list') return [{ id: documentId, name: documentName, path: null, available: true }];
         if (command === 'agent_chat_status') {
           const waiting = name === 'chat-pending' || name === 'chat-running';
           const turn = { message: 'What did the page say?', answer: waiting ? null : 'The page says fixture-checksum.', phase: waiting ? name === 'chat-pending' ? 'Pending' : 'Running' : 'Succeeded', tools: [], contextRetained: !waiting, terminationUnconfirmed: false, stopUnconfirmed: false };
@@ -679,6 +677,7 @@ try {
         // The old editor briefly reappears before selection rebinds; wait for the new document too.
         await until(() => evaluate(`document.querySelector('.agent-selector select:not(:disabled)')?.value === '00000000-0000-4000-8000-000000000005' && !!document.querySelector('.instructions-editor') && !document.querySelector('.new-agent-form')`), 'created agent Instructions editor');
         if (await evaluate(`document.querySelector('.instructions-editor').value !== '' || document.body.innerText.includes('Tests could not be read')`)) throw Error('Blank draft was seeded or shown as unreadable');
+        if (await evaluate(`document.querySelector('.agent-selector select').selectedOptions[0]?.textContent !== 'native-helper'`)) throw Error('Created agent selector must name native-helper');
       }
       await evaluate(`document.querySelector('main').scrollTop = 0`);
     }
