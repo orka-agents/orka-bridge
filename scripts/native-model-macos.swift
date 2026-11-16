@@ -1107,14 +1107,21 @@ click("Send message", [])
 localSize(1280, 800); scroll(4000)
 _ = try seek("Waiting for your agent to start…", -100)
 waitForChatText("Waiting for your agent to start…")
-for (phase, expected) in [("pending", "Waiting for your agent to start…"), ("running", "Waiting for your agent’s reply…")] {
+for (phase, expected) in [("pending", "Waiting for your agent to start…"), ("running", "Waiting for your agent’s reply…"), ("session-null", "No answer was received."), ("session-answer", "The checksum is ALPHA.")] {
     try phase.write(to: chatPhase, atomically: true, encoding: .utf8)
     waitForChatText(expected)
     for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
         localSize(CGFloat(width), CGFloat(height)); scroll(4000)
         _ = try seek(expected, -100)
         _ = try capture("chat-\(phase)-\(size)", [expected])
-        require(!nativeChatTextIsVisible("This turn is not confirmed in later context."), "Waiting Chat must not show a context fault")
+        if phase.hasPrefix("session-") {
+            // BEFORE evidence: a terminal turn claims a context fault while Session is still pending.
+            require(nativeTextExists("Waiting for the conversation to finish saving…"), "Session must still be pending")
+            require(nativeChatTextIsVisible("This turn is not confirmed in later context."), "Baseline must show the premature context claim")
+            require(nativeTextExists("No answer was received.") == (phase == "session-null"), "Baseline null-answer claim must not replace a known answer")
+        } else {
+            require(!nativeChatTextIsVisible("This turn is not confirmed in later context."), "Waiting Chat must not show a context fault")
+        }
     }
 }
 try "answer".write(to: chatPhase, atomically: true, encoding: .utf8)

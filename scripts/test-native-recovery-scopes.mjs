@@ -31,14 +31,27 @@ function actions(chosen) {
   return names;
 }
 const all = actions(selection()), core = actions(selection('core')), ui = actions(selection('chat-agent-clusters'));
-assert.equal(all.length, 55);
+assert.equal(all.length, 57);
 assert.equal(core.length, 46);
-assert.equal(ui.length, 9);
+assert.equal(ui.length, 11);
 assert.ok(core.includes('designer-reply-saved'), 'saved reply captures belong to the core scope');
 assert.ok(!ui.includes('designer-reply-saved'), 'UI scope must not repeat saved reply captures');
 assert.equal(new Set([...core, ...ui]).size, all.length, 'scopes must partition, not repeat or omit cases');
 assert.deepEqual([...core, ...ui], all);
-assert.deepEqual(ui, ['chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure']);
+assert.deepEqual(ui, ['chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure']);
+const chatStatus = source.match(/if \(command === 'agent_chat_status'\) \{([\s\S]*?return \{ documentId,[^\n]+;)\n        \}/)?.[1];
+assert.ok(chatStatus, 'bounded Chat snapshot producer is missing');
+for (const name of ['chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer']) {
+  const snapshot = Function('name', 'documentId', chatStatus)(name, 'fixture-document');
+  const turn = snapshot.versions[0].turns[0];
+  const confirming = name.startsWith('chat-session-');
+  assert.equal(snapshot.state, confirming ? 'waitingForSession' : name === 'chat-answer' ? 'ready' : 'working', name);
+  assert.equal(turn.phase, confirming || name === 'chat-answer' ? 'Succeeded' : name === 'chat-pending' ? 'Pending' : 'Running', name);
+  assert.equal(turn.answer, ['chat-answer', 'chat-session-answer'].includes(name) ? 'The page says fixture-checksum.' : null, name);
+  assert.equal(turn.contextRetained, name === 'chat-answer', name);
+  assert.equal(snapshot.busy, name !== 'chat-answer', name);
+  assert.equal(snapshot.canSend, name === 'chat-answer', name);
+}
 for (const name of ['fixtures', 'setupFixtures', 'overviewVariants']) {
   assert.equal(roster(name, selection('chat-agent-clusters')).length, 0, `UI scope must not repeat ${name}`);
   assert.ok(roster(name, selection('core')).length > 0);
@@ -53,4 +66,4 @@ for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clus
   assert.match(step, /timeout-minutes: 3\n/, 'each scope keeps the existing three-minute ceiling');
 }
 assert.ok(workflow.includes('node ../scripts/test-native-recovery-scopes.mjs'));
-console.log('PASS real scope parsing; 46+9 unique action cases; disjoint CI scopes with unchanged three-minute ceilings');
+console.log('PASS real scope parsing; 46+11 unique action cases; Chat snapshot matrix; disjoint CI scopes with unchanged three-minute ceilings');
