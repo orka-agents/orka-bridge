@@ -11,8 +11,9 @@ import Preflight from './Preflight';
 import { canQueueModel, setupView } from './progress';
 import { formatRequirementGB, type WorkspaceRequirements, workspaceRequirements } from './requirements';
 import { type CheckStepState, Meet, SetupProgress } from './Steps';
-import { cancelLocal, changeLocal, type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
+import { cancelLocal, type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
+import Workspace from './Workspace';
 import './welcome.css';
 import type { RunSnapshot } from '../designer/run-api';
 import FirstPass from './FirstPass';
@@ -22,8 +23,8 @@ const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting',
 const runtimeCopy = {
   notIntegrated: 'Local cluster setup is not included in this build. Nothing will be downloaded or started.',
 };
-export type LocalClusterControl = { stop: () => void };
-export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, active = true }: {
+export type LocalClusterControl = { stop: () => void; showPlaces: () => void };
+export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, active = true }: {
   ref?: Ref<LocalClusterControl>;
   onOpenExample: () => void; onOpenAgent?: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
@@ -38,6 +39,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   onWorkspaceAction?: (pending: boolean, stopping?: boolean) => void;
   onPlace?: (place: SelectedPlace) => void;
   onLocalView?: (visible: boolean) => void;
+  onWorkspaceMode?: (returning: boolean) => void;
   place?: SelectedPlace;
 }) {
   const [status, setStatus] = useState<SetupStatus>();
@@ -45,6 +47,12 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const [busy, setBusy] = useState(true);
   const [sending, setSending] = useState(false);
   const [pendingAction, setPendingAction] = useState<'start' | 'cancel' | 'change'>();
+  const [workspace, setWorkspace] = useState(false);
+  const [confirmStop, setConfirmStop] = useState(false);
+  const stopTrigger = useRef<HTMLButtonElement>(null);
+  const confirmAction = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (confirmStop) confirmAction.current?.focus(); }, [confirmStop]);
+  useEffect(() => { onWorkspaceMode?.(workspace); }, [workspace, onWorkspaceMode]);
   const mutation = useRef(false);
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
@@ -62,7 +70,6 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   useEffect(() => { currentPlaceRef.current = currentPlace; }, [currentPlace]);
   const cluster = currentPlace.kind === 'cluster';
   const [panel, setPanel] = useState<'places' | 'local' | 'cluster'>();
-  const [fromPlaces, setFromPlaces] = useState(false);
   const [payoffDismissed, setPayoffDismissed] = useState(false);
   const shownPayoff = useRef(false);
   const [providerChange, setProviderChange] = useState(0);
@@ -157,7 +164,9 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   function chooseComputer() { publishPlace({ kind: 'thisComputer' }); }
   function openExample() { if (firstPass) setPayoffDismissed(true); chooseComputer(); onOpenExample(); }
   function back() { focusChoice.current = true; setPanel('places'); }
-  function openLocal() { focusChoice.current = true; setFromPlaces(true); setLocation('local'); setPreflightBlocked(true); setPanel('local'); }
+  function requestStop(button: HTMLButtonElement) { stopTrigger.current = button; setConfirmStop(true); }
+  function keepRunning() { setConfirmStop(false); stopTrigger.current?.focus(); }
+  function openLocal() { focusChoice.current = true; setLocation('local'); setPreflightBlocked(true); setPanel('local'); }
   function removed(key: string, targetId: string | undefined, navigate: boolean) {
     const current = currentPlaceRef.current;
     if (targetId && current.kind === 'cluster' && current.target?.id === targetId) publishPlace({ kind: 'cluster' });
@@ -171,14 +180,14 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     // Observation must not invalidate an explicit selection awaiting its reply.
     const firstStart = action === 'start' && status.selected !== 'localVm';
     if (firstStart) armFirstTest();
-    if (action === 'change') { retireFirstTest(); start(); }
+    if (action === 'change') { retireFirstTest(); start(); setWorkspace(true); setConfirmStop(false); }
     clearTimeout(timer.current);
     ++epoch.current;
     mutation.current = true;
     onWorkspaceAction?.(true, action !== 'start');
-    if (action === 'start') { chooseComputer(); onStarting?.(); }
+    if (action === 'start') { chooseComputer(); if (!workspace) onStarting?.(); }
     setBusy(true); setSending(true); setPendingAction(action); setError(undefined);
-    const result = await (action === 'cancel' ? cancelLocal() : action === 'change' ? changeLocal() : selectLocal());
+    const result = await (action === 'start' ? selectLocal() : cancelLocal());
     mutation.current = false;
     if (!mounted.current) return;
     onWorkspaceAction?.(false);
@@ -193,7 +202,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   }
 
   const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
-  useImperativeHandle(ref, () => ({ stop() { setPanel('local'); void chooseLocal('change'); } }));
+  useImperativeHandle(ref, () => ({ stop() { setPanel('local'); void chooseLocal('change'); }, showPlaces() { if (view !== 'places') back(); } }));
   const titleId = active ? 'page-title' : undefined;
   if (!status && !error) return <h1 id={titleId}>Checking the local cluster…</h1>;
   if (welcome && status) return <Welcome titleId={titleId} onStart={start} onCluster={() => chooseCluster()} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
@@ -207,24 +216,24 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     connected: 'Run your first agent',
   };
   const aiHeading = aiHeadings[modelState] ?? 'Connect the AI';
-  const presentation = setupView(error ? undefined : status, { stopping: sending && pendingAction !== 'start', model: modelState, check: firstCheck, initialAutomatic });
-  const showPayoff = !payoffDismissed && eligiblePayoff;
+  const presentation = setupView(error ? undefined : status, { stopping: sending && pendingAction !== 'start', starting: sending && pendingAction === 'start', workspace, model: modelState, check: firstCheck, initialAutomatic });
+  const showPayoff = !workspace && !payoffDismissed && eligiblePayoff;
   return <div className="places-workspace">
-    {view !== 'places' && !showPayoff && <Button type="button" kind="quiet" className="places-back" onClick={back}>{view === 'local' && !fromPlaces ? 'Choose where agents run' : 'Back to clusters'}</Button>}
+    {view === 'cluster' && <Button type="button" kind="quiet" className="places-back" onClick={back}>Back to clusters</Button>}
     <div className="workspace-heading places-heading" hidden={!!showPayoff}>
-      <h1 ref={heading} tabIndex={-1} id={showPayoff ? undefined : titleId}>{view === 'places' ? 'Clusters' : view === 'cluster' ? entry?.current ? 'Manage your cluster' : entry?.remembered ? 'Connect a cluster' : 'Add a cluster' : selected ? presentation.done ? 'This computer' : status?.localVm === 'ready' ? aiHeading : status?.localVm === 'failed' ? status.preflightFailure ? 'Check this computer' : workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
+      <h1 ref={heading} tabIndex={-1} id={showPayoff ? undefined : titleId}>{view === 'places' ? 'Clusters' : view === 'cluster' ? entry?.current ? 'Manage your cluster' : entry?.remembered ? 'Connect a cluster' : 'Add a cluster' : workspace ? 'This computer' : selected ? presentation.done ? 'This computer' : status?.localVm === 'ready' ? aiHeading : status?.localVm === 'failed' ? status.preflightFailure ? 'Check this computer' : workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
       {view === 'places' && <p className="muted">Choose where agents run</p>}
       {view === 'places' && <Button type="button" kind={!snapshotUnavailable && snapshot?.persistenceState === 'complete' && snapshot.places.length === 0 ? 'secondary' : 'primary'} onClick={() => chooseCluster()}>Add a cluster</Button>}
-      {view === 'local' && selected && !['ready', 'failed', 'notIntegrated'].includes(status?.localVm ?? '') && <p className="muted">Meanwhile, meet the agent you'll test first.</p>}
-      {view === 'local' && selected && status?.localVm === 'ready' && !modelRecovery && !presentation.done && !firstCheck && <p className="muted">On first setup, Bridge runs the bundled agent after you connect the AI, then shows you what happened.</p>}
+      {view === 'local' && !workspace && selected && !['ready', 'failed', 'notIntegrated'].includes(status?.localVm ?? '') && <p className="muted">Meanwhile, meet the agent you'll test first.</p>}
+      {view === 'local' && !workspace && selected && status?.localVm === 'ready' && !modelRecovery && !presentation.done && !firstCheck && <p className="muted">On first setup, Bridge runs the bundled agent after you connect the AI, then shows you what happened.</p>}
     </div>
-    {view === 'local' && !showPayoff && modelRecovery && <p className="muted">Your workspace is running. Nothing is lost.</p>}
+    {view === 'local' && !workspace && !showPayoff && modelRecovery && <p className="muted">Your workspace is running. Nothing is lost.</p>}
     {view === 'places' && <Places modelRecovery={modelRecovery} recoveryRef={setPlaceRecovery} snapshot={snapshot} unavailable={snapshotUnavailable} status={error ? undefined : status} view={presentation} place={currentPlace} onLocal={openLocal} onCluster={chooseCluster} />}
     {showPayoff && firstPass && <FirstPass snapshot={firstPass} titleId={titleId} onOpen={openExample} />}
     <div hidden={view !== 'local' || !!showPayoff}>
       {cluster && <Button type="button" kind="secondary" onClick={chooseComputer}>Use this computer</Button>}
-      <div className={selected ? `setup workspace-setup-grid${status?.localVm === 'failed' || modelRecovery ? ' workspace-setup-failed' : ''}` : 'workspace-choice local-preflight'}>
-        {!selected && <>
+      <div className={workspace ? 'returning-workspace-stack' : selected ? `setup workspace-setup-grid${status?.localVm === 'failed' || modelRecovery ? ' workspace-setup-failed' : ''}` : 'workspace-choice local-preflight'}>
+        {!selected && !workspace && <>
           <section className="card">
             <p className="workspace-choice-step muted">Step 1 of 4</p>
             <fieldset className="workspace-options">
@@ -234,6 +243,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                 <label htmlFor="workspace-local">On this computer</label><span className="chip">Recommended</span>
                 <div className="workspace-option-detail">
                   <p>Bridge sets up a workspace on this computer. {requirements ? `It needs virtualization turned on and about ${formatRequirementGB(requirements.memoryBytes)} of installed memory.` : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>
+                  {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated' && <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} onCluster={() => { setLocation('cluster'); document.getElementById('workspace-cluster')?.focus(); }} />}
                   <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
                     <div id="workspace-inside" hidden={!inside}>
                       <p>The local cluster includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>
@@ -248,18 +258,21 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                 <div className="workspace-option-detail"><p>For Kubernetes users. Pick a kubectl context and Bridge uses the Orka on that cluster.</p></div>
               </div>
             </fieldset>
-          {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated'
-            ? <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} action={continueAction} />
-            : <div className="workspace-step-actions">{continueAction}</div>}
+          <div className="workspace-step-actions">{continueAction}</div>
           {location === 'local' && status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
           </section>
         </>}
         <div className="setup-column setup-main">
-        {selected && status && <SetupProgress modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onChange={() => { void chooseLocal('change'); }} onOpenExample={openExample} />}
+        {confirmStop && <fieldset className="workspace-stop-confirm" aria-label="Stop the workspace?">
+          <legend>Stop the workspace?</legend><p>Any running tests or chats will end. Actions already taken are not undone. Your agents and files are kept.</p>
+          <div className="workspace-step-actions"><Button type="button" kind="secondary" ref={confirmAction} disabled={busy || !!error} onClick={() => { heading.current?.focus(); void chooseLocal('change'); }}>Stop workspace</Button><Button type="button" kind="quiet" onClick={keepRunning}>Keep running</Button></div>
+        </fieldset>}
+        {workspace && status && <Workspace status={status} busy={sending} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} model={modelState} onStart={() => { void chooseLocal(); }} onCancel={() => { void chooseLocal('cancel'); }} active={active && view === 'local'} onStop={requestStop} />}
+        {!workspace && selected && status && <SetupProgress modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onChange={requestStop} onOpenExample={openExample} />}
         </div>
         <div className="setup-column setup-side">
         {status && modelMounted && <div className="setup-model-slot"><Model changeRequest={providerChange} onPlaceCard={view === 'places'} recoveryTarget={view === 'places' ? placeRecovery : stepRecovery} enabled={status.model === 'available'} queueable={canQueueModel(status)} paused={!!error || sending} away={cluster} primary={status.localVm === 'ready'} onConnectRequest={() => { chooseComputer(); if (view === 'places') setPanel('local'); }} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
-        {selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={openExample} onName={onExampleName} />}
+        {!workspace && selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={openExample} onName={onExampleName} />}
         </div>
       </div>
     </div>

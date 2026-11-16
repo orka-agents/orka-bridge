@@ -67,7 +67,7 @@ test('single-target discovery keeps This computer selected and successful Use se
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(await screen.findByRole('button', { name: 'Back to clusters' }));
+  await user.click(await screen.findByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await chooseContext(user, context.name);
   await screen.findByText('Cluster found');
@@ -100,7 +100,7 @@ test('failed context discovery leaves local Run and Chat usable without reselect
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
-  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await chooseContext(user, context.name);
   await screen.findByRole('alert');
@@ -170,7 +170,7 @@ test('local results remain explicitly local after confirming cluster access', as
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByText('1 of 1 passed', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await screen.findByRole('button', { name: 'kubectl context' }); await discover(user);
   await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
@@ -190,7 +190,7 @@ test('local model acknowledgement survives a cluster round trip', async () => {
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await within(screen.getByRole('region', { name: 'Connect the AI' })).findByText('Connected');
-  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await screen.findByRole('button', { name: 'kubectl context' });
   await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
@@ -214,7 +214,7 @@ test('local-result observation continues while remote access is unconfirmed', as
   await user.click(await screen.findByRole('button', { name: 'Designer' }));
   await screen.findByText('Running tests…', { selector: '.checks-status' });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await chooseContext(user, context.name);
   await screen.findByText('Cluster found');

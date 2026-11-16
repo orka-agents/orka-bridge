@@ -169,7 +169,7 @@ test('using a cluster clears the held intent even though the view stays mounted'
   sim.localVm = 'ready';
   await observe(ipc);
   expect(within(screen.getByRole('navigation')).getByText('AI unavailable')).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: /Back to clusters|Choose where agents run/ }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   await user.click(await screen.findByRole('button', { name: 'kubectl context' }));
   await user.click(screen.getByRole('button', { name: 'team-dev' }));
@@ -177,7 +177,7 @@ test('using a cluster clears the held intent even though the view stays mounted'
   await screen.findAllByText('Access confirmed');
   sim.model = 'available';
   await observe(ipc); expect(connects()).toBe(0);
-  await user.click(screen.getByRole('button', { name: /Back to clusters|Choose where agents run/ }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await openLocalSetup(user);
   await user.click(screen.getByRole('button', { name: 'Use this computer' }));
   expect(await screen.findByRole('button', { name: 'Connect the AI' })).toBeTruthy();
