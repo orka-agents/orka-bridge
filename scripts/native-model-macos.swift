@@ -104,7 +104,8 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         let lenient = ["local-key-", "local-reset-", "local-remove-"].contains { name.hasPrefix($0) }
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || lenient && nativeChatTextIsVisible(value))
         let chatText = !found && name.hasPrefix("chat-") && nativeChatTextIsVisible(value)
-        require(found || nativeText || chatText, "Missing \(value) in \(name): \(text)")
+        let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
+        require(found || nativeText || chatText || workspaceControl, "Missing \(value) in \(name): \(text)")
     }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
@@ -114,7 +115,8 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     // Setup frames 1c, 1d (cropped) and 1e exist only in light; dark captures use them as layout references.
     // Frames 1g (AI connection failed) and 1h (AI reset) are approved in both themes.
     let frame: (file: String, label: String)? =
-        ["local-result", "local-answer", "local-story", "local-running", "local-stopping", "local-shell"].contains(where: { name.hasPrefix($0) }) ? ("designer-reference-\(theme)", "Approved Designer frame (wide reference)")
+        name.hasPrefix("local-workspace-") || name == "local-stopped" ? ("workspace-reference-\(theme)", "Approved workspace frame (wide reference)")
+        : ["local-result", "local-answer", "local-story", "local-running", "local-stopping", "local-shell"].contains(where: { name.hasPrefix($0) }) ? ("designer-reference-\(theme)", "Approved Designer frame (wide reference)")
         : name.hasPrefix("local-first-pass") ? ("setup-reference-first-pass", "Approved frame 1e, light (wide reference)")
         : name.hasPrefix("local-setup-installing") || name.hasPrefix("local-setup-meet") ? ("setup-reference-meet", "Approved frame 1c, light (wide reference)")
         : ["before-connect", "connected"].contains(name) || name.hasPrefix("local-setup-ai") || name.hasPrefix("local-setup-queued") || name.hasPrefix("local-setup-connected") || name.hasPrefix("local-key-anthropic-empty") ? ("setup-reference-ai", "Approved frame 1d, light (wide reference, cropped)")
@@ -201,7 +203,7 @@ click("Show details", [])
 _ = try capture("local-setup-starting-details", ["45 seconds elapsed", "Starting the local cluster"])
 try FileManager.default.removeItem(at: setupProgress)
 Thread.sleep(forTimeInterval: 0.6)
-click("Choose where agents run", [])
+click("Clusters", [])
 waitForButton("Connect the AI")
 // A running VM is not completed setup: its local row offers the current AI action.
 var rows = try capture("local-places-wide", ["Choose where agents run", "This computer", "Connect the AI"])
@@ -221,7 +223,7 @@ waitForButton("Reset AI connection")
 require(nativeTextExists("The AI couldn't connect") && nativeTextExists("Your workspace is running. Nothing is lost."), "Mismatch must name the AI failure and the safe workspace")
 require(!["Remove sign-in", "Check again", "Connect the AI"].contains(where: anyButton), "Mismatch offers only reset recovery")
 try resetCapture("mismatch", ["earlier setup", "Use another provider", "Copy details for help"], anchor: "Reset AI connection")
-press(enabledButton("Back to clusters") != nil ? "Back to clusters" : "Choose where agents run")
+press("Clusters")
 waitForButton("Reset AI connection")
 try resetCapture("place", ["This computer", "Workspace running", "earlier setup"], anchor: "Reset AI connection")
 press("Connect the AI")
@@ -299,20 +301,31 @@ click("Retry removal", rows)
 rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Connect the AI"])
 click("Connect the AI", rows)
 rows = try capture("reconnected", ["Connected", "Remove sign-in"])
-// Only the fixture's finite in-memory state changes; no VM or files are touched.
-click("Stop the local cluster", rows)
-rows = try capture("local-stopped", ["Where should your agents run?", "On this computer", "Back to clusters"])
-require(enabledButton("Stop the local cluster") == nil, "Stop must leave the local preflight page")
+// Workspace Stop is exercised after the original baseline coverage below.
 // Reuse the setup-progress selector and the existing Places entry to remount real
 // preflight for each bounded synthetic result. No native admission command runs.
-for state in ["ready", "unknown", "blocked", "cluster"] {
+// This synthetic reset is a fresh choice, so acknowledge Welcome explicitly;
+// Stop no longer provides that unrelated presentation side effect.
+try "preflight-ready".write(to: setupProgress, atomically: true, encoding: .utf8)
+waitForButton("Get started")
+click("Get started", [])
+for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
     try "preflight-\(state)".write(to: setupProgress, atomically: true, encoding: .utf8)
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
         localSize(1280, 800)
         scroll(4000)
-        click("Back to clusters", [])
+        click("Clusters", [])
         click("Set up", [])
-        waitForButton("Check again")
+        // Completion is a status, not the presence of a retry control.
+        var checksSettled = false
+        for _ in 0..<100 {
+            let strings = nativeElements().flatMap { element in
+                ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+            }
+            if strings.contains(where: { $0.contains("These checks do not change") || $0.contains("Fix the computer requirements") || $0.contains("Bridge couldn't check this computer yet.") }) { checksSettled = true; break }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        require(checksSettled, "Computer requirements did not settle")
         let choices = nativeElements().filter { attribute($0, "AXRole") as? String == "AXRadioButton" }
         require(choices.count == 2, "Preflight needs exactly two setup choices")
         let local = choices.first { element in
@@ -324,19 +337,32 @@ for state in ["ready", "unknown", "blocked", "cluster"] {
                 && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Continue" }
         }
         require(next.count == 1, "Preflight needs one Continue")
-        require((attribute(next[0], "AXEnabled") as? Bool == true) == !["blocked", "cluster"].contains(state),
+        require((attribute(next[0], "AXEnabled") as? Bool == true) == !["blocked", "memory", "mixed", "cluster"].contains(state),
                 "Only known local blockers may disable Continue")
         let strings = nativeElements().flatMap { element in
             ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
         }
         require(strings.contains { $0.contains("4.3 GB") } && strings.contains { $0.contains("Step 1 of 4") },
                 "Local choice lost native-derived decimal GB or its step counter")
-        if state == "unknown" {
-            require(strings.contains { $0.contains("Not checked") } && strings.contains { $0.contains("Bridge checks this when it starts.") },
-                    "Unknown checks must remain neutral and defer final checking to startup")
+        require(enabledButton("Back to clusters") == nil && enabledButton("Choose where agents run") == nil, "Local setup must not have a header Back link")
+        if ["ready", "unknown"].contains(state) {
+            require(!strings.contains { $0.hasPrefix("Virtualization:") || $0.hasPrefix("Installed memory:") || $0 == "Not checked" },
+                    "Only checks that ran and failed get rows")
+            require(enabledButton("Check again") == nil && enabledButton("Copy details for help") == nil, "Nonfailed checks need no recovery controls")
+        }
+        if ["unknown", "mixed"].contains(state) {
+            require(strings.contains { $0.contains("Bridge couldn't check this computer yet. It checks again when the workspace starts.") },
+                    "Unknown checks need one quiet startup explanation")
+        }
+        if ["memory", "mixed"].contains(state) {
+            require(strings.contains { $0.contains("Not enough installed memory") }, "Insufficient RAM must show its failed row")
         }
         if state == "cluster" {
-            chooseConnection("On a cluster you already have")
+            click("Use a cluster instead", [])
+            require(nativeElements().contains { element in
+                attribute(element, "AXFocused") as? Bool == true
+                    && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.hasPrefix("On a cluster you already have") == true }
+            }, "Cluster fallback must focus its radio choice")
             waitForButton("Continue")
             require(!nativeElements().contains { element in
                 ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Computer requirements" }
@@ -387,14 +413,15 @@ func waitForNativeText(_ text: String) {
     }
     require(false, "Native text did not appear: \(text)")
 }
-// Fresh-profile automatic outcomes. With an outcome selected, the fixture's Stop restores
-// only its sample and reloads the renderer without its first-test claim; no VM or files.
+// Fresh-profile automatic outcomes use the explicit preflight fixture reset, never Stop.
+// This restores the sample and reloads the renderer without its first-test claim; no VM or files.
 for outcome in ["passed", "unknown"] {
     try outcome.write(to: firstTestOutcome, atomically: true, encoding: .utf8)
     localSize(1280, 800); scroll(4000)
-    reveal("Stop the local cluster")
-    click("Stop the local cluster", [])
-    waitForButton("Set up"); click("Set up", [])
+    try "preflight-ready".write(to: setupProgress, atomically: true, encoding: .utf8)
+    waitForButton("Set up")
+    try FileManager.default.removeItem(at: setupProgress)
+    click("Set up", [])
     waitForButton("Continue"); scroll(-4000); click("Continue", [])
     waitForButton("Connect the AI"); click("Connect the AI", [])
     if outcome == "passed" {
@@ -412,7 +439,7 @@ for outcome in ["passed", "unknown"] {
         require(enabledButton("Open web-reader") == nil, "The first-pass story replayed")
     } else {
         waitForNativeText("Result unknown")
-        click("Clusters", []); scroll(4000)
+        scroll(4000)
         for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
             localSize(CGFloat(width), CGFloat(height)); scroll(4000)
             _ = try seek("Result unknown", -200)
@@ -573,7 +600,7 @@ localSize(540, 900)
 localSize(1280, 800)
 click("Clusters", [])
 scroll(4000)
-if enabledButton("Back to clusters") != nil { click("Back to clusters", []) }
+click("Clusters", [])
 _ = try seek("Connect", -150)
 click("Connect", [])
 _ = try seek("Use this cluster", -150)
@@ -635,7 +662,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
 // remaining pre-existing editor/Chat walk continues on This computer.
 click("Clusters", [])
 scroll(4000)
-if enabledButton("Back to clusters") != nil { click("Back to clusters", []) }
+click("Clusters", [])
 let localAction = nativeElements().first { element in
     guard attribute(element, "AXRole") as? String == "AXButton" else { return false }
     var parent = element
@@ -694,6 +721,16 @@ func nativeResultTextIsVisible(_ expected: String) -> Bool {
             (text == expected || (expected == "Observed for" ? text.hasPrefix("Observed for ") : text.hasPrefix("The answer did not include") && text.contains(expected))),
             let bounds = nativeBounds(element) else { return false }
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
+    }
+}
+// Vision read the visible Stop workspace button with a lowercase initial.
+// Exact, in-window accessibility controls prove the same property independently.
+func nativeWorkspaceButtonIsVisible(_ expected: String) -> Bool {
+    nativeElements().contains { element in
+        guard ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? ""),
+            ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == expected }),
+            let bounds = nativeBounds(element) else { return false }
+        return window()!.1.contains(bounds)
     }
 }
 func nativeChatTextIsVisible(_ expected: String) -> Bool {
@@ -1002,11 +1039,102 @@ _ = try capture("local-stopping-minimum", ["Cancelling"])
 localSize(540, 900)
 scroll(4000)
 click("Clusters", [])
-_ = try capture("local-manage-compact", ["Back to clusters", "Remove sign-in"])
+_ = try capture("local-manage-compact", ["This computer", "Remove sign-in"])
 // Keep the completed local and removal states reviewable at the compact size too.
 _ = try seek("Remove sign-in", -200)
 click("Remove sign-in", [])
 _ = try capture("local-remove-confirmation-compact", ["saved sign-in?", "Cancel", "Remove sign-in"])
 click("Cancel", [])
-click("Back to clusters", [])
+click("Clusters", [])
 _ = try capture("local-places-compact", ["Choose where agents run", "This computer"])
+// Stop/restart uses real UI actions. The existing selector settles only pending
+// synthetic IPC; no VM, credentials or provider is accessed.
+localSize(1280, 800)
+scroll(4000)
+click("Manage", [])
+func workspacePhase(_ phase: String) throws {
+    try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
+    Thread.sleep(forTimeInterval: 1.2)
+}
+func workspaceCapture(_ state: String, _ expected: [String]) throws {
+    for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+        localSize(width, height)
+        scroll(4000)
+        _ = try capture("local-workspace-\(state)-\(size)", expected)
+    }
+    localSize(1280, 800)
+    scroll(4000)
+}
+try workspacePhase("workspace-wait")
+click("Stop the local cluster", [])
+try workspaceCapture("confirmation", ["Stop the workspace?", "Stop workspace", "Keep running"])
+click("Keep running", [])
+require(enabledButton("Stop the local cluster") != nil, "Keep running must not stop the workspace")
+click("Stop the local cluster", [])
+click("Stop workspace", [])
+try workspaceCapture("stopping", ["This computer", "Workspace", "Stopping"])
+require(enabledButton("Start") == nil, "Start must be disabled until stop acknowledgement")
+try workspacePhase("workspace-stopped")
+waitForButton("Start")
+try workspaceCapture("stopped", ["This computer", "Workspace", "Stopped", "Start"])
+_ = try capture("local-stopped", ["This computer", "Stopped", "Start"])
+require(!nativeElements().contains { attribute($0, "AXRole") as? String == "AXRadioButton" }, "Stop must not return to first-run choices")
+click("Start", [])
+waitForButton("Cancel")
+try workspaceCapture("starting", ["This computer", "Starting", "0:18 so far", "Cancel"])
+try workspacePhase("workspace-wait")
+click("Cancel", [])
+try workspacePhase("workspace-stopped")
+waitForButton("Start")
+try workspaceCapture("cancelled", ["This computer", "Stopped", "Start"])
+click("Start", [])
+try workspacePhase("workspace-failed")
+waitForButton("Try again")
+try workspaceCapture("failed", ["This computer", "Couldn't start", "Try again"])
+try workspacePhase("workspace-wait")
+click("Try again", [])
+try workspacePhase("workspace-running")
+waitForButton("Stop")
+try workspaceCapture("running", ["This computer", "Running", "Stop"])
+try workspacePhase("workspace-wait")
+click("Stop", [])
+click("Stop workspace", [])
+try workspacePhase("workspace-stopped")
+waitForButton("Start")
+try workspacePhase("workspace-unavailable")
+try workspaceCapture("unavailable", ["This computer", "Status unavailable"])
+require(enabledButton("Start") == nil, "Unreadable status must not authorize Start")
+try workspacePhase("workspace-stopped")
+waitForButton("Start")
+click("Start", [])
+try workspacePhase("workspace-running")
+waitForButton("Stop")
+try workspacePhase("workspace-wait")
+click("Stop", [])
+click("Stop workspace", [])
+try workspacePhase("workspace-closed")
+try workspaceCapture("closed", ["This computer", "Stopped", "Quit Bridge and reopen it"])
+require(enabledButton("Start") == nil, "Terminal closed state must not offer an inert Start")
+// Closed and failed are terminal: reset only the bounded fixture selector for
+// independent Stop failures, rather than duplicating the full restart walk.
+try workspacePhase("workspace-reset-ready")
+waitForButton("Stop")
+try workspacePhase("workspace-wait")
+click("Stop", [])
+click("Stop workspace", [])
+try workspacePhase("workspace-stop-failed")
+try workspaceCapture("stop-failed", ["This computer", "Couldn't stop", "Try again"])
+require(enabledButton("Try again") == nil, "Unconfirmed Stop must not authorize Try again")
+require(enabledButton("Start") == nil, "Unconfirmed Stop must not authorize Start")
+
+try workspacePhase("workspace-reset-ready")
+waitForButton("Stop")
+try workspacePhase("workspace-wait")
+click("Stop", [])
+click("Stop workspace", [])
+try workspacePhase("workspace-stop-lost-reply")
+try workspaceCapture("stop-lost-reply", ["This computer", "Status unavailable", "Workspace status is unavailable"])
+require(enabledButton("Stop") == nil && enabledButton("Start") == nil, "Lost Stop reply must pause workspace actions")
+try workspacePhase("workspace-stopped")
+waitForButton("Start")
+try workspaceCapture("stop-reply-recovered", ["This computer", "Stopped", "Start"])

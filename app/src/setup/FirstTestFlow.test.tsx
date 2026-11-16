@@ -11,15 +11,16 @@ const other = '12345678-1234-1234-1234-123456789abc';
 const idle = { documentId: sample, busy: null, state: 'idle', canRun: true, modelConnected: true, report: null, acknowledged: [], pending: null, error: null };
 function native(holdSave = false, lostReplies = false) {
   vi.stubGlobal('isTauri', true);
-  let selected = false; let running = false; let finished = false;
+  let selected = false; let running = false; let finished = false; let stopped = false;
   let attemptId: unknown;
   let unreadable = false; let unreadableFiles = false; let verdict = 'passed'; let saved = pair; let modelUnavailable = false;
-  const status = () => ({ selected: selected ? 'localVm' : null, localVm: selected ? 'ready' : 'idle', model: selected ? 'available' : 'locked' });
+  const status = () => ({ selected: selected ? 'localVm' : null, localVm: stopped ? 'cancelled' : selected ? 'ready' : 'idle', model: selected && !stopped ? 'available' : 'locked' });
   const ipc = vi.fn((command: string, payload?: unknown) => {
     const args = payload as Record<string, unknown> | undefined;
     if (command === 'setup_status') return status();
     if (command === 'setup_requirements') return null;
-    if (command === 'setup_select_local') { selected = true; if (lostReplies) throw Error('Lost selection reply'); return status(); }
+    if (command === 'setup_select_local') { selected = true; stopped = false; if (lostReplies) throw Error('Lost selection reply'); return status(); }
+    if (command === 'setup_cancel_local') { stopped = true; running = false; return status(); }
     if (command === 'setup_change_local') { selected = false; return status(); }
     if (command === 'setup_example') return { agent: pair.agent, tests: pair.tests };
     if (command === 'setup_connect_model') return { ready: true };
@@ -67,6 +68,22 @@ test('first setup stays for its first-pass story, opens only on request and neve
   await user.click(screen.getByRole('button', { name: 'Open web-reader' }));
   expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page');
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample, bundledExample: true, attemptId: expect.any(String) }]]);
+});
+
+test('Stop after the first-pass story retains the workspace without replaying the story or automatic run on restart', async () => {
+  const { ipc, finish } = native(); const user = await completeSetup();
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1)); finish();
+  await user.click(await screen.findByRole('button', { name: 'Open web-reader' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(await screen.findByRole('button', { name: 'Stop the local cluster' }));
+  await user.click(screen.getByRole('button', { name: 'Stop workspace' }));
+  await user.click(await screen.findByRole('button', { name: 'Start' }));
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await screen.findByRole('button', { name: 'Change' });
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('This computer');
+  expect(screen.queryByRole('heading', { name: 'Your first agent passed its test' })).toBeNull();
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
+  expect(ipc.mock.calls.filter(([c]) => c === 'setup_change_local')).toHaveLength(0);
 });
 
 test('reading instructions before completion does not dismiss the later payoff', async () => {
@@ -149,7 +166,7 @@ test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains 
     expect(within(screen.getByRole('navigation')).getByText('Its test failed')).toBeTruthy();
     expect(within(screen.getByRole('contentinfo')).getByText('Its test failed')).toBeTruthy();
     expect(document.querySelector('.host-chip .live-dot')?.className).toContain('bad');
-    await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+    await user.click(screen.getByRole('button', { name: 'Clusters' }));
     expect(within(screen.getByRole('region', { name: 'This computer' })).getByText('Failed', { selector: '.pill' }).className).toContain('status-failed');
     await openLocalSetup(user);
   }
@@ -295,10 +312,10 @@ test.each(['Overview', 'Designer', 'cluster', 'Add', 'Places', 'workspace lost']
   if (destination === 'Overview' || destination === 'Designer') await user.click(screen.getByRole('button', { name: destination }));
   else if (destination === 'workspace lost') { loseWorkspace(); window.dispatchEvent(new Event('focus')); await screen.findByRole('button', { name: 'Continue' }); }
   else if (destination === 'Add' || destination === 'Places') {
-    await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+    await user.click(screen.getByRole('button', { name: 'Clusters' }));
     if (destination === 'Add') await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   } else {
-    await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+    await user.click(screen.getByRole('button', { name: 'Clusters' }));
     await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   }
   finish();
@@ -318,7 +335,7 @@ test('Add retires an automatic first test awaiting its initial observation witho
   const user = await completeSetup();
   await waitFor(() => expect(reads).toBe(1));
   expect(localStorage.getItem('bridge.firstTest.v1')).toBe('pending');
-  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
   await user.click(screen.getByRole('button', { name: 'Add a cluster' }));
   expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
   expect(document.querySelector('.host-chip .host-label')?.textContent).toBe('This computer');
