@@ -220,7 +220,8 @@ require(enabledButton("Connect the AI") != nil && enabledButton("Manage") == nil
         "VM-ready local card must offer Connect the AI, not Manage")
 click("Connect the AI", rows)
 rows = try capture("before-connect", ["Connect the AI"])
-require(exactTextIsVisible("3 saved agents"), "Hidden Overview must report the saved-file count")
+// The tab subtitle is visible in the capture but isn't a separate AXStaticText value.
+require(rows.contains { $0.boundingBox.minX < 0.3 && $0.boundingBox.maxY > 0.85 && $0.topCandidates(1).first?.string == "3 saved agents" }, "Hidden Overview must report the saved-file count in the header")
 localSize(540, 640)
 scroll(4000)
 _ = try capture("local-setup-ai-minimum-top", ["This computer", "Get your workspace ready"])

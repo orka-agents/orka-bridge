@@ -193,7 +193,7 @@ test('Meet opens the owned example for editing without Run commands', async () =
   const { ipc } = native(); const user = userEvent.setup(); render(<App />); await openLocalSetup();
   expect(await screen.findByRole('heading', { name: 'web-reader' })).toBeTruthy();
   expect(screen.getByText('Answers from the web page named in the request')).toBeTruthy();
-  expect(within(screen.getByRole('navigation')).getByText('No agent open')).toBeTruthy();
+  expect(within(screen.getByRole('navigation')).getByText('Ready after setup')).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   const main = screen.getByRole('main', { name: 'web-reader' });
   expect(within(main).getByText('Fetch before answering.')).toBeTruthy();
