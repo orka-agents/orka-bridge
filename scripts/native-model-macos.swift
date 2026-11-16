@@ -305,7 +305,9 @@ click("Clusters", [])
 rows = try capture("local-first-test-failed", ["This computer", "Its test failed", "See what it answered"])
 func reveal(_ label: String) {
     for _ in 0..<8 {
-        if let bounds = enabledButton(label).flatMap(nativeBounds), window()!.1.contains(bounds) { return }
+        let frame = window()!.1
+        // The fixed 32px footer is inside the window but covers page controls.
+        if let bounds = enabledButton(label).flatMap(nativeBounds), frame.contains(bounds), bounds.maxY <= frame.maxY - 32 { return }
         scroll(-200)
     }
     require(false, "Native control not visible: \(label)")
