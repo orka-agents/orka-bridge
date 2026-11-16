@@ -453,6 +453,7 @@ try {
           return null;
         }
         if (designer && command === 'agent_selected') return documentId;
+        if (designer && command === 'agents_list') return [{ id: documentId, name: 'web-reader', path: null, available: true }];
         if (designer && (command === 'workspace_catalog' || command === 'cluster_catalog')) {
           window.__bridgeCatalogCalls.push({ command, args });
           return { defaultModel: name === 'designer-connected' ? 'gpt-5.6-terra' : 'fixture-model', models: { state: 'ready', items: [{ id: name === 'designer-connected' ? 'gpt-5.6-terra' : 'fixture-model' }, ...command === 'workspace_catalog' ? [{ id: 'other-model' }] : []] }, tools: { state: 'ready', items: [{ kind: 'builtin', name: 'web_fetch', description: 'Fetch a page' }, { kind: 'builtin', name: 'request_approval', description: 'Ask a person to approve an action.' }] } };
@@ -463,7 +464,8 @@ try {
         // A complete idle snapshot, so the blocked-Chat check proves Ready is suppressed, not merely that no status loaded.
         if (designer && command === 'agent_chat_status') return { documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null };
         if (command === 'send_status') return { documentId, view: null, busy: null };
-        if (command === 'agent_open') return { ...pair, documentId, name: 'web-reader', ...(name.startsWith('first-test-') && name !== 'first-test-result' && name !== 'first-test-running' || name === 'designer-stale' || localCancel ? { source } : {}) };
+        if (name === 'designer-remote' && command === 'send_preflight') return { documentId, targetId: target.id, providerId: provider.id, source, model: 'fixture-model', canSend: true, action: 'create', canSeparate: false, rows: [{ label: 'Cluster', status: 'allowed', message: 'Ready.' }] };
+        if (command === 'agent_open') return { ...pair, documentId, name: 'web-reader', ...(name.startsWith('first-test-') && name !== 'first-test-result' && name !== 'first-test-running' || ['designer-connected', 'designer-remote', 'designer-stale'].includes(name) || localCancel ? { source } : {}) };
         if (localCancel && (command === 'agent_run_cancel' || command === 'agent_run_check_cancellation')) {
           if (args?.documentId !== documentId) throw Error('Wrong cancellation document');
           window.__bridgeCancelCalls.push(command); window.__bridgeCancellation = 'cancelling'; return snapshot();
@@ -873,10 +875,9 @@ try {
             if (/\bReady\b/.test(chat.text) || chat.reset !== true) throw Error(`Blocked Chat must not say Ready and must disable New conversation: ${JSON.stringify(chat)}`);
             await shoot('chat-blocked');
             // Top-level tab navigation retains the last view.
-            const nav = label => evaluate(`(() => { const b = [...document.querySelectorAll('button')].find(b => !b.closest('main') && b.textContent.trim().startsWith(${JSON.stringify(label)}) && !b.disabled); if (b) b.click(); return !!b; })()`);
-            if (!await nav('Overview')) throw Error('Overview tab not found');
+            await evaluate(`document.querySelector('nav[aria-label="Main"] button[aria-label="Overview"]').click()`);
             await until(() => evaluate(`!document.querySelector('.chat-heading')?.getClientRects().length`), 'Chat hidden while on Overview');
-            if (!await nav('Designer')) throw Error('Designer tab not found');
+            await evaluate(`document.querySelector('nav[aria-label="Main"] button[aria-label="Designer"]').click()`);
             await until(async () => await pressed() === 'Chat' && await evaluate(`!!document.querySelector('.chat-heading')?.getClientRects().length`), 'tab return keeps Chat');
           }
         }

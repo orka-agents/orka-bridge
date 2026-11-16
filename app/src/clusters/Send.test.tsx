@@ -45,6 +45,16 @@ test.each([
   if (snapshot.state === 'running') expect(screen.getByRole('button', { name: 'Cancel tests' })).toBeTruthy();
 });
 
+test('missing saved-file versions do not claim a destination check is running', async () => {
+  const ipc = native();
+  render(<Send place={place} stale={false} />);
+  expect(await screen.findByText('Saved file versions are unavailable. Open your agent again before sending.')).toBeTruthy();
+  expect(screen.queryByText('Checking this destination…')).toBeNull();
+  expect(screen.queryByText('Needs attention')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Send and run tests' }).hasAttribute('disabled')).toBe(true);
+  expect(ipc.mock.calls.some(([command]) => command === 'send_preflight')).toBe(false);
+});
+
 test.each(['blocked', 'cannotCheck'])('preflight %s explains the problem and prevents submission', async status => {
   const ipc = native(idle, null, { ...allowed, rows: [{ label: 'page-reader', status, message: status === 'blocked' ? 'Create page-reader on team-dev.' : 'Bridge cannot check page-reader.' }], canSend: false });
   render(<Send place={place} source={source} stale={false} />);

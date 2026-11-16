@@ -226,6 +226,7 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
   const matched = checked?.value && sameSource(source, checked.value.source) === true;
   const mismatched = checked?.value?.source != null && !matched;
   const reason = blocked ?? (foreignBusy ? `${foreignBusy.name} is sending tests.` : undefined) ?? (!target || !provider ? 'Choose a cluster and AI connection in Clusters first'
+    : !agentHash || !testsHash ? 'Saved file versions are unavailable. Open your agent again before sending.'
     : !checked ? 'Checking this destination…' : checked.error ?? (mismatched ? 'Your saved files changed. Reload them to check this destination.'
     : !checked.value?.canSend ? 'Resolve the destination checks before sending.' : undefined));
   const canSeparate = !blocked && !foreignBusy && matched && !!checked?.value?.canSeparate && !!target && !!provider;
@@ -293,7 +294,7 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
     : snapshot?.report?.verdict === 'cancelled' ? ['not-started', 'Cancelled']
     : snapshot?.error ? needsAttention ? ['needs-you', 'Needs attention'] : ['failed', 'Failed']
     : checkingEnabled && !checked ? ['running', 'Checking destination']
-    : !target || !provider || blocked ? ['not-started', 'Not started']
+    : !target || !provider || !agentHash || !testsHash || blocked ? ['not-started', 'Not started']
     : reason ? ['needs-you', 'Needs attention'] : ['passed', 'Ready to send'];
   const passedCount = snapshot?.report?.cases.filter(c => c.verdict === 'passed').length ?? 0;
   const headline = outdated ? 'Earlier result' : running || busy ? 'Tests on your cluster' : unhealthy ? (cancellation === 'requested' ? 'Waiting for the cluster' : 'Tests may still be running')

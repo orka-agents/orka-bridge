@@ -589,7 +589,8 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     require(anyButton("New conversation") && enabledButton("New conversation") == nil, "Blocked Chat must disable New conversation")
     _ = try capture("local-shell-chat-blocked-\(size)", ["Chat on local cluster"])
     _ = try seek("Chat is unavailable", -150)
-    _ = try capture("local-shell-chat-blocked-status-\(size)", ["Chat is unavailable"])
+    scroll(-100) // Keep the status clear of the fixed footer.
+    _ = try capture("local-shell-chat-blocked-status-\(size)", ["Chat is unavailable."])
     scroll(4000)
     click("Agent", [])
 }
@@ -911,16 +912,15 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     _ = try capture("local-shell-file-\(size)", ["web-reader.agent.md"])
     click("Agent", [])
     click("Send to a cluster", [])
-    scroll(4000)
-    _ = try seek("Team clusters are early in this preview", -150)
-    require(exactTextIsVisible("Team cluster") && nativeChatTextIsVisible("Team clusters are early in this preview"), "Send headline and early-preview text must be visible together")
+    // The header action already reveals and scrolls the card into view.
+    require(exactTextIsVisible("Send your agent") && nativeChatTextIsVisible("Team clusters are early in this preview."), "Send headline and early-preview text must be visible together")
     require(anyButton("Send and run tests") && enabledButton("Send and run tests") == nil, "Without a cluster, the opened Send must be visible but disabled")
-    _ = try capture("local-shell-send-\(size)", ["Team clusters are early in this preview"])
-    _ = try seek("Past Sends", -150)
-    click("Past Sends", [])
+    _ = try capture("local-shell-send-\(size)", ["Send your agent", "Team clusters are early in this preview."])
+    press("Past Sends")
     _ = try seek("Saved results and limits", -150)
+    scroll(-100)
     _ = try capture("local-shell-history-\(size)", ["Past Sends", "Saved results and limits"])
-    click("Past Sends", [])
+    press("Past Sends")
 }
 localSize(1280, 800)
 // Chat runs before the final Run, which intentionally stays busy forever in

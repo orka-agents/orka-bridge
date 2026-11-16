@@ -1245,10 +1245,17 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try clickSendControl("Run cluster tests again", scrolling: 350)
     Thread.sleep(forTimeInterval: 1)
     try capturePreflight("send-mixed-wide", "1 of 2 tests passed")
-    let failed = try capturePreflight("send-failed-wide", "The answer did not include")
-    require(failed.contains { ($0.topCandidates(1).first?.string ?? "").contains("2099-12-31") }, "Plain test failure reason missing")
+    // Vision can garble this short Inter sentence at a valid scroll position.
+    // Keep the failed test/verdict in the captured frame and require the exact
+    // native reason (including its expected value) fully above the footer.
+    let failureReason = "The answer did not include “2099-12-31”."
+    let visibleFailure: ([VNRecognizedTextObservation]) -> Bool = { seen in
+        seen.contains { ($0.topCandidates(1).first?.string ?? "").contains("Failed") }
+            && nativeTextBounds(failureReason, exact: true).contains { bodyBounds().contains($0) }
+    }
+    try capturePreflight("send-failed-wide", "has-a-date", requiring: visibleFailure)
     try resultSize(540, 900)
-    try capturePreflight("send-failed", "The answer did not include")
+    try capturePreflight("send-failed", "has-a-date", requiring: visibleFailure)
     // Arm only the loopback fixture: first answer completes, second Task stays
     // live. Hold the cancel reply until its in-flight state has been captured.
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "cancelling"])
@@ -1594,6 +1601,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(-250)
     }
     require(historyFound, "Saved Send history was not reachable after restart")
+    clickButton("Past Sends")
     try capture("send-history-restarted", "Designer")
     // Prove the earlier passing summary remains reachable after restart.
     var savedPass = false
