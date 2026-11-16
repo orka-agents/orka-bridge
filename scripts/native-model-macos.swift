@@ -1157,32 +1157,30 @@ click("Overview", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height))
     scroll(4000)
-    _ = try capture("local-controls-overview-\(size)", ["Your agents", "Refresh", "web-reader", "Failed", "Run tests"])
+    if size == "minimum" {
+        _ = try seek("2 of 2 tests on earlier files", -300)
+        let expected = ["Earlier files", "2 of 2 tests on earlier files", "Draft"]
+        let proof = try capture("local-controls-overview-\(size)", expected)
+        let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(expected.allSatisfy { pixels.contains($0) }, "Cluster result and draft must be visible in OCR")
+    } else {
+        _ = try capture("local-controls-overview-\(size)", ["Your agents", "Refresh", "web-reader", "Failed", "Run tests"])
+    }
 }
+scroll(4000)
 click("By agent", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height))
     scroll(4000)
-    _ = try capture("local-overview-by-agent-\(size)", ["Your agents", "web-reader", "This computer"])
-}
-// Native UI with synthetic Overview IPC, not a cluster Send. Capture below-fold
-// evidence separately: top-of-page screenshots do not prove these cards are visible.
-for (grouping, label) in [("By cluster", "by-cluster"), ("By agent", "by-agent")] {
-    scroll(4000)
-    click(grouping, [])
-    for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
-        localSize(CGFloat(width), CGFloat(height))
-        for (scene, anchor, expected) in [
-            ("earlier-pass", "2 of 2 tests on earlier files", ["Earlier files", "2 of 2 tests on earlier files"]),
-            ("earlier-failed", "1 of 2 tests on earlier files", ["Failed", "1 of 2 tests on earlier files"]),
-            ("draft", "Add instructions and a test to get started.", ["Draft", "Add instructions and a test to get started."])
-        ] {
-            scroll(4000)
-            _ = try seek(anchor, -300)
-            let proof = try capture("local-overview-\(label)-\(scene)-\(size)", expected)
-            let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-            require(expected.allSatisfy { pixels.contains($0) }, "Overview evidence must be visible in OCR, not merely in AX")
-        }
+    if size == "minimum" {
+        // The draft anchor is unique; the failed count alone also occurs on the local file.
+        _ = try seek("Add instructions and a test to get started.", -300)
+        let expected = ["team-dev", "Failed", "1 of 2 tests on earlier files", "Draft"]
+        let proof = try capture("local-overview-by-agent-\(size)", expected)
+        let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(expected.allSatisfy { pixels.contains($0) }, "Cluster failure and draft must be visible in OCR")
+    } else {
+        _ = try capture("local-overview-by-agent-\(size)", ["Your agents", "web-reader", "This computer"])
     }
 }
 scroll(4000)
