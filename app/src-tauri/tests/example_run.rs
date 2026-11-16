@@ -58,6 +58,44 @@ async fn first_test_rejects_files_edited_after_renderer_open_but_manual_run_acce
 }
 
 #[tokio::test]
+async fn approval_tool_is_rejected_before_posts_and_explicit_removal_restores_run() {
+    for (kind, name) in [
+        ("builtin", "request_approval"),
+        ("tool", "request_approval"),
+        ("builtin", " request_approval "),
+    ] {
+        let (vm, posts, _) = fixture(false, false).await;
+        let home = tempfile::tempdir().unwrap();
+        let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+        let original = folder.open().unwrap().agent;
+        let source = original.replace(
+            "  tools:",
+            &format!("  tools:\n    - kind: {kind}\n      name: '{name}'"),
+        );
+        assert_ne!(source, original);
+        folder.save(source.clone()).unwrap();
+        let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder.clone());
+        run.start(vm.clone());
+        let rejected = finished(&run, &vm).await;
+        assert_eq!(rejected.error, Some("unsupportedTool"));
+        assert!(rejected.report.is_none());
+        assert!(rejected.acknowledged.is_empty() && rejected.pending.is_none());
+        assert!(posts.lock().unwrap().is_empty());
+        assert_eq!(folder.open().unwrap().agent, source);
+        folder.save(original).unwrap();
+        run.start(vm.clone());
+        let passed = finished(&run, &vm).await;
+        assert_eq!(passed.error, None);
+        assert_eq!(
+            passed.report.unwrap().verdict,
+            bridge_engine::engine::run::Verdict::Passed
+        );
+        assert_eq!(posts.lock().unwrap().len(), 2);
+        vm.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn legacy_untitled_sample_is_preserved_and_remains_manually_runnable() {
     let (vm, posts, _) = fixture(false, false).await;
     let home = tempfile::tempdir().unwrap();
@@ -143,7 +181,7 @@ async fn first_test_requires_the_expected_template_and_current_connection() {
         let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
         let pair = folder.prepare_example_model(saved).unwrap();
         let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
-        run.start_first_test_with_model(vm.clone(), pair.document_id, expected.into())
+        run.start_first_test_with_model(vm.clone(), pair.document_id, expected.into(), None)
             .unwrap();
         let done = finished(&run, &vm).await;
         assert_eq!(done.error, error, "{saved}/{expected}/{connected}");
@@ -175,11 +213,68 @@ async fn first_test_cannot_select_another_document_or_claim_admission() {
     assert!(run
         .start_first_test(vm.clone(), other.document_id())
         .is_err());
-    assert!(run
-        .start_first_test_with_model(vm.clone(), pair.document_id, "arbitrary-model".into())
-        .is_err());
+    let token = Some(Uuid::new_v4());
+    let model = || "gpt-5.6-terra".to_string();
+    // A token never unlocks another document or template; nil is no correlation.
+    for (id, model, attempt) in [
+        (other.document_id(), model(), token),
+        (pair.document_id, "arbitrary-model".into(), token),
+        (pair.document_id, "arbitrary-model".into(), None),
+        (pair.document_id, model(), Some(Uuid::nil())),
+    ] {
+        assert!(run
+            .start_first_test_with_model(vm.clone(), id, model, attempt)
+            .is_err());
+    }
     assert!(!run.is_active());
+    assert!(run.status(&vm).attempt_id.is_none());
     assert!(posts.lock().unwrap().is_empty());
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn first_test_attempt_is_recorded_only_by_its_own_admission() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let pair = folder.open().unwrap();
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder.clone());
+    let (first, second) = (Uuid::new_v4(), Uuid::new_v4());
+    let model = || "gpt-5.6-terra".to_string();
+    let accepted = run
+        .start_first_test_with_model(vm.clone(), pair.document_id, model(), Some(first))
+        .unwrap();
+    assert_eq!(accepted.attempt_id, Some(first));
+    // A competing request sees the admitted run, never its own token.
+    let denied = run
+        .start_first_test_with_model(vm.clone(), pair.document_id, model(), Some(second))
+        .unwrap();
+    assert_eq!(denied.attempt_id, Some(first));
+    let done = finished(&run, &vm).await;
+    assert_eq!(done.state, RunState::Complete);
+    assert_eq!(
+        serde_json::to_value(&done).unwrap()["attemptId"],
+        first.to_string()
+    );
+    assert_eq!(posts.lock().unwrap().len(), 2);
+    // A manual run clears the correlation; a request it blocks cannot claim it.
+    assert!(run.start(vm.clone()).attempt_id.is_none());
+    let blocked = run
+        .start_first_test_with_model(vm.clone(), pair.document_id, model(), Some(second))
+        .unwrap();
+    assert!(blocked.attempt_id.is_none());
+    let manual = finished(&run, &vm).await;
+    assert!(manual.attempt_id.is_none());
+    assert!(serde_json::to_value(&manual)
+        .unwrap()
+        .get("attemptId")
+        .is_none());
+    // Without the model image there is no admission and so no token.
+    let unavailable = ExampleRun::new(tokio::runtime::Handle::current(), false, folder);
+    let refused = unavailable
+        .start_first_test_with_model(vm.clone(), pair.document_id, model(), Some(second))
+        .unwrap();
+    assert!(refused.attempt_id.is_none() && !unavailable.is_active());
     vm.shutdown().await.unwrap();
 }
 

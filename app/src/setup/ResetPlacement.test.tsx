@@ -24,7 +24,7 @@ test.each(['stay', 'navigate'])('AI recovery keeps reset completion visible afte
   expect(await screen.findByRole('heading', { name: "The AI couldn't connect" })).toBeTruthy();
   const row = screen.getByText('Choose the AI your agent uses').closest('li')!;
   expect(within(row).getByRole('button', { name: 'Reset AI connection' })).toBeTruthy();
-  expect(screen.getByText('The local cluster is running on this computer.')).toBeTruthy();
+  expect(screen.getByText('Your workspace is ready on this computer.')).toBeTruthy();
   await user.click(within(row).getByRole('button', { name: 'Show details' }));
   await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
   const place = screen.getByRole('region', { name: 'This computer' });

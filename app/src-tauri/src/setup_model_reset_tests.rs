@@ -14,7 +14,7 @@ fn mismatch_reset_deletes_only_recorded_slot_in_every_phase_without_guest_io() {
             let root = setup.root.as_ref().unwrap();
             let vault = FakeVault::default();
             setup
-                .associate_secret_for_vendor(old, SECRET, vendor, &vault)
+                .associate_secret_for_vendor(old, SECRET, vendor, None, &vault)
                 .unwrap();
             let mut binding = read_binding(root).unwrap().unwrap();
             let slot = binding.slot;

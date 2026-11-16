@@ -41,6 +41,14 @@ test('mismatch has one primary and confirmed reset, excludes duplicates and retu
   expect(document.body.textContent).not.toContain('SECRET');
 });
 
+test('an explicit provider-change request uses reset confirmation for a mismatched record', async () => {
+  const view = render(<Model enabled changeRequest={0} />); await mismatch();
+  view.rerender(<Model enabled changeRequest={1} />);
+  expect(screen.getByRole('group', { name: 'Reset AI connection confirmation' })).toBeTruthy();
+  expect(screen.queryByRole('group', { name: 'Remove sign-in confirmation' })).toBeNull();
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
+});
+
 test('another provider uses the same reset confirmation and opens key choice only after success', async () => {
   render(<Model enabled />); await mismatch();
   fireEvent.click(screen.getByRole('button', { name: 'Use another provider' }));
