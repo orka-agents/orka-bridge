@@ -74,7 +74,8 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
       if (request !== focusEpoch.current) return;
       if (target) setPlaceError(!value);
       const seen = value?.places.find(p => p.key === target?.key);
-      if (value) setPlaces(value);
+      // Other places were not queried by this refresh, so keep their cached freshness.
+      setPlaces(previous => value ?? (target && previous && { ...previous, places: previous.places.map(p => p.key === target.key ? { ...p, stale: true } : p) }) ?? previous);
       if (target && seen?.agents.some(a => a.uid === target.uid && a.namespace === target.namespace)) { toFocus.current = `${target.key}/${target.uid}`; setFocusTick(v => v + 1); return; }
       const check = target ? await sendAgentCheck(focus.sendId) : 'cannotCheck';
       if (request === focusEpoch.current) setFocusNote(focusNotes[check]);

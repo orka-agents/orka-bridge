@@ -1000,14 +1000,15 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         try reloadFixture()
     }
     @discardableResult
-    func capturePreflight(_ name: String, _ expected: String) throws -> [VNRecognizedTextObservation] {
+    func capturePreflight(_ name: String, _ expected: String, anchor: String? = nil,
+                          requiring: (([VNRecognizedTextObservation]) -> Bool)? = nil) throws -> [VNRecognizedTextObservation] {
         for _ in 0..<8 {
             // Preserve a visible transient state before doing any search work.
             let seen = try capture("send-probe", "Designer", searching: true)
             let text = seen.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
             // Section labels are uppercased; Vision also varies casing in the fixed fixture ID.
             // Require Send context in this same captured frame, never later accessibility state.
-            if text.localizedCaseInsensitiveContains(expected) && sendFrameVisible(seen) {
+            if text.localizedCaseInsensitiveContains(expected) && sendFrameVisible(seen) && (requiring?(seen) ?? true) {
                 // Keep the frame we verified. A transient state can end between
                 // two screenshots; a second OCR pass would test a different frame.
                 if name != "send-probe" {
@@ -1022,7 +1023,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             // Reflow and result updates preserve a scroll offset, not a row.
             // Anchor missing text in either direction, away from fixed chrome.
             // Prefer rendered text over a 1px screen-reader announcement.
-            if let anchor = nativeTextBounds(expected, visibleOnly: false)
+            if let anchor = nativeTextBounds(anchor ?? expected, visibleOnly: false)
                 .filter({ $0.width > 1 && $0.height > 1 })
                 .max(by: { $0.width * $0.height < $1.width * $1.height }) {
                 let delta = bodyBounds().minY + 64 - anchor.minY
@@ -1604,8 +1605,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         fail("Saved answer provenance has no native bounds")
     }
     scrollMain(Int32((bodyBounds().minY + 64 - provenance.minY).rounded()))
-    // Vision can omit the small provenance line; qualify answer pixels plus its visible native text bounds.
-    let savedWide = try capturePreflight("send-history-answer-wide", "Fixture answer:")
+    // The answer-only fallback can scroll the question/provenance out of view after reflow.
+    // Keep anchoring the whole saved result until one frame proves all three.
+    let savedWide = try capturePreflight("send-history-answer-wide", "Fixture answer:", anchor: "Saved on this computer", requiring: { seen in
+        seen.contains { ($0.topCandidates(1).first?.string ?? "").contains("What SHA-256 checksum does") }
+            && nativeTextIsVisible("Saved on this computer")
+    })
     require(savedWide.contains { ($0.topCandidates(1).first?.string ?? "").contains("What SHA-256 checksum does") }
         && nativeTextIsVisible("Saved on this computer"),
             "Wide saved question, answer and local provenance must remain visible after reopening offline")

@@ -151,6 +151,20 @@ test('successful navigation clears an earlier inventory read error even when the
   await screen.findByText('Not shown in Overview yet.');
   expect(screen.queryByText(/Couldn't read clusters just now/)).toBeNull();
 });
+test('a failed focused read makes only its place unknown, keeping other fresh results', async () => {
+  const other = { ...place([{ ...agent('uid-other'), name: 'other-agent' }]), key: 'other', context: 'other' };
+  const calls = ipc({ ...places([agent('uid-one')]), places: [place([agent('uid-one')]), other] }, 'cannotCheck');
+  const view = render(<Overview {...props} />);
+  const card = async (name: RegExp) => within(await screen.findByRole('article', { name })).getByText(/Passed|Result unknown/).textContent;
+  expect(await card(/^same-name/)).toBe('Passed');
+  calls.mockImplementation(command => command === 'overview_files' ? files : command === 'send_agent_check' ? 'cannotCheck' : live); calls.mockClear();
+  view.rerender(<Overview {...props} focus={{ id: 1, sendId: 's1', target: target('uid-one') }} />);
+  await screen.findByText('Cannot check this agent. Your saved result is unchanged.');
+  expect(await card(/^same-name/)).toBe('Result unknown');
+  expect(await card(/^other-agent/)).toBe('Passed');
+  expect(screen.getByText(/Couldn't read clusters just now/)).toBeTruthy();
+  expect(calls.mock.calls.filter(([command]) => command === 'overview_places').every(([, args]) => (args as { key?: string } | undefined)?.key === key)).toBe(true);
+});
 test('a Send with no recorded agent says so without any check', async () => {
   const calls = ipc(places([agent('uid-one')]));
   render(<Overview {...props} focus={{ id: 1, sendId: 's1' }} />);

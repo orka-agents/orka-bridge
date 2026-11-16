@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import Example from './Example';
@@ -87,11 +87,15 @@ test('the page-head Send control only brings the Send card into view', async () 
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('region', { name: 'Send and cluster tests' })));
 });
 test('a team Send destination supplies its catalog without disabling local tests', async () => {
-  const ipc = native();
+  let release!: (value: typeof localResult) => void;
+  const ipc = native(new Promise<typeof localResult>(resolve => { release = resolve; }));
   render(<Example remote place={place} catalogKey={1} />);
   const tool = await screen.findByRole('button', { name: 'Add a tool' });
   await waitFor(() => expect((tool as HTMLButtonElement).disabled).toBe(false));
   expect((screen.getByRole('combobox', { name: 'It thinks with' }) as HTMLSelectElement).disabled).toBe(false);
   expect(ipc.mock.calls.some(([command]) => command === 'cluster_catalog')).toBe(true);
-  expect((within(screen.getByRole('region', { name: 'This computer' })).getByRole('button', { name: 'Run tests' }) as HTMLButtonElement).disabled).toBe(false);
+  const run = within(screen.getByRole('region', { name: 'This computer' })).getByRole('button', { name: 'Run tests' }) as HTMLButtonElement;
+  expect(run.disabled).toBe(true); // Catalog readiness is independent of the pending local snapshot.
+  await act(async () => release(localResult));
+  await waitFor(() => expect(run.disabled).toBe(false));
 });
