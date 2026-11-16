@@ -364,7 +364,12 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         return true
     }
     require(sampled, "Cannot sample screenshot in sRGB")
-    let expected: [CGFloat] = theme == "dark" ? [26, 29, 33] : [228, 226, 219]
+    var expected: [CGFloat] = theme == "dark" ? [26, 29, 33] : [228, 226, 219]
+    if name.hasPrefix("cluster-picker-open") || name == "cluster-reload-options" {
+        require(visibleButtons("Close picker").count == 1, "Context picker must be visibly open")
+        // Its 12% black backdrop composites over the footer; the theme check still applies.
+        expected = expected.map { $0 * 0.88 }
+    }
     let actual = rgba.prefix(3).map { CGFloat($0) }
     require(zip(actual, expected).allSatisfy { abs($0 - $1) < 8 },
             "Native screenshot does not show the expected \(theme) Estuary chrome: \(actual)")
@@ -1363,19 +1368,28 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     func recordShot(_ name: String, _ checks: String) throws -> String {
         try overviewShot("overview-probe", [checks])
-        let anchor = visibleTextBounds(checks)[0]
-        guard let disclosure = visibleButtons("Details").filter({ $0.minY > anchor.minY }).min(by: { $0.minY < $1.minY }) else {
-            fail("Details disclosure not visible below \(checks)")
+        let viewport = bodyBounds()
+        let cards = nativeElements().compactMap { element -> (AXUIElement, CGRect)? in
+            guard attribute(element, "AXRole") as? String == "AXGroup",
+                ["AXTitle", "AXDescription"].contains(where: { (attribute(element, $0) as? String)?.hasSuffix(", \(checks)") == true }),
+                let bounds = nativeBounds(element), viewport.contains(bounds) else { return nil }
+            return (element, bounds)
         }
+        guard let selected = cards.min(by: { $0.1.minY < $1.1.minY }) else { fail("No visible Overview card for \(checks)") }
+        let card = selected.0
+        // Another column's Details can be closer vertically; keep every action inside this card.
+        func cardButton(_ label: String) -> CGRect? {
+            guard let bounds = nativeBounds(card) else { return nil }
+            let matches = visibleButtons(label).filter { bounds.contains($0) }
+            return matches.count == 1 ? matches[0] : nil
+        }
+        guard let disclosure = cardButton("Details") else { fail("Details not visible inside the \(checks) card") }
         let point = CGPoint(x: disclosure.midX, y: disclosure.midY)
         mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
         Thread.sleep(forTimeInterval: 0.5)
         // Generated IDs are shortened on screen; exercise Copy instead of requiring a raw UID in the layout.
         try overviewShot("overview-probe", [checks, "Agent ID"])
-        guard let currentAnchor = visibleTextBounds(checks).first,
-            let copy = visibleButtons("Copy Agent ID").filter({ $0.minY > currentAnchor.minY }).min(by: { $0.minY < $1.minY }) else {
-            fail("Agent ID Copy not visible below \(checks)")
-        }
+        guard let copy = cardButton("Copy Agent ID") else { fail("Agent ID Copy not visible inside the \(checks) card") }
         NSPasteboard.general.clearContents()
         let copyPoint = CGPoint(x: copy.midX, y: copy.midY)
         mouse(.leftMouseDown, copyPoint); mouse(.leftMouseUp, copyPoint)
@@ -1384,7 +1398,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         require(uid.hasPrefix("uid-bridge-run-"), "Copy did not retain the full synthetic Agent UID")
         NSPasteboard.general.clearContents()
         try capture(name, "Overview")
-        if let close = visibleButtons("Details").filter({ $0.minY > currentAnchor.minY }).min(by: { $0.minY < $1.minY }) {
+        if let close = cardButton("Details") {
             let p = CGPoint(x: close.midX, y: close.midY)
             mouse(.leftMouseDown, p); mouse(.leftMouseUp, p)
         }
