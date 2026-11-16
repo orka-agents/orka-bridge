@@ -1399,7 +1399,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try capturePreflight("send-cancel-completion-race", "Tests finished before cancellation.")
     try focusSend()
     try capturePreflight("send-cancel-race-result", "1 of 2 tests passed")
-    try capturePreflight("send-cancel-race-failure", "The answer did not include")
+    try capturePreflight("send-cancel-race-failure", "has-a-date", anchor: failureReason, requiring: visibleFailure)
     // Restore and actually Send the common file version on the primary cluster
     // before comparing it with the secondary. Merely restoring local bytes does
     // not undo the live spec updates exercised above.
