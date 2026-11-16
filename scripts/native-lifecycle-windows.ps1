@@ -363,7 +363,14 @@ try {
         [System.Windows.Forms.SendKeys]::SendWait('^{END}')
         [System.Windows.Forms.SendKeys]::SendWait($script:marker)
         $owned = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Orka/agents/web-reader/web-reader.agent.md'
-        Wait-For 'Native editor change not saved' { (Test-Path $owned) -and [IO.File]::ReadAllText($owned).Contains($script:marker) } | Out-Null
+        Wait-For 'Native editor change not saved' {
+            try { (Test-Path $owned) -and [IO.File]::ReadAllText($owned).Contains($script:marker) }
+            catch [IO.IOException] {
+                # Autosave can hold an exclusive writer; only sharing/lock violations are transient.
+                if (($_.Exception.GetBaseException().HResult -band 0xffff) -notin 32, 33) { throw }
+                $false
+            }
+        } | Out-Null
         # SC_CLOSE follows the native titlebar Close route, unlike process termination.
         [NativeWalk]::PostMessage($script:hwnd, 0x112, [IntPtr]0xf060, [IntPtr]::Zero) | Out-Null
         Wait-For 'Native Close did not hide' { ![NativeWalk]::IsWindowVisible($script:hwnd) } | Out-Null
