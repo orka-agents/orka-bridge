@@ -9,7 +9,7 @@ import { armFirstTest, retireFirstTest } from './first-test';
 import Model, { type ModelState } from './Model';
 import Preflight from './Preflight';
 import { canQueueModel, setupView } from './progress';
-import { formatSize, type WorkspaceRequirements, workspaceRequirements } from './requirements';
+import { formatRequirementGB, type WorkspaceRequirements, workspaceRequirements } from './requirements';
 import { type CheckStepState, Meet, SetupProgress } from './Steps';
 import { cancelLocal, changeLocal, type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
@@ -81,7 +81,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const snapshotEpoch = useRef(0);
   const [requirements, setRequirements] = useState<WorkspaceRequirements | null>();
   const [preflightBlocked, setPreflightBlocked] = useState(true);
-  const [preflightUncertain, setPreflightUncertain] = useState(false);
+  const [location, setLocation] = useState<'local' | 'cluster'>('local');
   const epoch = useRef(0);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const heading = useRef<HTMLHeadingElement>(null);
@@ -155,7 +155,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   function chooseComputer() { publishPlace({ kind: 'thisComputer' }); }
   function openExample() { if (firstPass) setPayoffDismissed(true); chooseComputer(); onOpenExample(); }
   function back() { focusChoice.current = true; setPanel('places'); }
-  function openLocal() { focusChoice.current = true; setFromPlaces(true); setPanel('local'); }
+  function openLocal() { focusChoice.current = true; setFromPlaces(true); setLocation('local'); setPreflightBlocked(true); setPanel('local'); }
   function removed(key: string, targetId: string | undefined, navigate: boolean) {
     const current = currentPlaceRef.current;
     if (targetId && current.kind === 'cluster' && current.target?.id === targetId) publishPlace({ kind: 'cluster' });
@@ -190,7 +190,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     else timer.current = setTimeout(() => setCheck(value => value + 1), 1000);
   }
 
-  const continueAction = <Button type="button" kind={preflightUncertain ? 'secondary' : 'primary'} aria-describedby={requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { void chooseLocal(); }}>Continue</Button>;
+  const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
   useImperativeHandle(ref, () => ({ stop() { setPanel('local'); void chooseLocal('change'); } }));
   const titleId = active ? 'page-title' : undefined;
   if (!status && !error) return <h1 id={titleId}>Checking the local cluster…</h1>;
@@ -201,7 +201,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   return <div className="places-workspace">
     {view !== 'places' && !showPayoff && <Button type="button" kind="quiet" className="places-back" onClick={back}>{view === 'local' && !fromPlaces ? 'Choose where agents run' : 'Back to clusters'}</Button>}
     <div className="workspace-heading places-heading" hidden={!!showPayoff}>
-      <h1 ref={heading} tabIndex={-1} id={showPayoff ? undefined : titleId}>{view === 'places' ? 'Clusters' : view === 'cluster' ? entry?.current ? 'Manage your cluster' : entry?.remembered ? 'Connect a cluster' : 'Add a cluster' : selected ? presentation.done ? 'This computer' : status?.localVm === 'ready' ? modelState === 'connected' ? 'Run your first agent' : 'Connect the AI' : status?.localVm === 'failed' ? status.preflightFailure ? 'Check this computer' : workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready' : 'Set up this computer'}</h1>
+      <h1 ref={heading} tabIndex={-1} id={showPayoff ? undefined : titleId}>{view === 'places' ? 'Clusters' : view === 'cluster' ? entry?.current ? 'Manage your cluster' : entry?.remembered ? 'Connect a cluster' : 'Add a cluster' : selected ? presentation.done ? 'This computer' : status?.localVm === 'ready' ? modelState === 'connected' ? 'Run your first agent' : 'Connect the AI' : status?.localVm === 'failed' ? status.preflightFailure ? 'Check this computer' : workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
       {view === 'places' && <Button type="button" kind={!snapshotUnavailable && snapshot?.persistenceState === 'complete' && snapshot.places.length === 0 ? 'secondary' : 'primary'} onClick={() => chooseCluster()}>Add a cluster</Button>}
       {view === 'places' && <p className="muted">Choose where agents run</p>}
       {view === 'local' && selected && !['ready', 'failed', 'notIntegrated'].includes(status?.localVm ?? '') && <p className="muted">Meanwhile, meet the agent you'll test first.</p>}
@@ -214,19 +214,32 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
       <div className={selected ? `setup workspace-setup-grid${status?.localVm === 'failed' ? ' workspace-setup-failed' : ''}` : 'workspace-choice local-preflight'}>
         {!selected && <>
           <section className="card">
-            <h2>This computer</h2>
-            <p>Bridge runs the local cluster on this computer. It needs virtualization turned on.</p>
-            <dl className="workspace-sizes">
-              <div><dt>Memory</dt><dd>{requirements ? formatSize(requirements.memoryBytes) : requirements === undefined ? 'Reading…' : 'Not available yet'}</dd></div>
-              <div><dt>Cluster download</dt><dd>{requirements ? formatSize(requirements.imageBytes) : requirements === undefined ? 'Reading…' : 'Not available yet'}</dd></div>
-              <div><dt>Data disk, up to</dt><dd>{requirements ? formatSize(requirements.stateDiskBytes) : requirements === undefined ? 'Reading…' : 'Not available yet'}</dd></div>
-            </dl>
-            <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
-            <p id="workspace-inside" hidden={!inside}>The local cluster includes Orka and the tools your agents use. Bridge checks the download before starting it.</p></Disclosure>
-          {view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated'
-            ? <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} onUncertain={setPreflightUncertain} action={continueAction} />
+            <p className="workspace-choice-step muted">Step 1 of 4</p>
+            <fieldset className="workspace-options">
+              <legend className="workspace-sr-only">Where agents run</legend>
+              <div className={`workspace-option${location === 'local' ? ' workspace-selected' : ''}`}>
+                <input id="workspace-local" name="workspace-location" type="radio" value="local" checked={location === 'local'} onChange={() => { setPreflightBlocked(true); setLocation('local'); }} />
+                <label htmlFor="workspace-local">On this computer</label><span className="chip">Recommended</span>
+                <div className="workspace-option-detail">
+                  <p>Bridge sets up a workspace on this computer. {requirements ? `It needs virtualization turned on and about ${formatRequirementGB(requirements.memoryBytes)} of installed memory.` : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>
+                  <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
+                    <div id="workspace-inside" hidden={!inside}>
+                      <p>The local cluster includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>
+                      {requirements && <p>{`This build's image size is ${formatRequirementGB(requirements.imageBytes)} after installation, not the amount downloaded. Its data disk can grow to ${formatRequirementGB(requirements.stateDiskBytes)}.`}</p>}
+                    </div>
+                  </Disclosure>
+                </div>
+              </div>
+              <div className={`workspace-option${location === 'cluster' ? ' workspace-selected' : ''}`}>
+                <input id="workspace-cluster" name="workspace-location" type="radio" value="cluster" checked={location === 'cluster'} onChange={() => setLocation('cluster')} />
+                <label htmlFor="workspace-cluster">On a cluster you already have</label>
+                <div className="workspace-option-detail"><p>For Kubernetes users. Pick a kubectl context and Bridge uses the Orka on that cluster.</p></div>
+              </div>
+            </fieldset>
+          {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated'
+            ? <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} action={continueAction} />
             : <div className="workspace-step-actions">{continueAction}</div>}
-          {status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
+          {location === 'local' && status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
           </section>
         </>}
         <div className="setup-column setup-main">
