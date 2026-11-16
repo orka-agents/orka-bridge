@@ -15,6 +15,8 @@ const SECRET: &[u8] = b"synthetic-model-only";
 
 #[path = "setup_model_key_tests.rs"]
 mod key_tests;
+#[path = "setup_model_reset_tests.rs"]
+mod reset_tests;
 
 fn permissions(root: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
@@ -226,6 +228,7 @@ struct FakeVault {
     deny_delete: Mutex<bool>,
     block_publish: Mutex<Option<(std::path::PathBuf, u32)>>,
     observe_save: Option<Box<dyn Fn(Uuid) + Send + Sync>>,
+    observe_delete: Option<Box<dyn Fn(Uuid) + Send + Sync>>,
     apply_then_error: bool,
     calls: Mutex<Vec<(&'static str, Uuid)>>,
     slots: Mutex<HashMap<Uuid, Vec<u8>>>,
@@ -278,6 +281,9 @@ impl CredentialStore for FakeVault {
             return Err(StoreError::Unavailable);
         }
         self.slots.lock().unwrap().remove(&slot);
+        if let Some(observe) = &self.observe_delete {
+            observe(slot);
+        }
         Ok(())
     }
 }

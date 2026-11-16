@@ -1,18 +1,19 @@
-import { Disclosure } from '../components/Disclosure';
+import { type ReactNode, type Ref, useEffect, useState } from 'react';
 import { Button } from '../components/Button';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type Status, StatusIcon, StatusPill } from '../components/DesignSystem';
+import { Disclosure } from '../components/Disclosure';
 import { agentInfo } from '../designer/agent-api';
-import { type ExamplePair, loadExample, type SetupStatus } from './state';
-import Recovery from './Recovery';
-import { StatusIcon, StatusPill, type Status } from '../components/DesignSystem';
 import type { ModelState } from './Model';
 import { canQueueModel, infraProgress, setupView } from './progress';
+import Recovery from './Recovery';
 import { modelDetails } from './recovery-info';
+import { type ExamplePair, loadExample, type SetupStatus } from './state';
 import './steps.css';
 
 export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
 
 type Props = {
+  modelRecoveryRef?: Ref<HTMLDivElement>;
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
   firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void;
   onCancel: () => void; onRestart: () => void; onCluster?: () => void; onChange: (button: HTMLButtonElement) => void; onOpenExample: () => void;
@@ -29,8 +30,8 @@ function stepRows({ status, stopping, error, modelState = 'idle', firstCheck, in
     : failed ? ['failed', 'Needs attention'] : paused ? ['not-started', 'Paused']
     : stopping || status.localVm === 'closing' ? ['running', 'Stopping']
     : infra ? ['running', status.localVm === 'starting' ? 'Starting' : 'Getting ready'] : ['not-started', 'Waiting'];
-  const model: [Status, string] = modelState === 'failed' ? ['failed', 'Needs attention'] : connected ? ['passed', 'Connected']
-    : modelState === 'connecting' ? ['running', 'Connecting'] : modelState === 'removing' ? ['running', 'Removing sign-in']
+  const model: [Status, string] = ['failed', 'resetFailed', 'removalFailed'].includes(modelState) ? ['failed', 'Needs attention'] : connected ? ['passed', 'Connected']
+    : modelState === 'resetting' ? ['running', 'Resetting'] : modelState === 'connecting' ? ['running', 'Connecting'] : modelState === 'removing' ? ['running', 'Removing sign-in']
     : modelState === 'queued' ? ['not-started', 'Queued']
     : status.localVm === 'ready' ? status.model === 'locked' ? ['not-started', 'Unavailable'] : ['needs-you', 'Needs you']
     : canQueueModel(status) ? ['not-started', 'Pick any time'] : ['not-started', 'Waiting'];
@@ -91,7 +92,7 @@ export function SetupProgress(props: Props) {
   </section>;
 }
 
-export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster'> & { workspaceDetails?: ReactNode }) {
+export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster'> & { workspaceDetails?: ReactNode; modelRecoveryRef?: Ref<HTMLDivElement> }) {
   const { status, busy, error, onRestart, onCluster } = props;
   const { view, failed, rows } = stepRows(props);
   return <ol className="steps-four" aria-label="Setup steps">
@@ -99,6 +100,7 @@ export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | '
         return <li key={name} className={rowClass[state]} aria-current={!view.done && index + 1 === view.step && ['running', 'needs-you'].includes(state) ? 'step' : undefined}>
         <StatusIcon state={state} /><b>{name}</b><span className="step-result">{result}</span>
         {index === 1 && props.workspaceDetails && <div className="step-more">{props.workspaceDetails}</div>}
+        {index === 2 && <div ref={props.modelRecoveryRef} className="step-more model-recovery-slot" />}
         {failed && index === 1 && <div className="step-more">
           <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /></div>}
       </li>; })}

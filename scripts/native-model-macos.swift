@@ -96,7 +96,9 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         // Vision renders the capital I as a lowercase l in this exact observed label.
         let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI")
             .replacingOccurrences(of: "APl key", with: "API key").contains(value)
-        let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || name.hasPrefix("local-key-") && nativeChatTextIsVisible(value))
+        // Recovery copy has apostrophes and "AI" that Vision misreads; require visible native text instead.
+        let lenient = ["local-key-", "local-reset-", "local-remove-"].contains { name.hasPrefix($0) }
+        let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || lenient && nativeChatTextIsVisible(value))
         let chatText = !found && name.hasPrefix("chat-") && nativeChatTextIsVisible(value)
         require(found || nativeText || chatText, "Missing \(value) in \(name): \(text)")
     }
@@ -105,10 +107,15 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         else { fatalError("Cannot sample native theme") }
     let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
     require(theme == "dark" ? brightness < 0.25 : brightness > 0.8, "Wrong system theme")
-    if ["local-result", "local-answer", "local-story", "local-running", "local-stopping"].contains(where: { name.hasPrefix($0) }) {
+    // Approved frames: Designer, 1g (AI connection failed) and 1h (AI reset).
+    let approved: (String, String)? = ["local-result", "local-answer", "local-story", "local-running", "local-stopping"].contains(where: { name.hasPrefix($0) })
+        ? ("designer-reference", "Approved Designer frame (wide reference)")
+        : name.hasPrefix("local-reset-mismatch") || name.hasPrefix("local-reset-place") ? ("ai-connection-failed-reference", "Approved AI connection failure frame (wide reference)")
+        : name.hasPrefix("local-reset-") ? ("ai-reset-failed-reference", "Approved AI reset frame (wide reference)") : nil
+    if let (referenceName, referenceLabel) = approved {
         guard let actual = NSImage(contentsOfFile: file),
-            let reference = NSImage(contentsOfFile: "../docs/images/designer-reference-\(theme).png") else {
-            fatalError("Missing Designer comparison image")
+            let reference = NSImage(contentsOfFile: "../docs/images/\(referenceName)-\(theme).png") else {
+            fatalError("Missing approved comparison image")
         }
         let width = actual.size.width
         let referenceHeight = reference.size.height * width / reference.size.width
@@ -121,11 +128,11 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         reference.draw(in: NSRect(x: width + 32, y: height - 42 - referenceHeight, width: width, height: referenceHeight))
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.labelColor]
         ("Native Bridge, synthetic test data" as NSString).draw(at: NSPoint(x: 16, y: height - 26), withAttributes: attributes)
-        ("Approved Designer frame (wide reference)" as NSString).draw(at: NSPoint(x: width + 32, y: height - 26), withAttributes: attributes)
+        (referenceLabel as NSString).draw(at: NSPoint(x: width + 32, y: height - 26), withAttributes: attributes)
         comparison.unlockFocus()
         guard let tiff = comparison.tiffRepresentation,
             let bitmap = NSBitmapImageRep(data: tiff),
-            let png = bitmap.representation(using: .png, properties: [:]) else { fatalError("Cannot compose Designer comparison") }
+            let png = bitmap.representation(using: .png, properties: [:]) else { fatalError("Cannot compose approved comparison") }
         try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
     }
     print("PASS \(name): real native frontend, synthetic IPC only")
@@ -182,6 +189,56 @@ scroll(4000)
 _ = try capture("local-setup-ai-minimum-top", ["Where agents run", "Get your workspace ready"])
 _ = try seek("Connect the AI", -200)
 _ = try capture("local-setup-ai-minimum", ["GitHub Copilot", "Connect the AI"])
+// Earlier-installation record (frames 1g/1h): synthetic recovery IDs, no store, file or VM.
+try "model-mismatch".write(to: setupProgress, atomically: true, encoding: .utf8)
+press("Connect the AI")
+waitForButton("Reset AI connection")
+require(nativeTextExists("The AI couldn't connect") && nativeTextExists("Your workspace is running. Nothing is lost."), "Mismatch must name the AI failure and the safe workspace")
+require(!["Remove sign-in", "Check again", "Connect the AI"].contains(where: anyButton), "Mismatch offers only reset recovery")
+try resetCapture("mismatch", ["earlier setup", "Use another provider", "Copy details for help"], anchor: "Reset AI connection")
+press(enabledButton("Back to clusters") != nil ? "Back to clusters" : "Choose where agents run")
+waitForButton("Reset AI connection")
+try resetCapture("place", ["This computer", "Workspace running", "earlier setup"], anchor: "Reset AI connection")
+press("Connect the AI")
+waitForButton("Reset AI connection")
+press("Reset AI connection")
+try resetCapture("confirmation", ["Reset the AI connection?", "starts with this same reset", "Cancel"], anchor: "Reset")
+press("Cancel")
+waitForButton("Reset AI connection")
+press("Use another provider")
+require(nativeTextExists("Use another provider starts with this same reset."), "Use another provider must confirm the same reset")
+press("Cancel")
+try "reset-fail-credential".write(to: setupProgress, atomically: true, encoding: .utf8)
+press("Reset AI connection")
+press("Reset")
+waitForButton("Reset again")
+require(nativeTextExists("The AI connection couldn't be reset") && nativeTextExists("Bridge couldn't reset the AI connection"), "Reset failure needs its own headings")
+require(!anyButton("Use another provider") && !anyButton("Remove sign-in"), "Reset failure offers only Reset again and Copy details")
+try resetCapture("failed", ["couldn't reset the AI connection", "Try once more", "Copy details for help"], anchor: "Reset again")
+press("Copy details for help")
+waitForNativeText(["Details copied.", "Couldn't copy."])
+try resetCapture("copy-notice", [nativeTextExists("Details copied.") ? "No keys or sign-in tokens are included." : "Couldn't copy."], anchor: "Copy details for help")
+pressLowest("Show details")
+waitForNativeText(["Native credential removal not confirmed; saved record kept."])
+try resetCapture("details", ["Native credential removal not confirmed; saved record kept.", "20000000-0000-4000-8000-000000000002"], anchor: "30000000-0000-4000-8000-000000000003")
+try "reset-fail-record".write(to: setupProgress, atomically: true, encoding: .utf8)
+press("Reset again")
+waitForNativeText(["Reset failed again"])
+waitForButton("Reset again")
+require(nativeTextExists("Native credential removed; saved record removal not confirmed."), "Repeated failure must show its distinct custody stage")
+try resetCapture("failed-again", ["Reset failed again", "Copy details for help"], anchor: "Reset again")
+try "reset-pending".write(to: setupProgress, atomically: true, encoding: .utf8)
+press("Reset again")
+waitForNativeText(["Removing Bridge's saved AI connection"])
+require(nativeTextExists("Resetting the AI connection"), "Resetting must name the operation")
+require(!["Remove sign-in", "Connect the AI", "Reset again", "Reset AI connection"].contains(where: anyButton), "Resetting is a status, not an action")
+try resetCapture("resetting", ["Resetting"], anchor: "Removing Bridge's saved AI connection")
+try "reset-done".write(to: setupProgress, atomically: true, encoding: .utf8)
+waitForNativeText(["Connection reset. Choose the AI again."])
+waitForButton("Connect the AI")
+require(!anyButton("Remove sign-in"), "Reset leaves no saved sign-in to remove")
+try resetCapture("done", ["Connection reset. Choose the AI again.", "GitHub Copilot"], anchor: "Connect the AI")
+try FileManager.default.removeItem(at: setupProgress)
 localSize(1280, 800)
 scroll(4000)
 require(enabledButton("Remove sign-in") == nil, "Remove must be absent before the first sign-in attempt")
@@ -196,7 +253,8 @@ rows = try capture("connected", ["Connected", "Remove sign-in"])
 click("Remove sign-in", rows)
 rows = try capture("local-remove-confirmed", ["saved sign-in?", "Cancel", "Remove sign-in"])
 click("Remove sign-in", rows)
-rows = try capture("remove-failed", ["Retry removal", "Copy details for help"])
+rows = try capture("local-remove-failed", ["Couldn't remove the saved sign-in", "Retry removal", "Copy details for help"])
+require(nativeTextExists("The saved sign-in couldn't be removed") && !anyButton("Remove sign-in"), "Removal failure needs its own heading and no Remove")
 require(enabledButton("Connect the AI") == nil, "Failed cleanup must offer removal retry, not connection")
 click("Retry removal", rows)
 rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Connect the AI"])
@@ -339,6 +397,7 @@ try keyCapture("filled", ["API key", "claude-sonnet-5-5"], compact: true)
 _ = try seek("Connect the AI", -200)
 click("Connect the AI", [])
 try keyCapture("checking", ["Checking", "Asking Anthropic"])
+require(!anyButton("Remove key") && !anyButton("Remove sign-in"), "Remove must be absent while Connecting")
 try Data().write(to: keyCheckRelease, options: .atomic)
 waitForButton("Check again")
 for (state, message) in [("rejected", "Anthropic didn't accept this key"),
@@ -366,6 +425,7 @@ scroll(4000)
 _ = try seek("Change", -200)
 click("Change", [])
 try keyCapture("change-failed", ["Key removal has not been confirmed", "Retry removal"])
+require(nativeTextExists("Couldn't remove the saved key") && !anyButton("Remove key"), "Key removal failure needs its own heading and no Remove")
 require(enabledButton("Anthropic") == nil, "Change must not permit replacement before cleanup")
 click("Retry removal", [])
 try keyCapture("changed", ["API key", "No AI connection."], compact: true)
@@ -458,6 +518,71 @@ func waitForButton(_ label: String) {
         Thread.sleep(forTimeInterval: 0.1)
     }
     require(false, "Native Chat action did not become available: \(label)")
+}
+// Presence checks for state assertions; unlike enabledButton these include disabled controls.
+func anyButton(_ label: String) -> Bool {
+    nativeElements().contains { element in
+        ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? "")
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
+    }
+}
+func nativeTextExists(_ expected: String) -> Bool {
+    nativeElements().contains { element in
+        attribute(element, "AXRole") as? String == "AXStaticText" && (attribute(element, "AXValue") as? String)?.contains(expected) == true
+    }
+}
+func waitForNativeText(_ any: [String]) {
+    for _ in 0..<40 {
+        if any.contains(where: nativeTextExists) { return }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(false, "Native text did not appear: \(any)")
+}
+func reachable(_ bounds: CGRect?) -> Bool {
+    bounds.map { window()!.1.contains($0) && $0.maxY <= window()!.1.maxY - 32 } == true
+}
+// Scroll from the top until the exact control sits above the fixed footer, then click it.
+func press(_ label: String) {
+    scroll(4000)
+    for _ in 0..<10 {
+        if reachable(enabledButton(label).flatMap(nativeBounds)) { break }
+        scroll(-200)
+    }
+    click(label, [])
+}
+// Setup keeps the workspace row's own Show details; the AI row's control is the lower one.
+func pressLowest(_ label: String) {
+    scroll(4000)
+    for _ in 0..<10 {
+        let lowest = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXButton" && attribute(element, "AXEnabled") as? Bool == true
+                && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
+        }.compactMap(nativeBounds).max(by: { $0.minY < $1.minY })
+        if let bounds = lowest, reachable(bounds) {
+            for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: CGPoint(x: bounds.midX, y: bounds.midY), mouseButton: .left)?.post(tap: .cghidEventTap)
+            }
+            Thread.sleep(forTimeInterval: 1)
+            return
+        }
+        scroll(-200)
+    }
+    require(false, "Native control is not reachable: \(label)")
+}
+// Each reset state at the wide size and the exact 540x640 minimum, beside its approved frame.
+func resetCapture(_ state: String, _ expected: [String], anchor: String) throws {
+    for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+        localSize(width, height)
+        scroll(4000)
+        for _ in 0..<10 {
+            if let button = enabledButton(anchor) { if reachable(nativeBounds(button)) { break } }
+            else if nativeChatTextIsVisible(anchor) { break }
+            scroll(-200)
+        }
+        _ = try capture("local-reset-\(state)-\(size)", expected + [anchor])
+    }
+    localSize(1280, 800)
+    scroll(4000)
 }
 func waitForChatText(_ text: String) {
     for _ in 0..<40 {
