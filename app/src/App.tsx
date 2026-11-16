@@ -269,7 +269,7 @@ export default function App() {
                 else setPage(name);
               }}>
               <span className={`icon-tile tile-${name.toLowerCase()}`}><PageIcon page={name} /></span>
-              <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{name === 'Designer' && agentName ? <><span className="tab-agent-name">{agentName}, </span><span className="tab-agent-status">{agentStateWord ? <>{agentStatus.slice(0, agentStateWord.index)}<span className={`tab-status-word status-${tabTone}`}>{agentStateWord[0]}</span>{agentStatus.slice(agentStateWord.index! + agentStateWord[0].length)}</> : agentStatus}</span></> : tabStatus[name]}</small></span>
+              <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{name === 'Designer' && agentName ? <><span className="tab-agent-name">{agentName}, </span><span className="tab-agent-status">{agentStateWord ? <>{agentStatus.slice(0, agentStateWord.index)}<span className={`tab-status-word status-${tabTone}`}>{agentStateWord[0]}</span>{agentStatus.slice((agentStateWord.index ?? 0) + agentStateWord[0].length)}</> : agentStatus}</span></> : tabStatus[name]}</small></span>
             </button>
           ))}
         </nav>

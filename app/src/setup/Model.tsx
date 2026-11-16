@@ -213,14 +213,14 @@ export default function Model({ enabled, queueable = false, paused = false, away
   const portaled = !!recoveryTarget && (!!error || onPlaceCard && (resetDone || cardRecovery));
   const content = <section ref={root} className={portaled ? "setup-model" : "card setup-model"} aria-labelledby="model-title" aria-busy={!!busy}>
     <h2 id="model-title" ref={heading} tabIndex={-1}>{removalFailed ? `Couldn't remove the saved ${keyMode ? 'key' : 'sign-in'}` : 'Connect the AI'}</h2>
-    {actionReason && (paused || busy) && <p className="muted">{actionReason}</p>}
+    {actionReason && (paused || busy || removalFailed) && <p className="muted">{actionReason}</p>}
     {!ready && busy !== 'remove' && !removalFailed && <>
       <fieldset className="model-choice" title={providerReason} disabled={!!busy || hasSignIn}>
         <legend className="sr-only">AI connection</legend>
         <label><input type="radio" name="model-kind" checked={!keyMode} onChange={() => chooseKind('copilot')} /> GitHub Copilot</label>
         <label><input type="radio" name="model-kind" checked={keyMode} onChange={() => chooseKind('key')} /> Your own API key <span className="muted">(OpenAI, Anthropic)</span></label>
       </fieldset>
-      {providerReason && <p className="muted">{providerReason}</p>}
+      {providerReason && providerReason !== actionReason && <p className="muted">{providerReason}</p>}
       {keyMode ? <div className="model-key-form">
         <fieldset className="view-switch"><legend className="sr-only">Company</legend>
           {(['openai', 'anthropic'] as const).map(item => <button key={item} type="button" aria-pressed={vendor === item} disabled={!!busy || hasSignIn} onClick={() => { clearKey(); setVendor(item); setError(undefined); }}>{companies[item].name}</button>)}

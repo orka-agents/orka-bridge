@@ -8,6 +8,12 @@ const { invoke, isTauri } = vi.hoisted(() => ({ invoke: vi.fn(), isTauri: vi.fn(
 vi.mock('@tauri-apps/api/core', () => ({ invoke, isTauri }));
 beforeEach(() => { invoke.mockReset(); isTauri.mockReturnValue(true); });
 afterEach(() => { cleanup(); });
+test('a busy AI action explains its disabled controls once', async () => {
+  invoke.mockImplementation(() => new Promise(() => {}));
+  render(<Model enabled />);
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  expect(screen.getAllByText('Wait for the AI connection to finish.')).toHaveLength(1);
+});
 test('paused model actions explain the workspace wait without changing admission', async () => {
   invoke.mockResolvedValue({ ready: true });
   const view = render(<Model enabled />);

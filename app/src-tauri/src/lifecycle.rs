@@ -38,6 +38,10 @@ pub fn hide(app: &tauri::AppHandle) {
         CloseAction::Hide => hide_or_stop(app),
         CloseAction::Pending => {}
         CloseAction::Explain => {
+            let Some(window) = app.get_webview_window("main") else {
+                hide_or_stop(app);
+                return;
+            };
             let handle = app.clone();
             let location = if cfg!(target_os = "macos") {
                 "menu bar"
@@ -46,7 +50,7 @@ pub fn hide(app: &tauri::AppHandle) {
             };
             app.dialog().message(format!(
                 "Closing this window doesn't stop your workspace. Open Bridge from the {location}. To stop the workspace and quit Bridge, choose ‘Stop the local cluster and quit’ from its menu."
-            )).title("Bridge is still running").show(move |acknowledged| {
+            )).title("Bridge is still running").parent(&window).show(move |acknowledged| {
                 // Quit can win while the information dialog is open.
                 let shutdown = handle.state::<Arc<TerminalShutdown>>();
                 if shutdown.closing() || shutdown.completed() { return; }
