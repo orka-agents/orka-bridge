@@ -53,6 +53,12 @@ for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clus
   assert.match(step, /timeout-minutes: 3\n/, 'each scope keeps the existing three-minute ceiling');
 }
 assert.ok(workflow.includes('node ../scripts/test-native-recovery-scopes.mjs'));
+for (const path of ['build.rs', 'permissions/setup.toml']) {
+  const registration = await readFile(new URL(`../app/src-tauri/${path}`, import.meta.url), 'utf8');
+  for (const command of ['cluster_service_accounts', 'cluster_service_account_preview']) {
+    assert.ok(registration.includes(`"${command}"`), `${path} must permit the real desktop ${command} command`);
+  }
+}
 // Execute the driver's actual isolated-world IPC setup, not a second copy of its payloads.
 const captureActions = source.slice(source.indexOf('  async function captureActions('), source.indexOf('  // Overview renderer fixtures:'));
 for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination']) {

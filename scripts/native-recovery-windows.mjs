@@ -706,7 +706,7 @@ try {
       await clickAction('Use this cluster');
       await clickAction('Open your agent');
     } else if (noDestination) {
-      await clickAction('Overview');
+      await evaluate(`document.querySelector('button[aria-label="Overview"]').click()`);
       await clickAction('Open');
     } else if (name.startsWith('designer') || name.startsWith('local-cancel-') || name.startsWith('chat-') || name.startsWith('new-agent-')) await clickAction('Read its instructions');
     if (name.startsWith('chat-')) {
