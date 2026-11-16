@@ -17,7 +17,7 @@ export default function Places({ snapshot, unavailable, status, view, place, onL
       <span className="icon-tile" aria-hidden="true"><svg className="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></svg></span>
       <div className="place-summary"><h2>This computer</h2><p className="place-meta"><span>{!status ? 'Local cluster status could not be read' : status.localVm === 'notIntegrated' ? view.line : started ? view.detail : 'The local cluster runs here'}</span>{(started && view.line !== view.detail || !status) && <span>{view.line}</span>}</p></div>
       <StatusPill state={view.status}>{view.status === 'passed' ? 'Ready' : undefined}</StatusPill>
-      <Button type="button" kind={knownEmpty && !started && !!status ? 'primary' : 'secondary'} size="small" onClick={onLocal}>{!status ? 'View details' : view.action}</Button>
+      <Button type="button" kind={!!status && !view.done && (started || knownEmpty) ? 'primary' : 'secondary'} size="small" onClick={onLocal}>{!status ? 'View details' : view.action}</Button>
     </section>
     {snapshot?.places.map(item => {
       const selected = place.kind === 'cluster' && !!place.target && snapshot.selectedKey === item.key;
@@ -32,6 +32,6 @@ export default function Places({ snapshot, unavailable, status, view, place, onL
       </section>;
     })}
     {snapshot?.persistenceState === 'unavailable' && <p role="status">Remembered cluster information is unavailable. New connections may not be remembered after Bridge closes.</p>}
-    {unavailable ? <p role="status">Couldn't read your clusters. Try opening Clusters again.</p> : !snapshot ? <p role="status">Reading your clusters…</p> : knownEmpty && <p className="muted">No other clusters added yet. Add a Kubernetes cluster with Orka installed.</p>}
+    {unavailable ? <p role="status">Couldn't read your clusters. Try opening Clusters again.</p> : !snapshot ? <p role="status">Reading your clusters…</p> : knownEmpty && <p className="muted">No other clusters added yet. Connect a cluster your team already uses.</p>}
   </div>;
 }

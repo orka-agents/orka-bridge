@@ -226,7 +226,7 @@ test.each([['closed', 'Local cluster stopped'], ['cancelled', 'Setup paused'], [
   expect(within(local).getByText(label).closest('.pill')).toBeNull();
   expect(local.querySelector('.pill')?.className).toContain('status-not-started');
   expect(within(local).queryByText('Setup in progress')).toBeNull();
-  expect(within(local).getByRole('button', { name: 'Continue setup' })).toBeTruthy();
+  expect(within(local).getByRole('button', { name: 'Continue setup' }).classList.contains('button-primary')).toBe(true);
 });
 
 test('snapshot failure retains known rows but does not invent a selected row or empty inventory', async () => {
@@ -237,7 +237,7 @@ test('snapshot failure retains known rows but does not invent a selected row or 
   await screen.findByText("Couldn't read your clusters. Try opening Clusters again.");
   expect(row('team-dev')).toBeTruthy();
   expect(screen.queryByText('Selected for Designer')).toBeNull();
-  expect(screen.queryByText('No other clusters added yet. Add a Kubernetes cluster with Orka installed.')).toBeNull();
+  expect(screen.queryByText(/No other clusters added yet/)).toBeNull();
 });
 
 test('a Use recheck clears the frontend target before native replies and Back cannot restore it', async () => {
