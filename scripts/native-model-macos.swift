@@ -172,8 +172,10 @@ for (phase, expected) in [("installing", "Installing, 1 GiB of 2 GiB"), ("starti
         scroll(4000)
         _ = try capture("local-setup-\(phase)-\(size)", ["Getting your workspace ready", "Where agents run", "Get your workspace ready", expected])
         if phase == "installing" {
-            _ = try seek("Meet your first agent", -200)
-            _ = try capture("local-setup-meet-\(size)", ["Meet your first agent", "web-reader"])
+            // Show the file-derived tool/test rows, not just the card heading at the fold.
+            scroll(-4000)
+            require(nativeChatTextIsVisible("web_fetch"), "Meet tool name must be visible")
+            _ = try capture("local-setup-meet-\(size)", ["Meet your first agent", "web-reader", "Read a web page"])
         }
     }
 }
