@@ -23,7 +23,7 @@ test.each(['Agent', 'File'] as const)('a pending %s draft survives setup readine
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
   const user = userEvent.setup(); render(<App />);
-  await within(screen.getByRole('contentinfo')).findByText('Starting the local cluster');
+  await within(screen.getByRole('contentinfo')).findByText('Getting your workspace ready, step 2 of 4');
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   await screen.findByRole('textbox', { name: 'Instructions' });
   if (view === 'File') await user.click(screen.getByRole('button', { name: 'File' }));
@@ -32,7 +32,7 @@ test.each(['Agent', 'File'] as const)('a pending %s draft survives setup readine
   fireEvent.change(editor, { target: { value: edited } }); fireEvent.blur(editor);
   await waitFor(() => expect(pending).toContain('Draft kept through setup.'));
   localVm = 'ready';
-  await within(screen.getByRole('contentinfo')).findByText('Connect the AI', {}, { timeout: 2000 });
+  await within(screen.getByRole('contentinfo')).findByText('Connect the AI, step 3 of 4', {}, { timeout: 2000 });
   expect(screen.getByRole('textbox', { name: view === 'File' ? 'Agent file' : 'Instructions' })).toBe(editor);
   expect(editor.value).toBe(edited); expect(opens).toBe(1); expect(discovery).toEqual([]);
   expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
@@ -57,6 +57,43 @@ test.each([true, false])('reopening Designer uses native model connection eviden
   if (modelConnected) await waitFor(() => expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(false));
   else { await screen.findByText(/Connect the AI in Clusters first/); expect(screen.getByRole('button', { name: 'Add a tool' }).matches(':disabled')).toBe(true); }
   expect(catalogs.mock.calls.length).toBe(modelConnected ? 1 : 0);
+});
+
+test.each(['preparing', 'installing', 'starting', 'closing', 'failed'])('Overview reflects setup %s rather than a stopped cluster', async localVm => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm, model: 'locked' };
+    if (command === 'overview_files') return { state: 'complete', files: [], runActive: false, historyState: 'complete', runAgents: [] };
+    if (command === 'overview_places') return { places: [], historyState: 'complete', unobserved: [] };
+    if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observedAt: null, observation: null, runActive: false, reason: 'stopped' };
+    return null;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  const page = await screen.findByRole('main', { name: 'Your agents' });
+  const expected = localVm === 'starting' ? 'Starting the local cluster' : localVm === 'closing' ? 'Stopping the local cluster' : localVm === 'failed' ? 'Setup failed' : 'Getting the local cluster ready';
+  const overview = within(page).getByRole('region', { name: 'Agents by cluster' });
+  expect(await within(overview).findByText(expected)).toBeTruthy();
+  expect(within(overview).queryByText(/The local cluster is stopped/)).toBeNull();
+});
+
+test.each(['closed', 'failed'])('Overview shows a pending start before the first reply from %s', async localVm => {
+  vi.stubGlobal('isTauri', true);
+  mockIPC(command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm, model: 'locked' };
+    if (command === 'setup_select_local') return new Promise(() => {});
+    if (command === 'overview_files') return { state: 'complete', files: [], runActive: false, historyState: 'complete', runAgents: [] };
+    if (command === 'overview_places') return { places: [], historyState: 'complete', unobserved: [] };
+    if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observedAt: null, observation: null, runActive: false, reason: 'stopped' };
+    return null;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await openLocalSetup(user);
+  await user.click(await screen.findByRole('button', { name: localVm === 'failed' ? 'Try again' : 'Start again' }));
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  const overview = screen.getByRole('region', { name: 'Agents by cluster' });
+  expect(await within(overview).findByText('Getting your workspace ready…')).toBeTruthy();
+  expect(within(overview).queryByText(/stopped|Setup failed/i)).toBeNull();
 });
 
 test('navigation_order', () => {
@@ -208,9 +245,9 @@ test('Designer opens the owned agent without workspace setup and shares its save
 
 test.each([
   ['idle', null, 'Choose where agents run', 'Choose where agents run'],
-  ['preparing', 'localVm', 'Getting the local cluster ready', 'Getting the local cluster ready'],
-  ['installing', 'localVm', 'Getting the local cluster ready', 'Getting the local cluster ready'],
-  ['starting', 'localVm', 'Starting the local cluster', 'Starting the local cluster'],
+  ['preparing', 'localVm', 'Getting your workspace ready, step 2 of 4', 'Setting up, step 2 of 4'],
+  ['installing', 'localVm', 'Getting your workspace ready, step 2 of 4', 'Setting up, step 2 of 4'],
+  ['starting', 'localVm', 'Getting your workspace ready, step 2 of 4', 'Setting up, step 2 of 4'],
   ['ready', 'localVm', 'AI connection unavailable', 'AI unavailable'],
   ['failed', 'localVm', "Bridge couldn't determine why the local cluster failed.", 'Setup failed'],
   ['closed', 'localVm', 'Local cluster stopped', 'Local cluster stopped'],
@@ -222,7 +259,7 @@ test.each([
   const footer = screen.getByRole('contentinfo');
   expect(await within(footer).findByText(detail)).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText(tabLine)).toBeTruthy();
-  expect(within(footer).queryByText(/saved|GPT|tests passing/i)).toBeNull();
+  expect(within(footer).queryByText(/saved|GPT|tests passing|\d+ of \d+ passed/i)).toBeNull();
 });
 
 test('unbuilt controls are disabled with discoverable reasons', async () => {
@@ -242,7 +279,7 @@ test('setup refreshes while another page is open', async () => {
   mockIPC(command => command === 'setup_status' ? { selected: 'localVm', localVm, model: localVm === 'ready' ? 'available' : 'locked' } : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
-  await within(screen.getByRole('contentinfo')).findByText('Connect the AI');
+  await within(screen.getByRole('contentinfo')).findByText('Connect the AI, step 3 of 4');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   localVm = 'failed';
   expect(await within(screen.getByRole('navigation')).findByText('Setup failed', {}, { timeout: 2000 })).toBeTruthy();
@@ -273,7 +310,7 @@ test('model acknowledgment and observed check counts survive navigation', async 
   expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('AI connected');
   expect(document.querySelector('.host-chip')?.textContent).toBe('This computer: AI connected');
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
-  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 tests passing')).toBeTruthy();
+  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 2 passed')).toBeTruthy();
   expect(screen.queryByText(/Connect the AI in Clusters first\./)).toBeNull();
   expect(within(screen.getByRole('navigation')).getByText((_, node) => node?.tagName === 'SMALL' && node.textContent === 'page-reader, 1 test failing')).toBeTruthy();
   expect(within(screen.getByRole('navigation')).getByText('Its test failed')).toBeTruthy();
@@ -300,7 +337,7 @@ test.each(['cancelling', 'cancelled', 'beforeStart', 'unconfirmed'] as const)('a
   const tab = await within(screen.getByRole('navigation')).findByTitle(`reader, ${label}`);
   if (cancellation === 'unconfirmed') expect(tab.querySelector('.tab-status-word')?.className).toContain('status-needs-you');
   expect(within(screen.getByRole('contentinfo')).getByText(label[0].toUpperCase() + label.slice(1))).toBeTruthy();
-  expect(within(screen.getByRole('contentinfo')).queryByText(/tests passing/i)).toBeNull();
+  expect(within(screen.getByRole('contentinfo')).queryByText(/tests passing|\d+ of \d+ passed/i)).toBeNull();
 });
 
 test('Stop from cancellation shares Setup busy/status and leaves a restarted cluster usable', async () => {
@@ -348,7 +385,7 @@ test('a running check finishes in the footer after leaving Designer', async () =
   await within(screen.getByRole('contentinfo')).findByText('Running tests…');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   complete = true;
-  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 1 tests passing')).toBeTruthy();
+  expect(await within(screen.getByRole('contentinfo')).findByText('1 of 1 passed')).toBeTruthy();
   expect(document.querySelectorAll('#page-title')).toHaveLength(1);
 });
 
@@ -408,7 +445,7 @@ test('a retained native report for older source is stale in the shared chrome', 
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(await within(screen.getByRole('contentinfo')).findByText('Tests not run since your edit')).toBeTruthy();
-  expect(within(screen.getByRole('contentinfo')).queryByText('1 of 1 tests passing')).toBeNull();
+  expect(within(screen.getByRole('contentinfo')).queryByText('1 of 1 passed')).toBeNull();
 });
 test('Open example retries a failed read without discarding successful runs', async () => {
   let fail = true;
@@ -436,7 +473,7 @@ test('a transient setup read failure recovers while off Clusters', async () => {
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await within(screen.getByRole('navigation')).findByText('Local cluster unavailable');
   await user.click(screen.getByRole('button', { name: 'Overview' })); fail = false;
-  expect(await within(screen.getByRole('navigation')).findByText('Starting the local cluster', {}, { timeout: 2000 })).toBeTruthy();
+  expect(await within(screen.getByRole('navigation')).findByText('Setting up, step 2 of 4', {}, { timeout: 2000 })).toBeTruthy();
 });
 
 test('a transient setup read failure does not invalidate an admitted model connection', async () => {
@@ -584,7 +621,7 @@ test('Overview waits for native busy release even when the report is already com
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
-  await within(screen.getByRole('contentinfo')).findByText('1 of 1 tests passing');
+  await within(screen.getByRole('contentinfo')).findByText('1 of 1 passed');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await screen.findByText('Updating when the test finishes.');
   await user.click(screen.getByRole('button', { name: 'Refresh' }));

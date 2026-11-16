@@ -64,14 +64,16 @@ test('Fix it first moves keyboard focus to the single failing local result, whic
   await user.click(within(local).getByRole('button', { name: 'Edit instructions' }));
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Instructions' })));
 });
-test('Fix it first falls back to Instructions when an active local suite hides partial failed results', async () => {
+test('Fix it first focuses the visible partial failed result while a local suite is still running', async () => {
   native({ ...localResult, state: 'running', stage: 'observe', canRun: false, busy: { documentId: id, name: 'web-reader' } });
   const user = userEvent.setup(); render(<Example remote place={place} />);
   const send = await screen.findByRole('button', { name: 'Send and run tests' });
   await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(false));
   await user.click(send);
   await user.click(await screen.findByRole('button', { name: 'Fix it first' }));
-  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Instructions' })));
+  // The test list shows finished results while the suite runs, so the failing one is the focus target.
+  await waitFor(() => expect(document.activeElement?.closest('[data-result-id]')?.getAttribute('data-result-id')).toBe('reads-the-title'));
+  expect(document.activeElement?.tagName).toBe('SUMMARY');
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 test('the page-head Send control only brings the Send card into view', async () => {

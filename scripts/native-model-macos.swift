@@ -39,7 +39,10 @@ try FileManager.default.createDirectory(atPath: output, withIntermediateDirector
 let child = Process()
 child.executableURL = URL(fileURLWithPath: CommandLine.arguments[2])
 let keyCheckRelease = URL(fileURLWithPath: output).appendingPathComponent("key-check-release-\(UUID().uuidString)")
-child.environment = ProcessInfo.processInfo.environment.merging(["BRIDGE_MODEL_CHECK_RELEASE": keyCheckRelease.path]) { _, fixture in fixture }
+let setupProgress = URL(fileURLWithPath: output).appendingPathComponent("setup-progress-\(UUID().uuidString)")
+try "installing".write(to: setupProgress, atomically: true, encoding: .utf8)
+defer { try? FileManager.default.removeItem(at: setupProgress) }
+child.environment = ProcessInfo.processInfo.environment.merging(["BRIDGE_MODEL_CHECK_RELEASE": keyCheckRelease.path, "BRIDGE_SETUP_PROGRESS": setupProgress.path]) { _, fixture in fixture }
 try child.run()
 defer { if child.isRunning { child.terminate(); child.waitUntilExit() } }
 func window() -> (CGWindowID, CGRect)? {
@@ -90,7 +93,9 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         }.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     }
     for value in expected {
-        let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI").contains(value)
+        // Vision renders the capital I as a lowercase l in this exact observed label.
+        let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI")
+            .replacingOccurrences(of: "APl key", with: "API key").contains(value)
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || name.hasPrefix("local-key-") && nativeChatTextIsVisible(value))
         let chatText = !found && name.hasPrefix("chat-") && nativeChatTextIsVisible(value)
         require(found || nativeText || chatText, "Missing \(value) in \(name): \(text)")
@@ -100,6 +105,29 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         else { fatalError("Cannot sample native theme") }
     let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
     require(theme == "dark" ? brightness < 0.25 : brightness > 0.8, "Wrong system theme")
+    if ["local-result", "local-answer", "local-story", "local-running", "local-stopping"].contains(where: { name.hasPrefix($0) }) {
+        guard let actual = NSImage(contentsOfFile: file),
+            let reference = NSImage(contentsOfFile: "../docs/images/designer-reference-\(theme).png") else {
+            fatalError("Missing Designer comparison image")
+        }
+        let width = actual.size.width
+        let referenceHeight = reference.size.height * width / reference.size.width
+        let height = max(actual.size.height, referenceHeight) + 42
+        let comparison = NSImage(size: NSSize(width: width * 2 + 48, height: height + 16))
+        comparison.lockFocus()
+        NSColor.windowBackgroundColor.setFill()
+        NSRect(origin: .zero, size: comparison.size).fill()
+        actual.draw(in: NSRect(x: 16, y: height - 42 - actual.size.height, width: width, height: actual.size.height))
+        reference.draw(in: NSRect(x: width + 32, y: height - 42 - referenceHeight, width: width, height: referenceHeight))
+        let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 14), .foregroundColor: NSColor.labelColor]
+        ("Native Bridge, synthetic test data" as NSString).draw(at: NSPoint(x: 16, y: height - 26), withAttributes: attributes)
+        ("Approved Designer frame (wide reference)" as NSString).draw(at: NSPoint(x: width + 32, y: height - 26), withAttributes: attributes)
+        comparison.unlockFocus()
+        guard let tiff = comparison.tiffRepresentation,
+            let bitmap = NSBitmapImageRep(data: tiff),
+            let png = bitmap.representation(using: .png, properties: [:]) else { fatalError("Cannot compose Designer comparison") }
+        try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
+    }
     print("PASS \(name): real native frontend, synthetic IPC only")
     return rows
 }
@@ -124,7 +152,24 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     }
     Thread.sleep(forTimeInterval: 1)
 }
-// A native frame can appear before WebKit has painted the controls.
+// Exercise the four-step list with only synthetic IPC, at the actual minimum and wide sizes.
+waitForButton("Connect the AI")
+for (phase, expected) in [("installing", "Installing, 1 GiB of 2 GiB"), ("starting", "45 seconds elapsed")] {
+    try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
+    Thread.sleep(forTimeInterval: 0.6)
+    for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+        localSize(width, height)
+        scroll(4000)
+        _ = try capture("local-setup-\(phase)-\(size)", ["Getting your workspace ready", "Where agents run", "Get your workspace ready", expected])
+    }
+}
+localSize(1280, 800)
+scroll(4000)
+click("Show details", [])
+_ = try capture("local-setup-starting-details", ["45 seconds elapsed", "Starting the local cluster"])
+try FileManager.default.removeItem(at: setupProgress)
+Thread.sleep(forTimeInterval: 0.6)
+click("Choose where agents run", [])
 waitForButton("Connect the AI")
 // A running VM is not completed setup: its local row offers the current AI action.
 var rows = try capture("local-places-wide", ["Choose where agents run", "This computer", "Connect the AI"])
@@ -132,10 +177,17 @@ require(enabledButton("Connect the AI") != nil && enabledButton("Manage") == nil
         "VM-ready local card must offer Connect the AI, not Manage")
 click("Connect the AI", rows)
 rows = try capture("before-connect", ["Connect the AI"])
+localSize(540, 640)
+scroll(4000)
+_ = try capture("local-setup-ai-minimum-top", ["Where agents run", "Get your workspace ready"])
+_ = try seek("Connect the AI", -200)
+_ = try capture("local-setup-ai-minimum", ["GitHub Copilot", "Connect the AI"])
+localSize(1280, 800)
+scroll(4000)
 require(enabledButton("Remove sign-in") == nil, "Remove must be absent before the first sign-in attempt")
 click("Connect the AI", rows)
-rows = try capture("local-completed", ["Local cluster", "Local cluster ready", "Stop the local cluster", "Completed setup steps"])
-require(!rows.contains { ($0.topCandidates(1).first?.string ?? "").range(of: "Step [0-9]+ of 5", options: .regularExpression) != nil },
+rows = try capture("local-completed", ["Local cluster", "Local cluster ready", "Stop the local cluster", "Run your first test"])
+require(!rows.contains { ($0.topCandidates(1).first?.string ?? "").range(of: "[Ss]tep [0-9]+ of [45]", options: .regularExpression) != nil },
         "Completed local page must not keep a setup counter")
 click("Remove sign-in", rows)
 rows = try capture("local-remove-confirmation", ["saved sign-in?", "Cancel", "Remove sign-in"])
@@ -285,6 +337,16 @@ _ = try seek("Tests on the local cluster", -250)
 _ = try capture("local-result", ["Tests on the local cluster", "1 of 2 passed"])
 _ = try seek("The answer did not include", -150)
 _ = try capture("local-answer", ["Which date is shown", "No date was given", "2099-12-31"])
+localSize(540, 640)
+scroll(4000)
+_ = try seek("Says which date", -150)
+// Put the result above the fixed footer, not merely inside the window bounds.
+scroll(-200)
+_ = try capture("local-result-minimum", ["Says which date", "Asked"])
+_ = try seek("The answer did not include", -100)
+scroll(-180)
+_ = try capture("local-story-minimum", ["No date was given", "2099-12-31"])
+localSize(540, 900)
 // Both local results and the cluster Send stay visible. This separate fixture
 // has no send_start handler; opening/dismissing the warning cannot mutate anything.
 localSize(1280, 800)
@@ -331,6 +393,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
     require(focusedButtonTitle() == "Send and run tests", "Escape must return focus to Send")
     click("Send and run tests", [])
     click("Fix it first", [])
+    _ = try seek("Edit instructions", 150)
     _ = try capture("local-send-fix-result-\(size)", ["Which date is shown", "No date was given", "Edit instructions"])
 }
 // Return through the local row, without stopping either destination. The
@@ -587,6 +650,21 @@ waitForButton("New conversation")
 _ = try capture("chat-stop-ready-compact", ["Ready", "Execution termination is unconfirmed."])
 localSize(1280, 800)
 _ = try capture("chat-stop-ready-wide", ["Ready", "Execution termination is unconfirmed."])
+// Capture card actions before the final test deliberately holds the fixture busy.
+click("Overview", [])
+for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height))
+    scroll(4000)
+    _ = try capture("local-controls-overview-\(size)", ["Your agents", "Refresh", "web-reader", "Failed", "Run tests"])
+}
+click("By agent", [])
+for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height))
+    scroll(4000)
+    _ = try capture("local-overview-by-agent-\(size)", ["Your agents", "web-reader", "This computer"])
+}
+click("By cluster", [])
+click("Designer", [])
 scroll(4000)
 click("Agent", [])
 localSize(540, 900)
@@ -598,7 +676,15 @@ _ = try capture("local-running", ["Waiting for answers", "Observed for"])
 localSize(1280, 800)
 scroll(4000)
 _ = try seek("Waiting for answers", -250)
-_ = try capture("local-running-wide", ["Waiting for answers", "Observed for"])
+_ = try capture("local-running-wide", ["Waiting for answers", "Observed for", "Stop", "Copies the checksum from the page", "Awaiting result"])
+localSize(540, 640)
+scroll(4000)
+_ = try seek("Stop", -100)
+scroll(-400)
+_ = try capture("local-running-minimum", ["Stop", "Waiting for answers", "Awaiting result"])
+click("Stop", [])
+_ = try seek("Cancelling", -100)
+_ = try capture("local-stopping-minimum", ["Cancelling"])
 localSize(540, 900)
 scroll(4000)
 click("Clusters", [])
@@ -610,17 +696,3 @@ _ = try capture("local-remove-confirmation-compact", ["saved sign-in?", "Cancel"
 click("Cancel", [])
 click("Back to clusters", [])
 _ = try capture("local-places-compact", ["Choose where agents run", "This computer"])
-// Keep the third top-level page reviewable at both control sizes too.
-click("Overview", [])
-for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
-    localSize(CGFloat(width), CGFloat(height))
-    scroll(4000)
-    _ = try capture("local-controls-overview-\(size)", ["Your agents", "Refresh", "web-reader", "Failed"])
-}
-click("By agent", [])
-for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
-    localSize(CGFloat(width), CGFloat(height))
-    scroll(4000)
-    _ = try capture("local-overview-by-agent-\(size)", ["Your agents", "web-reader", "This computer"])
-}
-click("By cluster", [])
