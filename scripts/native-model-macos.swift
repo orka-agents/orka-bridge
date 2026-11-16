@@ -456,7 +456,15 @@ func localSize(_ width: CGFloat, _ height: CGFloat) {
     let app = AXUIElementCreateApplication(child.processIdentifier)
     var windows: CFTypeRef?
     require(AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windows) == .success, "Cannot read fixture window")
-    let native = (windows as! [AXUIElement])[0]
+    guard let frame = window()?.1 else { fatalError("Cannot find the captured fixture window") }
+    // AXWindows also includes transient auxiliary windows; never resize the first one blindly.
+    let matches = (windows as! [AXUIElement]).filter { element in
+        guard let bounds = nativeBounds(element) else { return false }
+        return abs(bounds.minX - frame.minX) < 3 && abs(bounds.minY - frame.minY) < 3
+            && abs(bounds.width - frame.width) < 3 && abs(bounds.height - frame.height) < 3
+    }
+    require(matches.count == 1, "Expected one native window matching the captured frame, found \(matches.count)")
+    let native = matches[0]
     var origin = CGPoint(x: 0, y: 40)
     require(AXUIElementSetAttributeValue(native, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &origin)!) == .success, "Cannot position fixture window")
     var size = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled, .closable, .miniaturizable, .resizable]).size

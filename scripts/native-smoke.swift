@@ -118,8 +118,9 @@ while Date() < rendererDeadline {
         // Navigation/footer controls can render before setup_status settles.
         // Observe the welcome or the actual release setup result, not a button
         // that merely happens to be below the header.
-        let bodyReady = names.contains("Get started") || nativeTextIsVisible("Choose where agents run")
-        if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names) && bodyReady { found = true; break }
+        // The text viewport also needs the tab bar; do not query it during renderer startup.
+        if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names)
+            && (names.contains("Get started") || nativeTextIsVisible("Choose where agents run")) { found = true; break }
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 }

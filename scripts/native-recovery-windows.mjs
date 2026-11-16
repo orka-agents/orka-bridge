@@ -563,7 +563,8 @@ try {
       await evaluate(`(() => { const input = document.querySelector('#new-agent-name'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, 'native-helper'); input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
       if (name === 'new-agent-created') {
         await clickAction('Create');
-        await until(() => evaluate(`!!document.querySelector('.instructions-editor') && !document.querySelector('.new-agent-form')`), 'blank Instructions editor');
+        // The old editor briefly reappears before selection rebinds; wait for the new document too.
+        await until(() => evaluate(`document.querySelector('.agent-selector select:not(:disabled)')?.value === '00000000-0000-4000-8000-000000000005' && !!document.querySelector('.instructions-editor') && !document.querySelector('.new-agent-form')`), 'created agent Instructions editor');
         if (await evaluate(`document.querySelector('.instructions-editor').value !== '' || document.body.innerText.includes('Tests could not be read')`)) throw Error('Blank draft was seeded or shown as unreadable');
       }
       await evaluate(`document.querySelector('main').scrollTop = 0`);
