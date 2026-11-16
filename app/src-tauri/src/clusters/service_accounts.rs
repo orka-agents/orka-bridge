@@ -6,10 +6,7 @@ use kube::{client::Body, core::Request};
 const CAP: usize = 1024 * 1024;
 
 fn failure(error: AccessOutcome) -> ClusterFailure {
-    ClusterFailure {
-        check: Check::ServiceAccount,
-        result: error.failure(Check::ServiceAccount).result,
-    }
+    error.failure(Check::ServiceAccount)
 }
 
 impl ClusterClient {

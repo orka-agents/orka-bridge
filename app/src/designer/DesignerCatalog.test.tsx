@@ -20,6 +20,16 @@ test('without a connected destination no catalog is requested or blamed for fail
   expect(ipc.mock.calls.some(([c]) => c === 'workspace_catalog' || c === 'cluster_catalog')).toBe(false);
   expect(screen.getByRole('option', { name: 'saved-model' })).toBeTruthy();
 });
+test('a connected cluster without a chosen AI connection does not request or blame a catalog', async () => {
+  vi.stubGlobal('isTauri', true); const ipc = vi.fn(command => command === 'agent_open' ? pair : null); mockIPC(ipc);
+  render(<Example remote place={{ ...place(), kind: 'cluster', providerId: undefined }} catalogKey={1} />);
+  await screen.findByRole('textbox', { name: 'Instructions' });
+  expect(screen.getAllByText('Choose an AI connection in Clusters to load tools and models').length).toBeGreaterThan(0);
+  expect(screen.queryByText('Connect a cluster in Clusters to load tools and models')).toBeNull();
+  expect(ipc.mock.calls.some(([c]) => c === 'workspace_catalog' || c === 'cluster_catalog')).toBe(false);
+  expect(screen.getByRole('option', { name: 'saved-model' })).toBeTruthy();
+});
+
 test.each([false, true])('failed catalog is attributed only to its actual destination (remote=%s)', async remote => {
   vi.stubGlobal('isTauri', true); mockIPC(command => command === 'agent_open' ? pair : null);
   render(<Example remote={remote} place={remote ? place() : { kind: 'thisComputer' }} catalogKey={1} />);

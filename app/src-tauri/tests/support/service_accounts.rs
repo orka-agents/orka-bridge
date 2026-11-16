@@ -23,6 +23,26 @@ fn page(names: &[&str], after: &str) -> Value {
 }
 
 #[tokio::test]
+async fn service_account_list_preserves_discovery_revalidation_failure() {
+    let api = Arc::new(ApiFixture::default());
+    let orka = Arc::new(OrkaFixture::default());
+    let mut client = client(&api, &orka, json!({"token":"static-fixture"}));
+    let id = target(&mut client).await;
+    api.calls.lock().unwrap().clear();
+    *api.override_response.lock().unwrap() = Some((
+        "/services".into(),
+        403,
+        json!({"kind":"Status","apiVersion":"v1","reason":"Forbidden","code":403}),
+    ));
+    assert_eq!(
+        reply(client.service_accounts(id, deadline()).await.unwrap_err()),
+        json!({"check":"clusterApi","result":"permissionDenied"})
+    );
+    assert!(!api.calls.lock().unwrap().iter().any(|c| c.1 == LIST));
+    assert_no_credentials_or_orka(&api, &orka);
+}
+
+#[tokio::test]
 async fn service_account_list_is_namespace_only_and_never_uses_credentials() {
     let api = Arc::new(ApiFixture::default());
     let orka = Arc::new(OrkaFixture::default());

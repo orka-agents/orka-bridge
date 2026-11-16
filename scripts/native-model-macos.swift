@@ -1250,8 +1250,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
 }
 click("team-runner", [])
 localSize(1280, 800)
-_ = try seek("Required Orka permissions", -150)
-waitForChatText("Required Orka permissions: Allowed")
+_ = try seek("Required Orka permissions: Allowed", -150)
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("Required Orka permissions", -100)

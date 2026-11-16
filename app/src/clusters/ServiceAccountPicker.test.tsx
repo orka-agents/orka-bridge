@@ -72,6 +72,13 @@ test('forbidden listing gives a plain reason and typed fallback without preview 
   await waitFor(() => expect(ipc.mock.calls).toContainEqual(['cluster_use', { targetId: target.id, saName: 'existing-runner' }]));
 });
 
+test.each(['clusterApi', 'compatibility'])('a %s failure is not blamed on account-list rights', async check => {
+  fixture(() => Promise.reject({ check, result: 'permissionDenied' }));
+  await open();
+  await screen.findByText("Couldn't recheck this cluster. Check Clusters and try again.");
+  expect(screen.queryByText(/cannot list ServiceAccounts/)).toBeNull();
+});
+
 test('empty listing is not denied and truncated results do not claim completeness', async () => {
   fixture({ names: [], truncated: false }); const { user } = await open();
   await screen.findByText('No ServiceAccounts were found in agents.');

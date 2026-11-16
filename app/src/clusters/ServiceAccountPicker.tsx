@@ -23,8 +23,9 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
     }, error => {
       if (request !== listEpoch.current) return;
       const failure = failedCheck(error, 'serviceAccount');
-      setReason(failure.result === 'permissionDenied' ? `Your current cluster sign-in cannot list ServiceAccounts in ${target.watched_namespace}. Enter an existing account name from your cluster administrator.`
+      setReason(failure.check === 'serviceAccount' && failure.result === 'permissionDenied' ? `Your current cluster sign-in cannot list ServiceAccounts in ${target.watched_namespace}. Enter an existing account name from your cluster administrator.`
         : failure.result === 'authenticationRejected' ? 'Your cluster sign-in was not accepted. Check Clusters and try again.'
+        : failure.check !== 'serviceAccount' ? "Couldn't recheck this cluster. Check Clusters and try again."
         : "Couldn't list ServiceAccounts. Check the cluster connection and try again.");
     });
     return () => { ++listEpoch.current; };
