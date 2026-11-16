@@ -649,6 +649,35 @@ test('Clusters reads setup without engine diagnostics or legacy IPC', async () =
   expect(fetch).not.toHaveBeenCalled();
 });
 
+test('Overview Refresh retries a failed native lookup before refreshing its recovered destination', async () => {
+  vi.stubGlobal('isTauri', true);
+  const id = '9b2b93c4-375c-4815-9717-39852a96e411';
+  const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
+  let lookups = 0;
+  const placeReads: unknown[] = [];
+  mockIPC((command, args) => {
+    if (command === 'setup_status') return { selected: null, localVm: 'notIntegrated', model: 'locked' };
+    if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks', source };
+    if (command === 'agent_run_status') return { documentId: id, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null, busy: null };
+    if (command === 'send_status') return { documentId: id, busy: null, view: { documentId: id, id: '00000000-0000-4000-8000-000000000004', targetId: '00000000-0000-4000-8000-000000000002', providerId: '00000000-0000-4000-8000-000000000003', targetName: 'team', source, model: 'm', agentName: 'bridge-run-one', state: 'unknown', stage: 'stopped', report: null, acknowledged: [], pending: null, error: 'stopped', storageError: false, agentAction: 'update' } };
+    if (command === 'send_history') return [];
+    if (command === 'send_agent_focus') return ++lookups === 1 ? Promise.reject(new Error('Transient history read failure')) : { key: 'team', name: 'bridge-run-one', namespace: 'agents', uid: 'uid-one' };
+    if (command === 'send_agent_check') return 'present';
+    if (command === 'overview_places') { placeReads.push(args); return { places: [], historyState: 'complete', unobserved: [] }; }
+    return null;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  await user.click(await screen.findByRole('button', { name: 'See in Overview' }));
+  const note = await screen.findByText('Cannot check this agent. Your saved result is unchanged.');
+  placeReads.length = 0;
+  await user.click(within(note.parentElement!).getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(lookups).toBe(2));
+  await waitFor(() => expect(placeReads).toEqual([{ key: 'team' }]));
+  await screen.findByText('Not shown in Overview yet.');
+  expect(screen.queryByText('Cannot check this agent. Your saved result is unchanged.')).toBeNull();
+});
+
 test.each([true, false])('pending See in Overview skips unrelated reads and respects later navigation (leave: %s)', async leave => {
   vi.stubGlobal('isTauri', true);
   const id = '9b2b93c4-375c-4815-9717-39852a96e411';

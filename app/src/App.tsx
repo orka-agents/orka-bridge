@@ -280,7 +280,7 @@ export default function App() {
           onChatDocument={id => openOverviewDocument(id, 'chat')}
           onRunDocument={id => openOverviewDocument(id, 'run')}
           onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)}
-          focus={overviewFocus} focusPending={overviewPending}
+          focus={overviewFocus} focusPending={overviewPending} onRetryFocus={seeInOverview}
           onChooseWorkspace={() => setPage('Clusters')} />
         {page === 'Designer' && !exampleOpen && <p role="status">Opening your agent…</p>}
       </main>

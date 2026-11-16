@@ -13,11 +13,12 @@ export type OverviewProps = {
   /** Newest request wins. target is absent when native has no recorded agent for that Send. */
   focus?: { id: number; sendId: string; target?: AgentFocus };
   focusPending?: boolean;
+  onRetryFocus?: (sendId: string) => void;
   workspaceNote?: string; filesRevision?: number;
 };
 const focusNotes = { present: 'Not shown in Overview yet.', gone: 'The original agent is no longer available. Your saved result is unchanged.', cannotCheck: 'Cannot check this agent. Your saved result is unchanged.' };
 const complete = (v?: LiveAgents): v is CompleteAgents => v?.state === 'complete' && v.installation !== null && v.observedAt !== null;
-export default function Overview({ onNewAgent, active, runBusy, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, workspaceNote, filesRevision = 0, focus: navigationFocus, focusPending = false }: OverviewProps) {
+export default function Overview({ onNewAgent, active, runBusy, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, workspaceNote, filesRevision = 0, focus: navigationFocus, focusPending = false, onRetryFocus }: OverviewProps) {
   const [dismissedFocus, setDismissedFocus] = useState<number>();
   const focus = navigationFocus?.id === dismissedFocus ? undefined : navigationFocus;
   const [focusRetry, setFocusRetry] = useState(0);
@@ -160,7 +161,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
       {onNewAgent && !empty && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}
       {!empty && <div className="view-switch" role="group" aria-label="Group agents"><button type="button" aria-pressed={!byAgent} onClick={() => setByAgent(false)}>By cluster</button><button type="button" aria-pressed={byAgent} onClick={() => setByAgent(true)}>By agent</button></div>}
       <Button onClick={actions.onCheck}>Refresh</Button></div></div>
-    {focusNote && <div className="overview-note" role="status"><p>{focusNote}</p><Button kind="quiet" onClick={() => setFocusRetry(v => v + 1)}>Refresh</Button></div>}
+    {focusNote && <div className="overview-note" role="status"><p>{focusNote}</p><Button kind="quiet" onClick={() => { if (focus && !focus.target && onRetryFocus) onRetryFocus(focus.sendId); else setFocusRetry(v => v + 1); }}>Refresh</Button></div>}
     {placeError && <div className="overview-note" role="status"><p>Couldn't read clusters just now.{places && ' Showing what Bridge last saw.'}</p><Button kind="quiet" onClick={actions.onCheck}>Check again</Button></div>}
     {places?.historyState === 'unavailable' && <p role="alert" className="overview-note">Saved Send results are unavailable, so cluster agents show no test result.</p>}
     {byAgent && !empty && <div className="overview-stack">{clusters.filter(g => g.notes.some(n => !n.text.startsWith('No agents'))).map(g => <GroupSection key={g.key} group={{ ...g, cards: [], count: undefined, notes: g.notes.filter(n => !n.text.startsWith('No agents')) }} byAgent={false} actions={actions} />)}</div>}
