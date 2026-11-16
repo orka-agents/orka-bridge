@@ -282,6 +282,78 @@ fn cancellation_and_no_space_leave_source_and_both_metadata_records_unchanged() 
         assert_eq!(owner.inspect().unwrap(), UpgradeStatus::None);
     }
 }
+#[cfg(windows)]
+#[test]
+fn replacement_retains_a_real_stale_windows_control_socket_without_reading_it() {
+    use std::{
+        mem::{size_of, zeroed},
+        os::windows::{
+            fs::OpenOptionsExt,
+            io::{FromRawSocket, OwnedSocket},
+        },
+    };
+    use windows_sys::Win32::{
+        Networking::WinSock::*,
+        Storage::FileSystem::{FILE_READ_ATTRIBUTES, READ_CONTROL},
+    };
+    let mut s = Scene::new(ImageTarget::WindowsAmd64);
+    let root = s.local.join("local-vm-v1");
+    let endpoint = crate::runtime::windows::control::ControlEndpoint::create(&root).unwrap();
+    let path = endpoint.path().to_owned();
+    let relative = path.strip_prefix(&root).unwrap().to_owned();
+    let mut data = unsafe { zeroed() };
+    assert_eq!(unsafe { WSAStartup(0x0202, &mut data) }, 0);
+    let raw = unsafe {
+        WSASocketW(
+            AF_UNIX as i32,
+            SOCK_STREAM,
+            0,
+            std::ptr::null(),
+            0,
+            WSA_FLAG_NO_HANDLE_INHERIT,
+        )
+    };
+    assert_ne!(raw, INVALID_SOCKET);
+    let socket = unsafe { OwnedSocket::from_raw_socket(raw as _) };
+    let mut address: SOCKADDR_UN = unsafe { zeroed() };
+    address.sun_family = AF_UNIX;
+    for (out, byte) in address
+        .sun_path
+        .iter_mut()
+        .zip(path.to_str().unwrap().bytes())
+    {
+        *out = byte as i8;
+    }
+    assert_eq!(
+        unsafe {
+            bind(
+                raw,
+                (&address as *const SOCKADDR_UN).cast(),
+                size_of::<SOCKADDR_UN>() as i32,
+            )
+        },
+        0
+    );
+    drop(socket);
+    unsafe {
+        WSACleanup();
+    }
+    drop(endpoint);
+    let metadata = |path: &Path| {
+        OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+            .share_mode(3)
+            .custom_flags(0x02200000)
+            .open(path)
+            .unwrap()
+    };
+    let before = file_identity(&metadata(&path)).unwrap();
+    assert_eq!(s.replace(None).unwrap(), UpgradeStatus::Fresh);
+    let owner = WorkspaceUpgrade::open(&s.data, &s.local).unwrap();
+    let intent = owner.read_intent().unwrap().unwrap();
+    let retained = s.local.join(intent.retained).join(relative);
+    assert_eq!(file_identity(&metadata(&retained)).unwrap(), before);
+}
 #[test]
 fn failed_upgrade_parent_flush_refuses_before_archiving_source_metadata() {
     let s = Scene::new(ImageTarget::WindowsAmd64);
