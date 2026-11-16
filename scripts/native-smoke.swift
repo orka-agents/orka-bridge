@@ -1253,9 +1253,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         seen.contains { ($0.topCandidates(1).first?.string ?? "").contains("Failed") }
             && nativeTextBounds(failureReason, exact: true).contains { bodyBounds().contains($0) }
     }
-    try capturePreflight("send-failed-wide", "has-a-date", requiring: visibleFailure)
+    try capturePreflight("send-failed-wide", "has-a-date", anchor: failureReason, requiring: visibleFailure)
     try resultSize(540, 900)
-    try capturePreflight("send-failed", "has-a-date", requiring: visibleFailure)
+    try capturePreflight("send-failed", "has-a-date", anchor: failureReason, requiring: visibleFailure)
     // Arm only the loopback fixture: first answer completes, second Task stays
     // live. Hold the cancel reply until its in-flight state has been captured.
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "cancelling"])
