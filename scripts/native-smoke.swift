@@ -235,7 +235,7 @@ func nativeStrings() -> [String] {
         ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
     }
 }
-func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bool = true) -> [CGRect] {
+func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bool = true, exact: Bool = false) -> [CGRect] {
     guard let rect = window()?.1 else { return [] }
     // Destination chips and footer mirrors are not evidence of a visible card.
     // Below-the-fold bounds can guide scrolling, but never prove visibility.
@@ -245,7 +245,7 @@ func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bo
         guard let role = attribute(element, "AXRole") as? String else { continue }
         if ["AXStaticText", "AXHeading", "AXDisclosureTriangle"].contains(role) && (!heading || role == "AXHeading") {
             let values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
-            if values.contains(where: { heading ? $0 == expected : $0.contains(expected) }),
+            if values.contains(where: { (heading || exact) ? $0 == expected : $0.contains(expected) }),
                 let bounds = nativeBounds(element), (!visibleOnly || body.contains(bounds)) { matches.append(bounds) }
         }
         guard !heading, role == "AXGroup",
@@ -255,7 +255,7 @@ func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bo
         var text = ""
         var line: CGRect?
         func finishLine() {
-            if let bounds = line, text.contains(expected) { matches.append(bounds) }
+            if let bounds = line, (exact ? text == expected : text.contains(expected)) { matches.append(bounds) }
             text = ""; line = nil
         }
         for child in children {
@@ -271,7 +271,7 @@ func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bo
     }
     return matches
 }
-func nativeTextIsVisible(_ expected: String) -> Bool { !nativeTextBounds(expected).isEmpty }
+func nativeTextIsVisible(_ expected: String, exact: Bool = false) -> Bool { !nativeTextBounds(expected, exact: exact).isEmpty }
 @discardableResult
 func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> AXUIElement {
     // Small Inter labels can be grouped with subtitles by Vision. Identify the
@@ -1023,7 +1023,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             // Reflow and result updates preserve a scroll offset, not a row.
             // Anchor missing text in either direction, away from fixed chrome.
             // Prefer rendered text over a 1px screen-reader announcement.
-            if let anchor = nativeTextBounds(anchor ?? expected, visibleOnly: false)
+            // An explicit anchor is an exact label: the editor's longer storage note is not saved-result provenance.
+            if let anchor = nativeTextBounds(anchor ?? expected, visibleOnly: false, exact: anchor != nil)
                 .filter({ $0.width > 1 && $0.height > 1 })
                 .max(by: { $0.width * $0.height < $1.width * $1.height }) {
                 let delta = bodyBounds().minY + 64 - anchor.minY
@@ -1601,7 +1602,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try capture("send-history-answer", "Designer")
     try resultSize(1280, 800)
     // Anchor the entire saved result before looking for answer pixels, not whichever tail survived reflow.
-    guard let provenance = nativeTextBounds("Saved on this computer", visibleOnly: false).first else {
+    guard let provenance = nativeTextBounds("Saved on this computer", visibleOnly: false, exact: true).first else {
         fail("Saved answer provenance has no native bounds")
     }
     scrollMain(Int32((bodyBounds().minY + 64 - provenance.minY).rounded()))
@@ -1609,10 +1610,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Keep anchoring the whole saved result until one frame proves all three.
     let savedWide = try capturePreflight("send-history-answer-wide", "Fixture answer:", anchor: "Saved on this computer", requiring: { seen in
         seen.contains { ($0.topCandidates(1).first?.string ?? "").contains("What SHA-256 checksum does") }
-            && nativeTextIsVisible("Saved on this computer")
+            && nativeTextIsVisible("Saved on this computer", exact: true)
     })
     require(savedWide.contains { ($0.topCandidates(1).first?.string ?? "").contains("What SHA-256 checksum does") }
-        && nativeTextIsVisible("Saved on this computer"),
+        && nativeTextIsVisible("Saved on this computer", exact: true),
             "Wide saved question, answer and local provenance must remain visible after reopening offline")
 }
 do {
