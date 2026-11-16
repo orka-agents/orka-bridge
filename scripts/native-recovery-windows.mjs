@@ -870,8 +870,8 @@ $c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
   ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'viewport-probe' }));
   await delay(500);
   let reported = await viewport();
-  const close = (a, b) => Math.abs(a - b) <= 2;
-  if (resized.status !== 0 || !close(reported.width * reported.dpr, target.width) || !close(reported.height * reported.dpr, target.height)) {
+  // Layout and minimum-size assertions use CSS pixels, not device pixels.
+  if (resized.status !== 0 || reported.width !== target.width || reported.height !== target.height) {
     // Limitation, reported honestly: the window could not be resized, so use renderer viewport emulation.
     console.warn(`Native window resize unverified (exit ${resized.status}); using renderer viewport emulation. ${resized.stderr ?? ''}`);
     mode = 'renderer-viewport-emulation';
