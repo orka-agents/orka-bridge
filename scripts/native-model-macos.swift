@@ -206,6 +206,11 @@ rows = try capture("reconnected", ["Connected", "Remove sign-in"])
 // Workspace Stop is exercised after the original baseline coverage below.
 // Reuse the setup-progress selector and the existing Places entry to remount real
 // preflight for each bounded synthetic result. No native admission command runs.
+// This synthetic reset is a fresh choice, so acknowledge Welcome explicitly;
+// Stop no longer provides that unrelated presentation side effect.
+try "preflight-ready".write(to: setupProgress, atomically: true, encoding: .utf8)
+waitForButton("Get started")
+click("Get started", [])
 for state in ["ready", "unknown", "blocked", "cluster"] {
     try "preflight-\(state)".write(to: setupProgress, atomically: true, encoding: .utf8)
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
@@ -744,3 +749,26 @@ click("Stop workspace", [])
 try workspacePhase("workspace-closed")
 try workspaceCapture("closed", ["This computer", "Stopped", "Quit Bridge and reopen it"])
 require(enabledButton("Start") == nil, "Terminal closed state must not offer an inert Start")
+// Closed and failed are terminal: reset only the bounded fixture selector for
+// independent Stop failures, rather than duplicating the full restart walk.
+try workspacePhase("workspace-reset-ready")
+waitForButton("Stop")
+try workspacePhase("workspace-wait")
+click("Stop", [])
+click("Stop workspace", [])
+try workspacePhase("workspace-stop-failed")
+try workspaceCapture("stop-failed", ["This computer", "Couldn't stop", "Try again"])
+require(enabledButton("Try again") == nil, "Unconfirmed Stop must not authorize Try again")
+require(enabledButton("Start") == nil, "Unconfirmed Stop must not authorize Start")
+
+try workspacePhase("workspace-reset-ready")
+waitForButton("Stop")
+try workspacePhase("workspace-wait")
+click("Stop", [])
+click("Stop workspace", [])
+try workspacePhase("workspace-stop-lost-reply")
+try workspaceCapture("stop-lost-reply", ["This computer", "Status unavailable", "Workspace status is unavailable"])
+require(enabledButton("Stop") == nil && enabledButton("Start") == nil, "Lost Stop reply must pause workspace actions")
+try workspacePhase("workspace-stopped")
+waitForButton("Start")
+try workspaceCapture("stop-reply-recovered", ["This computer", "Stopped", "Start"])

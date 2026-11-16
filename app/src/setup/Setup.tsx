@@ -45,6 +45,9 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const [pendingAction, setPendingAction] = useState<'start' | 'cancel' | 'change'>();
   const [workspace, setWorkspace] = useState(false);
   const [confirmStop, setConfirmStop] = useState(false);
+  const stopTrigger = useRef<HTMLButtonElement>(null);
+  const confirmAction = useRef<HTMLButtonElement>(null);
+  useEffect(() => { if (confirmStop) confirmAction.current?.focus(); }, [confirmStop]);
   useEffect(() => { onWorkspaceMode?.(workspace); }, [workspace, onWorkspaceMode]);
   const mutation = useRef(false);
   const mounted = useRef(false);
@@ -147,6 +150,8 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   function chooseComputer() { publishPlace({ kind: 'thisComputer' }); }
   function openExample() { chooseComputer(); onOpenExample(); }
   function back() { focusChoice.current = true; setPanel('places'); }
+  function requestStop(button: HTMLButtonElement) { stopTrigger.current = button; setConfirmStop(true); }
+  function keepRunning() { setConfirmStop(false); stopTrigger.current?.focus(); }
   function openLocal() { focusChoice.current = true; setFromPlaces(true); setLocation('local'); setPreflightBlocked(true); setPanel('local'); }
   function removed(key: string, targetId: string | undefined, navigate: boolean) {
     const current = currentPlaceRef.current;
@@ -233,12 +238,12 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
           </section>
         </>}
         <div className="setup-column setup-main">
-        {workspace && status && <Workspace status={status} busy={sending} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} model={modelState} onStart={() => { void chooseLocal(); }} onCancel={() => { void chooseLocal('cancel'); }} onStop={() => setConfirmStop(true)} />}
-        {!workspace && selected && status && <SetupProgress status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onChange={() => setConfirmStop(true)} onOpenExample={openExample} />}
         {confirmStop && <fieldset className="workspace-stop-confirm" aria-label="Stop the workspace?">
           <legend>Stop the workspace?</legend><p>Any running tests or chats will end. Actions already taken are not undone. Your agents and files are kept.</p>
-          <div className="workspace-step-actions"><Button type="button" kind="secondary" disabled={busy || !!error} onClick={() => { void chooseLocal('change'); }}>Stop workspace</Button><Button type="button" kind="quiet" onClick={() => setConfirmStop(false)}>Keep running</Button></div>
+          <div className="workspace-step-actions"><Button type="button" kind="secondary" ref={confirmAction} disabled={busy || !!error} onClick={() => { heading.current?.focus(); void chooseLocal('change'); }}>Stop workspace</Button><Button type="button" kind="quiet" onClick={keepRunning}>Keep running</Button></div>
         </fieldset>}
+        {workspace && status && <Workspace status={status} busy={sending} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} model={modelState} onStart={() => { void chooseLocal(); }} onCancel={() => { void chooseLocal('cancel'); }} active={active && view === 'local'} onStop={requestStop} />}
+        {!workspace && selected && status && <SetupProgress status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onChange={requestStop} onOpenExample={openExample} />}
         </div>
         <div className="setup-column setup-side">
         {status && modelMounted && <div className="setup-model-slot"><Model enabled={status.model === 'available'} queueable={canQueueModel(status)} paused={!!error || sending} away={cluster} primary={status.localVm === 'ready'} onConnectRequest={chooseComputer} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}

@@ -130,6 +130,7 @@ struct WorkspaceFixture {
     selected: bool,
     phase: &'static str,
     returning: bool,
+    stop_failed: bool,
 }
 #[cfg(all(target_os = "macos", feature = "custom-protocol"))]
 impl WorkspaceFixture {
@@ -139,8 +140,11 @@ impl WorkspaceFixture {
             "workspaceProgress":(self.phase == "starting").then(|| serde_json::json!({
                 "phase":"starting", "bytes":null, "totalBytes":null, "elapsedMs":18000, "remainingMs":null}))});
         if self.phase == "failed" {
-            status["workspaceFailure"] =
-                serde_json::json!({"operation":"start", "cause":"permission", "codes":[13]});
+            status["workspaceFailure"] = if self.stop_failed {
+                serde_json::json!({"operation":"stop", "cause":"stopUnconfirmed", "codes":[]})
+            } else {
+                serde_json::json!({"operation":"start", "cause":"permission", "codes":[13]})
+            };
         }
         status
     }
@@ -158,6 +162,7 @@ fn main() {
         selected: true,
         phase: "ready",
         returning: false,
+        stop_failed: false,
     }));
     let connected = std::sync::atomic::AtomicBool::new(false);
     let key_connected = std::sync::atomic::AtomicBool::new(false);
@@ -297,7 +302,7 @@ fn main() {
                 "setup_status" | "setup_change_local" | "setup_select_local" | "setup_cancel_local" => {
                     let command = invoke.message.command();
                     let phase = setup_progress.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
-                    if command == "setup_status" && phase.as_deref() == Some("workspace-unavailable") {
+                    if command == "setup_status" && matches!(phase.as_deref(), Some("workspace-unavailable" | "workspace-stop-lost-reply")) {
                         invoke.resolver.reject("Synthetic workspace status unreadable");
                         return true;
                     }
@@ -315,6 +320,14 @@ fn main() {
                         }
                     }
                     let mut state = workspace.lock().unwrap();
+                    if command == "setup_status" && phase.as_deref() == Some("workspace-reset-ready") {
+                        // Explicit fixture-only reset between independent terminal captures.
+                        // Never rearm the first test or exercise a real restart here.
+                        state.selected = true;
+                        state.phase = "ready";
+                        state.returning = true;
+                        state.stop_failed = false;
+                    }
                     if command == "setup_status" && phase.as_deref().is_some_and(|s| s.starts_with("preflight-")) {
                         // Preserve the earlier independent preflight captures without using Stop
                         // as a shortcut back to first-run setup.
@@ -335,6 +348,7 @@ fn main() {
                         "setup_select_local" => {
                             cancelling.store(false, std::sync::atomic::Ordering::SeqCst);
                             state.selected = true;
+                            state.stop_failed = false;
                             state.phase = if state.returning { "starting" } else { "ready" };
                             if !state.returning { first_test_pending.store(true, std::sync::atomic::Ordering::SeqCst); }
                             running.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -342,6 +356,7 @@ fn main() {
                         "setup_cancel_local" => {
                             assert!(state.selected, "Cancel must retain the selected workspace");
                             state.returning = true;
+                            state.stop_failed = false;
                             state.phase = "closing";
                             connected.store(false, std::sync::atomic::Ordering::SeqCst);
                             running.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -351,10 +366,17 @@ fn main() {
                             tauri::async_runtime::spawn(async move {
                                 loop {
                                     let phase = selector.as_ref().and_then(|path| std::fs::read_to_string(path).ok());
-                                    if matches!(phase.as_deref(), Some("workspace-stopped" | "workspace-closed")) {
+                                    if matches!(phase.as_deref(), Some("workspace-stopped" | "workspace-closed" | "workspace-stop-failed" | "workspace-stop-lost-reply")) {
                                         let mut state = workspace.lock().unwrap();
-                                        state.phase = if phase.as_deref() == Some("workspace-closed") { "closed" } else { "cancelled" };
-                                        resolver.resolve(state.status());
+                                        state.stop_failed = phase.as_deref() == Some("workspace-stop-failed");
+                                        state.phase = if state.stop_failed { "failed" } else if phase.as_deref() == Some("workspace-closed") { "closed" } else { "cancelled" };
+                                        if state.stop_failed || phase.as_deref() == Some("workspace-stop-lost-reply") {
+                                            // Real cancel errors reject the command; setup_status owns
+                                            // the subsequent failure/cancellation observation.
+                                            resolver.reject("Synthetic Stop failed or reply lost");
+                                        } else {
+                                            resolver.resolve(state.status());
+                                        }
                                         break;
                                     }
                                     tokio::time::sleep(std::time::Duration::from_millis(20)).await;

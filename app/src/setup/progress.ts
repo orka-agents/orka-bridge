@@ -37,7 +37,7 @@ export function setupView(status: SetupStatus | undefined, { checking = false, s
   if (workspace) {
     const state = workspaceView(status, { stopping, starting });
     const result = view('local', 0, `Workspace ${state.word.toLowerCase()}`, state.detail, state.tone, status.localVm === 'ready');
-    return { ...result, tabLine: `This computer, ${state.word.toLowerCase()}`, action: state.word === 'Stopped' ? 'Start' : 'Manage' };
+    return { ...result, tabLine: `This computer, ${state.word.toLowerCase()}`, action: state.word === 'Stopped' && status.localVm === 'cancelled' ? 'Start' : 'Manage' };
   }
   const place = status.selected === 'localVm' ? 'local' : 'none';
   if (status.localVm === 'notIntegrated') return view(place, 0, 'Local cluster unavailable', 'Local cluster unavailable', 'needs-you');

@@ -9,19 +9,21 @@ import Recovery from './Recovery';
 import type { SetupStatus } from './state';
 
 // Returning workspace management is not another pass through first-run setup.
-export default function Workspace({ status, busy, stopping, starting, error, model, onStart, onCancel, onStop }: {
-  status: SetupStatus; busy: boolean; stopping: boolean; starting: boolean; error?: string; model: ModelState;
-  onStart: () => void; onCancel: () => void; onStop: () => void;
+export default function Workspace({ status, busy, stopping, starting, error, model, active, onStart, onCancel, onStop }: {
+  status: SetupStatus; busy: boolean; stopping: boolean; starting: boolean; error?: string; model: ModelState; active: boolean;
+  onStart: () => void; onCancel: () => void; onStop: (button: HTMLButtonElement) => void;
 }) {
   const [agents, setAgents] = useState<AgentEntry[]>();
   const [path, setPath] = useState<string>();
   const [inside, setInside] = useState(false);
   useEffect(() => {
-    let active = true;
-    void listDocuments().then(value => { if (active) setAgents(value); });
-    void creationRoot().then(value => { if (active) setPath(value); });
-    return () => { active = false; };
-  }, []);
+    if (!active) return;
+    let current = true;
+    setAgents(undefined); setPath(undefined);
+    void listDocuments().then(value => { if (current) setAgents(value); });
+    void creationRoot().then(value => { if (current) setPath(value); });
+    return () => { current = false; };
+  }, [active]);
   const view = workspaceView(status, { stopping, starting });
   const failed = status.localVm === 'failed' && !stopping && !starting;
   const closed = status.localVm === 'closed';
@@ -32,7 +34,7 @@ export default function Workspace({ status, busy, stopping, starting, error, mod
   return <section className="card returning-workspace" aria-label="Workspace">
     <div className="steps-head"><div className="workspace-title"><h2>Workspace</h2><StatusPill state={error ? 'needs-you' : view.status}>{error ? 'Status unavailable' : view.word}</StatusPill></div>
     {!failed && !closed && <div className="workspace-actions">
-      {ready ? <Button type="button" kind="secondary" disabled={busy || !!error} onClick={onStop}>Stop</Button>
+      {ready ? <Button type="button" kind="secondary" disabled={busy || !!error} onClick={event => onStop(event.currentTarget)}>Stop</Button>
         : view.word === 'Starting' ? <Button type="button" kind="secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</Button>
           : <Button type="button" kind="primary" disabled={busy || !!error || view.word === 'Stopping'} onClick={onStart}>Start</Button>}
     </div>}</div>

@@ -7,11 +7,14 @@ import { createRef } from 'react';
 import Setup, { type LocalClusterControl } from './Setup';
 import { openLocalSetup } from './test-navigation';
 import type { SetupStatus } from './state';
+import { setupView } from './progress';
 
 let status: SetupStatus;
 let holdStop: (() => void) | undefined;
 let holdStart: (() => void) | undefined;
 let unreadable = false;
+let agentName = 'my-agent';
+let agentsReadable = true;
 const ipc = vi.fn((command: string) => {
   if (command === 'setup_status') { if (unreadable) throw Error('unreadable'); return status; }
   if (command === 'setup_requirements') return null;
@@ -21,7 +24,7 @@ const ipc = vi.fn((command: string) => {
   if (command === 'setup_select_local') {
     return new Promise(resolve => { holdStart = () => { status = { selected: 'localVm', localVm: 'starting', model: 'locked', workspaceProgress: { phase: 'starting', elapsedMs: 18000, bytes: null, totalBytes: null, remainingMs: null } }; resolve(status); }; });
   }
-  if (command === 'agents_list') return [{ id: '00000000-0000-4000-8000-000000000001', name: 'my-agent', path: '/agents/my-agent.agent.md', available: true }];
+  if (command === 'agents_list') { if (!agentsReadable) throw Error('unreadable'); return [{ id: '00000000-0000-4000-8000-000000000001', name: agentName, path: '/agents/my-agent.agent.md', available: true }]; }
   if (command === 'agent_creation_root') return '/agents';
   if (command === 'cluster_contexts') return [];
   throw Error('Unexpected command: ' + command);
@@ -29,6 +32,7 @@ const ipc = vi.fn((command: string) => {
 beforeEach(() => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   status = { selected: 'localVm', localVm: 'ready', model: 'available' };
+  agentName = 'my-agent'; agentsReadable = true;
   unreadable = false; holdStop = undefined; holdStart = undefined; ipc.mockClear(); mockIPC(ipc);
 });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
@@ -132,6 +136,31 @@ test('restart reaching ready keeps the place heading and requires an explicit AI
   expect(screen.getByRole('button', { name: 'Connect the AI' })).toBeTruthy();
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_connect_model');
   expect(localStorage.getItem('bridge.firstTest.v1')).not.toBe('pending');
+});
+
+test('Keep running returns keyboard focus to the Stop trigger', async () => {
+  const user = userEvent.setup(); render(<App />); await openLocalSetup(user);
+  const trigger = await screen.findByRole('button', { name: 'Stop the local cluster' });
+  await user.click(trigger);
+  await user.click(screen.getByRole('button', { name: 'Keep running' }));
+  expect(document.activeElement).toBe(trigger);
+  expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_cancel_local');
+});
+
+test.each([true, false])('returning from Designer refreshes saved agents, initially readable=%s', async initiallyReadable => {
+  agentsReadable = initiallyReadable;
+  const user = await stop();
+  await screen.findByText(initiallyReadable ? 'my-agent' : 'Agent list unavailable');
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  agentName = 'new-agent'; agentsReadable = true;
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  expect(await screen.findByText('new-agent')).toBeTruthy();
+  expect(within(screen.getByRole('region', { name: 'Workspace' })).queryByText('my-agent')).toBeNull();
+});
+
+test('terminal closed is Manage, not a Start promise on the Places row', () => {
+  expect(setupView({ selected: 'localVm', localVm: 'closed', model: 'locked' }, { workspace: true }).action).toBe('Manage');
+  expect(setupView({ selected: 'localVm', localVm: 'cancelled', model: 'locked' }, { workspace: true }).action).toBe('Start');
 });
 
 test('unreadable stopped status cannot authorize a restart', async () => {
