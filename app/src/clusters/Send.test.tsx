@@ -326,6 +326,7 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
     if (command === 'cluster_discover') return [target];
     if (command === 'cluster_use') return { status: 'connected', providers: [provider, other], failure: null };
     if (command === 'agent_open') return pair;
+    if (command === 'agent_select') return null;
     if (command === 'agent_run_status') return idle;
     if (command === 'send_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', view: null, busy: null };
     if (command === 'send_preflight') return { ...allowed, providerId: other.id };
@@ -340,6 +341,13 @@ test('a confirmed cluster opens the owned editor after failed local setup and ke
   await user.click(screen.getByRole('button', { name: 'Open your agent' }));
   expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
   expect(screen.queryByText('Read-only during setup')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  expect(screen.getByRole('button', { name: 'File' }).getAttribute('aria-pressed')).toBe('true');
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await user.click(screen.getByRole('button', { name: 'Open your agent' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Agent' }).getAttribute('aria-pressed')).toBe('true'));
   await user.click(screen.getByRole('button', { name: 'Send and run tests' }));
   await waitFor(() => expect(starts).toBe(1));
   expect(sentArgs).toEqual({ documentId: '9b2b93c4-375c-4815-9717-39852a96e411', targetId: target.id, providerId: other.id, expectedSource: source });

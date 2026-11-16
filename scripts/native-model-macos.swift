@@ -114,7 +114,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     // Setup frames 1c, 1d (cropped) and 1e exist only in light; dark captures use them as layout references.
     // Frames 1g (AI connection failed) and 1h (AI reset) are approved in both themes.
     let frame: (file: String, label: String)? =
-        ["local-result", "local-answer", "local-story", "local-running", "local-stopping"].contains(where: { name.hasPrefix($0) }) ? ("designer-reference-\(theme)", "Approved Designer frame (wide reference)")
+        ["local-result", "local-answer", "local-story", "local-running", "local-stopping", "local-shell"].contains(where: { name.hasPrefix($0) }) ? ("designer-reference-\(theme)", "Approved Designer frame (wide reference)")
         : name.hasPrefix("local-first-pass") ? ("setup-reference-first-pass", "Approved frame 1e, light (wide reference)")
         : name.hasPrefix("local-setup-installing") || name.hasPrefix("local-setup-meet") ? ("setup-reference-meet", "Approved frame 1c, light (wide reference)")
         : ["before-connect", "connected"].contains(name) || name.hasPrefix("local-setup-ai") || name.hasPrefix("local-setup-queued") || name.hasPrefix("local-setup-connected") || name.hasPrefix("local-key-anthropic-empty") ? ("setup-reference-ai", "Approved frame 1d, light (wide reference, cropped)")
@@ -580,6 +580,19 @@ _ = try seek("Use this cluster", -150)
 click("Use this cluster", [])
 _ = try seek("Open your agent", -150)
 click("Open your agent", [])
+// A remote place blocks Chat: no Ready claim and a disabled New conversation, at both sizes.
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    waitForButton("Chat"); click("Chat", [])
+    waitForChatText("Chat on local cluster")
+    require(!nativeChatTextIsVisible("Ready for your message."), "Blocked Chat must not say Ready")
+    require(anyButton("New conversation") && enabledButton("New conversation") == nil, "Blocked Chat must disable New conversation")
+    _ = try capture("local-shell-chat-blocked-\(size)", ["Chat on local cluster"])
+    _ = try seek("Chat is unavailable", -150)
+    _ = try capture("local-shell-chat-blocked-status-\(size)", ["Chat is unavailable"])
+    scroll(4000)
+    click("Agent", [])
+}
 func focusedButtonTitle() -> String? {
     var focused: CFTypeRef?
     let app = AXUIElementCreateApplication(child.processIdentifier)
@@ -876,6 +889,40 @@ require((attribute(editor, "AXValue") as? String)?.contains("Changed fixture ins
 scroll(4000)
 _ = try seek("Not run since your edit", -250)
 _ = try capture("local-stale", ["Not run since your edit"])
+// Shell evidence beside the approved Designer frame: Agent, File, then Send and Past Sends opened on request.
+// Blocked Chat is captured in the remote section above. The first (wide) pass sees the unused Send hidden; opening it
+// keeps it retained, so the minimum pass must see it already visible.
+func exactTextIsVisible(_ expected: String) -> Bool {
+    nativeElements().contains { element in
+        guard attribute(element, "AXRole") as? String == "AXStaticText", attribute(element, "AXValue") as? String == expected,
+            let bounds = nativeBounds(element) else { return false }
+        return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
+    }
+}
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    click("Agent", [])
+    require(nativeElements().contains { attribute($0, "AXRole") as? String == "AXPopUpButton" }, "Header agent picker missing")
+    require(anyButton("Send to a cluster") && anyButton("Past Sends"), "Header Send entry and Past Sends must always exist")
+    if size == "wide" { require(!anyButton("Send and run tests"), "An unused Send must start hidden") }
+    else { require(anyButton("Send and run tests"), "Send opened earlier must stay retained and visible") }
+    _ = try capture("local-shell-agent-\(size)", ["Instructions and settings"])
+    click("File", [])
+    _ = try capture("local-shell-file-\(size)", ["web-reader.agent.md"])
+    click("Agent", [])
+    click("Send to a cluster", [])
+    scroll(4000)
+    _ = try seek("Team clusters are early in this preview", -150)
+    require(exactTextIsVisible("Team cluster") && nativeChatTextIsVisible("Team clusters are early in this preview"), "Send headline and early-preview text must be visible together")
+    require(anyButton("Send and run tests") && enabledButton("Send and run tests") == nil, "Without a cluster, the opened Send must be visible but disabled")
+    _ = try capture("local-shell-send-\(size)", ["Team clusters are early in this preview"])
+    _ = try seek("Past Sends", -150)
+    click("Past Sends", [])
+    _ = try seek("Saved results and limits", -150)
+    _ = try capture("local-shell-history-\(size)", ["Past Sends", "Saved results and limits"])
+    click("Past Sends", [])
+}
+localSize(1280, 800)
 // Chat runs before the final Run, which intentionally stays busy forever in
 // this fixture. These actions change only the fixture's in-memory transcript.
 localSize(1280, 800)
