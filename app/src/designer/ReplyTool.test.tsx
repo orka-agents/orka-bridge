@@ -34,12 +34,26 @@ test('a saved reply is warned about but preserved until explicit removal', async
   const changed = vi.fn(); const user = userEvent.setup();
   const view = render(<AgentParts source={saved} readOnly={false} onChange={changed} />);
   expect(screen.getByText('Reply in a conversation')).toBeTruthy();
-  expect(screen.getByRole('alert').textContent).toMatch(/Remove .*reply_in_conversation before running local tests or Chat/);
+  expect(screen.getByRole('alert').textContent).toMatch(/Remove all .*reply_in_conversation tools before running local tests or Chat/);
   expect(changed).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Remove Reply in a conversation' }));
   const edited = changed.mock.calls[0][0];
   expect(readForm(edited).tools).toEqual([]);
   view.rerender(<AgentParts source={edited} readOnly={false} onChange={changed} />);
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
+test('a saved agent with both unsupported tools is warned until both are removed', async () => {
+  const saved = source.replace('tools: []', 'tools: [{kind: builtin, name: request_approval}, {kind: builtin, name: reply_in_conversation}]');
+  const changed = vi.fn(); const user = userEvent.setup();
+  const view = render(<AgentParts source={saved} readOnly={false} onChange={changed} />);
+  expect(screen.getByRole('alert').textContent).toBe('Remove all request_approval and reply_in_conversation tools before running local tests or Chat. No work was submitted.');
+  await user.click(screen.getByRole('button', { name: 'Remove Reply in a conversation' }));
+  const approvalOnly = changed.mock.calls.at(-1)![0];
+  view.rerender(<AgentParts source={approvalOnly} readOnly={false} onChange={changed} />);
+  expect(screen.getByRole('alert')).toBeTruthy();
+  await user.click(screen.getByRole('button', { name: 'Remove Ask for approval' }));
+  view.rerender(<AgentParts source={changed.mock.calls.at(-1)![0]} readOnly={false} onChange={changed} />);
   expect(screen.queryByRole('alert')).toBeNull();
 });
 

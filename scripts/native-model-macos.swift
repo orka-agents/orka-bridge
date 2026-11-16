@@ -902,7 +902,7 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     }
     require(replyButtons.count == 1, "Search must leave exactly the reply tool row")
     require(attribute(replyButtons[0], "AXEnabled") as? Bool == false, "Reply tool must stay disabled locally")
-    require(nativeResultTextIsVisible(replyReason), "Reply reason must be fully visible in the picker")
+    // Require the whole reason in the captured window, not only accessibility-node geometry.
     _ = try capture("local-reply-tool-\(size)", ["Find a tool", "Reply in a conversation", replyReason])
     guard let close = enabledButton("Close picker"), let bounds = nativeBounds(close) else {
         fatalError("Labeled picker X missing")

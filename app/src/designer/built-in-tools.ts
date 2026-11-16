@@ -7,7 +7,7 @@ export const unsupportedToolReason = 'Approval tools need autonomous coordinatio
 export const unsupportedLocalToolReason = (name: string) => name.trim() === 'reply_in_conversation'
   ? 'Conversation replies need an authenticated gateway conversation, which local tests and Chat do not have.'
   : unsupportedToolReason;
-export const unsupportedToolMessage = 'Remove request_approval or reply_in_conversation before running local tests or Chat. No work was submitted.';
+export const unsupportedToolMessage = 'Remove all request_approval and reply_in_conversation tools before running local tests or Chat. No work was submitted.';
 
 // Creator-facing descriptions for common built-ins; unknown tools keep their supplied text.
 export const builtInToolDescriptions: Readonly<Record<string, string>> = {
