@@ -1142,26 +1142,33 @@ try {
     for (const name of actionFixtures) await captureActions(theme, 'wide', name);
     for (const variant of overviewVariants) await captureOverview(theme, 'wide', variant);
   }
-  // Resize the real native window to its minimum 540x640 client area, as a user would. Win32 SetWindowPos through
-  // PowerShell, then verify what the embedded WebView actually reports; never assume the resize worked.
+  // Request CSS viewport dimensions, converting once for the real native client area.
+  // Verify both Win32 physical pixels and the embedded WebView; never emulate or assume a resize.
   async function resizeTo(target, label) {
+  const viewport = async () => evaluate('({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })');
+  ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'viewport-probe' }));
+  const ratio = (await viewport()).dpr;
+  const physical = { width: Math.round(target.width * ratio), height: Math.round(target.height * ratio) };
   const resizeScript = `
 $ErrorActionPreference = 'Stop'
 Add-Type @'
 using System; using System.Runtime.InteropServices;
 public struct WinRect { public int L, T, R, B; }
 public static class WinSize {
+  [DllImport("user32.dll")] public static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out WinRect r);
   [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out WinRect r);
   [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int h2, uint flags);
 }
 '@
+# PMv2 keeps these Win32 coordinates physical, independent of PowerShell's default awareness.
+if ([WinSize]::SetThreadDpiAwarenessContext([IntPtr](-4)) -eq [IntPtr]::Zero) { throw 'Cannot select physical-pixel coordinates' }
 $h = (Get-Process -Id ${child.pid}).MainWindowHandle
 if ($h -eq [IntPtr]::Zero) { throw 'No native main window handle' }
 for ($i = 0; $i -lt 4; $i++) {
   $w = New-Object WinRect; $c = New-Object WinRect
   [void][WinSize]::GetWindowRect($h, [ref]$w); [void][WinSize]::GetClientRect($h, [ref]$c)
-  $dw = ${target.width} - ($c.R - $c.L); $dh = ${target.height} - ($c.B - $c.T)
+  $dw = ${physical.width} - ($c.R - $c.L); $dh = ${physical.height} - ($c.B - $c.T)
   if ($dw -eq 0 -and $dh -eq 0) { break }
   [void][WinSize]::SetWindowPos($h, [IntPtr]::Zero, $w.L, $w.T, ($w.R - $w.L) + $dw, ($w.B - $w.T) + $dh, 0x0014)
   Start-Sleep -Milliseconds 300
@@ -1171,15 +1178,15 @@ $c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
   // EncodedCommand avoids any argument-quoting ambiguity for the embedded C#.
   const resized = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(resizeScript, 'utf16le').toString('base64')], { encoding: 'utf8', timeout: 20000 });
   let mode = 'native-window-resize';
-  const viewport = async () => evaluate('({ width: innerWidth, height: innerHeight, dpr: devicePixelRatio })');
-  ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: 'viewport-probe' }));
   await delay(500);
   let reported = await viewport();
   const close = (a, b) => Math.abs(a - b) <= 2;
-  if (resized.status !== 0 || !close(reported.width * reported.dpr, target.width) || !close(reported.height * reported.dpr, target.height)) {
-    throw Error(`Native client resize to ${target.width}x${target.height} unverified (exit ${resized.status}): ${JSON.stringify(reported)} ${resized.stderr ?? ''}`);
+  const client = /client=(\d+)x(\d+)/.exec(resized.stdout ?? '');
+  if (resized.status !== 0 || reported.width !== target.width || reported.height !== target.height || !client
+      || !close(Number(client[1]), reported.width * reported.dpr) || !close(Number(client[2]), reported.height * reported.dpr)) {
+    throw Error(`Native client resize to ${target.width}x${target.height} CSS px (${physical.width}x${physical.height} physical px) unverified (exit ${resized.status}): ${JSON.stringify(reported)} ${resized.stdout ?? ''} ${resized.stderr ?? ''}`);
   }
-  notes.push(`${label} captures: ${mode}. Requested content area ${target.width}x${target.height}; WebView reported ${reported.width}x${reported.height} CSS px at devicePixelRatio ${reported.dpr}. ${resized.stdout.trim()}`);
+  notes.push(`${label} captures: ${mode}. Requested content area ${target.width}x${target.height} CSS px (${physical.width}x${physical.height} physical px); WebView reported ${reported.width}x${reported.height} CSS px at devicePixelRatio ${reported.dpr}. ${resized.stdout.trim()}`);
   }
   await resizeTo({ width: 540, height: 640 }, 'Compact');
   for (const theme of ['light', 'dark']) {
