@@ -236,10 +236,10 @@ func nativeStrings() -> [String] {
     }
 }
 func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bool = true, exact: Bool = false) -> [CGRect] {
-    guard let rect = window()?.1 else { return [] }
-    // Destination chips and footer mirrors are not evidence of a visible card.
+    guard window() != nil else { return [] }
+    // Use the same native viewport as controls: compact tabs are shorter than wide tabs.
     // Below-the-fold bounds can guide scrolling, but never prove visibility.
-    let body = CGRect(x: rect.minX, y: rect.minY + 110, width: rect.width, height: max(0, rect.height - 142))
+    let body = bodyBounds()
     var matches: [CGRect] = []
     for element in nativeElements() {
         guard let role = attribute(element, "AXRole") as? String else { continue }
@@ -423,7 +423,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         if name == "cluster-conditional" {
             require(accountName && text.contains("existing account in agents"), "Conditional name-only access prompt missing: \(text)")
         } else {
-            require(text.contains("Orka identity") && text.contains("Access was denied") && !accountName, "Denial incorrectly offered identity substitution: \(text)")
+            require(text.contains("account and namespace") && text.contains("Access was denied") && !accountName, "Denial incorrectly offered identity substitution: \(text)")
             guard let explanation = nativeTextBounds("Access was denied").first,
                 let retry = nativeButtons("Check again").compactMap({ nativeBounds($0) }).first else {
                 fail("Access error or its retry action is missing")

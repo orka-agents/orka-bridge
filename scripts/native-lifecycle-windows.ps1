@@ -477,7 +477,7 @@ assertions: []
         # File > Quit is exercised by the native menu/failed-stop subprocess test,
         # not by a duplicate GUI lookup through this runner's incomplete UIA tree.
         if ((Test-Path $selected) -or (Test-Path $vmData)) { throw 'Saved local selection or VM data appeared' }
-        "PASS $theme`: native own-repo chooser, selected path/copy, web-reader starter pair only (no nested Git/marker); native Close/hide, tray menu/Open, same PID $script:originalPid/window $script:hwnd, File view/edited text retained, hidden/minimized second launches, menu stop. Standard Quit is covered by native subprocess tests. Integrated debug shell only; empty image source, no VM/Ready/provider/cluster/session logout proof. OS popup theme is captured as drawn, not forced by product hooks." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
+        "PASS $theme`: native own-repo chooser, selected path/copy, blank web-reader-named draft pair only (no nested Git/marker); native Close/hide, tray menu/Open, same PID $script:originalPid/window $script:hwnd, File view/edited text retained, hidden/minimized second launches, menu stop. Standard Quit is covered by native subprocess tests. Integrated debug shell only; empty image source, no VM/Ready/provider/cluster/session logout proof. OS popup theme is captured as drawn, not forced by product hooks." | Tee-Object (Join-Path $script:themeOutput 'evidence.txt')
     }
 } catch {
     $failure = $_
