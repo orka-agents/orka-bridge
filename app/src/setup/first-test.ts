@@ -20,7 +20,7 @@ function claim() {
 }
 const text = (value: string) => value.replaceAll('\r\n', '\n');
 
-export function useFirstTest(options: { ready: boolean; canOpen: boolean; sampleDirty: boolean; onOpen: () => void; onPrepared?: () => void; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; onPassed?: (snapshot: RunSnapshot) => void; onUnavailable?: () => void }): CheckStepState | undefined {
+export function useFirstTest(options: { ready: boolean; canOpen: boolean; sampleDirty: boolean; onOpen: () => void; onPrepared?: () => void; onSource?: (source: SourceId | null) => void; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; onPassed?: (snapshot: RunSnapshot) => void; onUnavailable?: () => void }): CheckStepState | undefined {
   const latest = useRef(options);
   useEffect(() => { latest.current = options; });
   const [check, setCheck] = useState<CheckStepState>();
@@ -44,18 +44,19 @@ export function useFirstTest(options: { ready: boolean; canOpen: boolean; sample
       const ownedPass = submitted && verdict === 'passed' && snapshot?.attemptId === attemptId && sameSource(submittedSource, snapshot?.source) === true;
       if (ownedPass && latest.current.ready && latest.current.canOpen && snapshot) {
         // A run's frozen source is not proof that its files are still readable/current.
-        let sourceCurrent = false;
-        try {
-          const current = await agentCall('agent_open', undefined, SAMPLE_DOCUMENT_ID);
-          sourceCurrent = sameSource(current.source, snapshot.source) === true;
-        } catch { /* An unreadable current file cannot prove a fresh result. */ }
+        let currentSource: SourceId | null = null;
+        try { currentSource = (await agentCall('agent_open', undefined, SAMPLE_DOCUMENT_ID)).source ?? null; }
+        catch { /* An unreadable current file cannot prove a fresh result. */ }
         if (cancelled || !mounted.current) return;
-        snapshot = { ...snapshot, sourceCurrent };
+        // Status polls replace snapshots; retain the read's source separately so
+        // they cannot restore the submitted, now-stale hash or an unreadable file.
+        latest.current.onSource?.(currentSource);
+        snapshot = { ...snapshot, sourceCurrent: currentSource ? sameSource(currentSource, snapshot.source) : undefined };
       }
       latest.current.onSnapshot?.(snapshot);
       setCheck(verdict === 'cancelled' ? 'unknown' : verdict);
       if (latest.current.ready && latest.current.canOpen) {
-        if (ownedPass && snapshot && !snapshot.error && snapshot.sourceCurrent !== false && sameSource(submittedSource, snapshot.source) === true && snapshot.report?.cases.every(result => result.verdict === 'passed')) latest.current.onPassed?.(snapshot);
+        if (ownedPass && snapshot && !snapshot.error && snapshot.sourceCurrent === true && sameSource(submittedSource, snapshot.source) === true && snapshot.report?.cases.every(result => result.verdict === 'passed')) latest.current.onPassed?.(snapshot);
         else if (snapshot?.error === 'model' && latest.current.onUnavailable) latest.current.onUnavailable();
         else latest.current.onOpen();
       }

@@ -54,7 +54,7 @@ export function SetupProgress(props: Props) {
   const { view, failed: failedStatus, paused, infra } = stepRows(props);
   const failed = failedStatus && !error;
   const ready = status.localVm === 'ready';
-  const needsModel = props.modelUnavailable && props.firstCheck === 'unknown';
+  const needsModel = props.modelState === 'connected' && props.modelUnavailable && props.firstCheck === 'unknown';
   const progress = status.workspaceProgress;
   const copying = !stopping && status.localVm === 'installing' && progress?.phase === 'materializing';
   const stateLine = error ? 'Local cluster status is unavailable.' : stopping ? 'Stopping the local cluster…' : ready ? 'Your workspace is ready on this computer.'

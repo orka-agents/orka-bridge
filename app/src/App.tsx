@@ -158,6 +158,7 @@ export default function App() {
     sampleDirty,
     onOpen: () => openDesigner(SAMPLE_DOCUMENT_ID),
     onPrepared: () => setSampleRevision(value => value + 1),
+    onSource: setSampleSource,
     onSnapshot: observeSampleRun,
     onPassed: setFirstPass,
     onUnavailable: () => setFirstPass(undefined),

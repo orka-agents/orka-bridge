@@ -23,6 +23,7 @@ function native(holdSave = false, lostReplies = false) {
     if (command === 'setup_change_local') { selected = false; return status(); }
     if (command === 'setup_example') return { agent: pair.agent, tests: pair.tests };
     if (command === 'setup_connect_model') return { ready: true };
+    if (command === 'setup_remove_model') return { ready: false };
     if (command === 'agent_select') return null;
     if (command === 'agent_open') { if (unreadableFiles) throw Error('Lost file read'); return args?.documentId === other ? { ...pair, documentId: other, name: 'other', agent: '---\nname: other\n---\nOther instructions.' } : { ...saved, documentId: sample, name: 'web-reader' }; }
     if (command === 'agent_save') { if (holdSave) return new Promise(() => {}); saved = { ...pair, agent: String(args?.content), source: { ...pair.source, agent: 'c'.repeat(64) } }; return { ...saved, documentId: sample, name: 'web-reader' }; }
@@ -38,7 +39,7 @@ function native(holdSave = false, lostReplies = false) {
     if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
     throw Error('Unexpected command: ' + command);
   });
-  mockIPC(ipc); return { ipc, unavailable: () => { modelUnavailable = true; }, finish: () => { finished = true; }, loseWorkspace: () => { selected = false; }, loseRunStatus: () => { unreadable = true; }, restoreRunStatus: () => { unreadable = false; }, loseFileReads: () => { unreadableFiles = true; }, restoreFileReads: () => { unreadableFiles = false; }, failNext: () => { verdict = 'failed'; } };
+  mockIPC(ipc); return { ipc, unavailable: () => { modelUnavailable = true; }, finish: () => { finished = true; }, loseWorkspace: () => { selected = false; }, loseRunStatus: () => { unreadable = true; }, restoreRunStatus: () => { unreadable = false; }, loseFileReads: () => { unreadableFiles = true; }, restoreFileReads: () => { unreadableFiles = false; }, editFiles: () => { saved = { ...pair, agent: pair.agent + ' External edit.', source: { ...pair.source, agent: 'd'.repeat(64) } }; }, failNext: () => { verdict = 'failed'; } };
 }
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
@@ -97,6 +98,22 @@ test('an unreachable model stays in setup with explicit recovery and never repla
   await screen.findByRole('group', { name: 'Remove sign-in confirmation' });
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
   expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
+  await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  expect(await screen.findByRole('button', { name: 'Read its instructions' })).toBeTruthy();
+});
+
+test.each(['edited', 'unreadable'] as const)('completion file freshness survives subsequent native status polls (%s)', async state => {
+  const { ipc, finish, editFiles, loseFileReads } = native(); const user = await completeSetup();
+  await screen.findByText('Setting up, step 4 of 4');
+  if (state === 'edited') editFiles(); else loseFileReads();
+  finish();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page'));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  const reads = ipc.mock.calls.filter(([command]) => command === 'agent_run_status').length;
+  await waitFor(() => expect(ipc.mock.calls.filter(([command]) => command === 'agent_run_status').length).toBeGreaterThan(reads));
+  expect(screen.getByText('Run your first test', { selector: 'li b' }).closest('li')!.textContent).toBe(`Run your first test${state === 'edited' ? 'Needs running' : 'Result unknown'}`);
+  expect(screen.queryByRole('heading', { name: 'Your first agent passed its test' })).toBeNull();
+  expect(ipc.mock.calls.filter(([command]) => command === 'agent_run')).toHaveLength(1);
 });
 
 test.each(['passed', 'failed', 'unreadable', 'edited'] as const)('Setup retains the latest sample evidence (%s), not the automatic result or another document', async state => {

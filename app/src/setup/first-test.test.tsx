@@ -66,9 +66,11 @@ test.each(['submitted', 'existing', 'changed', 'changed-after-run', 'unreadable-
     if (command === 'agent_run_status') return existing || scenario === 'lost-reply' && ipc.mock.calls.some(([c]) => c === 'agent_run') ? { ...passed, ...(attemptId ? { attemptId } : {}) } : idle;
     if (command === 'agent_run') { attemptId = scenario === 'raced' ? '12345678-1234-1234-1234-123456789abc' : args?.attemptId; if (scenario === 'lost-reply') throw Error('Lost reply'); return { ...passed, ...(attemptId ? { attemptId } : {}) }; }
   });
-  mockIPC(ipc); const onOpen = vi.fn(); const onPassed = vi.fn();
-  const view = renderHook(() => useFirstTest({ ready: true, canOpen: scenario !== 'left', sampleDirty: false, onOpen, onPassed }));
+  mockIPC(ipc); const onOpen = vi.fn(); const onPassed = vi.fn(); const onSource = vi.fn();
+  const view = renderHook(() => useFirstTest({ ready: true, canOpen: scenario !== 'left', sampleDirty: false, onOpen, onPassed, onSource }));
   await waitFor(() => expect(view.result.current).toBe(['failed', 'unknown'].includes(scenario) ? scenario : scenario === 'cancelled' ? 'unknown' : 'passed'));
+  if (scenario === 'changed-after-run') expect(onSource.mock.lastCall?.[0]?.tests).toBe('d'.repeat(64));
+  if (scenario === 'unreadable-after-run') expect(onSource).toHaveBeenLastCalledWith(null);
   expect(onPassed).toHaveBeenCalledTimes(scenario === 'submitted' ? 1 : 0);
   expect(onOpen).toHaveBeenCalledTimes(scenario === 'submitted' || scenario === 'left' ? 0 : 1);
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(existing ? 0 : 1);
