@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import vm from 'node:vm';
 
-const source = await readFile(new URL('./native-recovery-windows.mjs', import.meta.url), 'utf8');
+const source = (await readFile(new URL('./native-recovery-windows.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const prefix = source.slice(0, source.indexOf('for (const root of')).replace(/^import .*;\n/gm, '');
 function selection(scope) {
   const argv = ['node', 'driver', 'app.exe', 'captures', ...(scope === undefined ? [] : [scope])];
@@ -42,7 +42,7 @@ for (const name of ['fixtures', 'setupFixtures', 'overviewVariants']) {
   assert.ok(roster(name, selection('core')).length > 0);
 }
 assert.match(source, /if \(runCore\) for \(const name of \['designer-connected'/, 'UI scope must not repeat minimum Designer cases');
-const workflow = await readFile(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8');
+const workflow = (await readFile(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clusters', 'native-chat-agent-clusters']]) {
   const command = `node ../scripts/native-recovery-windows.mjs src-tauri/target/debug/orka-bridge.exe windows-artifact/${directory} ${scope}`;
   assert.ok(workflow.includes(command), `CI must run ${scope} into its own artifact directory`);
