@@ -56,10 +56,11 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, action }: { 
       </section>
       <section aria-label="Installed memory">
         <p className="preflight-result" role={memory === 'insufficient' && !checking ? 'alert' : undefined}><StatusIcon state={checking ? 'running' : memory === 'insufficient' ? 'failed' : memory === 'ready' ? 'passed' : 'not-started'} /><span><b>Installed memory: </b><span>{checking ? 'Checking…' : result?.installedMemoryBytes != null
-          ? `${formatRequirementGB(result.installedMemoryBytes)} installed; ${formatRequirementGB(requiredMemoryBytes)} needed${memory === 'insufficient' ? '. Not enough installed memory.' : '.'}`
+          ? `about ${formatRequirementGB(result.installedMemoryBytes)} installed; about ${formatRequirementGB(requiredMemoryBytes)} needed${memory === 'insufficient' ? '. Not enough installed memory. See About this check for exact amounts.' : '.'}`
           : 'Not checked'}</span></span></p>
         <Disclosure label="About this check" open={memoryHelp} controls="preflight-memory-help" onOpenChange={setMemoryHelp}>
-        {memoryHelp && <p id="preflight-memory-help">This is installed RAM, not currently free memory. Closing apps does not increase installed memory. Use a computer with at least {formatRequirementGB(requiredMemoryBytes)} installed, or choose a cluster instead. An unreadable check is left to local cluster startup; no memory is reserved by this check.</p>}</Disclosure>
+        {memoryHelp && <div id="preflight-memory-help"><p>This is installed RAM, not currently free memory. Closing apps does not increase installed memory. Use a computer with enough installed memory (about {formatRequirementGB(requiredMemoryBytes)}), or choose a cluster instead. An unreadable check is left to local cluster startup; no memory is reserved by this check.</p>
+          <p>{`Required: ${requiredMemoryBytes.toLocaleString()} bytes.${result?.installedMemoryBytes != null ? ` Installed: ${result.installedMemoryBytes.toLocaleString()} bytes.` : ''}`}</p></div>}</Disclosure>
       </section>
     </div>
     <p className="muted" id="preflight-reason" role="status">{checking ? 'Checking this computer before setup.' : failedVirtualization || memory === 'insufficient' ? 'Fix the computer requirements above before continuing.' : uncertain ? 'Bridge checks this when it starts.' : 'These checks do not change this computer.'}</p>

@@ -92,7 +92,7 @@ test('insufficient installed memory blocks preparation, explains RAM, and can be
   const panel = await screen.findByRole('region', { name: 'Computer requirements' });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true));
   const memory = within(panel).getByRole('region', { name: 'Installed memory' });
-  await waitFor(() => expect(memory.textContent).toContain('4.3 GB installed; 6.4 GB needed'));
+  await waitFor(() => expect(memory.textContent).toContain('about 4.3 GB installed; about 6.4 GB needed'));
   await user.click(within(memory).getByRole('button', { name: 'About this check' }));
   expect(memory.textContent).toMatch(/Closing apps does not increase installed memory/);
   expect(memory.textContent).toMatch(/cluster/);
@@ -108,6 +108,18 @@ test('insufficient installed memory blocks preparation, explains RAM, and can be
   await user.click(screen.getByRole('button', { name: 'Continue' }));
   expect(await screen.findByText('Starting the local cluster…')).toBeTruthy();
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_select_local')).toHaveLength(1);
+});
+
+test('rounded RAM values are approximate and the memory disclosure preserves exact failed amounts', async () => {
+  const { ipc } = await native({ ...ready, memory: 'insufficient', installedMemoryBytes: 6400000000 });
+  const memory = await screen.findByRole('region', { name: 'Installed memory' });
+  await waitFor(() => expect(memory.textContent).toContain('about 6.4 GB installed; about 6.4 GB needed'));
+  expect(screen.getByText(/about 6.4 GB of installed memory/)).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
+  await userEvent.setup().click(within(memory).getByRole('button', { name: 'About this check' }));
+  expect(memory.textContent).toContain(`Required: ${requirements.memoryBytes.toLocaleString()} bytes.`);
+  expect(memory.textContent).toContain(`Installed: ${(6400000000).toLocaleString()} bytes.`);
+  expect(ipc.mock.calls.some(([c]) => c === 'setup_select_local')).toBe(false);
 });
 
 test('virtualization failure offers native fixed-topic help, sanitized copy, and a usable cluster alternative', async () => {

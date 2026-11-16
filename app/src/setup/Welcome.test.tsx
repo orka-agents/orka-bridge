@@ -97,7 +97,7 @@ test('keyboard disclosure and opening local setup are inert; only Continue start
 test('requirements render the native build values rather than fixed image or memory sizes', async () => {
   localStorage.setItem(preference, '1'); native(unselected, { memoryBytes: 8589934592, imageBytes: 18253611008, stateDiskBytes: 68719476736 });
   render(<App />); await openLocalSetup();
-  expect(screen.getByText(/at least 8.6 GB of installed memory/)).toBeTruthy();
+  expect(screen.getByText(/about 8.6 GB of installed memory/)).toBeTruthy();
   await userEvent.setup().click(screen.getByRole('button', { name: "What's inside" }));
   const imageDetails = screen.getByText(/image size is 18.3 GB/);
   expect(imageDetails).toBeTruthy();

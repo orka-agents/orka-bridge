@@ -206,7 +206,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                 <input id="workspace-local" name="workspace-location" type="radio" value="local" checked={location === 'local'} onChange={() => { setPreflightBlocked(true); setLocation('local'); }} />
                 <label htmlFor="workspace-local">On this computer</label><span className="chip">Recommended</span>
                 <div className="workspace-option-detail">
-                  <p>Bridge sets up a workspace on this computer. {requirements ? `It needs virtualization turned on and at least ${formatRequirementGB(requirements.memoryBytes)} of installed memory.` : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>
+                  <p>Bridge sets up a workspace on this computer. {requirements ? `It needs virtualization turned on and about ${formatRequirementGB(requirements.memoryBytes)} of installed memory.` : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>
                   <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
                     <div id="workspace-inside" hidden={!inside}>
                       <p>The local cluster includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>
