@@ -506,11 +506,24 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         let headings = nativeTextBounds("Add a cluster", heading: true)
         require(headings.count == 1, "Add a cluster heading must be visible")
-        // Header destination metadata can remain confirmed; only inspect content below this page's heading.
-        let bodyConfirmed = nativeTextBounds("Access confirmed").contains { $0.minY >= headings[0].maxY }
-        require(text.contains("Back to clusters") && !text.contains("Cluster found") && !bodyConfirmed
-            && nativeButtons("Open your agent").isEmpty && nativeButtons("Check access again").isEmpty
-            && nativeStrings().contains { $0.contains("Choose a context") }, "Add a cluster did not open a blank Places subview: \(text)")
+        let frame = window()!.1
+        func centre(_ row: VNRecognizedTextObservation) -> CGPoint {
+            CGPoint(x: frame.minX + row.boundingBox.midX * frame.width,
+                    y: frame.minY + (1 - row.boundingBox.midY) * frame.height)
+        }
+        // Header AT descriptions and popup AX values are not proof of rendered page text.
+        let bodyConfirmed = observations.contains {
+            $0.topCandidates(1).first?.string.contains("Access confirmed") == true
+                && bodyBounds().contains(centre($0)) && centre($0).y >= headings[0].maxY
+        }
+        let pickers = visibleButtons("kubectl context")
+        let blank = pickers.count == 1 && observations.contains {
+            $0.topCandidates(1).first?.string.contains("Choose a context") == true && pickers[0].contains(centre($0))
+        }
+        let checks = ["back": text.contains("Back to clusters"), "no discovery": !text.contains("Cluster found"),
+            "no body confirmation": !bodyConfirmed, "no open": nativeButtons("Open your agent").isEmpty,
+            "no recheck": nativeButtons("Check access again").isEmpty, "blank picker": blank]
+        require(checks.values.allSatisfy { $0 }, "Add a cluster did not open a blank Places subview: \(checks): \(text)")
         print("PASS \(name): native Places subview with blank kubectl context")
         return observations
     }
