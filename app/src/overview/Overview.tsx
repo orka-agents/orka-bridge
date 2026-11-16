@@ -151,7 +151,7 @@ export default function Overview({ onNewAgent, active, runBusy, activeDocumentId
   const empty = isEmpty(inputs, built);
   const partial = !!workspaceNote || filesStale || files?.historyState !== 'complete' || !complete(live) || pending || !places || placeError || places.places.some(p => p.stale || p.observedAt === null);
   const counts = !files ? 'Reading saved files…' : files.state === 'unavailable' ? 'Saved files unavailable'
-    : !filesVisited.current ? filesStale ? 'Saved files unavailable' : files.files.length ? `${files.files.length} saved agent${files.files.length === 1 ? '' : 's'}` : 'No agents yet'
+    : !filesVisited.current ? filesStale ? 'Saved files unavailable' : files.files.length ? `${files.files.length} saved agent${files.files.length === 1 ? '' : 's'}` : 'No saved agents yet'
     : summaryLabel(built.cards, partial);
   useEffect(() => { onCounts?.(counts); }, [counts, onCounts]);
   const clusters = clusterGroups(inputs, built);

@@ -244,7 +244,7 @@ test('first opening the sample refreshes the hidden saved count without live dis
     throw { kind: 'unavailable' };
   });
   render(<App />);
-  await within(screen.getByRole('navigation')).findByText('No agents yet');
+  await within(screen.getByRole('navigation')).findByText('No saved agents yet');
   await userEvent.click(screen.getByRole('button', { name: 'Designer' }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
   await within(screen.getByRole('navigation')).findByText('1 saved agent');

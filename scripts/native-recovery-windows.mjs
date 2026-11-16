@@ -283,7 +283,7 @@ try {
     const panel = localVm === 'failed' ? '.workspace-failure' : '.setup-progress';
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected)}) && [...document.querySelectorAll(${JSON.stringify(panel)})].some(item => item.getClientRects().length)`), `${name} setup progress`);
     if (!await evaluate(`document.querySelector('h1')?.textContent === 'This computer'`)) throw Error(`${name}: local page lost its stable title`);
-    await until(() => evaluate(`document.querySelector('#tab-status-Overview')?.textContent === 'No agents yet'`), 'initial saved-only empty count');
+    await until(() => evaluate(`document.querySelector('#tab-status-Overview')?.textContent === 'No saved agents yet'`), 'initial saved-only empty count');
     const chrome = await evaluate(`document.querySelector('header').innerText + document.querySelector('footer').innerText`);
     const observed = !failLater && localVm !== 'failed';
     const step = localVm === 'ready' ? 3 : 2;

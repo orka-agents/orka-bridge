@@ -58,7 +58,7 @@ test('generated Chat runtime agents are hidden without hiding saved, remote or s
 });
 
 test.each([
-  [files([]), 'No agents yet'],
+  [files([]), 'No saved agents yet'],
   [files(), '1 saved agent'],
   [{ state: 'unavailable', files: [], runActive: false }, 'Saved files unavailable'],
 ])('an unvisited hidden Overview reports saved inventory only: %s', async (saved, label) => {
