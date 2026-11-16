@@ -95,7 +95,8 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     for value in expected {
         // Vision renders the capital I as a lowercase l in this exact observed label.
         let found = visible.replacingOccurrences(of: "Connect the Al", with: "Connect the AI")
-            .replacingOccurrences(of: "APl key", with: "API key").contains(value)
+            .replacingOccurrences(of: "APl key", with: "API key")
+            .replacingOccurrences(of: "Reset Al connection", with: "Reset AI connection").contains(value)
         // Recovery copy has apostrophes and "AI" that Vision misreads; require visible native text instead.
         let lenient = ["local-key-", "local-reset-", "local-remove-"].contains { name.hasPrefix($0) }
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || lenient && nativeChatTextIsVisible(value))

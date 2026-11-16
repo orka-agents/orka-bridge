@@ -80,12 +80,12 @@ fn unavailable() -> SetupError {
 }
 fn mismatch(installation: Uuid, b: &Binding) -> SetupError {
     SetupError {
-        recovery: Some(ModelRecovery {
+        recovery: Some(Box::new(ModelRecovery {
             installation,
             saved_installation: b.installation,
             credential_slot: b.slot,
             reset_stage: None,
-        }),
+        })),
         ..SetupError::model("modelInstallationMismatch")
     }
 }

@@ -150,7 +150,7 @@ pub struct SetupError {
     #[serde(skip_serializing_if = "Option::is_none")]
     native: Option<StoreDiagnostic>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    recovery: Option<ModelRecovery>,
+    recovery: Option<Box<ModelRecovery>>,
     #[serde(skip)]
     diagnostic: Option<bridge_runtime_protocol::ModelDiagnostic>,
 }

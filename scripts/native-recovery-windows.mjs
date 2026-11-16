@@ -444,7 +444,7 @@ try {
     if (first || preflight) await clickAction('Set up');
     else if (!places) await clickAction('Connect the AI');
     if (first) await clickAction('Continue');
-    if (first || ['ai-cli-missing', 'ai-connecting', 'ai-connected', 'local-completed', 'local-stopped', 'ai-removal-confirmation', 'ai-removal-retry'].includes(name)) await clickAction('Connect the AI');
+    if (first || ['ai-reset', 'ai-cli-missing', 'ai-connecting', 'ai-connected', 'local-completed', 'local-stopped', 'ai-removal-confirmation', 'ai-removal-retry'].includes(name)) await clickAction('Connect the AI');
     if (name === 'local-stopped') {
       await clickAction('Stop the local cluster');
       await until(() => evaluate(`!!document.querySelector('.local-preflight #workspace-local') && window.__bridgeStops === 1`), 'Stop returns to local preflight');
