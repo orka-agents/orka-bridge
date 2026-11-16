@@ -23,7 +23,7 @@ const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting',
 const runtimeCopy = {
   notIntegrated: 'Local cluster setup is not included in this build. Nothing will be downloaded or started.',
 };
-export type LocalClusterControl = { stop: () => void };
+export type LocalClusterControl = { stop: () => void; showPlaces: () => void };
 export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, active = true }: {
   ref?: Ref<LocalClusterControl>;
   onOpenExample: () => void; onOpenAgent?: () => void; active?: boolean;
@@ -70,7 +70,6 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   useEffect(() => { currentPlaceRef.current = currentPlace; }, [currentPlace]);
   const cluster = currentPlace.kind === 'cluster';
   const [panel, setPanel] = useState<'places' | 'local' | 'cluster'>();
-  const [fromPlaces, setFromPlaces] = useState(false);
   const [payoffDismissed, setPayoffDismissed] = useState(false);
   const shownPayoff = useRef(false);
   const [providerChange, setProviderChange] = useState(0);
@@ -167,7 +166,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   function back() { focusChoice.current = true; setPanel('places'); }
   function requestStop(button: HTMLButtonElement) { stopTrigger.current = button; setConfirmStop(true); }
   function keepRunning() { setConfirmStop(false); stopTrigger.current?.focus(); }
-  function openLocal() { focusChoice.current = true; setFromPlaces(true); setLocation('local'); setPreflightBlocked(true); setPanel('local'); }
+  function openLocal() { focusChoice.current = true; setLocation('local'); setPreflightBlocked(true); setPanel('local'); }
   function removed(key: string, targetId: string | undefined, navigate: boolean) {
     const current = currentPlaceRef.current;
     if (targetId && current.kind === 'cluster' && current.target?.id === targetId) publishPlace({ kind: 'cluster' });
@@ -203,7 +202,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   }
 
   const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
-  useImperativeHandle(ref, () => ({ stop() { setPanel('local'); void chooseLocal('change'); } }));
+  useImperativeHandle(ref, () => ({ stop() { setPanel('local'); void chooseLocal('change'); }, showPlaces() { if (view !== 'places') back(); } }));
   const titleId = active ? 'page-title' : undefined;
   if (!status && !error) return <h1 id={titleId}>Checking the local cluster…</h1>;
   if (welcome && status) return <Welcome titleId={titleId} onStart={start} onCluster={() => chooseCluster()} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
@@ -220,7 +219,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const presentation = setupView(error ? undefined : status, { stopping: sending && pendingAction !== 'start', starting: sending && pendingAction === 'start', workspace, model: modelState, check: firstCheck, initialAutomatic });
   const showPayoff = !workspace && !payoffDismissed && eligiblePayoff;
   return <div className="places-workspace">
-    {view !== 'places' && !showPayoff && <Button type="button" kind="quiet" className="places-back" onClick={back}>{view === 'local' && !fromPlaces ? 'Choose where agents run' : 'Back to clusters'}</Button>}
+    {view === 'cluster' && <Button type="button" kind="quiet" className="places-back" onClick={back}>Back to clusters</Button>}
     <div className="workspace-heading places-heading" hidden={!!showPayoff}>
       <h1 ref={heading} tabIndex={-1} id={showPayoff ? undefined : titleId}>{view === 'places' ? 'Clusters' : view === 'cluster' ? entry?.current ? 'Manage your cluster' : entry?.remembered ? 'Connect a cluster' : 'Add a cluster' : workspace ? 'This computer' : selected ? presentation.done ? 'This computer' : status?.localVm === 'ready' ? aiHeading : status?.localVm === 'failed' ? status.preflightFailure ? 'Check this computer' : workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready' : 'Where should your agents run?'}</h1>
       {view === 'places' && <Button type="button" kind={!snapshotUnavailable && snapshot?.persistenceState === 'complete' && snapshot.places.length === 0 ? 'secondary' : 'primary'} onClick={() => chooseCluster()}>Add a cluster</Button>}
@@ -244,6 +243,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                 <label htmlFor="workspace-local">On this computer</label><span className="chip">Recommended</span>
                 <div className="workspace-option-detail">
                   <p>Bridge sets up a workspace on this computer. {requirements ? `It needs virtualization turned on and about ${formatRequirementGB(requirements.memoryBytes)} of installed memory.` : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>
+                  {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated' && <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} onCluster={() => { setLocation('cluster'); document.getElementById('workspace-cluster')?.focus(); }} />}
                   <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
                     <div id="workspace-inside" hidden={!inside}>
                       <p>The local cluster includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>
@@ -258,9 +258,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                 <div className="workspace-option-detail"><p>For Kubernetes users. Pick a kubectl context and Bridge uses the Orka on that cluster.</p></div>
               </div>
             </fieldset>
-          {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated'
-            ? <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} action={continueAction} />
-            : <div className="workspace-step-actions">{continueAction}</div>}
+          <div className="workspace-step-actions">{continueAction}</div>
           {location === 'local' && status?.localVm === 'notIntegrated' && <p className="muted">{runtimeCopy.notIntegrated}</p>}
           </section>
         </>}

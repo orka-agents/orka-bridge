@@ -1,13 +1,13 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { createRef } from 'react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
-import { createRef } from 'react';
-import Setup, { type LocalClusterControl } from './Setup';
-import { openLocalSetup } from './test-navigation';
-import type { SetupStatus } from './state';
 import { setupView } from './progress';
+import Setup, { type LocalClusterControl } from './Setup';
+import type { SetupStatus } from './state';
+import { openLocalSetup } from './test-navigation';
 
 let status: SetupStatus;
 let holdStop: (() => void) | undefined;
@@ -63,6 +63,17 @@ test('Stop keeps This computer and native selection instead of first-run setup',
   expect(screen.getByText('/agents')).toBeTruthy();
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_cancel_local')).toHaveLength(1);
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_change_local');
+});
+
+test('the active Clusters tab opens Places without losing the stopped workspace or restarting it', async () => {
+  const user = await stop();
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  const row = await screen.findByRole('region', { name: 'This computer' });
+  await user.click(within(row).getByRole('button', { name: 'Start' }));
+  expect(within(screen.getByRole('region', { name: 'Workspace' })).getByText('Stopped', { selector: '.pill' })).toBeTruthy();
+  expect(screen.queryByRole('list', { name: 'Setup steps' })).toBeNull();
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_cancel_local')).toHaveLength(1);
+  expect(ipc.mock.calls.filter(([command]) => ['setup_select_local', 'setup_change_local'].includes(command))).toHaveLength(0);
 });
 
 test('Stopping overrides the last ready snapshot and disables Start until acknowledged', async () => {
