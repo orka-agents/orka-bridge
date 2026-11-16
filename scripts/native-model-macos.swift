@@ -460,7 +460,9 @@ func localSize(_ width: CGFloat, _ height: CGFloat) {
     var origin = CGPoint(x: 0, y: 40)
     require(AXUIElementSetAttributeValue(native, kAXPositionAttribute as CFString, AXValueCreate(.cgPoint, &origin)!) == .success, "Cannot position fixture window")
     var size = NSWindow.frameRect(forContentRect: CGRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled, .closable, .miniaturizable, .resizable]).size
-    require(AXUIElementSetAttributeValue(native, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!) == .success, "Cannot resize fixture window")
+    let before = nativeBounds(native)
+    let result = AXUIElementSetAttributeValue(native, kAXSizeAttribute as CFString, AXValueCreate(.cgSize, &size)!)
+    require(result == .success, "Cannot resize fixture window: AX=\(result.rawValue), title=\(attribute(native, "AXTitle") as? String ?? "unnamed"), windows=\((windows as! [AXUIElement]).count), before=\(String(describing: before)), requested=\(size)")
     Thread.sleep(forTimeInterval: 0.3)
     require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Fixture content size not applied")
 }
