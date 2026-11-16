@@ -1238,9 +1238,10 @@ try "cluster-account-picker".write(to: setupProgress, atomically: true, encoding
 press("Check again")
 waitForButton("Use this cluster"); press("Use this cluster")
 waitForButton("ServiceAccount"); press("ServiceAccount")
-waitForChatText("task-reader")
+_ = try capture("cluster-account-picker-ready", ["Find an account"])
+waitForButton("task-reader")
 fillMessage("team", fieldLabel: "Find an account")
-require(!nativeTextExists("task-reader"), "Account search must filter names")
+require(!anyButton("task-reader") && anyButton("team-runner"), "Account search must filter names")
 click("Close picker", [])
 press("ServiceAccount")
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
@@ -1262,7 +1263,6 @@ try "cluster-account-forbidden".write(to: setupProgress, atomically: true, encod
 press("kubectl context"); click("team-dev", [])
 waitForButton("Use this cluster"); press("Use this cluster")
 _ = try seek("ServiceAccount name", -100)
-waitForChatText("ServiceAccount name")
 fillMessage("team-runner", fieldLabel: "ServiceAccount name")
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
