@@ -142,18 +142,22 @@ fn installation(root: &Path) -> Result<Option<Installation>, RuntimeError> {
         state: record.state_identity,
     }))
 }
-fn allocated(root: &Path) -> Result<u64, RuntimeError> {
+fn allocated(root: &Path, journal: Option<&Journal>) -> Result<u64, RuntimeError> {
     directory_identity(root)?;
     let mut bytes = 0u64;
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let kind = entry.file_type()?;
         let n = if kind.is_dir() {
-            allocated(&entry.path())?
+            allocated(&entry.path(), None)?
         } else if kind.is_file() {
-            let file = File::open(entry.path())?;
-            image_cache::not_reparse(&file)?;
-            allocation(&file)?
+            if let Some(journal) = journal.filter(|_| entry.file_name() == "owner.lock") {
+                journal.owner_allocated_bytes()?
+            } else {
+                let file = File::open(entry.path())?;
+                image_cache::not_reparse(&file)?;
+                allocation(&file)?
+            }
         } else {
             return Err(RuntimeError::RetainedState);
         };
@@ -188,8 +192,17 @@ fn cancelled(closed: &watch::Receiver<bool>) -> Result<(), RuntimeError> {
 }
 impl WorkspaceUpgrade {
     pub(crate) fn open(data: &Path, local: &Path) -> Result<Self, RuntimeError> {
+        Self::open_with_sync(data, local, image_cache::fs::sync)
+    }
+    fn open_with_sync(
+        data: &Path,
+        local: &Path,
+        sync: impl FnOnce(&Dir) -> Result<(), ImageError>,
+    ) -> Result<Self, RuntimeError> {
         let local_dir = Dir::open_ambient_dir(local, cap_std::ambient_authority())?;
         let directory = image_cache::directory(&local_dir, STORE.as_ref())?;
+        // The archive directory itself must survive before D's records can be removed.
+        sync(&local_dir)?;
         let mut options = cap_std::fs::OpenOptions::new();
         options.create(true).truncate(false).read(true).write(true);
         let owner = directory.open_with("owner.lock", &options)?.into_std();
@@ -410,7 +423,7 @@ impl WorkspaceUpgrade {
             },
             model: metadata.model.clone(),
             account: metadata.account.clone(),
-            retained_allocated_bytes: allocated(&root)?,
+            retained_allocated_bytes: allocated(&root, Some(&journal))?,
             additional_bytes,
         };
         let backend = journal.record().backend;

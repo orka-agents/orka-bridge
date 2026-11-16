@@ -127,7 +127,12 @@ impl Scene {
             |point| {
                 if std::env::var("BRIDGE_UPGRADE_CRASH_POINT").ok().as_deref() == Some(point) {
                     let home = PathBuf::from(std::env::var_os("BRIDGE_UPGRADE_CRASH_HOME").unwrap());
-                    fs::write(home.join("ready.json"), serde_json::to_vec(&serde_json::json!({"data":self.data,"local":self.local,"source":self.source_id})).unwrap()).unwrap();
+                    let bytes = serde_json::to_vec(&serde_json::json!({"data":self.data,"local":self.local,"source":self.source_id})).unwrap();
+                    let mut receipt = fs::File::create_new(home.join("ready.next")).unwrap();
+                    receipt.write_all(&bytes).unwrap();
+                    receipt.sync_all().unwrap();
+                    drop(receipt);
+                    fs::rename(home.join("ready.next"), home.join("ready.json")).unwrap();
                     loop { std::thread::sleep(std::time::Duration::from_secs(1)); }
                 }
                 if Some(point) == stop_at {
@@ -276,6 +281,19 @@ fn cancellation_and_no_space_leave_source_and_both_metadata_records_unchanged() 
         );
         assert_eq!(owner.inspect().unwrap(), UpgradeStatus::None);
     }
+}
+#[test]
+fn failed_upgrade_parent_flush_refuses_before_archiving_source_metadata() {
+    let s = Scene::new(ImageTarget::WindowsAmd64);
+    let model = fs::read(s.data.join("setup-v1/model-v1")).unwrap();
+    let result = WorkspaceUpgrade::open_with_sync(&s.data, &s.local, |_| Err(ImageError::NoSpace));
+    assert!(matches!(
+        result,
+        Err(RuntimeError::Image(ImageError::NoSpace))
+    ));
+    assert_eq!(fs::read(s.data.join("setup-v1/model-v1")).unwrap(), model);
+    assert!(s.local.join("local-vm-v1").exists());
+    assert!(!s.local.join(STORE).join("intent.json").exists());
 }
 #[test]
 fn native_replace_uses_verified_cache_and_keeps_only_live_creation_authority() {
