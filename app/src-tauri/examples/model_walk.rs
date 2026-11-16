@@ -257,7 +257,8 @@ fn main() {
                     "models":{"state":"ready", "items":[{"id":"gpt-5.6-terra"}]},
                     "tools":{"state":"ready", "items":[
                         {"kind":"builtin", "name":"web_fetch", "description":"Read a web page"},
-                        {"kind":"builtin", "name":"file_read", "description":"Read a file"}
+                        {"kind":"builtin", "name":"file_read", "description":"Read a file"},
+                        {"kind":"builtin", "name":"request_approval", "description":"Ask a person to approve an action."}
                     ]}
                 }),
                 // Only a synthetic destination for the failed-local-test popover walk.

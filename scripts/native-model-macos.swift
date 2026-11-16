@@ -824,6 +824,14 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     require(search.count == 1, "Expected the labeled picker search field")
     require(nativeBounds(search[0]).map { abs($0.height - 32) < 2 } == true, "Picker search must be 32px high")
     _ = try capture("local-controls-picker-\(size)", ["Find a tool", "Read a file"])
+    let approvalReason = "Approval tools need autonomous coordination, which Bridge does not support for local tests or Chat."
+    let approvalButtons = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("request_approval") == true }
+    }
+    require(approvalButtons.count == 1 && attribute(approvalButtons[0], "AXEnabled") as? Bool == false, "Approval tool must stay disabled locally")
+    require(nativeResultTextIsVisible(approvalReason), "Approval reason must be fully visible in the picker")
+    _ = try capture("local-approval-tool-\(size)", ["Find a tool", "Ask for approval", approvalReason])
     guard let close = enabledButton("Close picker"), let bounds = nativeBounds(close) else {
         fatalError("Labeled picker X missing")
     }
