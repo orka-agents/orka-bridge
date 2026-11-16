@@ -57,6 +57,17 @@ pub fn normalize_models(catalog: &mut WorkspaceCatalog, vendor: Option<ModelVend
             model.picker_enabled = Some(false);
         }
     }
+    // Eligibility flags grow the projection; preserve the guest's section fallback.
+    let fits = |catalog: &WorkspaceCatalog| {
+        serde_json::to_vec(catalog)
+            .is_ok_and(|bytes| bytes.len() <= bridge_runtime_protocol::MAX_FILE)
+    };
+    if !fits(catalog) {
+        catalog.tools = CatalogSection::Unavailable {};
+    }
+    if !fits(catalog) {
+        catalog.models = CatalogSection::Unavailable {};
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +151,51 @@ mod tests {
         let mut copilot = listed(rows.clone());
         normalize_models(&mut copilot, None);
         assert_eq!(copilot, listed(rows));
+    }
+
+    #[test]
+    fn catalog_policy_growth_keeps_models_when_the_combined_reply_was_at_the_byte_limit() {
+        use bridge_runtime_protocol::{CatalogTool, CatalogToolKind, MAX_FILE};
+        let mut catalog = listed(serde_json::json!([{"id":"gpt-future"}]));
+        let mut tools: Vec<_> = (0..128)
+            .map(|i| CatalogTool {
+                kind: CatalogToolKind::Tool,
+                name: format!("tool-{i}"),
+                description: if i < 127 {
+                    "d".repeat(8192)
+                } else {
+                    String::new()
+                },
+                available: None,
+            })
+            .collect();
+        catalog.tools = CatalogSection::Ready {
+            items: tools.clone(),
+        };
+        let remaining = MAX_FILE - serde_json::to_vec(&catalog).unwrap().len();
+        assert!(remaining <= 8192);
+        tools.last_mut().unwrap().description = "d".repeat(remaining);
+        catalog.tools = CatalogSection::Ready { items: tools };
+        assert_eq!(serde_json::to_vec(&catalog).unwrap().len(), MAX_FILE);
+        assert!(catalog.valid());
+        normalize_models(&mut catalog, Some(ModelVendor::Openai));
+        assert!(catalog.valid());
+        assert_eq!(catalog.tools, CatalogSection::Unavailable {});
+        assert_eq!(
+            serde_json::to_value(&catalog).unwrap()["models"]["items"],
+            serde_json::json!([{"id":"gpt-future", "pickerEnabled":false}])
+        );
+    }
+
+    #[test]
+    fn catalog_policy_growth_marks_models_unavailable_only_if_they_alone_exceed_the_limit() {
+        let mut catalog = listed(serde_json::json!((0..4096)
+            .map(|i| serde_json::json!({"id":format!("{i:04}-{}", "x".repeat(225))}))
+            .collect::<Vec<_>>()));
+        assert!(catalog.valid());
+        normalize_models(&mut catalog, Some(ModelVendor::Openai));
+        assert!(catalog.valid());
+        assert_eq!(catalog.models, CatalogSection::Unavailable {});
     }
 
     #[test]

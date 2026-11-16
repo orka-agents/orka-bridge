@@ -149,7 +149,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
         {modelHelp && <span className="muted">{modelHelp}</span>}
       </div>
       {!remote && catalog?.models.state === 'ready' && catalog.models.items.length === 1000 && <p className="muted">Showing up to 1,000 models; more may be available.</p>}
-      {!remote && !listed && models && form.model && <p className="muted">{knownModel ? 'This model is not offered for chat by the connected AI. Choose another model to use it here.' : 'This model is saved in your file but is not listed by the connected AI. It may not run here. Choose a listed model or check your AI connection.'}</p>}
+      {!remote && !listed && models && form.model && <p className="muted">{knownModel ? 'This model is not offered for chat in Bridge. Choose another model to use it here.' : 'This model is saved in your file but is not listed by the connected AI. It may not run here. Choose a listed model or check your AI connection.'}</p>}
     </div>
     <Disclosure className="agent-settings" label="More settings">
       <div className="agent-part">

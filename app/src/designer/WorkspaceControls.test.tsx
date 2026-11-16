@@ -51,9 +51,19 @@ test('bounded first-page notice counts returned rows, including excluded models'
   expect(screen.queryByText(/more may be available/)).toBeNull();
   expect(changed).not.toHaveBeenCalled();
 });
+test('remote configured defaults keep their model label and do not claim first-page discovery', () => {
+  const changed = vi.fn();
+  const rows = Array.from({ length: 1000 }, (_, i) => ({ id: i === 0 ? 'listed' : `m-${i}` }));
+  render(<AgentParts source={source} readOnly={false} remote catalog={{ ...catalog, defaultModel: 'listed', models: { state: 'ready', items: rows } }} onChange={changed} />);
+  expect(screen.getByRole('option', { name: 'listed' })).toBeTruthy();
+  expect(screen.queryByRole('option', { name: /Workspace default/ })).toBeNull();
+  expect(screen.queryByText(/more may be available/)).toBeNull();
+  expect(changed).not.toHaveBeenCalled();
+});
 test('an existing incompatible model stays visible without calling it unlisted', () => {
   const changed = vi.fn(); render(<AgentParts source={source.replace('model: unlisted', 'model: hidden')} readOnly={false} catalog={catalog} onChange={changed} />);
   expect(screen.getByRole('option', { name: 'hidden (not offered for chat)' })).toBeTruthy();
+  expect(screen.getByText('This model is not offered for chat in Bridge. Choose another model to use it here.')).toBeTruthy();
   expect(changed).not.toHaveBeenCalled();
 });
 test('tool choices show descriptions as text, distinguish kinds and suppress effective-name collisions', async () => {
@@ -277,7 +287,7 @@ test('unlisted and unavailable known models keep their friendly name and explana
   const view = render(<AgentParts source={source.replace('model: unlisted', 'model: gpt-5.6-terra')} readOnly={false} catalog={{ ...named, models: { state: 'ready', items: [{ id: 'listed' }] } }} onChange={() => {}} />);
   expect(screen.getByRole('option', { name: 'GPT-5.6 Terra (unlisted)' })).toBeTruthy(); expect(screen.getByText(/It may not run here/)).toBeTruthy();
   view.rerender(<AgentParts source={source.replace('model: unlisted', 'model: gpt-5.6-terra')} readOnly={false} catalog={{ ...named, models: { state: 'ready', items: [{ id: 'gpt-5.6-terra', chatSupported: false }, { id: 'listed' }] } }} onChange={() => {}} />);
-  expect(screen.getByRole('option', { name: 'GPT-5.6 Terra (not offered for chat)' })).toBeTruthy(); expect(screen.getByText(/not offered for chat by the connected AI/)).toBeTruthy();
+  expect(screen.getByRole('option', { name: 'GPT-5.6 Terra (not offered for chat)' })).toBeTruthy(); expect(screen.getByText(/not offered for chat in Bridge/)).toBeTruthy();
 });
 test('a listed local model default is not repeated in helper text', () => {
   render(<AgentParts source={source.replace('model: unlisted', 'model: gpt-5.6-terra')} readOnly={false} catalog={named} onChange={() => {}} />);
