@@ -56,7 +56,11 @@ test('creates during setup, previews the native location and both files, and ope
 
 test.each(['Chat', 'File'])('creation from %s opens empty Instructions with an incomplete test, never a format error', async previousView => {
   const calls: string[] = [];
-  native(command => { calls.push(command); if (command === 'agent_create') return id; });
+  native((command, args) => {
+    calls.push(command);
+    if (command === 'agent_create') return id;
+    if (command === 'agent_chat_status') return { documentId: args.documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+  });
   const user = userEvent.setup(); render(<Example />);
   await user.click(await screen.findByRole('button', { name: previousView }));
   await user.click(screen.getByRole('button', { name: 'New agent' }));
@@ -71,8 +75,10 @@ test.each(['Chat', 'File'])('creation from %s opens empty Instructions with an i
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'Chat' }));
   expect(screen.getByText(/write instructions in Agent view before chatting/i)).toBeTruthy();
+  await screen.findByText('Ready for your message.');
+  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Hello{Enter}');
   expect(calls).not.toContain('agent_run');
-  expect(calls).not.toContain('agent_chat_start');
+  expect(calls).not.toContain('agent_chat_send');
 });
 
 test('an incomplete draft reloads a completed test file and keeps instructions on a read failure', async () => {

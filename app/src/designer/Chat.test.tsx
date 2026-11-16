@@ -162,16 +162,16 @@ test('Stop dispatches only stop and its historical notice remains after Ready an
   await poll(); expect(screen.getByText('Stop requested. Execution termination is unconfirmed.')).toBeTruthy();
   expect(screen.getByText(/not confirmed in later context/)).toBeTruthy();
 });
-test.each(['Pending', 'Queued', ''])('a working snapshot with phase %s shows waiting to start', async phase => {
+test.each(['Pending', 'Queued', 'Scheduled', ''])('a working snapshot with phase %s shows waiting to start', async phase => {
   snapshot = { ...idle, state: 'working', busy: true, canSend: false, versions: [{ turns: [{ ...turn, answer: null, phase }] }] };
   await open(); expect(screen.getByText('Waiting to start…')).toBeTruthy();
 });
-test.each(['Pending', 'Queued', 'Running'])('pending %s reply reads as waiting, not missing history', async phase => {
+test.each(['Pending', 'Queued', 'Scheduled', 'Running', 'Finalizing'])('pending %s reply reads as waiting, not missing history', async phase => {
   snapshot = { ...idle, state: 'working', busy: true, canSend: false, versions: [{ turns: [{ ...turn, answer: null, contextRetained: false, phase }] }] };
   await open();
   const conversation = screen.getByRole('region', { name: 'Conversation' });
-  expect(within(conversation).queryAllByText(/No answer observed|not confirmed in later context/)).toHaveLength(0);
-  expect(within(conversation).getByText(phase === 'Running' ? 'Waiting for your agent’s reply…' : 'Waiting for your agent to start…')).toBeTruthy();
+  expect(within(conversation).queryAllByText(/No answer (observed|was received)|not confirmed in later context/)).toHaveLength(0);
+  expect(within(conversation).getByText(['Running', 'Finalizing'].includes(phase) ? 'Waiting for your agent’s reply…' : 'Waiting for your agent to start…')).toBeTruthy();
   expect(conversation.querySelector('.status-running')).toBeTruthy();
 });
 test('a newly admitted turn stays waiting while the saved agent is preparing', async () => {
@@ -194,6 +194,36 @@ test('composer grows with text and shrinks again after acceptance', async () => 
   enter('A long message'); await act(async () => {});
   expect(field().value).toBe('');
   expect(field().style.height).toBe('auto');
+});
+test('composer remeasures an unchanged draft when window wrapping changes', async () => {
+  await open();
+  let height = 80;
+  Object.defineProperty(field(), 'scrollHeight', { configurable: true, get: () => height });
+  fireEvent.change(field(), { target: { value: 'A draft that wraps differently after resizing' } });
+  expect(field().style.height).toBe('80px');
+  height = 180; fireEvent(window, new Event('resize'));
+  expect(field().style.height).toBe('180px');
+  height = 80; fireEvent(window, new Event('resize'));
+  expect(field().style.height).toBe('80px');
+});
+test('composer waits for activation to remeasure and removes its resize listener on unmount', async () => {
+  const view = await open();
+  let height = 80; const measure = vi.fn(() => height);
+  Object.defineProperty(field(), 'scrollHeight', { configurable: true, get: measure });
+  fireEvent.change(field(), { target: { value: 'Keep this draft' } });
+  view.rerender(<Chat documentId={id} active={false} />); measure.mockClear();
+  height = 180; fireEvent(window, new Event('resize'));
+  expect(measure).not.toHaveBeenCalled();
+  view.rerender(<Chat documentId={id} active />);
+  expect(field().style.height).toBe('180px');
+  view.unmount(); measure.mockClear(); fireEvent(window, new Event('resize'));
+  expect(measure).not.toHaveBeenCalled();
+});
+test('a retained historical Finalizing turn does not look like an active reply', async () => {
+  snapshot = { ...idle, versions: [{ turns: [{ ...turn, phase: 'Finalizing', answer: null, contextRetained: false }] }] };
+  await open();
+  expect(screen.getByText('No answer was received.')).toBeTruthy();
+  expect(screen.getByText(/not confirmed in later context/)).toBeTruthy();
 });
 test('a failed turn with an observed answer does not look like a successful turn', async () => {
   snapshot = { ...idle, versions: [{ turns: [{ ...turn, phase: 'Failed' }] }] };

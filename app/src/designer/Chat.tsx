@@ -70,11 +70,17 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     if (active && snapshot && follow.current && scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
   }, [active, snapshot]);
   useEffect(() => {
+    if (!active) return;
     const field = composer.current;
     if (!field) return;
-    field.style.height = 'auto';
-    if (draft) field.style.height = `${field.scrollHeight}px`;
-  }, [draft]);
+    const fit = () => {
+      field.style.height = 'auto';
+      if (draft) field.style.height = `${field.scrollHeight}px`;
+    };
+    fit();
+    window.addEventListener('resize', fit);
+    return () => window.removeEventListener('resize', fit);
+  }, [draft, active]);
   const act = async (action: ChatCommand) => {
     if (mutation.current || !snapshot) return;
     if (action === 'agent_chat_send' && (blocked || !snapshot.canSend || awaitingTurn || !draftRef.current.trim())) return;
@@ -100,7 +106,7 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
   const latestTurn = snapshot?.versions.at(-1)?.turns.at(-1);
   const status = pending.current?.uncertain ? 'Checking whether your message was accepted. Do not resend it.'
     : command === 'agent_chat_stop' ? states.requestingStop
-    : snapshot?.state === 'working' && latestTurn && ['', 'Pending', 'Queued'].includes(latestTurn.phase) ? 'Waiting to start…'
+    : snapshot?.state === 'working' && latestTurn && ['', 'Pending', 'Queued', 'Scheduled'].includes(latestTurn.phase) ? 'Waiting to start…'
     : snapshot ? states[snapshot.state] : 'Opening your conversation…';
   const canStop = snapshot && snapshot.state !== 'ready' && snapshot.state !== 'contextUnavailable';
   const canReset = snapshot && !snapshot.busy && !awaitingTurn && ['ready', 'contextUnavailable'].includes(snapshot.state);
@@ -118,13 +124,13 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
         <h3>Conversation {index + 1}</h3>
         {index > 0 && <p className="muted">New conversation. Earlier turns are shown for reference, not sent as history.</p>}
         {version.turns.map((turn, i) => {
-          const waiting = turn === latestTurn && ['preparing', 'working'].includes(snapshot.state) && ['', 'Pending', 'Queued', 'Running'].includes(turn.phase) && turn.answer === null;
+          const waiting = turn === latestTurn && ['preparing', 'working'].includes(snapshot.state) && ['', 'Pending', 'Queued', 'Scheduled', 'Running', 'Finalizing'].includes(turn.phase) && turn.answer === null;
           return <article className="chat-turn" key={i}>
             <div className="chat-question"><h4>You</h4><p className="reading">{turn.message}</p></div>
             <div className="chat-response"><h4>Agent</h4>
               {turn.phase === 'Failed' && <p>This turn failed.</p>}{turn.phase === 'Cancelled' && <p>The cluster reported this turn cancelled; worker termination is unconfirmed.</p>}
               {turn.answer !== null ? <p className="reading">{turn.answer}</p> : waiting
-                ? <p className="chat-waiting"><StatusIcon state="running" />{turn.phase === 'Running' ? 'Waiting for your agent’s reply…' : 'Waiting for your agent to start…'}</p>
+                ? <p className="chat-waiting"><StatusIcon state="running" />{['Running', 'Finalizing'].includes(turn.phase) ? 'Waiting for your agent’s reply…' : 'Waiting for your agent to start…'}</p>
                 : <p className="muted">{turn.phase === 'Failed' ? 'The turn failed without an answer.' : 'No answer was received.'}</p>}
               {turn.stopUnconfirmed ? <p className="chat-notice">{states.stopUnconfirmed}</p> : turn.terminationUnconfirmed && <p className="chat-notice">{states.stopRequested}</p>}
               {!turn.contextRetained && !waiting && <p className="muted">This turn is not confirmed in later context.</p>}
