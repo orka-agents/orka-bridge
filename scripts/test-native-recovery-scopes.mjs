@@ -31,9 +31,11 @@ function actions(chosen) {
   return names;
 }
 const all = actions(selection()), core = actions(selection('core')), ui = actions(selection('chat-agent-clusters'));
-assert.equal(all.length, 56);
-assert.equal(core.length, 45);
+assert.equal(all.length, 57);
+assert.equal(core.length, 46);
 assert.equal(ui.length, 11);
+assert.ok(core.includes('designer-reply-saved'), 'saved reply captures belong to the core scope');
+assert.ok(!ui.includes('designer-reply-saved'), 'UI scope must not repeat saved reply captures');
 assert.equal(new Set([...core, ...ui]).size, all.length, 'scopes must partition, not repeat or omit cases');
 assert.deepEqual([...core, ...ui], all);
 assert.deepEqual(ui, ['chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure']);
@@ -83,4 +85,4 @@ for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clus
   assert.match(step, /timeout-minutes: 3\n/, 'each scope keeps the existing three-minute ceiling');
 }
 assert.ok(workflow.includes('node ../scripts/test-native-recovery-scopes.mjs'));
-console.log('PASS real scope parsing; 45+11 unique action cases; Chat snapshot matrix; layout acceptance/rejection; disjoint CI scopes with unchanged three-minute ceilings');
+console.log('PASS real scope parsing; 46+11 unique action cases; Chat snapshot matrix; layout acceptance/rejection; disjoint CI scopes with unchanged three-minute ceilings');
