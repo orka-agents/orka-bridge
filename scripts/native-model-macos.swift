@@ -915,7 +915,9 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
         fatalError("Labeled picker X missing")
     }
     require(abs(bounds.width - 26) < 2 && abs(bounds.height - 26) < 2, "Picker X must be 26px square")
-    click("Close picker", [])
+    // Use the labeled AX control after filtering rather than a second geometry lookup.
+    require(AXUIElementPerformAction(close, kAXPressAction as CFString) == .success, "Cannot press picker X")
+    Thread.sleep(forTimeInterval: 1)
     require(enabledButton("Close picker") == nil, "X did not dismiss picker")
     require(attribute(enabledButton("Add a tool")!, "AXFocused") as? Bool == true, "X did not return focus")
     if size == "compact" {
