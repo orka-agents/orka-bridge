@@ -55,7 +55,7 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
   const matches = accounts?.names.filter(name => name.toLowerCase().includes(query.toLowerCase()));
   return <div className="account-choice">
     {!accounts && !reason ? <p role="status">Listing ServiceAccounts…</p> : manual ? <>
-      <p className="muted">{reason ?? `No ServiceAccounts were found in ${target.watched_namespace}.`}</p>
+      <p className="muted">{reason ?? (accounts?.truncated ? 'The account list is incomplete. Enter an existing ServiceAccount name.' : `No ServiceAccounts were found in ${target.watched_namespace}.`)}</p>
       <label htmlFor={`${id}-name`}>ServiceAccount name</label>
       <input ref={input} id={`${id}-name`} className="field" value={value} disabled={disabled} autoComplete="off" spellCheck={false} onChange={event => { ++previewEpoch.current; setPreview(undefined); onChange(event.target.value); }} />
       <Button kind="quiet" disabled={disabled} onClick={() => { setAccounts(undefined); setReason(undefined); setAttempt(n => n + 1); }}>Retry account list</Button>
@@ -66,7 +66,7 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
       </Button>
       {accounts?.truncated && <p className="muted">Showing up to 1,000 accounts. More may exist.</p>}
     </>}
-    {accounts?.truncated && <>
+    {accounts?.truncated && !manual && <>
       <label htmlFor={`${id}-name`}>ServiceAccount name</label>
       <input id={`${id}-name`} className="field" value={value} disabled={disabled} autoComplete="off" spellCheck={false} onChange={event => { ++previewEpoch.current; setPreview(undefined); onChange(event.target.value); }} />
     </>}

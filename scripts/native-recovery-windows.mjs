@@ -777,7 +777,7 @@ try {
         await evaluate(`window.__bridgeCatalogReleased = true`);
       }
       if (noDestination) {
-        await until(() => evaluate(`document.body.innerText.includes('Connect a cluster in Clusters to load tools and models')`), 'no destination guidance');
+        await until(() => evaluate(`document.body.innerText.includes('Open Clusters to load tools and models on This computer.')`), 'no destination guidance');
         if (await evaluate(`window.__bridgeCatalogCalls.length || /Couldn't read (tools|models) from/.test(document.body.innerText)`)) throw Error('Unselected destination requested or blamed a catalog');
         await evaluate(`document.querySelector('.model-select').scrollIntoView({ block: 'center' })`);
       } else if (name !== 'designer') await until(() => evaluate(`!document.querySelector('.model-select').disabled`), 'connected Designer catalog');

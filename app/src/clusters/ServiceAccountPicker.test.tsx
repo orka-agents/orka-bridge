@@ -93,6 +93,13 @@ test.each(['clusterApi', 'compatibility'])('a %s failure is not blamed on accoun
   expect(screen.queryByText(/cannot list ServiceAccounts/)).toBeNull();
 });
 
+test('an empty capped list is incomplete and offers exactly one manual input', async () => {
+  fixture({ names: [], truncated: true }); await open();
+  await screen.findByText('The account list is incomplete. Enter an existing ServiceAccount name.');
+  expect(screen.getAllByRole('textbox', { name: 'ServiceAccount name' })).toHaveLength(1);
+  expect(screen.queryByText('No ServiceAccounts were found in agents.')).toBeNull();
+});
+
 test('empty listing is not denied and truncated results do not claim completeness', async () => {
   fixture({ names: [], truncated: false }); const { user } = await open();
   await screen.findByText('No ServiceAccounts were found in agents.');

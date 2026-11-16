@@ -1274,8 +1274,8 @@ localSize(1280, 800)
 press("Overview"); press("Open web-reader")
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("Open Clusters", -100)
-    _ = try capture("local-catalog-no-destination-\(size)", ["Open Clusters to load tools and models on This computer."])
+    _ = try seek("Connect a cluster in Clusters", -100)
+    _ = try capture("local-catalog-no-destination-\(size)", ["Connect a cluster in Clusters to load tools and models"])
     require(!nativeTextExists("Couldn't read tools from") && !nativeTextExists("Couldn't read models from"), "No prior destination may be blamed")
 }
 try FileManager.default.removeItem(at: setupProgress)
