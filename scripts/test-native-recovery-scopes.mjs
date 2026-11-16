@@ -31,12 +31,12 @@ function actions(chosen) {
   return names;
 }
 const all = actions(selection()), core = actions(selection('core')), ui = actions(selection('chat-agent-clusters'));
-assert.equal(all.length, 54);
+assert.equal(all.length, 58);
 assert.equal(core.length, 45);
-assert.equal(ui.length, 9);
+assert.equal(ui.length, 13);
 assert.equal(new Set([...core, ...ui]).size, all.length, 'scopes must partition, not repeat or omit cases');
 assert.deepEqual([...core, ...ui], all);
-assert.deepEqual(ui, ['chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure']);
+assert.deepEqual(ui, ['chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure', 'cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination']);
 for (const name of ['fixtures', 'setupFixtures', 'overviewVariants']) {
   assert.equal(roster(name, selection('chat-agent-clusters')).length, 0, `UI scope must not repeat ${name}`);
   assert.ok(roster(name, selection('core')).length > 0);
@@ -51,4 +51,36 @@ for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clus
   assert.match(step, /timeout-minutes: 3\n/, 'each scope keeps the existing three-minute ceiling');
 }
 assert.ok(workflow.includes('node ../scripts/test-native-recovery-scopes.mjs'));
-console.log('PASS real scope parsing; 45+9 unique action cases; disjoint CI scopes with unchanged three-minute ceilings');
+// Execute the driver's actual isolated-world IPC setup, not a second copy of its payloads.
+const captureActions = source.slice(source.indexOf('  async function captureActions('), source.indexOf('  // Overview renderer fixtures:'));
+for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination']) {
+  let injection;
+  const stop = new Error('injection captured');
+  const capture = vm.runInNewContext(`(${captureActions})`, {
+    pair: { agent: '', tests: '' }, GiB: 1024 ** 3, fixtureAccount: 'synthetic-user',
+    call: async () => ({ frameTree: { frame: { id: 'fixture' } }, executionContextId: 1 }),
+    evaluate: async script => { injection = script; throw stop; },
+  });
+  await assert.rejects(capture('light', 'wide', name), error => error === stop);
+  const window = {};
+  vm.runInNewContext(injection, { window, localStorage: { setItem() {}, removeItem() {} }, document: { getElementById: () => ({ replaceWith() {} }), createElement: () => ({}) } });
+  const invoke = window.__TAURI_INTERNALS__.invoke;
+  if (name === 'designer-no-destination') {
+    assert.equal((await invoke('setup_status')).selected, null);
+    await assert.rejects(invoke('workspace_catalog'), /must not request a catalog/);
+    continue;
+  }
+  const [target] = await invoke('cluster_discover');
+  const args = { targetId: target.id, saName: null };
+  assert.equal((await invoke('cluster_use', args)).status, 'needServiceAccount');
+  if (name === 'cluster-account-forbidden') {
+    await assert.rejects(invoke('cluster_service_accounts', args), error => error.check === 'serviceAccount' && error.result === 'permissionDenied');
+  } else {
+    assert.equal(JSON.stringify(await invoke('cluster_service_accounts', args)), JSON.stringify({ names: ['team-runner', 'task-reader'], truncated: false }));
+    const preview = await invoke('cluster_service_account_preview', { ...args, saName: 'team-runner' });
+    assert.equal(preview.status, 'allowed');
+    assert.equal(preview.checks.map(check => `${check.resource}/${check.verb}/${check.status}`).join(), 'agents/create/allowed,agents/get/allowed,agents/list/allowed,tasks/create/allowed,tasks/get/allowed,tasks/list/allowed,providers/get/allowed,providers/list/allowed,tools/get/allowed,tools/list/allowed');
+    await assert.rejects(invoke('cluster_service_account_preview', { ...args, saName: 'task-reader' }), /Only the selected account/);
+  }
+}
+console.log('PASS real scope parsing; 45+13 unique action cases; disjoint CI scopes with unchanged three-minute ceilings');
