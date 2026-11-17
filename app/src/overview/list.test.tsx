@@ -72,6 +72,21 @@ test.each([3, 4])('%i clusters plus this computer use a select only past four ac
   }
 });
 
+test('removing the selected place resets its filter, including when that key returns later', async () => {
+  const saved = [file(), file('22345678-1234-1234-1234-123456789abc', 'writer')];
+  const clusters = Array.from({ length: 5 }, (_, i) => place(`team-${i}`));
+  ipc(saved, clusters); const view = render(<Overview {...props} />); await row();
+  await userEvent.selectOptions(screen.getByRole('combobox', { name: 'Place' }), 'team-2');
+  expect(screen.queryByRole('article', { name: 'writer' })).toBeNull();
+  ipc(saved, clusters.filter(p => p.key !== 'team-2'));
+  view.rerender(<Overview {...props} active={false} />); view.rerender(<Overview {...props} />);
+  await waitFor(() => expect(screen.getByRole('combobox', { name: 'Place' })).toHaveProperty('value', 'all'));
+  expect(await screen.findByRole('article', { name: 'writer' })).toBeTruthy();
+  ipc(saved, clusters); view.rerender(<Overview {...props} active={false} />); view.rerender(<Overview {...props} />);
+  await waitFor(() => expect(screen.getAllByRole('option')).toHaveLength(7));
+  expect(screen.getByRole('combobox', { name: 'Place' })).toHaveProperty('value', 'all');
+});
+
 test('rows sort by worst visible status, then newest run; equal names never merge', async () => {
   ipc([file(id, 'passed-new', 'passed', 9000), file('22345678-1234-1234-1234-123456789abc', 'failed-old', 'failed', 1), file('32345678-1234-1234-1234-123456789abc', 'stale', 'unknown', 5000), file('42345678-1234-1234-1234-123456789abc', 'passed-new', 'passed', 100)], [place('team', 'running', id)]);
   render(<Overview {...props} />); await screen.findByRole('article', { name: 'failed-old' });

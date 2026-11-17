@@ -222,6 +222,7 @@ assert.ok(overviewDriver.includes(".overview-agent-head button[aria-label^=\"Sho
 assert.ok(overviewDriver.includes("document.querySelectorAll('.overview-place')"), 'Overview fixtures must prove place evidence is mounted only after expansion');
 assert.ok(overviewDriver.includes("document.querySelector('[data-card-key=\"fixture-remote/remote-uid-1\"]')"), 'expanded places must retain exact Card keys');
 assert.ok(overviewDriver.includes("getAttribute('aria-label')"), 'place accessibility labels must be accepted by the capture gate');
+assert.ok(overviewDriver.includes("card?.querySelectorAll('button, [role=\"button\"]')"), 'Overview action proof must include summary-based Details controls');
 assert.ok(overviewDriver.includes('oldCards:') && overviewDriver.includes('oldGroups:') && !overviewDriver.includes("clickAction('By agent')") && !overviewDriver.includes("clickAction('By cluster')"), 'obsolete grouping/card controls must be rejected by the Overview fixture');
 assert.ok(overviewDriver.includes("shoot('-collapsed')") && overviewDriver.includes("shoot('-expanded')"), 'Overview must capture collapsed and expanded native states');
 assert.ok(model.includes('local-overview-ai-disconnected-collapsed-') && model.includes('local-overview-ai-connected-expanded-'), 'native model fixtures must cover disconnected and connected list states');

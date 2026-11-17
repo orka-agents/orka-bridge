@@ -1470,7 +1470,7 @@ try {
         const proof = await evaluate(`(() => {
           const describe = key => {
             const card = document.querySelector('[data-card-key="' + key + '"]');
-            return { text: card?.innerText, rowText: card?.closest('.overview-agent')?.innerText, buttons: [...(card?.querySelectorAll('button') ?? [])].map(b => b.textContent), label: card?.getAttribute('aria-label') };
+            return { text: card?.innerText, rowText: card?.closest('.overview-agent')?.innerText, buttons: [...(card?.querySelectorAll('button, [role="button"]') ?? [])].map(b => b.textContent), label: card?.getAttribute('aria-label') };
           };
           return { passed: describe('fixture-remote/remote-uid-1'), failed: describe('fixture-remote/remote-uid-2'), draft: describe('local/cccccccc-cccc-4ccc-8ccc-cccccccccccc'), external: describe('fixture-remote/external-uid') };
         })()`);

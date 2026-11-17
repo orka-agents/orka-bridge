@@ -1295,13 +1295,21 @@ click("Overview", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try capture("local-controls-overview-collapsed-\(size)", ["Your agents", "web-reader"])
-    setOverviewExpanded("web-reader", true)
-    if size == "minimum" { _ = try seek("2 of 2 passed, before your edit", -300) }
-    let expected = ["Not run since your edit", "2 of 2 passed, before your edit", "This computer", "Run tests"]
-    let proof = try capture("local-controls-overview-expanded-\(size)", expected)
-    let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-    require(expected.allSatisfy { pixels.contains($0) }, "Expanded Overview result must be visible in OCR")
-    setOverviewExpanded("web-reader", false)
+    for (agent, scene, expected) in [
+        ("release-notes", "earlier-pass", ["Not run since your edit", "2 of 2 passed, before your edit", "Run tests"]),
+        ("pr-summary", "earlier-failed", ["Failed", "1 of 2 passed, before your edit", "Run tests"]),
+        ("draft-helper", "draft", ["Draft", "Add instructions and a test to get started."])
+    ] {
+        scroll(4000)
+        setOverviewExpanded(agent, true)
+        if size == "minimum" { scroll(-150) }
+        _ = try seek(scene == "draft" ? expected[0] : expected[1], -150)
+        let proof = try capture("local-controls-overview-expanded-\(scene)-\(size)", expected)
+        let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(expected.allSatisfy { pixels.contains($0) }, "Expanded Overview result must be visible in OCR")
+        scroll(4000)
+        setOverviewExpanded(agent, false)
+    }
 }
 localSize(1280, 800); scroll(4000)
 click("Designer", [])

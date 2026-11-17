@@ -158,7 +158,10 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     : summaryLabel(agentRows(built.cards), partial);
   useEffect(() => { onCounts?.(counts); }, [counts, onCounts]);
   const clusters = clusterGroups(inputs, built);
-  const rows = agentRows(built.cards, placeFilter, nameFilter);
+  const knownPlace = placeFilter === 'all' || placeFilter === 'local' || !!places?.places.some(place => place.key === placeFilter);
+  const selectedPlace = knownPlace ? placeFilter : 'all';
+  useEffect(() => { if (places && !knownPlace) setPlaceFilter('all'); }, [places, knownPlace]);
+  const rows = agentRows(built.cards, selectedPlace, nameFilter);
   const options = [{ key: 'local', label: 'This computer' }, ...(places?.places ?? []).map(p => ({ key: p.key, label: built.labels.get(p.key)! }))];
   const needsAi = !localAiConnected && built.local.some(c => c.actions.some(a => a.id !== 'open'));
   const actions = { localAiReason: needsAi ? aiReasonId : undefined, onOpen: onOpenDocument, onChat: onChatDocument, onRun: onRunDocument, onCheck: () => { setDismissedFocus(navigationFocus?.id); setRefresh(v => v + 1); }, onClusters: onChooseWorkspace };
@@ -167,8 +170,8 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       {onNewAgent && !empty && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}
       </div></div>
     {!empty && <div className="overview-filters">
-      {options.length > 4 ? <select className="field" aria-label="Place" value={placeFilter} onChange={event => { setReveal(undefined); setPlaceFilter(event.target.value); }}><option value="all">All places</option>{options.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}</select>
-        : <div className="view-switch" role="group" aria-label="Place">{[{ key: 'all', label: 'All' }, ...options].map(p => <button key={p.key} type="button" aria-pressed={placeFilter === p.key} onClick={() => { setReveal(undefined); setPlaceFilter(p.key); }}>{p.label}</button>)}</div>}
+      {options.length > 4 ? <select className="field" aria-label="Place" value={selectedPlace} onChange={event => { setReveal(undefined); setPlaceFilter(event.target.value); }}><option value="all">All places</option>{options.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}</select>
+        : <div className="view-switch" role="group" aria-label="Place">{[{ key: 'all', label: 'All' }, ...options].map(p => <button key={p.key} type="button" aria-pressed={selectedPlace === p.key} onClick={() => { setReveal(undefined); setPlaceFilter(p.key); }}>{p.label}</button>)}</div>}
       <input className="field" aria-label="Filter by name" placeholder="Filter by name" value={nameFilter} onChange={event => { setReveal(undefined); setNameFilter(event.target.value); }} />
       <span className="overview-filter-count">{summaryLabel(rows, partial)}</span>
     </div>}
