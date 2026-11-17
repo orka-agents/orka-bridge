@@ -229,10 +229,11 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
         click(toggle, []); scroll(4000)
         require(anyButton("Run tests web-reader") && enabledButton("Run tests web-reader") == nil && enabledButton("Open web-reader") != nil,
                 "Without connected AI, Overview must disable local Run but preserve Open")
-        _ = try capture("overview-ai-disconnected-\(mode)-\(size)", ["Your agents", "Connect the AI in Clusters"])
+        _ = try capture("local-overview-ai-disconnected-\(mode)-\(size)", ["Your agents", "Connect the AI in Clusters"])
     }
 }
 localSize(1280, 800); scroll(4000)
+click("By cluster", [])
 click("Clusters", []); waitForButton("Connect the AI")
 localSize(540, 640)
 scroll(4000)
@@ -331,10 +332,11 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
         click(toggle, []); scroll(4000)
         require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to chat or run tests on this computer."),
                 "Connected AI must enable local Overview actions without the connection reason")
-        _ = try capture("overview-ai-connected-\(mode)-\(size)", ["Your agents", "Run tests"])
+        _ = try capture("local-overview-ai-connected-\(mode)-\(size)", ["Your agents", "Run tests"])
     }
 }
 localSize(1280, 800); scroll(4000)
+click("By cluster", [])
 click("Clusters", [])
 // Workspace Stop is exercised after the original baseline coverage below.
 // Reuse the setup-progress selector and the existing Places entry to remount real

@@ -63,6 +63,29 @@ test.each([true, false])('Overview follows acknowledged local AI connection, not
   expect(actions()).toEqual([]);
 });
 
+test.each([{ connectedInSetup: false, nativeConnected: true }, { connectedInSetup: true, nativeConnected: false }])('Overview honors native connection evidence over setup state: %j', async ({ connectedInSetup, nativeConnected }) => {
+  ipc(undefined, command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'setup_connect_model') return { ready: true };
+    if (command === 'overview_agents') return { state: 'complete', installation: documentId, agents: [], observation: null, observedAt: 123, runActive: false, reason: null };
+    if (command === 'agent_run_status') return { documentId, busy: null, state: 'idle', canRun: nativeConnected, modelConnected: nativeConnected, report: null, acknowledged: [], pending: null, error: null };
+    return undefined;
+  });
+  const user = userEvent.setup(); render(<App />);
+  if (connectedInSetup) {
+    await openLocalSetup(user);
+    await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  }
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Open reader' }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 });
+  await waitFor(() => expect(calls.some(c => c.command === 'agent_run_status')).toBe(true));
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(!nativeConnected));
+  expect(screen.getByRole('button', { name: 'Chat reader' }).matches(':disabled')).toBe(!nativeConnected);
+  expect(actions()).toEqual([]);
+});
+
 test('local readiness never substitutes a provider for a team destination', async () => {
   ipc(() => ({ target, providers: [{ ...provider, ready: false }] }));
   const user = userEvent.setup(); render(<App />);
