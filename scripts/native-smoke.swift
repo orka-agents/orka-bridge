@@ -572,7 +572,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
                     "Local setup choice lost its step counter or Continue")
         }
         if !welcome {
-            require(!nativeTextIsVisible("Local cluster setup is not included in this build. Nothing will be downloaded or started."),
+            require(!nativeTextIsVisible("Workspace setup is not included in this build. Nothing will be downloaded or started."),
                     "Supported release still reports setup unavailable")
         }
         if ["places-empty", "places-after-form", "places-local", "places-retained"].contains(name) {
@@ -845,7 +845,7 @@ require(!retained.contains { $0.topCandidates(1).first?.string == "Get started" 
         "Restart must retain welcome dismissal without starting a workspace")
 clickTab("Overview", retained)
 let overview = try capture("overview", "Overview")
-require(nativeTextIsVisible("This local cluster can't list its agents yet."),
+require(nativeTextIsVisible("This workspace can't list its agents yet."),
         "Overview must explain the source-inferred old Mac image limit")
 require(!visibleButtons("Open web-reader").isEmpty && nativeTextIsVisible("web-reader"),
         "Overview must show the saved file opened through the native Designer")

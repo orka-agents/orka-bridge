@@ -57,6 +57,13 @@ for (const name of ['fixtures', 'setupFixtures', 'overviewVariants']) {
   assert.ok(roster(name, selection('core')).length > 0);
 }
 assert.match(source, /if \(runCore\) for \(const name of \['designer-connected'/, 'UI scope must not repeat minimum Designer cases');
+// Exercise the queued-state predicate with the rendered summary, including its workspace wording.
+const queuedGuard = source.split('\n').find(line => line.includes('if (!queued.status'));
+assert.ok(queuedGuard);
+const checkQueued = Function('queued', 'name', queuedGuard);
+const queuedState = { status: true, inChoice: false, change: true, cancel: false, text: 'GitHub Copilot, connects when the workspace is ready' };
+assert.doesNotThrow(() => checkQueued(queuedState, 'setup-transfer-queued'));
+assert.throws(() => checkQueued({ ...queuedState, cancel: true }, 'setup-transfer-queued'));
 // Exercise the real layout gate with measurements, without pretending to render a native window.
 const layoutGate = source.slice(source.indexOf('  async function checkLayout('), source.indexOf('  // Setup-progress states:'));
 assert.ok(layoutGate.includes('wide tabs must stay 180px'));
