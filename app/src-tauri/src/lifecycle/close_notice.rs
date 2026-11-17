@@ -5,8 +5,25 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn closing_without_a_running_workspace_quits_without_consuming_the_notice() {
+        let notice = CloseNotice::new(None);
+        assert_eq!(notice.admit(false), CloseAction::Quit);
+        assert_eq!(notice.admit(true), CloseAction::Explain);
+        assert_eq!(notice.admit(false), CloseAction::Quit);
+        notice.finish(true).unwrap();
+        assert_eq!(notice.admit(false), CloseAction::Quit);
+        assert_eq!(notice.admit(true), CloseAction::Hide);
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum CloseAction {
+    Quit,
     Explain,
     Pending,
     Hide,
@@ -28,7 +45,10 @@ impl CloseNotice {
             pending: AtomicBool::new(false),
         }
     }
-    pub fn admit(&self) -> CloseAction {
+    pub fn admit(&self, running: bool) -> CloseAction {
+        if !running {
+            return CloseAction::Quit;
+        }
         if self.seen.load(Ordering::Acquire) {
             CloseAction::Hide
         } else if self.pending.swap(true, Ordering::AcqRel) {
