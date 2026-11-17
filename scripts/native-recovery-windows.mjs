@@ -1560,7 +1560,7 @@ try {
     if (filterProof.named !== 1 || filterProof.reset <= 1) throw Error('Overview name filter did not narrow and reset the real rows');
     await evaluate(`document.querySelector('main').scrollTo(0, 0)`);
     await shoot('-collapsed');
-    await evaluate(`[...document.querySelectorAll('.overview-agent-head button[aria-label^="Show places for "][aria-expanded="false"])].forEach(button => button.click())`);
+    await evaluate(`[...document.querySelectorAll('.overview-agent-head button[aria-label^="Show places for "][aria-expanded="false"]')].forEach(button => button.click())`);
     await until(() => evaluate(`document.querySelectorAll('.overview-place').length > 0`), 'expanded Overview places');
     await check('expanded');
     await evaluate(`document.querySelector('main').scrollTo(0, 0)`);

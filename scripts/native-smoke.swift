@@ -371,10 +371,12 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         guard let tiff = comparison.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) else { fail("Cannot compose native comparison") }
         try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
     }
+    // Overview's scrolled evidence can paint an overlay scrollbar at the window edge.
+    let chromeInset = name == "overview" || name.hasPrefix("overview-") ? 20 : 8
     // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
         let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
-        let pixel = image.cropping(to: CGRect(x: CGFloat(image.width - 8), y: CGFloat(image.height - 8), width: 1, height: 1)),
+        let pixel = image.cropping(to: CGRect(x: CGFloat(image.width - chromeInset), y: CGFloat(image.height - 8), width: 1, height: 1)),
         let space = CGColorSpace(name: CGColorSpace.sRGB) else { fail("Cannot decode screenshot") }
     var rgba = [UInt8](repeating: 0, count: 4)
     let sampled = rgba.withUnsafeMutableBytes { bytes in
@@ -403,7 +405,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         "\(observation.boundingBox): \(observation.topCandidates(1).first?.string ?? "")"
     }.joined(separator: "\n")
     try recognized.write(toFile: "\(output)/\(name).ocr.txt", atomically: true, encoding: .utf8)
-    if name == "new-agent-probe" || name == "send-probe" || name == "cluster-probe" || name == "overview-probe" || name.hasPrefix("overview-fixture-") { return observations }
+    if name == "new-agent-probe" || name == "send-probe" || name == "cluster-probe" || name == "overview-probe" || name.hasPrefix("overview-probe-") || name.hasPrefix("overview-fixture-") { return observations }
     if name.hasPrefix("new-agent-") && name.hasSuffix("-end") {
         require(visibleButtons("Create").count == 1 && visibleButtons("Cancel").count == 1, "Creation actions overlap the fixed chrome")
         return observations

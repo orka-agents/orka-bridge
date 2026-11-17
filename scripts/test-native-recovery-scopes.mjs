@@ -263,6 +263,14 @@ assert.ok(smoke.includes('clickButton("Show details")\n    clickButton("Remove")
 // Source contracts supplement, but never substitute for, the hosted native walk.
 const model = await readFile(new URL('./native-model-macos.swift', import.meta.url), 'utf8');
 const overviewDriver = source.slice(source.indexOf('  // Overview renderer fixtures:'), source.indexOf('  const notes = []'));
+const expandOverview = overviewDriver.match(/await evaluate\(`(\[\.\.\.document\.querySelectorAll\('\.overview-agent-head[^`]+)`\);/)?.[1];
+assert.ok(expandOverview, 'Overview must activate its real disclosure controls');
+let overviewClicks = 0;
+vm.runInNewContext(expandOverview, { document: { querySelectorAll(selector) {
+  assert.equal(selector, '.overview-agent-head button[aria-label^="Show places for "][aria-expanded="false"]');
+  return [{ click() { overviewClicks++; } }, { click() { overviewClicks++; } }];
+} } });
+assert.equal(overviewClicks, 2, 'the injected expression must parse and activate each collapsed row');
 assert.ok(overviewDriver.includes(".overview-agent-head button[aria-label^=\"Show places for \"]"), 'Overview fixtures must drive the real agent disclosure contract');
 assert.ok(overviewDriver.includes("document.querySelectorAll('.overview-place')"), 'Overview fixtures must prove place evidence is mounted only after expansion');
 assert.ok(overviewDriver.includes("document.querySelector('[data-card-key=\"fixture-remote/remote-uid-1\"]')"), 'expanded places must retain exact Card keys');
@@ -276,6 +284,8 @@ assert.ok(model.includes('Cannot bring Overview disclosure into view') && model.
 assert.ok(model.includes('capture("local-overview-ai-disconnected-collapsed-\\(size)", ["Your agents"])') && model.includes('require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer.")'), 'disconnected Overview must verify the exact native reason without fragile OCR of AI/Al');
 assert.ok(smoke.includes('Show places for web-reader') && smoke.includes('overview-fixture-multiple-places-expanded'), 'native smoke must expand the agent list before proving per-place evidence');
 assert.ok(!smoke.includes('heading: "fixture-secondary"'), 'place names are marks or evidence labels, never list headings');
+assert.ok(smoke.includes('name.hasPrefix("overview-probe-")'), 'renamed scrolled Overview probes must retain the existing heading exemption');
+assert.ok(smoke.includes('CGFloat(image.width - chromeInset)') && smoke.includes('name.hasPrefix("overview-") ? 20 : 8'), 'Overview theme sampling must avoid its transient edge scrollbar without relaxing the theme tolerance');
 assert.ok(!smoke.includes('clickText("Refresh", in: try capture("overview-probe", "Overview"))') && !smoke.includes('clickText("By agent"') && !smoke.includes('clickText("By cluster"'), 'native smoke must remove top Refresh and grouping-only Overview paths');
 assert.ok(model.includes('nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2")'), 'numbered Chat versions must be verified as native headings, not body static text');
 assert.ok(model.includes('anchorChatHeading("Conversation 2")'), 'Chat capture must align its native heading clear of fixed navigation');
