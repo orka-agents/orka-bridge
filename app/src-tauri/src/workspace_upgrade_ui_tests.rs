@@ -76,8 +76,10 @@ fn eligibility_refuses_malformed_metadata_and_distinguishes_every_saved_phase() 
             assert!(dto.can_replace);
             // Limits are admission ceilings, not installed-image sizes. Count
             // actual target cache + private files, including the fresh state disk.
-            let ImageSource::Pinned { profile, host } = &scene.source else {
-                unreachable!()
+            let (profile, host) = match &scene.source {
+                ImageSource::Pinned { profile, host } => (profile, host),
+                #[cfg(debug_assertions)]
+                ImageSource::Development => unreachable!(),
             };
             let image =
                 crate::runtime::manifest::resolve_image(&profile.pin, &profile.manifest, host)
