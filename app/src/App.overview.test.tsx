@@ -131,7 +131,7 @@ test('opening another cluster resets an old management subview before returning 
   const user = userEvent.setup(); render(<App />); await user.click(screen.getByRole('button', { name: 'Overview' })); await expand();
   await user.click(screen.getByRole('button', { name: 'Run tests reader on team-one' })); await screen.findByRole('heading', { name: 'reader', level: 1 });
   await user.click(screen.getByRole('button', { name: 'Clusters' })); await user.click(await within(await screen.findByRole('region', { name: 'team-one' })).findByRole('button', { name: 'Manage' }));
-  await screen.findByRole('heading', { name: 'Manage your cluster', level: 1 }); await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await screen.findByRole('heading', { name: 'team-one', level: 1 }); await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(screen.getByRole('button', { name: 'Run tests reader on team-two' })); await screen.findByRole('heading', { name: 'reader', level: 1 }); await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(await screen.findByRole('heading', { name: 'Clusters', level: 1 })).toBeTruthy(); expect(await within(screen.getByRole('region', { name: 'team-two' })).findByRole('button', { name: 'Manage' })).toBeTruthy(); expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
 });
