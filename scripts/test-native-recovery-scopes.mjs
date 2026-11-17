@@ -191,6 +191,8 @@ assert.ok(unsupportedWalk.includes('"Check cluster status"'));
 assert.ok(!unsupportedWalk.includes('clickSendControl("Retry cancellation"'), 'unsupported must be last, never followed by retry');
 assert.ok(smoke.indexOf('send-cancel-completion-race') < smoke.indexOf('// Unsupported is deliberately the last Send:'));
 assert.ok(smoke.includes('Resources and file hashes'), 'native discovery must distinguish resources from nested Details');
+assert.ok(smoke.includes('let buttonAnchor = nativeButtons(anchor ?? expected)'), 'action captions need actual AXButton bounds after Details closes');
+assert.ok(smoke.includes('if let anchor = textAnchor ?? buttonAnchor'), 'native action anchors retain frozen-frame verification');
 const checksumPattern = smoke.match(/label == "published-checksum" && \$0\.range\(of: #"([^\"]+)"#/)[1];
 const checksumLabel = new RegExp(checksumPattern, 'i');
 assert.ok(checksumLabel.test('› published-checksum'));
