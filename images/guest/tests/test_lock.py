@@ -23,12 +23,13 @@ class LockTests(unittest.TestCase):
         self.assertEqual(VERSIONS.get('sourceOfflineProfile'), {
             'profile': 'orka-3cb1f0df-native/v1',
             'profileSha256': '20647cab1e653394fe7466608a08dd816f05d1a44bc8a8598fa478f7e20fc8f5',
-            'kmxSourceCommit': 'eb872e8ba1ea5d28ba4640ef5004715eae2e35b4',
+            'kmxSourceCommit': 'd6296c834d68cfddc37cab679d79e90d67fac3c6',
             'chartSha256': '11cc020b923dd5bc810a6f3b97f236a6e3123ce8ad80791d912c0af760abcca8',
             'artifactsSha256': '6f620c97411465b1f1559b57f6d279313894dcf0006ae25f8121e35afbb66080',
         })
         revisions = {'503b3ffcbdcc0a966e3b6de6235a8a98077b989e',
-                     'eb872e8ba1ea5d28ba4640ef5004715eae2e35b4'}
+                     'eb872e8ba1ea5d28ba4640ef5004715eae2e35b4',
+                     'd6296c834d68cfddc37cab679d79e90d67fac3c6'}
         self.assertEqual(set(MODEL_IMAGES), revisions)
         expected = {
             'vekil': {
@@ -57,12 +58,13 @@ class LockTests(unittest.TestCase):
             {'name': 'kmx-offline-manifest'},
         ])
         manifest = {'profile': 'orka-3cb1f0df-native/v1',
-                    'kmx': {'revision': 'eb872e8ba1ea5d28ba4640ef5004715eae2e35b4'}}
+                    'kmx': {'revision': 'd6296c834d68cfddc37cab679d79e90d67fac3c6'}}
         try:
             validate_source_offline(self.value, manifest)
         except ValueError as error:
             self.fail(f'merged kmx source revision must be accepted: {error}')
         for revision in ('503b3ffcbdcc0a966e3b6de6235a8a98077b989e',
+                         'eb872e8ba1ea5d28ba4640ef5004715eae2e35b4',
                          'e58f763cdda79ac41c81a1a695559c7aabfe4dc0'):
             manifest['kmx']['revision'] = revision
             with self.subTest(revision=revision), self.assertRaisesRegex(
