@@ -796,6 +796,12 @@ func anyButton(_ label: String) -> Bool {
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
     }
 }
+func nativeHeadingExists(_ expected: String) -> Bool {
+    nativeElements().contains { element in
+        attribute(element, "AXRole") as? String == "AXHeading"
+            && ["AXValue", "AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == expected }
+    }
+}
 func nativeTextExists(_ expected: String) -> Bool {
     nativeElements().contains { element in
         attribute(element, "AXRole") as? String == "AXStaticText" && (attribute(element, "AXValue") as? String)?.contains(expected) == true
@@ -1165,7 +1171,7 @@ waitForButton("Send message")
 rows = try seek("Send message", -150)
 click("Send message", rows)
 waitForChatText("Read another page.")
-require(nativeTextExists("Conversation 1") && nativeTextExists("Conversation 2"), "Two Chat versions must retain both numbered headings")
+require(nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2"), "Two Chat versions must retain both numbered headings")
 localSize(540, 640)
 _ = try seek("Conversation 2", -100)
 _ = try capture("chat-new-version-minimum", ["Conversation 2", "Read another page."])
