@@ -85,6 +85,12 @@
 .first-pass > p { font: var(--type-body); max-width: 65ch; }
 .first-pass .test-answer { border: 0; padding: 16px 0; }
 .first-pass .reading { overflow-wrap: anywhere; }
+@media (min-width: 820px) {
+  .first-pass { max-width: 1060px; padding: 16px 0; }
+  .first-pass > .status-icon { width: 24px; height: 24px; margin-bottom: 12px; }
+  .first-pass > p { margin-block: 12px; }
+  .first-pass-stories { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+}
 .workspace-management { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--color-border); }
 .workspace-tool { margin: 0 8px 8px 0; }
 .workspace-change { flex-basis: 100%; min-width: 0; margin: 0; padding: 16px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-row); background: var(--color-chrome); }
