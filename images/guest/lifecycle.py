@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING
 if __package__ or TYPE_CHECKING:
     from .cache import encoded
     from .lock import (
+        MODEL_ROLES,
+        ROLES,
         checked_file,
         input_identity,
         load_lock,
@@ -28,6 +30,8 @@ if __package__ or TYPE_CHECKING:
 else:
     from cache import encoded
     from lock import (
+        MODEL_ROLES,
+        ROLES,
         checked_file,
         input_identity,
         load_lock,
@@ -62,10 +66,46 @@ def refusal(stderr):
     return ' | '.join(lines[:40])[:6144] + ' | ... | ' + ' | '.join(lines[-3:])[-2039:]
 
 
-def execute(argv, *, env=None, stdin=None, timeout=600):
+def cache_reason(stderr):
+    """Keep small, nonsensitive cache reasons; omit suspect detail rather than fragments."""
+    omitted = '[stderr omitted]'
+    if len(stderr) > 8192:
+        return omitted
+    try:
+        text = stderr.decode()
+    except UnicodeDecodeError:
+        return omitted
+    text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', text)
+    if '\x1b' in text or '\x9b' in text:
+        return omitted
+    # Digest text is common in cache failures; hide the value, not its surrounding cause.
+    text = re.sub(r'\bsha256:[0-9a-f]{64}(?![0-9a-f])', 'sha256:<digest>', text, flags=re.IGNORECASE)
+    plain = ''.join(c for c in text if c.isprintable())
+    # Check the whole detail before any bounding, including markers split by controls/whitespace.
+    compact = re.sub(r'\s+', '', plain)
+    if (re.search(r'sk-|gh[pousr]_|github_pat_|glpat-|AKIA|ASIA|AIza|bearer|auth|cookie|credential|passw|api[_-]?key|token|secret|://[^/]*@|privatekey|-----begin', compact, re.IGNORECASE)
+            or re.search(r'[A-Za-z0-9_+/=-]{32}', plain)):
+        return omitted
+    lines = [''.join(c for c in line if c.isprintable()).strip() for line in text.splitlines()]
+    reason = ' | '.join(line for line in lines if line)
+    return reason if len(reason) <= 8192 else omitted
+
+
+def execute(argv, *, env=None, stdin=None, timeout=600, cache_context=None):
+    if cache_context is not None:
+        operation, component = cache_context
+        require(operation in ('import', 'inspect') and component in ROLES | set(MODEL_ROLES), 'invalid cache diagnostic context')
     with open(stdin, 'rb') if stdin is not None else open(os.devnull, 'rb') as stream:
-        result = subprocess.run(argv, env=env, stdin=stream, capture_output=True, timeout=timeout, check=False)
+        try:
+            result = subprocess.run(argv, env=env, stdin=stream, capture_output=True, timeout=timeout, check=False)
+        except subprocess.TimeoutExpired:
+            if cache_context is None:
+                raise
+            raise ValueError(f'cache {operation} timed out: {component}') from None
     if result.returncode != 0:
+        if cache_context is not None:
+            reason = cache_reason(result.stderr)
+            raise ValueError(f'cache {operation} failed: {component} (exit {result.returncode})' + (': ' + reason if reason else ''))
         name = Path(argv[0]).name
         # kmx states why it refused; other children's raw output stays out of the journal.
         reason = refusal(result.stderr) if name == 'kmx' else ''
@@ -259,10 +299,10 @@ def initialize(lock, state, *, require_existing):
     for name, row in images:
         node = journal['nodeIds'][0]
         component = components[name]
-        execute(['docker', 'exec', '-i', node, 'ctr', '--namespace', 'k8s.io', 'images', 'import', '--all-platforms', '--digests', '-'], env=env, stdin=BUNDLE / component['archive'])
+        execute(['docker', 'exec', '-i', node, 'ctr', '--namespace', 'k8s.io', 'images', 'import', '--all-platforms', '--digests', '-'], env=env, stdin=BUNDLE / component['archive'], cache_context=('import', name))
         reference = row['repository'] + '@' + row['manifestDigest']
         # The normalized archive must supply this exact reference; no fallback tag.
-        status = json.loads(execute(['docker', 'exec', node, 'crictl', 'inspecti', '-o', 'json', reference], env=env))['status']
+        status = json.loads(execute(['docker', 'exec', node, 'crictl', 'inspecti', '-o', 'json', reference], env=env, cache_context=('inspect', name)))['status']
         require(status['id'] == row['configDigest'] and reference in status['repoDigests'], 'exact CRI image unavailable')
     journal['phase'] = 'cache-verified'
     save(state, journal)

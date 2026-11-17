@@ -134,7 +134,7 @@ class ModelImageTests(unittest.TestCase):
         self.enterContext(patch.object(harness.api, 'BUNDLE', harness.bundle))
         original = harness.execute
         imports = []
-        def execute(argv, *, env=None, stdin=None, timeout=None):
+        def execute(argv, *, env=None, stdin=None, timeout=None, cache_context=None):
             if 'import' in argv:
                 imports.append(stdin)
             if 'inspecti' in argv:
@@ -143,7 +143,7 @@ class ModelImageTests(unittest.TestCase):
                 component = next(c for c in harness.lock['components'] if reference == c['repository'] + '@' + c['manifestDigest'])
                 digest = 'sha256:' + 'f' * 64 if wrong_cri and component['name'] == 'model-launcher' else component['configDigest']
                 return json.dumps({'status': {'id': digest, 'repoDigests': [reference]}})
-            return original(argv, env=env, stdin=stdin, timeout=timeout)
+            return original(argv, env=env, stdin=stdin, timeout=timeout, cache_context=cache_context)
         self.enterContext(patch.object(harness.api, 'execute', execute))
         return harness, imports
 

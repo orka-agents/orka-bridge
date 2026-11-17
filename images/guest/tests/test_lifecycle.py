@@ -3,16 +3,17 @@ import json
 import re
 import subprocess
 import tempfile
+import traceback
 import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from guest.lock import VERSIONS
 from guest.offline import stage_bundle
 from guest.tests.fixtures import encoded
-from guest.tests.test_offline import native_inputs, SYNTHETIC_PROFILE
-from guest.lock import VERSIONS
+from guest.tests.test_offline import SYNTHETIC_PROFILE, native_inputs
 
 ORKA_READYZ = '--raw=/api/v1/namespaces/orka-system/services/http:orka-api:api/proxy/readyz'
 
@@ -56,6 +57,7 @@ class LifecycleTests(unittest.TestCase):
             self.fail('guest lifecycle missing')
         self.addCleanup(patch.stopall)
         patch.object(self.api, 'BUNDLE', self.bundle).start()
+        self.real_execute = self.api.execute
         patch.object(self.api, 'execute', self.execute).start()
         patch.object(self.api, 'time', SimpleNamespace(monotonic=lambda: self.now, sleep=self.sleep)).start()
 
@@ -90,7 +92,7 @@ class LifecycleTests(unittest.TestCase):
         pods = [self.pod(selector, **(self.pod_overrides.get(name, {}) if i == 0 else {})) for i in range(self.replicas[(namespace, name)] or 1)]
         return json.dumps({'kind': 'List', 'items': pods})
 
-    def execute(self, argv, *, env=None, stdin=None, timeout=None):
+    def execute(self, argv, *, env=None, stdin=None, timeout=None, cache_context=None):
         self.calls.append((argv, env))
         if self.fail_command and self.fail_command in argv:
             raise ValueError('injected phase failure')
@@ -140,6 +142,66 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn([*kube, '-n', 'orka-system', 'get', 'pods', '-l', 'app=orka-api-controller,tier=x', '-o', 'json'], commands)
         self.assertFalse(any('get' in args and 'pods' in args and '-l' not in args for args in commands))
         self.assertEqual([], self.sleeps)
+
+    def test_only_cache_import_and_inspect_opt_in_without_changing_invocations(self):
+        calls = []
+        def observed(argv, *, env=None, stdin=None, timeout=600, cache_context=None):
+            calls.append((argv, env, stdin, timeout, cache_context))
+            return self.execute(argv, env=env, stdin=stdin, timeout=timeout, cache_context=cache_context)
+        with patch.object(self.api, 'execute', observed):
+            self.api.bootstrap(self.lock, self.state)
+        cache_calls = [call for call in calls if 'import' in call[0] or 'inspecti' in call[0]]
+        self.assertEqual(10, len(cache_calls))
+        expected = []
+        for row in self.manifest['images']:
+            name = row['component']
+            expected.extend([('import', name), ('inspect', name)])
+            imported, inspected = cache_calls[len(expected) - 2:len(expected)]
+            self.assertEqual(['docker', 'exec', '-i', self.node_id, 'ctr', '--namespace', 'k8s.io', 'images', 'import', '--all-platforms', '--digests', '-'], imported[0])
+            self.assertEqual(self.bundle / ('components/' + name + '.oci.tar'), imported[2])
+            self.assertEqual(['docker', 'exec', self.node_id, 'crictl', 'inspecti', '-o', 'json', row['repository'] + '@' + row['manifestDigest']], inspected[0])
+            self.assertIsNone(inspected[2])
+        self.assertEqual(expected, [call[4] for call in cache_calls])
+        for call in cache_calls:
+            self.assertEqual(600, call[3])
+        for call in calls:
+            self.assertEqual(self.api.environment(self.state, self.installation), call[1])
+            if call not in cache_calls:
+                self.assertIsNone(call[4])
+
+    def check_cache_failure(self, operation, *, timed_out=False):
+        target = 'import' if operation == 'import' else 'inspecti'
+        def observed(argv, **kwargs):
+            if target in argv:
+                self.calls.append((argv, kwargs.get('env')))
+                result = subprocess.CompletedProcess(argv, 23, b'hidden-stdout', b'unsupported media type')
+                timeout = subprocess.TimeoutExpired(['hidden-command'], 600, output=b'hidden-output', stderr=b'hidden-stderr') if timed_out else None
+                with patch.object(self.api.subprocess, 'run', return_value=result, side_effect=timeout):
+                    return self.real_execute(argv, **kwargs)
+            return self.execute(argv, **kwargs)
+        with patch.object(self.api, 'execute', observed), self.assertRaises(ValueError) as raised:
+            self.api.bootstrap(self.lock, self.state)
+        expected = 'cache ' + operation + ' timed out: controller' if timed_out else 'cache ' + operation + ' failed: controller (exit 23): unsupported media type'
+        self.assertEqual(expected, str(raised.exception))
+        journal = json.loads((self.state / 'bootstrap.json').read_bytes())
+        self.assertEqual('cluster-ready', journal['phase'])
+        self.assertEqual([self.node_id], journal['nodeIds'])
+        commands = [args for args, _ in self.calls]
+        self.assertEqual(['import'] if operation == 'import' else ['import', 'inspecti'],
+                         [target for args in commands for target in ('import', 'inspecti') if target in args])
+        self.assertFalse(any('install' in args or 'delete' in args or '--force' in args for args in commands))
+
+    def test_cache_import_failure_attributes_component_and_retains_cluster(self):
+        self.check_cache_failure('import')
+
+    def test_cache_inspect_failure_attributes_component_and_retains_cluster(self):
+        self.check_cache_failure('inspect')
+
+    def test_cache_import_timeout_retains_cluster_without_retry(self):
+        self.check_cache_failure('import', timed_out=True)
+
+    def test_cache_inspect_timeout_retains_cluster_without_retry(self):
+        self.check_cache_failure('inspect', timed_out=True)
 
     def restart(self, *, bootstrap=True):
         # The VM restarts: the stopped node's StartedAt changes only when it starts again,
@@ -401,6 +463,115 @@ class ExecuteTests(unittest.TestCase):
         with self.assertRaises(ValueError) as raised:
             self.api.execute([kubectl, 'get', 'nodes'])
         self.assertEqual('command failed: kubectl', str(raised.exception))
+
+    def cache_failure(self, stderr, *, context=('import', 'controller'), code=17):
+        detail, calls, stdin = self.bin / 'stderr', self.bin / 'calls', self.bin / 'stdin'
+        detail.write_bytes(stderr)
+        calls.write_text('')
+        stdin.write_bytes(b'hidden-stdin')
+        docker = self.tool('docker', 'printf x >> "$2"; /bin/cat "$1" >&2; printf hidden-stdout; exit ' + str(code) + '\n')
+        with self.assertRaises(ValueError) as raised:
+            self.api.execute([docker, str(detail), str(calls), 'hidden-argument'], env={'PROVIDER_API_KEY': 'hidden-env'}, stdin=stdin, cache_context=context)
+        self.assertEqual('x', calls.read_text(), 'cache failures must not retry')
+        message = str(raised.exception)
+        self.assertNotIn('hidden-', message)
+        self.assertNotIn(str(self.bin), message)
+        return message
+
+    def test_cache_failures_include_operation_component_exit_and_safe_reason(self):
+        for context, code in ((('import', 'controller'), 17), (('inspect', 'model-launcher'), 4)):
+            with self.subTest(context=context):
+                self.assertEqual('cache ' + context[0] + ' failed: ' + context[1] + ' (exit ' + str(code) + '): unsupported media type',
+                                 self.cache_failure(b'unsupported media type\n', context=context, code=code))
+
+    def test_cache_reason_masks_content_digests_without_losing_the_failure(self):
+        detail = b'failed to ingest sha256:' + b'f' * 64 + b': unexpected EOF\n'
+        self.assertEqual('cache import failed: controller (exit 17): failed to ingest sha256:<digest>: unexpected EOF',
+                         self.cache_failure(detail))
+
+    def test_silent_cache_failure_still_identifies_operation_component_and_exit(self):
+        self.assertEqual('cache inspect failed: vekil (exit 9)', self.cache_failure(b'', context=('inspect', 'vekil'), code=9))
+
+    def test_cache_reason_strips_ansi_and_control_characters(self):
+        message = self.cache_failure(b'\x1b[31munsupported media type\x1b[0m\r\ninvalid\x00 archive\x07\n')
+        self.assertEqual('cache import failed: controller (exit 17): unsupported media type | invalid archive', message)
+        self.assertTrue(all(c.isprintable() for c in message))
+
+    def test_cache_reason_omits_sensitive_detail_instead_of_redacting_fragments(self):
+        cases = [
+            b'sk-proj-hidden-provider-key', b'sk-ant-hidden-provider-key', b'ghp_hidden-pat',
+            b'github_pat_hidden-pat', b'glpat-hidden-value', b'AKIA' + b'X' * 16,
+            b'Authorization: Basic hidden-value', b'Bearer hidden-value',
+            b'Cookie: session=hidden-value', b'credentials: hidden-value', b'invalid UTF-8: \xff',
+            b'password=hidden-value', b'passwd: hidden-value', b'API_KEY=hidden-value',
+            b'api-key: hidden-key', b'https://user:hidden-url@registry.example/image',
+            b'-----BEGIN RSA PRIVATE KEY-----\nhidden-key-material', b'-----BEGIN OPENSSH PRIVATE KEY-----',
+            b'A' * 52, b'api_\x1b[31mkey=hidden-value', b'pass\x00word=hidden-value',
+            b'media failed\n' * 620 + b'sk-proj-hidden-key',
+            b'\x1b]8;;https://user:hidden-url@registry.example\x07link\x1b]8;;\x07',
+        ]
+        for index, detail in enumerate(cases):
+            with self.subTest(case=index):
+                self.assertEqual('cache import failed: controller (exit 17): [stderr omitted]', self.cache_failure(detail))
+
+    def test_cache_reason_is_bounded_and_oversized_detail_is_omitted_whole(self):
+        for size in (8191, 8192, 8193, 100000):
+            with self.subTest(size=size):
+                detail = (b'bad media type. ' * 6250)[:size]
+                message = self.cache_failure(detail)
+                self.assertLessEqual(len(message), len('cache import failed: controller (exit 17): ') + 8192)
+                if size <= 8192:
+                    self.assertIn('bad media type.', message)
+                else:
+                    self.assertEqual('cache import failed: controller (exit 17): [stderr omitted]', message)
+        for detail in (b'a\n' * 4096, b'x' * 8190 + b'sk-proj-hidden-key', b'password=hidden-key' + b'x' * 100000):
+            with self.subTest(size=len(detail)):
+                self.assertEqual('cache import failed: controller (exit 17): [stderr omitted]', self.cache_failure(detail))
+
+    def test_cache_success_preserves_stdout_and_existing_output_bound(self):
+        docker = self.tool('docker', "printf 'payload\\n'; printf sk-hidden-stderr >&2\n")
+        for context in (None, ('import', 'controller'), ('inspect', 'model-launcher')):
+            with self.subTest(context=context):
+                self.assertEqual('payload\n', self.api.execute([docker, 'hidden-argument'], cache_context=context))
+        docker = self.tool('docker', 'head -c 1048577 /dev/zero\n')
+        with self.assertRaisesRegex(ValueError, '^command output exceeds bound$'):
+            self.api.execute([docker], cache_context=('inspect', 'controller'))
+
+    def test_cache_context_accepts_only_fixed_operations_and_known_component_roles(self):
+        for context in (('hidden-operation', 'controller'), ('import', 'hidden-component'), ('inspect', 'controller\nhidden-component')):
+            with self.subTest(context=context), patch.object(self.api.subprocess, 'run') as child:
+                with self.assertRaisesRegex(ValueError, '^invalid cache diagnostic context$'):
+                    self.api.execute(['hidden-command'], cache_context=context)
+                child.assert_not_called()
+
+    def test_cache_timeout_has_only_fixed_context_without_retry_or_exception_detail(self):
+        for operation, component in (('import', 'controller'), ('inspect', 'model-launcher')):
+            calls = self.bin / 'calls'
+            calls.write_text('')
+            docker = self.tool('docker', 'printf x >> "$1"; printf hidden-timeout-stdout; printf hidden-timeout-stderr >&2; exec sleep 10\n')
+            argv = [docker, str(calls), 'hidden-argument']
+            with self.subTest(operation=operation):
+                with self.assertRaises(ValueError) as raised:
+                    self.api.execute(argv, timeout=0.1, cache_context=(operation, component))
+                self.assertEqual('cache ' + operation + ' timed out: ' + component, str(raised.exception))
+                self.assertNotIn('hidden-', ''.join(traceback.format_exception(raised.exception)))
+                self.assertEqual('x', calls.read_text())
+
+    def test_noncache_timeout_retains_original_exception_and_output(self):
+        docker = self.tool('docker', 'printf hidden-timeout-stdout; printf hidden-timeout-stderr >&2; exec sleep 10\n')
+        argv = [docker, 'hidden-argument']
+        with self.assertRaises(subprocess.TimeoutExpired) as raised:
+            self.api.execute(argv, timeout=0.1)
+        self.assertEqual(argv, raised.exception.cmd)
+        self.assertEqual(0.1, raised.exception.timeout)
+        self.assertEqual(b'hidden-timeout-stdout', raised.exception.output)
+        self.assertEqual(b'hidden-timeout-stderr', raised.exception.stderr)
+
+    def test_noncache_docker_failure_still_hides_raw_stderr(self):
+        docker = self.tool('docker', 'echo hidden-child-detail >&2; exit 17\n')
+        with self.assertRaises(ValueError) as raised:
+            self.api.execute([docker, 'import', 'hidden-argument'])
+        self.assertEqual('command failed: docker', str(raised.exception))
 
     def test_silent_kmx_failure_keeps_fixed_text(self):
         kmx = self.tool('kmx', "exit 3\n")
