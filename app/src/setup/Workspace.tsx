@@ -6,6 +6,7 @@ import { Disclosure } from '../components/Disclosure';
 import { type AgentEntry, creationRoot, listDocuments } from '../designer/documents-api';
 import { workspaceView } from './progress';
 import { workspaceRecovery } from './recovery-info';
+import { preflightRecovery } from './preflight-state';
 import type { SetupStatus } from './state';
 
 // Returning workspace management is not another pass through first-run setup.
@@ -19,6 +20,7 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   const [details, setDetails] = useState(false);
   const [quitError, setQuitError] = useState(false);
   const [quitting, setQuitting] = useState(false);
+  const [helpError, setHelpError] = useState(false);
   async function quit() {
     setQuitting(true); setQuitError(false);
     try { await invoke('quit_bridge'); } catch { setQuitError(true); setQuitting(false); }
@@ -36,7 +38,11 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   const closed = status.localVm === 'closed';
   const stopped = status.localVm === 'cancelled';
   const stopFailed = failed && status.workspaceFailure?.operation === 'stop';
-  const recovery = workspaceRecovery(status.workspaceFailure);
+  const recovery = status.preflightFailure ? preflightRecovery(status.preflightFailure) : workspaceRecovery(status.workspaceFailure);
+  async function help() {
+    try { await invoke('setup_open_help', { topic: recovery.topic }); setHelpError(false); }
+    catch { setHelpError(true); }
+  }
   const elapsed = status.workspaceProgress?.elapsedMs;
   const seconds = elapsed === undefined ? undefined : Math.floor(elapsed / 1000);
   const clock = seconds === undefined ? undefined : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
@@ -46,10 +52,13 @@ export default function Workspace({ status, busy, stopping, starting, error, act
     <p role="status">{error ? 'Workspace status is unavailable. Check again before starting it.' : stopFailed ? "The workspace didn't stop." : failed ? recovery.summary : stopped ? 'The workspace stopped unexpectedly. Your agents and files are kept.' : view.detail}</p>
     {view.word === 'Starting' && clock && <p className="muted">{clock} so far</p>}
     {(stopFailed || closed) && <Button type="button" kind="primary" disabled={quitting} onClick={() => { void quit(); }}>Quit Bridge</Button>}
-    {(failed || stopped) && !stopFailed && <Button type="button" kind="primary" disabled={busy || !!error || failed && recovery.retryBlocked} title={failed && recovery.retryBlocked ? recovery.action : undefined} onClick={onStart}>Restart workspace</Button>}
+    {failed && !stopFailed && recovery.action && <p>{recovery.action}</p>}
+    {(failed || stopped) && !stopFailed && <div className="workspace-step-actions"><Button type="button" kind="primary" disabled={busy || !!error || failed && recovery.retryBlocked} title={failed && recovery.retryBlocked ? recovery.action : undefined} onClick={onStart}>Restart workspace</Button>
+      {failed && recovery.topic && <Button type="button" kind="secondary" onClick={() => { void help(); }}>Show me how</Button>}</div>}
+    {helpError && <p role="alert">Couldn't open help. Open Show details to read the error.</p>}
     {quitError && <p role="alert">Couldn't quit Bridge. Try again or use Quit Bridge from its menu.</p>}
     {failed && <Disclosure label={details ? 'Hide details' : 'Show details'} open={details} controls="returning-workspace-error" onOpenChange={setDetails}>
-      {details && <pre id="returning-workspace-error">{status.localVmError || recovery.summary}</pre>}
+      {details && <div className="workspace-progress-details"><pre id="returning-workspace-error">{status.localVmError || recovery.summary}</pre></div>}
     </Disclosure>}
     <dl className="workspace-facts">
       <div><dt>Agents</dt><dd>{agents ? agents.length ? `${agents[0].name}${agents.length > 1 ? ` and ${agents.length - 1} more` : ''}` : 'No saved agents yet' : 'Agent list unavailable'}</dd></div>

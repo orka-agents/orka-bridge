@@ -307,7 +307,7 @@ try {
       return image.data;
     };
     if (name.startsWith('setup-image-')) {
-      const refusal = await evaluate(`(() => { const alert = [...document.querySelectorAll('.workspace-failure')].find(item => item.getClientRects().length); const retry = [...alert.querySelectorAll('button')].find(button => button.textContent === 'Restart workspace'); return { text: alert.innerText, disabled: retry?.disabled, title: retry?.title, replace: [...document.querySelectorAll('button')].some(button => button.textContent === 'Set up new workspace') }; })()`);
+      const refusal = await evaluate(`(() => { const alert = [...document.querySelectorAll('.workspace-failure')].find(item => item.getClientRects().length); const retry = [...alert.querySelectorAll('button')].find(button => button.textContent === 'Try again'); return { text: alert.innerText, disabled: retry?.disabled, title: retry?.title, replace: [...document.querySelectorAll('button')].some(button => button.textContent === 'Set up new workspace') }; })()`);
       if (!refusal.disabled || refusal.title !== 'Open the matching Bridge version.' || !refusal.text.includes('Open the matching Bridge version.') || refusal.text.includes("couldn't be verified") || refusal.replace) throw Error(`${name}: misleading or actionable image refusal ${JSON.stringify(refusal)}`);
     }
     if (name === 'setup-transfer') {
@@ -424,6 +424,7 @@ try {
       if (['failed', 'stopped-unexpectedly', 'stop-failed'].includes(state)) {
         await evaluate(`document.querySelector('.returning-workspace summary[aria-controls="returning-workspace-error"]').click()`);
         await until(() => evaluate(`!!document.querySelector('#returning-workspace-error')`), 'expanded workspace diagnostics');
+        await checkLayout(theme, size, 'local-workspace-' + state + '-details');
         const details = await call('Page.captureScreenshot', { format: 'png' });
         await writeFile(join(output, `${theme}-${size}-local-workspace-${state}-details.png`), Buffer.from(details.data, 'base64'));
         await evaluate(`document.querySelector('.returning-workspace summary[aria-controls="returning-workspace-error"]').click()`);
@@ -587,7 +588,7 @@ try {
         if (window.__bridgeWorkspaceUnreadable) throw Error('Synthetic workspace status unreadable');
         const localVm = selected ? workspacePhase : window.__bridgeStops || name === 'designer-no-destination' ? 'cancelled' : 'idle';
         return { selected: selected ? 'localVm' : null, localVm, model: localVm === 'ready' ? 'available' : 'locked', modelSupported: true,
-          localVmError: stoppedUnexpectedly ? 'Synthetic workspace stopped unexpectedly.' : null,
+          localVmError: stoppedUnexpectedly ? 'Synthetic workspace stopped unexpectedly. ' + 'x'.repeat(512) : null,
           workspaceProgress: localVm === 'starting' ? { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 18000, remainingMs: null } : null,
           ...(localVm === 'failed' ? { workspaceFailure: stopFailed
             ? { operation: 'stop', cause: 'stopUnconfirmed', codes: [] }

@@ -14,6 +14,7 @@ const ipc = vi.fn((command: string) => {
   if (command === 'setup_status') { if (unreadable) throw Error('unreadable'); return status; }
   if (command === 'setup_requirements') return null;
   if (command === 'setup_select_local') return status = { selected: 'localVm', localVm: 'starting', model: 'locked', workspaceProgress: { phase: 'starting', elapsedMs: 18000, bytes: null, totalBytes: null, remainingMs: null } };
+  if (command === 'setup_open_help') return;
   if (command === 'quit_bridge') { if (quitFails) throw Error('unavailable'); return; }
   if (command === 'agents_list') return [{ id: '00000000-0000-4000-8000-000000000001', name: agentName, path: '/agents/my-agent.agent.md', available: true }];
   if (command === 'agent_creation_root') return '/agents';
@@ -100,6 +101,24 @@ test('stop failure offers Quit Bridge through native cleanup and keeps a rejecte
   expect(ipc.mock.calls.map(([command]) => command)).not.toContain('setup_select_local');
   await user.click(within(card).getByRole('button', { name: 'Show details' }));
   expect(within(card).getByText('private stop diagnostic')).toBeTruthy();
+});
+
+test('returning preflight failure keeps its specific remedy and help action', async () => {
+  status = { selected: 'localVm', localVm: 'failed', model: 'locked', preflightFailure: 'hypervisorUnavailable' };
+  const user = await open();
+  const card = await screen.findByRole('region', { name: 'Workspace' });
+  expect(within(card).getByText("Windows Hypervisor Platform isn't available.")).toBeTruthy();
+  expect(within(card).getByText('Enable Windows Hypervisor Platform in Windows features, restart, then try again.')).toBeTruthy();
+  await user.click(within(card).getByRole('button', { name: 'Show me how' }));
+  expect(ipc).toHaveBeenCalledWith('setup_open_help', { topic: 'hypervisor' });
+});
+
+test.each(['workspaceUpdateRequired', 'workspaceVersionUnsupported'] as const)('blocked %s restart explains the remedy without hover', async cause => {
+  status = { selected: 'localVm', localVm: 'failed', model: 'locked', workspaceFailure: { cause, operation: 'verify', codes: [] } };
+  await open();
+  const card = await screen.findByRole('region', { name: 'Workspace' });
+  expect(within(card).getByText('Open the matching Bridge version.', { selector: 'p' })).toBeTruthy();
+  expect((within(card).getByRole('button', { name: 'Restart workspace' }) as HTMLButtonElement).disabled).toBe(true);
 });
 
 test('returning to This computer refreshes saved agents', async () => {

@@ -5,6 +5,12 @@ import vm from 'node:vm';
 
 const read = async name => (await readFile(new URL(name, import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const source = await read('./native-recovery-windows.mjs');
+const refusalExpression = source.match(/const refusal = await evaluate\(`([^`]+)`\);/)[1];
+const retry = { textContent: 'Try again', disabled: true, title: 'Open the matching Bridge version.' };
+const refusalCard = { innerText: 'Open the matching Bridge version.', getClientRects: () => [1], querySelectorAll: () => [retry] };
+const refusal = Function('document', `return ${refusalExpression}`)({ querySelectorAll: selector => selector === '.workspace-failure' ? [refusalCard] : [retry] });
+assert.equal(refusal.disabled, true, 'first-setup image refusal must find its actual disabled Try again control');
+assert.equal(refusal.title, 'Open the matching Bridge version.');
 const recoverySource = await read('../app/src/setup/recovery-info.ts');
 const causes = Function(`return ${recoverySource.match(/const causes = (\[[^\n]+\]) as const/)[1]}`)();
 const captureActions = source.slice(source.indexOf('  async function captureActions('), source.indexOf('  // Overview renderer fixtures:'));

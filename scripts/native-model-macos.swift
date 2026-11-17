@@ -1461,6 +1461,7 @@ try workspacePhase("workspace-scene-starting")
 try workspaceCapture("starting-after-quit-synthetic", ["This computer", "Starting", "0:18 so far"])
 click("Designer", [])
 for (view, label) in [("Agent", "tests"), ("Chat", "chat")] {
+    localSize(1280, 800); scroll(4000)
     click(view, [])
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
         localSize(width, height); scroll(4000)
