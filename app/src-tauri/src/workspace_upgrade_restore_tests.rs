@@ -298,6 +298,65 @@ fn restore_retains_incomplete_b_without_reopening_it_or_recovering_creation_auth
     }
 }
 #[test]
+fn abandoned_staging_bytes_never_block_exact_restore_or_become_metadata() {
+    let mut s = Scene::new(ImageTarget::WindowsAmd64);
+    s.replace(None).unwrap();
+    let id = transaction(&s);
+    assert!(matches!(
+        restore(&s, id, Some("source-restored")),
+        Err(RuntimeError::Closed)
+    ));
+    let pending = s
+        .data
+        .join("setup-v1")
+        .join(format!("restore-{id}-model-v1.next"));
+    fs::write(&pending, b"partial-metadata").unwrap();
+    fs::write(s.local.join(STORE).join("intent.next"), b"partial-intent").unwrap();
+    assert_eq!(restore(&s, id, None).unwrap(), UpgradeStatus::Restored);
+    assert_eq!(fs::read(&pending).unwrap(), b"partial-metadata");
+    let model: serde_json::Value =
+        serde_json::from_slice(&fs::read(s.data.join("setup-v1/model-v1")).unwrap()).unwrap();
+    assert_eq!(model["installation"], serde_json::json!(s.source_id));
+}
+#[test]
+fn fresh_c_archive_interruption_keeps_admission_blocked_and_retries_idempotently() {
+    for point in ["completed-archive-staged", "completed-archived"] {
+        let mut s = Scene::new(ImageTarget::WindowsAmd64);
+        s.replace(None).unwrap();
+        let id = transaction(&s);
+        restore(&s, id, None).unwrap();
+        for (attempt, stop) in [("retry-one", Some(point)), ("retry-two", None)] {
+            let cache = s._temp.path().join(attempt);
+            fs::create_dir(&cache).unwrap();
+            s.target = Some(
+                PreparedImage::from_verified(fixture::verified_with_identity(
+                    &cache,
+                    ImageTarget::WindowsAmd64,
+                    Some("new-state"),
+                    Some("new-image"),
+                ))
+                .unwrap(),
+            );
+            if stop.is_some() {
+                assert!(
+                    matches!(s.replace(stop), Err(RuntimeError::Closed)),
+                    "{point}"
+                );
+                let owner = WorkspaceUpgrade::open(&s.data, &s.local).unwrap();
+                assert_eq!(owner.recover().unwrap(), UpgradeStatus::Restored);
+                assert!(admit(&s.local.join("local-vm-v1")).is_err());
+            } else {
+                assert_eq!(s.replace(None).unwrap(), UpgradeStatus::Fresh);
+            }
+        }
+        assert!(s
+            .local
+            .join(STORE)
+            .join(format!("completed-{id}.json"))
+            .exists());
+    }
+}
+#[test]
 fn interrupted_restore_refuses_unrecorded_metadata_writes_without_overwriting_them() {
     // Until Restore completes, only exact recorded effects may be reconciled.
     // The matching older app must not be opened during this window.

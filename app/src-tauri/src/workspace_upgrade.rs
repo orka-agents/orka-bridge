@@ -286,14 +286,15 @@ impl WorkspaceUpgrade {
     fn persist(&self, intent: &Intent) -> Result<(), RuntimeError> {
         let bytes = serde_json::to_vec(intent).map_err(|_| RuntimeError::RetainedState)?;
         let path = self.local.join(STORE);
+        let pending = path.join(format!("intent-{}.next", Uuid::new_v4()));
         let mut file = OpenOptions::new()
             .create_new(true)
             .write(true)
-            .open(path.join("intent.next"))?;
+            .open(&pending)?;
         file.write_all(&bytes)?;
         file.sync_all()?;
         drop(file);
-        crate::runtime::journal::replace(&path.join("intent.next"), &path.join("intent.json"))?;
+        crate::runtime::journal::replace(&pending, &path.join("intent.json"))?;
         image_cache::fs::sync(&self.directory)?;
         Ok(())
     }
@@ -488,14 +489,28 @@ impl WorkspaceUpgrade {
         };
         let backend = journal.record().backend;
         if let Some(previous) = previous {
-            // Preserve consumed transactions and B metadata before reusing the
-            // active intent slot. No retained installation is a fresh target.
-            image_cache::fs::publish_named(
-                &self.directory,
-                "intent.json",
-                &format!("completed-{}.json", previous.transaction),
-            )?;
+            // Keep the admission marker until the new intent atomically replaces
+            // it. Completed history is a durable, idempotent copy, not a move.
+            let name = format!("completed-{}.json", previous.transaction);
+            let bytes = serde_json::to_vec(&previous).map_err(|_| RuntimeError::RetainedState)?;
+            if let Some(archived) = read_bytes(&self.local.join(STORE).join(&name), 128 * 1024)? {
+                if archived != bytes {
+                    return Err(RuntimeError::RetainedState);
+                }
+            } else {
+                let pending = format!("completed-{}-{}.next", previous.transaction, Uuid::new_v4());
+                let mut file = OpenOptions::new()
+                    .create_new(true)
+                    .write(true)
+                    .open(self.local.join(STORE).join(&pending))?;
+                file.write_all(&bytes)?;
+                file.sync_all()?;
+                drop(file);
+                point("completed-archive-staged")?;
+                image_cache::fs::publish_named(&self.directory, &pending, &name)?;
+            }
             image_cache::fs::sync(&self.directory)?;
+            point("completed-archived")?;
         }
         self.persist(&intent)?;
         point("intent")?;
@@ -746,10 +761,10 @@ impl WorkspaceUpgrade {
             let path = self.data.join("setup-v1").join(name);
             if let Some(bytes) = snapshot {
                 if read_bytes(&path, 16384)?.as_ref() != Some(bytes) {
-                    let pending = self
-                        .data
-                        .join("setup-v1")
-                        .join(format!("restore-{transaction}-{name}.next"));
+                    let pending = self.data.join("setup-v1").join(format!(
+                        "restore-{transaction}-{name}-{}.next",
+                        Uuid::new_v4()
+                    ));
                     let mut file = OpenOptions::new()
                         .create_new(true)
                         .write(true)
