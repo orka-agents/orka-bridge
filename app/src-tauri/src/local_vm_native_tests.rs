@@ -20,6 +20,8 @@ mod infrastructure_tests {
         drops: AtomicUsize,
         releases: AtomicUsize,
         fail_stop: bool,
+        stop_barrier:
+            std::sync::Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
         version_refusal: bool,
         reentry: std::sync::Mutex<Option<std::sync::Weak<LocalVm>>>,
     }
@@ -87,6 +89,10 @@ mod infrastructure_tests {
         }
         fn stop(&mut self) -> Result<(), RuntimeError> {
             self.0.stops.fetch_add(1, Ordering::SeqCst);
+            if let Some((entered, release)) = self.0.stop_barrier.lock().unwrap().take() {
+                entered.send(()).unwrap();
+                release.recv().unwrap();
+            }
             if self.0.fail_stop {
                 Err(io::Error::other("stop detail").into())
             } else {
@@ -306,6 +312,22 @@ mod infrastructure_tests {
         assert!(!vm.model_connected());
     }
     #[tokio::test]
+    async fn configured_recovery_factory_is_retained_but_cannot_resume_ordinary_startup() {
+        let probe = Arc::new(Probe::default());
+        let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
+        vm.block_for_recovery();
+        vm.start();
+        tokio::task::yield_now().await;
+        assert_eq!(probe.starts.load(Ordering::SeqCst), 0);
+        let quiesced = vm.quiesce_for_upgrade().await.unwrap();
+        assert_eq!(probe.releases.load(Ordering::SeqCst), 1);
+        assert_eq!(probe.stops.load(Ordering::SeqCst), 0);
+        drop(quiesced);
+        vm.start();
+        tokio::task::yield_now().await;
+        assert_eq!(probe.starts.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
     async fn absent_factory_without_recovery_provenance_cannot_quiesce() {
         let vm = LocalVm::unavailable();
         // A failure phase alone does not establish a safely absent recovery factory.
@@ -388,9 +410,51 @@ mod infrastructure_tests {
         tokio::task::yield_now().await;
         assert_eq!(vm.status(), LocalVmStatus::Failed);
         assert_eq!(probe.starts.load(Ordering::SeqCst), 1, "retry stays gated");
+        let home = tempfile::tempdir().unwrap();
+        let dto = vm
+            .upgrade_status(home.path().join("data"), home.path().join("local"))
+            .await;
+        assert!(
+            !dto.busy,
+            "quarantined stop failure is not work still in progress"
+        );
+        assert_eq!(dto.error, Some("stopUnconfirmed"));
+        assert!(!dto.can_replace && !dto.can_restore);
     }
     #[tokio::test]
-    async fn restore_workspace_stops_and_releases_before_storage_and_failed_stop_never_enters_it() {
+    async fn cancelled_quiescence_is_quarantined_without_an_endless_busy_projection() {
+        let probe = Arc::new(Probe::default());
+        let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
+        ready(&probe, &vm).await;
+        let (entered, entered_rx) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        *probe.stop_barrier.lock().unwrap() = Some((entered, release_rx));
+        let stopping = vm.clone();
+        let waiter = tokio::spawn(async move {
+            let _guard = stopping.quiesce_for_upgrade().await;
+        });
+        tokio::task::spawn_blocking(move || {
+            entered_rx
+                .recv_timeout(std::time::Duration::from_secs(3))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        waiter.abort();
+        release.send(()).unwrap();
+        let _ = waiter.await;
+        let home = tempfile::tempdir().unwrap();
+        let dto = vm
+            .upgrade_status(home.path().join("data"), home.path().join("local"))
+            .await;
+        assert_eq!(dto.error, Some("stopUnconfirmed"));
+        assert!(!dto.busy && !dto.can_replace && !dto.can_restore);
+        assert_eq!(probe.releases.load(Ordering::SeqCst), 0);
+        vm.start();
+        assert_eq!(probe.starts.load(Ordering::SeqCst), 1);
+    }
+    #[tokio::test]
+    async fn foreign_upgrade_operations_never_stop_or_release_the_existing_vm() {
         for (fail_stop, operation) in [false, true]
             .into_iter()
             .flat_map(|fail| ["restore", "transfer", "remove"].map(|operation| (fail, operation)))
@@ -416,18 +480,16 @@ mod infrastructure_tests {
                     .await
                     .is_err(),
                 "remove" => vm
-                    .remove_workspace_credential(data, local.clone(), transaction, Uuid::new_v4())
+                    .remove_workspace_credential(data, local.clone(), transaction)
                     .await
                     .is_err(),
                 _ => unreachable!(),
             };
             assert!(failed, "{operation}");
-            assert_eq!(probe.stops.load(Ordering::SeqCst), 1);
-            assert_eq!(
-                probe.releases.load(Ordering::SeqCst),
-                usize::from(!fail_stop)
-            );
-            assert_eq!(local.join("workspace-upgrades-v1").exists(), !fail_stop);
+            assert_eq!(probe.stops.load(Ordering::SeqCst), 0);
+            assert_eq!(probe.releases.load(Ordering::SeqCst), 0);
+            assert!(!local.join("workspace-upgrades-v1").exists());
+            assert_eq!(vm.status(), LocalVmStatus::Ready);
             assert!(!vm.model_connected());
         }
     }
@@ -1841,7 +1903,12 @@ fn release_factory_does_not_activate_from_existing_state() {
     fs::create_dir(&root).unwrap();
     fs::write(root.join("record.json"), b"not an approved image").unwrap();
     assert_eq!(
-        configured(Some(data.path().into()), Some(data.path().into())).status(),
+        configured(
+            Some(data.path().into()),
+            Some(data.path().into()),
+            Some(data.path().into())
+        )
+        .status(),
         if crate::catalog::IMAGE_AVAILABLE {
             LocalVmStatus::Idle
         } else {
@@ -1873,6 +1940,7 @@ async fn native_factory_releases_retained_handles_before_identity_preserving_ren
     let state = file_identity(&fs::File::open(root.join("state.disk")).unwrap()).unwrap();
     let factory = Arc::new(NativeFactory {
         resources: temp.path().into(),
+        data: temp.path().into(),
         root: root.clone(),
         cache: temp.path().join("cache"),
         source: image::ImageSource::Pinned {
@@ -1908,7 +1976,7 @@ async fn native_factory_releases_retained_handles_before_identity_preserving_ren
 #[test]
 fn factory_configuration_without_native_paths_cannot_activate_a_session() {
     assert_eq!(
-        configured(None, None).status(),
+        configured(None, None, None).status(),
         LocalVmStatus::NotIntegrated
     );
 }

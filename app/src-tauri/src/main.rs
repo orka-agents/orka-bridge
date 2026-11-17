@@ -687,6 +687,7 @@ fn main() {
             let vm = if recovery.is_ok() {
                 local_vm::configured(
                     app.path().resource_dir().ok(),
+                    app.path().app_data_dir().ok(),
                     app.path().app_local_data_dir().ok(),
                 )
             } else {

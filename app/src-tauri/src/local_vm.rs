@@ -15,7 +15,12 @@ use std::{
 use tokio::sync::{watch, Mutex as AsyncMutex};
 #[path = "local_vm_native.rs"]
 pub(crate) mod native;
-pub use native::configured;
+pub use native::{configured, upgrade_target};
+/// Opaque Rust-owned target. No serde constructor or renderer-selected paths.
+pub struct UpgradeTarget {
+    pub(crate) source: native::image::ImageSource,
+    pub(crate) machine_id: Vec<u8>,
+}
 #[derive(Serialize)]
 pub struct ExamplePair {
     pub agent: &'static str,
@@ -143,6 +148,17 @@ pub trait LocalFactory: Send + Sync {
     /// Drop retained factory handles only after native stop and all queued work joined.
     fn release_stopped(&self) -> Result<(), RuntimeError> {
         Ok(())
+    }
+    /// Hand a just-created destination's live, new-only creation authority to the
+    /// factory that will eventually launch it. Only the process that called
+    /// `WorkspaceUpgrade::replace`/`retry` may call this; a later ordinary start
+    /// must reuse this exact journal, never reopen the directory from scratch.
+    /// Default: no native upgrade backend (debug/dev/unavailable factories).
+    fn adopt_destination(
+        &self,
+        _journal: crate::runtime::journal::Journal,
+    ) -> Result<(), RuntimeError> {
+        Err(RuntimeError::Unavailable)
     }
 }
 pub trait LocalSession: Send {
@@ -454,21 +470,38 @@ pub struct LocalVm {
     factory: Option<Arc<dyn LocalFactory>>,
     /// Only a fresh recovery-blocked owner proves factory custody was never acquired.
     recovery_without_factory: bool,
-    choice: AsyncMutex<()>,
+    recovery_blocked: std::sync::atomic::AtomicBool,
+    choice: Arc<AsyncMutex<()>>,
     authoring: Mutex<Arc<AsyncMutex<()>>>,
     upgrading: std::sync::atomic::AtomicBool,
+    /// Latches true once this process observes any upgrade-backed destination
+    /// or an interrupted/restored transaction. Never cleared within a process:
+    /// suppressing automatic first-test replay must survive a later successful
+    /// status poll, a cleared failure or a later Restored transition.
+    workspace_replaced: std::sync::atomic::AtomicBool,
+    /// Last successfully computed status, so a concurrent poll during a busy
+    /// mutation still shows real fields with `busy` overlaid, not a blank DTO.
+    upgrade_cache: Mutex<Option<crate::workspace_upgrade::UpgradeStatusDto>>,
+    workspace_replaced_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
+    /// Present only while a replace/retry/restore/transfer/remove is in
+    /// flight; cooperative, matching the existing `closed` receiver contract.
+    upgrade_cancel: Mutex<Option<watch::Sender<bool>>>,
 }
 /// Keep native launch admission and setup choice serialized through the switch.
-#[allow(dead_code)]
 pub(crate) struct UpgradeQuiescence<'a> {
     vm: &'a LocalVm,
-    _choice: tokio::sync::MutexGuard<'a, ()>,
+    custody_released: bool,
+    _choice: tokio::sync::OwnedMutexGuard<()>,
 }
 impl Drop for UpgradeQuiescence<'_> {
     fn drop(&mut self) {
-        self.vm
-            .upgrading
-            .store(false, std::sync::atomic::Ordering::Release);
+        if self.custody_released {
+            self.vm
+                .upgrading
+                .store(false, std::sync::atomic::Ordering::Release);
+        } else {
+            self.vm.quarantine_upgrade();
+        }
     }
 }
 impl LocalVm {
@@ -502,9 +535,14 @@ impl LocalVm {
             }),
             factory,
             recovery_without_factory,
-            choice: AsyncMutex::new(()),
+            recovery_blocked: std::sync::atomic::AtomicBool::new(false),
+            choice: Arc::new(AsyncMutex::new(())),
             authoring: Mutex::new(Arc::new(AsyncMutex::new(()))),
             upgrading: std::sync::atomic::AtomicBool::new(false),
+            workspace_replaced: std::sync::atomic::AtomicBool::new(false),
+            upgrade_cache: Mutex::new(None),
+            workspace_replaced_observer: Mutex::new(None),
+            upgrade_cancel: Mutex::new(None),
         })
     }
     pub fn new(factory: Arc<dyn LocalFactory>) -> Arc<Self> {
@@ -515,77 +553,471 @@ impl LocalVm {
     }
     pub fn recovery_blocked() -> Arc<Self> {
         let vm = Self::make(None, true);
-        vm.inner.fail(
+        vm.block_for_recovery();
+        vm
+    }
+    /// Retain the configured factory for explicit recovery without resuming startup.
+    pub fn block_for_recovery(&self) {
+        self.recovery_blocked
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.set_workspace_replaced(true);
+        self.inner.fail(
             "Workspace recovery is required before starting the local cluster.".into(),
             &RuntimeError::RetainedState,
             WorkspaceOperation::Verify,
             false,
         );
-        vm
     }
-    /// A timeout keeps the gate and journal custody quarantined until process exit.
-    #[allow(dead_code)] // Unexposed native upgrade owner; renderer activation is a later change.
+    #[cfg(test)]
     pub(crate) async fn quiesce_for_upgrade(&self) -> Result<UpgradeQuiescence<'_>, RuntimeError> {
-        let choice = self.choice.lock().await;
+        let choice = self.choice.clone().lock_owned().await;
+        self.quiesce_with_choice(choice).await
+    }
+    /// Reserve choice before preflight, then retain it through stop and handoff.
+    /// A timeout keeps the gate and journal custody quarantined until process exit.
+    async fn quiesce_with_choice(
+        &self,
+        choice: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Result<UpgradeQuiescence<'_>, RuntimeError> {
         self.upgrading
             .store(true, std::sync::atomic::Ordering::Release);
-        tokio::time::timeout(std::time::Duration::from_secs(30), self.stop(false))
-            .await
-            .map_err(|_| {
-                RuntimeError::StopUnconfirmed("Workspace stop did not complete.".into())
-            })??;
-        match self.factory.as_ref() {
-            Some(factory) => factory.release_stopped()?,
-            // stop still joins all work above; only this constructor proves no
-            // native factory ever held handles in this process.
-            None if self.recovery_without_factory => {}
-            None => return Err(RuntimeError::Unavailable),
+        if let Some(dto) = self.upgrade_cache.lock().unwrap().as_mut() {
+            dto.busy = true;
+            dto.error = None;
         }
-        Ok(UpgradeQuiescence {
+        let mut guard = UpgradeQuiescence {
             vm: self,
+            custody_released: false,
             _choice: choice,
-        })
+        };
+        let stopped = tokio::time::timeout(std::time::Duration::from_secs(30), self.stop(false))
+            .await
+            .unwrap_or_else(|_| {
+                Err(RuntimeError::StopUnconfirmed(
+                    "Workspace stop did not complete.".into(),
+                ))
+            });
+        stopped?;
+        let released = match self.factory.as_ref() {
+            Some(factory) => factory.release_stopped(),
+            // Only this constructor proves no factory ever acquired handles.
+            None if self.recovery_without_factory => Ok(()),
+            None => Err(RuntimeError::Unavailable),
+        };
+        released?;
+        guard.custody_released = true;
+        Ok(guard)
     }
-    /// Native-only recovery; the lifecycle guard spans the complete storage
-    /// operation, including blocking filesystem work and metadata publication.
-    #[allow(dead_code)]
-    pub(crate) async fn restore_workspace(
+    /// Admission and preflight share one reservation, including before spawn.
+    fn reserve_upgrade_choice(&self) -> Result<tokio::sync::OwnedMutexGuard<()>, RuntimeError> {
+        self.choice
+            .clone()
+            .try_lock_owned()
+            .map_err(|_| RuntimeError::Busy)
+    }
+    /// Denial-only preflight; full mutation authority remains in WorkspaceUpgrade.
+    fn validate_upgrade_transaction(
         &self,
-        data: std::path::PathBuf,
-        local: std::path::PathBuf,
+        data: &std::path::Path,
+        local: &std::path::Path,
         transaction: bridge_runtime_protocol::Uuid,
     ) -> Result<crate::workspace_upgrade::UpgradeStatus, RuntimeError> {
-        let _quiesced = self.quiesce_for_upgrade().await?;
-        // No detached worker may outlive this borrowed lifecycle guard if the
-        // caller drops its future. Renderer activation remains a later task.
-        crate::workspace_upgrade::WorkspaceUpgrade::open(&data, &local)?.restore(transaction)
+        self.upgrade_idle()?;
+        crate::workspace_upgrade::validate_transaction(data, local, transaction)
     }
-    /// Native-only explicit intents; neither method connects AI or addresses an archived guest.
-    #[allow(dead_code)]
-    pub(crate) async fn transfer_workspace_credential(
+    fn upgrade_idle(&self) -> Result<(), RuntimeError> {
+        if self.upgrading.load(std::sync::atomic::Ordering::Acquire)
+            || (matches!(
+                self.status(),
+                LocalVmStatus::Preparing | LocalVmStatus::Starting
+            ) && self
+                .upgrade_cache
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|dto| dto.state == "fresh"))
+        {
+            Err(RuntimeError::Busy)
+        } else {
+            Ok(())
+        }
+    }
+    /// Recovery never starts A in this app, even after an explicit restore.
+    pub async fn restore_workspace(
         &self,
         data: std::path::PathBuf,
         local: std::path::PathBuf,
         transaction: bridge_runtime_protocol::Uuid,
-    ) -> Result<bool, RuntimeError> {
-        let _quiesced = self.quiesce_for_upgrade().await?;
+    ) -> Result<crate::workspace_upgrade::UpgradeStatusDto, RuntimeError> {
+        let choice = self.reserve_upgrade_choice()?;
+        if self.validate_upgrade_transaction(&data, &local, transaction)?
+            == crate::workspace_upgrade::UpgradeStatus::Restored
+        {
+            return Err(RuntimeError::RetainedState);
+        }
+        let _quiesced = self.quiesce_with_choice(choice).await?;
+        let result = (|| {
+            let mut owner = crate::workspace_upgrade::WorkspaceUpgrade::open(&data, &local)?;
+            owner.restore(transaction)?;
+            self.retire_workspace_state();
+            self.block_for_recovery();
+            Ok(owner.status_dto(native::upgrade_source().as_ref()))
+        })();
+        self.finish_upgrade_status(&data, &local, result)
+    }
+    /// Explicit association consent only; restart validated B, never Connect.
+    pub async fn transfer_workspace_credential(
+        self: &Arc<Self>,
+        data: std::path::PathBuf,
+        local: std::path::PathBuf,
+        transaction: bridge_runtime_protocol::Uuid,
+    ) -> Result<crate::workspace_upgrade::UpgradeStatusDto, RuntimeError> {
+        let choice = self.reserve_upgrade_choice()?;
+        if self.validate_upgrade_transaction(&data, &local, transaction)?
+            != crate::workspace_upgrade::UpgradeStatus::Consumed
+        {
+            return Err(RuntimeError::RetainedState);
+        }
         crate::workspace_upgrade::WorkspaceUpgrade::open(&data, &local)?
-            .transfer_credential(transaction)
+            .validate_transfer(transaction)?;
+        let quiesced = self.quiesce_with_choice(choice).await?;
+        let result = (|| {
+            let mut owner = crate::workspace_upgrade::WorkspaceUpgrade::open(&data, &local)?;
+            owner.transfer_credential(transaction)?;
+            Ok(owner.status_dto(native::upgrade_source().as_ref()))
+        })();
+        let dto = self.finish_upgrade_status(&data, &local, result)?;
+        drop(quiesced);
+        if matches!(dto.state, "fresh" | "consumed") {
+            self.start();
+        }
+        Ok(dto)
     }
-    #[allow(dead_code)]
-    pub(crate) async fn remove_workspace_credential(
-        &self,
+    /// The slot is always native-derived, never a renderer argument.
+    pub async fn remove_workspace_credential(
+        self: &Arc<Self>,
         data: std::path::PathBuf,
         local: std::path::PathBuf,
         transaction: bridge_runtime_protocol::Uuid,
-        slot: bridge_runtime_protocol::Uuid,
-    ) -> Result<(), RuntimeError> {
-        let _quiesced = self.quiesce_for_upgrade().await?;
-        crate::workspace_upgrade::WorkspaceUpgrade::open(&data, &local)?.remove_credential(
-            transaction,
-            slot,
-            &crate::runtime::credential_store::OsCredentialStore,
-        )
+    ) -> Result<crate::workspace_upgrade::UpgradeStatusDto, RuntimeError> {
+        let choice = self.reserve_upgrade_choice()?;
+        if !matches!(
+            self.validate_upgrade_transaction(&data, &local, transaction)?,
+            crate::workspace_upgrade::UpgradeStatus::Consumed
+                | crate::workspace_upgrade::UpgradeStatus::Restored
+        ) {
+            return Err(RuntimeError::RetainedState);
+        }
+        let slot = crate::workspace_upgrade::WorkspaceUpgrade::open(&data, &local)?
+            .resolve_removal_slot(transaction)?;
+        let quiesced = self.quiesce_with_choice(choice).await?;
+        let result = (|| {
+            let mut owner = crate::workspace_upgrade::WorkspaceUpgrade::open(&data, &local)?;
+            owner.remove_credential(
+                transaction,
+                slot,
+                &crate::runtime::credential_store::OsCredentialStore,
+            )?;
+            Ok(owner.status_dto(native::upgrade_source().as_ref()))
+        })();
+        let dto = self.finish_upgrade_status(&data, &local, result)?;
+        drop(quiesced);
+        if matches!(dto.state, "fresh" | "consumed") {
+            self.start();
+        }
+        Ok(dto)
+    }
+    /// Installed once by the native shell; never a renderer-supplied callback.
+    pub fn on_workspace_replaced(&self, observer: Arc<dyn Fn() + Send + Sync>) {
+        *self.workspace_replaced_observer.lock().unwrap() = Some(observer);
+    }
+    fn retire_workspace_state(&self) {
+        let observer = self.workspace_replaced_observer.lock().unwrap().clone();
+        if let Some(observer) = observer {
+            observer();
+        }
+    }
+    /// Observe the durable transaction before ordinary startup takes its journal.
+    pub fn seed_upgrade_status(&self, data: &std::path::Path, local: &std::path::Path) {
+        let dto = crate::workspace_upgrade::upgrade_status(
+            data,
+            local,
+            native::upgrade_source().as_ref(),
+        );
+        self.set_workspace_replaced(dto.transaction.is_some());
+        self.cache_upgrade_status(dto);
+    }
+    fn quarantine_upgrade(&self) {
+        let mut dto = self
+            .upgrade_cache
+            .lock()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
+        dto.state = "conflict";
+        dto.error = Some("stopUnconfirmed");
+        dto.busy = false;
+        dto.can_replace = false;
+        dto.can_restore = false;
+        self.cache_upgrade_status(dto);
+        self.inner.fail(
+            "Workspace shutdown or custody release could not be confirmed.".into(),
+            &RuntimeError::StopUnconfirmed("Workspace recovery is required.".into()),
+            WorkspaceOperation::Stop,
+            false,
+        );
+        // Keep upgrading=true: only process restart may release this quarantine.
+    }
+    fn cache_upgrade_status(&self, dto: crate::workspace_upgrade::UpgradeStatusDto) {
+        *self.upgrade_cache.lock().unwrap() = Some(dto);
+    }
+    fn finish_upgrade_status(
+        &self,
+        data: &std::path::Path,
+        local: &std::path::Path,
+        result: Result<crate::workspace_upgrade::UpgradeStatusDto, RuntimeError>,
+    ) -> Result<crate::workspace_upgrade::UpgradeStatusDto, RuntimeError> {
+        match result {
+            Ok(dto) => {
+                self.cache_upgrade_status(dto.clone());
+                Ok(dto)
+            }
+            Err(error) => {
+                self.inner.fail(
+                    failure_reason(&error),
+                    &error,
+                    WorkspaceOperation::Prepare,
+                    false,
+                );
+                let mut dto = crate::workspace_upgrade::upgrade_status(
+                    data,
+                    local,
+                    native::upgrade_source().as_ref(),
+                );
+                if dto.busy {
+                    dto = self
+                        .upgrade_cache
+                        .lock()
+                        .unwrap()
+                        .clone()
+                        .unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
+                }
+                dto.busy = false;
+                dto.error = crate::workspace_upgrade::classify_error(&error);
+                self.cache_upgrade_status(dto);
+                Err(error)
+            }
+        }
+    }
+    /// Projection is not mutation authority. Our running journal is expected
+    /// to exclude Journal::open; it is not evidence of an upgrade in progress.
+    pub async fn upgrade_status(
+        &self,
+        data: std::path::PathBuf,
+        local: std::path::PathBuf,
+    ) -> crate::workspace_upgrade::UpgradeStatusDto {
+        if self.upgrading.load(std::sync::atomic::Ordering::Acquire) {
+            let mut dto = self
+                .upgrade_cache
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
+            dto.busy = dto.error != Some("stopUnconfirmed");
+            return dto;
+        }
+        let phase = self.status();
+        if matches!(
+            phase,
+            LocalVmStatus::Preparing | LocalVmStatus::Starting | LocalVmStatus::Ready
+        ) {
+            let mut dto = self
+                .upgrade_cache
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
+            dto.busy = dto.state == "fresh" && phase != LocalVmStatus::Ready;
+            if phase == LocalVmStatus::Ready && dto.state == "fresh" {
+                dto.state = "consumed";
+                self.cache_upgrade_status(dto.clone());
+            }
+            return dto;
+        }
+        let source = native::upgrade_source();
+        match tokio::task::spawn_blocking(move || {
+            crate::workspace_upgrade::upgrade_status(&data, &local, source.as_ref())
+        })
+        .await
+        {
+            Ok(mut dto) => {
+                // A failed native launch can still retain our journal.
+                if dto.busy {
+                    dto = self.upgrade_cache.lock().unwrap().clone().unwrap_or(dto);
+                }
+                dto.busy = self.upgrading.load(std::sync::atomic::Ordering::Acquire);
+                if let Some(error) = self
+                    .upgrade_cache
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .and_then(|c| c.error)
+                {
+                    dto.error = Some(error);
+                }
+                self.cache_upgrade_status(dto.clone());
+                dto
+            }
+            Err(_) => {
+                let mut dto = self
+                    .upgrade_cache
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
+                dto.busy = false;
+                self.cache_upgrade_status(dto.clone());
+                dto
+            }
+        }
+    }
+    /// The owned task holds quiescence through the blocking worker AND handoff.
+    /// Dropping an IPC waiter cannot detach filesystem work from lifecycle custody.
+    pub async fn replace_workspace(
+        self: &Arc<Self>,
+        data: std::path::PathBuf,
+        local: std::path::PathBuf,
+        target: UpgradeTarget,
+    ) -> Result<crate::workspace_upgrade::UpgradeStatusDto, RuntimeError> {
+        let choice = self.reserve_upgrade_choice()?;
+        self.upgrade_idle()?;
+        if self.status() == LocalVmStatus::Ready {
+            return Err(RuntimeError::RetainedState);
+        }
+        crate::workspace_upgrade::validate_new_replacement(&data, &local)?;
+        let vm = self.clone();
+        tokio::spawn(async move {
+            let factory = vm.factory.clone().ok_or(RuntimeError::Unavailable)?;
+            let quiesced = vm.quiesce_with_choice(choice).await?;
+            vm.set_workspace_replaced(true);
+            let (tx, rx) = watch::channel(false);
+            *vm.upgrade_cancel.lock().unwrap() = Some(tx);
+            let runtime = tokio::runtime::Handle::current();
+            let inner = vm.inner.clone();
+            inner.publish(LocalProgress::Status(LocalVmStatus::Preparing));
+            let (worker_data, worker_local) = (data.clone(), local.clone());
+            let result = tokio::task::spawn_blocking(move || {
+                let mut owner =
+                    crate::workspace_upgrade::WorkspaceUpgrade::open(&worker_data, &worker_local)?;
+                owner.set_progress(Arc::new(move |event| {
+                    inner.publish(LocalProgress::Image(event))
+                }));
+                owner.replace(&target.source, target.machine_id, &rx, &runtime)?;
+                // Status must inspect the original creator Journal before handoff.
+                let dto = owner.status_dto(Some(&target.source));
+                let journal = owner
+                    .take_destination()
+                    .ok_or(RuntimeError::RetainedState)?;
+                factory.adopt_destination(journal)?;
+                Ok(dto)
+            })
+            .await
+            .unwrap_or(Err(RuntimeError::Unavailable));
+            *vm.upgrade_cancel.lock().unwrap() = None;
+            let dto = vm.finish_upgrade_status(&data, &local, result)?;
+            vm.retire_workspace_state();
+            vm.recovery_blocked
+                .store(false, std::sync::atomic::Ordering::Release);
+            vm.inner
+                .publish(LocalProgress::Status(LocalVmStatus::Cancelled));
+            drop(quiesced);
+            vm.start();
+            Ok(dto)
+        })
+        .await
+        .map_err(|_| RuntimeError::Unavailable)?
+    }
+    /// Retry creates a new destination, never reopens new-only authority.
+    pub async fn retry_workspace(
+        self: &Arc<Self>,
+        data: std::path::PathBuf,
+        local: std::path::PathBuf,
+        target: UpgradeTarget,
+        transaction: bridge_runtime_protocol::Uuid,
+    ) -> Result<crate::workspace_upgrade::UpgradeStatusDto, RuntimeError> {
+        let choice = self.reserve_upgrade_choice()?;
+        if !matches!(
+            self.validate_upgrade_transaction(&data, &local, transaction)?,
+            crate::workspace_upgrade::UpgradeStatus::SourceSelected
+                | crate::workspace_upgrade::UpgradeStatus::SourceRetained
+                | crate::workspace_upgrade::UpgradeStatus::Incomplete
+        ) {
+            return Err(RuntimeError::RetainedState);
+        }
+        let vm = self.clone();
+        tokio::spawn(async move {
+            let factory = vm.factory.clone().ok_or(RuntimeError::Unavailable)?;
+            let quiesced = vm.quiesce_with_choice(choice).await?;
+            vm.set_workspace_replaced(true);
+            let (tx, rx) = watch::channel(false);
+            *vm.upgrade_cancel.lock().unwrap() = Some(tx);
+            let runtime = tokio::runtime::Handle::current();
+            let inner = vm.inner.clone();
+            inner.publish(LocalProgress::Status(LocalVmStatus::Preparing));
+            let (worker_data, worker_local) = (data.clone(), local.clone());
+            let result = tokio::task::spawn_blocking(move || {
+                let mut owner =
+                    crate::workspace_upgrade::WorkspaceUpgrade::open(&worker_data, &worker_local)?;
+                owner.set_progress(Arc::new(move |event| {
+                    inner.publish(LocalProgress::Image(event))
+                }));
+                owner.retry(
+                    transaction,
+                    &target.source,
+                    target.machine_id,
+                    &rx,
+                    &runtime,
+                )?;
+                let dto = owner.status_dto(Some(&target.source));
+                let journal = owner
+                    .take_destination()
+                    .ok_or(RuntimeError::RetainedState)?;
+                factory.adopt_destination(journal)?;
+                Ok(dto)
+            })
+            .await
+            .unwrap_or(Err(RuntimeError::Unavailable));
+            *vm.upgrade_cancel.lock().unwrap() = None;
+            let dto = vm.finish_upgrade_status(&data, &local, result)?;
+            vm.retire_workspace_state();
+            vm.recovery_blocked
+                .store(false, std::sync::atomic::Ordering::Release);
+            vm.inner
+                .publish(LocalProgress::Status(LocalVmStatus::Cancelled));
+            drop(quiesced);
+            vm.start();
+            Ok(dto)
+        })
+        .await
+        .map_err(|_| RuntimeError::Unavailable)?
+    }
+    /// Cooperative cancellation at the existing acquisition/publication checkpoints.
+    pub async fn cancel_workspace_upgrade(&self) -> Result<(), RuntimeError> {
+        let cancelling_transaction = {
+            let cancel = self.upgrade_cancel.lock().unwrap();
+            if let Some(tx) = cancel.as_ref() {
+                let _ = tx.send(true);
+                true
+            } else {
+                false
+            }
+        };
+        // Stop startup cooperatively without dropping the factory's original
+        // new-only journal: Cancel is not quiesce/release_stopped.
+        if !cancelling_transaction {
+            self.cancel().await?;
+        }
+        Ok(())
     }
     /// Atomic Run/Chat admission, separate from each bounded VM request.
     pub fn try_authoring(&self) -> Option<tokio::sync::OwnedMutexGuard<()>> {
@@ -600,6 +1032,19 @@ impl LocalVm {
     }
     pub fn status(&self) -> LocalVmStatus {
         self.inner.state.lock().unwrap().phase
+    }
+    /// Native-set only; latches true and never clears within this process.
+    /// Main sets this once from startup recovery; later replace/retry/restore
+    /// completions in this same process must call it again on success.
+    pub fn set_workspace_replaced(&self, replaced: bool) {
+        if replaced {
+            self.workspace_replaced
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+    }
+    pub fn workspace_replaced(&self) -> bool {
+        self.workspace_replaced
+            .load(std::sync::atomic::Ordering::Acquire)
     }
     /// Acknowledgment retained by the native session, independent of renderer reloads.
     pub fn model_connected(&self) -> bool {
@@ -642,6 +1087,9 @@ impl LocalVm {
     pub fn start(self: &Arc<Self>) {
         let mut state = self.inner.state.lock().unwrap();
         if state.terminal
+            || self
+                .recovery_blocked
+                .load(std::sync::atomic::Ordering::Acquire)
             || self.upgrading.load(std::sync::atomic::Ordering::Acquire)
             || state.closing
             || !matches!(
