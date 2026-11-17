@@ -304,13 +304,13 @@ require(!rows.contains { ($0.topCandidates(1).first?.string ?? "").range(of: "[S
 // Connected now only exposes Change; it opens a panel before the existing removal confirmation.
 click("Change", rows)
 for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
-    localSize(width, height); scroll(4000)
+    localSize(width, height); scroll(size == "minimum" ? -4000 : 4000)
     rows = try capture("local-change-panel-\(size)", ["Change the AI", "Remove saved sign-in", "Done"])
 }
 localSize(1280, 800); scroll(4000)
 click("Remove saved sign-in", rows)
 for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
-    localSize(width, height); scroll(4000)
+    localSize(width, height); scroll(size == "minimum" ? -4000 : 4000)
     rows = try capture("local-remove-confirmation-\(size)", ["saved sign-in?", "Cancel", "Remove sign-in"])
 }
 localSize(1280, 800); scroll(4000)
