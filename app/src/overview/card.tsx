@@ -56,7 +56,7 @@ export function AgentListRow({ row, actions, reveal, onToggle }: { row: AgentRow
       {document ? <Button size="small" aria-label={`Open ${document.subject}`} onClick={() => {
         if (!document.documentId) return;
         if (document.remote) actions.onOpen(document.documentId, document.groupKey); else actions.onOpen(document.documentId);
-      }}>Open</Button> : <Button size="small" aria-label={`Details ${row.title}`} onClick={toggle}>Details</Button>}
+      }}>Open</Button> : <Button size="small" aria-label={`Details ${row.title}`} aria-expanded={expanded} aria-controls={id} onClick={toggle}>Details</Button>}
     </header>
     {expanded && <div id={id} className="overview-places">{row.cards.map(card => <PlaceRow key={card.key} card={card} actions={actions} />)}</div>}
   </article>;

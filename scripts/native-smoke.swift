@@ -1766,7 +1766,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickTab("Clusters", []); clickTab("Overview", [])
     Thread.sleep(forTimeInterval: 1)
     setOverviewExpanded("web-reader", true)
-    try overviewShot("overview-fixture-offline-expanded", ["fixture-secondary", "Couldn't check just now.", "Showing what Bridge saw"])
+    // Anchor the recovery note's source label, not a distant place mark.
+    try overviewShot("overview-fixture-offline-expanded", ["fixture-secondary:", "Couldn't check just now.", "Showing what Bridge saw"])
     try overviewShot("overview-fixture-offline-record-expanded", ["Last Send passed", "Result unknown"])
     setOverviewExpanded("web-reader", false)
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false])

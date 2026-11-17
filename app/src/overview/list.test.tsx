@@ -134,6 +134,10 @@ test('unlinked inventory never invents last-run time and keeps Details instead o
   const agent = await screen.findByRole('article', { name: 'remote-reader' });
   expect(agent.querySelector('time')).toBeNull();
   expect(within(agent).queryByRole('button', { name: /Open/ })).toBeNull();
-  await userEvent.click(within(agent).getByRole('button', { name: 'Details remote-reader' }));
+  const details = within(agent).getByRole('button', { name: 'Details remote-reader' });
+  expect(details.getAttribute('aria-expanded')).toBe('false');
+  await userEvent.click(details);
+  expect(details.getAttribute('aria-expanded')).toBe('true');
+  expect(document.getElementById(details.getAttribute('aria-controls')!)).toBeTruthy();
   expect(within(agent).getByRole('article', { name: 'team, No recorded result' })).toBeTruthy();
 });

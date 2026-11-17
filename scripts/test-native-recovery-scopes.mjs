@@ -284,6 +284,7 @@ assert.ok(model.includes('Cannot bring Overview disclosure into view') && model.
 assert.ok(model.includes('capture("local-overview-ai-disconnected-collapsed-\\(size)", ["Your agents"])') && model.includes('require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer.")'), 'disconnected Overview must verify the exact native reason without fragile OCR of AI/Al');
 assert.ok(smoke.includes('Show places for web-reader') && smoke.includes('overview-fixture-multiple-places-expanded'), 'native smoke must expand the agent list before proving per-place evidence');
 assert.ok(!smoke.includes('heading: "fixture-secondary"'), 'place names are marks or evidence labels, never list headings');
+assert.ok(smoke.includes('overviewShot("overview-fixture-offline-expanded", ["fixture-secondary:",'), 'offline recovery must anchor its source label, not a distant place mark');
 assert.ok(smoke.includes('name.hasPrefix("overview-probe-")'), 'renamed scrolled Overview probes must retain the existing heading exemption');
 assert.ok(smoke.includes('CGFloat(image.width - chromeInset)') && smoke.includes('name.hasPrefix("overview-") ? 20 : 8'), 'Overview theme sampling must avoid its transient edge scrollbar without relaxing the theme tolerance');
 assert.ok(!smoke.includes('clickText("Refresh", in: try capture("overview-probe", "Overview"))') && !smoke.includes('clickText("By agent"') && !smoke.includes('clickText("By cluster"'), 'native smoke must remove top Refresh and grouping-only Overview paths');
