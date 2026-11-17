@@ -1803,7 +1803,6 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     require(savedOpened, "Saved passing Send details were not reachable")
     try clickSendControl("published-checksum", scrolling: -100, region: "Past Sends")
-    try capture("send-history-answer", "Designer")
     try resultSize(1280, 800)
     // Anchor the entire saved result before looking for answer pixels, not whichever tail survived reflow.
     guard let provenance = nativeTextBounds("Saved on this computer", visibleOnly: false, exact: true).first else {
@@ -1819,6 +1818,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     require(savedWide.contains { ($0.topCandidates(1).first?.string ?? "").contains("What SHA-256 checksum does") }
         && nativeTextIsVisible("Saved on this computer", exact: true),
             "Wide saved question, answer and local provenance must remain visible after reopening offline")
+    try capture("send-history-answer", "Designer")
 }
 do {
     // Run after the sample/Send checks: a second web-reader must not make their selectors ambiguous.
