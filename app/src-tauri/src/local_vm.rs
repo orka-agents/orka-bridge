@@ -556,6 +556,15 @@ impl LocalVm {
         vm.block_for_recovery();
         vm
     }
+    /// Preserve configured custody for explicit retry; never resume ordinary boot.
+    pub fn for_recovery(self: Arc<Self>) -> Arc<Self> {
+        if self.factory.is_none() {
+            Self::recovery_blocked()
+        } else {
+            self.block_for_recovery();
+            self
+        }
+    }
     /// Retain the configured factory for explicit recovery without resuming startup.
     pub fn block_for_recovery(&self) {
         self.recovery_blocked
@@ -608,12 +617,25 @@ impl LocalVm {
         guard.custody_released = true;
         Ok(guard)
     }
+    fn upgrade_cancellation(&self) -> watch::Receiver<bool> {
+        // Close drops state before taking cancel; registration must observe a
+        // close that arrived before the owner task could install its watch.
+        let mut cancel = self.upgrade_cancel.lock().unwrap();
+        let (sender, receiver) = watch::channel(self.inner.state.lock().unwrap().terminal);
+        *cancel = Some(sender);
+        receiver
+    }
     /// Admission and preflight share one reservation, including before spawn.
     fn reserve_upgrade_choice(&self) -> Result<tokio::sync::OwnedMutexGuard<()>, RuntimeError> {
-        self.choice
+        let choice = self
+            .choice
             .clone()
             .try_lock_owned()
-            .map_err(|_| RuntimeError::Busy)
+            .map_err(|_| RuntimeError::Busy)?;
+        if self.inner.state.lock().unwrap().terminal {
+            return Err(RuntimeError::Closed);
+        }
+        Ok(choice)
     }
     /// Denial-only preflight; full mutation authority remains in WorkspaceUpgrade.
     fn validate_upgrade_transaction(
@@ -900,8 +922,7 @@ impl LocalVm {
             let factory = vm.factory.clone().ok_or(RuntimeError::Unavailable)?;
             let quiesced = vm.quiesce_with_choice(choice).await?;
             vm.set_workspace_replaced(true);
-            let (tx, rx) = watch::channel(false);
-            *vm.upgrade_cancel.lock().unwrap() = Some(tx);
+            let rx = vm.upgrade_cancellation();
             let runtime = tokio::runtime::Handle::current();
             let inner = vm.inner.clone();
             inner.publish(LocalProgress::Status(LocalVmStatus::Preparing));
@@ -959,8 +980,7 @@ impl LocalVm {
             let factory = vm.factory.clone().ok_or(RuntimeError::Unavailable)?;
             let quiesced = vm.quiesce_with_choice(choice).await?;
             vm.set_workspace_replaced(true);
-            let (tx, rx) = watch::channel(false);
-            *vm.upgrade_cancel.lock().unwrap() = Some(tx);
+            let rx = vm.upgrade_cancellation();
             let runtime = tokio::runtime::Handle::current();
             let inner = vm.inner.clone();
             inner.publish(LocalProgress::Status(LocalVmStatus::Preparing));
@@ -1394,12 +1414,19 @@ impl LocalVm {
         state.closing = true;
         state.progress = None;
         state.cancelled.send_replace(true);
+        // Cancellation publishes progress under state; do not invert that order.
+        drop(state);
+        if let Some(cancel) = self.upgrade_cancel.lock().unwrap().as_ref() {
+            cancel.send_replace(true);
+        }
     }
     pub async fn cancel(&self) -> Result<(), RuntimeError> {
         self.stop(false).await
     }
     pub async fn shutdown(&self) -> Result<(), RuntimeError> {
         self.request_close();
+        // Owned forward work retains choice through filework, adoption and retirement.
+        let _choice = self.choice.lock().await;
         self.stop(true).await
     }
     async fn stop(&self, terminal: bool) -> Result<(), RuntimeError> {
@@ -1476,6 +1503,19 @@ impl LocalVm {
         }
     }
 }
+#[cfg(test)]
+#[test]
+fn facade_request_close_cancels_upgrade_before_async_shutdown() {
+    let vm = LocalVm::unavailable();
+    let (cancel, receiver) = watch::channel(false);
+    *vm.upgrade_cancel.lock().unwrap() = Some(cancel);
+    vm.request_close();
+    assert!(
+        *receiver.borrow(),
+        "close must cancel acquisition synchronously"
+    );
+}
+
 impl EngineTransport for LocalVm {
     fn execute(&self, request: EngineRequest) -> TransportFuture<'_> {
         Box::pin(async move {

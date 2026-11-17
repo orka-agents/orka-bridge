@@ -736,6 +736,12 @@ impl WorkspaceUpgrade {
             .read_intent()?
             .filter(|intent| intent.transaction == transaction)
             .ok_or(RuntimeError::RetainedState)?;
+        if let Some(slot) = self.slot(&intent)? {
+            // Both pending and completed removal deny transfer before quiescence.
+            if self.slot_outcome(slot)?.is_some() {
+                return Err(RuntimeError::RetainedState);
+            }
+        }
         if self.credential_label(&intent)? != "eligible" {
             return Err(RuntimeError::RetainedState);
         }

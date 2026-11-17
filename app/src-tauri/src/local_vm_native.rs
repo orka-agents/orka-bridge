@@ -12,28 +12,23 @@ fn run_cancel_guest(build: &str) -> bool {
 }
 #[path = "local_vm_image.rs"]
 pub(crate) mod image;
+#[cfg(any(
+    test,
+    all(windows, target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64")
+))]
+use crate::runtime::journal::JournalCustody;
 #[cfg(test)]
 use crate::runtime::types::BackendKind;
 #[cfg(any(test, all(windows, target_arch = "x86_64")))]
 use crate::runtime::windows::inputs::{verify_windows_runtime, FilePin};
-#[cfg(any(
-    test,
-    all(windows, target_arch = "x86_64"),
-    all(target_os = "macos", target_arch = "aarch64")
-))]
-use crate::runtime::{
-    image_install::InstalledImageSet,
-    journal::{Journal, JournalCustody},
-};
+use crate::runtime::{image_install::InstalledImageSet, journal::Journal};
 #[cfg(any(test, all(windows, target_arch = "x86_64")))]
 use std::io::Read;
-use std::path::PathBuf;
-#[cfg(any(
-    test,
-    all(windows, target_arch = "x86_64"),
-    all(target_os = "macos", target_arch = "aarch64")
-))]
-use std::{fs, path::Path};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 #[cfg(any(
     test,
@@ -254,10 +249,10 @@ pub(crate) fn upgrade_source() -> Option<image::ImageSource> {
         let target = crate::runtime::image_types::ImageTarget::MacosArm64;
         let profile = image::shipping_image(target)?;
         let host = image::native_host_target(target).ok()?;
-        return Some(image::ImageSource::Pinned {
+        Some(image::ImageSource::Pinned {
             profile: Box::new(profile),
             host,
-        });
+        })
     }
     #[cfg(not(any(
         all(windows, target_arch = "x86_64"),
@@ -348,11 +343,6 @@ fn read_runtime_manifest(root: &Path, pin: &FilePin) -> Result<Vec<FilePin>, Run
     pins.push(pin.clone()); // Nested provenance manifest is itself in the exact inventory.
     Ok(pins)
 }
-#[cfg(any(
-    test,
-    all(windows, target_arch = "x86_64"),
-    all(target_os = "macos", target_arch = "aarch64")
-))]
 fn reopen(
     root: &Path,
     source: &mut image::ImageSource,

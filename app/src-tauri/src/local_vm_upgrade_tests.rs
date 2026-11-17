@@ -285,6 +285,77 @@ fn facade_dropped_forward_waiter_never_releases_lifecycle_before_work_finishes()
 }
 
 #[test]
+fn facade_shutdown_joins_forward_handoff_before_returning() {
+    for retry in [false, true] {
+        let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+        let transaction = if retry {
+            scene.replace(Some("intent")).unwrap_err();
+            Some(
+                WorkspaceUpgrade::open(&scene.data, &scene.local)
+                    .unwrap()
+                    .read_intent()
+                    .unwrap()
+                    .unwrap()
+                    .transaction,
+            )
+        } else {
+            None
+        };
+        seed_cache(&mut scene);
+        let (entered, entered_rx) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let (vm, factory) = facade(&scene, Some((entered, Mutex::new(release_rx))));
+        let retired = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = retired.clone();
+        vm.on_workspace_replaced(Arc::new(move || {
+            observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }));
+        runtime().block_on(async {
+            let worker = {
+                let (vm, data, local, target) = (
+                    vm.clone(),
+                    scene.data.clone(),
+                    scene.local.clone(),
+                    target(&scene),
+                );
+                tokio::spawn(async move {
+                    match transaction {
+                        Some(id) => vm.retry_workspace(data, local, target, id).await,
+                        None => vm.replace_workspace(data, local, target).await,
+                    }
+                })
+            };
+            tokio::task::spawn_blocking(move || {
+                entered_rx
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap()
+            })
+            .await
+            .unwrap();
+            let shutdown = {
+                let vm = vm.clone();
+                tokio::spawn(async move { vm.shutdown().await })
+            };
+            tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+            let finished_early = shutdown.is_finished();
+            // Always unblock the owned fileworker before assertions or joins.
+            release.send(()).unwrap();
+            worker.await.unwrap().unwrap();
+            shutdown.await.unwrap().unwrap();
+            vm.start();
+            tokio::task::yield_now().await;
+            assert!(!finished_early, "shutdown detached handoff; retry={retry}");
+            assert_eq!(retired.load(std::sync::atomic::Ordering::SeqCst), 1);
+            assert!(
+                factory.launched.lock().unwrap().is_empty(),
+                "terminal close must bar late launch; retry={retry}"
+            );
+            assert_eq!(vm.status(), LocalVmStatus::Closed);
+        });
+    }
+}
+
+#[test]
 fn facade_rejects_foreign_nil_and_replayed_transactions_without_mutating_identity() {
     for id in [Uuid::nil(), Uuid::from_u128(123)] {
         let mut scene = Scene::new(ImageTarget::WindowsAmd64);
@@ -370,8 +441,8 @@ fn facade_explicit_retry_from_blocked_startup_boots_only_new_b() {
         .unwrap()
         .transaction;
     seed_cache(&mut scene);
-    let (vm, factory) = facade(&scene, None);
-    vm.block_for_recovery();
+    let (configured, factory) = facade(&scene, None);
+    let vm = configured.clone().for_recovery();
     runtime().block_on(async {
         vm.start();
         tokio::task::yield_now().await;
@@ -386,6 +457,10 @@ fn facade_explicit_retry_from_blocked_startup_boots_only_new_b() {
             .await
             .unwrap();
         assert_eq!(dto.state, "fresh");
+        assert!(
+            Arc::ptr_eq(&configured, &vm),
+            "recovery must retain the configured owner and factory"
+        );
         tokio::time::timeout(std::time::Duration::from_secs(3), async {
             while vm.status() != LocalVmStatus::Ready {
                 tokio::task::yield_now().await;
@@ -649,6 +724,139 @@ fn facade_completed_removal_ack_refuses_replay_before_stopping_b() {
         );
         assert_eq!(vm.status(), LocalVmStatus::Ready);
         vm.shutdown().await.unwrap();
+    });
+}
+
+#[test]
+fn facade_transfer_rejects_removal_outcomes_before_stopping_b() {
+    for outcome in [b"removing".as_slice(), b"removed".as_slice()] {
+        let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+        seed_cache(&mut scene);
+        let (vm, factory) = facade(&scene, None);
+        runtime().block_on(async {
+            let dto = vm
+                .replace_workspace(scene.data.clone(), scene.local.clone(), target(&scene))
+                .await
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                while vm.status() != LocalVmStatus::Ready {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            let owner = WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap();
+            let transaction = dto.transaction.unwrap();
+            let slot = owner.resolve_removal_slot(transaction).unwrap();
+            owner.write_slot_outcome(slot, outcome).unwrap();
+            drop(owner);
+            let stops = factory.stops.load(std::sync::atomic::Ordering::SeqCst);
+            let releases = factory.releases.load(std::sync::atomic::Ordering::SeqCst);
+            assert!(vm
+                .transfer_workspace_credential(scene.data.clone(), scene.local.clone(), transaction)
+                .await
+                .is_err());
+            assert_eq!(
+                factory.stops.load(std::sync::atomic::Ordering::SeqCst),
+                stops,
+                "outcome={outcome:?}"
+            );
+            assert_eq!(
+                factory.releases.load(std::sync::atomic::Ordering::SeqCst),
+                releases
+            );
+            assert_eq!(vm.status(), LocalVmStatus::Ready);
+            vm.shutdown().await.unwrap();
+        });
+    }
+}
+
+#[test]
+fn facade_terminal_close_before_worker_registers_cancellation_keeps_a() {
+    use std::future::Future;
+    let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+    seed_cache(&mut scene);
+    let (vm, factory) = facade(&scene, None);
+    runtime().block_on(async {
+        let forward = vm.replace_workspace(scene.data.clone(), scene.local.clone(), target(&scene));
+        tokio::pin!(forward);
+        // Spawn the owner without allowing it to register its watch yet.
+        std::future::poll_fn(|cx| {
+            assert!(forward.as_mut().poll(cx).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+        vm.request_close();
+        assert!(
+            forward.await.is_err(),
+            "terminal close must not be lost before watch registration"
+        );
+        vm.shutdown().await.unwrap();
+        assert_eq!(
+            read_record(&scene.local.join("local-vm-v1"))
+                .unwrap()
+                .installation_id,
+            scene.source_id
+        );
+        assert!(factory.launched.lock().unwrap().is_empty());
+    });
+}
+
+#[test]
+fn facade_terminal_close_rejects_late_native_forward_without_filesystem_custody() {
+    let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+    seed_cache(&mut scene);
+    let (vm, factory) = facade(&scene, None);
+    runtime().block_on(async {
+        vm.shutdown().await.unwrap();
+        let result = vm
+            .replace_workspace(scene.data.clone(), scene.local.clone(), target(&scene))
+            .await;
+        assert!(
+            matches!(result, Err(RuntimeError::Closed)),
+            "terminal close must bar later filesystem admission"
+        );
+        assert_eq!(
+            factory.releases.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert_eq!(
+            read_record(&scene.local.join("local-vm-v1"))
+                .unwrap()
+                .installation_id,
+            scene.source_id
+        );
+        assert_eq!(vm.status(), LocalVmStatus::Closed);
+    });
+}
+
+#[test]
+fn facade_unavailable_recovery_fallback_restores_without_factory() {
+    let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+    scene.replace(Some("intent")).unwrap_err();
+    let transaction = WorkspaceUpgrade::open(&scene.data, &scene.local)
+        .unwrap()
+        .read_intent()
+        .unwrap()
+        .unwrap()
+        .transaction;
+    assert!(recover_startup(&scene.data, &scene.local).is_err());
+    let vm = LocalVm::unavailable().for_recovery();
+    runtime().block_on(async {
+        let dto = vm
+            .restore_workspace(scene.data.clone(), scene.local.clone(), transaction)
+            .await
+            .unwrap();
+        assert_eq!(dto.state, "restored");
+        vm.start();
+        tokio::task::yield_now().await;
+        assert_eq!(vm.status(), LocalVmStatus::Failed);
+        assert_eq!(
+            read_record(&scene.local.join("local-vm-v1"))
+                .unwrap()
+                .installation_id,
+            scene.source_id
+        );
     });
 }
 
