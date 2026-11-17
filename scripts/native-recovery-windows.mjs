@@ -880,7 +880,7 @@ try {
       await evaluate(`document.querySelector('.chat-panel').scrollIntoView({ block: 'start' }); if (${name === 'chat-long'}) document.querySelector('main').scrollTop = 140;`);
       await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const chatCopy = await evaluate(`(() => {
-        const root = document.querySelector('.chat-panel'), main = document.querySelector('main'), field = root.querySelector('textarea'), send = root.querySelector('button[type="submit"]'), hint = root.querySelector('.chat-composer > p');
+        const root = document.querySelector('.chat-panel'), main = document.querySelector('main'), field = root.querySelector('textarea'), send = root.querySelector('button[type="submit"]'), hint = root.querySelector('.chat-composer [id^="chat-hint-"]');
         const rect = node => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
         const parts = [field, send, hint].map(rect), view = rect(main);
         const earlier = [...root.querySelectorAll('.chat-turn')].slice(0, 3).some(node => { const r = rect(node); return r.bottom > view.top && r.top < view.bottom; });

@@ -27,6 +27,7 @@ test('destination head and one summary precede honest collapsed checks and separ
   await screen.findByText('Ready to send: 1 check passed');
   expect(within(card()).getByRole('heading', { name: 'To team-dev' })).toBeTruthy();
   expect(within(card()).getByRole('region', { name: 'What you send' }).textContent).toContain('web-reader with 2 tests');
+  expect(within(card()).getByRole('region', { name: 'What you send' }).textContent).toContain('Into control/orka on team-dev, namespace agents.');
   const checks = screen.getByText('Ready to send: 1 check passed').closest('details')!;
   expect(checks.open).toBe(false);
   expect(checks.contains(screen.getByText('Checked when tests run.'))).toBe(true);

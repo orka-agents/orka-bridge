@@ -365,7 +365,7 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
    <p className="sr-only test-announcement" role="status" aria-live="polite" aria-atomic="true">{!running ? outdated ? revisionExplanation : cancellation && cancellation !== 'confirmed' ? `${cancellationLabels[cancellation]}.` : snapshot?.stage === 'stopped' && !cancellation ? 'Stopped watching.' : uncertain ? 'Test result unknown.' : resultAnnouncement(snapshot?.report) : undefined}</p>
     {!checkingEnabled && reason && (blocked || !foreignBusy) && <p className="muted">{reason}</p>}
     <CardSection title="What you send">
-    <p>{agentName ? <code>{agentName}</code> : 'Your saved agent'}{testCount !== undefined ? ` with ${testCount} test${testCount === 1 ? '' : 's'}` : ' and test files'}{provider && <>, {destinationModel ? modelLabel(destinationModel) : provider.name}{provider.ready ? ', checked when tests run' : ' · AI connection not ready'}</>}.{target && <> Into <code>{target.service_name}</code> on <code>{target.context_name}</code>.</>}</p>
+    <p>{agentName ? <code>{agentName}</code> : 'Your saved agent'}{testCount !== undefined ? ` with ${testCount} test${testCount === 1 ? '' : 's'}` : ' and test files'}{provider && <>, {destinationModel ? modelLabel(destinationModel) : provider.name}{provider.ready ? ', checked when tests run' : ' · AI connection not ready'}</>}.{target && <> Into <code>{target.service_namespace}/{target.service_name}</code> on <code>{target.context_name}</code>, namespace <code>{target.watched_namespace}</code>.</>}</p>
     </CardSection>
     {checkingEnabled && !destinationReady && <section className="send-preflight" aria-label="Before Send" aria-busy={!checked}>
       {checkRows(failingChecks)}

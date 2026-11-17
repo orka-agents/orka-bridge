@@ -1,7 +1,7 @@
 import { isTauri } from '@tauri-apps/api/core';
 import { Disclosure } from '../components/Disclosure';
 import { Button } from '../components/Button';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { SAMPLE_DOCUMENT_ID, REPO_SAVE_CONFLICT, agentCall, agentInfo, storageCopy, type AgentPair, type SaveState } from './agent-api';
 import Run from './Run';
 import { Details } from '../components/DesignSystem';
@@ -220,6 +220,8 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   }, [sampleRevision, boundDocument]);
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const instructionsMissing = !!pair && !readForm(draft).instructions.trim();
+  const testFile = pair?.tests;
+  const definitions = useMemo(() => testFile === undefined ? undefined : testDefinitions(testFile), [testFile]);
   const testDraft = !!pair && isTestDraft(pair.tests);
   const nameCounts = new Map<string, number>();
   for (const entry of entries ?? []) nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
@@ -284,10 +286,10 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
           : setupPending ? <div><h3>Tests</h3><span className="coming-control" tabIndex={0} role="group" aria-label="Run tests: Wait for the workspace and AI to be ready" title="Wait for the workspace and AI to be ready"><Button type="button" kind="secondary" className="action-spaced" disabled title="Wait for the workspace and AI to be ready">Run tests</Button><span className="control-tip" aria-hidden="true">Wait for the workspace and AI to be ready</span></span><p className="muted">The workspace is getting ready. Connect the AI in Clusters before running a test.</p>{onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Go to Clusters</Button>}</div>
           : <Run tests={pair.tests} onChooseCluster={onChooseCluster} onStopLocalCluster={onStopLocalCluster} onEditInstructions={editInstructions} documentId={boundDocument} source={pair.source} onSnapshot={observeRun} blocked={instructionsMissing || pendingSoul || saveState !== 'saved'} stale={stale} startRequest={actionReady && view === 'Agent' && actionRequest?.action === 'run' ? actionRequest.id : undefined} onStartRequestHandled={finishAction} onStart={() => { if (latest.current === draft) setStale(false); }} />}
         {/* Run shows the test list and test file itself; this copy is only for the not-ready state. */}
-        {setupPending && !testDraft && <><DesignerTests definitions={testDefinitions(pair.tests)} stale={false} /><Details hint="Test file">{testSource}</Details></>}
+        {setupPending && !testDraft && <><DesignerTests definitions={definitions} stale={false} /><Details hint="Test file">{testSource}</Details></>}
       </div></section>
       <section className="designer-checks" aria-label="Team cluster">
-        <Send expanded={sendRequest > 0} documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} agentName={pair.name} testCount={testDefinitions(pair.tests)?.length} onFixInDesigner={editInstructions} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
+        <Send expanded={sendRequest > 0} documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} agentName={pair.name} testCount={definitions?.length} onFixInDesigner={editInstructions} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
       </section>
       </div>
       </div>

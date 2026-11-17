@@ -88,6 +88,8 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     if (action === 'agent_chat_send' && (blocked || !snapshot.canSend || awaitingTurn || !draftRef.current.trim())) return;
     mutation.current = true; const request = ++epoch.current; setCommand(action); setError(undefined);
     if (action === 'agent_chat_send') {
+      follow.current = true;
+      if (scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
       pending.current = { message: draftRef.current, count: snapshot.versions.reduce((n, version) => n + version.turns.length, 0) };
       setAwaitingTurn(true);
     }
@@ -155,9 +157,9 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
         })}
       </section>)}
     </section>
-    <p className="chat-status" role="status" aria-live="polite" aria-atomic="true">{status === states.ready ? undefined : status}</p>
-    {(error || readError || snapshotError) && <p role="alert">{error?.message ?? readError ?? snapshotError}</p>}
     <form className="chat-composer" onSubmit={event => { event.preventDefault(); void act('agent_chat_send'); }}>
+      <p className="chat-status" role="status" aria-live="polite" aria-atomic="true">{status === states.ready ? undefined : status}</p>
+      {(error || readError || snapshotError) && <p role="alert">{error?.message ?? readError ?? snapshotError}</p>}
       <label className="sr-only" htmlFor={`message-${documentId}`}>Message</label>
       <div className="chat-compose-row"><textarea className="field" ref={composer} id={`message-${documentId}`} rows={1} placeholder="Message your agent" value={draft} aria-describedby={`chat-hint-${documentId}`}
         onChange={event => { draftRef.current = event.target.value; setDraft(event.target.value); }}

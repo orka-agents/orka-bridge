@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import Example from './Example';
+import * as definitions from './test-definitions';
 
 const id = '9b2b93c4-375c-4815-9717-39852a96e411';
 const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
@@ -13,7 +14,7 @@ const place = { kind: 'cluster' as const, target, providers: [provider], provide
 const failed = { id: 'reads-the-title', question: 'What is the title?', phase: 'Succeeded', answer: 'No', completedTools: [], assertions: [{ id: 'has', kind: 'contains', expected: 'Title', verdict: 'failed' }], verdict: 'failed' };
 const localResult = { documentId: id, busy: null, state: 'complete', stage: 'done', canRun: true, modelConnected: true, source, report: { verdict: 'failed', cases: [failed] }, acknowledged: [], pending: null, error: null };
 beforeEach(() => { Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; } }); });
-afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
+afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
 function native(run: object = localResult, send: object | null = null) {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn((command: string) => {
@@ -92,6 +93,14 @@ test('a failed cluster Send offers Fix in Designer and focuses the instructions,
   const fix = await screen.findByRole('button', { name: 'Fix in Designer' });
   await userEvent.click(fix);
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Instructions' })));
+});
+test('editing instructions does not reparse the unchanged saved test file', async () => {
+  const parse = vi.spyOn(definitions, 'testDefinitions'); native();
+  render(<Example remote place={place} />);
+  const field = await screen.findByRole('textbox', { name: 'Instructions' });
+  const reads = parse.mock.calls.length;
+  const user = userEvent.setup(); await user.type(field, ' Edited');
+  expect(parse.mock.calls.length).toBe(reads);
 });
 test('a team Send destination supplies its catalog without disabling local tests', async () => {
   let release!: (value: typeof localResult) => void;

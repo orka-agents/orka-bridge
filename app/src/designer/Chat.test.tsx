@@ -74,6 +74,8 @@ test.each(['busy', 'source', 'model'])('native %s rejection keeps the message an
 });
 test('an uncertain Send reply retains acknowledgement and cannot replay before status shows its turn', async () => {
   send = () => Promise.reject('unknown transport error'); await open(); enter(); await act(async () => {});
+  expect(screen.getByRole('alert').closest('form')).toBe(field().closest('form'));
+  expect(document.querySelector('.chat-status')?.closest('form')).toBe(field().closest('form'));
   await poll(); expect(field().value).toBe('Hello');
   expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true);
   expect(screen.getByRole('button', { name: 'New conversation' }).hasAttribute('disabled')).toBe(true);
@@ -347,6 +349,15 @@ test('hidden Chat never follows or tracks the shared page scroll', async () => {
   view.rerender(<main className="page-content"><Chat documentId={id} active={false} /></main>);
   page.scrollTop = 400; fireEvent.scroll(page); await poll(); expect(page.scrollTop).toBe(400);
   view.rerender(<main className="page-content"><Chat documentId={id} active /></main>); await poll();
+  expect(page.scrollTop).toBe(1000);
+});
+test('sending from earlier messages resumes follow while passive updates leave the reader alone', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = document.querySelector<HTMLElement>('.page-content')!;
+  Object.defineProperties(page, { scrollHeight: { value: 1000, configurable: true }, clientHeight: { value: 200, configurable: true }, scrollTop: { value: 100, writable: true } });
+  fireEvent.scroll(page); enter('Next question'); await act(async () => {});
+  expect(sends()).toHaveLength(1);
   expect(page.scrollTop).toBe(1000);
 });
 test('conversation follows the page scroll only while the reader stays near its end', async () => {
