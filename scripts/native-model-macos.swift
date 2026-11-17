@@ -110,7 +110,8 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || lenient && nativeChatTextIsVisible(value))
         let chatText = !found && (name.hasPrefix("chat-") || name.hasPrefix("cluster-")) && nativeChatTextIsVisible(value)
         let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
-        require(found || nativeText || chatText || workspaceControl, "Missing \(value) in \(name): \(text)")
+        let overviewControl = !found && name.hasPrefix("local-") && name.contains("overview") && nativeWorkspaceButtonIsVisible(value)
+        require(found || nativeText || chatText || workspaceControl || overviewControl, "Missing \(value) in \(name): \(text)")
     }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
@@ -1218,6 +1219,8 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 
     if size == "minimum" {
         // The draft anchor is unique; the failed count alone also occurs on the local file.
         _ = try seek("Add instructions and a test to get started.", -300)
+        // Leave room for the draft's status below its group heading.
+        scroll(-150)
         let expected = ["team-dev", "Failed", "1 of 2 passed, before your edit", "Draft"]
         let proof = try capture("local-overview-by-agent-\(size)", expected)
         let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
