@@ -1765,7 +1765,11 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         let agent = try capture("agent-cluster-owned", "Designer")
         clickText("Send to a cluster", in: agent)
         Thread.sleep(forTimeInterval: 1)
-        let checked = try capturePreflight(name, expected)
+        var checked = try capturePreflight(name, expected)
+        for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+            try resultSize(width, height)
+            checked = try capturePreflight("\(name)-\(size)", expected)
+        }
         clickTab("Clusters", checked)
     }
     // Unsupported is deliberately the last Send: unfinished work must not block
