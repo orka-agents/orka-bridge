@@ -476,6 +476,21 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         print("PASS \(name): fixture-backed native Send screen; no real cluster or model")
         return observations
     }
+    if name.hasPrefix("cluster-success") || name.hasPrefix("cluster-details") || name.hasPrefix("cluster-selected-list") {
+        // Scrolled matrix frames prove their own visible content, not an off-screen page heading.
+        if name.hasPrefix("cluster-selected-list") {
+            require(nativeTextIsVisible(name.hasSuffix("-end") ? "fixture-secondary" : "Choose where agents run"),
+                    "Selected-list matrix anchor is not visible")
+        } else if name.hasPrefix("cluster-details") {
+            require(nativeTextIsVisible("Orka image"), "Open cluster details are not visible")
+        } else if name.hasSuffix("-end") {
+            require(visibleButtons("Done").count == 1 && visibleButtons("Open your agent").count == 1,
+                    "Cluster handoff actions are not visible")
+        } else {
+            require(nativeTextIsVisible("fixture-secondary"), "Connected cluster name is not visible")
+        }
+        return observations
+    }
     if name.hasPrefix("cluster-access") {
         let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(text.contains("Access confirmed") && text.contains("Open your agent") && !nativeButtons("Done").isEmpty,
@@ -1502,6 +1517,37 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     Thread.sleep(forTimeInterval: 1)
     scrollMain(-400)
     try capture("cluster-access-wide", "Clusters")
+    // Connected cluster capture matrix. Keep the existing 540x900 compact walk separate.
+    for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+        setContent(width, height)
+        scrollMain(12000)
+        try capture("cluster-success-\(size)", "Clusters")
+        require(nativeTextBounds("Add a cluster", heading: true).count == 1
+            && nativeTextIsVisible("fixture-secondary") && nativeTextIsVisible("control / orka"),
+            "Baseline connected cluster must retain its old heading and location wording")
+        require(["Change context", "Check access again", "Reload kubeconfig", "Remove"].allSatisfy { !nativeButtons($0).isEmpty },
+            "Baseline connected maintenance remains outside Show details")
+        scrollMain(-12000)
+        try capture("cluster-success-\(size)-end", "Clusters")
+        require(visibleButtons("Done").count == 1 && visibleButtons("Open your agent").count == 1,
+                "Connected handoff actions must be reachable above the footer")
+        clickButton("Show details")
+        scrollMain(-12000)
+        try capture("cluster-details-\(size)", "Clusters")
+        require(nativeTextIsVisible("Orka image") && ["Change context", "Check access again", "Reload kubeconfig", "Remove"].allSatisfy { !visibleButtons($0).isEmpty },
+                "Details must reveal the cluster image and reachable maintenance actions")
+        clickButton("Hide details")
+        clickButton("Done")
+        scrollMain(12000)
+        try capture("cluster-selected-list-\(size)", "Clusters")
+        requirePlaceCards()
+        scrollMain(-12000)
+        try capture("cluster-selected-list-\(size)-end", "Clusters")
+        require(nativeTextIsVisible("fixture-secondary") && nativeTextIsVisible("Selected for Designer"),
+                "Selected cluster row must remain visible at \(size)")
+        clickButton("Manage")
+    }
+    setContent(1280, 800)
     // Done leaves the confirmed destination selected and returns to the list.
     clickButton("Done")
     try capture("places-populated", "Clusters")

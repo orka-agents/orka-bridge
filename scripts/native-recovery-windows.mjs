@@ -382,7 +382,7 @@ try {
     })()`);
     await writeFile(join(output, `${theme}-${size}-${name}-comparison.png`), Buffer.from(comparison, 'base64'));
   }
-  if (runUi) actionFixtures.push('chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure', 'cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination');
+  if (runUi) actionFixtures.push('chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure', 'cluster-connected', 'cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination');
   async function captureWorkspace(theme, size, name) {
     const card = '.returning-workspace';
     const capture = async (state, word, action, disabled = false) => {
@@ -487,6 +487,7 @@ try {
       const name = ${JSON.stringify(name)};
       let documentId = '9b2b93c4-375c-4815-9717-39852a96e411';
       let selected = ${JSON.stringify(!first && !places)};
+      let clusterSelected = false;
       const designer = name.startsWith('designer') || name.startsWith('chat-') || name.startsWith('new-agent-');
       let documentName = 'web-reader';
       if (designer) pair.agent = ${JSON.stringify('---\nname: web-reader\nmodel: ' + (name === 'designer-connected' ? 'gpt-5.6-terra' : 'fixture-model') + '\nkmx:\n  runtime: orka\n  schemaVersion: 1\n  tools: []\n---\nFetch before answering.')};
@@ -497,6 +498,13 @@ try {
       const context = { id: '00000000-0000-4000-8000-000000000001', name: 'team-dev', current: true };
       const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name, service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'fixture-image' };
       const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-ai', ready: true };
+      const checkedAt = Date.now() - 600000;
+      const rememberedPlaces = [
+        { key: 'fixture-a', context: 'fixture-cluster', service: 'control / orka', namespace: 'agents', stale: false, observedAt: checkedAt, checkedAt, agents: [] },
+        { key: 'fixture-b', context: 'fixture-secondary-with-a-long-cluster-name-to-wrap-without-clipping', service: 'control / orka', namespace: 'agents', stale: true, observedAt: null, checkedAt: null, agents: [] },
+      ];
+      const currentCluster = { key: 'fixture-current', context: context.name, service: 'control / orka', namespace: 'agents', stale: false, observedAt: checkedAt, checkedAt,
+        agents: [{ name: 'runtime-reader', namespace: 'agents', uid: 'fixture-reader', agentType: 'runtime', model: 'fixture-model', tools: [], record: null }] };
       window.__bridgeCatalogCalls = [];
       window.__bridgeOverviewLiveReads = 0;
       const localCancel = name.startsWith('local-cancel-');
@@ -593,10 +601,9 @@ try {
         // Known and missing size facts: fixture IPC, not the native catalog.
         if (command === 'setup_requirements') return name.startsWith('local-preflight') && name !== 'local-preflight-missing' ? ${JSON.stringify({ memoryBytes: 4 * GiB, imageBytes: Math.round(2.8 * GiB), stateDiskBytes: 20 * GiB, downloadBytes: 2800000000 })} : null;
         if (command === 'setup_preflight') return { platform: 'windows', virtualization: ['local-preflight-unknown', 'local-preflight-mixed'].includes(name) ? 'unknown' : ['local-preflight-blocked', 'local-preflight-cluster'].includes(name) ? 'disabled' : 'ready', memory: name === 'local-preflight-unknown' ? 'unknown' : ['local-preflight-memory', 'local-preflight-mixed'].includes(name) ? 'insufficient' : 'ready', installedMemoryBytes: name === 'local-preflight-unknown' ? null : ['local-preflight-memory', 'local-preflight-mixed'].includes(name) ? ${2 * GiB} : ${16 * GiB}, requiredMemoryBytes: ${4 * GiB} };
-        if (command === 'cluster_places') return name === 'places-populated' ? { selectedKey: null, persistenceState: 'complete', places: [
-          { key: 'fixture-a', context: 'fixture-cluster', service: 'control / orka', namespace: 'agents', stale: false, observedAt: Date.now() - 600000, agents: [] },
-          { key: 'fixture-b', context: 'fixture-secondary-with-a-long-cluster-name-to-wrap-without-clipping', service: 'control / orka', namespace: 'agents', stale: true, observedAt: null, agents: [] }] }
-          : { places: [], selectedKey: null, persistenceState: 'complete' };
+        if (command === 'cluster_places') return { selectedKey: clusterSelected ? currentCluster.key : null, persistenceState: 'complete',
+          places: name === 'places-populated' ? rememberedPlaces : clusterSelected ? [currentCluster, ...rememberedPlaces] : [] };
+        if (name === 'cluster-connected' && command === 'overview_places') return { places: clusterSelected ? [currentCluster] : [], historyState: 'complete', unobserved: [] };
         if (command === 'setup_example') return pair;
         if (command === 'setup_connect_model' && window.__bridgeMismatch) throw { kind: 'modelInstallationMismatch', recovery, message: 'fixture-private-diagnostic' };
         if (name === 'ai-reset' && command === 'setup_reset_model') {
@@ -636,7 +643,10 @@ try {
             if (args.targetId !== target.id || args.saName !== null) throw Error('Only initial explicit Use is expected');
             return { status: 'needServiceAccount', providers: [], failure: null };
           }
-          if (name === 'designer-remote') return { status: 'connected', providers: [provider], failure: null };
+          if (name === 'designer-remote' || name === 'cluster-connected') {
+            if (args.targetId !== target.id || args.saName !== null) throw Error('Wrong connected cluster target');
+            clusterSelected = name === 'cluster-connected'; return { status: 'connected', providers: [provider], failure: null };
+          }
         }
         if (command === 'cluster_service_accounts' || command === 'cluster_service_account_preview') {
           window.__bridgeAccountCalls.push({ command, args });
@@ -668,7 +678,7 @@ try {
         }
         if (name.startsWith('cluster-') && command === 'cluster_contexts') return [context, { ...context, id: '00000000-0000-4000-8000-000000000004', name: 'team-west', current: false }];
         if (name.startsWith('cluster-') && command === 'cluster_discover') {
-          if (name.startsWith('cluster-account-')) return [target];
+          if (name.startsWith('cluster-account-') || name === 'cluster-connected') return [target];
           window.__bridgeClusterUses++;
           if (name === 'cluster-picker-open') throw Error('Opening picker must not discover');
           if (name === 'cluster-checking') return new Promise(() => {});
@@ -774,7 +784,50 @@ try {
         if (await evaluate('window.__bridgeClusterUses') !== 0) throw Error('Picker opened a background discovery');
       } else {
         await chooseContext('team-dev');
-        if (accountScene) {
+        if (name === 'cluster-connected') {
+          await clickAction('Use this cluster');
+          await until(() => evaluate(`document.querySelector('.cluster-card')?.innerText.includes('runtime-reader') && document.querySelector('.host-chip')?.innerText.includes('team-dev')`), 'connected cluster summary and header');
+          const shoot = async (scene, anchor) => {
+            await evaluate(`document.querySelector(${JSON.stringify(anchor)}).scrollIntoView({ block: 'start' })`);
+            await checkLayout(theme, size, scene);
+            const labels = scene === 'cluster-success-end' ? ['Done', 'Open your agent'] : scene === 'cluster-details-end' ? ['Check access again', 'Change context', 'Reload kubeconfig', 'Remove'] : [];
+            const reachable = await evaluate(`(() => {
+              const main = document.querySelector('main').getBoundingClientRect();
+              return ${JSON.stringify(labels)}.every(label => [...document.querySelectorAll('.cluster-card button')].some(button => {
+                const r = button.getBoundingClientRect();
+                return button.textContent.trim() === label && !button.disabled && r.width > 0 && r.top >= main.top && r.bottom <= main.bottom;
+              }));
+            })()`);
+            if (!reachable) throw Error(scene + ': cluster actions overlap fixed chrome');
+            await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+            const image = await call('Page.captureScreenshot', { format: 'png' });
+            await writeFile(join(output, `${theme}-${size}-${scene}.png`), Buffer.from(image.data, 'base64'));
+            await compareReference(image.data, theme, size, scene, 'clusters');
+          };
+          const probe = await evaluate(`({ heading: document.querySelector('h1').textContent, text: document.querySelector('.cluster-card').innerText,
+            actions: [...document.querySelectorAll('.cluster-card button')].map(button => button.textContent.trim()) })`);
+          if (probe.heading !== 'Add a cluster' || !probe.text.includes('control / orka') || !probe.text.includes('Last checked') ||
+            !['Done', 'Open your agent', 'Show details'].every(label => probe.actions.includes(label)) ||
+            !['Check access again', 'Change context', 'Reload kubeconfig', 'Remove'].every(label => probe.actions.includes(label))) throw Error('Connected cluster actions/wording: ' + JSON.stringify(probe));
+          await evaluate(`document.querySelector('main').scrollTop = 0`);
+          await shoot('cluster-success', 'h1');
+          await shoot('cluster-success-end', '.cluster-actions');
+          await clickAction('Show details');
+          await until(() => evaluate(`!!document.querySelector('#cluster-details') && [...document.querySelectorAll('.cluster-actions button')].some(button => button.textContent === 'Remove')`), 'baseline cluster details with maintenance outside');
+          await shoot('cluster-details', '#cluster-details');
+          await shoot('cluster-details-end', '.cluster-actions');
+          await clickAction('Hide details');
+          await clickAction('Done');
+          await until(() => evaluate(`document.querySelector('[aria-label="team-dev"]')?.innerText.includes('Selected for Designer')`), 'selected cluster list');
+          const list = await evaluate(`(() => {
+            const labels = [...document.querySelectorAll('.places-list button')].map(button => button.textContent.trim());
+            return { labels, row: document.querySelector('[aria-label="team-dev"]').innerText, header: document.querySelector('.host-chip').innerText };
+          })()`);
+          if (!list.labels.includes('Manage') || list.labels.filter(label => label === 'Connect').length !== 2 || !list.header.includes('team-dev') || !list.row.includes('Selected for Designer') || await evaluate('window.__bridgeClusterUses') !== 1) throw Error('Selected cluster list/header: ' + JSON.stringify(list));
+          await shoot('cluster-selected-list', 'h1');
+          await shoot('cluster-selected-list-end', '[aria-label="team-dev"]');
+          return;
+        } else if (accountScene) {
           await clickAction('Use this cluster');
           const reason = 'Your current cluster sign-in cannot list ServiceAccounts in agents. Enter an existing account name from your cluster administrator.';
           if (name === 'cluster-account-forbidden') {
@@ -1461,7 +1514,7 @@ $c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
     if (runCore) for (const name of ['designer-connected', 'designer-running', 'designer-failed', 'designer-passed', 'designer-stale']) await captureActions(theme, 'minimum', name);
   }
   await writeFile(join(output, 'compact-window.txt'), `Capture scope: ${captureScope}\n` + notes.join('\n') + '\n');
-  await writeFile(join(output, 'README.txt'), `Capture scope: ${captureScope}. CI keeps core and chat-agent-clusters artifacts separately; both are required for the complete matrix.\n` + 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*, including ready, unknown, blocked and cluster-selected choices), Welcome (welcome*), completed local/Stop pages (local-completed, local-stopped) and action-driven returning-workspace lifecycle states (local-workspace-*, compared with the approved workspace reference), removal confirmation/retry (ai-removal-*), earlier-installation AI reset states beside approved frames 1g/1h (ai-reset-*), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Local Cancel states (local-cancel-*) exercise renderer controls with synthetic cancellation/worker results, not native cancellation proof. First-test outcomes (first-test-passed, -unknown, -lost-reply) each reload the page and own one synthetic automatic attempt with an identical source; only the acknowledged passed submission may show the first-pass story. Setup Meet/queued, AI idle/key/connected and first-pass captures have *-comparison.png images beside cropped approved light frames 1c, 1d and 1e (dark captures use the light frame). ai-key never types a key. Layout JSON records setup stacks, form widths, row alignment, card insets, Designer priority, loading/open-error fallback spacing, fixed wide tabs/host gap, compact subtitles/label, quiet padding and themed thin scrollbars. Overview states (overview-*, including 540x640 minimum) use synthetic overview_* IPC. Chat empty/pending/running/answer and waitingForSession Succeeded/null or known-answer, New agent form/blank-created, Clusters list, context picker/checking/failure, account picker/Allowed/forbidden-list typed fallback and Designer no-destination guidance are captured at wide and true 540x640 client sizes in both themes with comparisons. Chat/New agent compare the Designer design system, not a dedicated target frame; cluster states compare the approved cluster cards (light reference for both themes). compact-window.txt records verified native client resizing; an unverified resize fails rather than falling back to viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
+  await writeFile(join(output, 'README.txt'), `Capture scope: ${captureScope}. CI keeps core and chat-agent-clusters artifacts separately; both are required for the complete matrix.\n` + 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*, including ready, unknown, blocked and cluster-selected choices), Welcome (welcome*), completed local/Stop pages (local-completed, local-stopped) and action-driven returning-workspace lifecycle states (local-workspace-*, compared with the approved workspace reference), removal confirmation/retry (ai-removal-*), earlier-installation AI reset states beside approved frames 1g/1h (ai-reset-*), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Local Cancel states (local-cancel-*) exercise renderer controls with synthetic cancellation/worker results, not native cancellation proof. First-test outcomes (first-test-passed, -unknown, -lost-reply) each reload the page and own one synthetic automatic attempt with an identical source; only the acknowledged passed submission may show the first-pass story. Setup Meet/queued, AI idle/key/connected and first-pass captures have *-comparison.png images beside cropped approved light frames 1c, 1d and 1e (dark captures use the light frame). ai-key never types a key. Layout JSON records setup stacks, form widths, row alignment, card insets, Designer priority, loading/open-error fallback spacing, fixed wide tabs/host gap, compact subtitles/label, quiet padding and themed thin scrollbars. Overview states (overview-*, including 540x640 minimum) use synthetic overview_* IPC. Chat empty/pending/running/answer and waitingForSession Succeeded/null or known-answer, New agent form/blank-created, Clusters list, connected success/details/selected list and header, context picker/checking/failure, account picker/Allowed/forbidden-list typed fallback and Designer no-destination guidance are captured at wide and true 540x640 client sizes in both themes with comparisons. Chat/New agent compare the Designer design system, not a dedicated target frame; cluster states compare the approved cluster cards (light reference for both themes). compact-window.txt records verified native client resizing; an unverified resize fails rather than falling back to viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
   // Keep the source identity next to images without inferring it from branch names.
   await writeFile(join(output, 'head.txt'), await readFile(join(output, '..', 'native-lifecycle', 'head.txt')));
 } finally {
