@@ -1436,7 +1436,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Either retained identity can therefore correctly lead the unknown cards;
     // their distinct UIDs and exact create count were verified at separate Send.
     require(separateAgents.contains { $0["uid"] as? String == unknownUID }, "Unknown Overview card did not retain an acknowledged Agent UID")
-    try overviewShot("overview-fixture-external-by-place", ["runtime-reader", "Running on fixture-secondary, not saved here", "external-model", "web_fetch"])
+    try overviewShot("overview-fixture-external-by-place", ["runtime-reader", "Running on fixture-cluster, not saved here", "external-model", "web_fetch"])
     // Explicit retries reuse this attempt's exact Task UID. Neither an HTTP
     // acknowledgement nor a lost response may manufacture a terminal result.
     clickTab("Designer", [])
