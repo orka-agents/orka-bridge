@@ -466,7 +466,7 @@ try {
     if (name === 'send-unsupported' && !probe.buttons.includes('Retry cancellation')) throw Error('Baseline Unsupported cancellation must still offer retry');
     if (probe.title !== '' || probe.id !== 'page-checksum') throw Error('Baseline cluster result must show code ID without the captured title');
     if (name === 'send-earlier-target' && (!probe.text.includes('fixture-captured') || probe.text.includes('Earlier result on fixture-captured') || !probe.text.includes('Destination fixture-selected'))) throw Error('Baseline unlabelled result and selected destination must both remain');
-    if (probe.detailsOpen !== details || probe.extras.length) throw Error('Baseline resources Details must not contain the header controls');
+    if (probe.detailsOpen !== details || ['Check again', 'Send as a separate agent'].some(label => probe.extras.includes(label))) throw Error('Baseline resources Details must not contain the header controls');
     if (probe.scrollWidth > probe.width + 2) throw Error('Send overflows the native client width');
   }
   async function captureSendScene(theme, size, name) {

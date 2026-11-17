@@ -1311,7 +1311,6 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try capturePreflight("send-older-orka-wide", "This Orka can't safely update this agent")
     try resultSize(540, 640)
     try focusSend()
-    try clickSendControl("Details", scrolling: -250)
     try capturePreflight("send-older-orka-action", "Send as a separate agent")
     try assertDeployment(passedUID, generation: 2, tasks: 3)
     try clickSendControl("Send as a separate agent", scrolling: -250)

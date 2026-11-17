@@ -74,6 +74,7 @@ const unsupported = { ...sendProbe, header: [...sendProbe.header.slice(0, 2), { 
 checkSend('send-unsupported', unsupported, false);
 checkSend('send-earlier-target', { ...sendProbe, header: [sendProbe.header[0], { label: 'Send and run tests', primary: false }, ...sendProbe.header.slice(2)], text: 'fixture-captured Destination fixture-selected' }, false);
 checkSend('send-failed', { ...sendProbe, detailsOpen: true }, true);
+checkSend('send-failed', { ...sendProbe, detailsOpen: true, extras: ['Copy Planned agent'] }, true);
 for (const mutation of [
   { header: sendProbe.header.slice(0, 2) }, { title: 'Captured checksum from the page' }, { id: '' }, { scrollWidth: 550 },
 ]) assert.throws(() => checkSend('send-failed', { ...sendProbe, ...mutation }, false));
