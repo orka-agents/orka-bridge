@@ -180,7 +180,7 @@ test.each(['Chat', 'Run tests'] as const)('Overview %s routes to the saved docum
     if (command === 'overview_agents') return { state: 'complete', installation, agents: [], observation: null, observedAt: 123, runActive: false, reason: null };
     if (command === 'overview_places') return { places: [], historyState: 'complete', unobserved: [] };
     if (command === 'agent_open') { expect(args).toEqual({ documentId: id }); return { documentId: id, name: 'reader', source, agent: '---\nname: reader\n---\nRead.', tests: 'Checks' }; }
-    if (command === 'agent_run_status' || command === 'agent_run') return { documentId: id, busy: null, state: command === 'agent_run' ? 'running' : 'idle', canRun: command !== 'agent_run', source, report: null, acknowledged: [], pending: null, error: null };
+    if (command === 'agent_run_status' || command === 'agent_run') return { documentId: (args as { documentId: string }).documentId, busy: null, state: command === 'agent_run' ? 'running' : 'idle', canRun: command !== 'agent_run', modelConnected: true, source, report: null, acknowledged: [], pending: null, error: null };
     return null;
   });
   const user = userEvent.setup(); render(<App />);
