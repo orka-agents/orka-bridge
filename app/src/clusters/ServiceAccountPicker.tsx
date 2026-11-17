@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { Button, CloseIcon } from '../components/Button';
 import { StatusIcon } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
+import { clusterRecovery } from './recovery';
 import { failedCheck, previewServiceAccount, serviceAccounts, type AccountPreview, type ServiceAccounts, type TargetView } from './api';
 
 const labels = { allowed: 'Allowed', denied: 'Denied', unknown: "Couldn't check", notChecked: 'Not checked' };
@@ -9,6 +10,7 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
   target: TargetView; active: boolean; disabled: boolean; value: string; onChange: (name: string) => void;
 }) {
   const id = useId(); const trigger = useRef<HTMLButtonElement>(null); const input = useRef<HTMLInputElement>(null);
+  const listFocus = useRef<Element | null>(null);
   const popover = useRef<HTMLDivElement>(null); const listEpoch = useRef(0); const previewEpoch = useRef(0);
   const [accounts, setAccounts] = useState<ServiceAccounts>(); const [reason, setReason] = useState<string>();
   const [attempt, setAttempt] = useState(0); const [open, setOpen] = useState(false); const [query, setQuery] = useState('');
@@ -17,14 +19,14 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
   function close(focus = true) { setOpen(false); setQuery(''); if (focus) trigger.current?.focus(); }
   useEffect(() => {
     if (!active || disabled || accounts || reason) return;
-    const request = ++listEpoch.current;
+    const request = ++listEpoch.current; listFocus.current = document.activeElement;
     void serviceAccounts(target.id).then(result => {
       if (request === listEpoch.current) setAccounts(result);
     }, error => {
       if (request !== listEpoch.current) return;
       const failure = failedCheck(error, 'serviceAccount');
       setReason(failure.check === 'serviceAccount' && failure.result === 'permissionDenied' ? `Your current cluster sign-in cannot list ServiceAccounts in ${target.watched_namespace}. Enter an existing account name from your cluster administrator.`
-        : failure.result === 'authenticationRejected' ? 'Your cluster sign-in was not accepted. Check Clusters and try again.'
+        : failure.result === 'authenticationRejected' ? `Your cluster sign-in was not accepted. ${clusterRecovery(failure).next}`
         : failure.check !== 'serviceAccount' ? "Couldn't recheck this cluster. Check Clusters and try again."
         : "Couldn't list ServiceAccounts. Check the cluster connection and try again.");
     });
@@ -35,7 +37,11 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
   }, [active, disabled]);
   useEffect(() => () => { ++previewEpoch.current; }, []);
   useEffect(() => {
-    if (active && !disabled && (accounts || reason)) (accounts?.names.length ? trigger.current : input.current)?.focus();
+    const origin = listFocus.current;
+    if (active && !disabled && (accounts || reason)
+      && (document.activeElement === origin || origin && !origin.isConnected && document.activeElement === document.body)) {
+      (accounts?.names.length ? trigger.current : input.current)?.focus();
+    }
   }, [accounts, reason, active, disabled]);
   useEffect(() => {
     if (open) { popover.current?.showPopover?.(); popover.current?.querySelector('input')?.focus(); }

@@ -58,6 +58,22 @@ test('choosing a listed account previews only it, and only explicit Use sends it
   ]));
 });
 
+test('account-list authentication rejection reuses the existing sign-in recovery path', async () => {
+  fixture(() => Promise.reject({ check: 'serviceAccount', result: 'authenticationRejected' }));
+  await open();
+  await screen.findByText(/Refresh the sign-in outside Bridge, then press Reload kubeconfig/);
+});
+
+test('a delayed list does not take focus from another control', async () => {
+  let finish!: (value: unknown) => void; fixture(() => new Promise(resolve => { finish = resolve; }));
+  const user = userEvent.setup();
+  render(<><ServiceAccountPicker target={target} active disabled={false} value="" onChange={vi.fn()} /><input aria-label="Another control" /></>);
+  const other = screen.getByRole('textbox', { name: 'Another control' }); await user.click(other);
+  await act(async () => finish({ names: ['team-runner'], truncated: false }));
+  await screen.findByRole('button', { name: 'ServiceAccount' });
+  expect(document.activeElement).toBe(other);
+});
+
 test('disabled account controls do not start a list until enabled', async () => {
   const ipc = fixture();
   const view = render(<ServiceAccountPicker target={target} active disabled value="" onChange={vi.fn()} />);
