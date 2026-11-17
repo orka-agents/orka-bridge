@@ -272,6 +272,7 @@ assert.ok(overviewDriver.includes('oldCards:') && overviewDriver.includes('oldGr
 assert.ok(overviewDriver.includes("shoot('-collapsed')") && overviewDriver.includes("shoot('-expanded')"), 'Overview must capture collapsed and expanded native states');
 assert.ok(model.includes('local-overview-ai-disconnected-collapsed-') && model.includes('local-overview-ai-connected-expanded-'), 'native model fixtures must cover disconnected and connected list states');
 assert.ok(!model.includes('by-cluster') && !model.includes('by-agent'), 'native model fixtures must not retain grouping controls');
+assert.ok(model.includes('Cannot bring Overview disclosure into view') && model.includes('let top = enabledButton("Overview").flatMap(nativeBounds)?.maxY'), 'native Overview disclosures must be brought clear of fixed navigation before pointer activation');
 assert.ok(model.includes('capture("local-overview-ai-disconnected-collapsed-\\(size)", ["Your agents"])') && model.includes('require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer.")'), 'disconnected Overview must verify the exact native reason without fragile OCR of AI/Al');
 assert.ok(smoke.includes('Show places for web-reader') && smoke.includes('overview-fixture-multiple-places-expanded'), 'native smoke must expand the agent list before proving per-place evidence');
 assert.ok(!smoke.includes('heading: "fixture-secondary"'), 'place names are marks or evidence labels, never list headings');

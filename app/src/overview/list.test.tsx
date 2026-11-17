@@ -34,6 +34,7 @@ test('one row per document, one mark per place, one primary; evidence and action
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
   expect(within(agent).getByLabelText('This computer: Passed')).toBeTruthy();
   expect(within(agent).getByLabelText('team: Failed')).toBeTruthy();
+  expect(within(agent).getByRole('button', { name: 'Show places for reader', description: /This computer: Passed; team: Failed/ })).toBeTruthy();
   expect(within(agent).queryByText('1 of 2 passed')).toBeNull();
   expect(document.querySelectorAll('.button-primary')).toHaveLength(1);
   await waitFor(() => expect(counts).toHaveBeenLastCalledWith('1 agent, 1 failed'));

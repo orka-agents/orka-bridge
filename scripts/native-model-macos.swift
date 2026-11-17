@@ -174,7 +174,18 @@ func setOverviewExpanded(_ title: String, _ expanded: Bool) {
             && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == label }
     }
     require(buttons.count == 1, "Cannot identify Overview disclosure \(label)")
-    if attribute(buttons[0], "AXExpanded") as? Bool != expanded { click(label, []) }
+    if attribute(buttons[0], "AXExpanded") as? Bool == expanded { return }
+    let top = enabledButton("Overview").flatMap(nativeBounds)?.maxY ?? window()!.1.minY
+    for _ in 0..<12 {
+        if let bounds = enabledButton(label).flatMap(nativeBounds) {
+            if bounds.minY >= top + 8 && bounds.maxY <= window()!.1.maxY - 32 {
+                click(label, []); return
+            }
+            scroll(bounds.minY < top + 8 ? 150 : -150)
+        } else { scroll(-150) }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(false, "Cannot bring Overview disclosure into view: \(label)")
 }
 func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     guard let button = enabledButton(label) else { require(false, "Native button is disabled or missing: \(label)"); return }

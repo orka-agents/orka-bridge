@@ -43,7 +43,7 @@ export function AgentListRow({ row, actions, reveal, onToggle }: { row: AgentRow
   const toggle = () => { setOpen(!expanded); onToggle(); };
   return <article className="overview-agent" aria-label={row.title}>
     <header className="overview-agent-head">
-      <h2 aria-label={row.title}><button type="button" className="overview-row-toggle" aria-label={`Show places for ${row.title}`} aria-expanded={expanded} aria-controls={id} onClick={toggle}>
+      <h2 aria-label={row.title}><button type="button" className="overview-row-toggle" aria-label={`Show places for ${row.title}`} aria-describedby={`${id}-summary`} aria-expanded={expanded} aria-controls={id} onClick={toggle}>
         <span className="overview-agent-identity"><svg className={`icon${expanded ? ' overview-chevron-open' : ''}`} viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7" /></svg>
           <span className="overview-agent-name"><span className="overview-agent-title">{row.title}</span><span className="overview-description">{row.description}</span></span>
         </span>
@@ -51,6 +51,7 @@ export function AgentListRow({ row, actions, reveal, onToggle }: { row: AgentRow
           <StatusIcon state={card.status ?? 'not-started'} /><span className={card.remote ? 'overview-mono' : undefined}>{card.place}</span>
         </span>)}</span>
       </button></h2>
+      <span id={`${id}-summary`} className="sr-only">{row.description} {marks.map(card => `${card.place}: ${card.pill ?? 'No recorded result'}`).join('; ')}</span>
       <span className="overview-time">{row.testedAt !== undefined && <RelativeTime value={row.testedAt} />}</span>
       {document ? <Button size="small" aria-label={`Open ${document.subject}`} onClick={() => {
         if (!document.documentId) return;
