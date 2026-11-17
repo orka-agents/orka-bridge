@@ -3,6 +3,7 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from './App';
+import { openLocalSetup } from './setup/test-navigation';
 
 const documentId = '9b2b93c4-375c-4815-9717-39852a96e411';
 const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
@@ -36,6 +37,41 @@ function ipc(select: (args: unknown) => unknown = () => ({ target, providers: [p
 beforeEach(() => { vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1'); calls.length = 0; });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 const actions = () => calls.map(c => c.command).filter(c => ['agent_run', 'send_start', 'cluster_use', 'cluster_reconnect'].includes(c));
+
+test.each([true, false])('Overview follows acknowledged local AI connection, not a ready inventory (%s)', async succeeds => {
+  let finish!: (value: unknown) => void;
+  ipc(undefined, command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'overview_agents') return { state: 'complete', installation: documentId, agents: [], observation: null, observedAt: 123, runActive: false, reason: null };
+    if (command === 'setup_connect_model') return new Promise(resolve => { finish = resolve; });
+    return undefined;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  const localRun = await screen.findByRole('button', { name: 'Run tests reader' });
+  expect(localRun.matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run tests reader on team-one' }).matches(':disabled')).toBe(false);
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await openLocalSetup(user);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await waitFor(() => expect(finish).toBeTypeOf('function'));
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(true);
+  await act(async () => finish(succeeds ? { ready: true } : { ready: false }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(!succeeds));
+  expect(screen.getByRole('button', { name: 'Chat reader' }).matches(':disabled')).toBe(!succeeds);
+  expect(actions()).toEqual([]);
+});
+
+test('local readiness never substitutes a provider for a team destination', async () => {
+  ipc(() => ({ target, providers: [{ ...provider, ready: false }] }));
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(await screen.findByRole('button', { name: 'Run tests reader on team-one' }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 });
+  expect(actions()).toEqual([]);
+  expect(calls.filter(c => c.command === 'send_preflight')).toEqual([]);
+});
 
 test.each(['Open', 'Run tests'])('cluster %s selects the exact destination and never executes from Overview', async action => {
   ipc(); const user = userEvent.setup(); render(<App />);

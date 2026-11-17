@@ -222,6 +222,18 @@ click("Connect the AI", rows)
 rows = try capture("before-connect", ["Connect the AI"])
 // The tab subtitle is visible in the capture but isn't a separate AXStaticText value.
 require(rows.contains { $0.boundingBox.minX < 0.3 && $0.boundingBox.maxY > 0.85 && $0.topCandidates(1).first?.string == "4 saved agents" }, "Hidden Overview must report the saved-file count in the header")
+click("Overview", [])
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    for (mode, toggle) in [("by-cluster", "By cluster"), ("by-agent", "By agent")] {
+        click(toggle, []); scroll(4000)
+        require(anyButton("Run tests web-reader") && enabledButton("Run tests web-reader") == nil && enabledButton("Open web-reader") != nil,
+                "Without connected AI, Overview must disable local Run but preserve Open")
+        _ = try capture("overview-ai-disconnected-\(mode)-\(size)", ["Your agents", "Connect the AI in Clusters"])
+    }
+}
+localSize(1280, 800); scroll(4000)
+click("Clusters", []); waitForButton("Connect the AI")
 localSize(540, 640)
 scroll(4000)
 _ = try capture("local-setup-ai-minimum-top", ["This computer", "Get your workspace ready"])
@@ -312,6 +324,18 @@ click("Retry removal", rows)
 rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Connect the AI"])
 click("Connect the AI", rows)
 rows = try capture("reconnected", ["Connected", "Remove sign-in"])
+click("Overview", [])
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    for (mode, toggle) in [("by-cluster", "By cluster"), ("by-agent", "By agent")] {
+        click(toggle, []); scroll(4000)
+        require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to chat or run tests on this computer."),
+                "Connected AI must enable local Overview actions without the connection reason")
+        _ = try capture("overview-ai-connected-\(mode)-\(size)", ["Your agents", "Run tests"])
+    }
+}
+localSize(1280, 800); scroll(4000)
+click("Clusters", [])
 // Workspace Stop is exercised after the original baseline coverage below.
 // Reuse the setup-progress selector and the existing Places entry to remount real
 // preflight for each bounded synthetic result. No native admission command runs.
@@ -1175,8 +1199,8 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 
     localSize(CGFloat(width), CGFloat(height))
     scroll(4000)
     if size == "minimum" {
-        _ = try seek("2 of 2 tests on earlier files", -300)
-        let expected = ["Earlier files", "2 of 2 tests on earlier files", "Draft"]
+        _ = try seek("2 of 2 passed, before your edit", -300)
+        let expected = ["Not run since your edit", "2 of 2 passed, before your edit", "Draft"]
         let proof = try capture("local-controls-overview-\(size)", expected)
         let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(expected.allSatisfy { pixels.contains($0) }, "Cluster result and draft must be visible in OCR")
@@ -1192,7 +1216,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 
     if size == "minimum" {
         // The draft anchor is unique; the failed count alone also occurs on the local file.
         _ = try seek("Add instructions and a test to get started.", -300)
-        let expected = ["team-dev", "Failed", "1 of 2 tests on earlier files", "Draft"]
+        let expected = ["team-dev", "Failed", "1 of 2 passed, before your edit", "Draft"]
         let proof = try capture("local-overview-by-agent-\(size)", expected)
         let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(expected.allSatisfy { pixels.contains($0) }, "Cluster failure and draft must be visible in OCR")

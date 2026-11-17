@@ -176,6 +176,7 @@ test.each(['Chat', 'Run tests'] as const)('Overview %s routes to the saved docum
     calls.push({ command, args });
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'overview_files') return { state: 'complete', runActive: false, historyState: 'complete', runAgents: [], files: [{ documentId: id, name: 'reader', source, state: 'readable', summary: { name: 'reader', description: 'Reads a page', model: 'model', tools: [] }, reason: null, localResult: { installation, documentId: id, source, namespace: 'orka-system', agentName: 'generated-reader', agentUid: 'run-id', observedAt: 123, state: 'complete', report: { verdict: 'passed', passed: 1, total: 1 } } }] };
+    if (command === 'setup_connect_model') return { ready: true };
     if (command === 'overview_agents') return { state: 'complete', installation, agents: [], observation: null, observedAt: 123, runActive: false, reason: null };
     if (command === 'overview_places') return { places: [], historyState: 'complete', unobserved: [] };
     if (command === 'agent_open') { expect(args).toEqual({ documentId: id }); return { documentId: id, name: 'reader', source, agent: '---\nname: reader\n---\nRead.', tests: 'Checks' }; }
@@ -183,6 +184,10 @@ test.each(['Chat', 'Run tests'] as const)('Overview %s routes to the saved docum
     return null;
   });
   const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  await openLocalSetup(user);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await user.click(await screen.findByRole('button', { name: `${action} reader` }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
