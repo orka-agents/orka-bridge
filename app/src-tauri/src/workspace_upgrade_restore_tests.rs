@@ -291,10 +291,12 @@ fn restored_transaction_never_reopens_b_and_fresh_c_keeps_b_and_its_archive() {
 }
 #[test]
 fn restore_retains_incomplete_b_without_reopening_it_or_recovering_creation_authority() {
-    for (boundary, phase) in [
-        ("destination-recorded", StatePhase::Empty),
-        ("destination-recorded", StatePhase::Preparing),
-        ("image-prepared", StatePhase::Preparing),
+    for (boundary, phase, staged) in [
+        ("destination-recorded", StatePhase::Empty, false),
+        ("destination-recorded", StatePhase::Preparing, false),
+        ("image-prepared", StatePhase::Preparing, false),
+        ("image-prepared", StatePhase::Empty, true),
+        ("image-prepared", StatePhase::Preparing, true),
     ] {
         let mut s = Scene::new(ImageTarget::WindowsAmd64);
         assert!(s.replace(Some(boundary)).is_err());
@@ -308,6 +310,11 @@ fn restore_retains_incomplete_b_without_reopening_it_or_recovering_creation_auth
         .unwrap();
         if phase == StatePhase::Preparing {
             fs::write(root.join("state.disk"), b"partial-state-preparation").unwrap();
+        }
+        if staged {
+            fs::write(root.join("record.next"), b"uncommitted-record-bytes").unwrap();
+        }
+        if phase == StatePhase::Preparing || staged {
             assert!(matches!(
                 Journal::open(&root),
                 Err(RuntimeError::RetainedState)

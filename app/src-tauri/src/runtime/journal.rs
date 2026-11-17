@@ -185,8 +185,10 @@ impl Journal {
         let root = fs::canonicalize(root)?;
         let owner = OwnerLock(Arc::new(lock(&root)?));
         let image_root = Dir::open_ambient_dir(&root, cap_std::ambient_authority())?;
-        // An interrupted record write needs explicit recovery, not guessed replay.
-        if root.join("record.next").exists() {
+        // Ordinary reopen must not guess an interrupted update. Retention-only
+        // inspection validates the committed record and preserves staged bytes;
+        // the inspection API cannot replay them or return Journal/boot authority.
+        if root.join("record.next").exists() && !retention_only {
             return Err(RuntimeError::RetainedState);
         }
         regular(&root.join("record.json"))?;
