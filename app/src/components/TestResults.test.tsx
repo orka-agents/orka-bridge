@@ -20,6 +20,16 @@ test('failed tests lead and open next to their frozen question, with a plain rea
   expect(rows[0].querySelector('details')?.open).toBe(false);
   expect(resultLabel(report)).toBe('1 of 2 passed');
 });
+test('captured titles label current and earlier cluster results, with the original id retained', () => {
+  const { container } = render(<TestResults report={{ verdict: 'failed', cases: [{ ...failed, title: 'Reads the published checksum' }] }} stale />);
+  expect(container.querySelector('.test-result > summary')?.textContent).toContain('Reads the published checksum');
+  expect(container.querySelector('.test-result > summary code')?.textContent).toBe('reads-page');
+});
+test.each([undefined, '', ' ', 'x'.repeat(161), 'hidden\u200btitle', 'ghp_abcdefghijklmnopqrstuvwxyz123456'])('invalid or absent captured title falls back to its id (%s)', title => {
+  const { container } = render(<TestResults report={{ verdict: 'failed', cases: [{ ...failed, title }] }} stale={false} />);
+  const summary = container.querySelector('.test-result > summary')!;
+  expect(summary.textContent).toBe('reads-pageFailed');
+});
 test('test-row grid styles never apply to nested Details labels in either breakpoint', () => {
   const { container } = render(<TestResults report={report} stale={false} />);
   const style = document.createElement('style');
