@@ -171,7 +171,7 @@ test('a failed cluster read marks cached clusters stale and never becomes onboar
 });
 
 test('unavailable Send history produces an alert and no trusted pass evidence', async () => {
-  ipc(places([{ ...two, agents: two.agents.map(a => ({ ...a, record: null })) }], { historyState: 'unavailable', unobserved: [{ ...record, agentUid: null, verdict: 'unknown' }] })); render(<Overview {...props} />);
+  ipc(places([{ ...two, agents: [{ ...agent, uid: 'uid-three', record: null }] }], { historyState: 'unavailable', unobserved: [{ ...record, agentUid: null, verdict: 'unknown' }] })); render(<Overview {...props} />);
   const parent = await expanded('same-name');
   expect(within(parent).getByRole('article', { name: "team-two, Couldn't check" })).toBeTruthy();
   expect(screen.getByRole('alert').textContent).toContain('Saved Send results are unavailable');
