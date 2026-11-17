@@ -144,6 +144,41 @@ fn retry_ledger_limit_still_leaves_room_to_restore_the_current_metadata() {
 }
 
 #[test]
+fn maximum_schema_one_source_and_destination_snapshots_fit_initial_replace_and_restore() {
+    fn pad(scene: &Scene) {
+        let model_path = scene.data.join("setup-v1/model-v1");
+        let mut model = fs::read(&model_path).unwrap();
+        model.resize(16384, b' ');
+        fs::write(model_path, model).unwrap();
+        let account_path = scene.data.join("setup-v1/model-account-v1");
+        let mut account = fs::read(&account_path).unwrap();
+        account.resize(256, b' ');
+        fs::write(account_path, account).unwrap();
+    }
+    let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+    pad(&scene);
+    let source_model = fs::read(scene.data.join("setup-v1/model-v1")).unwrap();
+    let source_account = fs::read(scene.data.join("setup-v1/model-account-v1")).unwrap();
+    scene.replace(None).unwrap();
+    let transaction = id(&scene);
+    let b = installation(&scene.local.join("local-vm-v1"))
+        .unwrap()
+        .unwrap();
+    restore::destination_metadata(&scene, b.installation);
+    pad(&scene);
+    let mut owner = WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap();
+    assert_eq!(owner.restore(transaction).unwrap(), UpgradeStatus::Restored);
+    assert_eq!(
+        fs::read(scene.data.join("setup-v1/model-v1")).unwrap(),
+        source_model
+    );
+    assert_eq!(
+        fs::read(scene.data.join("setup-v1/model-account-v1")).unwrap(),
+        source_account
+    );
+}
+
+#[test]
 fn oversized_retention_record_cannot_replace_the_last_readable_intent() {
     let mut scene = Scene::new(ImageTarget::WindowsAmd64);
     scene.replace(None).unwrap();
