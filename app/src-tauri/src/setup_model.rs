@@ -387,6 +387,12 @@ fn finish_connect(
 // Closed classes only: never format the error payload, which may contain secrets.
 fn cleanup_error_class(error: &std::io::Error) -> &'static str {
     use std::io::ErrorKind;
+    if error
+        .get_ref()
+        .is_some_and(|inner| inner.is::<crate::runtime::client::GuestRequestRefused>())
+    {
+        return "refused";
+    }
     match error.kind() {
         ErrorKind::TimedOut | ErrorKind::WouldBlock => "timeout",
         ErrorKind::Unsupported => "unsupported",
@@ -397,7 +403,6 @@ fn cleanup_error_class(error: &std::io::Error) -> &'static str {
         | ErrorKind::ConnectionAborted
         | ErrorKind::NotConnected => "connection",
         ErrorKind::PermissionDenied => "permission",
-        ErrorKind::Other => "refused",
         _ => "io",
     }
 }

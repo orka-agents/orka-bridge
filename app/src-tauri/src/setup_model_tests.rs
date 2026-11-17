@@ -1037,6 +1037,11 @@ fn older_image_refuses_reconnect_without_poisoning_its_existing_control_channel(
 }
 
 #[test]
+fn unknown_transport_other_is_not_mislabeled_as_a_guest_refusal() {
+    let error = std::io::Error::other("synthetic-private-token /private/path");
+    assert_eq!(cleanup_error_class(&error), "io");
+}
+#[test]
 fn previous_boot_failures_keep_finite_operation_and_class_without_secrets() {
     for (case, expected) in [
         (0, "modelStatus:unsupported"),
