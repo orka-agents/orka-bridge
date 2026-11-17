@@ -57,6 +57,18 @@ test.each(['unchanged', 'update'] as const)('current failed result offers editor
   expect(screen.getByRole('button', { name: action === 'unchanged' ? 'Run cluster tests again' : 'Update agent and run tests' }).className).toContain('button-secondary');
   await userEvent.click(repair); expect(fix).toHaveBeenCalledOnce();
 });
+test.each(['Failed', 'CreditLimited'])('%s execution failure keeps retry primary instead of instruction repair', async phase => {
+  native({ ...result, report: { verdict: 'failed', cases: [{ ...failed, phase, answer: null, assertions: failed.assertions.map(a => ({ ...a, verdict: 'unknown' })) }] } });
+  render(<Send place={place} source={source} stale={false} onFixInDesigner={() => {}} />);
+  await screen.findByText('The agent could not finish this test. Try running it again.');
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run cluster tests again' }).className).toContain('button-primary'));
+  expect(screen.queryByRole('button', { name: 'Fix in Designer' })).toBeNull();
+});
+test('a known failed assertion still offers repair alongside a separate execution failure', async () => {
+  native({ ...result, report: { verdict: 'failed', cases: [failed, { ...failed, id: 'execution', phase: 'Failed', answer: null, assertions: failed.assertions.map(a => ({ ...a, verdict: 'unknown' })) }] } });
+  render(<Send place={place} source={source} stale={false} onFixInDesigner={() => {}} />);
+  expect((await screen.findByRole('button', { name: 'Fix in Designer' })).className).toContain('button-primary');
+});
 test('a failed result that finished before confirmed cancellation still offers repair', async () => {
   native({ ...result, cancellation: 'confirmed' });
   render(<Send place={place} source={source} stale={false} onFixInDesigner={() => {}} />);

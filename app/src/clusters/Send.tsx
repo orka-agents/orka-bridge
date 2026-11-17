@@ -334,7 +334,7 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
   // Status/cancellation act on the recorded Send; a new Send still uses the selected destination.
   const recovery = checkCancellation ? 'status' : mismatched ? 'reload' : !target || !provider ? 'choose' : checked && reason ? 'check' : undefined;
   const passedResult = !outdated && snapshot?.report?.verdict === 'passed';
-  const fixResult = !outdated && !uncertain && !unhealthy && !snapshot?.error && snapshot?.report?.verdict === 'failed' && onFixInDesigner;
+  const fixResult = !outdated && !uncertain && !unhealthy && !snapshot?.error && snapshot?.report?.verdict === 'failed' && snapshot.report.cases.some(c => c.phase === 'Succeeded' && c.assertions.some(a => a.verdict === 'failed')) && onFixInDesigner;
   const sendButton = (kind: 'primary' | 'secondary') => <Button type="button" kind={kind} disabled={!!reason || busy || !!message} title={reason} onClick={event => startSend(event.currentTarget)}>{snapshot ? againLabel : sendLabel}</Button>;
   const overviewButton = (kind: 'primary' | 'secondary') => seeOverview && snapshot && onSeeInOverview && <Button type="button" kind={kind} onClick={() => onSeeInOverview(snapshot.id)}>See in Overview</Button>;
   const retryCancellation = retryCancel && <Button type="button" kind="secondary" disabled={busy} onClick={() => { void control('send_history_cancel'); }}>Retry cancellation</Button>;
