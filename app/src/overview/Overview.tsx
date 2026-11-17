@@ -1,8 +1,9 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '../components/Button';
 import { type LiveAgents, type Observation, type Places, type RunAgent, readAgents, readFiles, readPlaces, type SavedFiles, unavailableAgents } from './api';
-import { agentGroups, balance, buildCards, clusterGroups, type CompleteAgents, type Inputs, isEmpty, summaryLabel } from './model';
-import { Board, GroupSection, useCompact } from './places';
+import { agentRows, buildCards, clusterGroups, type CompleteAgents, type Inputs, isEmpty, summaryLabel } from './model';
+import { PlaceNotes } from './places';
+import { AgentListRow } from './card';
 import { type AgentFocus, sendAgentCheck } from '../clusters/send-api';
 import './overview.css';
 
@@ -34,10 +35,11 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const [pending, setPending] = useState(false);
   const [localReady, setLocalReady] = useState(false);
   const [refresh, setRefresh] = useState(0);
-  const [byAgent, setByAgent] = useState(false);
+  const [placeFilter, setPlaceFilter] = useState('all');
+  const [nameFilter, setNameFilter] = useState('');
+  const [reveal, setReveal] = useState<string>();
   const [places, setPlaces] = useState<Places>();
   const [placeError, setPlaceError] = useState(false);
-  const compact = useCompact();
   useEffect(() => {
     if (!active || focusPending || focus?.target) return;
     let cancelled = false;
@@ -68,7 +70,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     const request = ++focusEpoch.current;
     const identity = `${focus.id}/${focusRetry}`;
     if (autofocusRequest.current !== identity) { autofocusRequest.current = identity; ownsFocus.current = true; }
-    setByAgent(false); setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined;
+    setPlaceFilter('all'); setNameFilter(''); setReveal(undefined); setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined;
     if (focusPending) return;
     const { target } = focus;
     void (async () => {
@@ -78,21 +80,21 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       const seen = value?.places.find(p => p.key === target?.key);
       // Other places were not queried by this refresh, so keep their cached freshness.
       setPlaces(previous => value ?? (target && previous && { ...previous, places: previous.places.map(p => p.key === target.key ? { ...p, stale: true } : p) }) ?? previous);
-      if (target && seen?.agents.some(a => a.uid === target.uid && a.namespace === target.namespace)) { toFocus.current = `${target.key}/${target.uid}`; setFocusTick(v => v + 1); return; }
+      if (target && seen?.agents.some(a => a.uid === target.uid && a.namespace === target.namespace)) { toFocus.current = `${target.key}/${target.uid}`; setReveal(toFocus.current); setFocusTick(v => v + 1); return; }
       const check = target ? await sendAgentCheck(focus.sendId) : 'cannotCheck';
       if (request === focusEpoch.current) setFocusNote(focusNotes[check]);
     })();
     return () => { focusEpoch.current++; };
   }, [active, focus, focusRetry, focusPending]);
   useEffect(() => {
-    // Local reads can rebalance the board and remount a destination in the other stack.
+    // A navigation request reveals its exact place/UID before focus moves.
     const key = toFocus.current; if (!active || !localReady || !ownsFocus.current || !key) return;
     if (focusedCard.current?.isConnected) return;
     if (focusedCard.current && document.activeElement !== document.body) { toFocus.current = undefined; focusedCard.current = undefined; return; }
     const card = [...document.querySelectorAll<HTMLElement>('[data-card-key]')].find(node => node.dataset.cardKey === key);
     // Retain ownership across post-run rebalancing, but never override a later user focus.
     if (card) { focusedCard.current = card; card.focus(); card.scrollIntoView?.({ block: 'center' }); }
-  }, [active, localReady, focusTick, places, byAgent, files, live, compact]);
+  }, [active, localReady, focusTick, places, files, live, reveal]);
   const epoch = useRef(0);
   const knownWorkspace = useRef(workspaceKey);
   useEffect(() => {
@@ -153,27 +155,31 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const partial = !!workspaceNote || filesStale || files?.historyState !== 'complete' || !complete(live) || pending || !places || placeError || places.places.some(p => p.stale || p.observedAt === null);
   const counts = !files ? 'Reading saved files…' : files.state === 'unavailable' ? 'Saved files unavailable'
     : !filesVisited.current ? filesStale ? 'Saved files unavailable' : files.files.length ? `${files.files.length} saved agent${files.files.length === 1 ? '' : 's'}` : 'No saved agents yet'
-    : summaryLabel(built.cards, partial);
+    : summaryLabel(agentRows(built.cards), partial);
   useEffect(() => { onCounts?.(counts); }, [counts, onCounts]);
   const clusters = clusterGroups(inputs, built);
-  const groups = byAgent ? agentGroups(built.cards, built.saved) : clusters;
+  const rows = agentRows(built.cards, placeFilter, nameFilter);
+  const options = [{ key: 'local', label: 'This computer' }, ...(places?.places ?? []).map(p => ({ key: p.key, label: built.labels.get(p.key)! }))];
   const needsAi = !localAiConnected && built.local.some(c => c.actions.some(a => a.id !== 'open'));
   const actions = { localAiReason: needsAi ? aiReasonId : undefined, onOpen: onOpenDocument, onChat: onChatDocument, onRun: onRunDocument, onCheck: () => { setDismissedFocus(navigationFocus?.id); setRefresh(v => v + 1); }, onClusters: onChooseWorkspace };
-  const trouble = { ...clusters[0], cards: [], count: undefined, notes: clusters[0].notes.filter(n => !n.text.startsWith('No agents')) };
-  return <section className="overview" aria-label="Agents by cluster" hidden={!active}>
+  return <section className="overview" aria-label="Your agents" hidden={!active}>
     <div className="page-heading"><h1 id={active ? 'page-title' : undefined}>Your agents</h1><div className="overview-actions">
       {onNewAgent && !empty && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}
-      {!empty && <div className="view-switch" role="group" aria-label="Group agents"><button type="button" aria-pressed={!byAgent} onClick={() => setByAgent(false)}>By cluster</button><button type="button" aria-pressed={byAgent} onClick={() => setByAgent(true)}>By agent</button></div>}
-      <Button onClick={actions.onCheck}>Refresh</Button></div></div>
+      </div></div>
+    {!empty && <div className="overview-filters">
+      {options.length > 4 ? <select className="field" aria-label="Place" value={placeFilter} onChange={event => { setReveal(undefined); setPlaceFilter(event.target.value); }}><option value="all">All places</option>{options.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}</select>
+        : <div className="view-switch" role="group" aria-label="Place">{[{ key: 'all', label: 'All' }, ...options].map(p => <button key={p.key} type="button" aria-pressed={placeFilter === p.key} onClick={() => { setReveal(undefined); setPlaceFilter(p.key); }}>{p.label}</button>)}</div>}
+      <input className="field" aria-label="Filter by name" placeholder="Filter by name" value={nameFilter} onChange={event => { setReveal(undefined); setNameFilter(event.target.value); }} />
+      <span className="overview-filter-count">{summaryLabel(rows, partial)}</span>
+    </div>}
     {needsAi && <p id={aiReasonId} className="overview-note" tabIndex={0}>Connect the AI in Clusters to chat or run tests on this computer.</p>}
     {focusNote && <div className="overview-note" role="status"><p>{focusNote}</p><Button kind="quiet" onClick={() => { if (focus && !focus.target && onRetryFocus) onRetryFocus(focus.sendId); else setFocusRetry(v => v + 1); }}>Refresh</Button></div>}
     {placeError && <div className="overview-note" role="status"><p>Couldn't read clusters just now.{places && ' Showing what Bridge last saw.'}</p><Button kind="quiet" onClick={actions.onCheck}>Check again</Button></div>}
     {places?.historyState === 'unavailable' && <p role="alert" className="overview-note">Saved Send results are unavailable, so cluster agents show no test result.</p>}
-    {byAgent && !empty && <div className="overview-stack">{clusters.filter(g => g.notes.some(n => !n.text.startsWith('No agents'))).map(g => <GroupSection key={g.key} group={{ ...g, cards: [], count: undefined, notes: g.notes.filter(n => !n.text.startsWith('No agents')) }} byAgent={false} actions={actions} />)}</div>}
+    <PlaceNotes groups={clusters} actions={actions} />
     {empty ? <>
-      {!!trouble.notes.length && <GroupSection group={trouble} byAgent={false} actions={actions} />}
-      <div className="card overview-empty"><h2>No agents yet</h2><p>Make an agent, or start from web-reader, the example that answers from a web page. Agents you test or send show up here, one card per cluster.</p>
+      <div className="card overview-empty"><h2>No agents yet</h2><p>Make an agent, or start from web-reader, the example that answers from a web page. Agents you test or send show up here, with their results in each place.</p>
         <div className="overview-card-actions">{onNewAgent && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}<Button onClick={onOpenExample}>Open web-reader</Button></div></div>
-    </> : <Board stacks={compact ? [groups, []] : balance(groups)} byAgent={byAgent} actions={actions} />}
+    </> : <div className="overview-list">{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="overview-note">No agents match these filters.</p>}</div>}
   </section>;
 }

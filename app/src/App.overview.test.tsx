@@ -37,6 +37,12 @@ function ipc(select: (args: unknown) => unknown = () => ({ target, providers: [p
 beforeEach(() => { vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1'); calls.length = 0; });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 const actions = () => calls.map(c => c.command).filter(c => ['agent_run', 'send_start', 'cluster_use', 'cluster_reconnect'].includes(c));
+async function expand(name = 'reader') {
+  const agent = await screen.findByRole('article', { name });
+  const toggle = within(agent).getByRole('button', { name: `Show places for ${name}` });
+  if (toggle.getAttribute('aria-expanded') === 'false') await userEvent.click(toggle);
+  return agent;
+}
 
 test.each([true, false])('Overview follows acknowledged local AI connection, not a ready inventory (%s)', async succeeds => {
   let finish!: (value: unknown) => void;
@@ -46,21 +52,14 @@ test.each([true, false])('Overview follows acknowledged local AI connection, not
     if (command === 'setup_connect_model') return new Promise(resolve => { finish = resolve; });
     return undefined;
   });
-  const user = userEvent.setup(); render(<App />);
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  const localRun = await screen.findByRole('button', { name: 'Run tests reader' });
-  expect(localRun.matches(':disabled')).toBe(true);
-  expect(screen.getByRole('button', { name: 'Run tests reader on team-one' }).matches(':disabled')).toBe(false);
-  await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await openLocalSetup(user);
-  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  await waitFor(() => expect(finish).toBeTypeOf('function'));
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(true);
+  const user = userEvent.setup(); render(<App />); await user.click(screen.getByRole('button', { name: 'Overview' })); await expand();
+  const localRun = screen.getByRole('button', { name: 'Run tests reader' }); expect(localRun).toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: 'Run tests reader on team-one' })).toHaveProperty('disabled', false);
+  await user.click(screen.getByRole('button', { name: 'Clusters' })); await openLocalSetup(user); await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await waitFor(() => expect(finish).toBeTypeOf('function')); await user.click(screen.getByRole('button', { name: 'Overview' }));
+  expect(screen.getByRole('button', { name: 'Run tests reader' })).toHaveProperty('disabled', true);
   await act(async () => finish(succeeds ? { ready: true } : { ready: false }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(!succeeds));
-  expect(screen.getByRole('button', { name: 'Chat reader' }).matches(':disabled')).toBe(!succeeds);
-  expect(actions()).toEqual([]);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' })).toHaveProperty('disabled', !succeeds)); expect(actions()).toEqual([]);
 });
 
 test.each([{ connectedInSetup: false, nativeConnected: true }, { connectedInSetup: true, nativeConnected: false }])('Overview honors native connection evidence over setup state: %j', async ({ connectedInSetup, nativeConnected }) => {
@@ -72,18 +71,11 @@ test.each([{ connectedInSetup: false, nativeConnected: true }, { connectedInSetu
     return undefined;
   });
   const user = userEvent.setup(); render(<App />);
-  if (connectedInSetup) {
-    await openLocalSetup(user);
-    await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  }
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(await screen.findByRole('button', { name: 'Open reader' }));
-  await screen.findByRole('heading', { name: 'reader', level: 1 });
-  await waitFor(() => expect(calls.some(c => c.command === 'agent_run_status')).toBe(true));
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(!nativeConnected));
-  expect(screen.getByRole('button', { name: 'Chat reader' }).matches(':disabled')).toBe(!nativeConnected);
-  expect(actions()).toEqual([]);
+  if (connectedInSetup) { await openLocalSetup(user); await user.click(await screen.findByRole('button', { name: 'Connect the AI' })); }
+  await user.click(screen.getByRole('button', { name: 'Overview' })); await expand();
+  await user.click(screen.getByRole('button', { name: 'Open reader' })); await screen.findByRole('heading', { name: 'reader', level: 1 });
+  await waitFor(() => expect(calls.some(c => c.command === 'agent_run_status')).toBe(true)); await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' })).toHaveProperty('disabled', !nativeConnected)); expect(actions()).toEqual([]);
 });
 
 test('Overview refreshes native AI readiness without a mounted Designer and after reconnecting', async () => {
@@ -95,128 +87,71 @@ test('Overview refreshes native AI readiness without a mounted Designer and afte
     if (command === 'agent_run_status') return { documentId, busy: null, state: 'idle', canRun: connected, modelConnected: connected, report: null, acknowledged: [], pending: null, error: null };
     return undefined;
   });
-  const user = userEvent.setup(); render(<App />);
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(false));
+  const user = userEvent.setup(); render(<App />); await user.click(screen.getByRole('button', { name: 'Overview' })); await expand();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' })).toHaveProperty('disabled', false));
   expect(calls.some(c => c.command === 'agent_open')).toBe(false);
-  connected = false;
-  await user.click(screen.getByRole('button', { name: 'Open reader' }));
-  await screen.findByRole('heading', { name: 'reader', level: 1 });
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(true));
-  await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await openLocalSetup(user);
-  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(false));
-  expect(actions()).toEqual([]);
+  connected = false; await user.click(screen.getByRole('button', { name: 'Open reader' })); await screen.findByRole('heading', { name: 'reader', level: 1 }); await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' })).toHaveProperty('disabled', true));
+  await user.click(screen.getByRole('button', { name: 'Clusters' })); await openLocalSetup(user); await user.click(await screen.findByRole('button', { name: 'Connect the AI' })); await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' })).toHaveProperty('disabled', false)); expect(actions()).toEqual([]);
 });
 
-test('Overview recovers native readiness and observes disconnects without navigating away', async () => {
-  let readable = false; let connected = true; let reads = 0;
+test('Overview recovers native readiness on activation and observes disconnects on the same reread path', async () => {
+  let readable = false, connected = true, reads = 0;
   ipc(undefined, command => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'overview_agents') return { state: 'complete', installation: documentId, agents: [], observation: null, observedAt: 123, runActive: false, reason: null };
-    if (command === 'agent_run_status') {
-      reads++;
-      if (!readable) return Promise.reject(Error('temporarily unavailable'));
-      return { documentId, busy: null, state: 'idle', canRun: connected, modelConnected: connected, report: null, acknowledged: [], pending: null, error: null };
-    }
+    if (command === 'agent_run_status') { reads++; if (!readable) return Promise.reject(Error('temporarily unavailable')); return { documentId, busy: null, state: 'idle', canRun: connected, modelConnected: connected, report: null, acknowledged: [], pending: null, error: null }; }
     return undefined;
   });
-  const user = userEvent.setup(); render(<App />);
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await waitFor(() => expect(reads).toBeGreaterThan(0));
-  expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(true);
-  readable = true;
-  await user.click(screen.getByRole('button', { name: 'Refresh' }));
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(false));
-  connected = false;
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(true));
-  expect(calls.some(c => c.command === 'agent_open')).toBe(false);
-  expect(actions()).toEqual([]);
+  const user = userEvent.setup(); render(<App />); await user.click(screen.getByRole('button', { name: 'Overview' })); await expand(); await waitFor(() => expect(reads).toBeGreaterThan(0));
+  expect(screen.getByRole('button', { name: 'Run tests reader' })).toHaveProperty('disabled', true);
+  readable = true; await user.click(screen.getByRole('button', { name: 'Clusters' })); await user.click(screen.getByRole('button', { name: 'Overview' })); await expand();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' })).toHaveProperty('disabled', false));
+  connected = false; await user.click(screen.getByRole('button', { name: 'Clusters' })); await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' })).toHaveProperty('disabled', true)); expect(actions()).toEqual([]);
 });
 
 test('local readiness never substitutes a provider for a team destination', async () => {
-  ipc(() => ({ target, providers: [{ ...provider, ready: false }] }));
-  const user = userEvent.setup(); render(<App />);
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(await screen.findByRole('button', { name: 'Run tests reader on team-one' }));
-  await screen.findByRole('heading', { name: 'reader', level: 1 });
-  expect(actions()).toEqual([]);
-  expect(calls.filter(c => c.command === 'send_preflight')).toEqual([]);
+  ipc(() => ({ target, providers: [{ ...provider, ready: false }] })); const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' })); await expand(); await user.click(screen.getByRole('button', { name: 'Run tests reader on team-one' }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 }); expect(actions()).toEqual([]); expect(calls.filter(c => c.command === 'send_preflight')).toEqual([]);
 });
 
-test.each(['Open', 'Run tests'])('cluster %s selects the exact destination and never executes from Overview', async action => {
-  ipc(); const user = userEvent.setup(); render(<App />);
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(await screen.findByRole('button', { name: `${action} reader on team-one` }));
-  await screen.findByRole('heading', { name: 'reader', level: 1 });
-  expect(calls).toContainEqual({ command: 'cluster_select', args: { key: 'one' } });
-  expect(document.querySelector('.host-chip')?.textContent).toContain('team-one');
-  const panel = await screen.findByRole('region', { name: 'Send and cluster tests' });
-  if (action === 'Run tests') await waitFor(() => expect(document.activeElement).toBe(panel));
-  expect(actions()).toEqual([]);
-  expect(within(panel).queryByText(/Choose a cluster in Clusters/)).toBeNull();
+test('cluster Run selects the exact destination and never executes from Overview', async () => {
+  ipc(); const user = userEvent.setup(); render(<App />); await user.click(screen.getByRole('button', { name: 'Overview' })); await expand();
+  await user.click(screen.getByRole('button', { name: 'Run tests reader on team-one' })); await screen.findByRole('heading', { name: 'reader', level: 1 });
+  expect(calls).toContainEqual({ command: 'cluster_select', args: { key: 'one' } }); expect(document.querySelector('.host-chip')?.textContent).toContain('team-one');
+  const panel = await screen.findByRole('region', { name: 'Send and cluster tests' }); await waitFor(() => expect(document.activeElement).toBe(panel)); expect(actions()).toEqual([]);
 });
 
 test('opening another cluster resets an old management subview before returning to Clusters', async () => {
-  let selectedKey = 'one';
-  const second = { ...target, id: '00000000-0000-4000-8000-000000000004', context_name: 'team-two' };
-  ipc(args => {
-    selectedKey = (args as { key: string }).key;
-    return { target: selectedKey === 'one' ? target : second, providers: [provider] };
-  }, command => command === 'cluster_places' ? { places: inventory, selectedKey, persistenceState: 'complete' }
-    : command === 'setup_status' ? { selected: 'localVm', localVm: 'ready', model: 'locked' } : undefined);
-  const user = userEvent.setup(); render(<App />);
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(await screen.findByRole('button', { name: 'Open reader on team-one' }));
-  await screen.findByRole('heading', { name: 'reader', level: 1 });
-  await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await user.click(await within(await screen.findByRole('region', { name: 'team-one' })).findByRole('button', { name: 'Manage' }));
-  await screen.findByRole('heading', { name: 'Manage your cluster', level: 1 });
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(await screen.findByRole('button', { name: 'Run tests reader on team-two' }));
-  await screen.findByRole('heading', { name: 'reader', level: 1 });
-  await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  expect(await screen.findByRole('heading', { name: 'Clusters', level: 1 })).toBeTruthy();
-  expect(await within(screen.getByRole('region', { name: 'team-two' })).findByRole('button', { name: 'Manage' })).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
+  let selectedKey = 'one'; const second = { ...target, id: '00000000-0000-4000-8000-000000000004', context_name: 'team-two' };
+  ipc(args => { selectedKey = (args as { key: string }).key; return { target: selectedKey === 'one' ? target : second, providers: [provider] }; }, command => command === 'cluster_places' ? { places: inventory, selectedKey, persistenceState: 'complete' } : command === 'setup_status' ? { selected: 'localVm', localVm: 'ready', model: 'locked' } : undefined);
+  const user = userEvent.setup(); render(<App />); await user.click(screen.getByRole('button', { name: 'Overview' })); await expand();
+  await user.click(screen.getByRole('button', { name: 'Run tests reader on team-one' })); await screen.findByRole('heading', { name: 'reader', level: 1 });
+  await user.click(screen.getByRole('button', { name: 'Clusters' })); await user.click(await within(await screen.findByRole('region', { name: 'team-one' })).findByRole('button', { name: 'Manage' }));
+  await screen.findByRole('heading', { name: 'Manage your cluster', level: 1 }); await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(screen.getByRole('button', { name: 'Run tests reader on team-two' })); await screen.findByRole('heading', { name: 'reader', level: 1 }); await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  expect(await screen.findByRole('heading', { name: 'Clusters', level: 1 })).toBeTruthy(); expect(await within(screen.getByRole('region', { name: 'team-two' })).findByRole('button', { name: 'Manage' })).toBeTruthy(); expect(screen.queryByRole('button', { name: 'Remove' })).toBeNull();
 });
 
 test('lost access opens the file with no admitted destination and reconnect guidance', async () => {
-  ipc(() => Promise.reject(Error('gone'))); const user = userEvent.setup(); render(<App />);
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(await screen.findByRole('button', { name: 'Run tests reader on team-one' }));
-  await screen.findByRole('heading', { name: 'reader', level: 1 });
-  expect(await screen.findByText(/Connect this cluster again in Clusters/)).toBeTruthy();
-  expect(document.querySelector('.host-chip')?.textContent).toContain('Choose a cluster');
-  expect(actions()).toEqual([]);
+  ipc(() => Promise.reject(Error('gone'))); const user = userEvent.setup(); render(<App />); await user.click(screen.getByRole('button', { name: 'Overview' })); await expand();
+  await user.click(screen.getByRole('button', { name: 'Run tests reader on team-one' })); await screen.findByRole('heading', { name: 'reader', level: 1 });
+  expect(await screen.findByText(/Connect this cluster again in Clusters/)).toBeTruthy(); expect(document.querySelector('.host-chip')?.textContent).toContain('Choose a cluster'); expect(actions()).toEqual([]);
 });
 
 test('leaving Overview invalidates a delayed cluster selection reply', async () => {
-  let finish!: (v: unknown) => void;
-  ipc(() => new Promise(resolve => { finish = resolve; })); const user = userEvent.setup(); render(<App />);
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(await screen.findByRole('button', { name: 'Run tests reader on team-one' }));
-  await waitFor(() => expect(finish).toBeTypeOf('function'));
-  await user.click(screen.getByRole('button', { name: 'Clusters' }));
-  await act(async () => finish({ target, providers: [provider] }));
-  expect(screen.queryByRole('heading', { name: 'reader', level: 1 })).toBeNull();
-  expect(document.querySelector('.host-chip')?.textContent).not.toContain('team-one');
-  expect(actions()).toEqual([]);
+  let finish!: (v: unknown) => void; ipc(() => new Promise(resolve => { finish = resolve; })); const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' })); await expand(); await user.click(screen.getByRole('button', { name: 'Run tests reader on team-one' })); await waitFor(() => expect(finish).toBeTypeOf('function'));
+  await user.click(screen.getByRole('button', { name: 'Clusters' })); await act(async () => finish({ target, providers: [provider] }));
+  expect(screen.queryByRole('heading', { name: 'reader', level: 1 })).toBeNull(); expect(document.querySelector('.host-chip')?.textContent).not.toContain('team-one'); expect(actions()).toEqual([]);
 });
 
 test('a newer cluster card wins over an older selection reply', async () => {
-  let finish!: (v: unknown) => void; let selections = 0;
-  const second = { ...target, id: '00000000-0000-4000-8000-000000000004', context_name: 'team-two' };
-  ipc(() => ++selections === 1 ? new Promise(resolve => { finish = resolve; }) : { target: second, providers: [provider] });
-  const user = userEvent.setup(); render(<App />);
-  await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(await screen.findByRole('button', { name: 'Open reader on team-one' }));
-  await user.click(screen.getByRole('button', { name: 'Open reader on team-two' }));
-  await screen.findByRole('heading', { name: 'reader', level: 1 });
-  await act(async () => finish({ target, providers: [provider] }));
-  expect(document.querySelector('.host-chip')?.textContent).toContain('team-two');
-  expect(actions()).toEqual([]);
+  let finish!: (v: unknown) => void; let selections = 0; const second = { ...target, id: '00000000-0000-4000-8000-000000000004', context_name: 'team-two' };
+  ipc(() => ++selections === 1 ? new Promise(resolve => { finish = resolve; }) : { target: second, providers: [provider] }); const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' })); await expand(); await user.click(screen.getByRole('button', { name: 'Run tests reader on team-one' })); await user.click(screen.getByRole('button', { name: 'Run tests reader on team-two' }));
+  await screen.findByRole('heading', { name: 'reader', level: 1 }); await act(async () => finish({ target, providers: [provider] })); expect(document.querySelector('.host-chip')?.textContent).toContain('team-two'); expect(actions()).toEqual([]);
 });
