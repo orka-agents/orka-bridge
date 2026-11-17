@@ -42,9 +42,17 @@ test('a connected cluster without a chosen AI connection does not request or bla
 test.each([false, true])('failed catalog is attributed only to its actual destination (remote=%s)', async remote => {
   vi.stubGlobal('isTauri', true); mockIPC(command => command === 'agent_open' ? pair : null);
   render(<Example remote={remote} place={remote ? place() : { kind: 'thisComputer' }} catalogKey={1} />);
-  const destination = remote ? 'team-dev · agents' : 'This computer';
+  const destination = remote ? 'team-dev · control/orka · agents' : 'This computer';
   await screen.findByText(`Couldn't read models from ${destination}. Check Clusters or edit File view.`);
   expect(screen.getByText(`Couldn't read tools from ${destination}. Check Clusters or edit File view.`, { selector: 'p' })).toBeTruthy();
+});
+test('catalog failure distinguishes installations sharing a context and watched namespace', async () => {
+  vi.stubGlobal('isTauri', true); mockIPC(command => command === 'agent_open' ? pair : null);
+  const selected = place();
+  if (selected.kind === 'cluster' && selected.target) selected.target = { ...selected.target, service_namespace: 'other-control', service_name: 'other-orka' };
+  render(<Example remote place={selected} catalogKey={1} />);
+  await screen.findByText("Couldn't read models from team-dev · other-control/other-orka · agents. Check Clusters or edit File view.");
+  expect(screen.getByText("Couldn't read tools from team-dev · other-control/other-orka · agents. Check Clusters or edit File view.", { selector: 'p' })).toBeTruthy();
 });
 test('paused catalog makes no request and does not manufacture a failed-cluster message', async () => {
   vi.stubGlobal('isTauri', true); const ipc = vi.fn(command => command === 'agent_open' ? pair : null); mockIPC(ipc);

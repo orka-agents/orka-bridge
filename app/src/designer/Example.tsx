@@ -65,7 +65,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   }, [catalogEnabled, catalogPaused, catalogKey, catalogIdentity, catalogAttempt, remote, targetId, providerId]);
   const currentCatalog = catalogEnabled && !catalogPaused && catalog?.key === catalogIdentity && catalog.attempt === catalogAttempt ? catalog : undefined;
   const catalogAvailability = !catalogEnabled ? remote && targetId && !providerId ? 'needsConnection' : 'unavailable' : catalogPaused ? 'paused' : !currentCatalog ? 'loading' : 'attempted';
-  const catalogDestination = remote && place.kind === 'cluster' && place.target ? `${place.target.context_name} · ${place.target.watched_namespace}` : 'This computer';
+  const catalogDestination = remote && place.kind === 'cluster' && place.target ? `${place.target.context_name} · ${place.target.service_namespace}/${place.target.service_name} · ${place.target.watched_namespace}` : 'This computer';
   const [pair, setPair] = useState<AgentPair>();
   useEffect(() => { let mounted = true; void listDocuments().then(value => { if (mounted) setEntries(value); }); return () => { mounted = false; }; }, [boundDocument, creating, pair?.documentId, agentsRevision, listAttempt]);
   const [draft, setDraft] = useState('');
