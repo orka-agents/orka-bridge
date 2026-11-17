@@ -179,6 +179,36 @@ fn maximum_schema_one_source_and_destination_snapshots_fit_initial_replace_and_r
 }
 
 #[test]
+fn retention_target_collision_does_not_publish_an_unrecoverable_entry() {
+    let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+    scene.replace(None).unwrap();
+    let transaction = id(&scene);
+    let b = installation(&scene.local.join("local-vm-v1"))
+        .unwrap()
+        .unwrap();
+    let collision = scene
+        .local
+        .join(format!("retained-incomplete-{}", b.installation));
+    fs::create_dir(&collision).unwrap();
+    fs::write(collision.join("keep"), b"unexpected retained files").unwrap();
+    let before = fs::read(scene.local.join(STORE).join("intent.json")).unwrap();
+    assert!(matches!(
+        retry(&scene, transaction, None),
+        Err(RuntimeError::RetainedState)
+    ));
+    assert_eq!(
+        fs::read(scene.local.join(STORE).join("intent.json")).unwrap(),
+        before
+    );
+    assert_eq!(
+        fs::read(collision.join("keep")).unwrap(),
+        b"unexpected retained files"
+    );
+    let mut owner = WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap();
+    assert_eq!(owner.restore(transaction).unwrap(), UpgradeStatus::Restored);
+}
+
+#[test]
 fn oversized_retention_record_cannot_replace_the_last_readable_intent() {
     let mut scene = Scene::new(ImageTarget::WindowsAmd64);
     scene.replace(None).unwrap();

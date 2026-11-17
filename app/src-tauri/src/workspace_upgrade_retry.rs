@@ -256,6 +256,7 @@ impl WorkspaceUpgrade {
             });
             _snapshot = Some(snapshot);
             _owner = None;
+            self.validate_incomplete(&intent, installation(&root)?.as_ref())?;
             self.persist(&intent)?;
             point("retry-intent")?;
         } else {
