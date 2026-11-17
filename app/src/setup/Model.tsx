@@ -104,7 +104,8 @@ export default function Model({ enabled, queueable = false, paused = false, away
     if (!owns) { refocus.current = undefined; return; }
     if (busy || queued) { status.current?.focus(); return; }
     if (confirmRemoval || confirmReset) { cancelRemoval.current?.focus(); return; }
-    (refocus.current === 'remove' ? removal.current ?? retry.current : retry.current)?.focus();
+    const next = refocus.current === 'remove' ? removal.current ?? retry.current : retry.current;
+    if (next?.disabled) keyField.current?.focus(); else next?.focus();
     if (document.activeElement === document.body) status.current?.focus();
     refocus.current = undefined;
   }, [busy, queued, ready, error, confirmRemoval, confirmReset, recoveryTarget]);

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import Setup from './Setup';
 import Model from './Model';
@@ -82,6 +82,19 @@ test('keyboard connection success retains focus inside the AI card', async () =>
   connect.focus(); fireEvent.click(connect);
   await act(async () => finish({ ready: true }));
   expect(document.activeElement).toBe(screen.getByText('Connected').closest('[role="status"]'));
+});
+
+test('a keyboard-started rejected key returns focus to the empty replacement field', async () => {
+  invoke.mockRejectedValue({ kind: 'modelCredentialRejected' });
+  render(<Model enabled />);
+  fireEvent.click(screen.getByRole('radio', { name: /Your own API key/ }));
+  const field = screen.getByLabelText('API key');
+  fireEvent.change(field, { target: { value: 'synthetic-key' } });
+  const connect = screen.getByRole('button', { name: 'Connect the AI' });
+  connect.focus(); fireEvent.click(connect);
+  await screen.findByRole('alert');
+  expect(screen.getByRole('button', { name: 'Check again' }).hasAttribute('disabled')).toBe(true);
+  await waitFor(() => expect(document.activeElement).toBe(field));
 });
 
 test.each(['unavailable', 'stopping'] as const)('a retained ready snapshot cannot paint Ready while %s', mode => {
