@@ -367,6 +367,11 @@ fn cancellation_and_no_space_leave_source_and_both_metadata_records_unchanged() 
 #[cfg(windows)]
 #[test]
 fn replacement_retains_a_real_stale_windows_control_socket_without_reading_it() {
+    retain_stale_windows_control_socket(false);
+    retain_stale_windows_control_socket(true);
+}
+#[cfg(windows)]
+fn retain_stale_windows_control_socket(retrying: bool) {
     use std::{
         mem::{size_of, zeroed},
         os::windows::{
@@ -379,7 +384,11 @@ fn replacement_retains_a_real_stale_windows_control_socket_without_reading_it() 
         Storage::FileSystem::{FILE_READ_ATTRIBUTES, READ_CONTROL},
     };
     let mut s = Scene::new(ImageTarget::WindowsAmd64);
+    if retrying {
+        s.replace(None).unwrap();
+    }
     let root = s.local.join("local-vm-v1");
+    let previous = installation(&root).unwrap().unwrap();
     let endpoint = crate::runtime::windows::control::ControlEndpoint::create(&root).unwrap();
     let path = endpoint.path().to_owned();
     let relative = path.strip_prefix(&root).unwrap().to_owned();
@@ -430,10 +439,22 @@ fn replacement_retains_a_real_stale_windows_control_socket_without_reading_it() 
             .unwrap()
     };
     let before = file_identity(&metadata(&path)).unwrap();
-    assert_eq!(s.replace(None).unwrap(), UpgradeStatus::Fresh);
+    let result = if retrying {
+        retry::retry(&s, retry::id(&s), None)
+    } else {
+        s.replace(None)
+    };
+    assert_eq!(result.unwrap(), UpgradeStatus::Fresh);
     let owner = WorkspaceUpgrade::open(&s.data, &s.local).unwrap();
     let intent = owner.read_intent().unwrap().unwrap();
-    let retained = s.local.join(intent.retained).join(relative);
+    let retained = s
+        .local
+        .join(if retrying {
+            format!("retained-incomplete-{}", previous.installation)
+        } else {
+            intent.retained
+        })
+        .join(relative);
     assert_eq!(file_identity(&metadata(&retained)).unwrap(), before);
 }
 #[cfg(windows)]

@@ -2,7 +2,7 @@ use super::*;
 #[path = "workspace_upgrade_retry_guard_tests.rs"]
 mod guards;
 
-fn id(scene: &Scene) -> Uuid {
+pub(super) fn id(scene: &Scene) -> Uuid {
     WorkspaceUpgrade::open(&scene.data, &scene.local)
         .unwrap()
         .read_intent()
@@ -10,7 +10,7 @@ fn id(scene: &Scene) -> Uuid {
         .unwrap()
         .transaction
 }
-fn retry(
+pub(super) fn retry(
     scene: &Scene,
     transaction: Uuid,
     stop: Option<&str>,
