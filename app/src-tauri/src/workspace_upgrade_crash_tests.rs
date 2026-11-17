@@ -29,6 +29,89 @@ pub(super) fn crash_at(data: &Path, local: &Path, source: Uuid, point: &str) {
         std::thread::sleep(Duration::from_secs(1));
     }
 }
+#[cfg(unix)]
+#[test]
+fn transaction_owner_drop_releases_fork_inheritance_but_child_drop_cannot_unlock_parent() {
+    const KEY: &str = "BRIDGE_TEST_UPGRADE_OWNER_FORK";
+    if std::env::var_os(KEY).is_none() {
+        let name = format!("{}::transaction_owner_drop_releases_fork_inheritance_but_child_drop_cannot_unlock_parent", module_path!().split_once("::").unwrap().1);
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &name, "--nocapture"])
+            .env(KEY, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return;
+    }
+    for (metadata, child_drops) in [(false, false), (false, true), (true, false), (true, true)] {
+        let temp = tempfile::tempdir().unwrap();
+        let local = temp.path().join("local");
+        fs::create_dir(&local).unwrap();
+        let open = || {
+            if metadata {
+                SetupStore::new(Some(temp.path().into()))
+                    .snapshot_for_upgrade(Uuid::from_u128(1))
+                    .map(|owner| (None, Some(owner)))
+                    .map_err(|_| RuntimeError::RetainedState)
+            } else {
+                WorkspaceUpgrade::open(temp.path(), &local).map(|owner| (Some(owner), None))
+            }
+        };
+        let owner = open().unwrap();
+        let mut pipe = [0; 2];
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0);
+        if pid == 0 {
+            unsafe {
+                libc::close(pipe[1]);
+                if child_drops {
+                    drop(owner);
+                } else {
+                    let mut byte = 0u8;
+                    libc::read(pipe[0], (&mut byte as *mut u8).cast(), 1);
+                }
+                libc::_exit(0);
+            }
+        }
+        unsafe {
+            libc::close(pipe[0]);
+        }
+        let mut status = 0;
+        if child_drops {
+            assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+            assert_eq!(status, 0);
+            assert!(
+                open().is_err(),
+                "child released parent's custody; metadata={metadata}"
+            );
+            drop(owner);
+            assert!(open().is_ok());
+        } else {
+            drop(owner);
+            let reopened = open();
+            let sent = unsafe { libc::write(pipe[1], b"x".as_ptr().cast(), 1) };
+            let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
+            assert_eq!(sent, 1);
+            assert_eq!(waited, pid);
+            assert_eq!(status, 0);
+            assert!(
+                reopened.is_ok(),
+                "inherited descriptor retained custody; metadata={metadata}: {:?}",
+                reopened.err()
+            );
+        }
+        unsafe {
+            libc::close(pipe[1]);
+        }
+    }
+}
 struct ChildGuard(Child);
 impl Drop for ChildGuard {
     fn drop(&mut self) {

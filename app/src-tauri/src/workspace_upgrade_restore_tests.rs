@@ -298,6 +298,47 @@ fn restore_retains_incomplete_b_without_reopening_it_or_recovering_creation_auth
     }
 }
 #[test]
+fn interrupted_restore_refuses_unrecorded_metadata_writes_without_overwriting_them() {
+    // Until Restore completes, only exact recorded effects may be reconciled.
+    // The matching older app must not be opened during this window.
+    let mut s = Scene::new(ImageTarget::WindowsAmd64);
+    s.replace(None).unwrap();
+    let b = consumed_destination(&s);
+    destination_metadata(&s, b.installation);
+    let id = transaction(&s);
+    assert!(matches!(
+        restore(&s, id, Some("source-restored")),
+        Err(RuntimeError::Closed)
+    ));
+    let (model, account) = destination_metadata(&s, s.source_id);
+    let intent = fs::read(s.local.join(STORE).join("intent.json")).unwrap();
+    let mut owner = WorkspaceUpgrade::open(&s.data, &s.local).unwrap();
+    assert!(matches!(owner.recover(), Err(RuntimeError::RetainedState)));
+    assert!(matches!(
+        owner.restore(id),
+        Err(RuntimeError::RetainedState)
+    ));
+    assert_eq!(fs::read(s.data.join("setup-v1/model-v1")).unwrap(), model);
+    assert_eq!(
+        fs::read(s.data.join("setup-v1/model-account-v1")).unwrap(),
+        account
+    );
+    assert_eq!(
+        fs::read(s.local.join(STORE).join("intent.json")).unwrap(),
+        intent
+    );
+    assert_eq!(
+        read_record(&s.local.join("local-vm-v1"))
+            .unwrap()
+            .installation_id,
+        s.source_id
+    );
+    assert_eq!(
+        installation(&s.local.join(format!("retained-new-{id}"))).unwrap(),
+        Some(b)
+    );
+}
+#[test]
 fn restore_releases_its_unhanded_destination_and_never_returns_that_creation_authority() {
     let mut s = Scene::new(ImageTarget::WindowsAmd64);
     let mut owner = WorkspaceUpgrade::open(&s.data, &s.local).unwrap();

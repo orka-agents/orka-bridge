@@ -100,7 +100,17 @@ pub(crate) struct WorkspaceUpgrade {
     local: PathBuf,
     directory: Dir,
     _owner: File,
+    owner_process: u32,
     live_destination: Option<Journal>,
+}
+impl Drop for WorkspaceUpgrade {
+    fn drop(&mut self) {
+        // A concurrent fork may inherit even CLOEXEC descriptors until exec.
+        // Only this process owns the transaction; a child must not unlock it.
+        if self.owner_process == std::process::id() {
+            let _ = self._owner.unlock();
+        }
+    }
 }
 fn directory_identity(path: &Path) -> Result<FileIdentity, RuntimeError> {
     if !fs::symlink_metadata(path)?.file_type().is_dir() {
@@ -245,6 +255,7 @@ impl WorkspaceUpgrade {
             local: local.to_owned(),
             directory,
             _owner: owner,
+            owner_process: std::process::id(),
             live_destination: None,
         })
     }

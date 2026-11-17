@@ -162,15 +162,25 @@ fn write_file(root: &Path, name: &str, bytes: &[u8]) -> Result<(), SetupError> {
 pub(crate) struct UpgradeMetadata {
     pub model: Option<Vec<u8>>,
     pub account: Option<Vec<u8>>,
-    _owner: fs::File,
+    _owner: UpgradeMetadataOwner,
+}
+pub(crate) struct UpgradeMetadataOwner(fs::File, u32);
+impl Drop for UpgradeMetadataOwner {
+    fn drop(&mut self) {
+        // Upgrade recovery must not retain ownership through another thread's
+        // fork/exec window, nor let an inherited child release the parent lock.
+        if self.1 == std::process::id() {
+            let _ = self.0.unlock();
+        }
+    }
 }
 impl SetupStore {
     /// Recovery already has exact durable snapshots; lock without interpreting a
     /// temporarily mixed pair of records as a new credential association.
     #[allow(dead_code)]
-    pub(crate) fn lock_upgrade_metadata(&self) -> Result<fs::File, SetupError> {
+    pub(crate) fn lock_upgrade_metadata(&self) -> Result<UpgradeMetadataOwner, SetupError> {
         let root = self.root.as_ref().ok_or_else(unavailable)?;
-        model_owner(root)
+        Ok(UpgradeMetadataOwner(model_owner(root)?, std::process::id()))
     }
     #[allow(dead_code)]
     pub(crate) fn snapshot_for_upgrade(
@@ -180,7 +190,7 @@ impl SetupStore {
         let _access = self.access.lock().map_err(|_| unavailable())?;
         let root = self.root.as_ref().ok_or_else(unavailable)?;
         fs::create_dir_all(root).map_err(|_| unavailable())?;
-        let owner = model_owner(root)?;
+        let owner = self.lock_upgrade_metadata()?;
         let binding = read_binding(root)?;
         if binding
             .as_ref()
