@@ -390,19 +390,33 @@ test('Manage after an unused Add keeps its already confirmed target', async () =
   expect(screen.queryByRole('button', { name: 'Use this cluster' })).toBeNull();
 });
 
-test('showing context choices does not strand a pending Manage inventory', async () => {
-  const { ipc } = native(); const old = ipc.getMockImplementation()!; const pending = deferred<unknown>();
+test('showing context choices, including repeated clicks while loading, does not strand Manage inventory', async () => {
+  const { ipc } = native(); const old = ipc.getMockImplementation()!;
+  const pending = deferred<unknown>(), replacement = deferred<unknown>(), contexts = deferred<unknown>();
   const fresh = { ...primary, stale: false, agents: [{ name: 'reader', namespace: 'agents', uid: 'uid-reader', agentType: null, model: null, tools: [], record: null }] };
-  let reads = 0;
-  mockIPC(command => command === 'overview_places' ? ++reads === 1 ? pending.promise : { places: [fresh], historyState: 'complete', unobserved: [] } : old(command));
+  let reads = 0, contextReads = 0;
+  mockIPC(command => {
+    if (command === 'overview_places') return ++reads === 1 ? pending.promise : replacement.promise;
+    if (command === 'cluster_contexts') { contextReads++; return contexts.promise; }
+    return old(command);
+  });
   const user = userEvent.setup(); render(<Host initial={connected} />);
   await user.click(within(await screen.findByRole('region', { name: 'team-dev' })).getByRole('button', { name: 'Manage' }));
   await user.click(await screen.findByRole('button', { name: 'Show details' }));
   await screen.findByText('Reading agents…');
-  await user.click(screen.getByRole('button', { name: 'Change context' }));
+  const change = screen.getByRole('button', { name: 'Change context' });
+  await user.click(change);
+  await waitFor(() => expect(reads).toBe(2));
+  await user.click(change);
+  expect(contextReads).toBe(1);
+  await act(async () => {
+    contexts.resolve([context]);
+    replacement.resolve({ places: [fresh], historyState: 'complete', unobserved: [] });
+    pending.resolve({ places: [{ ...primary, agents: [] }], historyState: 'complete', unobserved: [] });
+  });
   expect(await screen.findByText('reader')).toBeTruthy();
-  await act(async () => pending.resolve({ places: [{ ...primary, agents: [] }], historyState: 'complete', unobserved: [] }));
-  expect(screen.getByText('reader')).toBeTruthy();
+  expect(screen.queryByText('Reading agents…')).toBeNull();
+  expect(change.matches(':disabled')).toBe(false);
   expect(reads).toBe(2);
 });
 
