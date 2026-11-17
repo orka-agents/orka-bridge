@@ -173,6 +173,15 @@ func nativeElements(_ root: AXUIElement? = nil) -> [AXUIElement] {
     }
     return nodes
 }
+func nativeRegion(_ name: String) -> AXUIElement {
+    let matches = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXGroup"
+            && attribute(element, "AXSubrole") as? String == "AXLandmarkRegion"
+            && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == name }
+    }
+    require(matches.count == 1, "Expected one named native region \(name), found \(matches.count)")
+    return matches[0]
+}
 func nativeBounds(_ element: AXUIElement) -> CGRect? {
     guard let position = attribute(element, "AXPosition"), CFGetTypeID(position) == AXValueGetTypeID(),
         let size = attribute(element, "AXSize"), CFGetTypeID(size) == AXValueGetTypeID() else { return nil }
@@ -193,8 +202,8 @@ func clickDesignerView(_ name: String) {
     Thread.sleep(forTimeInterval: 0.3)
 }
 // Places actions are native buttons; a row action may carry the row name after its verb.
-func nativeButtons(_ label: String) -> [AXUIElement] {
-    nativeElements().filter { element in
+func nativeButtons(_ label: String, root: AXUIElement? = nil) -> [AXUIElement] {
+    nativeElements(root).filter { element in
         guard let role = attribute(element, "AXRole") as? String else { return false }
         // WebKit exposes the context's aria-haspopup trigger as a popup button.
         return (role == "AXButton" || label == "kubectl context" && role == "AXPopUpButton")
@@ -239,13 +248,13 @@ func nativeStrings() -> [String] {
         ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
     }
 }
-func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bool = true, exact: Bool = false) -> [CGRect] {
+func nativeTextBounds(_ expected: String, heading: Bool = false, visibleOnly: Bool = true, exact: Bool = false, root: AXUIElement? = nil) -> [CGRect] {
     guard window() != nil else { return [] }
     // Use the same native viewport as controls: compact tabs are shorter than wide tabs.
     // Below-the-fold bounds can guide scrolling, but never prove visibility.
     let body = bodyBounds()
     var matches: [CGRect] = []
-    for element in nativeElements() {
+    for element in nativeElements(root) {
         guard let role = attribute(element, "AXRole") as? String else { continue }
         if ["AXStaticText", "AXHeading", "AXDisclosureTriangle"].contains(role) && (!heading || role == "AXHeading") {
             let values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
@@ -625,12 +634,13 @@ func setContent(_ width: CGFloat, _ height: CGFloat) {
     Thread.sleep(forTimeInterval: 0.5)
     require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Native \(width)x\(height) content area not verified")
 }
-func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
+func clickSendControl(_ label: String, scrolling pixels: Int32, region: String? = "Send and cluster tests") throws {
+    let root = region.map { nativeRegion($0) }
     if ["Check again", "Send as a separate agent", "See in Overview", "Run cluster tests again", "Send and run tests", "Update agent and run tests"].contains(label),
-        nativeButtons(label).allSatisfy({ nativeBounds($0).map { $0.width <= 1 || $0.height <= 1 } ?? true }) {
+        nativeButtons(label, root: root).allSatisfy({ nativeBounds($0).map { $0.width <= 1 || $0.height <= 1 } ?? true }) {
         // Extra actions now live in the existing resources disclosure. Open it
         // explicitly rather than clicking a hidden control or emulating layout.
-        try clickSendControl("Details", scrolling: pixels)
+        try clickSendControl("Details", scrolling: pixels, region: region)
     }
     // Disabling Start during IPC can reset WebKit's keyboard focus. Locate the
     // real control after each state transition instead of counting Tab stops.
@@ -639,9 +649,9 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
     for _ in 0..<4 {
         // A state capture may leave the card header above the viewport. Locate
         // its actual button instead of searching only in the caller's direction.
-        let buttons = label == "Details" ? nativeButtons(label).filter { element in
+        let buttons = label == "Details" ? nativeButtons(label, root: root).filter { element in
             ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("Resources and file hashes") == true }
-        } : nativeButtons(label)
+        } : nativeButtons(label, root: root)
         if buttons.count == 1, let bounds = nativeBounds(buttons[0]), !bodyBounds().contains(bounds) {
             scrollMain(Int32((bodyBounds().minY + 32 - bounds.minY).rounded()))
         }
@@ -659,7 +669,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32) throws {
         // Vision includes the native disclosure triangle as a bullet in this label.
         if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"^\W*published-checksum\b"#, options: [.regularExpression, .caseInsensitive]) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) || (label == "Destination ready" && $0.range(of: #"^\W*Destination ready\b"#, options: .regularExpression) != nil) }) {
             if ["Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent", "Cancel tests", "Retry cancellation", "Check cluster status", "Check again", "Reload saved files", "Send to a cluster", "See in Overview"].contains(label) {
-                let enabled = nativeElements().contains { element in
+                let enabled = nativeElements(root).contains { element in
                     attribute(element, "AXRole") as? String == "AXButton"
                         && attribute(element, "AXEnabled") as? Bool == true
                         && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
@@ -1097,11 +1107,27 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     @discardableResult
     func capturePreflight(_ name: String, _ expected: String, anchor: String? = nil,
-                          requiring: (([VNRecognizedTextObservation]) -> Bool)? = nil) throws -> [VNRecognizedTextObservation] {
+                          region: String = "Send and cluster tests", requiring: (([VNRecognizedTextObservation]) -> Bool)? = nil) throws -> [VNRecognizedTextObservation] {
         for _ in 0..<8 {
             // Preserve a visible transient state before doing any search work.
             let seen = try capture("send-probe", "Designer", searching: true)
-            let text = seen.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+            let root = nativeRegion(region)
+            guard let bounds = nativeBounds(root), let frame = window()?.1 else {
+                fail("Native result region has no capture bounds: \(region)")
+            }
+            let viewport = bounds.intersection(bodyBounds())
+            // Select evidence from this frozen frame, not matching local tests elsewhere in the window.
+            let scopedSeen = seen.filter { observation in
+                let box = observation.boundingBox
+                let textBounds = CGRect(x: frame.minX + box.minX * frame.width,
+                    y: frame.minY + (1 - box.maxY) * frame.height,
+                    width: box.width * frame.width, height: box.height * frame.height)
+                return viewport.contains(textBounds)
+            }
+            // Code tokens can wrap after a hyphen; do not insert an OCR-only space inside the ID.
+            let text = scopedSeen.compactMap { $0.topCandidates(1).first?.string }.reduce("") { text, line in
+                text + (text.isEmpty || text.hasSuffix("-") ? "" : " ") + line
+            }
             // Section labels are uppercased; Vision also varies casing in the fixed fixture ID.
             // Require Send context in this same captured frame, never later accessibility state.
             if text.localizedCaseInsensitiveContains(expected) && sendFrameVisible(seen) && (requiring?(seen) ?? true) {
@@ -1120,11 +1146,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             // Anchor missing text in either direction, away from fixed chrome.
             // Prefer rendered text over a 1px screen-reader announcement.
             // An explicit anchor is an exact label: the editor's longer storage note is not saved-result provenance.
-            let textAnchor = nativeTextBounds(anchor ?? expected, visibleOnly: false, exact: anchor != nil)
+            // Titles/IDs also occur in local Designer tests; anchor only the named result region.
+            let textAnchor = nativeTextBounds(anchor ?? expected, visibleOnly: false, exact: anchor != nil, root: root)
                 .filter({ $0.width > 1 && $0.height > 1 })
                 .max(by: { $0.width * $0.height < $1.width * $1.height })
             // Action labels are AXButtons, not static text. Closing Details can leave them above the viewport.
-            let buttonAnchor = nativeButtons(anchor ?? expected).compactMap { nativeBounds($0) }
+            let buttonAnchor = nativeButtons(anchor ?? expected, root: root).compactMap { nativeBounds($0) }
                 .first { $0.width > 1 && $0.height > 1 }
             if let anchor = textAnchor ?? buttonAnchor {
                 let delta = bodyBounds().minY + 64 - anchor.minY
@@ -1136,14 +1163,15 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     let sendActionLabels = ["Cancel tests", "Check cluster status", "Retry cancellation", "Reload saved files", "Choose a cluster", "Check again", "See in Overview", "Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent"]
     func closeSendDetails() throws {
-        if nativeButtons("Copy Planned agent").contains(where: { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }) {
+        if nativeButtons("Copy Planned agent", root: nativeRegion("Send and cluster tests")).contains(where: { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }) {
             try clickSendControl("Details", scrolling: 350)
         }
     }
     func requireSendActions(_ expected: [String]) throws {
         try closeSendDetails()
+        let root = nativeRegion("Send and cluster tests")
         let actions = sendActionLabels.filter { label in
-            nativeButtons(label).contains { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }
+            nativeButtons(label, root: root).contains { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }
         }
         require(actions.count >= 3 && actions.contains("See in Overview") && actions.contains("Check again"), "Baseline must retain crowded header actions: \(actions)")
         if expected.contains("Check cluster status") { require(actions.contains("Retry cancellation"), "Baseline unsupported retry must still be exposed") }
@@ -1196,7 +1224,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         try closeSendDetails()
         // Observe a real Send control after reflow. Vision can omit the small uppercase section label.
         let actions = ["See in Overview", "Cancel tests", "Send and run tests", "Update agent and run tests", "Run cluster tests again", "Check cluster status", "Reload saved files", "Choose a cluster", "Check again"]
-        guard let action = actions.first(where: { nativeButtons($0).filter { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }.count == 1 }) else { fail("Send panel has no recognized action after reflow") }
+        let root = nativeRegion("Send and cluster tests")
+        guard let action = actions.first(where: { nativeButtons($0, root: root).filter { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }.count == 1 }) else { fail("Send panel has no recognized action after reflow") }
         _ = try capturePreflight("send-probe", action)
     }
     func resultSize(_ width: CGFloat, _ height: CGFloat) throws {
@@ -1355,8 +1384,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // native reason (including its expected value) fully above the footer.
     let failureReason = "The answer did not include “2099-12-31”."
     let visibleFailure: ([VNRecognizedTextObservation]) -> Bool = { seen in
-        seen.contains { ($0.topCandidates(1).first?.string ?? "").contains("Failed") }
-            && nativeTextBounds(failureReason, exact: true).contains { bodyBounds().contains($0) }
+        let root = nativeRegion("Send and cluster tests")
+        return seen.contains { ($0.topCandidates(1).first?.string ?? "").contains("Failed") }
+            && nativeTextBounds("has-a-date", exact: true, root: root).contains { bodyBounds().contains($0) }
+            && nativeTextBounds(failureReason, exact: true, root: root).contains { bodyBounds().contains($0) }
     }
     try capturePreflight("send-failed-wide", "has-a-date", anchor: failureReason, requiring: visibleFailure)
     require(nativeStrings().contains { $0.contains("has-a-date") }, "Baseline result must retain its code ID")
@@ -1642,7 +1673,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Use this cluster", in: cancellationTarget)
     scrollMain(-400)
     clickText("Open your agent", in: try capture("cluster-probe", "Clusters"))
-    try clickSendControl("Send to a cluster", scrolling: -350)
+    try clickSendControl("Send to a cluster", scrolling: -350, region: nil)
     restoreTemporaryTests = { try originalTests.write(to: testsURL, options: .atomic) }
     try mixedTests.write(to: testsURL, options: .atomic)
     try clickSendControl("Check again", scrolling: -250)
@@ -1726,7 +1757,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             "Removed cluster returned after restart")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
-    try clickSendControl("Send to a cluster", scrolling: -350)
+    try clickSendControl("Send to a cluster", scrolling: -350, region: nil)
     clickButton("Past Sends")
     guard let historyHeading = nativeButtons("Past Sends").compactMap({ nativeBounds($0) }).first else {
         fail("Saved Send history was not reachable after restart")
@@ -1765,7 +1796,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(-100)
     }
     require(savedOpened, "Saved passing Send details were not reachable")
-    try clickSendControl("published-checksum", scrolling: -100)
+    try clickSendControl("published-checksum", scrolling: -100, region: "Past Sends")
     try capture("send-history-answer", "Designer")
     try resultSize(1280, 800)
     // Anchor the entire saved result before looking for answer pixels, not whichever tail survived reflow.
@@ -1775,7 +1806,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     scrollMain(Int32((bodyBounds().minY + 64 - provenance.minY).rounded()))
     // The answer-only fallback can scroll the question/provenance out of view after reflow.
     // Keep anchoring the whole saved result until one frame proves all three.
-    let savedWide = try capturePreflight("send-history-answer-wide", "Fixture answer:", anchor: "Saved on this computer", requiring: { seen in
+    let savedWide = try capturePreflight("send-history-answer-wide", "Fixture answer:", anchor: "Saved on this computer", region: "Past Sends", requiring: { seen in
         seen.contains { ($0.topCandidates(1).first?.string ?? "").contains("What SHA-256 checksum does") }
             && nativeTextIsVisible("Saved on this computer", exact: true)
     })

@@ -182,6 +182,8 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
 // Source contracts supplement, but never substitute for, the hosted native walk.
 const smoke = await readFile(new URL('./native-smoke.swift', import.meta.url), 'utf8');
 const model = await readFile(new URL('./native-model-macos.swift', import.meta.url), 'utf8');
+assert.ok(model.includes('nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2")'), 'numbered Chat versions must be verified as native headings, not body static text');
+assert.ok(model.includes('attribute(element, "AXRole") as? String == "AXHeading"'), 'Chat heading discovery must use its actual native role');
 assert.ok(smoke.includes('("minimum", CGFloat(540), CGFloat(640))'));
 for (const name of ['send-failed', 'send-unsupported', 'send-earlier-target']) assert.ok(smoke.includes(`captureSendPresentation("${name}"`));
 assert.ok(smoke.includes('Native') && smoke.includes('Result window size was not applied'));
@@ -190,7 +192,15 @@ assert.ok(unsupportedWalk.includes('"Check cluster status"'));
 assert.ok(!unsupportedWalk.includes('clickSendControl("Retry cancellation"'), 'unsupported must be last, never followed by retry');
 assert.ok(smoke.indexOf('send-cancel-completion-race') < smoke.indexOf('// Unsupported is deliberately the last Send:'));
 assert.ok(smoke.includes('Resources and file hashes'), 'native discovery must distinguish resources from nested Details');
-assert.ok(smoke.includes('let buttonAnchor = nativeButtons(anchor ?? expected)'), 'action captions need actual AXButton bounds after Details closes');
+assert.ok(smoke.includes('let buttonAnchor = nativeButtons(anchor ?? expected, root: root)'), 'action captions need scoped AXButton bounds after Details closes');
+assert.ok(smoke.includes('nativeTextBounds(anchor ?? expected, visibleOnly: false, exact: anchor != nil, root: root)'), 'duplicate local test names cannot steer Send anchors');
+assert.ok(smoke.includes('nativeTextBounds(failureReason, exact: true, root: root)'), 'the visible failure reason must belong to Send');
+assert.ok(smoke.includes('let text = scopedSeen.compactMap'), 'frozen OCR acceptance must use region-bound evidence, not the matching local test');
+assert.ok(smoke.includes('attribute(element, "AXSubrole") as? String == "AXLandmarkRegion"'), 'named regions must not collide with their disclosure groups');
+assert.ok(smoke.includes('return viewport.contains(textBounds)'), 'frozen OCR evidence must be contained in the visible native region');
+assert.ok(smoke.includes('text.hasSuffix("-")'), 'hyphenated fixture IDs must survive native OCR line wraps');
+assert.ok(smoke.includes('region: "Past Sends", requiring:'), 'saved history anchors keep their separate region');
+assert.ok(smoke.includes('scrolling: -350, region: nil'), 'the Designer Send entry is outside the result region');
 assert.ok(smoke.includes('if let anchor = textAnchor ?? buttonAnchor'), 'native action anchors retain frozen-frame verification');
 assert.ok(model.includes('localSize(540, 640)') && model.includes('chat-new-version-minimum'));
 assert.ok(source.includes("resizeTo({ width: 1280, height: 800 }, 'Wide')"));
