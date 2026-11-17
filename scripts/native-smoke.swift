@@ -1174,6 +1174,45 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     @discardableResult
     func capturePreflight(_ name: String, _ expected: String, anchor: String? = nil,
                           region: String = "Send and cluster tests", requiring: (([VNRecognizedTextObservation]) -> Bool)? = nil) throws -> [VNRecognizedTextObservation] {
+        func enlargedChecksumVisible(_ viewport: CGRect, _ frame: CGRect) throws -> Bool {
+            guard [viewport.origin.x, viewport.origin.y, viewport.width, viewport.height,
+                   frame.origin.x, frame.origin.y, frame.width, frame.height].allSatisfy({ $0.isFinite }),
+                !viewport.isEmpty, frame.width > 0, frame.height > 0,
+                let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: "\(output)/send-probe.png") as CFURL, nil),
+                let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return false }
+            let scaleX = CGFloat(image.width) / frame.width, scaleY = CGFloat(image.height) / frame.height
+            let pixels = CGRect(x: (viewport.minX - frame.minX) * scaleX,
+                y: (viewport.minY - frame.minY) * scaleY,
+                width: viewport.width * scaleX, height: viewport.height * scaleY)
+            guard [pixels.origin.x, pixels.origin.y, pixels.width, pixels.height].allSatisfy({ $0.isFinite }) else { return false }
+            let clipped = pixels.intersection(CGRect(x: 0, y: 0, width: CGFloat(image.width), height: CGFloat(image.height)))
+            guard !clipped.isNull, !clipped.isEmpty else { return false }
+            // Round inward so the crop never includes pixels outside the visible Send region.
+            let rect = CGRect(x: ceil(clipped.minX), y: ceil(clipped.minY),
+                width: floor(clipped.maxX) - ceil(clipped.minX), height: floor(clipped.maxY) - ceil(clipped.minY))
+            guard rect.width > 0, rect.height > 0, let crop = image.cropping(to: rect),
+                let space = CGColorSpace(name: CGColorSpace.sRGB),
+                let context = CGContext(data: nil, width: crop.width * 2, height: crop.height * 2,
+                    bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.interpolationQuality = .high
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: CGFloat(crop.width * 2), height: CGFloat(crop.height * 2)))
+            guard let enlarged = context.makeImage(),
+                let png = NSBitmapImageRep(cgImage: enlarged).representation(using: .png, properties: [:]) else { return false }
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            do { try VNImageRequestHandler(cgImage: enlarged, options: [:]).perform([request]) }
+            catch { print("Frozen Send crop OCR failed: \(error)"); return false }
+            let rows = request.results ?? []
+            let text = rows.compactMap { $0.topCandidates(1).first?.string }.reduce("") { text, line in
+                text + (text.isEmpty || text.hasSuffix("-") ? "" : " ") + line
+            }
+            guard normalizedSendText(text).localizedCaseInsensitiveContains(expected) else { return false }
+            try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-send-crop-2x.png"), options: .atomic)
+            try rows.map { "\($0.boundingBox): \($0.topCandidates(1).first?.string ?? "")" }.joined(separator: "\n")
+                .write(toFile: "\(output)/\(name)-send-crop-2x.ocr.txt", atomically: true, encoding: .utf8)
+            return true
+        }
         for _ in 0..<8 {
             // Preserve a visible transient state before doing any search work.
             let seen = try capture("send-probe", "Designer", searching: true)
@@ -1196,7 +1235,15 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             }
             // Section labels are uppercased; Vision also varies casing in the fixed fixture ID.
             // Require Send context in this same captured frame, never later accessibility state.
-            if normalizedSendText(text).localizedCaseInsensitiveContains(expected) && sendFrameVisible(seen) && (requiring?(seen) ?? true) {
+            var matchesExpected = normalizedSendText(text).localizedCaseInsensitiveContains(expected)
+            // Small monospace IDs may be omitted by full-window OCR. Reuse only these frozen pixels;
+            // keep the original rows for callers and require their original full-window context/guards.
+            let hasContext = (matchesExpected || expected == "published-checksum")
+                && sendFrameVisible(seen) && (requiring?(seen) ?? true)
+            if !matchesExpected && expected == "published-checksum" && hasContext {
+                matchesExpected = try enlargedChecksumVisible(viewport, frame)
+            }
+            if matchesExpected && hasContext {
                 // Keep the frame we verified. A transient state can end between
                 // two screenshots; a second OCR pass would test a different frame.
                 if name != "send-probe" {
