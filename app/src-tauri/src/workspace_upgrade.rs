@@ -28,6 +28,7 @@ use std::{
 use tokio::sync::watch;
 
 const STORE: &str = "workspace-upgrades-v1";
+type MetadataFiles<'a> = [(&'static str, &'a Option<Vec<u8>>); 2];
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Installation {
@@ -852,7 +853,7 @@ impl WorkspaceUpgrade {
     fn source_metadata<'a>(
         &self,
         intent: &'a Intent,
-    ) -> Result<[(&'static str, &'a Option<Vec<u8>>); 2], RuntimeError> {
+    ) -> Result<MetadataFiles<'a>, RuntimeError> {
         let removed = self
             .slot(intent)?
             .map(|s| self.slot_outcome(s))
