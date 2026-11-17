@@ -184,6 +184,7 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
 const smoke = await readFile(new URL('./native-smoke.swift', import.meta.url), 'utf8');
 const model = await readFile(new URL('./native-model-macos.swift', import.meta.url), 'utf8');
 assert.ok(model.includes('nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2")'), 'numbered Chat versions must be verified as native headings, not body static text');
+assert.ok(model.includes('seek("Conversation 2", 100)'), 'Chat capture must search up from the composer-follow position for its heading');
 assert.ok(model.includes('attribute(element, "AXRole") as? String == "AXHeading"'), 'Chat heading discovery must use its actual native role');
 assert.ok(smoke.includes('("minimum", CGFloat(540), CGFloat(640))'));
 for (const name of ['send-failed', 'send-unsupported', 'send-earlier-target']) assert.ok(smoke.includes(`captureSendPresentation("${name}"`));
@@ -196,6 +197,7 @@ assert.ok(smoke.includes('Resources and file hashes'), 'native discovery must di
 assert.ok(smoke.includes('let buttonAnchor = nativeButtons(anchor ?? expected, root: root)'), 'action captions need scoped AXButton bounds after Details closes');
 assert.ok(smoke.includes('nativeTextBounds(anchor ?? expected, visibleOnly: false, exact: anchor != nil, root: root)'), 'duplicate local test names cannot steer Send anchors');
 assert.ok(smoke.includes('nativeTextBounds(failureReason, exact: true, root: root)'), 'the visible failure reason must belong to Send');
+assert.ok(smoke.includes('nativeButtons("has-a-date", root: root).compactMap'), 'case identity/visibility must use its native summary control, not a title static-text proxy');
 assert.ok(smoke.includes('let text = scopedSeen.compactMap'), 'frozen OCR acceptance must use region-bound evidence, not the matching local test');
 assert.ok(smoke.includes('attribute(element, "AXSubrole") as? String == "AXLandmarkRegion"'), 'named regions must not collide with their disclosure groups');
 assert.ok(smoke.includes('return viewport.contains(textBounds)'), 'frozen OCR evidence must be contained in the visible native region');
