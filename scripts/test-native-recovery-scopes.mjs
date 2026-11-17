@@ -289,6 +289,8 @@ assert.ok(model.includes('capture("local-overview-ai-disconnected-collapsed-\\(s
 assert.ok(smoke.includes('Show places for web-reader') && smoke.includes('overview-fixture-multiple-places-expanded'), 'native smoke must expand the agent list before proving per-place evidence');
 assert.ok(!smoke.includes('heading: "fixture-secondary"'), 'place names are marks or evidence labels, never list headings');
 assert.ok(smoke.includes('overviewShot("overview-fixture-offline-expanded", ["fixture-secondary:",'), 'offline recovery must anchor its source label, not a distant place mark');
+const overviewShotGate = smoke.slice(smoke.indexOf('    func overviewShot('), smoke.indexOf('    func recordShot('));
+assert.ok(overviewShotGate.includes('afterFrame:') && !overviewShotGate.includes('anchor.minY'), 'capture the already-visible native Overview state; do not scroll it away for cosmetic framing');
 assert.ok(smoke.includes('name.hasPrefix("overview-probe-")'), 'renamed scrolled Overview probes must retain the existing heading exemption');
 assert.ok(smoke.includes('CGFloat(image.width - chromeInset)') && smoke.includes('name.hasPrefix("overview-") ? 20 : 8'), 'Overview theme sampling must avoid its transient edge scrollbar without relaxing the theme tolerance');
 assert.ok(!smoke.includes('clickText("Refresh", in: try capture("overview-probe", "Overview"))') && !smoke.includes('clickText("By agent"') && !smoke.includes('clickText("By cluster"'), 'native smoke must remove top Refresh and grouping-only Overview paths');

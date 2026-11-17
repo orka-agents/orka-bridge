@@ -1531,10 +1531,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         for _ in 0..<40 {
             let anchors = visibleTextBounds(required[0])
             if !anchors.isEmpty && required.allSatisfy({ nativeTextIsVisible($0) }) {
-                let anchor = anchors[0]
-                scrollMain(-Int32(max(0, anchor.minY - window()!.1.minY - 150)))
-                require(required.allSatisfy({ nativeTextIsVisible($0) }), "Overview state moved out of view: \(required)")
-                let seen = try capture(name, "Overview")
+                // The required state already fits. Reframing can scroll its recovery note away.
+                let seen = try capture(name, "Overview", afterFrame: {
+                    require(required.allSatisfy({ nativeTextIsVisible($0) }), "Overview state moved during capture: \(required)")
+                })
                 print("PASS \(name): visible native state \(required)")
                 return seen
             }
