@@ -190,6 +190,8 @@ assert.ok(unsupportedWalk.includes('"Check cluster status"'));
 assert.ok(!unsupportedWalk.includes('clickSendControl("Retry cancellation"'), 'unsupported must be last, never followed by retry');
 assert.ok(smoke.indexOf('send-cancel-completion-race') < smoke.indexOf('// Unsupported is deliberately the last Send:'));
 assert.ok(smoke.includes('Resources and file hashes'), 'native discovery must distinguish resources from nested Details');
+assert.ok(smoke.includes('let buttonAnchor = nativeButtons(anchor ?? expected)'), 'action captions need actual AXButton bounds after Details closes');
+assert.ok(smoke.includes('if let anchor = textAnchor ?? buttonAnchor'), 'native action anchors retain frozen-frame verification');
 assert.ok(model.includes('localSize(540, 640)') && model.includes('chat-new-version-minimum'));
 assert.ok(source.includes("resizeTo({ width: 1280, height: 800 }, 'Wide')"));
 assert.ok(source.includes("resizeTo({ width: 540, height: 640 }, 'Compact')"));

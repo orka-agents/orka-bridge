@@ -1120,9 +1120,13 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             // Anchor missing text in either direction, away from fixed chrome.
             // Prefer rendered text over a 1px screen-reader announcement.
             // An explicit anchor is an exact label: the editor's longer storage note is not saved-result provenance.
-            if let anchor = nativeTextBounds(anchor ?? expected, visibleOnly: false, exact: anchor != nil)
+            let textAnchor = nativeTextBounds(anchor ?? expected, visibleOnly: false, exact: anchor != nil)
                 .filter({ $0.width > 1 && $0.height > 1 })
-                .max(by: { $0.width * $0.height < $1.width * $1.height }) {
+                .max(by: { $0.width * $0.height < $1.width * $1.height })
+            // Action labels are AXButtons, not static text. Closing Details can leave them above the viewport.
+            let buttonAnchor = nativeButtons(anchor ?? expected).compactMap { nativeBounds($0) }
+                .first { $0.width > 1 && $0.height > 1 }
+            if let anchor = textAnchor ?? buttonAnchor {
                 let delta = bodyBounds().minY + 64 - anchor.minY
                 if abs(delta) > 2 { scrollMain(Int32(delta.rounded())); continue }
             }
@@ -1132,7 +1136,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     let sendActionLabels = ["Cancel tests", "Check cluster status", "Retry cancellation", "Reload saved files", "Choose a cluster", "Check again", "See in Overview", "Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent"]
     func closeSendDetails() throws {
-        if !nativeButtons("Copy Planned agent").isEmpty { try clickSendControl("Details", scrolling: 350) }
+        if nativeButtons("Copy Planned agent").contains(where: { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }) {
+            try clickSendControl("Details", scrolling: 350)
+        }
     }
     func requireSendActions(_ expected: [String]) throws {
         try closeSendDetails()
@@ -1190,7 +1196,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         try closeSendDetails()
         // Observe a real Send control after reflow. Vision can omit the small uppercase section label.
         let actions = ["See in Overview", "Cancel tests", "Send and run tests", "Update agent and run tests", "Run cluster tests again", "Check cluster status", "Reload saved files", "Choose a cluster", "Check again"]
-        guard let action = actions.first(where: { nativeButtons($0).count == 1 }) else { fail("Send panel has no recognized action after reflow") }
+        guard let action = actions.first(where: { nativeButtons($0).filter { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }.count == 1 }) else { fail("Send panel has no recognized action after reflow") }
         _ = try capturePreflight("send-probe", action)
     }
     func resultSize(_ width: CGFloat, _ height: CGFloat) throws {
