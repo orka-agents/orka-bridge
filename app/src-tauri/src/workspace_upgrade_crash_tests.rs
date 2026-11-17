@@ -139,7 +139,7 @@ fn native_store() -> bool {
     cfg!(any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(windows, target_arch = "x86_64")
-    ))
+    )) && std::env::var("BRIDGE_TEST_NATIVE_CREDENTIAL_STORE").as_deref() == Ok("1")
 }
 struct OwnedSyntheticSlot(PathBuf);
 impl Drop for OwnedSyntheticSlot {
@@ -236,6 +236,25 @@ fn crash_child() {
             .unwrap();
     }
     panic!("crash point was not reached");
+}
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(windows, target_arch = "x86_64")
+))]
+#[test]
+#[ignore = "explicit native synthetic-slot verification; CI opts in"]
+fn native_credential_process_death_uses_only_owned_synthetic_slots() {
+    let output=Command::new(std::env::current_exe().unwrap())
+        .args(["--exact","workspace_upgrade::tests::process::credential_process_death_preserves_all_phase_reservations_and_exact_slot_outcomes","--nocapture"])
+        .env("BRIDGE_TEST_NATIVE_CREDENTIAL_STORE","1")
+        .output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
 }
 #[test]
 fn credential_process_death_preserves_all_phase_reservations_and_exact_slot_outcomes() {

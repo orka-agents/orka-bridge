@@ -407,7 +407,18 @@ impl WorkspaceUpgrade {
             let outcome = source.map(|s| self.slot_outcome(s)).transpose()?.flatten();
             let removed = outcome == Some(true)
                 || matches!(intent.credential, CredentialDisposition::Removed);
-            if outcome == Some(false) {
+            let archived_b = intent
+                .restore
+                .as_ref()
+                .map(|r| SetupStore::upgrade_slot(r.model.as_deref()))
+                .transpose()
+                .map_err(|_| RuntimeError::RetainedState)?
+                .flatten();
+            let archived_outcome = archived_b
+                .map(|slot| self.slot_outcome(slot))
+                .transpose()?
+                .flatten();
+            if outcome == Some(false) || archived_outcome == Some(false) {
                 return Err(RuntimeError::RetainedState);
             }
             if index == 0 && !matches!(intent.phase, Phase::ImagePrepared | Phase::Restored) {
@@ -427,15 +438,10 @@ impl WorkspaceUpgrade {
                 return Err(RuntimeError::RetainedState);
             }
             if let Some(slot) = slot {
-                let archived_b = intent
-                    .restore
-                    .as_ref()
-                    .map(|r| SetupStore::upgrade_slot(r.model.as_deref()))
-                    .transpose()
-                    .map_err(|_| RuntimeError::RetainedState)?
-                    .flatten();
                 if (source == Some(slot) || archived_b == Some(slot))
-                    && (removal || self.slot_removed(slot)? || (source == Some(slot) && removed))
+                    && (removal
+                        || self.slot_outcome(slot)?.is_some()
+                        || (source == Some(slot) && removed))
                 {
                     return Err(RuntimeError::RetainedState);
                 }
@@ -586,7 +592,12 @@ impl WorkspaceUpgrade {
         {
             // B may have acquired a different saved association since setup.
             // Validate its current ownership rather than comparing it with A.
-            if matches!(intent.credential, CredentialDisposition::Transferring) {
+            let removed = self
+                .slot(&intent)?
+                .map(|slot| self.slot_removed(slot))
+                .transpose()?
+                .unwrap_or(false);
+            if matches!(intent.credential, CredentialDisposition::Transferring) && !removed {
                 let expected =
                     SetupStore::transferred_model(intent.model.as_deref(), b.installation)
                         .map_err(|_| RuntimeError::RetainedState)?;

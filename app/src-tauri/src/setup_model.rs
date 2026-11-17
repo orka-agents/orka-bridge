@@ -510,11 +510,20 @@ impl SetupStore {
         if !selected(root)? {
             return Ok(());
         }
-        let _owners = self.mutation_owner(root, true)?;
-        if let Some(b) = read_binding(root)? {
-            if b.installation == installation && b.phase == Phase::Storing {
+        let owners = self.mutation_owner(root, false)?;
+        match read_binding(root)? {
+            Some(b) if b.installation == installation && b.phase == Phase::Storing => {
+                owners
+                    .0
+                    .guard_model(Some(b.slot), true)
+                    .map_err(|_| unavailable())?;
                 discard_absent_reservation(root, &b, store)?;
             }
+            None => owners
+                .0
+                .guard_model(None, true)
+                .map_err(|_| unavailable())?,
+            _ => {}
         }
         Ok(())
     }

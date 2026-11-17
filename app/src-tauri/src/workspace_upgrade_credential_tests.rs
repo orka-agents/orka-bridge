@@ -66,6 +66,121 @@ fn every_phase_and_interrupted_switch_refuses_ordinary_deletion_and_reservation(
     }
 }
 #[test]
+fn copilot_reuse_after_transfer_and_restore_reaches_guest_capability_before_loading() {
+    use bridge_runtime_protocol::*;
+    struct Wire(std::io::Cursor<Vec<u8>>);
+    impl Read for Wire {
+        fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+            self.0.read(b)
+        }
+    }
+    impl Write for Wire {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    for restored in [false, true] {
+        let mut s = Scene::new(ImageTarget::WindowsAmd64);
+        s.replace(None).unwrap();
+        let mut owner = WorkspaceUpgrade::open(&s.data, &s.local).unwrap();
+        let intent = owner.read_intent().unwrap().unwrap();
+        owner.transfer_credential(intent.transaction).unwrap();
+        let installation = if restored {
+            owner.restore(intent.transaction).unwrap();
+            s.source_id
+        } else {
+            intent.destination.unwrap().installation
+        };
+        drop(owner);
+        let before = fs::read(s.data.join("setup-v1/model-v1")).unwrap();
+        let nonce = Uuid::new_v4();
+        let reply = encode(&Frame::Result(WireResult {
+            version: VERSION,
+            boot_nonce: nonce,
+            request_id: 3,
+            body: ResultBody::Error {
+                code: ErrorCode::Unavailable,
+            },
+        }))
+        .unwrap();
+        let mut client = crate::runtime::client::VmClient::established(
+            Box::new(Wire(std::io::Cursor::new(reply))),
+            nonce,
+        )
+        .unwrap();
+        let setup = SetupStore::with_upgrade_root(Some(s.data.clone()), Some(s.local.clone()));
+        setup.select_local().unwrap();
+        let error = setup
+            .connect_stored_model(
+                installation,
+                &mut client,
+                &Vault(Mutex::new(vec![])),
+                || panic!("no recapture"),
+            )
+            .unwrap_err();
+        assert_eq!(
+            serde_json::to_value(error).unwrap()["kind"],
+            "modelGuest",
+            "restored={restored}"
+        );
+        assert_eq!(fs::read(s.data.join("setup-v1/model-v1")).unwrap(), before);
+    }
+}
+#[test]
+fn completed_removal_ends_partial_transfer_constraints_for_a_new_association() {
+    let mut s = Scene::new(ImageTarget::WindowsAmd64);
+    s.replace(None).unwrap();
+    let mut owner = WorkspaceUpgrade::open(&s.data, &s.local).unwrap();
+    let intent = owner.read_intent().unwrap().unwrap();
+    let slot = owner.slot(&intent).unwrap().unwrap();
+    assert!(owner
+        .transfer_credential_with(intent.transaction, |p| if p == "model-v1" {
+            Err(RuntimeError::Closed)
+        } else {
+            Ok(())
+        })
+        .is_err());
+    owner
+        .remove_credential(intent.transaction, slot, &Vault(Mutex::new(vec![])))
+        .unwrap();
+    let (new_model, _) =
+        super::restore::destination_metadata(&s, intent.destination.unwrap().installation);
+    assert!(owner.recover().is_ok());
+    owner
+        .remove_credential(intent.transaction, slot, &Vault(Mutex::new(vec![])))
+        .unwrap();
+    assert_eq!(
+        fs::read(s.data.join("setup-v1/model-v1")).unwrap(),
+        new_model
+    );
+    owner.restore(intent.transaction).unwrap();
+    assert!(!s.data.join("setup-v1/model-v1").exists());
+}
+#[test]
+fn pending_removal_of_a_distinct_archived_destination_slot_blocks_reuse() {
+    let mut s = Scene::new(ImageTarget::WindowsAmd64);
+    s.replace(None).unwrap();
+    let mut owner = WorkspaceUpgrade::open(&s.data, &s.local).unwrap();
+    let intent = owner.read_intent().unwrap().unwrap();
+    let source = owner.slot(&intent).unwrap().unwrap();
+    owner
+        .remove_credential(intent.transaction, source, &Vault(Mutex::new(vec![])))
+        .unwrap();
+    let (model, _) =
+        super::restore::destination_metadata(&s, intent.destination.unwrap().installation);
+    let destination = SetupStore::upgrade_slot(Some(&model)).unwrap().unwrap();
+    owner.restore(intent.transaction).unwrap();
+    owner.write_slot_outcome(destination, b"removing").unwrap();
+    assert!(owner.guard_model(Some(destination), false).is_err());
+    assert!(
+        owner.guard_model(None, true).is_err(),
+        "pending archived removal still reserves a credential"
+    );
+}
+#[test]
 fn definitive_failed_key_connect_cannot_auto_delete_a_retained_shared_slot() {
     use bridge_runtime_protocol::*;
     struct Wire(std::io::Cursor<Vec<u8>>);
@@ -298,6 +413,7 @@ fn transfer_keeps_only_eligible_slot_and_account_without_old_guest_authority() {
     all(windows, target_arch = "x86_64")
 ))]
 #[test]
+#[ignore = "explicit native synthetic-slot verification; CI opts in"]
 fn native_store_all_phases_keep_guarded_slots_until_explicit_exact_removal() {
     use crate::runtime::credential_store::OsCredentialStore;
     struct NativeSlot(Uuid);
