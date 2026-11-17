@@ -1355,7 +1355,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try capturePreflight("send-failed-wide", "has-a-date", anchor: failureReason, requiring: visibleFailure)
     require(nativeStrings().contains { $0.contains("has-a-date") }, "Baseline result must retain its code ID")
     try resultSize(540, 640)
-    try capturePreflight("send-failed-minimum", "has-a-date", anchor: failureReason, requiring: visibleFailure)
+    try capturePreflight("send-failed-minimum", "has-a-date", anchor: "has-a-date", requiring: visibleFailure)
     try captureSendPresentation("send-failed", actions: ["Run cluster tests again", "See in Overview"])
     // Arm only the loopback fixture: first answer completes, second Task stays
     // live. Hold the cancel reply until its in-flight state has been captured.
