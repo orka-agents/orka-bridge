@@ -1632,7 +1632,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Overview's explicit refresh gives the primary place its historical observation.
     // Places shows it later without refreshing again; the secondary has none yet.
     scrollMain(12000)
-    clickText("Refresh", in: try capture("overview-probe", "Overview"))
+    _ = try capture("overview-probe", "Overview")
+    clickButton("Refresh")
     Thread.sleep(forTimeInterval: 1)
     // Confirm another real synthetic installation via the existing Use flow.
     clickTab("Clusters", [])
@@ -1736,7 +1737,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try overviewShot("overview-fixture-first-read-unavailable", ["Couldn't check just now.", "Showing what Bridge saw", "runtime-reader"], heading: "fixture-secondary")
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false])
     scrollMain(12000)
-    clickText("Refresh", in: try capture("overview-probe", "Overview"))
+    _ = try capture("overview-probe", "Overview")
+    clickButton("Refresh")
     Thread.sleep(forTimeInterval: 1)
     try overviewShot("overview-fixture-multiple-places-by-place", ["fixture-secondary", "Passed"], heading: "fixture-secondary")
     require(!nativeTextIsVisible("Earlier Sends"), "Unobserved Send attempts must stay in Send history, not become Overview cards")
@@ -1746,7 +1748,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": true])
     defer { try? fixtureControl(["action": "offline", "place": "fixture-secondary", "offline": false]) }
     scrollMain(12000)
-    clickText("Refresh", in: try capture("overview-probe", "Overview"))
+    _ = try capture("overview-probe", "Overview")
+    clickButton("Refresh")
     Thread.sleep(forTimeInterval: 1)
     try overviewShot("overview-fixture-offline-by-agent", ["fixture-secondary", "Last Send passed", "Result unknown"])
     scrollMain(12000)
