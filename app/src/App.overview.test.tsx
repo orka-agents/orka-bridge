@@ -112,6 +112,31 @@ test('Overview refreshes native AI readiness without a mounted Designer and afte
   expect(actions()).toEqual([]);
 });
 
+test('Overview recovers native readiness and observes disconnects without navigating away', async () => {
+  let readable = false; let connected = true; let reads = 0;
+  ipc(undefined, command => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    if (command === 'overview_agents') return { state: 'complete', installation: documentId, agents: [], observation: null, observedAt: 123, runActive: false, reason: null };
+    if (command === 'agent_run_status') {
+      reads++;
+      if (!readable) return Promise.reject(Error('temporarily unavailable'));
+      return { documentId, busy: null, state: 'idle', canRun: connected, modelConnected: connected, report: null, acknowledged: [], pending: null, error: null };
+    }
+    return undefined;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await waitFor(() => expect(reads).toBeGreaterThan(0));
+  expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(true);
+  readable = true;
+  await user.click(screen.getByRole('button', { name: 'Refresh' }));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(false));
+  connected = false;
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests reader' }).matches(':disabled')).toBe(true));
+  expect(calls.some(c => c.command === 'agent_open')).toBe(false);
+  expect(actions()).toEqual([]);
+});
+
 test('local readiness never substitutes a provider for a team destination', async () => {
   ipc(() => ({ target, providers: [{ ...provider, ready: false }] }));
   const user = userEvent.setup(); render(<App />);

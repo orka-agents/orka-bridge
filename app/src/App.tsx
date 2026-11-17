@@ -205,11 +205,16 @@ export default function App() {
     setOverviewAiConnected(false);
     if (page !== 'Overview' || !workspaceReady || workspaceBusy || setup?.model !== 'available') return;
     let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
     // Native connection state is workspace-wide; no Designer or saved-file selection is needed.
-    void runCall('agent_run_status').then(result => {
-      if (!cancelled) setOverviewAiConnected(result.ok && (result.snapshot.modelConnected ?? model === 'connected'));
-    });
-    return () => { cancelled = true; };
+    const observe = async () => {
+      const result = await runCall('agent_run_status');
+      if (cancelled) return;
+      setOverviewAiConnected(result.ok && (result.snapshot.modelConnected ?? model === 'connected'));
+      timer = setTimeout(() => { void observe(); }, 500);
+    };
+    void observe();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [page, workspaceReady, workspaceBusy, setup?.model, model]);
   const workspaceTransition = !!setup && ['preparing', 'installing', 'starting', 'closing', 'failed'].includes(setup.localVm);
   const overviewWorkspaceNote = workspaceStopping ? 'Stopping the local cluster'
