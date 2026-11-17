@@ -57,6 +57,7 @@ for (const name of ['fixtures', 'setupFixtures', 'overviewVariants']) {
   assert.ok(roster(name, selection('core')).length > 0);
 }
 assert.match(source, /if \(runCore\) for \(const name of \['designer-connected'/, 'UI scope must not repeat minimum Designer cases');
+assert.ok(source.includes("if (runUi) await resizeTo({ width: 1280, height: 800 }, 'Cluster wide');"), 'UI wide captures must verify the requested native 1280x800 client size');
 // Exercise the real layout gate with measurements, without pretending to render a native window.
 const layoutGate = source.slice(source.indexOf('  async function checkLayout('), source.indexOf('  // Setup-progress states:'));
 assert.ok(layoutGate.includes('wide tabs must stay 180px'));

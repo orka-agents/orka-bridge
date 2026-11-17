@@ -1444,6 +1444,7 @@ try {
     await captureCards('by-agent');
   }
   const notes = [];
+  if (runUi) await resizeTo({ width: 1280, height: 800 }, 'Cluster wide');
   for (const theme of ['light', 'dark']) {
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
     for (const fixture of setupFixtures) await captureSetup(theme, 'wide', fixture);
