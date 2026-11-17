@@ -199,9 +199,11 @@ fn restore_resumes_each_directory_and_cross_root_metadata_boundary() {
         let mut s = Scene::new(ImageTarget::WindowsAmd64);
         let a = installation(&s.local.join("local-vm-v1")).unwrap();
         let a_files = inventory(&s.local.join("local-vm-v1"));
+        let model_a = fs::read(s.data.join("setup-v1/model-v1")).unwrap();
+        let account_a = fs::read(s.data.join("setup-v1/model-account-v1")).unwrap();
         s.replace(None).unwrap();
         let b = consumed_destination(&s);
-        destination_metadata(&s, b.installation);
+        let (model_b, account_b) = destination_metadata(&s, b.installation);
         let id = transaction(&s);
         assert!(restore(&s, id, Some(point)).is_err(), "{point}");
         let mut owner = WorkspaceUpgrade::open(&s.data, &s.local).unwrap();
@@ -221,6 +223,19 @@ fn restore_resumes_each_directory_and_cross_root_metadata_boundary() {
             "{point}"
         );
         assert_eq!(inventory(&s.local.join("local-vm-v1")), a_files, "{point}");
+        assert_eq!(
+            fs::read(s.data.join("setup-v1/model-v1")).unwrap(),
+            model_a,
+            "{point}"
+        );
+        assert_eq!(
+            fs::read(s.data.join("setup-v1/model-account-v1")).unwrap(),
+            account_a,
+            "{point}"
+        );
+        let archived = owner.read_intent().unwrap().unwrap().restore.unwrap();
+        assert_eq!(archived.model, Some(model_b), "{point}");
+        assert_eq!(archived.account, Some(account_b), "{point}");
         assert_eq!(
             installation(&s.local.join(format!("retained-new-{id}"))).unwrap(),
             Some(b)
@@ -276,9 +291,13 @@ fn restored_transaction_never_reopens_b_and_fresh_c_keeps_b_and_its_archive() {
 }
 #[test]
 fn restore_retains_incomplete_b_without_reopening_it_or_recovering_creation_authority() {
-    for phase in [StatePhase::Empty, StatePhase::Preparing] {
+    for (boundary, phase) in [
+        ("destination-recorded", StatePhase::Empty),
+        ("destination-recorded", StatePhase::Preparing),
+        ("image-prepared", StatePhase::Preparing),
+    ] {
         let mut s = Scene::new(ImageTarget::WindowsAmd64);
-        assert!(s.replace(Some("destination-recorded")).is_err());
+        assert!(s.replace(Some(boundary)).is_err());
         let root = s.local.join("local-vm-v1");
         let mut record = read_record(&root).unwrap();
         record.phase = phase;
@@ -287,6 +306,13 @@ fn restore_retains_incomplete_b_without_reopening_it_or_recovering_creation_auth
             serde_json::to_vec(&record).unwrap(),
         )
         .unwrap();
+        if phase == StatePhase::Preparing {
+            fs::write(root.join("state.disk"), b"partial-state-preparation").unwrap();
+            assert!(matches!(
+                Journal::open(&root),
+                Err(RuntimeError::RetainedState)
+            ));
+        }
         let id = transaction(&s);
         let before = inventory(&root);
         assert_eq!(restore(&s, id, None).unwrap(), UpgradeStatus::Restored);

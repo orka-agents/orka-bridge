@@ -162,13 +162,13 @@ fn write_file(root: &Path, name: &str, bytes: &[u8]) -> Result<(), SetupError> {
 pub(crate) struct UpgradeMetadata {
     pub model: Option<Vec<u8>>,
     pub account: Option<Vec<u8>>,
-    _owner: UpgradeMetadataOwner,
+    _owner: ModelOwner,
 }
-pub(crate) struct UpgradeMetadataOwner(fs::File, u32);
-impl Drop for UpgradeMetadataOwner {
+pub(crate) struct ModelOwner(fs::File, u32);
+impl Drop for ModelOwner {
     fn drop(&mut self) {
-        // Upgrade recovery must not retain ownership through another thread's
-        // fork/exec window, nor let an inherited child release the parent lock.
+        // Closing alone can leave custody in a concurrent fork. Only the
+        // acquiring process may explicitly release the shared lock.
         if self.1 == std::process::id() {
             let _ = self.0.unlock();
         }
@@ -178,9 +178,9 @@ impl SetupStore {
     /// Recovery already has exact durable snapshots; lock without interpreting a
     /// temporarily mixed pair of records as a new credential association.
     #[allow(dead_code)]
-    pub(crate) fn lock_upgrade_metadata(&self) -> Result<UpgradeMetadataOwner, SetupError> {
+    pub(crate) fn lock_upgrade_metadata(&self) -> Result<ModelOwner, SetupError> {
         let root = self.root.as_ref().ok_or_else(unavailable)?;
-        Ok(UpgradeMetadataOwner(model_owner(root)?, std::process::id()))
+        model_owner(root)
     }
     #[allow(dead_code)]
     pub(crate) fn snapshot_for_upgrade(
@@ -228,7 +228,7 @@ impl SetupStore {
     }
 }
 // Independent descriptors coordinate native mutations across instances and processes.
-fn model_owner(root: &Path) -> Result<fs::File, SetupError> {
+fn model_owner(root: &Path) -> Result<ModelOwner, SetupError> {
     let file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -237,7 +237,7 @@ fn model_owner(root: &Path) -> Result<fs::File, SetupError> {
         .open(root.join("model-owner.lock"))
         .map_err(|_| unavailable())?;
     file.try_lock().map_err(|_| unavailable())?;
-    Ok(file)
+    Ok(ModelOwner(file, std::process::id()))
 }
 // Called under the model-owner lock for this installation's Storing reservation.
 // A failed read is not proof of absence unless CredReadW specifically reports NOT_FOUND.

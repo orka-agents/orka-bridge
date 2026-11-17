@@ -162,7 +162,22 @@ impl Journal {
         journal.persist(&journal.record)?;
         Ok(journal)
     }
+    /// Inspect a retained image during interrupted state preparation. The
+    /// internal Journal is never returned, and has no live creation authority.
+    #[allow(dead_code)]
+    pub(crate) fn inspect_recovery_image(
+        root: &Path,
+        compatibility: &str,
+    ) -> Result<InstalledImageSet, RuntimeError> {
+        let journal = Self::open_for_inspection(root, true)?;
+        Ok(super::image_install::inspect_installed_image(
+            &journal.image_target(compatibility)?,
+        )?)
+    }
     pub fn open(root: &Path) -> Result<Self, RuntimeError> {
+        Self::open_for_inspection(root, false)
+    }
+    fn open_for_inspection(root: &Path, retention_only: bool) -> Result<Self, RuntimeError> {
         let metadata = fs::symlink_metadata(root)?;
         if !metadata.file_type().is_dir() {
             return Err(RuntimeError::RetainedState);
@@ -190,7 +205,7 @@ impl Journal {
             || record.machine_id.is_empty()
             || record.machine_id.len() > 4096
             || record.mac[0] & 3 != 2
-            || record.phase == StatePhase::Preparing
+            || (record.phase == StatePhase::Preparing && !retention_only)
             || (record.phase == StatePhase::Consumed && record.boot_nonce.is_none())
         {
             return Err(RuntimeError::RetainedState);

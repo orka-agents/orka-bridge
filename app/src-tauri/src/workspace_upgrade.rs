@@ -222,6 +222,20 @@ fn verify_binding(root: &Path, identity: &ImageIdentity, hash: &str) -> Result<(
     }
     Ok(())
 }
+fn verify_destination_binding(
+    root: &Path,
+    identity: &ImageIdentity,
+    hash: &str,
+) -> Result<(), RuntimeError> {
+    if binding_hash(root)? != hash {
+        return Err(RuntimeError::RetainedState);
+    }
+    let installed = Journal::inspect_recovery_image(root, &identity.state_compatibility_id)?;
+    if installed.identity() != identity {
+        return Err(RuntimeError::RetainedState);
+    }
+    Ok(())
+}
 fn cancelled(closed: &watch::Receiver<bool>) -> Result<(), RuntimeError> {
     if *closed.borrow() {
         Err(RuntimeError::Closed)
@@ -355,12 +369,10 @@ impl WorkspaceUpgrade {
                 }
                 let root = self.local.join("local-vm-v1");
                 let phase = read_record(&root)?.phase;
-                if phase != StatePhase::Preparing {
-                    if let Some(hash) = &intent.destination_binding_sha256 {
-                        verify_binding(&root, &intent.target_binding, hash)?;
-                    } else if phase == StatePhase::Consumed {
-                        return Err(RuntimeError::RetainedState);
-                    }
+                if let Some(hash) = &intent.destination_binding_sha256 {
+                    verify_destination_binding(&root, &intent.target_binding, hash)?;
+                } else if phase == StatePhase::Consumed {
+                    return Err(RuntimeError::RetainedState);
                 }
                 Ok(if phase == StatePhase::Consumed {
                     UpgradeStatus::Consumed
@@ -613,7 +625,7 @@ impl WorkspaceUpgrade {
             &intent.source_binding_sha256,
         )?;
         if let (Some(target), Some(hash)) = (target, &intent.destination_binding_sha256) {
-            verify_binding(target, &intent.target_binding, hash)?;
+            verify_destination_binding(target, &intent.target_binding, hash)?;
         }
         if intent.phase == Phase::Restored {
             if !source_selected {
