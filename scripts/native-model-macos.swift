@@ -108,7 +108,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         // Recovery copy has apostrophes and "AI" that Vision misreads; require visible native text instead.
         let lenient = ["local-key-", "local-reset-", "local-remove-"].contains { name.hasPrefix($0) }
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || lenient && nativeChatTextIsVisible(value))
-        let chatText = !found && (name.hasPrefix("chat-") || name.hasPrefix("cluster-")) && nativeChatTextIsVisible(value)
+        let chatText = !found && (name.hasPrefix("chat-") || name.hasPrefix("cluster-") || name.hasPrefix("local-shell-chat-")) && nativeChatTextIsVisible(value)
         let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
         let overviewControl = !found && name.hasPrefix("local-") && name.contains("overview") && nativeWorkspaceButtonIsVisible(value)
         require(found || nativeText || chatText || workspaceControl || overviewControl, "Missing \(value) in \(name): \(text)")

@@ -175,7 +175,7 @@ try {
       const rect = node => { if (!node) return null; const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width }; };
       const main = document.querySelector('main');
       return {
-        width: innerWidth, scrollWidth: main.scrollWidth, clientWidth: main.clientWidth, scrollHeight: main.scrollHeight, clientHeight: main.clientHeight,
+        width: innerWidth, height: innerHeight, documentScrollHeight: document.scrollingElement.scrollHeight, scrollWidth: main.scrollWidth, clientWidth: main.clientWidth, scrollHeight: main.scrollHeight, clientHeight: main.clientHeight,
         tabs: shown('.page-tab').map(node => ({ ...rect(node), grow: getComputedStyle(node).flexGrow })),
         host: rect(document.querySelector('.host-chip')), hostLabel: rect(document.querySelector('.host-label')),
         subtitles: shown('.tab-copy small').filter(node => getComputedStyle(node).display !== 'none').length,
@@ -192,6 +192,7 @@ try {
       };
     })()`);
     const fail = reason => { throw Error(`${name}/${size}: ${reason}: ${JSON.stringify(layout)}`); };
+    if (layout.documentScrollHeight > layout.height + 2) fail('document overflows outside the page scroll');
     if (layout.scrollWidth > layout.clientWidth + 2) fail('page overflows horizontally');
     if (size === 'setup-fit' && layout.scrollHeight > layout.clientHeight + 2) fail('page overflows vertically');
     if (layout.width > 820 && (layout.tabs.length !== 3 || layout.tabs.some(tab => Math.abs(tab.width - 180) > 1 || tab.grow !== '0') || layout.host.x - layout.tabs.at(-1).right < 16)) fail('wide tabs must stay 180px/non-growing with a 16px host gap');
@@ -1436,17 +1437,18 @@ try {
         if (!type.testTitle || type.testTitle.mono || type.testTitle.weight !== '500' || !type.testId?.mono) throw Error(`${name}: test title must be UI font/500 with a mono ID: ${JSON.stringify(type)}`);
         if (type.model?.value !== 'gpt-5.6-terra' || type.model.shown !== 'Workspace default: GPT-5.6 Terra' || type.defaultRepeated) throw Error(`${name}: workspace default needs a friendly label, unchanged value and no repeated default: ${JSON.stringify(type)}`);
       }
-      // Header geometry must not move across Agent, Chat and File.
+      // Chat supplies a place subtitle. Its header may grow, but controls stay in their row and File restores Agent's geometry.
       const header = async () => { await evaluate(`document.querySelector('main').scrollTop = 0`); return evaluate(`(() => { const r = s => { const b = document.querySelector(s)?.getBoundingClientRect(); return b && { x: b.x, y: b.y, w: b.width, h: b.height }; }; return { switch: r('.view-switch'), picker: r('.agent-selector'), send: r('.send-entry'), name: r('.agent-name') }; })()`); };
       const base = await header();
       for (const view of ['Chat', 'File']) {
         await clickAction(view);
         await until(async () => await pressed() === view, `${view} view`);
         const now = await header();
-        for (const key of Object.keys(base)) if (!base[key] || !now[key] || ['x', 'y', 'w', 'h'].some(k => Math.abs(base[key][k] - now[key][k]) > 2)) throw Error(`${name}: header ${key} moved in ${view}: ${JSON.stringify([base, now])}`);
+        for (const key of Object.keys(base)) if (!base[key] || !now[key] || (view === 'Chat' ? key === 'name' ? ['x', 'h'] : ['x', 'w', 'h'] : ['x', 'y', 'w', 'h']).some(k => Math.abs(base[key][k] - now[key][k]) > 2)) throw Error(`${name}: header ${key} moved in ${view}: ${JSON.stringify([base, now])}`);
+        if (view === 'Chat' && ['picker', 'send'].some(key => Math.abs(now[key].y - base[key].y - (now.switch.y - base.switch.y)) > 2)) throw Error(`${name}: Chat controls left their header row`);
         if (view === 'Chat') {
-          await until(() => evaluate(`!!document.querySelector('.chat-heading')?.getClientRects().length && !document.body.innerText.includes('Opening your conversation')`), 'Chat snapshot');
-          const chat = await evaluate(`(() => { const root = document.querySelector('.chat-heading').parentElement; return { text: root.innerText, reset: [...root.querySelectorAll('button')].find(b => b.textContent === 'New conversation')?.disabled }; })()`);
+          await until(() => evaluate(`!!document.querySelector('.chat-panel')?.getClientRects().length && !document.body.innerText.includes('Opening your conversation')`), 'Chat snapshot');
+          const chat = await evaluate(`(() => { const root = document.querySelector('.chat-panel'); return { text: root.innerText, reset: [...root.querySelectorAll('button')].find(b => b.textContent === 'New conversation')?.disabled }; })()`);
           await writeFile(join(output, `${theme}-${size}-${name}-chat-state.json`), JSON.stringify(chat, null, 2));
           // Remote is parent-blocked; the idle ready snapshot must not be shown as Ready. Unblocked state is recorded only.
           if (name === 'designer-remote') {
@@ -1454,9 +1456,9 @@ try {
             await shoot('chat-blocked');
             // Top-level tab navigation retains the last view.
             await evaluate(`document.querySelector('nav[aria-label="Main"] button[aria-label="Overview"]').click()`);
-            await until(() => evaluate(`!document.querySelector('.chat-heading')?.getClientRects().length`), 'Chat hidden while on Overview');
+            await until(() => evaluate(`!document.querySelector('.chat-panel')?.getClientRects().length`), 'Chat hidden while on Overview');
             await evaluate(`document.querySelector('nav[aria-label="Main"] button[aria-label="Designer"]').click()`);
-            await until(async () => await pressed() === 'Chat' && await evaluate(`!!document.querySelector('.chat-heading')?.getClientRects().length`), 'tab return keeps Chat');
+            await until(async () => await pressed() === 'Chat' && await evaluate(`!!document.querySelector('.chat-panel')?.getClientRects().length`), 'tab return keeps Chat');
           }
         }
         if (view === 'File') await shoot('file');

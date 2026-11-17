@@ -49,6 +49,12 @@ test.each(['unchanged', 'update'] as const)('current failed result offers editor
   expect(screen.getByRole('button', { name: action === 'unchanged' ? 'Run cluster tests again' : 'Update agent and run tests' }).className).toContain('button-secondary');
   await userEvent.click(repair); expect(fix).toHaveBeenCalledOnce();
 });
+test('a failed result that finished before confirmed cancellation still offers repair', async () => {
+  native({ ...result, cancellation: 'confirmed' });
+  render(<Send place={place} source={source} stale={false} onFixInDesigner={() => {}} />);
+  expect((await screen.findByRole('button', { name: 'Fix in Designer' })).className).toContain('button-primary');
+  expect(screen.getByRole('button', { name: 'Run cluster tests again' }).className).toContain('button-secondary');
+});
 test.each(['foreign', 'stale', 'status', 'reload', 'check'] as const)('%s result or recovery never promotes Fix in Designer', async mode => {
   native({ ...result, ...(mode === 'foreign' ? { targetId: '00000000-0000-4000-8000-000000000005' } : {}), ...(mode === 'status' ? { cancellation: 'unconfirmed' } : {}) }, { ...check, ...(mode === 'reload' ? { source: { ...source, tests: 'c'.repeat(64) } } : {}), ...(mode === 'check' ? { canSend: false } : {}) });
   render(<Send place={place} source={source} stale={mode === 'stale'} onFixInDesigner={() => {}} onSeeInOverview={() => {}} />);

@@ -145,7 +145,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .page-content:has(> div:not([hidden]) .designer-chat:not([hidden])) { display: flex; flex-direction: column; }
 .page-content > div:not([hidden]):has(.designer-chat:not([hidden])),
 .designer:not([hidden]):has(> .designer-chat:not([hidden])), .designer-chat:not([hidden]) { display: flex; flex: 1; flex-direction: column; }
-.chat-panel { margin-top: var(--space-4); display: flex; flex: 1; flex-direction: column; gap: var(--space-4); min-width: 0; }
+.chat-panel { position: relative; margin-top: var(--space-4); display: flex; flex: 1; flex-direction: column; gap: var(--space-4); min-width: 0; }
 .chat-heading, .chat-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .chat-heading { justify-content: flex-end; }
 .chat-about { max-width: 65ch; color: var(--color-text-secondary); }
@@ -169,7 +169,6 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .chat-compose-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: var(--space-2); }
 .chat-composer p { margin: 0; }
 .chat-composer textarea { width: 100%; min-height: 48px; max-height: 40dvh; overflow-y: auto; resize: none; padding: var(--space-3); font: var(--type-reading); }
-.chat-panel > .card-details p + p { margin-top: var(--space-3); }
 .designer-editing { grid-column: 1; grid-row: 1; min-width: 0; }
 .file-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .file-toolbar h2 { overflow-wrap: anywhere; }

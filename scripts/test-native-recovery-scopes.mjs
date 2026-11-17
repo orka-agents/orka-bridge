@@ -98,6 +98,21 @@ for (const [name, header] of [
 for (const mutation of [{ heading: 'Send your agent' }, { summary: '' }, { checks: 'Ready to send: 2 checks passed' }]) {
   assert.throws(() => checkSend('send-failed', { ...sendProbe, ...mutation }, false));
 }
+const documentScrollGuard = source.split('\n').find(line => line.includes('if (layout.documentScrollHeight'));
+assert.ok(documentScrollGuard, 'screen-reader-only content must not escape the page scroll');
+const checkDocumentScroll = Function('layout', 'fail', documentScrollGuard);
+assert.doesNotThrow(() => checkDocumentScroll({ documentScrollHeight: 900, height: 900 }, assert.fail));
+assert.throws(() => checkDocumentScroll({ documentScrollHeight: 2105, height: 900 }, assert.fail));
+// The Chat subtitle can resize the heading, but not reorder or independently move its controls.
+const headerGate = source.match(/const now = await header\(\);\n([\s\S]*?)\n        if \(view === 'Chat'\)/)?.[1];
+assert.ok(headerGate);
+const verifyDesignerHeader = Function('base', 'now', 'view', 'name', headerGate);
+const headerBase = Object.fromEntries(['switch', 'picker', 'send', 'name'].map((key, i) => [key, { x: i * 100, y: 80, w: 80, h: 32 }]));
+const chatHeader = Object.fromEntries(Object.entries(headerBase).map(([key, rect]) => [key, { ...rect, y: key === 'name' ? 75 : 88, w: key === 'name' ? 200 : rect.w }]));
+assert.doesNotThrow(() => verifyDesignerHeader(headerBase, chatHeader, 'Chat', 'fixture'));
+assert.throws(() => verifyDesignerHeader(headerBase, chatHeader, 'File', 'fixture'));
+assert.throws(() => verifyDesignerHeader(headerBase, { ...chatHeader, picker: { ...chatHeader.picker, x: 120 } }, 'Chat', 'fixture'));
+assert.throws(() => verifyDesignerHeader(headerBase, { ...chatHeader, picker: { ...chatHeader.picker, y: 100 } }, 'Chat', 'fixture'));
 // Exercise the actual Chat gate, including composer geometry while reading earlier turns.
 const chatGate = source.slice(source.indexOf('  function assertChatPresentation('), source.indexOf('  async function captureActions('));
 assert.ok(chatGate.includes('earlier'), 'Chat needs a reader-position geometry gate');
@@ -368,6 +383,7 @@ assert.ok(!model.includes('seek("Ask your agent a question"'), 'empty Chat has n
 assert.ok(model.includes('Enter sends · Shift+Enter for a new line'), 'Mac capture must check the precise composer hint');
 assert.ok(model.includes('requireChatComposerVisible()'), 'Mac captures must verify composer geometry');
 assert.ok(model.includes('chat-long-early-') && model.includes('chat-long-end-'), 'Mac long Chat must capture earlier-reader and end states');
+assert.ok(model.includes('name.hasPrefix("local-shell-chat-")'), 'mixed local/Chat captures must check the visible native subtitle, not only OCR');
 assert.ok(smoke.includes('"Fix in Designer", "Run cluster tests again"'), 'failed Send must preserve Fix primary and precise rerun secondary');
 assert.ok(source.includes('chat-long-early') && source.includes('chat-long-end'), 'long Chat needs distinct earlier-reader and end captures');
 assert.ok(source.includes("resizeTo({ width: 1280, height: 800 }, 'Wide')"));
