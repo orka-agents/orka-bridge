@@ -973,16 +973,25 @@ func fillMessage(_ text: String, secure: Bool = false, fieldLabel: String? = nil
     }
     // Deliver text in short Unicode payloads, not an unpaced pair of events
     // per character that can flood the native event queue on a busy runner.
-    let characters = Array(text.utf16)
-    for start in stride(from: 0, to: characters.count, by: 16) {
-        let units = Array(characters[start..<min(start + 16, characters.count)])
-        for down in [true, false] {
-            let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
-            units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress!) }
-            event.flags = []; event.post(tap: .cghidEventTap)
+    for (lineIndex, line) in text.components(separatedBy: "\n").enumerated() {
+        // A Unicode payload beginning with a newline can drop its following text.
+        // Use the real newline gesture, never an unmodified Enter that submits Chat.
+        if lineIndex > 0 {
+            for down in [true, false] {
+                let event = CGEvent(keyboardEventSource: nil, virtualKey: 36, keyDown: down)!
+                event.flags = .maskShift; event.post(tap: .cghidEventTap)
+            }
         }
-        // Long-fixture input needs paced delivery while WebKit lays out each text update.
-        if characters.count > 256 { Thread.sleep(forTimeInterval: 0.08) }
+        let characters = Array(line.utf16)
+        for start in stride(from: 0, to: characters.count, by: 16) {
+            let units = Array(characters[start..<min(start + 16, characters.count)])
+            for down in [true, false] {
+                let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: down)!
+                units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress!) }
+                event.flags = []; event.post(tap: .cghidEventTap)
+            }
+            if text.utf16.count > 256 { Thread.sleep(forTimeInterval: 0.08) }
+        }
     }
     Thread.sleep(forTimeInterval: 0.2)
     // Secure values may be hidden by AX; never read or log their contents.
