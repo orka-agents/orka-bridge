@@ -43,7 +43,13 @@ class ConsumerVectors(unittest.TestCase):
                 payload = b"synthetic consumer fixture, never bootable\n"
                 value = package.create(BoundedStream(payload), meta, root / "package", 17,
                                        **boot_inputs(root / "boot", meta, payload))
-                self.assertEqual(package.canonical(value), (ROOT / ("producer-" + platform + ".json")).read_bytes())
+                golden = (ROOT / ("producer-" + platform + ".json")).read_bytes()
+                expected = json.loads(golden)
+                self.assertEqual(package.canonical(expected), golden)
+                # Keep historical vectors immutable while checking the live producer policy binding.
+                policy = Path(package.guest.__file__).with_name("versions.json").read_bytes()
+                expected["components"]["versionPolicySha256"] = hashlib.sha256(policy).hexdigest()
+                self.assertEqual(package.canonical(value), package.canonical(expected))
 
     def test_future_gzip_data_documents_python_behavior_only(self):
         for row in json.loads((ROOT / "gzip-future.json").read_bytes()):

@@ -25,6 +25,18 @@ MODEL_IMAGES = {
             "arm64": "sha256:a4b7bbbb14a7e50bec3f6cbc4e2560c9b6792a7ae7062637bdfc25793817d4ff",
         },
     },
+    "eb872e8ba1ea5d28ba4640ef5004715eae2e35b4": {
+        "vekil": {
+            "repository": "ghcr.io/sozercan/vekil",
+            "amd64": "sha256:b885b08ca26abb6362fee830cc683c255ec740da28ffcb48b711232ffebf2040",
+            "arm64": "sha256:9c1788a001e9abac79286d5cb5ccf43cbce67fe9391f68fefc835cfce0947948",
+        },
+        "model-launcher": {
+            "repository": "docker.io/library/busybox",
+            "amd64": "sha256:5624bb6777cf469b1fb50ae3f981b15d2715ee2fffaf20b9998cfb7843726835",
+            "arm64": "sha256:a4b7bbbb14a7e50bec3f6cbc4e2560c9b6792a7ae7062637bdfc25793817d4ff",
+        },
+    },
 }
 HEX = r"[0-9a-f]{64}"
 DIGEST = r"sha256:" + HEX

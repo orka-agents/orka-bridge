@@ -1,5 +1,6 @@
 """Producer and consumer parity for the explicit v2 guest input contract."""
 import copy
+import hashlib
 import json
 import tempfile
 import unittest
@@ -61,4 +62,10 @@ class ModelManifestTests(unittest.TestCase):
                 package.validate_manifest(value)
                 if platform == 'windows':
                     golden = Path(package.__file__).parent / 'testdata/v2/producer-model-input-v2.json'
-                    self.assertEqual(package.canonical(value), golden.read_bytes())
+                    original = golden.read_bytes()
+                    expected = json.loads(original)
+                    self.assertEqual(package.canonical(expected), original)
+                    # Only the current policy hash varies; historical vector bytes stay fixed.
+                    policy = Path(package.guest.__file__).with_name('versions.json').read_bytes()
+                    expected['components']['versionPolicySha256'] = hashlib.sha256(policy).hexdigest()
+                    self.assertEqual(package.canonical(value), package.canonical(expected))

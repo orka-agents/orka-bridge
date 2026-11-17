@@ -23,11 +23,28 @@ class LockTests(unittest.TestCase):
         self.assertEqual(VERSIONS.get('sourceOfflineProfile'), {
             'profile': 'orka-3cb1f0df-native/v1',
             'profileSha256': '20647cab1e653394fe7466608a08dd816f05d1a44bc8a8598fa478f7e20fc8f5',
-            'kmxSourceCommit': '503b3ffcbdcc0a966e3b6de6235a8a98077b989e',
+            'kmxSourceCommit': 'eb872e8ba1ea5d28ba4640ef5004715eae2e35b4',
             'chartSha256': '11cc020b923dd5bc810a6f3b97f236a6e3123ce8ad80791d912c0af760abcca8',
             'artifactsSha256': '6f620c97411465b1f1559b57f6d279313894dcf0006ae25f8121e35afbb66080',
         })
-        self.assertEqual(set(MODEL_IMAGES), {VERSIONS['sourceOfflineProfile']['kmxSourceCommit']})
+        revisions = {'503b3ffcbdcc0a966e3b6de6235a8a98077b989e',
+                     'eb872e8ba1ea5d28ba4640ef5004715eae2e35b4'}
+        self.assertEqual(set(MODEL_IMAGES), revisions)
+        expected = {
+            'vekil': {
+                'repository': 'ghcr.io/sozercan/vekil',
+                'amd64': 'sha256:b885b08ca26abb6362fee830cc683c255ec740da28ffcb48b711232ffebf2040',
+                'arm64': 'sha256:9c1788a001e9abac79286d5cb5ccf43cbce67fe9391f68fefc835cfce0947948',
+            },
+            'model-launcher': {
+                'repository': 'docker.io/library/busybox',
+                'amd64': 'sha256:5624bb6777cf469b1fb50ae3f981b15d2715ee2fffaf20b9998cfb7843726835',
+                'arm64': 'sha256:a4b7bbbb14a7e50bec3f6cbc4e2560c9b6792a7ae7062637bdfc25793817d4ff',
+            },
+        }
+        for revision in revisions:
+            with self.subTest(revision=revision):
+                self.assertEqual(MODEL_IMAGES[revision], expected)
         self.assertEqual(VERSIONS['releaseProfiles'], {})
 
     def test_source_offline_accepts_merged_kmx_and_rejects_superseded_revision(self):
@@ -40,14 +57,17 @@ class LockTests(unittest.TestCase):
             {'name': 'kmx-offline-manifest'},
         ])
         manifest = {'profile': 'orka-3cb1f0df-native/v1',
-                    'kmx': {'revision': '503b3ffcbdcc0a966e3b6de6235a8a98077b989e'}}
+                    'kmx': {'revision': 'eb872e8ba1ea5d28ba4640ef5004715eae2e35b4'}}
         try:
             validate_source_offline(self.value, manifest)
         except ValueError as error:
             self.fail(f'merged kmx source revision must be accepted: {error}')
-        manifest['kmx']['revision'] = 'e58f763cdda79ac41c81a1a695559c7aabfe4dc0'
-        with self.assertRaisesRegex(ValueError, 'source offline profile or kmx revision differs'):
-            validate_source_offline(self.value, manifest)
+        for revision in ('503b3ffcbdcc0a966e3b6de6235a8a98077b989e',
+                         'e58f763cdda79ac41c81a1a695559c7aabfe4dc0'):
+            manifest['kmx']['revision'] = revision
+            with self.subTest(revision=revision), self.assertRaisesRegex(
+                    ValueError, 'source offline profile or kmx revision differs'):
+                validate_source_offline(self.value, manifest)
 
     def test_source_lock(self):
         validate_lock(self.value, production=False)
