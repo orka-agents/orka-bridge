@@ -1106,7 +1106,19 @@ for character in "Changed fixture instructions.".utf16 {
 }
 Thread.sleep(forTimeInterval: 1)
 require((attribute(editor, "AXValue") as? String)?.contains("Changed fixture instructions.") == true, "Native keystrokes did not edit Instructions")
-require(exactTextIsVisible("Saved"), "A completed edit/save must acknowledge Saved")
+// Keep the original checkpoint result, but collect the requested Chat frames before reporting it.
+// This before-only walk must still fail if Saved was absent here, even if it appears later.
+let savedAtEditCheckpoint = exactTextIsVisible("Saved")
+if !savedAtEditCheckpoint {
+    print("BASELINE_DEFERRED_ASSERT Saved absent at original edit checkpoint; not waived")
+    if let frame = window() {
+        let diagnostic = Process()
+        diagnostic.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        diagnostic.arguments = ["-x", "-o", "-l", String(frame.0), "\(output)/local-save-ack-observation.png"]
+        do { try diagnostic.run(); diagnostic.waitUntilExit() }
+        catch { print("BASELINE_DEFERRED_ASSERT diagnostic screenshot unavailable") }
+    }
+}
 // Focusing Instructions scrolls below the compact test card; return to its start.
 scroll(4000)
 _ = try seek("Not run since your edit", -250)
@@ -1475,3 +1487,4 @@ for (phase, summary) in [("image-update", "This version of Bridge needs a new wo
     require(enabledButton("Try again") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
     require(!nativeTextExists("The cluster download couldn't be verified."), "Version mismatch is not download corruption")
 }
+require(savedAtEditCheckpoint, "A completed edit/save must acknowledge Saved at the original checkpoint (deferred, not waived)")
