@@ -309,6 +309,7 @@ jobs:
           if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
           osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
           test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
+          swift -D NATIVE_FRAME_CACHE_TESTS ../scripts/native-model-macos.swift
           node -e 'console.error("native-model-perf event=swift-launch epoch_ms=" + Date.now() + " theme=" + process.argv[1])' "$theme"
           swift ../scripts/native-model-macos.swift "native-model/$theme" "$PWD/src-tauri/target/debug/examples/model_walk" "$theme"
       - name: Mac app bundle and native walk
