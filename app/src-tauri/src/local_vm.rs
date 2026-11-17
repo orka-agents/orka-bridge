@@ -917,23 +917,31 @@ impl LocalVm {
             return Err(RuntimeError::RetainedState);
         }
         crate::workspace_upgrade::validate_new_replacement(&data, &local)?;
+        let factory = self.factory.clone().ok_or(RuntimeError::Unavailable)?;
+        let rx = self.upgrade_cancellation();
         let vm = self.clone();
         tokio::spawn(async move {
-            let factory = vm.factory.clone().ok_or(RuntimeError::Unavailable)?;
-            let quiesced = vm.quiesce_with_choice(choice).await?;
+            let quiesced = match vm.quiesce_with_choice(choice).await {
+                Ok(quiesced) => quiesced,
+                Err(error) => {
+                    *vm.upgrade_cancel.lock().unwrap() = None;
+                    return Err(error);
+                }
+            };
             vm.set_workspace_replaced(true);
-            let rx = vm.upgrade_cancellation();
             let runtime = tokio::runtime::Handle::current();
             let inner = vm.inner.clone();
             inner.publish(LocalProgress::Status(LocalVmStatus::Preparing));
             let (worker_data, worker_local) = (data.clone(), local.clone());
+            // Keep a receiver through adoption so an acknowledged Cancel survives handoff.
+            let worker_rx = rx.clone();
             let result = tokio::task::spawn_blocking(move || {
                 let mut owner =
                     crate::workspace_upgrade::WorkspaceUpgrade::open(&worker_data, &worker_local)?;
                 owner.set_progress(Arc::new(move |event| {
                     inner.publish(LocalProgress::Image(event))
                 }));
-                owner.replace(&target.source, target.machine_id, &rx, &runtime)?;
+                owner.replace(&target.source, target.machine_id, &worker_rx, &runtime)?;
                 // Status must inspect the original creator Journal before handoff.
                 let dto = owner.status_dto(Some(&target.source));
                 let journal = owner
@@ -944,15 +952,26 @@ impl LocalVm {
             })
             .await
             .unwrap_or(Err(RuntimeError::Unavailable));
-            *vm.upgrade_cancel.lock().unwrap() = None;
+            let cancelled = {
+                let mut cancel = vm.upgrade_cancel.lock().unwrap();
+                let cancelled = *rx.borrow();
+                *cancel = None;
+                cancelled
+            };
             let dto = vm.finish_upgrade_status(&data, &local, result)?;
             vm.retire_workspace_state();
             vm.recovery_blocked
                 .store(false, std::sync::atomic::Ordering::Release);
             vm.inner
                 .publish(LocalProgress::Status(LocalVmStatus::Cancelled));
+            // Keep choice through synchronous start admission: fallback Cancel
+            // must not acknowledge success before a late startup is scheduled.
+            vm.upgrading
+                .store(false, std::sync::atomic::Ordering::Release);
+            if !cancelled {
+                vm.start();
+            }
             drop(quiesced);
-            vm.start();
             Ok(dto)
         })
         .await
@@ -975,16 +994,23 @@ impl LocalVm {
         ) {
             return Err(RuntimeError::RetainedState);
         }
+        let factory = self.factory.clone().ok_or(RuntimeError::Unavailable)?;
+        let rx = self.upgrade_cancellation();
         let vm = self.clone();
         tokio::spawn(async move {
-            let factory = vm.factory.clone().ok_or(RuntimeError::Unavailable)?;
-            let quiesced = vm.quiesce_with_choice(choice).await?;
+            let quiesced = match vm.quiesce_with_choice(choice).await {
+                Ok(quiesced) => quiesced,
+                Err(error) => {
+                    *vm.upgrade_cancel.lock().unwrap() = None;
+                    return Err(error);
+                }
+            };
             vm.set_workspace_replaced(true);
-            let rx = vm.upgrade_cancellation();
             let runtime = tokio::runtime::Handle::current();
             let inner = vm.inner.clone();
             inner.publish(LocalProgress::Status(LocalVmStatus::Preparing));
             let (worker_data, worker_local) = (data.clone(), local.clone());
+            let worker_rx = rx.clone();
             let result = tokio::task::spawn_blocking(move || {
                 let mut owner =
                     crate::workspace_upgrade::WorkspaceUpgrade::open(&worker_data, &worker_local)?;
@@ -995,7 +1021,7 @@ impl LocalVm {
                     transaction,
                     &target.source,
                     target.machine_id,
-                    &rx,
+                    &worker_rx,
                     &runtime,
                 )?;
                 let dto = owner.status_dto(Some(&target.source));
@@ -1007,15 +1033,24 @@ impl LocalVm {
             })
             .await
             .unwrap_or(Err(RuntimeError::Unavailable));
-            *vm.upgrade_cancel.lock().unwrap() = None;
+            let cancelled = {
+                let mut cancel = vm.upgrade_cancel.lock().unwrap();
+                let cancelled = *rx.borrow();
+                *cancel = None;
+                cancelled
+            };
             let dto = vm.finish_upgrade_status(&data, &local, result)?;
             vm.retire_workspace_state();
             vm.recovery_blocked
                 .store(false, std::sync::atomic::Ordering::Release);
             vm.inner
                 .publish(LocalProgress::Status(LocalVmStatus::Cancelled));
+            vm.upgrading
+                .store(false, std::sync::atomic::Ordering::Release);
+            if !cancelled {
+                vm.start();
+            }
             drop(quiesced);
-            vm.start();
             Ok(dto)
         })
         .await
@@ -1035,6 +1070,8 @@ impl LocalVm {
         // Stop startup cooperatively without dropping the factory's original
         // new-only journal: Cancel is not quiesce/release_stopped.
         if !cancelling_transaction {
+            // No watch may mean admission or handoff, not ordinary startup.
+            let _choice = self.reserve_upgrade_choice()?;
             self.cancel().await?;
         }
         Ok(())
@@ -1503,6 +1540,22 @@ impl LocalVm {
         }
     }
 }
+#[cfg(test)]
+#[test]
+fn facade_cancel_without_watch_refuses_reserved_choice_without_stopping_vm() {
+    let vm = LocalVm::unavailable();
+    let choice = vm.reserve_upgrade_choice().unwrap();
+    let status = vm.status();
+    let result = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(vm.cancel_workspace_upgrade());
+    drop(choice);
+    assert!(matches!(result, Err(RuntimeError::Busy)));
+    assert_eq!(vm.status(), status);
+}
+
 #[cfg(test)]
 #[test]
 fn facade_request_close_cancels_upgrade_before_async_shutdown() {

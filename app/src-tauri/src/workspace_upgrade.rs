@@ -637,12 +637,7 @@ impl WorkspaceUpgrade {
             ("model-v1", Some(model)),
             ("model-account-v1", intent.account.clone()),
         ];
-        for (name, bytes) in &expected {
-            let current = read_bytes(&self.data.join("setup-v1").join(name), 16384)?;
-            if current.is_some() && current != *bytes {
-                return Err(RuntimeError::RetainedState);
-            }
-        }
+        self.check_transfer_metadata(&expected)?;
         if matches!(intent.credential, CredentialDisposition::Transferred) {
             return Ok(true);
         }
@@ -731,6 +726,18 @@ impl WorkspaceUpgrade {
             CredentialDisposition::Removed => unreachable!(),
         })
     }
+    fn check_transfer_metadata(
+        &self,
+        expected: &[(&str, Option<Vec<u8>>)],
+    ) -> Result<(), RuntimeError> {
+        for (name, bytes) in expected {
+            let current = read_bytes(&self.data.join("setup-v1").join(name), 16384)?;
+            if current.is_some() && current != *bytes {
+                return Err(RuntimeError::RetainedState);
+            }
+        }
+        Ok(())
+    }
     pub(crate) fn validate_transfer(&self, transaction: Uuid) -> Result<(), RuntimeError> {
         let intent = self
             .read_intent()?
@@ -745,7 +752,17 @@ impl WorkspaceUpgrade {
         if self.credential_label(&intent)? != "eligible" {
             return Err(RuntimeError::RetainedState);
         }
-        Ok(())
+        let destination = intent
+            .destination
+            .as_ref()
+            .ok_or(RuntimeError::RetainedState)?;
+        let model =
+            SetupStore::transferred_model(intent.model.as_deref(), destination.installation)
+                .map_err(|_| RuntimeError::RetainedState)?;
+        self.check_transfer_metadata(&[
+            ("model-v1", model),
+            ("model-account-v1", intent.account.clone()),
+        ])
     }
     /// The renderer never supplies a slot; derive the exact one this
     /// transaction may remove. Prefers the live/current slot, falling back to

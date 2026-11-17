@@ -772,6 +772,200 @@ fn facade_transfer_rejects_removal_outcomes_before_stopping_b() {
 }
 
 #[test]
+fn facade_cancel_before_forward_worker_runs_keeps_a() {
+    use std::future::Future;
+    for retry in [false, true] {
+        let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+        let transaction = if retry {
+            scene.replace(Some("intent")).unwrap_err();
+            Some(
+                WorkspaceUpgrade::open(&scene.data, &scene.local)
+                    .unwrap()
+                    .read_intent()
+                    .unwrap()
+                    .unwrap()
+                    .transaction,
+            )
+        } else {
+            None
+        };
+        seed_cache(&mut scene);
+        let (vm, factory) = facade(&scene, None);
+        runtime().block_on(async {
+            let forward = async {
+                match transaction {
+                    Some(id) => {
+                        vm.retry_workspace(
+                            scene.data.clone(),
+                            scene.local.clone(),
+                            target(&scene),
+                            id,
+                        )
+                        .await
+                    }
+                    None => {
+                        vm.replace_workspace(
+                            scene.data.clone(),
+                            scene.local.clone(),
+                            target(&scene),
+                        )
+                        .await
+                    }
+                }
+            };
+            tokio::pin!(forward);
+            std::future::poll_fn(|cx| {
+                assert!(forward.as_mut().poll(cx).is_pending());
+                std::task::Poll::Ready(())
+            })
+            .await;
+            let cancel = vm.cancel_workspace_upgrade().await;
+            let result = forward.await;
+            vm.shutdown().await.unwrap();
+            assert!(cancel.is_ok(), "retry={retry}");
+            assert!(
+                result.is_err(),
+                "acknowledged cancel was lost; retry={retry}"
+            );
+            assert_eq!(
+                read_record(&scene.local.join("local-vm-v1"))
+                    .unwrap()
+                    .installation_id,
+                scene.source_id
+            );
+            assert!(factory.launched.lock().unwrap().is_empty());
+        });
+    }
+}
+
+#[test]
+fn facade_cancel_during_forward_handoff_retains_b_without_launching() {
+    for retry in [false, true] {
+        let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+        let transaction = if retry {
+            scene.replace(Some("intent")).unwrap_err();
+            Some(
+                WorkspaceUpgrade::open(&scene.data, &scene.local)
+                    .unwrap()
+                    .read_intent()
+                    .unwrap()
+                    .unwrap()
+                    .transaction,
+            )
+        } else {
+            None
+        };
+        seed_cache(&mut scene);
+        let (entered, entered_rx) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        let (vm, factory) = facade(&scene, Some((entered, Mutex::new(release_rx))));
+        runtime().block_on(async {
+            let forward = {
+                let (vm, data, local, target) = (
+                    vm.clone(),
+                    scene.data.clone(),
+                    scene.local.clone(),
+                    target(&scene),
+                );
+                tokio::spawn(async move {
+                    match transaction {
+                        Some(id) => vm.retry_workspace(data, local, target, id).await,
+                        None => vm.replace_workspace(data, local, target).await,
+                    }
+                })
+            };
+            let entered = tokio::task::spawn_blocking(move || {
+                entered_rx.recv_timeout(std::time::Duration::from_secs(5))
+            })
+            .await
+            .unwrap();
+            let cancel = vm.cancel_workspace_upgrade().await;
+            // Release before any assertion, even if cancellation failed.
+            release.send(()).unwrap();
+            let result = forward.await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            vm.shutdown().await.unwrap();
+            assert!(entered.is_ok());
+            assert!(cancel.is_ok(), "retry={retry}");
+            assert!(result.is_ok(), "handoff must finish; retry={retry}");
+            assert!(
+                factory.launched.lock().unwrap().is_empty(),
+                "launch after acknowledged cancel; retry={retry}"
+            );
+            let destination = factory.destination.lock().unwrap();
+            let journal = destination.as_ref().expect("original B journal retained");
+            journal.require_fresh_creation().unwrap();
+            assert_eq!(
+                journal.record().installation_id,
+                read_record(&scene.local.join("local-vm-v1"))
+                    .unwrap()
+                    .installation_id
+            );
+        });
+    }
+}
+
+#[test]
+fn facade_transfer_rejects_conflicting_current_metadata_before_stopping_b() {
+    for name in ["model-v1", "model-account-v1"] {
+        let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+        seed_cache(&mut scene);
+        let (vm, factory) = facade(&scene, None);
+        runtime().block_on(async {
+            let dto = vm
+                .replace_workspace(scene.data.clone(), scene.local.clone(), target(&scene))
+                .await
+                .unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                while vm.status() != LocalVmStatus::Ready {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            let owner = WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap();
+            let intent = owner.read_intent().unwrap().unwrap();
+            let bytes = if name == "model-v1" {
+                let model = SetupStore::transferred_model(
+                    intent.model.as_deref(),
+                    intent.destination.as_ref().unwrap().installation,
+                )
+                .unwrap()
+                .unwrap();
+                let mut model: serde_json::Value = serde_json::from_slice(&model).unwrap();
+                assert!(model["slot"].is_string());
+                model["slot"] = serde_json::json!(Uuid::new_v4());
+                serde_json::to_vec(&model).unwrap()
+            } else {
+                // Unrecognized bytes must fail closed; this is not a schema fixture.
+                b"unrecognized current account".to_vec()
+            };
+            drop(owner);
+            let path = scene.data.join("setup-v1").join(name);
+            fs::write(&path, &bytes).unwrap();
+            let stops = factory.stops.load(std::sync::atomic::Ordering::SeqCst);
+            let releases = factory.releases.load(std::sync::atomic::Ordering::SeqCst);
+            let result = vm
+                .transfer_workspace_credential(
+                    scene.data.clone(),
+                    scene.local.clone(),
+                    dto.transaction.unwrap(),
+                )
+                .await;
+            let status = vm.status();
+            let stopped = factory.stops.load(std::sync::atomic::Ordering::SeqCst);
+            let released = factory.releases.load(std::sync::atomic::Ordering::SeqCst);
+            vm.shutdown().await.unwrap();
+            assert!(result.is_err(), "name={name}");
+            assert_eq!(status, LocalVmStatus::Ready, "name={name}");
+            assert_eq!(stopped, stops, "name={name}");
+            assert_eq!(released, releases, "name={name}");
+            assert_eq!(fs::read(path).unwrap(), bytes);
+        });
+    }
+}
+
+#[test]
 fn facade_terminal_close_before_worker_registers_cancellation_keeps_a() {
     use std::future::Future;
     let mut scene = Scene::new(ImageTarget::WindowsAmd64);
