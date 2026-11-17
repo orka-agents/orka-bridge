@@ -91,6 +91,15 @@ for (const path of ['build.rs', 'permissions/setup.toml']) {
     assert.ok(registration.includes(`"${command}"`), `${path} must permit the real desktop ${command} command`);
   }
 }
+// Saved-only header counts apply before Overview is visited, not after its deliberate visit.
+const hiddenHeader = source.split('\n').find(line => line.includes("'hidden saved-file count'"));
+assert.ok(hiddenHeader);
+const checkHeader = Function('noDestination', 'until', 'evaluate', `return (async () => { ${hiddenHeader} })()`);
+let headerReads = 0;
+await checkHeader(true, async () => { headerReads++; }, () => true);
+assert.equal(headerReads, 0, 'visited Overview must not be required to keep its pre-visit saved-only label');
+await checkHeader(false, async () => { headerReads++; }, () => true);
+assert.equal(headerReads, 1, 'other Designer cases retain the hidden saved-only count gate');
 // Execute the driver's actual isolated-world IPC setup, not a second copy of its payloads.
 const captureActions = source.slice(source.indexOf('  async function captureActions('), source.indexOf('  // Overview renderer fixtures:'));
 for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination']) {

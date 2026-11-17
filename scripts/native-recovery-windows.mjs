@@ -802,8 +802,8 @@ try {
         if (await evaluate(`window.__bridgeCatalogCalls.length || /Couldn't read (tools|models) from/.test(document.body.innerText)`)) throw Error('Unselected destination requested or blamed a catalog');
         await evaluate(`document.querySelector('.model-select').scrollIntoView({ block: 'center' })`);
       } else if (name !== 'designer') await until(() => evaluate(`!document.querySelector('.model-select').disabled`), 'connected Designer catalog');
-      // This case opens Overview intentionally; other Designer scenes must not read its live inventory.
-      await until(() => evaluate(`document.querySelector('#tab-status-Overview')?.textContent === '1 saved agent'`), 'hidden saved-file count');
+      // This case visits Overview: its header then uses live/partial counts, not the pre-visit saved-only label.
+      if (!noDestination) await until(() => evaluate(`document.querySelector('#tab-status-Overview')?.textContent === '1 saved agent'`), 'hidden saved-file count');
       if (await evaluate(`(${!noDestination} && window.__bridgeOverviewLiveReads !== 0) || /\\bSaved\\b/.test(document.querySelector('footer').innerText)`)) throw Error('Untouched Designer claimed Saved or hidden Overview read live inventory');
       if (name === 'designer-catalog-busy') {
         await evaluate(`document.querySelector('button[aria-controls$="-picker"]').click()`);
