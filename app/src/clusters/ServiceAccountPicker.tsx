@@ -89,7 +89,7 @@ export default function ServiceAccountPicker({ target, active, disabled, value, 
     </div>}
     {value && !manual && <>
       <p role="status" className="cluster-checking"><StatusIcon state={icon} />Required Orka permissions: {status}</p>
-      <p className="muted">Required permissions only. Connection and broader access not verified.</p>
+      <p className="muted">Name/group preview only. Actual token permissions are checked on Use. Connection and broader access not verified.</p>
       {result?.reply && <Disclosure label="Permission details" open={details} onOpenChange={setDetails}>{details && <ul className="account-permissions">{result.reply.checks.map(check => <li key={`${check.resource}/${check.verb}`}><span>{check.verb} <code>{check.resource}</code></span><span>{labels[check.status]}</span></li>)}</ul>}</Disclosure>}
     </>}
     <p className="muted">Choose an account your administrator provided for Bridge. Required-permission checks do not inspect broader access.</p>

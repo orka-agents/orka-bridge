@@ -48,7 +48,7 @@ test('choosing a listed account previews only it, and only explicit Use sends it
   await screen.findByText('Required Orka permissions: Allowed');
   const description = screen.getByRole('button', { name: 'ServiceAccount' }).getAttribute('aria-describedby');
   expect(description && document.getElementById(description)?.textContent).toBe('team-runner');
-  expect(screen.getByText('Required permissions only. Connection and broader access not verified.')).toBeTruthy();
+  expect(screen.getByText('Name/group preview only. Actual token permissions are checked on Use. Connection and broader access not verified.')).toBeTruthy();
   expect(use.matches(':disabled')).toBe(false);
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_service_account_preview')).toEqual([['cluster_service_account_preview', { targetId: target.id, saName: 'team-runner' }]]);
   expect(ipc.mock.calls.filter(([c]) => c === 'cluster_use')).toHaveLength(1);
