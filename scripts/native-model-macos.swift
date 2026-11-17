@@ -211,9 +211,9 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
 localSize(1280, 800); scroll(4000)
 // Changing the provider choice while queued clears the queue; restore Copilot before continuing.
 click("Change", [])
-click("Your own API key", [])
+chooseConnection("Your own API key")
 require(!nativeTextExists("Queued"), "Changing the radio choice must clear the queue")
-click("GitHub Copilot", [])
+chooseConnection("GitHub Copilot")
 click("Change", [])
 click("Show details", [])
 _ = try capture("local-setup-starting-details", ["45 seconds elapsed", "Starting the workspace"])

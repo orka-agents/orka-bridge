@@ -444,7 +444,7 @@ test('an unreadable status makes the card unavailable instead of keeping the las
   expect(card().getByText('Get your workspace ready').closest('li')?.getAttribute('aria-current')).toBe('step');
   unreadable();
   await waitFor(() => expect(within(screen.getByRole('contentinfo')).getAllByText('Workspace unavailable').length).toBeGreaterThan(0), { timeout: 3000 });
-  expect(card().getByRole('status').textContent).toBe('Workspace status is unavailable.');
+  expect(screen.getByText('Workspace status is unavailable.', { selector: '.workspace-steps > [role="status"]' })).toBeTruthy();
   expect(card().queryByText('Setting up, step 2 of 4')).toBeNull();
   expect(screen.queryByRole('progressbar')).toBeNull();
   expect(screen.queryByText(/Installing, 1.1 GiB/)).toBeNull();

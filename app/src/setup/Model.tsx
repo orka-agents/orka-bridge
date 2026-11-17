@@ -232,8 +232,8 @@ export default function Model({ enabled, queueable = false, paused = false, away
   const content = <section ref={root} className={portaled || compact ? 'setup-model' : 'card setup-model'} aria-labelledby="model-title" aria-busy={!!busy} onFocusCapture={() => { focusWithin.current = true; }} onBlurCapture={event => { if (event.relatedTarget) focusWithin.current = !!root.current?.contains(event.relatedTarget); }} onKeyDown={event => { if (event.key === 'Escape' && !busy) { event.stopPropagation(); closeChange(); } }}>
     <div className={compact ? 'model-inline-head' : 'steps-head'}>
       <h2 id="model-title" ref={heading} tabIndex={-1} className={compact ? 'sr-only' : undefined}>{removalFailed ? `Couldn't remove the saved ${keyMode ? 'key' : 'sign-in'}` : 'Connect the AI'}</h2>
-      {compact && <span>{keyMode ? 'Your own API key' : 'GitHub Copilot'}{queued ? ', connects when the workspace is ready' : ', connect at step 3'}</span>}
-      {ready && <span role="status"><StatusPill state="passed">Connected</StatusPill></span>}
+      {compact && <span role="status" aria-atomic="true">{keyMode ? 'Your own API key' : 'GitHub Copilot'}{queued ? ', connects when the workspace is ready' : ', connect at step 3'}</span>}
+      {ready && <div ref={status} role="status" tabIndex={-1} className="model-state"><StatusPill state="passed">Connected</StatusPill></div>}
       {compact && <Button ref={changeButton} type="button" kind="quiet" disabled={paused || !!busy} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>Change</Button>}
     </div>
     <div hidden={compact && !expanded}>

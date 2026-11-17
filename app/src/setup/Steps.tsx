@@ -64,6 +64,8 @@ export function SetupProgress(props: Props) {
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
     : copying ? 'Installing the workspace…' : 'Checking the cluster download…';
   const pill: Status = error ? 'needs-you' : view.status;
+  const workspaceReady = ready && !error && !stopping;
+  const workspaceWord = error ? 'Status unavailable' : stopping || status.localVm === 'closing' ? 'Stopping' : workspaceReady ? 'Ready' : failed ? "Couldn't start" : undefined;
   const workspaceDetails = !failed && !error && <>
     {infra && <><div role="progressbar" aria-label="Workspace setup progress" aria-valuemin={0} aria-valuemax={100}
       aria-valuenow={infra.value === null ? undefined : Math.round(infra.value * 100)} className={`infra-bar${infra.value === null ? ' indeterminate' : ''}`}>
@@ -79,7 +81,7 @@ export function SetupProgress(props: Props) {
       </div>}</Disclosure>
   </>;
   return <section className="card workspace-steps setup-progress" aria-label="Workspace setup">
-    <div className="steps-head"><h2>Workspace</h2><StatusPill state={ready ? 'passed' : pill}>{ready ? 'Ready' : failed ? "Couldn't start" : undefined}</StatusPill></div>
+    <div className="steps-head"><h2>Workspace</h2><StatusPill state={workspaceReady ? 'passed' : pill}>{workspaceWord}</StatusPill></div>
     {view.done && <span className="status-description">{view.line !== 'Workspace ready' ? view.line : undefined}</span>}
     <p role="status" className={paused || error || status.localVm === 'notIntegrated' ? undefined : 'sr-only'}>{view.done || paused || error || ready || stopping || status.localVm === 'notIntegrated' ? stateLine : failed ? 'Setup needs attention' : view.line}</p>
     <SetupSteps {...props} workspaceDetails={workspaceDetails} />
