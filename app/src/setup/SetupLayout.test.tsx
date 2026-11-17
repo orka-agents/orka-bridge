@@ -54,11 +54,14 @@ test('readiness keeps keyboard focus with a queued choice when its card moves ou
   const connect = screen.getByRole('button', { name: 'Connect the AI' });
   connect.focus(); fireEvent.click(connect);
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Change' }));
-  invoke.mockImplementation(() => new Promise(() => {}));
+  let finish!: (value: unknown) => void;
+  invoke.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
   view.rerender(<Model enabled inline={false} choiceTarget={target} />);
   await act(async () => {});
   expect(document.activeElement?.closest('.setup-model')).toBeTruthy();
   expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_model');
+  await act(async () => finish({ ready: true }));
+  expect(document.activeElement).toBe(screen.getByText('Connected').closest('[role="status"]'));
   view.unmount(); target.remove();
 });
 

@@ -34,6 +34,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
   useEffect(() => {
     // A portal move replaces DOM, not consent. Restore focus only when that DOM owned it.
     if (focusWithin.current && document.activeElement === document.body && !root.current?.closest('[hidden]')) {
+      refocus.current = 'connect';
       (status.current ?? heading.current)?.focus();
     }
   }, [inline, choiceTarget]);
