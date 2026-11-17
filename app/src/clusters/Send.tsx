@@ -364,7 +364,6 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
       {target && <div><dt>Destination</dt><dd><code>{target.context_name}</code> · <code>{target.watched_namespace}</code></dd></div>}
       {provider && <div><dt>AI connection</dt><dd>{destinationModel ? modelLabel(destinationModel) : provider.name}{provider.ready ? ', checked when tests run' : ' · AI connection not ready'}</dd></div>}
     </dl>
-    {!running && canSeparate && <p>Sends as a new agent; the old one keeps running.</p>}
     {checkingEnabled && !destinationReady && <section className="send-preflight" aria-label="Before Send" aria-busy={!checked}>
      <h4>Before Send</h4>
       {checkRows}
@@ -398,6 +397,7 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
         {canSeparate && <Button type="button" kind="secondary" disabled={busy} onClick={event => startSend(event.currentTarget, true)}>Send as a separate agent</Button>}
         {checkingEnabled && checked && recovery !== 'reload' && recovery !== 'check' && refreshDestination('secondary')}
       </div>}
+      {!running && canSeparate && <p>Sends as a new agent; the old one keeps running.</p>}
       {provider && <p>AI connection: <code>{provider.name}</code></p>}
       {snapshot && <><dl className="cluster-details"><div><dt>Result destination</dt><dd>{targetName ?? 'Not confirmed'}</dd></div>
       <div><dt>Model sent</dt><dd><code>{snapshot.model ?? 'Not captured'}</code></dd></div>

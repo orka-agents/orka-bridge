@@ -109,7 +109,9 @@ test('Send copy is concise and friendly while recorded raw model/provider remain
   await screen.findByText('Destination ready');
   expect(screen.getByText('GPT-5.6 Terra, checked when tests run')).toBeTruthy();
   expect(screen.queryByText('Team clusters are early in this preview.')).toBeNull();
-  expect(screen.getByText('Sends as a new agent; the old one keeps running.')).toBeTruthy();
+  const separateHelp = screen.getByText('Sends as a new agent; the old one keeps running.');
+  expect(separateHelp.closest('details')?.open).toBe(false);
+  expect(within(card()).getByRole('region', { name: 'What you send' }).contains(separateHelp)).toBe(false);
   expect(screen.queryByText('Using the same agent without changing its configuration.')).toBeNull();
   await openDetails();
   expect(within(card()).getByText('Model sent').parentElement?.textContent).toContain('gpt-5.6-terra');
