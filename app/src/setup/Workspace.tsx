@@ -52,10 +52,10 @@ export default function Workspace({ status, busy, stopping, starting, error, act
     <p role="status">{error ? 'Workspace status is unavailable. Check again before starting it.' : stopFailed ? "The workspace didn't stop." : failed ? recovery.summary : stopped ? 'The workspace stopped unexpectedly. Your agents and files are kept.' : view.detail}</p>
     {view.word === 'Starting' && clock && <p className="muted">{clock} so far</p>}
     {(stopFailed || closed) && <Button type="button" kind="primary" disabled={quitting} onClick={() => { void quit(); }}>Quit Bridge</Button>}
-    {failed && !stopFailed && recovery.action && <p>{recovery.action}</p>}
+    {failed && !stopFailed && recovery.action && <p>{recovery.action.replaceAll('Try again', 'Restart workspace').replaceAll('copy the details for help', 'open Show details for help')}</p>}
     {(failed || stopped) && !stopFailed && <div className="workspace-step-actions"><Button type="button" kind="primary" disabled={busy || !!error || failed && recovery.retryBlocked} title={failed && recovery.retryBlocked ? recovery.action : undefined} onClick={onStart}>Restart workspace</Button>
       {failed && recovery.topic && <Button type="button" kind="secondary" onClick={() => { void help(); }}>Show me how</Button>}</div>}
-    {helpError && <p role="alert">Couldn't open help. Open Show details to read the error.</p>}
+    {failed && helpError && <p role="alert">Couldn't open help. Open Show details to read the error.</p>}
     {quitError && <p role="alert">Couldn't quit Bridge. Try again or use Quit Bridge from its menu.</p>}
     {failed && <Disclosure label={details ? 'Hide details' : 'Show details'} open={details} controls="returning-workspace-error" onOpenChange={setDetails}>
       {details && <div className="workspace-progress-details"><pre id="returning-workspace-error">{status.localVmError || recovery.summary}</pre></div>}

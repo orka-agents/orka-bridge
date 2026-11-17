@@ -136,7 +136,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
       if (result.ok) {
         if (initialStatus.current) {
           // A saved choice also exists mid-setup. Only a retired first-test intent proves a returning session.
-          setWorkspace(result.status.selected === 'localVm' && firstTestAttempted()); initialStatus.current = false;
+          setWorkspace(result.status.selected === 'localVm' && result.status.localVm !== 'notIntegrated' && firstTestAttempted()); initialStatus.current = false;
         }
         setStatus(result.status); setError(undefined);
       }
@@ -169,7 +169,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   function chooseComputer() { publishPlace({ kind: 'thisComputer' }); }
   function openExample() { if (firstPass) setPayoffDismissed(true); chooseComputer(); onOpenExample(); }
   function back() { focusChoice.current = true; setPanel('places'); }
-  function openLocal() { focusChoice.current = true; if (status?.selected === 'localVm' && firstCheck && !firstTestPending() && (!firstPass || payoffDismissed)) setWorkspace(true); setLocation('local'); setPreflightBlocked(true); setPanel('local'); }
+  function openLocal() { focusChoice.current = true; if (status?.selected === 'localVm' && status.localVm !== 'notIntegrated' && firstCheck && !firstTestPending() && (!firstPass || payoffDismissed)) setWorkspace(true); setLocation('local'); setPreflightBlocked(true); setPanel('local'); }
   function removed(key: string, targetId: string | undefined, navigate: boolean) {
     const current = currentPlaceRef.current;
     if (targetId && current.kind === 'cluster' && current.target?.id === targetId) publishPlace({ kind: 'cluster' });

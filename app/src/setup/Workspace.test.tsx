@@ -10,11 +10,12 @@ let status: SetupStatus;
 let unreadable = false;
 let agentName = 'my-agent';
 let quitFails = false;
+let helpFails = false;
 const ipc = vi.fn((command: string) => {
   if (command === 'setup_status') { if (unreadable) throw Error('unreadable'); return status; }
   if (command === 'setup_requirements') return null;
   if (command === 'setup_select_local') return status = { selected: 'localVm', localVm: 'starting', model: 'locked', workspaceProgress: { phase: 'starting', elapsedMs: 18000, bytes: null, totalBytes: null, remainingMs: null } };
-  if (command === 'setup_open_help') return;
+  if (command === 'setup_open_help') { if (helpFails) throw Error('unavailable'); return; }
   if (command === 'quit_bridge') { if (quitFails) throw Error('unavailable'); return; }
   if (command === 'agents_list') return [{ id: '00000000-0000-4000-8000-000000000001', name: agentName, path: '/agents/my-agent.agent.md', available: true }];
   if (command === 'agent_creation_root') return '/agents';
@@ -25,7 +26,7 @@ beforeEach(() => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   localStorage.setItem('bridge.firstTest.v1', 'attempted');
   status = { selected: 'localVm', localVm: 'ready', model: 'available' };
-  agentName = 'my-agent'; unreadable = false; quitFails = false; ipc.mockClear(); mockIPC(ipc);
+  agentName = 'my-agent'; unreadable = false; quitFails = false; helpFails = false; ipc.mockClear(); mockIPC(ipc);
 });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
@@ -119,6 +120,29 @@ test.each(['workspaceUpdateRequired', 'workspaceVersionUnsupported'] as const)('
   const card = await screen.findByRole('region', { name: 'Workspace' });
   expect(within(card).getByText('Open the matching Bridge version.', { selector: 'p' })).toBeTruthy();
   expect((within(card).getByRole('button', { name: 'Restart workspace' }) as HTMLButtonElement).disabled).toBe(true);
+});
+
+test('unavailable integration keeps its explanation instead of promising startup', async () => {
+  status = { selected: 'localVm', localVm: 'notIntegrated', model: 'locked' };
+  await open();
+  expect(screen.queryByRole('region', { name: 'Workspace' })).toBeNull();
+  expect(screen.getByText('Workspace setup is not included in this build. Nothing will be downloaded or started.')).toBeTruthy();
+});
+
+test('returning failure guidance names the offered restart and details controls', async () => {
+  status = { selected: 'localVm', localVm: 'failed', model: 'locked', workspaceFailure: { cause: 'services', operation: 'services', codes: [] } };
+  await open();
+  expect(screen.getByText('Press Restart workspace to restart the workspace. If it happens again, open Show details for help.')).toBeTruthy();
+});
+
+test('a rejected help action does not leave a failure notice on a recovered workspace', async () => {
+  status = { selected: 'localVm', localVm: 'failed', model: 'locked', preflightFailure: 'hypervisorUnavailable' }; helpFails = true;
+  const user = await open();
+  await user.click(screen.getByRole('button', { name: 'Show me how' }));
+  expect(await screen.findByText("Couldn't open help. Open Show details to read the error.")).toBeTruthy();
+  await observe({ selected: 'localVm', localVm: 'ready', model: 'available' });
+  await within(screen.getByRole('region', { name: 'Workspace' })).findByText('Ready', { selector: '.pill' });
+  expect(screen.queryByText("Couldn't open help. Open Show details to read the error.")).toBeNull();
 });
 
 test('returning to This computer refreshes saved agents', async () => {
