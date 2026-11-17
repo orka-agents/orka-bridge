@@ -26,7 +26,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
   const [expanded, setExpanded] = useState(false);
   const [changing, setChanging] = useState(false);
   const changeButton = useRef<HTMLButtonElement>(null);
-  function closeChange() { clearKey(); setExpanded(false); setChanging(false); setConfirmRemoval(false); changeFocus.current = 'change'; }
+  function closeChange() { clearKey(); setExpanded(false); setChanging(false); setConfirmRemoval(false); changeFocus.current = changing || compact ? 'change' : 'panel'; }
   const company = companies[vendor];
   const root = useRef<HTMLElement>(null);
   const status = useRef<HTMLDivElement>(null);

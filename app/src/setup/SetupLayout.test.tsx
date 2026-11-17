@@ -114,6 +114,24 @@ test('Escape in ordinary key entry preserves input and cannot prime a later Chan
   expect(document.activeElement).toBe(other);
 });
 
+test('Escape from recovery removal confirmation restores its action without a stale Change focus', async () => {
+  let finish!: (value: unknown) => void;
+  invoke.mockRejectedValueOnce({ kind: 'modelConnect' }).mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  render(<><Model enabled /><input aria-label="Another field" /></>);
+  fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
+  await screen.findByRole('alert');
+  fireEvent.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  const cancel = screen.getByRole('button', { name: 'Cancel' }); cancel.focus();
+  fireEvent.keyDown(cancel, { key: 'Escape' });
+  expect(screen.queryByRole('group', { name: 'Remove sign-in confirmation' })).toBeNull();
+  expect(invoke).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove sign-in' })));
+  const retry = screen.getByRole('button', { name: 'Check again' }); retry.focus(); fireEvent.click(retry);
+  const other = screen.getByRole('textbox', { name: 'Another field' }); other.focus();
+  await act(async () => finish({ ready: true }));
+  expect(document.activeElement).toBe(other);
+});
+
 test.each(['unavailable', 'stopping'] as const)('a retained ready snapshot cannot paint Ready while %s', mode => {
   render(<SetupProgress status={{ selected: 'localVm', localVm: 'ready', model: 'available' }} modelState="connected" busy={mode === 'stopping'} stopping={mode === 'stopping'} error={mode === 'unavailable' ? 'Observation unavailable' : undefined} onCancel={() => {}} onRestart={() => {}} onChange={() => {}} onOpenExample={() => {}} />);
   const pill = document.querySelector('.steps-head .pill')!;
