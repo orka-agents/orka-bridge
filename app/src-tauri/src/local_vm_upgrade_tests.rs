@@ -772,7 +772,7 @@ fn facade_transfer_rejects_removal_outcomes_before_stopping_b() {
 }
 
 #[test]
-fn facade_cancel_before_forward_worker_runs_keeps_a() {
+fn facade_cancel_local_before_forward_worker_runs_keeps_a() {
     use std::future::Future;
     for retry in [false, true] {
         let mut scene = Scene::new(ImageTarget::WindowsAmd64);
@@ -819,7 +819,11 @@ fn facade_cancel_before_forward_worker_runs_keeps_a() {
                 std::task::Poll::Ready(())
             })
             .await;
-            let cancel = vm.cancel_workspace_upgrade().await;
+            let store = Arc::new(SetupStore::with_upgrade_root(
+                Some(scene.data.clone()),
+                Some(scene.local.clone()),
+            ));
+            let cancel = crate::local_vm::cancel_local(store, &vm).await;
             let result = forward.await;
             vm.shutdown().await.unwrap();
             assert!(cancel.is_ok(), "retry={retry}");
@@ -839,7 +843,7 @@ fn facade_cancel_before_forward_worker_runs_keeps_a() {
 }
 
 #[test]
-fn facade_cancel_during_forward_handoff_retains_b_without_launching() {
+fn facade_cancel_local_during_forward_handoff_retains_b_without_launching() {
     for retry in [false, true] {
         let mut scene = Scene::new(ImageTarget::WindowsAmd64);
         let transaction = if retry {
@@ -879,7 +883,11 @@ fn facade_cancel_during_forward_handoff_retains_b_without_launching() {
             })
             .await
             .unwrap();
-            let cancel = vm.cancel_workspace_upgrade().await;
+            let store = Arc::new(SetupStore::with_upgrade_root(
+                Some(scene.data.clone()),
+                Some(scene.local.clone()),
+            ));
+            let cancel = crate::local_vm::cancel_local(store, &vm).await;
             // Release before any assertion, even if cancellation failed.
             release.send(()).unwrap();
             let result = forward.await.unwrap();

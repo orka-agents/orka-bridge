@@ -55,7 +55,7 @@ pub async fn cancel_local(
     store: Arc<crate::setup::SetupStore>,
     vm: &Arc<LocalVm>,
 ) -> Result<crate::setup::SetupSnapshot, crate::setup::SetupError> {
-    vm.cancel()
+    vm.cancel_workspace_upgrade()
         .await
         .map_err(|_| crate::setup::SetupError::model("modelSession"))?;
     setup_status(store, vm).await
@@ -657,7 +657,7 @@ impl LocalVm {
         if self.upgrading.load(std::sync::atomic::Ordering::Acquire)
             || matches!(
                 self.status(),
-                LocalVmStatus::Preparing | LocalVmStatus::Starting
+                LocalVmStatus::Preparing | LocalVmStatus::Installing | LocalVmStatus::Starting
             )
         {
             Err(RuntimeError::Busy)
@@ -899,7 +899,10 @@ impl LocalVm {
         let phase = self.status();
         if matches!(
             phase,
-            LocalVmStatus::Preparing | LocalVmStatus::Starting | LocalVmStatus::Ready
+            LocalVmStatus::Preparing
+                | LocalVmStatus::Installing
+                | LocalVmStatus::Starting
+                | LocalVmStatus::Ready
         ) {
             let mut dto = cached.unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
             dto.busy = dto.state == "fresh" && phase != LocalVmStatus::Ready;
@@ -1589,7 +1592,11 @@ fn facade_cancel_without_watch_refuses_reserved_choice_without_stopping_vm() {
 #[cfg(test)]
 #[test]
 fn facade_upgrade_admission_does_not_trust_incomplete_or_absent_cache() {
-    for phase in [LocalVmStatus::Preparing, LocalVmStatus::Starting] {
+    for phase in [
+        LocalVmStatus::Preparing,
+        LocalVmStatus::Installing,
+        LocalVmStatus::Starting,
+    ] {
         for cached in [false, true] {
             let vm = LocalVm::unavailable();
             vm.inner.state.lock().unwrap().phase = phase;
@@ -1685,6 +1692,18 @@ fn facade_status_disk_read_cannot_publish_across_a_cache_mutation() {
                 "fresh"
             );
 
+            for phase in [
+                LocalVmStatus::Preparing,
+                LocalVmStatus::Installing,
+                LocalVmStatus::Starting,
+            ] {
+                vm.inner.state.lock().unwrap().phase = phase;
+                let dto = vm
+                    .upgrade_status(data.path().into(), local.path().into())
+                    .await;
+                assert_eq!(dto.state, "fresh", "{phase:?}");
+                assert!(dto.busy, "{phase:?}");
+            }
             // The synchronous Ready projection must use the same publisher.
             vm.inner.state.lock().unwrap().phase = LocalVmStatus::Ready;
             let revision = vm
