@@ -181,8 +181,8 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     Thread.sleep(forTimeInterval: 1)
 }
 // Exercise the four-step list with only synthetic IPC, at the actual minimum and wide sizes.
-waitForButton("Connect the AI")
-for (phase, expected) in [("installing", "Installing, 1 GiB of 2 GiB"), ("starting", "45 seconds elapsed")] {
+waitForButton("Change")
+for (phase, expected) in [("installing", "Downloading, 1.1 of 2.1 GB"), ("starting", "45 seconds elapsed")] {
     try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
     Thread.sleep(forTimeInterval: 0.6)
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
@@ -196,21 +196,28 @@ for (phase, expected) in [("installing", "Installing, 1 GiB of 2 GiB"), ("starti
             _ = try capture("local-setup-meet-\(size)", ["Meet your first agent", "web-reader", "Read a web page"])
         }
     }
+    if phase == "installing" { try setupFitCapture("download", ["Meet your first agent", "Run your first agent"], "Read its instructions") }
 }
 localSize(1280, 800)
 scroll(4000)
+// Default shows one Cancel (pauses setup); queueing the AI goes through its own inline Change first.
+click("Change", [])
 click("Connect the AI", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("Connects when", -200)
-    reveal("Cancel queued connection")
-    _ = try capture("local-setup-queued-\(size)", ["Queued", "Cancel"])
+    _ = try seek("connects when", -200)
+    _ = try capture("local-setup-queued-\(size)", ["Queued", "Change"])
+    require(enabledButton("Cancel queued connection") == nil, "A queued connection must not offer its own Cancel")
 }
-reveal("Cancel queued connection")
-click("Cancel queued connection", [])
 localSize(1280, 800); scroll(4000)
+// Changing the provider choice while queued clears the queue; restore Copilot before continuing.
+click("Change", [])
+chooseConnection("Your own API key")
+require(!nativeTextExists("Queued"), "Changing the radio choice must clear the queue")
+chooseConnection("GitHub Copilot")
+click("Change", [])
 click("Show details", [])
-_ = try capture("local-setup-starting-details", ["45 seconds elapsed", "Starting the local cluster"])
+_ = try capture("local-setup-starting-details", ["45 seconds elapsed", "Starting the workspace"])
 try FileManager.default.removeItem(at: setupProgress)
 Thread.sleep(forTimeInterval: 0.6)
 click("Clusters", [])
@@ -241,17 +248,18 @@ scroll(4000)
 _ = try capture("local-setup-ai-minimum-top", ["This computer", "Get your workspace ready"])
 _ = try seek("Connect the AI", -200)
 _ = try capture("local-setup-ai-minimum", ["GitHub Copilot", "Connect the AI"])
+try setupFitCapture("ai", ["Workspace", "GitHub Copilot"], "Connect the AI")
 // Earlier-installation record (frames 1g/1h): synthetic recovery IDs, no store, file or VM.
 try "model-mismatch".write(to: setupProgress, atomically: true, encoding: .utf8)
 press("Connect the AI")
 waitForButton("Reset AI connection")
-require(nativeTextExists("The AI couldn't connect") && nativeTextExists("Your workspace is running. Nothing is lost."), "Mismatch must name the AI failure and the safe workspace")
+require(nativeTextExists("The AI couldn't connect") && nativeTextExists("Your agents are safe."), "Mismatch must name the AI failure and the safe workspace")
 require(!["Remove sign-in", "Check again", "Connect the AI"].contains(where: anyButton), "Mismatch offers only reset recovery")
 try resetCapture("mismatch", ["earlier setup", "Use another provider", "Copy details for help"], anchor: "Reset AI connection")
 press("Clusters")
 waitForButton("Reset AI connection")
-try resetCapture("place", ["This computer", "Workspace running", "earlier setup"], anchor: "Reset AI connection")
-press("Connect the AI")
+try resetCapture("place", ["This computer", "The AI needs to be set up again", "earlier setup"], anchor: "Reset AI connection")
+press("View workspace")
 waitForButton("Reset AI connection")
 press("Reset AI connection")
 try resetCapture("confirmation", ["Reset the AI connection?", "starts with this same reset", "Cancel"], anchor: "Reset")
@@ -304,23 +312,36 @@ localSize(1280, 800)
 scroll(4000)
 require(enabledButton("Remove sign-in") == nil, "Remove must be absent before the first sign-in attempt")
 click("Connect the AI", rows)
-rows = try capture("local-completed", ["This computer", "Local cluster ready", "Stop the local cluster", "Run your first test"])
+rows = try capture("local-completed", ["This computer", "Workspace ready", "Stop the workspace", "Run your first agent"])
 require(!rows.contains { ($0.topCandidates(1).first?.string ?? "").range(of: "[Ss]tep [0-9]+ of [45]", options: .regularExpression) != nil },
         "Completed local page must not keep a setup counter")
-click("Remove sign-in", rows)
-rows = try capture("local-remove-confirmation", ["saved sign-in?", "Cancel", "Remove sign-in"])
+// Connected now only exposes Change; it opens a panel before the existing removal confirmation.
+click("Change", rows)
+for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+    localSize(width, height); scroll(size == "minimum" ? -4000 : 4000)
+    rows = try capture("local-change-panel-\(size)", ["Change the AI", "Remove saved sign-in", "Done"])
+}
+localSize(1280, 800); scroll(4000)
+click("Remove saved sign-in", rows)
+for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+    localSize(width, height); scroll(size == "minimum" ? -4000 : 4000)
+    rows = try capture("local-remove-confirmation-\(size)", ["saved sign-in?", "Cancel", "Remove sign-in"])
+}
+localSize(1280, 800); scroll(4000)
 click("Cancel", rows)
-rows = try capture("connected", ["Connected", "Remove sign-in"])
+click("Done", rows)
+rows = try capture("connected", ["Connected", "Change"])
 require(nativeChatTextIsVisible("synthetic-user") && nativeChatTextIsVisible("gpt-5.6-terra"), "Connected Copilot must show the verified account and fixed model")
 localSize(540, 640); scroll(4000)
 _ = try seek("Saved GitHub sign-in", -200)
 _ = try capture("local-setup-connected-minimum", ["GitHub Copilot", "gpt-5.6-terra"])
 localSize(1280, 800); scroll(4000)
-click("Remove sign-in", rows)
+click("Change", rows)
+click("Remove saved sign-in", rows)
 rows = try capture("local-remove-confirmed", ["saved sign-in?", "Cancel", "Remove sign-in"])
 click("Remove sign-in", rows)
 rows = try capture("local-remove-failed", ["Couldn't remove the saved sign-in", "Retry removal", "Copy details for help"])
-require(nativeTextExists("The saved sign-in couldn't be removed") && !anyButton("Remove sign-in"), "Removal failure needs its own heading and no Remove")
+require(nativeTextExists("The saved sign-in couldn't be removed") && !anyButton("Remove saved sign-in"), "Removal failure needs its own heading and no Remove")
 require(enabledButton("Connect the AI") == nil, "Failed cleanup must offer removal retry, not connection")
 let cleanupCases: [(String?, String, String)] = [(nil, "disconnectRetainedModel", "refused"), ("cleanup-status", "modelStatus", "unsupported"), ("cleanup-preconditions", "modelStatusPreconditions", "refused")]
 for (index, item) in cleanupCases.enumerated() {
@@ -338,9 +359,9 @@ for (index, item) in cleanupCases.enumerated() {
 }
 try FileManager.default.removeItem(at: setupProgress)
 press("Retry removal")
-rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Connect the AI"])
+rows = try capture("removed", ["Saved sign-in removed.", "Connect the AI"])
 click("Connect the AI", rows)
-rows = try capture("reconnected", ["Connected", "Remove sign-in"])
+rows = try capture("reconnected", ["Connected", "Change"])
 click("Overview", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
@@ -447,8 +468,8 @@ scroll(-4000)
 click("Continue", [])
 rows = try capture("before-first-test", ["Connect the AI"])
 click("Connect the AI", rows)
-_ = try seek("Tests on the local cluster", -200)
-let firstResult = try capture("local-first-test-result", ["Tests on the local cluster", "1 of 2 passed"])
+_ = try seek("Tests on this computer", -200)
+let firstResult = try capture("local-first-test-result", ["Tests on this computer", "1 of 2 passed"])
 require(!firstResult.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ").contains("Your agent selection could not be saved"), "Fixture rejected its owned agent selection")
 require(!exactTextIsVisible("Saved"), "Untouched agent must not claim a save acknowledgement")
 // The native fixture reports the same finite Busy error as a held VM connection.
@@ -505,7 +526,8 @@ for outcome in ["passed", "unknown"] {
             reveal("Open web-reader")
             _ = try capture("local-first-pass-\(size)-action", ["Open web-reader"])
         }
-        require(enabledButton("Stop the local cluster") == nil, "The first-pass story must not offer Stop")
+        try setupFitCapture("result", ["Your first agent passed its test", "Open web-reader"], "Open web-reader")
+        require(enabledButton("Stop the workspace") == nil, "The first-pass story must not offer Stop")
         localSize(1280, 800); scroll(4000); reveal("Open web-reader")
         click("Open web-reader", [])
         click("Clusters", [])
@@ -523,6 +545,16 @@ for outcome in ["passed", "unknown"] {
 }
 try FileManager.default.removeItem(at: firstTestOutcome)
 localSize(1280, 800); scroll(4000)
+// Compare a real accessibility control before/after scrolling, not an image hash or a viewport guess.
+func setupFitCapture(_ name: String, _ expected: [String], _ anchor: String) throws {
+    localSize(1028, 729); scroll(4000)
+    guard let button = enabledButton(anchor), let before = nativeBounds(button) else { require(false, "Missing setup-fit anchor: \(anchor)"); return }
+    _ = try capture("local-setup-fit-\(name)", expected)
+    scroll(-4000)
+    guard let after = nativeBounds(button) else { require(false, "Lost setup-fit anchor: \(anchor)"); return }
+    require(abs(before.minY - after.minY) <= 1, "Setup must not scroll at 1028×729: \(name)")
+    localSize(1280, 800); scroll(4000)
+}
 func scroll(_ pixels: Int32) {
     let rect = window()!.1
     let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)
@@ -588,8 +620,9 @@ func keyCapture(_ state: String, _ expected: [String], compact: Bool = false) th
     }
     if compact { localSize(1280, 800); scroll(4000) }
 }
-// Change confirms removal of the saved sign-in before another choice.
+// Change opens a panel with a quiet Remove action, then the existing removal confirmation.
 click("Change", [])
+click("Remove saved sign-in", [])
 click("Remove sign-in", [])
 waitForButton("Connect the AI")
 chooseConnection("Your own API key")
@@ -611,7 +644,8 @@ click("Connect the AI", [])
 try keyCapture("checking", ["Checking", "Asking Anthropic"])
 require(!anyButton("Remove key") && !anyButton("Remove sign-in"), "Remove must be absent while Connecting")
 try Data().write(to: keyCheckRelease, options: .atomic)
-waitForButton("Check again")
+waitForNativeText("Anthropic didn't accept this key")
+require(anyButton("Check again") && enabledButton("Check again") == nil, "An empty replacement key must leave Check again disabled")
 for (state, message) in [("rejected", "Anthropic didn't accept this key"),
                          ("unreachable", "workspace couldn't reach Anthropic"),
                          ("model-unavailable", "isn't listed for this key")] {
@@ -636,21 +670,23 @@ click("Clusters", [])
 scroll(4000)
 _ = try seek("Change", -200)
 click("Change", [])
+click("Remove saved key", [])
 click("Remove key", [])
 try keyCapture("change-failed", ["Key removal has not been confirmed", "Retry removal"])
-require(nativeTextExists("Couldn't remove the saved key") && !anyButton("Remove key"), "Key removal failure needs its own heading and no Remove")
+require(nativeTextExists("Couldn't remove the saved key") && !anyButton("Remove saved key"), "Key removal failure needs its own heading and no Remove")
 require(enabledButton("Anthropic") == nil, "Change must not permit replacement before cleanup")
 click("Retry removal", [])
-try keyCapture("changed", ["API key", "No AI connection."], compact: true)
+try keyCapture("changed", ["API key", "Key removed."], compact: true)
 fillMessage("sk-ant-synthetic-only-not-a-real-key", secure: true)
 _ = try seek("Connect the AI", -200)
 click("Connect the AI", [])
-waitForButton("Remove key")
-_ = try seek("Remove key", -200)
-click("Remove key", [])
+waitForButton("Change")
+_ = try seek("Change", -200)
+click("Change", [])
+click("Remove saved key", [])
 try keyCapture("remove-confirmation", ["saved key?", "Cancel", "Remove key"], compact: true)
 click("Remove key", [])
-try keyCapture("removed", ["API key", "No AI connection."])
+try keyCapture("removed", ["API key", "Key removed."])
 chooseConnection("GitHub Copilot")
 _ = try seek("Connect the AI", -200)
 click("Connect the AI", [])
@@ -658,14 +694,14 @@ click("Connect the AI", [])
 scroll(4000)
 rows = try seek("Read its instructions", -200)
 click("Read its instructions", rows)
-rows = try seek("Tests on the local cluster", -250)
-_ = try capture("local-result-wide", ["Tests on the local cluster", "1 of 2 passed"])
+rows = try seek("Tests on this computer", -250)
+_ = try capture("local-result-wide", ["Tests on this computer", "1 of 2 passed"])
 _ = try seek("The answer did not include", -150)
 _ = try capture("local-answer-wide", ["Which date is shown", "No date was given", "2099-12-31"])
 localSize(540, 900)
 scroll(4000)
-_ = try seek("Tests on the local cluster", -250)
-_ = try capture("local-result", ["Tests on the local cluster", "1 of 2 passed"])
+_ = try seek("Tests on this computer", -250)
+_ = try capture("local-result", ["Tests on this computer", "1 of 2 passed"])
 _ = try seek("The answer did not include", -150)
 _ = try capture("local-answer", ["Which date is shown", "No date was given", "2099-12-31"])
 localSize(540, 640)
@@ -694,10 +730,10 @@ click("Open your agent", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     waitForButton("Chat"); click("Chat", [])
-    waitForChatText("Chat on local cluster")
+    waitForChatText("Chat on this computer")
     require(!nativeChatTextIsVisible("Ready for your message."), "Blocked Chat must not say Ready")
     require(anyButton("New conversation") && enabledButton("New conversation") == nil, "Blocked Chat must disable New conversation")
-    _ = try capture("local-shell-chat-blocked-\(size)", ["Chat on local cluster"])
+    _ = try capture("local-shell-chat-blocked-\(size)", ["Chat on this computer"])
     _ = try seek("Chat is unavailable", -150)
     scroll(-100) // Keep the status clear of the fixed footer.
     _ = try capture("local-shell-chat-blocked-status-\(size)", ["Chat is unavailable."])
@@ -839,6 +875,23 @@ func anyButton(_ label: String) -> Bool {
         ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? "")
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
     }
+}
+func nativeHeadings(_ expected: String) -> [AXUIElement] {
+    nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXHeading"
+            && ["AXValue", "AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == expected }
+    }
+}
+func nativeHeadingExists(_ expected: String) -> Bool { !nativeHeadings(expected).isEmpty }
+func anchorChatHeading(_ expected: String) {
+    let headings = nativeHeadings(expected)
+    guard headings.count == 1, let bounds = nativeBounds(headings[0]),
+        let header = enabledButton("Designer").flatMap(nativeBounds) else {
+        require(false, "Cannot anchor native Chat heading: \(expected)"); return
+    }
+    // Clear fixed navigation and the 48px composer-follow threshold before freezing the frame.
+    let delta = header.maxY + 64 - bounds.minY
+    if abs(delta) > 2 { scroll(Int32(delta.rounded())) }
 }
 func nativeTextExists(_ expected: String) -> Bool {
     nativeElements().contains { element in
@@ -1131,17 +1184,17 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     click("Agent", [])
     require(nativeElements().contains { attribute($0, "AXRole") as? String == "AXPopUpButton" }, "Header agent picker missing")
     require(anyButton("Send to a cluster") && anyButton("Past Sends"), "Header Send entry and Past Sends must always exist")
-    if size == "wide" { require(!anyButton("Send and run tests"), "An unused Send must start hidden") }
-    else { require(anyButton("Send and run tests"), "Send opened earlier must stay retained and visible") }
+    if size == "wide" { require(!anyButton("Choose a cluster"), "An unused Send must start hidden") }
+    else { require(anyButton("Choose a cluster"), "Send opened earlier must stay retained and visible") }
     _ = try capture("local-shell-agent-\(size)", ["Instructions and settings"])
     click("File", [])
     _ = try capture("local-shell-file-\(size)", ["web-reader.agent.md"])
     click("Agent", [])
     click("Send to a cluster", [])
     // The header action already reveals and scrolls the card into view.
-    require(exactTextIsVisible("Send your agent") && nativeChatTextIsVisible("Team clusters are early in this preview."), "Send headline and early-preview text must be visible together")
-    require(anyButton("Send and run tests") && enabledButton("Send and run tests") == nil, "Without a cluster, the opened Send must be visible but disabled")
-    _ = try capture("local-shell-send-\(size)", ["Send your agent", "Team clusters are early in this preview."])
+    require(exactTextIsVisible("Send your agent") && !nativeChatTextIsVisible("Team clusters are early in this preview."), "Send must retain its headline without repeating Welcome's preview sentence")
+    require(enabledButton("Choose a cluster") != nil && !anyButton("Send and run tests"), "Without a cluster, Choose a cluster must replace Send outside Details")
+    _ = try capture("local-shell-send-\(size)", ["Send your agent", "Choose a cluster"])
     press("Past Sends")
     _ = try seek("Saved results and limits", -150)
     scroll(-100)
@@ -1154,9 +1207,17 @@ localSize(1280, 800)
 localSize(1280, 800)
 scroll(4000)
 click("Chat", [])
+func requireSingleChatCopy() {
+    let strings = nativeElements().flatMap { element in
+        ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+    }
+    require(strings.contains("Chat on this computer") && strings.contains("Chat doesn't change test results."), "Chat heading, label or help copy missing")
+    require(!strings.contains(where: { $0.contains("Conversation 1") }), "A single Chat version must not be numbered, including its accessible label")
+}
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("Ask your agent a question", -100)
+    requireSingleChatCopy()
     _ = try capture("chat-empty-\(size)", ["Ask your agent a question"])
 }
 fillMessage("Remember the checksum ALPHA.")
@@ -1184,6 +1245,7 @@ try FileManager.default.removeItem(at: chatPhase)
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("The checksum is ALPHA.", -100)
+    requireSingleChatCopy()
     _ = try capture("chat-answer-\(size)", ["The checksum is ALPHA.", "<script>fixture</script>"])
 }
 localSize(1280, 800)
@@ -1200,8 +1262,12 @@ waitForButton("Send message")
 rows = try seek("Send message", -150)
 click("Send message", rows)
 waitForChatText("Read another page.")
-_ = try capture("chat-new-version-compact", ["Conversation 2", "Read another page."])
+require(nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2"), "Two Chat versions must retain both numbered headings")
+localSize(540, 640)
+anchorChatHeading("Conversation 2")
+_ = try capture("chat-new-version-minimum", ["Conversation 2", "Read another page."])
 localSize(1280, 800)
+anchorChatHeading("Conversation 2")
 _ = try capture("chat-new-version-wide", ["Conversation 2", "Read another page."])
 require(enabledButton("Stop") != nil, "Working Chat must offer Stop")
 _ = try capture("chat-working-wide", ["Stop", "Read another page."])
@@ -1272,12 +1338,14 @@ _ = try capture("local-stopping-minimum", ["Cancelling"])
 localSize(540, 900)
 scroll(4000)
 click("Clusters", [])
-_ = try capture("local-manage-compact", ["This computer", "Remove sign-in"])
+_ = try capture("local-manage-compact", ["This computer", "Change"])
 // Keep the completed local and removal states reviewable at the compact size too.
-_ = try seek("Remove sign-in", -200)
-click("Remove sign-in", [])
+_ = try seek("Change", -200)
+click("Change", [])
+click("Remove saved sign-in", [])
 _ = try capture("local-remove-confirmation-compact", ["saved sign-in?", "Cancel", "Remove sign-in"])
 click("Cancel", [])
+click("Done", [])
 click("Clusters", [])
 _ = try capture("local-places-compact", ["Choose where agents run", "This computer"])
 // Explicit context actions only: opening the picker never starts discovery.
@@ -1388,11 +1456,11 @@ func workspaceCapture(_ state: String, _ expected: [String]) throws {
     scroll(4000)
 }
 try workspacePhase("workspace-wait")
-click("Stop the local cluster", [])
+click("Stop the workspace", [])
 try workspaceCapture("confirmation", ["Stop the workspace?", "Stop workspace", "Keep running"])
 click("Keep running", [])
-require(enabledButton("Stop the local cluster") != nil, "Keep running must not stop the workspace")
-click("Stop the local cluster", [])
+require(enabledButton("Stop the workspace") != nil, "Keep running must not stop the workspace")
+click("Stop the workspace", [])
 click("Stop workspace", [])
 try workspaceCapture("stopping", ["This computer", "Workspace", "Stopping"])
 require(enabledButton("Start") == nil, "Start must be disabled until stop acknowledgement")

@@ -157,8 +157,8 @@ export function clusterGroups(i: Inputs, built: Built): Group[] {
   if (i.workspaceNote) notes.push({ text: i.workspaceNote, clusters: true });
   if (state === 'reading') notes.push({ text: 'Reading agents…' });
   if (state === 'updating') notes.push({ text: 'Updating when the test finishes.', seen });
-  if (state === 'busy') notes.push({ text: 'The local cluster is busy right now.', seen, check: true });
-  if (state === 'stopped') notes.push({ text: 'The local cluster is stopped. Start it to test or chat.', clusters: true });
+  if (state === 'busy') notes.push({ text: 'The workspace is busy right now.', seen, check: true });
+  if (state === 'stopped') notes.push({ text: 'The workspace is stopped. Start it to test or chat.', clusters: true });
   if (state === 'read') notes.push({ text: "Couldn't check just now.", seen, check: true });
   if (i.files?.state === 'complete' && !history && !i.filesStale) notes.push({ text: "Test history is unavailable, so other agents on this cluster aren't shown and results are unknown." });
   if (history && state === 'ok' && !local.length && !strays.length) notes.push({ text: 'No agents on this computer yet.' });
@@ -189,7 +189,7 @@ export function summaryLabel(cards: Card[], partial: boolean) {
   return `${cards.length} ${cards.length === 1 ? 'agent' : 'agents'}${partial ? ' shown' : ''}${failed ? `, ${failed} failed` : ''}`;
 }
 // Empty means nothing could be hiding: no files, no remembered clusters, no Agents, every read succeeded. A stopped or
-// image-limited local cluster still counts as empty; a failed read, a busy list or hidden unowned Agents do not.
+// image-limited workspace still counts as empty; a failed read, a busy list or hidden unowned Agents do not.
 export function isEmpty(i: Inputs, built: Built) {
   const { state, history } = built;
   return i.files?.state === 'complete' && !i.filesStale && !!i.places && !i.placeError && !i.places.places.length && !built.cards.length
