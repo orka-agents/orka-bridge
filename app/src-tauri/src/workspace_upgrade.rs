@@ -850,10 +850,7 @@ impl WorkspaceUpgrade {
     pub(crate) fn restore(&mut self, transaction: Uuid) -> Result<UpgradeStatus, RuntimeError> {
         self.restore_with(transaction, |_| Ok(()))
     }
-    fn source_metadata<'a>(
-        &self,
-        intent: &'a Intent,
-    ) -> Result<MetadataFiles<'a>, RuntimeError> {
+    fn source_metadata<'a>(&self, intent: &'a Intent) -> Result<MetadataFiles<'a>, RuntimeError> {
         let removed = self
             .slot(intent)?
             .map(|s| self.slot_outcome(s))
