@@ -15,7 +15,7 @@ impl CredentialStore for Vault {
         Ok(())
     }
 }
-fn phase(s: &Scene, phase: &str) -> (Uuid, Vec<u8>) {
+pub(super) fn phase(s: &Scene, phase: &str) -> (Uuid, Vec<u8>) {
     let path = s.data.join("setup-v1/model-v1");
     let mut b: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
     let slot = serde_json::from_value(b["slot"].clone()).unwrap();
@@ -399,6 +399,21 @@ fn partial_transfer_and_removal_boundaries_recover_without_restoring_a_removed_a
         assert!(!s.data.join("setup-v1/model-v1").exists(), "{boundary}");
         owner.remove_credential(transaction, slot, &vault).unwrap();
     }
+}
+#[test]
+fn intent_recorded_removal_also_revokes_replayed_canonical_association() {
+    let mut s = Scene::new(ImageTarget::WindowsAmd64);
+    let (slot, _) = phase(&s, "stored");
+    s.replace(None).unwrap();
+    let mut owner = WorkspaceUpgrade::open(&s.data, &s.local).unwrap();
+    let mut intent = owner.read_intent().unwrap().unwrap();
+    owner.transfer_credential(intent.transaction).unwrap();
+    intent = owner.read_intent().unwrap().unwrap();
+    // Existing intent-v1 removal disposition is authoritative even without a newer slot marker.
+    intent.credential = CredentialDisposition::Removed;
+    owner.persist(&intent).unwrap();
+    assert!(owner.guard_model(Some(slot), false).is_err());
+    assert!(owner.transfer_credential(intent.transaction).is_err());
 }
 #[test]
 fn completed_history_keeps_its_slot_guard_and_observes_later_removal() {

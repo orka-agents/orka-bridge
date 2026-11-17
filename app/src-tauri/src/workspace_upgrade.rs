@@ -435,7 +435,7 @@ impl WorkspaceUpgrade {
                     .map_err(|_| RuntimeError::RetainedState)?
                     .flatten();
                 if (source == Some(slot) || archived_b == Some(slot))
-                    && (removal || self.slot_removed(slot)?)
+                    && (removal || self.slot_removed(slot)? || (source == Some(slot) && removed))
                 {
                     return Err(RuntimeError::RetainedState);
                 }
