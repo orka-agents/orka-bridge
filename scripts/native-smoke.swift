@@ -210,7 +210,7 @@ func nativeButtons(_ label: String, root: AXUIElement? = nil) -> [AXUIElement] {
             && ["AXTitle", "AXDescription"].contains { key in
                 guard let value = attribute(element, key) as? String else { return false }
                 return value == label || value.hasPrefix(label + " ")
-                    || label == "published-checksum" && value.contains("published-checksum")
+                    || ["published-checksum", "has-a-date"].contains(label) && value.contains(label)
             }
     }
 }
@@ -1159,7 +1159,13 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             }
             Thread.sleep(forTimeInterval: 0.3)
         }
-        fail("Preflight state missing: \(expected)")
+        let candidates = nativeElements(nativeRegion(region)).compactMap { element -> String? in
+            let values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+            guard values.contains(where: { $0.contains(expected) || $0.contains(anchor ?? expected) }) else { return nil }
+            let role = attribute(element, "AXRole") as? String ?? "unknown"
+            return role + ": " + values.joined(separator: " | ")
+        }.prefix(4).joined(separator: "; ")
+        fail("Preflight state missing: \(expected); native candidates: \(candidates)")
     }
     let sendActionLabels = ["Cancel tests", "Check cluster status", "Retry cancellation", "Reload saved files", "Choose a cluster", "Check again", "See in Overview", "Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent"]
     func closeSendDetails() throws {
@@ -1386,7 +1392,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let visibleFailure: ([VNRecognizedTextObservation]) -> Bool = { seen in
         let root = nativeRegion("Send and cluster tests")
         return seen.contains { ($0.topCandidates(1).first?.string ?? "").contains("Failed") }
-            && nativeTextBounds("has-a-date", exact: true, root: root).contains { bodyBounds().contains($0) }
+            && nativeButtons("has-a-date", root: root).compactMap { nativeBounds($0) }.contains { bodyBounds().contains($0) }
             && nativeTextBounds(failureReason, exact: true, root: root).contains { bodyBounds().contains($0) }
     }
     try capturePreflight("send-failed-wide", "has-a-date", anchor: failureReason, requiring: visibleFailure)
