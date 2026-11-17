@@ -329,6 +329,8 @@ assert.ok(smoke.includes('clickButton("Show details")\n    clickButton("Change c
 assert.ok(smoke.includes('clickButton("Show details")\n    clickButton("Remove")'), 'restart removal must explicitly open details');
 // Source contracts supplement, but never substitute for, the hosted native walk.
 const model = await readFile(new URL('./native-model-macos.swift', import.meta.url), 'utf8');
+assert.ok(model.includes('if characters.count > 256 { Thread.sleep(forTimeInterval: 0.08) }'), 'long native input must be paced without changing short-input timing');
+assert.ok(model.includes('String(repeating: "\\nEarlier message.", count: 40)'), 'shorter payload must retain a vertically long transcript');
 assert.ok(model.includes('nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2")'), 'numbered Chat versions must be verified as native headings, not body static text');
 assert.ok(model.includes('anchorChatHeading("Conversation 2")'), 'Chat capture must align its native heading clear of fixed navigation');
 assert.ok(model.includes('let delta = header.maxY + 64 - bounds.minY'), 'Chat heading navigation must use actual header/heading geometry');

@@ -973,6 +973,8 @@ func fillMessage(_ text: String, secure: Bool = false, fieldLabel: String? = nil
             units.withUnsafeBufferPointer { event.keyboardSetUnicodeString(stringLength: units.count, unicodeString: $0.baseAddress!) }
             event.flags = []; event.post(tap: .cghidEventTap)
         }
+        // Long-fixture input needs paced delivery while WebKit lays out each text update.
+        if characters.count > 256 { Thread.sleep(forTimeInterval: 0.08) }
     }
     Thread.sleep(forTimeInterval: 0.2)
     // Secure values may be hidden by AX; never read or log their contents.
@@ -1284,7 +1286,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
 }
 localSize(1280, 800)
 // Same synthetic follow-up as AFTER; no live model or fixture backend changes.
-fillMessage("What checksum did I ask you to remember?" + String(repeating: "\n\nThis synthetic paragraph keeps earlier messages available for reading while the composer stays visible. It does not call a live model.", count: 12))
+fillMessage("What checksum did I ask you to remember?" + String(repeating: "\nEarlier message.", count: 40))
 waitForButton("Send message")
 click("Send message", [])
 waitForChatText("You asked me to remember ALPHA.")
