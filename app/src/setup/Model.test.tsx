@@ -82,6 +82,7 @@ test('uncertain connection failure retains explicit cleanup without echoing raw 
 test.each([
   [['disconnectRetainedModel', 'refused'], 'Cleanup operation: disconnectRetainedModel\nCleanup class: refused'],
   [['modelStatus', 'timeout'], 'Cleanup operation: modelStatus\nCleanup class: timeout'],
+  [['modelStatusPreconditions', 'refused'], 'Cleanup operation: modelStatusPreconditions\nCleanup class: refused'],
   [['modelStatus', 'synthetic-private-token'], ''],
   [['synthetic-private-token', 'refused'], ''],
 ])('copies only finite previous-boot diagnostic fields %j', async (diagnostic, expected) => {
