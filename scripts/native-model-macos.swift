@@ -1212,12 +1212,38 @@ func requireSingleChatCopy() {
         ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
     }
     require(strings.contains("Chat on this computer") && strings.contains("Chat doesn't change test results."), "Chat heading, label or help copy missing")
+    require(strings.contains("New conversation") && strings.contains("About this conversation"), "Baseline conversation controls missing")
     require(!strings.contains(where: { $0.contains("Conversation 1") }), "A single Chat version must not be numbered, including its accessible label")
+}
+// BEFORE evidence: the original composer follows the transcript in page flow.
+// Record AX bounds, including offscreen positions, without demanding the AFTER sticky row.
+func recordBaselineChatGeometry(_ name: String) throws {
+    let fields = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXTextArea"
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Message" })
+    }
+    let sends = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Send message" })
+    }
+    require(fields.count == 1 && sends.count == 1, "Baseline Chat must retain Message and Send message controls")
+    guard let field = fields.first.flatMap(nativeBounds), let send = sends.first.flatMap(nativeBounds) else {
+        require(false, "Baseline Chat composer bounds missing"); return
+    }
+    func rect(_ bounds: CGRect) -> [String: Double] {
+        ["top": Double(bounds.minY), "bottom": Double(bounds.maxY), "left": Double(bounds.minX), "right": Double(bounds.maxX)]
+    }
+    let geometry: [String: Any] = ["field": rect(field), "send": rect(send), "window": rect(window()!.1),
+        "fieldReachable": reachable(field), "sendReachable": reachable(send)]
+    try JSONSerialization.data(withJSONObject: geometry, options: [.prettyPrinted, .sortedKeys])
+        .write(to: URL(fileURLWithPath: "\(output)/\(name)-geometry.json"))
 }
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("Ask your agent a question", -100)
     requireSingleChatCopy()
+    require(nativeTextExists("Ready for your message."), "Baseline empty Chat must retain routine Ready")
+    try recordBaselineChatGeometry("chat-empty-\(size)")
     _ = try capture("chat-empty-\(size)", ["Ask your agent a question"])
 }
 fillMessage("Remember the checksum ALPHA.")
@@ -1246,17 +1272,38 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("The checksum is ALPHA.", -100)
     requireSingleChatCopy()
+    try recordBaselineChatGeometry("chat-answer-\(size)")
     _ = try capture("chat-answer-\(size)", ["The checksum is ALPHA.", "<script>fixture</script>"])
+    require(!nativeChatTextIsVisible("web_fetch"), "Baseline tool activity must start collapsed")
+    _ = try seek("Tool activity", -100)
+    click("Tool activity", [])
+    _ = try seek("web_fetch", -100)
+    require(nativeChatTextIsVisible("web_fetch"), "Baseline tool activity must be revealed through its disclosure")
+    _ = try capture("chat-answer-tool-\(size)", ["web_fetch"])
+    click("Tool activity", [])
 }
 localSize(1280, 800)
-fillMessage("What checksum did I ask you to remember?")
+// Same synthetic follow-up as AFTER; no live model or fixture backend changes.
+fillMessage("What checksum did I ask you to remember?" + String(repeating: "\n\nThis synthetic paragraph keeps earlier messages available for reading while the composer stays visible. It does not call a live model.", count: 12))
 waitForButton("Send message")
 click("Send message", [])
 waitForChatText("You asked me to remember ALPHA.")
 _ = try capture("chat-followup-wide", ["You asked me to remember ALPHA."])
 localSize(540, 900)
 _ = try capture("chat-followup-compact", ["You asked me to remember ALPHA."])
-click("New conversation", [])
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    _ = try seek("Remember the checksum ALPHA.", -100)
+    require(nativeChatTextIsVisible("Remember the checksum ALPHA.") && !nativeChatTextIsVisible("You asked me to remember ALPHA."),
+            "Long transcript capture must read earlier messages, not the end")
+    try recordBaselineChatGeometry("chat-long-early-\(size)")
+    _ = try capture("chat-long-early-\(size)", ["Remember the checksum ALPHA."])
+    scroll(-4000)
+    try recordBaselineChatGeometry("chat-long-end-\(size)")
+    _ = try capture("chat-long-end-\(size)", ["You asked me to remember ALPHA."])
+}
+localSize(1280, 800)
+press("New conversation")
 fillMessage("Read another page.")
 waitForButton("Send message")
 rows = try seek("Send message", -150)

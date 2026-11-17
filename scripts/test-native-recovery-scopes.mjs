@@ -31,14 +31,14 @@ function actions(chosen) {
   return names;
 }
 const all = actions(selection()), core = actions(selection('core')), ui = actions(selection('chat-agent-clusters'));
-assert.equal(all.length, 66);
+assert.equal(all.length, 71);
 assert.equal(core.length, 46);
-assert.equal(ui.length, 20);
+assert.equal(ui.length, 25);
 assert.ok(core.includes('designer-reply-saved'), 'saved reply captures belong to the core scope');
 assert.ok(!ui.includes('designer-reply-saved'), 'UI scope must not repeat saved reply captures');
 assert.equal(new Set([...core, ...ui]).size, all.length, 'scopes must partition, not repeat or omit cases');
 assert.deepEqual([...core, ...ui], all);
-assert.deepEqual(ui, ['chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer', 'chat-two-versions', 'send-failed', 'send-unsupported', 'send-earlier-target', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure', 'cluster-connected', 'cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination']);
+assert.deepEqual(ui, ['chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer', 'chat-two-versions', 'chat-long', 'send-ready', 'send-blocked', 'send-sending', 'send-passed', 'send-failed', 'send-unsupported', 'send-earlier-target', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure', 'cluster-connected', 'cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination']);
 const chatStatus = source.match(/if \(command === 'agent_chat_status'\) \{([\s\S]*?return \{ documentId,[^\n]+;)\n        \}/)?.[1];
 assert.ok(chatStatus, 'bounded Chat snapshot producer is missing');
 for (const name of ['chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer']) {
@@ -51,6 +51,12 @@ for (const name of ['chat-pending', 'chat-running', 'chat-answer', 'chat-session
   assert.equal(turn.contextRetained, name === 'chat-answer', name);
   assert.equal(snapshot.busy, name !== 'chat-answer', name);
   assert.equal(snapshot.canSend, name === 'chat-answer', name);
+}
+for (const name of ['chat-answer', 'chat-long']) {
+  const snapshot = Function('name', 'documentId', chatStatus)(name, 'fixture-document');
+  for (const turn of snapshot.versions[0].turns) for (const tool of turn.tools) {
+    assert.equal(typeof tool.callId, 'string', 'Chat tool fixtures must pass the production snapshot boundary');
+  }
 }
 const twoVersions = Function('name', 'documentId', chatStatus)('chat-two-versions', 'fixture-document');
 assert.equal(twoVersions.versions.length, 2);
@@ -68,12 +74,51 @@ assert.ok(sendGate.includes('Unsupported cancellation'), 'Send capture acceptanc
 const checkSend = Function(`${sendGate}; return assertSendPresentation;`)();
 const sendProbe = { header: [{ label: 'Run cluster tests again', primary: true }, { label: 'See in Overview', primary: false }],
   buttons: ['Run cluster tests again', 'See in Overview'], title: 'Captured checksum from the page', id: 'page-checksum',
-  text: 'fixture-captured', detailsOpen: false, extras: [], width: 540, scrollWidth: 540 };
+  summary: 'The saved agent and test files go together.', checks: 'Destination ready Show checks', checksOpen: false, inlineChecks: [],
+  text: 'Destination fixture-selected', detailsOpen: false, extras: [], width: 540, scrollWidth: 540 };
 checkSend('send-failed', sendProbe, false);
 const unsupported = { ...sendProbe, header: [{ label: 'Check cluster status', primary: true }], buttons: ['Check cluster status'] };
 checkSend('send-unsupported', unsupported, false);
 checkSend('send-earlier-target', { ...sendProbe, header: [{ label: 'Send and run tests', primary: true }, sendProbe.header[1]], text: 'Earlier result on fixture-captured Destination fixture-selected' }, false);
 checkSend('send-failed', { ...sendProbe, detailsOpen: true, extras: ['Check again', 'Send as a separate agent'] }, true);
+for (const [name, header] of [
+  ['send-ready', [{ label: 'Send and run tests', primary: true }]],
+  ['send-blocked', [{ label: 'Check again', primary: true }]],
+  ['send-sending', [{ label: 'Cancel tests', primary: false }]],
+  ['send-passed', [{ label: 'See in Overview', primary: true }, { label: 'Run cluster tests again', primary: false }]],
+]) {
+  const probe = { ...sendProbe, header, title: name === 'send-passed' ? sendProbe.title : '', id: name === 'send-passed' ? sendProbe.id : '',
+    checks: name === 'send-blocked' ? null : sendProbe.checks, checksOpen: name === 'send-blocked' ? null : false,
+    inlineChecks: name === 'send-blocked' ? ['allowed', 'unverified', 'blocked'] : [] };
+  checkSend(name, probe, false);
+  assert.throws(() => checkSend(name, { ...probe, header: [] }, false));
+  assert.throws(() => checkSend(name, { ...probe, checks: 'Ready to send: 1 check passed' }, false));
+  if (name === 'send-blocked') assert.throws(() => checkSend(name, { ...probe, inlineChecks: ['blocked'] }, false));
+}
+for (const mutation of [{ summary: '' }, { checksOpen: true }, { checks: 'Ready to send: 1 check passed' },
+  { header: [{ label: 'Fix in Designer', primary: true }, { label: 'Run cluster tests again', primary: false }] }]) {
+  assert.throws(() => checkSend('send-failed', { ...sendProbe, ...mutation }, false));
+}
+// Exercise original UI expectations; deliberately accept offscreen baseline composers.
+const chatGate = source.slice(source.indexOf('  function assertChatPresentation('), source.indexOf('  async function captureActions('));
+const checkChat = Function(`${chatGate}; return assertChatPresentation;`)();
+const rect = { top: 1800, bottom: 1900, left: 24, right: 516 };
+const chatProbe = { card: true, headingHidden: false, label: 'Chat on this computer', heading: 'Chat on this computer',
+  text: "Chat doesn't change test results. Ask your agent a question to start a conversation.", status: 'Ready for your message.',
+  numbers: [], controls: ['New conversation'], about: true, hint: 'Enter to send · Shift+Enter for a new line.',
+  sendLabel: null, sendText: 'Send message', fieldLabel: 'Message', tools: [], toolDisclosure: false, toolOpen: false,
+  composer: rect, field: rect, send: rect, viewport: { ...rect, top: 60, bottom: 640 }, nestedScroll: false,
+  earlier: true, long: true, scrollTop: 140, scrollMax: 4000 };
+checkChat('chat-empty', chatProbe);
+checkChat('chat-answer', { ...chatProbe, tools: ['web_fetch · Succeeded'], toolDisclosure: true });
+checkChat('chat-long', chatProbe);
+for (const mutation of [{ card: false }, { headingHidden: true }, { status: '' }, { text: '' }, { controls: [] },
+  { about: false }, { hint: 'Enter sends · Shift+Enter for a new line' }, { sendText: 'Send' }, { nestedScroll: true },
+  { field: null }]) assert.throws(() => checkChat('chat-empty', { ...chatProbe, ...mutation }));
+assert.throws(() => checkChat('chat-answer', { ...chatProbe, tools: ['web_fetch'], toolDisclosure: false }));
+assert.throws(() => checkChat('chat-answer', { ...chatProbe, tools: ['web_fetch'], toolDisclosure: true, toolOpen: true }));
+assert.throws(() => checkChat('chat-long', { ...chatProbe, earlier: false }));
+assert.throws(() => checkChat('chat-long', { ...chatProbe, scrollTop: 3990 }));
 for (const mutation of [
   { header: [...sendProbe.header, { label: 'Send as a separate agent', primary: false }] },
   { header: sendProbe.header.map(button => ({ ...button, primary: !button.primary })) },
@@ -161,7 +206,7 @@ await checkHeader(false, async () => { headerReads++; }, () => true);
 assert.equal(headerReads, 1, 'other Designer cases retain the hidden saved-only count gate');
 // Execute the driver's actual isolated-world IPC setup, not a second copy of its payloads.
 const captureActions = source.slice(source.indexOf('  async function captureActions('), source.indexOf('  // Overview renderer fixtures:'));
-for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination', 'send-failed', 'send-unsupported', 'send-earlier-target']) {
+for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination', 'send-ready', 'send-blocked', 'send-sending', 'send-passed', 'send-failed', 'send-unsupported', 'send-earlier-target', 'chat-answer', 'chat-long']) {
   let injection;
   const stop = new Error('injection captured');
   const capture = vm.runInNewContext(`(${captureActions})`, {
@@ -178,12 +223,34 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
     await assert.rejects(invoke('workspace_catalog'), /must not request a catalog/);
     continue;
   }
+  if (name === 'chat-answer' || name === 'chat-long') {
+    const chat = await invoke('agent_chat_status');
+    assert.equal(chat.versions.length, 1);
+    assert.ok(chat.versions[0].turns[0].tools.some(tool => tool.name === 'web_fetch'));
+    if (name === 'chat-long') assert.ok(chat.versions[0].turns.length >= 16, 'long transcript must exceed both native viewport heights');
+    continue;
+  }
   const [target] = await invoke('cluster_discover');
   if (name.startsWith('send-')) {
     const { documentId, view, busy } = await invoke('send_status');
     const preflight = await invoke('send_preflight');
     const opened = await invoke('agent_open');
     assert.equal(busy, null);
+    assert.equal(preflight.rows.filter(row => row.status === 'allowed').length, 1);
+    assert.ok(preflight.rows.some(row => row.status === 'unverified'), 'advisory rows must not inflate the passed count');
+    if (name === 'send-ready' || name === 'send-blocked') {
+      assert.equal(view, null);
+      assert.equal(preflight.canSend, name === 'send-ready');
+      assert.equal(preflight.rows.some(row => row.status === 'blocked'), name === 'send-blocked');
+      continue;
+    }
+    if (name === 'send-sending') {
+      assert.equal(view.state, 'running');
+      assert.equal(view.stage, 'observe');
+      assert.equal(view.report, null);
+      continue;
+    }
+    if (name === 'send-passed') assert.equal(view.report.verdict, 'passed');
     assert.equal(view.documentId, documentId);
     assert.equal(view.report.cases[0].title, 'Captured checksum from the page');
     assert.equal(view.report.cases[0].id, 'page-checksum');
@@ -299,7 +366,12 @@ assert.ok(checksumLabel.test('› published-checksum'));
 assert.ok(checksumLabel.test('Copies the checksum from the pagepublished-checksum'), 'OCR can join captured title and stable test ID');
 assert.ok(!checksumLabel.test('Copies a different checksum'));
 assert.ok(model.includes('localSize(540, 640)') && model.includes('chat-new-version-minimum'));
+assert.ok(model.includes('recordBaselineChatGeometry('), 'Mac must record rather than require AFTER composer geometry');
+assert.ok(model.includes('chat-long-early-') && model.includes('chat-long-end-'), 'Mac long capture pair missing');
+assert.ok(model.includes('chat-answer-tool-'), 'Mac baseline tools must be captured through their disclosure');
+assert.ok(model.includes('seek("Ask your agent a question"'), 'baseline empty invitation remains required');
+assert.ok(source.includes('chat-long-early') && source.includes('chat-long-end'), 'Windows long capture pair missing');
 assert.ok(source.includes("resizeTo({ width: 1280, height: 800 }, 'Wide')"));
 assert.ok(source.includes("resizeTo({ width: 540, height: 640 }, 'Compact')"));
 assert.ok(!source.includes('Emulation.setDeviceMetricsOverride'), 'a fake viewport cannot qualify native size evidence');
-console.log('PASS real scope parsing; 46+20 unique action cases; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
+console.log('PASS real scope parsing; 46+25 unique action cases; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');

@@ -387,7 +387,7 @@ try {
     })()`);
     await writeFile(join(output, `${theme}-${size}-${name}-comparison.png`), Buffer.from(comparison, 'base64'));
   }
-  if (runUi) actionFixtures.push('chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer', 'chat-two-versions', 'send-failed', 'send-unsupported', 'send-earlier-target', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure', 'cluster-connected', 'cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination');
+  if (runUi) actionFixtures.push('chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer', 'chat-two-versions', 'chat-long', 'send-ready', 'send-blocked', 'send-sending', 'send-passed', 'send-failed', 'send-unsupported', 'send-earlier-target', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure', 'cluster-connected', 'cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination');
   async function captureWorkspace(theme, size, name) {
     const card = '.returning-workspace';
     const capture = async (state, word, action, disabled = false) => {
@@ -464,22 +464,32 @@ try {
     if (await evaluate('window.__bridgeStops') !== 4 || await evaluate('window.__bridgeLocalSelections') !== 4) throw Error('Workspace action sequence changed');
   }
   function assertSendPresentation(name, probe, details) {
-    const labels = name === 'send-unsupported' ? ['Check cluster status'] : [name === 'send-earlier-target' ? 'Send and run tests' : 'Run cluster tests again', 'See in Overview'];
-    if (probe.header.length > 2 || probe.header.map(button => button.label).join('|') !== labels.join('|')
-        || !probe.header[0]?.primary || probe.header.slice(1).some(button => button.primary)) throw Error('Wrong Send header actions: ' + JSON.stringify(probe));
+    const labels = { 'send-ready': ['Send and run tests'], 'send-blocked': ['Check again'], 'send-sending': ['Cancel tests'],
+      'send-passed': ['See in Overview', 'Run cluster tests again'], 'send-failed': ['Run cluster tests again', 'See in Overview'],
+      'send-unsupported': ['Check cluster status'], 'send-earlier-target': ['Send and run tests', 'See in Overview'] }[name];
+    if (probe.header.map(button => button.label).join('|') !== labels.join('|')
+        || probe.header[0]?.primary !== (name !== 'send-sending') || probe.header.slice(1).some(button => button.primary)) throw Error('Wrong Send header actions: ' + JSON.stringify(probe));
+    if (!probe.summary.startsWith('The saved agent and test files go together') || !probe.text.includes('Destination fixture-selected')) throw Error('Baseline Send must retain its saved-files summary and Destination row');
+    if (name === 'send-blocked') {
+      if (probe.checks !== null || probe.checksOpen !== null || probe.inlineChecks.join('|') !== 'allowed|unverified|blocked') throw Error('Baseline blocked Send must expose all preflight rows');
+    } else if (probe.checks !== 'Destination ready Show checks' || probe.checksOpen !== false || probe.inlineChecks.length) throw Error('Baseline Destination ready must remain collapsed');
     if (name === 'send-unsupported' && probe.buttons.includes('Retry cancellation')) throw Error('Unsupported cancellation must not offer retry, including in Details');
-    if (probe.title !== 'Captured checksum from the page' || probe.id !== 'page-checksum') throw Error('Captured title and code ID must both survive');
+    if (!['send-ready', 'send-blocked', 'send-sending'].includes(name) && (probe.title !== 'Captured checksum from the page' || probe.id !== 'page-checksum')) throw Error('Captured title and code ID must both survive');
     if (name === 'send-earlier-target' && (!probe.text.includes('Earlier result on fixture-captured') || !probe.text.includes('Destination fixture-selected'))) throw Error('Earlier result and selected destination must be distinct and labelled');
     if (probe.detailsOpen !== details || details && !['Check again', 'Send as a separate agent'].every(label => probe.extras.includes(label))) throw Error('Resources Details did not expose the relocated controls');
     if (probe.scrollWidth > probe.width + 2) throw Error('Send overflows the native client width');
   }
   async function captureSendScene(theme, size, name) {
-    await until(() => evaluate(`!!document.querySelector('.send-panel .send-checks') && !!document.querySelector('.send-panel .test-result')`), 'populated Send and checked destination');
+    const hasResult = !['send-ready', 'send-blocked', 'send-sending'].includes(name);
+    await until(() => evaluate(`!!document.querySelector('.send-panel ${name === 'send-blocked' ? '.send-preflight' : '.send-checks'}') && ${hasResult ? "!!document.querySelector('.send-panel .test-result')" : 'true'}`), 'Send and checked destination');
     const probe = () => evaluate(`(() => {
       const root = document.querySelector('.send-panel');
       const resources = [...root.querySelectorAll('.card-details')].find(item => item.querySelector('summary')?.textContent.includes('Resources and file hashes'));
       const shown = selector => [...root.querySelectorAll(selector)].filter(button => button.getClientRects().length);
       return { header: shown('.long-card-head button').map(button => ({ label: button.textContent.trim(), primary: button.classList.contains('button-primary') })),
+        summary: root.querySelector('.long-card-summary')?.textContent ?? '',
+        checks: root.querySelector('.send-checks > summary')?.textContent.trim() ?? null, checksOpen: root.querySelector('.send-checks')?.open ?? null,
+        inlineChecks: shown('.send-preflight li').map(row => row.dataset.state),
         buttons: shown('button').map(button => button.textContent.trim()), title: root.querySelector('.test-result > summary .test-name > span')?.textContent ?? '',
         id: root.querySelector('.test-result > summary code')?.textContent, text: root.innerText.replace(/\\s+/g, ' '),
         detailsOpen: resources.open, extras: [...resources.querySelectorAll('button')].filter(button => button.getClientRects().length).map(button => button.textContent.trim()),
@@ -494,7 +504,11 @@ try {
     assertSendPresentation(name, await probe(), false);
     await shoot('', `root.querySelector('.long-card-head')`);
     if (name === 'send-earlier-target') await shoot('-destination', `root.querySelector('.card-section')`);
-    await shoot('-result', `root.querySelector('.test-result > summary')`);
+    if (hasResult) await shoot('-result', `root.querySelector('.test-result > summary')`);
+    else {
+      await writeFile(join(output, `${theme}-${size}-${name}-state.json`), JSON.stringify(await probe(), null, 2));
+      return;
+    }
     // Open only the existing resources disclosure, never a nested test's Details.
     await evaluate(`[...document.querySelectorAll('.send-panel .card-details')].find(item => item.querySelector('summary')?.textContent.includes('Resources and file hashes')).querySelector('summary').click()`);
     const opened = await probe();
@@ -502,6 +516,22 @@ try {
     await shoot('-details', `[...root.querySelectorAll('.card-details')].find(item => item.querySelector('summary')?.textContent.includes('Resources and file hashes')).querySelector('summary')`);
     await writeFile(join(output, `${theme}-${size}-${name}-state.json`), JSON.stringify(opened, null, 2));
     console.log(`Captured native WebView2 Send renderer fixture: ${theme}/${size}/${name}, header/result/Details`);
+  }
+  // BEFORE-only assertions: geometry is evidence, not the AFTER sticky-composer contract.
+  function assertChatPresentation(name, probe) {
+    if (!probe.card || probe.headingHidden || probe.label !== 'Chat on this computer' || probe.heading !== 'Chat on this computer'
+        || !probe.text.includes("Chat doesn't change test results.")) throw Error('Baseline Chat card/heading/help copy missing');
+    if (probe.sendLabel !== null || probe.sendText !== 'Send message' || probe.fieldLabel !== 'Message') throw Error('Baseline Chat composer labels changed');
+    if (probe.nestedScroll) throw Error('Chat must use the page scroll, not a nested transcript scroller');
+    if (!probe.controls.includes('New conversation') || !probe.about) throw Error('Baseline conversation controls missing');
+    if (name === 'chat-empty' && (!probe.text.includes('Ask your agent a question to start a conversation.') || probe.status !== 'Ready for your message.')) throw Error('Baseline empty invitation/Ready missing');
+    if (['chat-empty', 'chat-answer', 'chat-long', 'chat-two-versions'].includes(name) && probe.hint !== 'Enter to send · Shift+Enter for a new line.') throw Error('Baseline keyboard hint changed');
+    if (name === 'chat-two-versions' ? !probe.text.includes('Conversation 1') || !probe.text.includes('Conversation 2') : /Conversation 1/.test(probe.text + probe.numbers.join(' '))) throw Error('Chat version numbering is wrong');
+    if (name === 'chat-answer' && (!probe.tools.some(text => text.includes('web_fetch')) || !probe.toolDisclosure || probe.toolOpen)) throw Error('Baseline tool activity must start collapsed');
+    for (const rect of [probe.composer, probe.field, probe.send, probe.viewport]) {
+      if (!rect || !Object.values(rect).every(Number.isFinite)) throw Error('Baseline composer geometry missing');
+    }
+    if (name === 'chat-long' && (!probe.long || !probe.earlier || probe.scrollMax < 500 || probe.scrollTop >= probe.scrollMax - 100)) throw Error('Long Chat must capture earlier messages, not the end');
   }
   async function captureActions(theme, size, name) {
     const first = name.startsWith('first-test-');
@@ -710,10 +740,13 @@ try {
         if (designer && !name.startsWith('chat-') && command === 'agent_chat_status') return { documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null };
         if (command === 'send_status') {
           if (!sendScene) return { documentId, view: null, busy: null };
+          if (name === 'send-ready' || name === 'send-blocked') return { documentId, view: null, busy: null };
           const unsupported = name === 'send-unsupported';
+          const sending = name === 'send-sending';
+          const passed = name === 'send-passed';
           const earlier = name === 'send-earlier-target';
           const capturedCase = { ...report.cases[0], title: 'Captured checksum from the page' };
-          if (unsupported) {
+          if (unsupported || passed) {
             capturedCase.verdict = capturedCase.assertions[0].verdict = 'passed';
             capturedCase.answer = 'The page says fixture-checksum.';
           }
@@ -721,9 +754,9 @@ try {
             id: '00000000-0000-4000-8000-000000000006', targetId: earlier ? '00000000-0000-4000-8000-000000000007' : target.id,
             providerId: provider.id, targetName: earlier ? 'fixture-captured' : target.context_name,
             source: earlier ? { ...source, tests: 'c'.repeat(64) } : source, model: 'gpt-5.6-terra',
-            agentName: 'fixture-sent-agent', agentAction: 'unchanged', state: unsupported ? 'unknown' : 'complete', stage: 'done',
+            agentName: 'fixture-sent-agent', agentAction: 'unchanged', state: sending ? 'running' : unsupported ? 'unknown' : 'complete', stage: sending ? 'observe' : 'done',
             acknowledged: [{ kind: 'Agent', name: 'fixture-sent-agent', uid: 'fixture-agent-uid' }], pending: null,
-            report: { verdict: unsupported ? 'unknown' : 'failed', cases: [capturedCase] }, error: null, storageError: false,
+            report: sending ? null : { verdict: unsupported ? 'unknown' : passed ? 'passed' : 'failed', cases: [capturedCase] }, error: null, storageError: false,
             cancellation: unsupported ? 'unsupported' : null } };
         }
         if (command === 'agent_create') {
@@ -738,8 +771,8 @@ try {
         if (command === 'agent_chat_status') {
           const confirming = name === 'chat-session-null' || name === 'chat-session-answer';
           const waiting = name === 'chat-pending' || name === 'chat-running';
-          const turn = { message: 'What did the page say?', answer: waiting || name === 'chat-session-null' ? null : 'The page says fixture-checksum.', phase: waiting ? name === 'chat-pending' ? 'Pending' : 'Running' : 'Succeeded', tools: [], contextRetained: !waiting && !confirming, terminationUnconfirmed: false, stopUnconfirmed: false };
-          return { documentId, state: confirming ? 'waitingForSession' : waiting ? 'working' : 'ready', busy: waiting || confirming, canSend: !waiting && !confirming, versions: name === 'chat-empty' ? [] : name === 'chat-two-versions' ? [{ turns: [{ ...turn, message: 'Keep this earlier conversation.' }] }, { turns: [turn] }] : [{ turns: [turn] }], error: null };
+          const turn = { message: 'What did the page say?', answer: waiting || name === 'chat-session-null' ? null : 'The page says fixture-checksum.', phase: waiting ? name === 'chat-pending' ? 'Pending' : 'Running' : 'Succeeded', tools: ['chat-answer', 'chat-long'].includes(name) ? [{ name: 'web_fetch', callId: 'fixture-call', phase: 'Succeeded' }] : [], contextRetained: !waiting && !confirming, terminationUnconfirmed: false, stopUnconfirmed: false };
+          return { documentId, state: confirming ? 'waitingForSession' : waiting ? 'working' : 'ready', busy: waiting || confirming, canSend: !waiting && !confirming, versions: name === 'chat-empty' ? [] : name === 'chat-long' ? [{ turns: Array.from({ length: 20 }, (_, i) => ({ ...turn, message: 'Earlier message ' + (i + 1) + ': What did the page say?', answer: 'The page says fixture-checksum. ' + 'This synthetic paragraph keeps a long transcript available for reading without a live model. '.repeat(4) })) }] : name === 'chat-two-versions' ? [{ turns: [{ ...turn, message: 'Keep this earlier conversation.' }] }, { turns: [turn] }] : [{ turns: [turn] }], error: null };
         }
         if (name.startsWith('cluster-') && command === 'cluster_contexts') return [context, { ...context, id: '00000000-0000-4000-8000-000000000004', name: 'team-west', current: false }];
         if (name.startsWith('cluster-') && command === 'cluster_discover') {
@@ -749,7 +782,7 @@ try {
           if (name === 'cluster-checking') return new Promise(() => {});
           throw { check: 'clusterApi', result: 'connectionFailed' };
         }
-        if (sendScene && command === 'send_preflight') return { documentId, targetId: target.id, providerId: provider.id, source, model: 'gpt-5.6-terra', canSend: true, action: name === 'send-earlier-target' ? 'create' : 'unchanged', canSeparate: true, rows: [{ label: 'Cluster', status: 'allowed', message: 'Ready.' }] };
+        if (sendScene && command === 'send_preflight') return { documentId, targetId: target.id, providerId: provider.id, source, model: 'gpt-5.6-terra', canSend: name !== 'send-blocked', action: ['send-ready', 'send-blocked', 'send-earlier-target'].includes(name) ? 'create' : 'unchanged', canSeparate: true, rows: [{ label: 'Cluster', status: 'allowed', message: 'Ready.' }, { label: 'Inference', status: 'unverified', message: 'Checked when tests run.' }, ...name === 'send-blocked' ? [{ label: 'Tool access', status: 'blocked', message: 'The selected account cannot use web_fetch.' }] : []] };
         if (name === 'designer-remote' && command === 'send_preflight') return { documentId, targetId: target.id, providerId: provider.id, source, model: 'fixture-model', canSend: true, action: 'create', canSeparate: false, rows: [{ label: 'Cluster', status: 'allowed', message: 'Ready.' }] };
         // In-memory only: lets this fixture's existing editor path save a removal and its restore.
         if (name === 'designer-reply-saved' && command === 'agent_save') { pair.agent = args.content; return { ...pair, documentId, name: 'web-reader' }; }
@@ -842,10 +875,48 @@ try {
       await until(() => evaluate(`document.querySelector('.chat-panel')?.innerText.includes(${JSON.stringify(expected)})`), name);
       if (['chat-pending', 'chat-running', 'chat-session-null', 'chat-session-answer'].includes(name) && await evaluate(`['not confirmed in later context', 'No answer was received.', 'failed without an answer'].some(text => document.querySelector('.chat-transcript').innerText.includes(text))`)) throw Error('Waiting Chat shows a premature missing-answer/context fault');
       if (name.startsWith('chat-session-') && !await evaluate(`document.querySelector('.chat-panel').innerText.includes('Waiting for the conversation to finish saving…')`)) throw Error('Session confirmation lost its pending status');
-      const chatCopy = await evaluate(`(() => { const root = document.querySelector('.chat-panel'); return { label: root.getAttribute('aria-label'), heading: root.querySelector('h2').textContent, text: root.innerText, numbers: [...root.querySelectorAll('.chat-transcript section')].map(section => section.getAttribute('aria-label')).filter(Boolean) }; })()`);
-      if (chatCopy.label !== 'Chat on this computer' || chatCopy.heading !== 'Chat on this computer' || !chatCopy.text.includes("Chat doesn't change test results.")) throw Error('Chat copy is not current: ' + JSON.stringify(chatCopy));
-      if (name === 'chat-two-versions' ? !chatCopy.text.includes('Conversation 1') || !chatCopy.text.includes('Conversation 2') : /Conversation 1/.test(chatCopy.text + chatCopy.numbers.join(' '))) throw Error('Chat version numbering is wrong: ' + JSON.stringify(chatCopy));
-      await evaluate(`document.querySelector('.chat-panel').scrollIntoView({ block: 'start' })`);
+      await evaluate(`document.querySelector('.chat-panel').scrollIntoView({ block: 'start' }); if (${name === 'chat-long'}) document.querySelector('.chat-turn').scrollIntoView({ block: 'start' });`);
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+      const readChat = () => evaluate(`(() => {
+        const root = document.querySelector('.chat-panel'), main = document.querySelector('main'), field = root.querySelector('textarea'), send = root.querySelector('button[type="submit"]'), hint = root.querySelector('.chat-composer > p');
+        const rect = node => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
+        const parts = [field, send, hint].map(rect), view = rect(main);
+        const earlier = [...root.querySelectorAll('.chat-turn')].slice(0, 3).some(node => { const r = rect(node); return r.bottom > view.top && r.top < view.bottom; });
+        return { label: root.getAttribute('aria-label'), heading: root.querySelector('h2').textContent, headingHidden: root.querySelector('h2').classList.contains('sr-only'), card: root.classList.contains('card'),
+          text: root.innerText, status: root.querySelector('[role="status"]').textContent,
+          about: [...root.querySelectorAll('summary')].some(node => node.textContent === 'About this conversation'),
+          controls: [...root.querySelectorAll('.chat-heading button, .chat-heading summary')].map(node => node.textContent),
+          numbers: [...root.querySelectorAll('.chat-transcript section')].map(section => section.getAttribute('aria-label')).filter(Boolean),
+          hint: hint.textContent, sendLabel: send.getAttribute('aria-label'), sendText: send.textContent, fieldLabel: root.querySelector('label[for="' + field.id + '"]').textContent,
+          tools: [...root.querySelectorAll('.chat-tools li')].map(node => node.textContent), toolDisclosure: !!root.querySelector('details .chat-tools'), toolOpen: root.querySelector('details:has(.chat-tools)')?.open ?? false,
+          field: rect(field), send: rect(send), composer: { top: Math.min(...parts.map(r => r.top)), bottom: Math.max(...parts.map(r => r.bottom)), left: Math.min(...parts.map(r => r.left)), right: Math.max(...parts.map(r => r.right)) },
+          viewport: view, earlier, long: root.querySelectorAll('.chat-turn').length >= 16, scrollTop: main.scrollTop, scrollMax: main.scrollHeight - main.clientHeight,
+          nestedScroll: [...root.querySelectorAll('*')].some(node => /auto|scroll/.test(getComputedStyle(node).overflowY) && node.scrollHeight > node.clientHeight + 2 && node !== field) };
+      })()`);
+      const chatCopy = await readChat();
+      assertChatPresentation(name, chatCopy);
+      await writeFile(join(output, `${theme}-${size}-${name}-geometry.json`), JSON.stringify(chatCopy, null, 2));
+      if (name === 'chat-answer') {
+        await evaluate(`document.querySelector('.chat-panel details:has(.chat-tools) > summary').click()`);
+        await until(() => evaluate(`document.querySelector('.chat-panel details:has(.chat-tools)').open`), 'baseline tool disclosure open');
+        await evaluate(`document.querySelector('.chat-tools').scrollIntoView({ block: 'center' })`);
+        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+        if (!await evaluate(`(() => { const r = document.querySelector('.chat-tools').getBoundingClientRect(), view = document.querySelector('main').getBoundingClientRect(); return r.height > 0 && r.top >= view.top && r.bottom <= view.bottom; })()`)) throw Error('Baseline tool activity must be visible in its capture');
+        const tool = await call('Page.captureScreenshot', { format: 'png' });
+        await writeFile(join(output, `${theme}-${size}-chat-answer-tool.png`), Buffer.from(tool.data, 'base64'));
+        await evaluate(`document.querySelector('.chat-panel details:has(.chat-tools) > summary').click(); document.querySelector('.chat-panel').scrollIntoView({ block: 'start' });`);
+      }
+      if (name === 'chat-long') {
+        await checkLayout(theme, size, name);
+        const early = await call('Page.captureScreenshot', { format: 'png' });
+        await writeFile(join(output, `${theme}-${size}-chat-long-early.png`), Buffer.from(early.data, 'base64'));
+        await evaluate(`document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight`);
+        await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        await writeFile(join(output, `${theme}-${size}-${name}-end-geometry.json`), JSON.stringify(await readChat(), null, 2));
+        const end = await call('Page.captureScreenshot', { format: 'png' });
+        await writeFile(join(output, `${theme}-${size}-chat-long-end.png`), Buffer.from(end.data, 'base64'));
+        return;
+      }
     }
     if (name.startsWith('new-agent-')) {
       // Creation must leave File/Chat and open the blank Instructions editor.
