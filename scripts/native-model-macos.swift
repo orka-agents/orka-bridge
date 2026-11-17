@@ -1464,7 +1464,7 @@ for (view, label) in [("Agent", "tests"), ("Chat", "chat")] {
     localSize(1280, 800); scroll(4000)
     click(view, [])
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
-        localSize(width, height); scroll(4000)
+        localSize(width, height); scroll(view == "Chat" ? -12000 : 4000)
         _ = try seek("Waiting for the workspace to start.", -100)
         _ = try capture("local-designer-waiting-\(label)-\(size)", ["Waiting for the workspace to start."])
     }

@@ -259,6 +259,7 @@ try {
       const pair = ${JSON.stringify(samplePair)};
       let reads = 0;
       localStorage.setItem('bridge.welcomeSeen.v1', '1');
+      localStorage.removeItem('bridge.firstTest.v1');
       window.isTauri = true;
       window.__TAURI_INTERNALS__ = { invoke: async command => {
         if (command === 'setup_status' && ${JSON.stringify(!!failLater)} && reads++ > 0) throw Error('Fixture status unreadable');

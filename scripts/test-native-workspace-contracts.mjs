@@ -13,6 +13,19 @@ assert.equal(refusal.disabled, true, 'first-setup image refusal must find its ac
 assert.equal(refusal.title, 'Open the matching Bridge version.');
 const recoverySource = await read('../app/src/setup/recovery-info.ts');
 const causes = Function(`return ${recoverySource.match(/const causes = (\[[^\n]+\]) as const/)[1]}`)();
+const captureSetup = source.slice(source.indexOf('  async function captureSetup('), source.indexOf('  const actionFixtures'));
+let setupInjection;
+const setupStop = new Error('setup injection captured');
+const setupCapture = vm.runInNewContext(`(${captureSetup})`, {
+  frameTree: { frame: { id: 'fixture' } }, samplePair: { agent: '', tests: '' },
+  call: async () => ({ executionContextId: 1 }), evaluate: async script => { setupInjection = script; throw setupStop; },
+});
+await assert.rejects(setupCapture('dark', 'setup-fit', ['setup-transfer', 'installing', null, false, 'Downloading']), error => error === setupStop);
+const setupValues = new Map([['bridge.firstTest.v1', 'attempted']]);
+vm.runInNewContext(setupInjection, { window: {}, localStorage: {
+  setItem: (key, value) => setupValues.set(key, value), removeItem: key => setupValues.delete(key),
+}, document: { getElementById: () => ({ replaceWith() {} }), createElement: () => ({}) } });
+assert.equal(setupValues.has('bridge.firstTest.v1'), false, 'fresh setup must not inherit returning intent from earlier captures');
 const captureActions = source.slice(source.indexOf('  async function captureActions('), source.indexOf('  // Overview renderer fixtures:'));
 async function fixture(name) {
   let injection;
