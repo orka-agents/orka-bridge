@@ -11,11 +11,12 @@ let unreadable = false;
 let agentName = 'my-agent';
 let quitFails = false;
 let helpFails = false;
+let helpPending: Promise<void> | null = null;
 const ipc = vi.fn((command: string) => {
   if (command === 'setup_status') { if (unreadable) throw Error('unreadable'); return status; }
   if (command === 'setup_requirements') return null;
   if (command === 'setup_select_local') return status = { selected: 'localVm', localVm: 'starting', model: 'locked', workspaceProgress: { phase: 'starting', elapsedMs: 18000, bytes: null, totalBytes: null, remainingMs: null } };
-  if (command === 'setup_open_help') { if (helpFails) throw Error('unavailable'); return; }
+  if (command === 'setup_open_help') { if (helpPending) return helpPending; if (helpFails) throw Error('unavailable'); return; }
   if (command === 'quit_bridge') { if (quitFails) throw Error('unavailable'); return; }
   if (command === 'agents_list') return [{ id: '00000000-0000-4000-8000-000000000001', name: agentName, path: '/agents/my-agent.agent.md', available: true }];
   if (command === 'agent_creation_root') return '/agents';
@@ -26,7 +27,7 @@ beforeEach(() => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   localStorage.setItem('bridge.firstTest.v1', 'attempted');
   status = { selected: 'localVm', localVm: 'ready', model: 'available' };
-  agentName = 'my-agent'; unreadable = false; quitFails = false; helpFails = false; ipc.mockClear(); mockIPC(ipc);
+  agentName = 'my-agent'; unreadable = false; quitFails = false; helpFails = false; helpPending = null; ipc.mockClear(); mockIPC(ipc);
 });
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
@@ -142,6 +143,23 @@ test('a rejected help action does not leave a failure notice on a recovered work
   expect(await screen.findByText("Couldn't open help. Open Show details to read the error.")).toBeTruthy();
   await observe({ selected: 'localVm', localVm: 'ready', model: 'available' });
   await within(screen.getByRole('region', { name: 'Workspace' })).findByText('Ready', { selector: '.pill' });
+  expect(screen.queryByText("Couldn't open help. Open Show details to read the error.")).toBeNull();
+  await observe({ selected: 'localVm', localVm: 'failed', model: 'locked', workspaceFailure: { cause: 'permission', operation: 'start', codes: [] } });
+  await within(screen.getByRole('region', { name: 'Workspace' })).findByText('Bridge does not have permission to start the workspace.');
+  expect(screen.queryByText("Couldn't open help. Open Show details to read the error.")).toBeNull();
+});
+
+test('a late help rejection cannot enter a newer failure episode', async () => {
+  let rejectHelp!: (reason: Error) => void;
+  helpPending = new Promise<void>((_, reject) => { rejectHelp = reject; });
+  status = { selected: 'localVm', localVm: 'failed', model: 'locked', preflightFailure: 'hypervisorUnavailable' };
+  const user = await open();
+  await user.click(screen.getByRole('button', { name: 'Show me how' }));
+  await observe({ selected: 'localVm', localVm: 'ready', model: 'available' });
+  await within(screen.getByRole('region', { name: 'Workspace' })).findByText('Ready', { selector: '.pill' });
+  await observe({ selected: 'localVm', localVm: 'failed', model: 'locked', workspaceFailure: { cause: 'permission', operation: 'start', codes: [] } });
+  await within(screen.getByRole('region', { name: 'Workspace' })).findByText('Bridge does not have permission to start the workspace.');
+  await act(async () => { rejectHelp(Error('old help unavailable')); });
   expect(screen.queryByText("Couldn't open help. Open Show details to read the error.")).toBeNull();
 });
 

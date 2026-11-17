@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Button } from '../components/Button';
 import { StatusPill } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
@@ -21,6 +21,7 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   const [quitError, setQuitError] = useState(false);
   const [quitting, setQuitting] = useState(false);
   const [helpError, setHelpError] = useState(false);
+  const helpGeneration = useRef(0);
   async function quit() {
     setQuitting(true); setQuitError(false);
     try { await invoke('quit_bridge'); } catch { setQuitError(true); setQuitting(false); }
@@ -39,9 +40,14 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   const stopped = status.localVm === 'cancelled';
   const stopFailed = failed && status.workspaceFailure?.operation === 'stop';
   const recovery = status.preflightFailure ? preflightRecovery(status.preflightFailure) : workspaceRecovery(status.workspaceFailure);
+  useEffect(() => {
+    helpGeneration.current += 1;
+    setHelpError(false);
+  }, [status.localVm, status.preflightFailure, status.workspaceFailure?.cause, status.workspaceFailure?.operation]);
   async function help() {
-    try { await invoke('setup_open_help', { topic: recovery.topic }); setHelpError(false); }
-    catch { setHelpError(true); }
+    const generation = helpGeneration.current;
+    try { await invoke('setup_open_help', { topic: recovery.topic }); if (generation === helpGeneration.current) setHelpError(false); }
+    catch { if (generation === helpGeneration.current) setHelpError(true); }
   }
   const elapsed = status.workspaceProgress?.elapsedMs;
   const seconds = elapsed === undefined ? undefined : Math.floor(elapsed / 1000);
