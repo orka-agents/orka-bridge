@@ -308,7 +308,22 @@ click("Remove sign-in", rows)
 rows = try capture("local-remove-failed", ["Couldn't remove the saved sign-in", "Retry removal", "Copy details for help"])
 require(nativeTextExists("The saved sign-in couldn't be removed") && !anyButton("Remove sign-in"), "Removal failure needs its own heading and no Remove")
 require(enabledButton("Connect the AI") == nil, "Failed cleanup must offer removal retry, not connection")
-click("Retry removal", rows)
+let cleanupCases: [(String?, String, String)] = [(nil, "disconnectRetainedModel", "refused"), ("cleanup-status", "modelStatus", "unsupported"), ("cleanup-preconditions", "modelStatusPreconditions", "refused")]
+for (index, item) in cleanupCases.enumerated() {
+    if let phase = item.0 {
+        try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
+        press("Retry removal")
+        rows = try capture("local-remove-diagnostic-\(index)", ["Couldn't remove the saved sign-in", "Retry removal", "Copy details for help"])
+    }
+    NSPasteboard.general.clearContents()
+    press("Copy details for help")
+    RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+    let cleanupDetails = NSPasteboard.general.string(forType: .string) ?? ""
+    require(cleanupDetails.contains("Cleanup operation: \(item.1)") && cleanupDetails.contains("Cleanup class: \(item.2)"), "Removal Copy details must retain each finite cleanup operation/class")
+    require(!cleanupDetails.contains("synthetic-private-token"), "Removal Copy details must not include raw errors")
+}
+try FileManager.default.removeItem(at: setupProgress)
+press("Retry removal")
 rows = try capture("removed", ["no longer has a saved sign-in", "GitHub CLI stays signed in", "Connect the AI"])
 click("Connect the AI", rows)
 rows = try capture("reconnected", ["Connected", "Remove sign-in"])
@@ -333,7 +348,7 @@ for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
             let strings = nativeElements().flatMap { element in
                 ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
             }
-            if strings.contains(where: { $0.contains("These checks do not change") || $0.contains("Fix the computer requirements") || $0.contains("Bridge couldn't check this computer yet.") }) { checksSettled = true; break }
+            if strings.contains(where: { $0.contains("These checks do not change") || $0.contains("This computer has") || $0.contains("Virtualization:") || $0.contains("Bridge couldn't check") }) { checksSettled = true; break }
             Thread.sleep(forTimeInterval: 0.1)
         }
         require(checksSettled, "Computer requirements did not settle")
@@ -362,11 +377,13 @@ for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
             require(enabledButton("Check again") == nil && enabledButton("Copy details for help") == nil, "Nonfailed checks need no recovery controls")
         }
         if ["unknown", "mixed"].contains(state) {
-            require(strings.contains { $0.contains("Bridge couldn't check this computer yet. It checks again when the workspace starts.") },
+            let unchecked = state == "mixed" ? "virtualization" : "virtualization or memory"
+            require(strings.contains { $0.contains("Bridge couldn't check \(unchecked) yet. It checks again when the workspace starts.") },
                     "Unknown checks need one quiet startup explanation")
         }
         if ["memory", "mixed"].contains(state) {
-            require(strings.contains { $0.contains("Not enough installed memory") }, "Insufficient RAM must show its failed row")
+            require(strings.contains { $0.contains("This computer has 2.1 GB of memory; Bridge needs 4.3 GB.") }, "Insufficient RAM must show its native amounts")
+            require(enabledButton("Check again") == nil && enabledButton("Copy details for help") == nil, "RAM failure needs only the cluster alternative")
         }
         if state == "cluster" {
             click("Use a cluster instead", [])

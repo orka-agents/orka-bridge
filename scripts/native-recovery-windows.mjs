@@ -553,7 +553,8 @@ try {
       window.__bridgeResets = [];
       window.__bridgeResetOutcome = 'credential';
       window.__bridgeCopied = [];
-      if (name === 'ai-reset') Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.__bridgeCopied.push(text); } } });
+      window.__bridgeCleanupDiagnostic = ['disconnectRetainedModel', 'refused'];
+      if (name === 'ai-reset' || name === 'ai-removal-retry') Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async text => { window.__bridgeCopied.push(text); } } });
       window.__bridgeStops = 0;
       window.__bridgeLocalSelections = 0;
       window.__bridgeClusterUses = 0;
@@ -630,9 +631,9 @@ try {
         if (name === 'designer-no-destination' && command === 'overview_places') return { historyState: 'complete', unobserved: [], places: [] };
         if (command === 'agents_list') return [{ id: documentId, name: documentName, path: null, available: true }];
         if (command === 'agent_creation_root') return 'C:\\\\Users\\\\you\\\\Orka\\\\agents';
-        if (command === 'setup_remove_model') { window.__bridgeRemovals++; throw { kind: 'modelBusy' }; }
+        if (command === 'setup_remove_model') { window.__bridgeRemovals++; throw { kind: 'modelReconnect', cleanup: window.__bridgeCleanupDiagnostic, message: 'synthetic-private-token' }; }
         // Known and missing size facts: fixture IPC, not the native catalog.
-        if (command === 'setup_requirements') return name.startsWith('local-preflight') && name !== 'local-preflight-missing' ? ${JSON.stringify({ memoryBytes: 4 * GiB, imageBytes: Math.round(2.8 * GiB), stateDiskBytes: 20 * GiB })} : null;
+        if (command === 'setup_requirements') return name.startsWith('local-preflight') && name !== 'local-preflight-missing' ? ${JSON.stringify({ memoryBytes: 4 * GiB, imageBytes: Math.round(2.8 * GiB), stateDiskBytes: 20 * GiB, downloadBytes: 2800000000 })} : null;
         if (command === 'setup_preflight') return { platform: 'windows', virtualization: ['local-preflight-unknown', 'local-preflight-mixed'].includes(name) ? 'unknown' : ['local-preflight-blocked', 'local-preflight-cluster'].includes(name) ? 'disabled' : 'ready', memory: name === 'local-preflight-unknown' ? 'unknown' : ['local-preflight-memory', 'local-preflight-mixed'].includes(name) ? 'insufficient' : 'ready', installedMemoryBytes: name === 'local-preflight-unknown' ? null : ['local-preflight-memory', 'local-preflight-mixed'].includes(name) ? ${2 * GiB} : ${16 * GiB}, requiredMemoryBytes: ${4 * GiB} };
         if (command === 'cluster_places') return name === 'places-populated' ? { selectedKey: null, persistenceState: 'complete', places: [
           { key: 'fixture-a', context: 'fixture-cluster', service: 'control / orka', namespace: 'agents', stale: false, observedAt: Date.now() - 600000, agents: [] },
@@ -772,8 +773,21 @@ try {
       if (name === 'ai-removal-retry') {
         await clickAction('Remove sign-in');
         await until(() => evaluate(`!!document.querySelector('button.button-primary') && [...document.querySelectorAll('button.button-primary')].some(button => button.textContent === 'Retry removal')`), 'primary removal retry');
+        const diagnostics = [['disconnectRetainedModel', 'refused'], ['modelStatus', 'unsupported'], ['modelStatusPreconditions', 'refused']];
+        for (const [index, diagnostic] of diagnostics.entries()) {
+          if (index > 0) {
+            await evaluate(`window.__bridgeCleanupDiagnostic = ${JSON.stringify(diagnostic)}`);
+            await clickAction('Retry removal');
+            await until(() => evaluate(`window.__bridgeRemovals === ${index + 1}`), 'cleanup failure boundary');
+            await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+          }
+          await clickAction('Copy details for help');
+          await until(() => evaluate(`window.__bridgeCopied.length === ${index + 1}`), 'copied cleanup diagnostic');
+          const details = await evaluate(`window.__bridgeCopied[${index}]`);
+          if (!details.includes(`Cleanup operation: ${diagnostic[0]}`) || !details.includes(`Cleanup class: ${diagnostic[1]}`) || details.includes('synthetic-private-token')) throw Error('Copy details lost finite cleanup fields or disclosed raw errors');
+        }
         await clickAction('Retry removal');
-        await until(() => evaluate(`window.__bridgeRemovals === 2 && !document.querySelector('[aria-label="Remove sign-in confirmation"]')`), 'direct cleanup retry without reconfirmation');
+        await until(() => evaluate(`window.__bridgeRemovals === 4 && !document.querySelector('[aria-label="Remove sign-in confirmation"]')`), 'direct cleanup retry without reconfirmation');
       }
     }
     if (name === 'switch-place') {
@@ -1077,7 +1091,7 @@ try {
       console.log(`Captured native WebView2 AI reset fixture: ${theme}/${size}`);
       return;
     }
-    const expected = { welcome: 'About 5 minutes, mostly a download', 'chat-empty': 'Ask your agent a question', 'chat-pending': 'Waiting for your agent to start…', 'chat-running': 'Waiting for your agent’s reply…', 'chat-answer': 'The page says fixture-checksum.', 'chat-session-null': 'Waiting for the conversation to finish saving…', 'chat-session-answer': 'The page says fixture-checksum.', 'chat-two-versions': 'Conversation 2', 'new-agent-form': 'Starts blank, with one empty test.', 'new-agent-created': 'Your first test is incomplete.', 'cluster-picker-open': 'Find a context', 'cluster-checking': 'Checking the cluster', 'cluster-failure': "Couldn't reach this cluster.", 'cluster-account-picker-open': 'Find an account', 'cluster-account-allowed': 'Required Orka permissions: Allowed', 'cluster-account-forbidden': 'cannot list ServiceAccounts in agents', 'designer-no-destination': 'Open Clusters to load tools and models on This computer.', 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Step 1 of 4', 'local-preflight-missing': 'Step 1 of 4', 'local-preflight-unknown': "Bridge couldn't check this computer yet.", 'local-preflight-blocked': 'Fix the computer requirements above', 'local-preflight-memory': 'Fix the computer requirements above', 'local-preflight-mixed': 'Fix the computer requirements above', 'local-preflight-cluster': 'Fix the computer requirements above', 'ai-cli-missing': 'gh auth login --hostname github.com --web', 'designer-loading': 'Opening your agent', 'designer-open-error': 'Your agent folder could not be opened.', 'ai-key': 'Where do I get a key?', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster ready', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings', 'designer-connected': 'Instructions and settings', 'designer-catalog-busy': 'Instructions and settings', 'designer-file': 'web-reader.agent.md', 'designer-reply-saved': 'Reply in a conversation', 'designer-failed': 'checks failed', 'designer-passed': 'The test passed.', 'designer-stale': 'Not run since your edit', 'designer-running': 'Waiting for answers and evaluating tests', 'designer-remote': 'Instructions and settings' };
+    const expected = { welcome: 'About 5 minutes, mostly a download', 'chat-empty': 'Ask your agent a question', 'chat-pending': 'Waiting for your agent to start…', 'chat-running': 'Waiting for your agent’s reply…', 'chat-answer': 'The page says fixture-checksum.', 'chat-session-null': 'Waiting for the conversation to finish saving…', 'chat-session-answer': 'The page says fixture-checksum.', 'chat-two-versions': 'Conversation 2', 'new-agent-form': 'Starts blank, with one empty test.', 'new-agent-created': 'Your first test is incomplete.', 'cluster-picker-open': 'Find a context', 'cluster-checking': 'Checking the cluster', 'cluster-failure': "Couldn't reach this cluster.", 'cluster-account-picker-open': 'Find an account', 'cluster-account-allowed': 'Required Orka permissions: Allowed', 'cluster-account-forbidden': 'cannot list ServiceAccounts in agents', 'designer-no-destination': 'Open Clusters to load tools and models on This computer.', 'places-empty': 'No other clusters added yet', 'places-populated': 'Not checked yet', 'local-preflight': 'Step 1 of 4', 'local-preflight-missing': 'Step 1 of 4', 'local-preflight-unknown': "Bridge couldn't check virtualization or memory yet.", 'local-preflight-blocked': 'Virtualization:', 'local-preflight-memory': 'This computer has 2.1 GB of memory; Bridge needs 4.3 GB.', 'local-preflight-mixed': "Bridge couldn't check virtualization yet.", 'local-preflight-cluster': 'Virtualization:', 'ai-cli-missing': 'gh auth login --hostname github.com --web', 'designer-loading': 'Opening your agent', 'designer-open-error': 'Your agent folder could not be opened.', 'ai-key': 'Where do I get a key?', 'ai-idle': 'GitHub CLI must be installed and signed in', 'ai-connecting': 'Connecting', 'ai-connected': 'Connected', 'first-test-running': 'Run your first testRunning', 'first-test-result': 'No checksum was given.', 'local-completed': 'Local cluster ready', 'ai-removal-confirmation': 'Disconnect the AI and remove Bridge’s saved sign-in?', 'ai-removal-retry': 'Press Retry removal', 'switch-place': 'Add a cluster', designer: 'Instructions and settings', 'designer-connected': 'Instructions and settings', 'designer-catalog-busy': 'Instructions and settings', 'designer-file': 'web-reader.agent.md', 'designer-reply-saved': 'Reply in a conversation', 'designer-failed': 'checks failed', 'designer-passed': 'The test passed.', 'designer-stale': 'Not run since your edit', 'designer-running': 'Waiting for answers and evaluating tests', 'designer-remote': 'Instructions and settings' };
     await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(expected[name])}) && ${['designer-loading', 'designer-open-error'].includes(name) ? "!!document.querySelector('.designer > .designer-file')?.getClientRects().length" : 'true'}`), `${name} action state`).catch(async error => {
       throw Error(`${error.message}: ${await evaluate('document.body.innerText')}`);
     });
@@ -1105,8 +1119,9 @@ try {
       if (probe.again?.primary) fail('Check again must remain secondary');
       if (name === 'local-preflight-missing' ? !probe.text.includes('not available yet') : !probe.text.includes('4.3 GB') || /GiB|Cluster download/.test(probe.text)) fail('requirements must be explicit, native-derived decimal GB or unavailable');
       if (['local-preflight', 'local-preflight-unknown'].includes(name) && (probe.unknown || probe.again || /Virtualization:|Installed memory:|Not checked/.test(probe.text))) fail('nonfailed checks must not draw rows or retry actions');
-      if (['local-preflight-unknown', 'local-preflight-mixed'].includes(name) && (probe.openHelp || !probe.text.includes("Bridge couldn't check this computer yet. It checks again when the workspace starts."))) fail('unknown checks need one quiet startup explanation');
-      if (['local-preflight-memory', 'local-preflight-mixed'].includes(name) && (!probe.text.includes('Not enough installed memory') || probe.text.includes('Virtualization:'))) fail('only the failed RAM check gets a row');
+      const unchecked = name === 'local-preflight-mixed' ? 'virtualization' : 'virtualization or memory';
+      if (['local-preflight-unknown', 'local-preflight-mixed'].includes(name) && (probe.openHelp || !probe.text.includes(`Bridge couldn't check ${unchecked} yet. It checks again when the workspace starts.`))) fail('unknown checks need a specific startup explanation');
+      if (['local-preflight-memory', 'local-preflight-mixed'].includes(name) && (!probe.text.includes('This computer has 2.1 GB of memory; Bridge needs 4.3 GB.') || probe.text.includes('Virtualization:') || probe.again)) fail('RAM failure needs its amounts and only the cluster alternative');
       if (name === 'local-preflight-blocked' && !await evaluate(`[...document.querySelectorAll('[aria-label="Virtualization"] [role="button"]')].some(button => button.textContent.includes('Show me how'))`)) fail('known Windows virtualization failure must keep native fix help');
       if (name === 'local-preflight-cluster') {
         await clickAction('Use a cluster instead');
