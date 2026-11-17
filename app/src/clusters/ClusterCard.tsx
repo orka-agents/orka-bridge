@@ -223,7 +223,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
       </select></>}
     {error && recovery && <div className="workspace-failure cluster-failure" role="alert"><div className="workspace-failure-explanation">
       <p className="failure-summary">{networkFailure ? `Can't reach ${contextName}. Check your network or VPN.` : recovery.cause}</p>{!networkFailure && <p>{error.operation === 'Read kubeconfig' ? 'Check again to read your contexts. If you changed kubeconfig, use Reload kubeconfig in Details.' : recovery.next}</p>}
-      <p>Your local cluster and agent files are kept. Connection checks do not create an agent or run tests.</p>
+      <p>Your workspace and agent files are kept. Connection checks do not create an agent or run tests.</p>
     </div></div>}
     {target && <>
       {connected ? <>
