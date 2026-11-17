@@ -133,6 +133,10 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
     await assert.rejects(invoke('cluster_service_account_preview', { ...args, saName: 'task-reader' }), /Only the selected account/);
   }
 }
+const clusterProbe = source.slice(source.indexOf("const probe = await evaluate(`({ heading: document.querySelector('h1')"), source.indexOf("throw Error('Connected cluster actions/wording:"));
+assert.ok(clusterProbe.includes('summary[role="button"]'), 'connected actions include semantic summary disclosures, not only button elements');
+assert.ok(!source.includes("await clickAction('Show details')") && !source.includes("await clickAction('Hide details')"), 'cluster disclosure uses its real summary, not the button-only helper');
+
 // The connected scene must use the same real injection as discovery, then retain
 // that selection for its success/details/list captures without another mount.
 {
@@ -162,7 +166,7 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
 for (const scene of ['cluster-success', 'cluster-details', 'cluster-selected-list']) {
   assert.ok(source.includes(`'${scene}'`), `Windows connected mount must capture ${scene}`);
 }
-const smoke = await readFile(new URL('./native-smoke.swift', import.meta.url), 'utf8');
+const smoke = (await readFile(new URL('./native-smoke.swift', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const matrix = smoke.slice(smoke.indexOf('    // Connected cluster capture matrix.'), smoke.indexOf('    // Done leaves the confirmed destination'));
 assert.ok(matrix.includes('CGFloat(540), CGFloat(640)'), 'Mac connected scenes need true minimum content size');
 assert.ok(matrix.includes('CGFloat(1280), CGFloat(800)'), 'Mac connected scenes need matching wide content size');

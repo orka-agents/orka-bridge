@@ -1521,10 +1521,11 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
         setContent(width, height)
         scrollMain(12000)
-        try capture("cluster-success-\(size)", "Clusters")
-        require(nativeTextBounds("Add a cluster", heading: true).count == 1
-            && nativeTextIsVisible("fixture-secondary") && nativeTextIsVisible("control / orka"),
-            "Baseline connected cluster must retain its old heading and location wording")
+        let baseline = try capture("cluster-success-\(size)", "Clusters")
+        let baselineText = baseline.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        require(baselineText.contains(size == "wide" ? "Add a cluster" : "Manage your cluster")
+            && nativeTextIsVisible("fixture-secondary") && baselineText.contains("control / orka"),
+            "Baseline connected cluster must retain its old heading and location wording: \(baselineText)")
         require(["Change context", "Check access again", "Reload kubeconfig", "Remove"].allSatisfy { !nativeButtons($0).isEmpty },
             "Baseline connected maintenance remains outside Show details")
         scrollMain(-12000)

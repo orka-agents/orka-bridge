@@ -805,18 +805,18 @@ try {
             await compareReference(image.data, theme, size, scene, 'clusters');
           };
           const probe = await evaluate(`({ heading: document.querySelector('h1').textContent, text: document.querySelector('.cluster-card').innerText,
-            actions: [...document.querySelectorAll('.cluster-card button')].map(button => button.textContent.trim()) })`);
+            actions: [...document.querySelectorAll('.cluster-card button, .cluster-card summary[role="button"]')].map(button => button.textContent.trim()) })`);
           if (probe.heading !== 'Add a cluster' || !probe.text.includes('control / orka') || !probe.text.includes('Last checked') ||
             !['Done', 'Open your agent', 'Show details'].every(label => probe.actions.includes(label)) ||
             !['Check access again', 'Change context', 'Reload kubeconfig', 'Remove'].every(label => probe.actions.includes(label))) throw Error('Connected cluster actions/wording: ' + JSON.stringify(probe));
           await evaluate(`document.querySelector('main').scrollTop = 0`);
           await shoot('cluster-success', 'h1');
           await shoot('cluster-success-end', '.cluster-actions');
-          await clickAction('Show details');
+          await evaluate(`document.querySelector('.cluster-card summary').click()`);
           await until(() => evaluate(`!!document.querySelector('#cluster-details') && [...document.querySelectorAll('.cluster-actions button')].some(button => button.textContent === 'Remove')`), 'baseline cluster details with maintenance outside');
           await shoot('cluster-details', '#cluster-details');
           await shoot('cluster-details-end', '.cluster-actions');
-          await clickAction('Hide details');
+          await evaluate(`document.querySelector('.cluster-card summary').click()`);
           await clickAction('Done');
           await until(() => evaluate(`document.querySelector('[aria-label="team-dev"]')?.innerText.includes('Selected for Designer')`), 'selected cluster list');
           const list = await evaluate(`(() => {
