@@ -115,7 +115,7 @@ test('insufficient installed memory blocks preparation and offers the cluster ro
 test('rounded-equal RAM values retain exact failed amounts in the memory disclosure', async () => {
   const { ipc } = await native({ ...ready, memory: 'insufficient', installedMemoryBytes: 6400000000 });
   const memory = await screen.findByRole('region', { name: 'Installed memory' });
-  await waitFor(() => expect(memory.textContent).toContain('This computer has 6.4 GB of memory; Bridge needs 6.4 GB.'));
+  await waitFor(() => expect(within(memory).getByRole('alert').textContent).toBe('Not enough memory. This computer has 6.4 GB of memory; Bridge needs 6.4 GB.'));
   expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
   await userEvent.setup().click(within(memory).getByRole('button', { name: 'About this check' }));
   expect(memory.textContent).toContain(`Required: ${requirements.memoryBytes.toLocaleString()} bytes.`);

@@ -84,14 +84,6 @@ fn requirements_from(
         download_bytes,
     })
 }
-#[cfg(any(test, not(debug_assertions)))]
-fn download_bytes(target: crate::runtime::image_types::ImageTarget) -> Option<u64> {
-    let limits = crate::local_vm_image::shipping_image(target)?.pin.limits;
-    limits
-        .compressed_bytes
-        .checked_add(limits.kernel_bytes)?
-        .checked_add(limits.initrd_bytes)
-}
 /// Debug overrides retain engineering sizes; release uses the selected platform image.
 #[cfg(debug_assertions)]
 pub fn setup_requirements() -> Option<SetupRequirements> {
@@ -99,11 +91,11 @@ pub fn setup_requirements() -> Option<SetupRequirements> {
 }
 #[cfg(not(debug_assertions))]
 pub fn setup_requirements() -> Option<SetupRequirements> {
-    use crate::runtime::image_types::ImageTarget;
+    use crate::{catalog::image_download_bytes, runtime::image_types::ImageTarget};
     let download = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        download_bytes(ImageTarget::MacosArm64)
+        image_download_bytes(ImageTarget::MacosArm64)
     } else if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        download_bytes(ImageTarget::WindowsAmd64)
+        image_download_bytes(ImageTarget::WindowsAmd64)
     } else {
         None
     };
@@ -134,7 +126,9 @@ mod requirements_tests {
     }
     #[test]
     fn download_sizes_include_compressed_image_and_direct_boot_files() {
-        use crate::runtime::image_types::ImageTarget;
+        use crate::{
+            catalog::image_download_bytes as download_bytes, runtime::image_types::ImageTarget,
+        };
         assert_eq!(download_bytes(ImageTarget::MacosArm64), Some(2_380_070_756));
         assert_eq!(
             download_bytes(ImageTarget::WindowsAmd64),

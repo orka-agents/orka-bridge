@@ -55,7 +55,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }:
           : 'Turn on Windows Hypervisor Platform in Windows features, then restart this PC.'}</p>}</Disclosure>
       </section>}
       {!checking && memory === 'insufficient' && result?.installedMemoryBytes != null && <section aria-label="Installed memory">
-        <p className="preflight-result" role="alert"><StatusIcon state="failed" /><span>{`This computer has ${formatRequirementGB(result.installedMemoryBytes)} of memory; Bridge needs ${formatRequirementGB(requiredMemoryBytes)}.`}</span></p>
+        <p className="preflight-result" role="alert"><StatusIcon state="failed" /><span>{`${formatRequirementGB(result.installedMemoryBytes) === formatRequirementGB(requiredMemoryBytes) ? 'Not enough memory. ' : ''}This computer has ${formatRequirementGB(result.installedMemoryBytes)} of memory; Bridge needs ${formatRequirementGB(requiredMemoryBytes)}.`}</span></p>
         <Disclosure label="About this check" open={memoryHelp} controls="preflight-memory-help" onOpenChange={setMemoryHelp}>
         {memoryHelp && <div id="preflight-memory-help"><p>This is installed RAM, not currently free memory.</p>
           <p>{`Required: ${requiredMemoryBytes.toLocaleString()} bytes.${result?.installedMemoryBytes != null ? ` Installed: ${result.installedMemoryBytes.toLocaleString()} bytes.` : ''}`}</p></div>}</Disclosure>
