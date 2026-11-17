@@ -337,6 +337,12 @@ for (const scene of ['cluster-success', 'cluster-details', 'cluster-selected-lis
   assert.ok(source.includes(`'${scene}'`), `Windows connected mount must capture ${scene}`);
 }
 const smoke = (await readFile(new URL('./native-smoke.swift', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
+const frozenChecksumParts = smoke.match(/let checksumPattern = #"(.*?)"# \+ NSRegularExpression\.escapedPattern\(for: expected\) \+ #"(.*?)"#/)?.slice(1);
+assert.ok(frozenChecksumParts, 'frozen test identity must match a whole identifier, not a longer token');
+const matchesChecksum = text => new RegExp(`${frozenChecksumParts[0]}published-checksum${frozenChecksumParts[1]}`, 'i').test(text);
+for (const text of ['published-checksum', 'PUBLISHED-CHECKSUM', '(published-checksum), Passed', 'Title published-checksum Passed']) assert.equal(matchesChecksum(text), true);
+for (const text of ['published-checksum-extra', 'published-checksumX', 'other-published-checksum', 'published-checksum.extra', 'published-checksu']) assert.equal(matchesChecksum(text), false);
+assert.equal(matchesChecksum(['published-', 'checksum'].reduce((text, line) => text + (text.endsWith('-') ? '' : ' ') + line)), true);
 const countSpacing = smoke.match(/replacingOccurrences\(of: #"(.*?)"#, with: " of "/)?.[1];
 assert.ok(countSpacing, 'Send count OCR must tolerate the observed missing space without accepting a different verdict');
 const normalizedCount = text => text.replace(new RegExp(countSpacing, 'g'), ' of ').split(/\s+/).join(' ');

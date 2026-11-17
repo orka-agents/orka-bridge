@@ -1174,6 +1174,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     @discardableResult
     func capturePreflight(_ name: String, _ expected: String, anchor: String? = nil,
                           region: String = "Send and cluster tests", requiring: (([VNRecognizedTextObservation]) -> Bool)? = nil) throws -> [VNRecognizedTextObservation] {
+        func matchesCapturedText(_ value: String) -> Bool {
+            let text = normalizedSendText(value)
+            guard expected == "published-checksum" else { return text.localizedCaseInsensitiveContains(expected) }
+            let checksumPattern = #"(?<![\w.-])"# + NSRegularExpression.escapedPattern(for: expected) + #"(?![\w.-])"#
+            return text.range(of: checksumPattern, options: [.regularExpression, .caseInsensitive]) != nil
+        }
         func enlargedChecksumVisible(_ viewport: CGRect, _ frame: CGRect) throws -> Bool {
             guard [viewport.origin.x, viewport.origin.y, viewport.width, viewport.height,
                    frame.origin.x, frame.origin.y, frame.width, frame.height].allSatisfy({ $0.isFinite }),
@@ -1207,7 +1213,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             let text = rows.compactMap { $0.topCandidates(1).first?.string }.reduce("") { text, line in
                 text + (text.isEmpty || text.hasSuffix("-") ? "" : " ") + line
             }
-            guard normalizedSendText(text).localizedCaseInsensitiveContains(expected) else { return false }
+            guard matchesCapturedText(text) else { return false }
             try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-send-crop-2x.png"), options: .atomic)
             try rows.map { "\($0.boundingBox): \($0.topCandidates(1).first?.string ?? "")" }.joined(separator: "\n")
                 .write(toFile: "\(output)/\(name)-send-crop-2x.ocr.txt", atomically: true, encoding: .utf8)
@@ -1235,7 +1241,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             }
             // Section labels are uppercased; Vision also varies casing in the fixed fixture ID.
             // Require Send context in this same captured frame, never later accessibility state.
-            var matchesExpected = normalizedSendText(text).localizedCaseInsensitiveContains(expected)
+            var matchesExpected = matchesCapturedText(text)
             // Small monospace IDs may be omitted by full-window OCR. Reuse only these frozen pixels;
             // keep the original rows for callers and require their original full-window context/guards.
             let hasContext = (matchesExpected || expected == "published-checksum")
