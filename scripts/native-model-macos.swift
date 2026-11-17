@@ -803,15 +803,37 @@ func nativeHeadings(_ expected: String) -> [AXUIElement] {
     }
 }
 func nativeHeadingExists(_ expected: String) -> Bool { !nativeHeadings(expected).isEmpty }
+func chatCameraDiagnostic(_ phase: String, _ expected: String) {
+    let frame = window()!.1
+    let pointer = CGPoint(x: frame.maxX - 20, y: frame.midY)
+    var hit: AXUIElement?
+    let hitStatus = AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(pointer.x), Float(pointer.y), &hit)
+    let heading = nativeHeadings(expected).first.flatMap(nativeBounds)
+    let header = enabledButton("Designer").flatMap(nativeBounds)
+    let focused = nativeElements().first { attribute($0, "AXFocused") as? Bool == true }
+    let data: [String: String] = ["phase": phase, "uptime": String(ProcessInfo.processInfo.systemUptime),
+        "window": String(describing: frame), "pointer": String(describing: pointer),
+        "heading": String(describing: heading), "header": String(describing: header),
+        "hitStatus": String(describing: hitStatus), "hitRole": hit.flatMap { attribute($0, "AXRole") as? String } ?? "none",
+        "focusedRole": focused.flatMap { attribute($0, "AXRole") as? String } ?? "none",
+        "focusedBounds": String(describing: focused.flatMap(nativeBounds))]
+    if let json = try? JSONSerialization.data(withJSONObject: data, options: [.sortedKeys]),
+       let text = String(data: json, encoding: .utf8) { print("CHAT_CAMERA \(text)") }
+}
 func anchorChatHeading(_ expected: String) {
     let headings = nativeHeadings(expected)
     guard headings.count == 1, let bounds = nativeBounds(headings[0]),
         let header = enabledButton("Designer").flatMap(nativeBounds) else {
         require(false, "Cannot anchor native Chat heading: \(expected)"); return
     }
-    // Clear fixed navigation and the 48px composer-follow threshold before freezing the frame.
+    // The target clears navigation; it does not establish distance from the scroll area's bottom.
     let delta = header.maxY + 64 - bounds.minY
+    print("CHAT_CAMERA requestedDelta=\(delta) initialHeading=\(bounds) initialHeader=\(header)")
+    chatCameraDiagnostic("before-wheel", expected)
     if abs(delta) > 2 { scroll(Int32(delta.rounded())) }
+    chatCameraDiagnostic("after-wheel", expected)
+    Thread.sleep(forTimeInterval: 0.6)
+    chatCameraDiagnostic("after-snapshot-interval", expected)
 }
 func nativeTextExists(_ expected: String) -> Bool {
     nativeElements().contains { element in
