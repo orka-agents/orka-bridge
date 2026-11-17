@@ -891,7 +891,9 @@ func anchorChatHeading(_ expected: String) {
     }
     // Clear fixed navigation and the 48px composer-follow threshold before freezing the frame.
     let delta = header.maxY + 64 - bounds.minY
+    print("Chat anchor before: heading=\(bounds), header=\(header), window=\(window()!.1), delta=\(delta)")
     if abs(delta) > 2 { scroll(Int32(delta.rounded())) }
+    print("Chat anchor after: heading=\(String(describing: nativeHeadings(expected).first.flatMap(nativeBounds)))")
 }
 func nativeTextExists(_ expected: String) -> Bool {
     nativeElements().contains { element in
