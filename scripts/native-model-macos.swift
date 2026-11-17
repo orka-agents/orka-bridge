@@ -5,6 +5,25 @@ import CoreGraphics
 import ApplicationServices
 import Vision
 
+// Producer-side timings: CI can buffer stdout until long after a capture finishes.
+let modelPerfStarted = ProcessInfo.processInfo.systemUptime
+struct ModelPerfCounters {
+    var attributeCalls = 0
+    var attributeSeconds = 0.0
+    var treeCalls = 0
+    var treeSeconds = 0.0
+    var maxTreeNodes = 0
+}
+var modelPerf = ModelPerfCounters()
+var previousCapturePerf = modelPerf
+var previousCaptureEnd = modelPerfStarted
+let modelPerfTheme = CommandLine.arguments.count > 3 && ["light", "dark"].contains(CommandLine.arguments[3]) ? CommandLine.arguments[3] : "unknown"
+func modelTiming(_ event: String, details: String = "") {
+    let record = "native-model-perf event=\(event) theme=\(modelPerfTheme) epoch_ms=\(Int(Date().timeIntervalSince1970 * 1000)) elapsed_ms=\(Int((ProcessInfo.processInfo.systemUptime - modelPerfStarted) * 1000)) \(details)\n"
+    try? FileHandle.standardError.write(contentsOf: Data(record.utf8))
+}
+modelTiming("walk-start")
+
 let display = CGMainDisplayID()
 var previousDisplayMode: CGDisplayMode?
 func restoreDisplay() {
@@ -52,7 +71,10 @@ try "pending".write(to: chatPhase, atomically: true, encoding: .utf8)
 defer { try? FileManager.default.removeItem(at: chatPhase) }
 child.environment = ProcessInfo.processInfo.environment.merging(["BRIDGE_MODEL_CHECK_RELEASE": keyCheckRelease.path, "BRIDGE_SETUP_PROGRESS": setupProgress.path, "BRIDGE_FIRST_TEST_OUTCOME": firstTestOutcome.path, "BRIDGE_CHAT_PHASE": chatPhase.path, "BRIDGE_CATALOG_RELEASE": catalogRelease.path]) { _, fixture in fixture }
 try child.run()
-defer { if child.isRunning { child.terminate(); child.waitUntilExit() } }
+defer {
+    if child.isRunning { child.terminate(); child.waitUntilExit() }
+    modelTiming("child-stopped")
+}
 func window() -> (CGWindowID, CGRect)? {
     let list = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
     guard let w = list.first(where: {
@@ -68,21 +90,29 @@ for _ in 0..<30 {
     Thread.sleep(forTimeInterval: 1)
 }
 require(window() != nil, "Native model fixture did not open")
+modelTiming("window-observed")
 NSRunningApplication(processIdentifier: child.processIdentifier)?.activate(options: [])
 Thread.sleep(forTimeInterval: 2)
 func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextObservation] {
+    let captureStarted = ProcessInfo.processInfo.systemUptime
+    let before = modelPerf
+    modelTiming("capture-begin", details: "name=\(name)")
     let file = "\(output)/\(name).png"
     let command = Process()
     command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
     command.arguments = ["-x", "-o", "-l", String(window()!.0), file]
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture native model UI")
+    let screenshotDone = ProcessInfo.processInfo.systemUptime
+    modelTiming("screenshot-done", details: "name=\(name) screen_ms=\(Int((screenshotDone - captureStarted) * 1000))")
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let rows = request.results ?? []
     let text = rows.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     try text.write(toFile: "\(output)/\(name).txt", atomically: true, encoding: .utf8)
+    let ocrDone = ProcessInfo.processInfo.systemUptime
+    modelTiming("ocr-done", details: "name=\(name) ocr_ms=\(Int((ocrDone - screenshotDone) * 1000))")
     // Vision can interleave the adjacent setup column between wrapped lines.
     // Check phrases within the model panel, not the whole window's reading order.
     let visible: String
@@ -112,6 +142,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
         require(found || nativeText || chatText || workspaceControl, "Missing \(value) in \(name): \(text)")
     }
+    let assertionsDone = ProcessInfo.processInfo.systemUptime
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
         else { fatalError("Cannot sample native theme") }
@@ -153,6 +184,27 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
             let png = bitmap.representation(using: .png, properties: [:]) else { fatalError("Cannot compose approved comparison") }
         try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
     }
+    let finished = ProcessInfo.processInfo.systemUptime
+    // AX and tree timings overlap the phases; they are subsets, not extra time.
+    let timings: [String] = [
+        "name=\(name)", "screen_ms=\(Int((screenshotDone - captureStarted) * 1000))",
+        "ocr_ms=\(Int((ocrDone - screenshotDone) * 1000))",
+        "assert_ms=\(Int((assertionsDone - ocrDone) * 1000))",
+        "image_ms=\(Int((finished - assertionsDone) * 1000))",
+        "between_ms=\(Int((captureStarted - previousCaptureEnd) * 1000))",
+        "between_ax_calls=\(before.attributeCalls - previousCapturePerf.attributeCalls)",
+        "between_ax_ms=\(Int((before.attributeSeconds - previousCapturePerf.attributeSeconds) * 1000))",
+        "capture_ax_calls=\(modelPerf.attributeCalls - before.attributeCalls)",
+        "capture_ax_ms=\(Int((modelPerf.attributeSeconds - before.attributeSeconds) * 1000))",
+        "between_tree_calls=\(before.treeCalls - previousCapturePerf.treeCalls)",
+        "between_tree_ms=\(Int((before.treeSeconds - previousCapturePerf.treeSeconds) * 1000))",
+        "capture_tree_calls=\(modelPerf.treeCalls - before.treeCalls)",
+        "capture_tree_ms=\(Int((modelPerf.treeSeconds - before.treeSeconds) * 1000))",
+        "tree_max_nodes=\(modelPerf.maxTreeNodes)",
+    ]
+    modelTiming("capture-end", details: timings.joined(separator: " "))
+    previousCapturePerf = modelPerf
+    previousCaptureEnd = finished
     print("PASS \(name): real native frontend, synthetic IPC only")
     return rows
 }
@@ -780,11 +832,22 @@ scroll(4000)
 // writer is in-memory only, so no creator file or credential can be changed.
 scroll(4000)
 func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    let started = ProcessInfo.processInfo.systemUptime
+    defer {
+        modelPerf.attributeCalls += 1
+        modelPerf.attributeSeconds += ProcessInfo.processInfo.systemUptime - started
+    }
     var value: CFTypeRef?
     return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
 }
 func nativeElements() -> [AXUIElement] {
+    let started = ProcessInfo.processInfo.systemUptime
     var elements = [AXUIElementCreateApplication(child.processIdentifier)]
+    defer {
+        modelPerf.treeCalls += 1
+        modelPerf.treeSeconds += ProcessInfo.processInfo.systemUptime - started
+        modelPerf.maxTreeNodes = max(modelPerf.maxTreeNodes, elements.count)
+    }
     var index = 0
     while index < elements.count && elements.count < 4000 {
         let element = elements[index]; index += 1
@@ -1477,3 +1540,4 @@ for (phase, summary) in [("image-update", "This version of Bridge needs a new wo
     require(enabledButton("Try again") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
     require(!nativeTextExists("The cluster download couldn't be verified."), "Version mismatch is not download corruption")
 }
+modelTiming("walk-complete", details: "ax_calls=\(modelPerf.attributeCalls) ax_ms=\(Int(modelPerf.attributeSeconds * 1000)) tree_calls=\(modelPerf.treeCalls) tree_ms=\(Int(modelPerf.treeSeconds * 1000)) tree_max_nodes=\(modelPerf.maxTreeNodes)")
