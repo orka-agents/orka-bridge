@@ -600,7 +600,8 @@ click("Connect the AI", [])
 try keyCapture("checking", ["Checking", "Asking Anthropic"])
 require(!anyButton("Remove key") && !anyButton("Remove sign-in"), "Remove must be absent while Connecting")
 try Data().write(to: keyCheckRelease, options: .atomic)
-waitForButton("Check again")
+waitForNativeText("Anthropic didn't accept this key")
+require(anyButton("Check again") && enabledButton("Check again") == nil, "An empty replacement key must leave Check again disabled")
 for (state, message) in [("rejected", "Anthropic didn't accept this key"),
                          ("unreachable", "workspace couldn't reach Anthropic"),
                          ("model-unavailable", "isn't listed for this key")] {
