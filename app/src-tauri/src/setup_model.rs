@@ -165,6 +165,13 @@ pub(crate) struct UpgradeMetadata {
     _owner: fs::File,
 }
 impl SetupStore {
+    /// Recovery already has exact durable snapshots; lock without interpreting a
+    /// temporarily mixed pair of records as a new credential association.
+    #[allow(dead_code)]
+    pub(crate) fn lock_upgrade_metadata(&self) -> Result<fs::File, SetupError> {
+        let root = self.root.as_ref().ok_or_else(unavailable)?;
+        model_owner(root)
+    }
     #[allow(dead_code)]
     pub(crate) fn snapshot_for_upgrade(
         &self,

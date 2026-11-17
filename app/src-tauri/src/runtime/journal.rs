@@ -47,7 +47,7 @@ pub struct Journal {
     record: InstallationRecord,
     creation_live: bool,
 }
-struct OwnerLock(Arc<File>);
+pub(crate) struct OwnerLock(Arc<File>);
 impl Drop for OwnerLock {
     fn drop(&mut self) {
         // The lock belongs to the open file description, which any concurrent
@@ -99,6 +99,15 @@ fn regular(path: &Path) -> Result<(), RuntimeError> {
     Ok(())
 }
 impl Journal {
+    /// Storage recovery may retain an incomplete installation, but receives no
+    /// Journal, image target, boot capability or fresh formatting authority.
+    #[allow(dead_code)]
+    pub(crate) fn recovery_owner(root: &Path) -> Result<OwnerLock, RuntimeError> {
+        regular(&root.join("owner.lock"))?;
+        let owner = OwnerLock(Arc::new(lock(root)?));
+        super::image_cache::not_reparse(&owner.0)?;
+        Ok(owner)
+    }
     pub fn create(
         root: &Path,
         backend: BackendKind,

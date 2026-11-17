@@ -1,4 +1,4 @@
-//! Native-only forward replacement. No renderer command may enter this backend
+//! Native-only replacement and recovery-only restore. No renderer command may enter this backend
 //! until restore and shared-credential guards are complete.
 #![allow(dead_code)]
 use crate::runtime::{
@@ -9,14 +9,13 @@ use crate::runtime::{
     journal::{InstallationRecord, Journal, StatePhase},
     types::RuntimeError,
 };
+use crate::setup::SetupStore;
 #[cfg(any(
     test,
     all(windows, target_arch = "x86_64"),
     all(target_os = "macos", target_arch = "aarch64")
 ))]
-use crate::{
-    local_vm::native::image::ImageSource, runtime::image_install::PreparedImage, setup::SetupStore,
-};
+use crate::{local_vm::native::image::ImageSource, runtime::image_install::PreparedImage};
 use bridge_runtime_protocol::Uuid;
 use cap_std::fs::Dir;
 use serde::{Deserialize, Serialize};
@@ -44,6 +43,14 @@ enum Phase {
     SourceRetained,
     DestinationCreated,
     ImagePrepared,
+    Restoring,
+    Restored,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Restore {
+    model: Option<Vec<u8>>,
+    account: Option<Vec<u8>>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -66,12 +73,15 @@ struct Intent {
     credential: CredentialDisposition,
     retained_allocated_bytes: u64,
     additional_bytes: u64,
+    #[serde(default)]
+    restore: Option<Restore>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum CredentialDisposition {
     Absent,
     Reserved,
+    Removed,
 }
 #[derive(Debug, PartialEq)]
 pub(crate) enum UpgradeStatus {
@@ -81,6 +91,8 @@ pub(crate) enum UpgradeStatus {
     Fresh,
     Incomplete,
     Consumed,
+    Restoring,
+    Restored,
     Conflict,
 }
 pub(crate) struct WorkspaceUpgrade {
@@ -283,15 +295,29 @@ impl WorkspaceUpgrade {
         let Some(intent) = self.read_intent()? else {
             return Ok(UpgradeStatus::None);
         };
+        if intent.restore.is_some() {
+            return self.restore_status(&intent);
+        }
         let canonical = installation(&self.local.join("local-vm-v1"))?;
         let retained = installation(&self.local.join(&intent.retained))?;
-        for (name, snapshot) in [
-            ("model-v1", &intent.model),
-            ("model-account-v1", &intent.account),
-        ] {
-            let current = read_bytes(&self.data.join("setup-v1").join(name), 16384)?;
-            if current.is_some() && current != *snapshot {
-                return Err(RuntimeError::RetainedState);
+        if let Some(b) = canonical
+            .as_ref()
+            .filter(|b| Some(*b) == intent.destination.as_ref())
+        {
+            // B may have acquired a different saved association since setup.
+            // Validate its current ownership rather than comparing it with A.
+            let _metadata = SetupStore::new(Some(self.data.clone()))
+                .snapshot_for_upgrade(b.installation)
+                .map_err(|_| RuntimeError::RetainedState)?;
+        } else {
+            for (name, snapshot) in [
+                ("model-v1", &intent.model),
+                ("model-account-v1", &intent.account),
+            ] {
+                let current = read_bytes(&self.data.join("setup-v1").join(name), 16384)?;
+                if current.is_some() && current != *snapshot {
+                    return Err(RuntimeError::RetainedState);
+                }
             }
         }
         let source_root = if retained.as_ref() == Some(&intent.source) {
@@ -393,8 +419,13 @@ impl WorkspaceUpgrade {
         space: impl FnOnce(&Dir) -> Result<u64, ImageError>,
     ) -> Result<UpgradeStatus, RuntimeError> {
         cancelled(closed)?;
-        if self.read_intent()?.is_some() {
-            return Err(RuntimeError::RetainedState);
+        let previous = self.read_intent()?;
+        if let Some(intent) = &previous {
+            if intent.phase != Phase::Restored
+                || self.restore_status(intent)? != UpgradeStatus::Restored
+            {
+                return Err(RuntimeError::RetainedState);
+            }
         }
         let root = self.local.join("local-vm-v1");
         // Opening A proves the native lifecycle has released *all* journal custody.
@@ -442,8 +473,19 @@ impl WorkspaceUpgrade {
             account: metadata.account.clone(),
             retained_allocated_bytes: allocated(&root, Some(&journal))?,
             additional_bytes,
+            restore: None,
         };
         let backend = journal.record().backend;
+        if let Some(previous) = previous {
+            // Preserve consumed transactions and B metadata before reusing the
+            // active intent slot. No retained installation is a fresh target.
+            image_cache::fs::publish_named(
+                &self.directory,
+                "intent.json",
+                &format!("completed-{}.json", previous.transaction),
+            )?;
+            image_cache::fs::sync(&self.directory)?;
+        }
         self.persist(&intent)?;
         point("intent")?;
         // L's durable snapshot precedes each independent D metadata removal.
@@ -497,6 +539,223 @@ impl WorkspaceUpgrade {
         self.live_destination = Some(destination);
         point("image-prepared")?;
         Ok(UpgradeStatus::Fresh)
+    }
+    pub(crate) fn restore(&mut self, transaction: Uuid) -> Result<UpgradeStatus, RuntimeError> {
+        self.restore_with(transaction, |_| Ok(()))
+    }
+    fn source_metadata<'a>(&self, intent: &'a Intent) -> [(&'static str, &'a Option<Vec<u8>>); 2] {
+        let (model, account) = if matches!(intent.credential, CredentialDisposition::Removed) {
+            (&None, &None)
+        } else {
+            (&intent.model, &intent.account)
+        };
+        [("model-v1", model), ("model-account-v1", account)]
+    }
+    fn restore_status(&self, intent: &Intent) -> Result<UpgradeStatus, RuntimeError> {
+        let restore = intent.restore.as_ref().ok_or(RuntimeError::RetainedState)?;
+        let destination = intent.destination.as_ref();
+        let root = self.local.join("local-vm-v1");
+        let retained_a = self.local.join(&intent.retained);
+        let retained_b = self
+            .local
+            .join(format!("retained-new-{}", intent.transaction));
+        let canonical = installation(&root)?;
+        let a = installation(&retained_a)?;
+        let b = installation(&retained_b)?;
+        let source_selected = canonical.as_ref() == Some(&intent.source);
+        let (source, target) = match (canonical.as_ref(), a.as_ref(), b.as_ref()) {
+            (Some(current), Some(a), None)
+                if Some(current) == destination && a == &intent.source =>
+            {
+                (&retained_a, Some(&root))
+            }
+            (None, Some(a), Some(b)) if a == &intent.source && Some(b) == destination => {
+                (&retained_a, Some(&retained_b))
+            }
+            (Some(a), None, Some(b)) if a == &intent.source && Some(b) == destination => {
+                (&root, Some(&retained_b))
+            }
+            (None, Some(a), None) if a == &intent.source && destination.is_none() => {
+                (&retained_a, None)
+            }
+            (Some(a), None, None) if a == &intent.source && destination.is_none() => (&root, None),
+            _ => return Err(RuntimeError::RetainedState),
+        };
+        verify_binding(
+            source,
+            &intent.source_binding,
+            &intent.source_binding_sha256,
+        )?;
+        if let (Some(target), Some(hash)) = (target, &intent.destination_binding_sha256) {
+            verify_binding(target, &intent.target_binding, hash)?;
+        }
+        if intent.phase == Phase::Restored {
+            if !source_selected {
+                return Err(RuntimeError::RetainedState);
+            }
+            // Completion ends rollback authority over A's metadata. Its matching
+            // app may subsequently change the association; validate current
+            // ownership for fresh C, never replay the archived source bytes.
+            let _metadata = SetupStore::new(Some(self.data.clone()))
+                .snapshot_for_upgrade(intent.source.installation)
+                .map_err(|_| RuntimeError::RetainedState)?;
+            return Ok(UpgradeStatus::Restored);
+        }
+        for ((name, wanted), archived) in self
+            .source_metadata(intent)
+            .into_iter()
+            .zip([&restore.model, &restore.account])
+        {
+            let current = read_bytes(&self.data.join("setup-v1").join(name), 16384)?;
+            let expected = if source_selected {
+                wanted
+            } else if canonical.is_some() {
+                archived
+            } else {
+                &None
+            };
+            if current.is_some() && current != *expected {
+                return Err(RuntimeError::RetainedState);
+            }
+        }
+        Ok(UpgradeStatus::Restoring)
+    }
+    fn restore_with(
+        &mut self,
+        transaction: Uuid,
+        point: impl Fn(&str) -> Result<(), RuntimeError>,
+    ) -> Result<UpgradeStatus, RuntimeError> {
+        let mut intent = self.read_intent()?.ok_or(RuntimeError::RetainedState)?;
+        if intent.transaction != transaction || intent.phase == Phase::Restored {
+            return Err(RuntimeError::RetainedState);
+        }
+        let root = self.local.join("local-vm-v1");
+        let retained_a = self.local.join(&intent.retained);
+        let retained_b_name = format!("retained-new-{transaction}");
+        let retained_b = self.local.join(&retained_b_name);
+        // An unhanded destination has never reached a VM worker. Discard its
+        // creation capability; any handed-out/live custody must refuse below.
+        self.live_destination = None;
+        // A live/uncertain VM retains this custody and refuses storage switching.
+        // Incomplete B is lockable for retention, never for boot or formatting.
+        let canonical = installation(&root)?;
+        let canonical_owner = canonical
+            .as_ref()
+            .map(|_| Journal::recovery_owner(&root))
+            .transpose()?;
+        let source_owner = installation(&retained_a)?
+            .as_ref()
+            .map(|_| Journal::recovery_owner(&retained_a))
+            .transpose()?;
+        let target_owner = installation(&retained_b)?
+            .as_ref()
+            .map(|_| Journal::recovery_owner(&retained_b))
+            .transpose()?;
+        let setup = SetupStore::new(Some(self.data.clone()));
+        let (_snapshot, _recovery_owner);
+        if intent.restore.is_none() {
+            if retained_b.try_exists()? {
+                return Err(RuntimeError::RetainedState);
+            }
+            // Inspection opens its own journal; drop custody only after proving
+            // no active worker owns either installation, before read-only checks.
+            drop((canonical_owner, source_owner, target_owner));
+            if let Some(destination) = &intent.destination {
+                if canonical.as_ref() != Some(destination) {
+                    return Err(RuntimeError::RetainedState);
+                }
+                let snapshot = setup
+                    .snapshot_for_upgrade(destination.installation)
+                    .map_err(|_| RuntimeError::RetainedState)?;
+                intent.restore = Some(Restore {
+                    model: snapshot.model.clone(),
+                    account: snapshot.account.clone(),
+                });
+                _snapshot = Some(snapshot);
+                _recovery_owner = None;
+            } else {
+                _snapshot = None;
+                _recovery_owner = Some(
+                    setup
+                        .lock_upgrade_metadata()
+                        .map_err(|_| RuntimeError::RetainedState)?,
+                );
+                intent.restore = Some(Restore {
+                    model: None,
+                    account: None,
+                });
+            }
+            intent.phase = Phase::Restoring;
+            self.restore_status(&intent)?;
+            self.persist(&intent)?;
+            point("restore-intent")?;
+        } else {
+            drop((canonical_owner, source_owner, target_owner));
+            _snapshot = None;
+            _recovery_owner = Some(
+                setup
+                    .lock_upgrade_metadata()
+                    .map_err(|_| RuntimeError::RetainedState)?,
+            );
+        }
+        self.restore_status(&intent)?;
+        let parent = Dir::open_ambient_dir(&self.local, cap_std::ambient_authority())?;
+        let setup_dir =
+            Dir::open_ambient_dir(self.data.join("setup-v1"), cap_std::ambient_authority())?;
+        if intent.destination.is_some()
+            && installation(&root)?.as_ref() == intent.destination.as_ref()
+        {
+            for (name, boundary) in [
+                ("model-v1", "restore-model-archived"),
+                ("model-account-v1", "restore-account-archived"),
+            ] {
+                let path = self.data.join("setup-v1").join(name);
+                if read_bytes(&path, 16384)?.is_some() {
+                    fs::remove_file(path)?;
+                    image_cache::fs::sync(&setup_dir)?;
+                }
+                point(boundary)?;
+            }
+            image_cache::fs::publish_named(&parent, "local-vm-v1", &retained_b_name)?;
+            image_cache::fs::sync(&parent)?;
+            point("destination-retained")?;
+        }
+        self.restore_status(&intent)?;
+        if !root.try_exists()? {
+            image_cache::fs::publish_named(&parent, &intent.retained, "local-vm-v1")?;
+            image_cache::fs::sync(&parent)?;
+            point("source-restored")?;
+        }
+        self.restore_status(&intent)?;
+        for ((name, snapshot), boundary) in self
+            .source_metadata(&intent)
+            .into_iter()
+            .zip(["restore-model-published", "restore-account-published"])
+        {
+            let path = self.data.join("setup-v1").join(name);
+            if let Some(bytes) = snapshot {
+                if read_bytes(&path, 16384)?.as_ref() != Some(bytes) {
+                    let pending = self
+                        .data
+                        .join("setup-v1")
+                        .join(format!("restore-{transaction}-{name}.next"));
+                    let mut file = OpenOptions::new()
+                        .create_new(true)
+                        .write(true)
+                        .open(&pending)?;
+                    file.write_all(bytes)?;
+                    file.sync_all()?;
+                    drop(file);
+                    crate::runtime::journal::replace(&pending, &path)?;
+                }
+            }
+            image_cache::fs::sync(&setup_dir)?;
+            point(boundary)?;
+        }
+        intent.phase = Phase::Restored;
+        self.persist(&intent)?;
+        point("restored")?;
+        Ok(UpgradeStatus::Restored)
     }
     /// Only the creating process may hand B to its native worker. Recovery cannot.
     pub(crate) fn take_destination(&mut self) -> Option<Journal> {
