@@ -712,7 +712,7 @@ for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum",
     try capture("welcome-\(size)-end", "Clusters")
     require(visibleButtons("Get started").count == 1 && nativeTextIsVisible("About 5 minutes, mostly a download"),
             "Welcome next action and time cue must remain reachable at \(size)")
-    require(nativeStrings().contains { $0.contains("Team clusters are early in this preview.") }, "Welcome lost the team-cluster preview caveat")
+    require(nativeStrings().contains { $0.contains("Send it to your team's cluster (preview).") }, "Welcome lost the team-cluster preview caveat")
     requireNoLocalWorkspace()
 }
 setContent(1280, 800)
