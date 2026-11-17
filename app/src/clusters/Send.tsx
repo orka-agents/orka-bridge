@@ -331,7 +331,7 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
   // Status/cancellation act on the recorded Send; a new Send still uses the selected destination.
   const recovery = checkCancellation ? 'status' : mismatched ? 'reload' : !target || !provider ? 'choose' : checked && reason ? 'check' : undefined;
   const passedResult = !outdated && snapshot?.report?.verdict === 'passed';
-  const sendButton = (kind: 'primary' | 'secondary') => <Button type="button" kind={kind} disabled={!!reason || busy || !!message} title={reason} onClick={event => startSend(event.currentTarget)}>{snapshot && samePlace ? againLabel : sendLabel}</Button>;
+  const sendButton = (kind: 'primary' | 'secondary') => <Button type="button" kind={kind} disabled={!!reason || busy || !!message} title={reason} onClick={event => startSend(event.currentTarget)}>{snapshot ? againLabel : sendLabel}</Button>;
   const overviewButton = (kind: 'primary' | 'secondary') => seeOverview && snapshot && onSeeInOverview && <Button type="button" kind={kind} onClick={() => onSeeInOverview(snapshot.id)}>See in Overview</Button>;
   const retryCancellation = retryCancel && <Button type="button" kind="secondary" disabled={busy} onClick={() => { void control('send_history_cancel'); }}>Retry cancellation</Button>;
   const primaryAction = recovery === 'status' ? <Button type="button" kind="primary" disabled={busy} onClick={() => { void control('send_history_check'); }}>Check cluster status</Button>
@@ -394,6 +394,7 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
       {!running && <div className="workspace-step-actions">
         {recovery && sendButton('secondary')}
         {recovery === 'status' && overviewButton('secondary')}
+        {recovery !== 'choose' && (!target || !provider) && <Button type="button" kind="secondary" onClick={onChooseCluster} disabled={!onChooseCluster}>Choose a cluster</Button>}
         {canSeparate && <Button type="button" kind="secondary" disabled={busy} onClick={event => startSend(event.currentTarget, true)}>Send as a separate agent</Button>}
         {checkingEnabled && checked && recovery !== 'reload' && recovery !== 'check' && refreshDestination('secondary')}
       </div>}

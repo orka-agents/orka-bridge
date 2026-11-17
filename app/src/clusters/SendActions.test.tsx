@@ -84,6 +84,26 @@ test('an earlier target is labelled and preflight failure offers a check, not Ov
   expect(within(card()).getByText('Destination').parentElement?.textContent).toContain('team-dev');
 });
 
+test('returning to an unchanged destination uses its preflight rerun wording, not the retained result target', async () => {
+  native({ ...result, targetId: '00000000-0000-4000-8000-000000000005', targetName: 'earlier-team' });
+  render(<Send place={place} source={source} stale={false} onSeeInOverview={() => {}} />);
+  await screen.findByText('Destination ready');
+  const button = screen.getByRole('button', { name: 'Run cluster tests again' });
+  expect(button.className).toContain('button-primary');
+  expect(screen.queryByRole('button', { name: 'Update agent and run tests' })).toBeNull();
+});
+
+test('status recovery keeps its prerequisite cluster selection in Details when no destination is selected', async () => {
+  const choose = vi.fn(); native({ ...result, state: 'unknown', cancellation: 'unsupported', report: { verdict: 'unknown', cases: [row] } });
+  render(<Send place={{ kind: 'thisComputer' }} source={source} stale={false} onChooseCluster={choose} />);
+  await screen.findByRole('button', { name: 'Check cluster status' });
+  const button = screen.getByRole('button', { name: 'Choose a cluster' });
+  expect(button.closest('details')?.open).toBe(false);
+  await openDetails(); await userEvent.click(button);
+  expect(choose).toHaveBeenCalledOnce();
+  expect(within(actionRow()).getAllByRole('button').map(b => b.textContent)).toEqual(['Check cluster status']);
+});
+
 test('Send copy is concise and friendly while recorded raw model/provider remain in Details', async () => {
   native(); render(<Send place={place} source={source} stale={false} />);
   await screen.findByText('Destination ready');
