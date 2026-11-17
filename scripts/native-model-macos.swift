@@ -244,7 +244,9 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     require(!anyButton("By cluster") && !anyButton("By agent") && !anyButton("Refresh"),
             "Overview list must not retain grouping or top-level Refresh controls")
-    _ = try capture("local-overview-ai-disconnected-collapsed-\(size)", ["Your agents", "Connect the AI in Clusters"])
+    require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer."),
+            "Disconnected Overview must explain the local AI gate")
+    _ = try capture("local-overview-ai-disconnected-collapsed-\(size)", ["Your agents"])
     setOverviewExpanded("web-reader", true)
     require(anyButton("Run tests web-reader") && enabledButton("Run tests web-reader") == nil && enabledButton("Open web-reader") != nil,
             "Without connected AI, Overview must disable local Run but preserve Open")
@@ -377,9 +379,9 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try capture("local-overview-ai-connected-collapsed-\(size)", ["Your agents", "web-reader"])
     setOverviewExpanded("web-reader", true)
-    require(enabledButton("Chat web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to chat or run tests on this computer."),
-            "Connected AI must enable the fitting local Chat action without the connection reason")
-    _ = try capture("local-overview-ai-connected-expanded-\(size)", ["Your agents", "This computer", "Chat"])
+    require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to chat or run tests on this computer."),
+            "Connected AI must enable the failed agent's local Run action without the connection reason")
+    _ = try capture("local-overview-ai-connected-expanded-\(size)", ["Your agents", "This computer", "Run tests"])
     setOverviewExpanded("web-reader", false)
 }
 localSize(1280, 800); scroll(4000)

@@ -1397,7 +1397,7 @@ try {
       const failedRemote = { ...remote, name: 'checksum-checker', uid: 'remote-uid-2', record: { ...remote.record,
         id: '33333333-3333-4333-8333-333333333333', documentId: ids[0], plannedAgentName: 'checksum-checker', agentUid: 'remote-uid-2', verdict: 'failed', report: { verdict: 'failed', passed: 1, total: 3 } } };
       const external = { ...remote, name: 'review-helper', uid: 'external-uid', record: null };
-      const extraPlaces = ['team-secondary', 'team-staging', 'team-review', 'team-lab'].map((context, index) => ({ key: 'fixture-extra-' + index, context, service: 'control / orka', namespace: 'agents', stale: false, observedAt: now - 60000, agents: [] }));
+      const extraPlaces = ['team-secondary', 'team-staging', 'team-review'].map((context, index) => ({ key: 'fixture-extra-' + index, context, service: 'control / orka', namespace: 'agents', stale: false, observedAt: now - 60000, agents: [] }));
       const places = { historyState: 'complete', unobserved: [], places: variant === 'clusters' ? [{ key: 'fixture-remote', context: 'team-dev', service: 'control / orka', namespace: 'agents', stale: false, observedAt: now - 60000, agents: [remote, failedRemote, external] }, ...extraPlaces] : [] };
       const progress = { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 12000, remainingMs: null };
       const starting = variant === 'starting';
