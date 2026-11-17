@@ -1172,7 +1172,20 @@ for character in "Changed fixture instructions.".utf16 {
 }
 Thread.sleep(forTimeInterval: 1)
 require((attribute(editor, "AXValue") as? String)?.contains("Changed fixture instructions.") == true, "Native keystrokes did not edit Instructions")
-require(exactTextIsVisible("Saved"), "A completed edit/save must acknowledge Saved")
+let savedAtDeadline = exactTextIsVisible("Saved")
+if !savedAtDeadline {
+    // Freeze the original verdict before diagnostics so a late acknowledgement cannot pass.
+    print("Save acknowledgement missing at deadline; window=\(window()!.1)")
+    let saveLabels: Set<String> = ["Saved", "Unsaved changes", "Saving…", "Not saved"]
+    for element in nativeElements() {
+        let values = ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+        if values.contains(where: { saveLabels.contains($0) }) {
+            print("Save label: role=\(attribute(element, "AXRole") as? String ?? "unknown"), values=\(values), bounds=\(String(describing: nativeBounds(element)))")
+        }
+    }
+    _ = try? capture("local-save-ack-failure", [])
+}
+require(savedAtDeadline, "A completed edit/save must acknowledge Saved")
 // Focusing Instructions scrolls below the compact test card; return to its start.
 scroll(4000)
 _ = try seek("Not run since your edit", -250)
