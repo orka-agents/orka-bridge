@@ -85,12 +85,8 @@ for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clus
   assert.match(step, /timeout-minutes: 3\n/, 'each scope keeps the existing three-minute ceiling');
 }
 assert.ok(workflow.includes('node ../scripts/test-native-recovery-scopes.mjs'));
-for (const path of ['build.rs', 'permissions/setup.toml']) {
-  const registration = await readFile(new URL(`../app/src-tauri/${path}`, import.meta.url), 'utf8');
-  for (const command of ['cluster_service_accounts', 'cluster_service_account_preview']) {
-    assert.ok(registration.includes(`"${command}"`), `${path} must permit the real desktop ${command} command`);
-  }
-}
+// Effective native grants are checked through Tauri's generated runtime
+// authority in tests/config.rs, not by where Rust happens to spell the names.
 // Saved-only header counts apply before Overview is visited, not after its deliberate visit.
 const hiddenHeader = source.split('\n').find(line => line.includes("'hidden saved-file count'"));
 assert.ok(hiddenHeader);
@@ -132,4 +128,4 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
     await assert.rejects(invoke('cluster_service_account_preview', { ...args, saName: 'task-reader' }), /Only the selected account/);
   }
 }
-console.log('PASS real scope parsing; 46+15 unique action cases; Chat snapshot matrix; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
+console.log('PASS real scope parsing; 46+15 unique action cases; Chat snapshot matrix; layout acceptance/rejection; IPC injection; disjoint CI scopes with unchanged three-minute ceilings');
