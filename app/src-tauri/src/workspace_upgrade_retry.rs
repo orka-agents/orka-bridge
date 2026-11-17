@@ -117,11 +117,13 @@ impl WorkspaceUpgrade {
         intent.destination = None;
         intent.destination_binding_sha256 = None;
         intent.phase = Phase::SourceRetained;
-        intent.credential = if intent.model.is_some() {
-            CredentialDisposition::Reserved
-        } else {
-            CredentialDisposition::Absent
-        };
+        if !matches!(intent.credential, CredentialDisposition::Removed) {
+            intent.credential = if intent.model.is_some() {
+                CredentialDisposition::Reserved
+            } else {
+                CredentialDisposition::Absent
+            };
+        }
         self.persist(intent)?;
         point("retry-recorded")?;
         Ok(())

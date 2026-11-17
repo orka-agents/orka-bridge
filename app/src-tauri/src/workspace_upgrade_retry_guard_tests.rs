@@ -82,6 +82,68 @@ fn retry_never_adopts_an_unrecorded_destination_after_creation_gap() {
     assert_eq!(installation(&root).unwrap(), unknown);
 }
 #[test]
+fn retry_preserves_legacy_removed_disposition_without_a_slot_marker() {
+    let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+    scene.replace(None).unwrap();
+    let transaction = id(&scene);
+    {
+        let owner = WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap();
+        let mut intent = owner.read_intent().unwrap().unwrap();
+        intent.credential = CredentialDisposition::Removed;
+        owner.persist(&intent).unwrap();
+    }
+    retry(&scene, transaction, None).unwrap();
+    let mut owner = WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap();
+    assert!(matches!(
+        owner.transfer_credential(transaction),
+        Err(RuntimeError::RetainedState)
+    ));
+    owner.restore(transaction).unwrap();
+    assert!(!scene.data.join("setup-v1/model-v1").exists());
+    assert!(!scene.data.join("setup-v1/model-account-v1").exists());
+}
+
+#[test]
+fn retry_ledger_limit_still_leaves_room_to_restore_the_current_metadata() {
+    fn padded_metadata(scene: &Scene) {
+        let destination = installation(&scene.local.join("local-vm-v1"))
+            .unwrap()
+            .unwrap();
+        let (mut model, _) = restore::destination_metadata(scene, destination.installation);
+        model.resize(16384, b' ');
+        fs::write(scene.data.join("setup-v1/model-v1"), model).unwrap();
+    }
+    let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+    scene.replace(None).unwrap();
+    let transaction = id(&scene);
+    padded_metadata(&scene);
+    retry(&scene, transaction, None).unwrap();
+    padded_metadata(&scene);
+    let before = fs::read(scene.local.join(STORE).join("intent.json")).unwrap();
+    let canonical = installation(&scene.local.join("local-vm-v1")).unwrap();
+    assert!(matches!(
+        retry(&scene, transaction, None),
+        Err(RuntimeError::RetainedState)
+    ));
+    assert_eq!(
+        fs::read(scene.local.join(STORE).join("intent.json")).unwrap(),
+        before
+    );
+    assert_eq!(
+        installation(&scene.local.join("local-vm-v1")).unwrap(),
+        canonical
+    );
+    let mut owner = WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap();
+    assert_eq!(owner.restore(transaction).unwrap(), UpgradeStatus::Restored);
+    assert_eq!(
+        read_record(&scene.local.join("local-vm-v1"))
+            .unwrap()
+            .installation_id,
+        scene.source_id
+    );
+}
+
+#[test]
 fn oversized_retention_record_cannot_replace_the_last_readable_intent() {
     let mut scene = Scene::new(ImageTarget::WindowsAmd64);
     scene.replace(None).unwrap();

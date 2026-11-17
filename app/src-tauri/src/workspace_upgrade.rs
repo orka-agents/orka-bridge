@@ -306,8 +306,15 @@ impl WorkspaceUpgrade {
     }
     fn persist(&self, intent: &Intent) -> Result<(), RuntimeError> {
         let bytes = serde_json::to_vec(intent).map_err(|_| RuntimeError::RetainedState)?;
-        // Retry history must never replace a record with bytes recovery cannot read.
-        if bytes.len() > 128 * 1024 {
+        // Leave room for schema-1 rollback snapshots: model <=16 KiB, account
+        // <=256 B, up to four JSON bytes per archived byte, plus structure/phase
+        // overhead. Filling retry history must never consume restore's capacity.
+        let limit = if intent.restore.is_some() {
+            128 * 1024
+        } else {
+            128 * 1024 - (4 * (16384 + 256) + 1024)
+        };
+        if bytes.len() > limit {
             return Err(RuntimeError::RetainedState);
         }
         let path = self.local.join(STORE);
