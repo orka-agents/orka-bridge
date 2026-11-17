@@ -665,7 +665,7 @@ fn main() {
                     }
                     key_connected.store(false, std::sync::atomic::Ordering::SeqCst);
                     if !removed_once.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                        invoke.resolver.reject(json!({"kind":"modelBusy"}));
+                        invoke.resolver.reject(json!({"kind":"modelReconnect", "cleanup":["disconnectRetainedModel","refused"], "message":"synthetic-private-token"}));
                         return true;
                     }
                     json!({"ready":false})
