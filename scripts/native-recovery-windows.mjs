@@ -885,7 +885,7 @@ try {
         const parts = [field, send, hint].map(rect), view = rect(main);
         const earlier = [...root.querySelectorAll('.chat-turn')].slice(0, 3).some(node => { const r = rect(node); return r.bottom > view.top && r.top < view.bottom; });
         return { label: root.getAttribute('aria-label'), heading: root.querySelector('h2').textContent, headingHidden: root.querySelector('h2').classList.contains('sr-only'), card: root.classList.contains('card'),
-          subtitle: document.querySelector('.designer-heading .agent-heading-copy > p')?.textContent, text: root.innerText, status: root.querySelector('.chat-status').textContent,
+          subtitle: document.querySelector('.designer-heading .agent-heading-copy > p')?.textContent, text: root.innerText, status: root.querySelector('.chat-status').classList.contains('sr-only') ? '' : root.querySelector('.chat-status').textContent,
           controls: [...root.querySelectorAll('.chat-heading button, .chat-heading summary')].map(node => node.textContent),
           numbers: [...root.querySelectorAll('.chat-transcript section')].map(section => section.getAttribute('aria-label')).filter(Boolean),
           hint: hint.textContent, sendLabel: send.getAttribute('aria-label'), sendText: send.textContent, fieldLabel: root.querySelector('label[for="' + field.id + '"]').textContent,

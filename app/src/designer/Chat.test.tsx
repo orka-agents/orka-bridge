@@ -2,6 +2,7 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import Chat from './Chat';
+import { Profiler } from 'react';
 import type { ChatSnapshot, ChatTurn } from './chat-api';
 const id = '9b2b93c4-375c-4815-9717-39852a96e411';
 const idle: ChatSnapshot = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null };
@@ -359,6 +360,27 @@ test('sending from earlier messages resumes follow while passive updates leave t
   fireEvent.scroll(page); enter('Next question'); await act(async () => {});
   expect(sends()).toHaveLength(1);
   expect(page.scrollTop).toBe(1000);
+});
+test('an accepted long turn follows before a queued programmatic scroll event can disable it', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  render(<Profiler id="chat" onRender={() => {
+    if (document.querySelectorAll('.chat-turn').length > 1) fireEvent.scroll(document.querySelector('.page-content')!);
+  }}><main className="page-content"><Chat documentId={id} /></main></Profiler>);
+  await act(async () => {});
+  const page = document.querySelector<HTMLElement>('.page-content')!;
+  Object.defineProperties(page, { scrollHeight: { get: () => document.querySelectorAll('.chat-turn').length > 1 ? 1800 : 1000, configurable: true }, clientHeight: { value: 200 }, scrollTop: { value: 100, writable: true } });
+  fireEvent.scroll(page);
+  send = () => ({ ...idle, versions: [{ turns: [turn, { ...turn, message: 'A long next turn', answer: 'A long answer' }] }] });
+  enter('A long next turn'); await act(async () => {});
+  expect(page.scrollTop).toBe(1800);
+});
+test('completion remains announced to screen readers without routine visible Ready copy', async () => {
+  snapshot = { ...idle, state: 'working', busy: true, canSend: false, versions: [{ turns: [{ ...turn, answer: null, phase: 'Running' }] }] };
+  await open(); expect(screen.getByRole('status').textContent).toContain('working');
+  snapshot = { ...idle, versions: [{ turns: [turn] }] }; await poll();
+  const status = screen.getByRole('status');
+  expect(status.textContent).toBe('Ready for your message.');
+  expect(status.classList.contains('sr-only')).toBe(true);
 });
 test('conversation follows the page scroll only while the reader stays near its end', async () => {
   snapshot = { ...idle, versions: [{ turns: [turn] }] };

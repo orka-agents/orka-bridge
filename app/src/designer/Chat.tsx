@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '../components/Button';
 import { StatusIcon } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
@@ -57,7 +57,7 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     void observe();
     return () => { mounted = false; alive.current = false; epoch.current++; clearTimeout(timer); };
   }, [documentId]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active) return;
     const area = transcript.current?.closest<HTMLElement>('.page-content');
     if (!area) return;
@@ -66,7 +66,7 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     area.addEventListener('scroll', track);
     return () => { area.removeEventListener('scroll', track); scrollArea.current = null; };
   }, [active]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (active && snapshot && follow.current && scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
   }, [active, snapshot]);
   useEffect(() => {
@@ -89,7 +89,6 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     mutation.current = true; const request = ++epoch.current; setCommand(action); setError(undefined);
     if (action === 'agent_chat_send') {
       follow.current = true;
-      if (scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
       pending.current = { message: draftRef.current, count: snapshot.versions.reduce((n, version) => n + version.turns.length, 0) };
       setAwaitingTurn(true);
     }
@@ -158,7 +157,7 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
       </section>)}
     </section>
     <form className="chat-composer" onSubmit={event => { event.preventDefault(); void act('agent_chat_send'); }}>
-      <p className="chat-status" role="status" aria-live="polite" aria-atomic="true">{status === states.ready ? undefined : status}</p>
+      <p className={`chat-status${status === states.ready ? ' sr-only' : ''}`} role="status" aria-live="polite" aria-atomic="true">{status === states.ready && !latestTurn ? undefined : status}</p>
       {(error || readError || snapshotError) && <p role="alert">{error?.message ?? readError ?? snapshotError}</p>}
       <label className="sr-only" htmlFor={`message-${documentId}`}>Message</label>
       <div className="chat-compose-row"><textarea className="field" ref={composer} id={`message-${documentId}`} rows={1} placeholder="Message your agent" value={draft} aria-describedby={`chat-hint-${documentId}`}

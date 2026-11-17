@@ -34,6 +34,13 @@ test('destination head and one summary precede honest collapsed checks and separ
   expect(screen.getByRole('region', { name: 'Past Sends' }).classList.contains('card')).toBe(true);
   await userEvent.click(screen.getByRole('button', { name: 'Change' })); expect(choose).toHaveBeenCalledOnce();
 });
+test('capturing a model is not presented as a completed Send after a storage rejection', async () => {
+  native({ ...result, state: 'unknown', stage: 'storage', error: 'storage', acknowledged: [], report: null });
+  render(<Send place={place} source={source} stale={false} />);
+  await screen.findByText('Nothing was sent because Bridge could not save a summary. Check local storage before trying again.');
+  expect(card().querySelector('.long-card-summary')?.textContent).toContain('Captured model: GPT-5.6 Terra');
+  expect(card().querySelector('.long-card-summary')?.textContent).not.toContain('Sent with');
+});
 test('only blocking checks are exposed; passing and advisory rows stay folded', async () => {
   native(null, { ...check, canSend: false, action: 'blocked', rows: [...check.rows, { label: 'Missing tool', status: 'blocked', message: 'Install page-reader.' }] });
   render(<Send place={place} source={source} stale={false} />);
