@@ -15,10 +15,10 @@ const failed = { id: 'reads-the-title', question: 'What is the title?', phase: '
 const localResult = { documentId: id, busy: null, state: 'complete', stage: 'done', canRun: true, modelConnected: true, source, report: { verdict: 'failed', cases: [failed] }, acknowledged: [], pending: null, error: null };
 beforeEach(() => { Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; } }); });
 afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
-function native(run: object = localResult, send: object | null = null) {
+function native(run: object = localResult, send: object | null = null, opened = pair) {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn((command: string) => {
-    if (command === 'agent_open') return pair;
+    if (command === 'agent_open') return opened;
     if (command === 'agent_run_status' || command === 'agent_run') return run;
     if (command === 'send_status') return { documentId: id, view: send, busy: null };
     if (command === 'send_history') return [];
@@ -93,6 +93,14 @@ test('a failed cluster Send offers Fix in Designer and focuses the instructions,
   const fix = await screen.findByRole('button', { name: 'Fix in Designer' });
   await userEvent.click(fix);
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Instructions' })));
+});
+test.each([
+  ['frontmatter-reader', pair.agent.replace('name: web-reader', 'name: frontmatter-reader')],
+  ['web-reader', pair.agent.replace('name: web-reader\n', '')],
+])('Send identifies the saved front-matter name with a folder fallback: %s', async (name, agent) => {
+  native(localResult, null, { ...pair, agent }); render(<Example remote place={place} />);
+  const panel = await screen.findByRole('region', { name: 'Send and cluster tests' });
+  expect(within(panel).getByRole('region', { name: 'What you send' }).textContent).toContain(`${name} and test files`);
 });
 test('editing instructions does not reparse the unchanged saved test file', async () => {
   const parse = vi.spyOn(definitions, 'testDefinitions'); native();

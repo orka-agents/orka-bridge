@@ -220,6 +220,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   }, [sampleRevision, boundDocument]);
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const instructionsMissing = !!pair && !readForm(draft).instructions.trim();
+  const savedName = useMemo(() => agentInfo(pair?.agent).name, [pair?.agent]);
   const testFile = pair?.tests;
   const definitions = useMemo(() => testFile === undefined ? undefined : testDefinitions(testFile), [testFile]);
   const testDraft = !!pair && isTestDraft(pair.tests);
@@ -289,7 +290,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
         {setupPending && !testDraft && <><DesignerTests definitions={definitions} stale={false} /><Details hint="Test file">{testSource}</Details></>}
       </div></section>
       <section className="designer-checks" aria-label="Team cluster">
-        <Send expanded={sendRequest > 0} documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} agentName={pair.name} testCount={definitions?.length} onFixInDesigner={editInstructions} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
+        <Send expanded={sendRequest > 0} documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} agentName={savedName ?? pair.name} testCount={definitions?.length} onFixInDesigner={editInstructions} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
       </section>
       </div>
       </div>

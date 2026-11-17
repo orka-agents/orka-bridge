@@ -150,7 +150,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .chat-heading { justify-content: flex-end; }
 .chat-about { max-width: 65ch; color: var(--color-text-secondary); }
 .chat-about p { margin-top: var(--space-3); }
-.chat-status:empty, .chat-actions:empty { display: none; }
+.chat-actions:empty { display: none; }
 .chat-transcript { flex: 1; overflow-wrap: anywhere; padding: var(--space-1); }
 .chat-version + .chat-version { margin-top: var(--space-6); padding-top: var(--space-4); border-top: 1px solid var(--color-border-strong); }
 .chat-version h3 { margin: 0 0 var(--space-3); font: var(--type-body); font-weight: 600; }

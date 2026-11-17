@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import Chat from './Chat';
 import { Profiler } from 'react';
+import { readFileSync } from 'node:fs';
 import type { ChatSnapshot, ChatTurn } from './chat-api';
 const id = '9b2b93c4-375c-4815-9717-39852a96e411';
 const idle: ChatSnapshot = { documentId: id, state: 'ready', busy: false, canSend: true, versions: [], error: null };
@@ -373,6 +374,13 @@ test('an accepted long turn follows before a queued programmatic scroll event ca
   send = () => ({ ...idle, versions: [{ turns: [turn, { ...turn, message: 'A long next turn', answer: 'A long answer' }] }] });
   enter('A long next turn'); await act(async () => {});
   expect(page.scrollTop).toBe(1800);
+});
+test('the empty live region stays rendered before its first status update', async () => {
+  await open();
+  const style = document.createElement('style');
+  style.textContent = readFileSync('src/app.css', 'utf8'); document.head.append(style);
+  try { expect(getComputedStyle(screen.getByRole('status', { hidden: true })).display).not.toBe('none'); }
+  finally { style.remove(); }
 });
 test('completion remains announced to screen readers without routine visible Ready copy', async () => {
   snapshot = { ...idle, state: 'working', busy: true, canSend: false, versions: [{ turns: [{ ...turn, answer: null, phase: 'Running' }] }] };
