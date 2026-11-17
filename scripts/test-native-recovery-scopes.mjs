@@ -241,7 +241,14 @@ assert.ok(smoke.includes('text.hasSuffix("-")'), 'hyphenated fixture IDs must su
 assert.ok(smoke.includes('region: "Past Sends", requiring:'), 'saved history anchors keep their separate region');
 assert.ok(smoke.includes('scrolling: -350, region: nil'), 'the Designer Send entry is outside the result region');
 assert.ok(smoke.includes('if let anchor = textAnchor ?? buttonAnchor'), 'native action anchors retain frozen-frame verification');
-const checksumPattern = smoke.match(/label == "published-checksum" && \$0\.range\(of: #"([^\"]+)"#/)[1];
+assert.ok(smoke.includes('func uniqueOCRTarget('), 'scoped OCR click selection must reject distinct targets');
+assert.ok(smoke.includes('let scopedSeen = seen.filter'), 'OCR click candidates must belong to the selected native region');
+assert.ok(smoke.includes('clickText(control, in: [target])'), 'clicking must not search the full frame again');
+assert.ok(smoke.includes('matches.allSatisfy({ $0 == first })'), 'partly overlapping OCR boxes must not be coalesced as one target');
+for (const name of ['OCR excludes outside-region duplicates', 'OCR rejects distinct in-region targets', 'OCR rejects partial-overlap targets', 'OCR preserves one in-region target']) {
+  assert.ok(smoke.includes(name), `native geometry regression missing: ${name}`);
+}
+const checksumPattern = smoke.match(/label == "published-checksum" && text\.range\(of: #"([^\"]+)"#/)[1];
 const checksumLabel = new RegExp(checksumPattern, 'i');
 assert.ok(checksumLabel.test('› published-checksum'));
 assert.ok(checksumLabel.test('Copies the checksum from the pagepublished-checksum'), 'OCR can join captured title and stable test ID');

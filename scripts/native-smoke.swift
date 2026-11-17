@@ -634,6 +634,30 @@ func setContent(_ width: CGFloat, _ height: CGFloat) {
     Thread.sleep(forTimeInterval: 0.5)
     require(abs(window()!.1.width - size.width) < 3 && abs(window()!.1.height - size.height) < 3, "Native \(width)x\(height) content area not verified")
 }
+func ocrBounds(_ observation: VNRecognizedTextObservation, in frame: CGRect) -> CGRect {
+    let box = observation.boundingBox
+    return CGRect(x: frame.minX + box.minX * frame.width, y: frame.minY + (1 - box.maxY) * frame.height,
+                  width: box.width * frame.width, height: box.height * frame.height)
+}
+func uniqueOCRTarget(_ boxes: [CGRect], within viewport: CGRect) -> CGRect? {
+    let matches = boxes.filter { viewport.contains($0) }
+    guard let first = matches.first else { return nil }
+    return matches.allSatisfy({ $0 == first }) ? first : nil
+}
+// Exercise the exact native selection gate, including the duplicate local/history identity.
+do {
+    let viewport = CGRect(x: 0, y: 0, width: 100, height: 100)
+    let one = CGRect(x: 10, y: 10, width: 20, height: 10)
+    let other = CGRect(x: 10, y: 50, width: 20, height: 10)
+    let outside = CGRect(x: 120, y: 10, width: 20, height: 10)
+    require(uniqueOCRTarget([one], within: viewport) == one, "OCR preserves one in-region target")
+    require(uniqueOCRTarget([outside, one], within: viewport) == one, "OCR excludes outside-region duplicates")
+    require(uniqueOCRTarget([one, other], within: viewport) == nil, "OCR rejects distinct in-region targets")
+    let overlap = CGRect(x: 15, y: 10, width: 20, height: 10)
+    require(uniqueOCRTarget([one, overlap], within: viewport) == nil, "OCR rejects partial-overlap targets")
+    require(uniqueOCRTarget([one, one], within: viewport) == one, "OCR coalesces one repeated hit region")
+    require(uniqueOCRTarget([outside], within: viewport) == nil, "OCR rejects outside-region targets")
+}
 func clickSendControl(_ label: String, scrolling pixels: Int32, region: String? = "Send and cluster tests") throws {
     let root = region.map { nativeRegion($0) }
     if ["Check again", "Send as a separate agent", "See in Overview", "Run cluster tests again", "Send and run tests", "Update agent and run tests"].contains(label),
@@ -666,8 +690,23 @@ func clickSendControl(_ label: String, scrolling pixels: Int32, region: String? 
         }
         let seen = try capture("send-probe", "Designer", searching: true)
         observed = seen.compactMap { $0.topCandidates(1).first?.string }
+        let frame = window()!.1
+        let viewport: CGRect?
+        if let root {
+            guard let bounds = nativeBounds(root) else { fail("Native OCR click region has no bounds: \(region ?? "")") }
+            viewport = bounds.intersection(bodyBounds())
+        } else { viewport = nil }
+        let scopedSeen = seen.filter { viewport?.contains(ocrBounds($0, in: frame)) ?? true }
         // Vision includes the native disclosure triangle as a bullet in this label.
-        if let control = observed.first(where: { $0 == label || (label == "published-checksum" && $0.range(of: #"published-checksum\b"#, options: [.regularExpression, .caseInsensitive]) != nil) || (label == "Details" && $0.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) || (label == "Destination ready" && $0.range(of: #"^\W*Destination ready\b"#, options: .regularExpression) != nil) }) {
+        let matches = scopedSeen.filter { observation in
+            guard let text = observation.topCandidates(1).first?.string else { return false }
+            return text == label || (label == "published-checksum" && text.range(of: #"published-checksum\b"#, options: [.regularExpression, .caseInsensitive]) != nil) || (label == "Details" && text.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) || (label == "Destination ready" && text.range(of: #"^\W*Destination ready\b"#, options: .regularExpression) != nil)
+        }
+        if let target = matches.first, let control = target.topCandidates(1).first?.string {
+            if let viewport {
+                require(uniqueOCRTarget(matches.map { ocrBounds($0, in: frame) }, within: viewport) != nil,
+                        "Ambiguous native OCR control in \(region ?? ""): \(label)")
+            }
             if ["Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent", "Cancel tests", "Retry cancellation", "Check cluster status", "Check again", "Reload saved files", "Send to a cluster", "See in Overview"].contains(label) {
                 let enabled = nativeElements(root).contains { element in
                     attribute(element, "AXRole") as? String == "AXButton"
@@ -676,7 +715,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32, region: String? 
                 }
                 if !enabled { disabled = true; Thread.sleep(forTimeInterval: 0.3); continue }
             }
-            clickText(control, in: seen)
+            clickText(control, in: [target])
             return
         }
         scrollMain(pixels)
