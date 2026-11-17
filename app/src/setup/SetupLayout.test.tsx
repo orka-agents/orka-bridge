@@ -89,12 +89,29 @@ test('a keyboard-started rejected key returns focus to the empty replacement fie
   render(<Model enabled />);
   fireEvent.click(screen.getByRole('radio', { name: /Your own API key/ }));
   const field = screen.getByLabelText('API key');
-  fireEvent.change(field, { target: { value: 'synthetic-key' } });
+  fireEvent.change(field, { target: { value: 'sk-ant-synthetic-only-not-a-real-key' } });
   const connect = screen.getByRole('button', { name: 'Connect the AI' });
   connect.focus(); fireEvent.click(connect);
-  await screen.findByRole('alert');
+  expect((await screen.findByRole('alert')).textContent).toContain("Anthropic didn't accept this key");
+  expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_key', { vendor: 'anthropic', key: 'sk-ant-synthetic-only-not-a-real-key' });
   expect(screen.getByRole('button', { name: 'Check again' }).hasAttribute('disabled')).toBe(true);
   await waitFor(() => expect(document.activeElement).toBe(field));
+});
+
+test('Escape in ordinary key entry preserves input and cannot prime a later Change focus', async () => {
+  let finish!: (value: unknown) => void;
+  invoke.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  render(<><Model enabled /><input aria-label="Another field" /></>);
+  fireEvent.click(screen.getByRole('radio', { name: /Your own API key/ }));
+  const field = screen.getByLabelText('API key') as HTMLInputElement;
+  fireEvent.change(field, { target: { value: 'sk-ant-synthetic-only-not-a-real-key' } }); field.focus();
+  fireEvent.keyDown(field, { key: 'Escape' });
+  expect(field.value).toBe('sk-ant-synthetic-only-not-a-real-key');
+  const connect = screen.getByRole('button', { name: 'Connect the AI' });
+  connect.focus(); fireEvent.click(connect);
+  const other = screen.getByRole('textbox', { name: 'Another field' }); other.focus();
+  await act(async () => finish({ ready: true }));
+  expect(document.activeElement).toBe(other);
 });
 
 test.each(['unavailable', 'stopping'] as const)('a retained ready snapshot cannot paint Ready while %s', mode => {
