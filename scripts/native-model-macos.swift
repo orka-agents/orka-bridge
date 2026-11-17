@@ -1304,7 +1304,11 @@ scroll(4000)
 click("Clusters", [])
 // The first click returns from Designer; the second opens the Clusters list.
 click("Clusters", [])
-waitForButton("Manage"); click("Manage", [])
+// The unavailable snapshot unmounted Model and retired its in-memory consent.
+// Open the local page, then reconnect only the synthetic AI before the existing Stop walk.
+waitForButton("Connect the AI"); click("Connect the AI", [])
+press("Connect the AI")
+_ = try seek("Connected", -100)
 func workspacePhase(_ phase: String) throws {
     try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
     Thread.sleep(forTimeInterval: 1.2)
