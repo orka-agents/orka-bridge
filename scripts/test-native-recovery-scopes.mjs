@@ -21,7 +21,7 @@ assert.equal(selection('chat-agent-clusters').output, resolve('captures'), 'scop
 function roster(name, chosen) {
   const expression = source.match(new RegExp(`const ${name} = ([\\s\\S]*?);\\n`))?.[1];
   assert.ok(expression, `missing ${name}`);
-  return Function('runCore', 'transfer', 'startup', `return (${expression});`)(chosen.runCore, {}, () => ({}));
+  return Function('runCore', 'runUi', 'transfer', 'startup', `return (${expression});`)(chosen.runCore, chosen.runUi, {}, () => ({}));
 }
 function actions(chosen) {
   const names = roster('actionFixtures', chosen);
@@ -52,10 +52,18 @@ for (const name of ['chat-pending', 'chat-running', 'chat-answer', 'chat-session
   assert.equal(snapshot.busy, name !== 'chat-answer', name);
   assert.equal(snapshot.canSend, name === 'chat-answer', name);
 }
-for (const name of ['fixtures', 'setupFixtures', 'overviewVariants']) {
+for (const name of ['fixtures', 'setupFixtures']) {
   assert.equal(roster(name, selection('chat-agent-clusters')).length, 0, `UI scope must not repeat ${name}`);
   assert.ok(roster(name, selection('core')).length > 0);
 }
+const overviewAll = roster('overviewVariants', selection());
+const overviewCore = roster('overviewVariants', selection('core'));
+const overviewUi = roster('overviewVariants', selection('chat-agent-clusters'));
+assert.deepEqual(overviewAll, ['clusters', 'local-only', 'starting']);
+assert.deepEqual(overviewCore, [], 'Overview must leave the constrained Core scope');
+assert.deepEqual(overviewUi, overviewAll, 'UI must own the complete Overview matrix');
+assert.deepEqual([...overviewCore, ...overviewUi], overviewAll, 'split Overview coverage must match all');
+assert.equal(new Set([...overviewCore, ...overviewUi]).size, overviewAll.length, 'Overview must not repeat between scopes');
 assert.match(source, /if \(runCore\) for \(const name of \['designer-connected'/, 'UI scope must not repeat minimum Designer cases');
 // Exercise the queued-state predicate with the rendered summary, including its workspace wording.
 const queuedGuard = source.split('\n').find(line => line.includes('if (!queued.status'));
