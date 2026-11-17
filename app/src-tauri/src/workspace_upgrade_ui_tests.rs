@@ -149,6 +149,53 @@ fn restored_transaction_warns_that_another_setup_cannot_reopen_retained_b() {
 }
 
 #[test]
+fn interrupted_restore_projection_offers_exact_transaction_continuation() {
+    for target in [ImageTarget::WindowsAmd64, ImageTarget::MacosArm64] {
+        let mut scene = Scene::new(target);
+        scene.replace(None).unwrap();
+        let mut owner = WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap();
+        let intent = owner.read_intent().unwrap().unwrap();
+        let root = scene.local.join("local-vm-v1");
+        let retained_a = scene.local.join(&intent.retained);
+        let a = installation(&retained_a).unwrap();
+        let b = installation(&root).unwrap();
+        let a_record = fs::read(retained_a.join("record.json")).unwrap();
+        let b_record = fs::read(root.join("record.json")).unwrap();
+        assert!(matches!(
+            owner.restore_with(intent.transaction, |point| {
+                if point == "restore-intent" {
+                    Err(RuntimeError::Closed)
+                } else {
+                    Ok(())
+                }
+            }),
+            Err(RuntimeError::Closed)
+        ));
+        drop(owner);
+        let mut owner = WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap();
+        let dto = owner.status_dto(Some(&scene.source));
+        assert_eq!(dto.state, "restoring");
+        assert_eq!(dto.transaction, Some(intent.transaction));
+        assert!(dto.can_restore);
+        assert_eq!(
+            owner.restore(intent.transaction).unwrap(),
+            UpgradeStatus::Restored
+        );
+        let dto = owner.status_dto(Some(&scene.source));
+        assert_eq!(dto.transaction, Some(intent.transaction));
+        assert_eq!(dto.state, "restored");
+        assert!(!dto.can_restore);
+        let retained_b = scene
+            .local
+            .join(format!("retained-new-{}", intent.transaction));
+        assert_eq!(installation(&root).unwrap(), a);
+        assert_eq!(installation(&retained_b).unwrap(), b);
+        assert_eq!(fs::read(root.join("record.json")).unwrap(), a_record);
+        assert_eq!(fs::read(retained_b.join("record.json")).unwrap(), b_record);
+    }
+}
+
+#[test]
 fn forward_and_retry_publish_real_materialization_progress() {
     for retrying in [false, true] {
         let mut scene = Scene::new(ImageTarget::WindowsAmd64);

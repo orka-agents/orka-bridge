@@ -839,6 +839,7 @@ impl WorkspaceUpgrade {
                     | UpgradeStatus::Incomplete
                     | UpgradeStatus::Fresh
                     | UpgradeStatus::Consumed
+                    | UpgradeStatus::Restoring
             ),
         })
     }
