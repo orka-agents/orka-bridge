@@ -127,8 +127,8 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
   useEffect(() => {
     if (!active || removing) return;
     if (confirmRemoval) keepCluster.current?.focus();
-    else if (focusRemoval.current) { (details || !connected ? removeButton.current : detailsButton.current)?.focus(); focusRemoval.current = false; }
-  }, [confirmRemoval, active, removing, details, connected]);
+    else if (focusRemoval.current) { (details || !connected || error ? removeButton.current : detailsButton.current)?.focus(); focusRemoval.current = false; }
+  }, [confirmRemoval, active, removing, details, connected, error]);
   async function reconnect(key: string) {
     const request = ++epoch.current; setBusy(true); setError(undefined);
     initialLoaded.current = false; setChoices([]); setFoundContexts(new Set());
@@ -174,7 +174,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
     if (!active) return;
     const request = ++epoch.current;
     setContextId(id); setTargets(undefined); setTargetId(''); setAccess(undefined); setProviderId(''); providerName.current = ''; setAccount(''); setNeedsAccount(false); setError(undefined); setDetails(false); setNotice('');
-    setRetained(undefined); setSummary(undefined);
+    setRetained(undefined); setSummary(undefined); setConfirmRemoval(false); setRemoveError(false);
     // Discovery revokes remote handles, but does not replace a selected local workspace.
     if (selection?.kind !== 'thisComputer') onPlace({ kind: 'cluster' });
     if (!id) { setBusy(false); return; }
@@ -245,7 +245,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
       {!error && <Disclosure summaryRef={detailsButton} label={details ? 'Hide details' : 'Show details'} open={details} controls="cluster-details" onOpenChange={setDetails}>
       {details && <div id="cluster-details"><dl className="cluster-details"><div><dt>Context</dt><dd>{target.context_name}</dd></div><div><dt>Service</dt><dd>{target.service_namespace} / {target.service_name}</dd></div><div><dt>Watched namespace</dt><dd>{target.watched_namespace}</dd></div><div><dt>Orka image</dt><dd>{target.image}</dd></div>
         {access?.providers.map(p => <div key={p.id}><dt>Provider</dt><dd>{p.name} <span className="muted">{p.ready ? 'Ready' : 'Not ready'}</span></dd></div>)}</dl>
-        {connected && <div className="workspace-step-actions">
+        {connected && !confirmRemoval && <div className="workspace-step-actions">
           <Button type="button" kind="secondary" disabled={busy} onClick={() => { void confirm(); }}>Check access again</Button>
           <Button type="button" kind="quiet" disabled={removing} onClick={() => { setChangingContext(true); if (!initialLoaded.current) readContexts(); }}>Change context</Button>
           <Button type="button" kind="quiet" disabled={reloading || removing} onClick={() => { void reload(); }}>Reload kubeconfig</Button>
@@ -280,7 +280,7 @@ export default function ClusterCard({ active = true, entry, selection, onPlace, 
       </> : <Button type="button" kind="primary" disabled={busy || (needsAccount && !account.trim())} onClick={() => { void confirm(); }}>Use this cluster</Button>)}
       {!connected && entry?.remembered && !changingContext && <Button type="button" kind="quiet" disabled={removing} onClick={() => { setChangingContext(true); if (!initialLoaded.current) readContexts(); }}>Change context</Button>}
       {!error && !connected && <Button type="button" kind="quiet" disabled={reloading || removing} onClick={() => { void reload(); }}>{reloading ? 'Reloading kubeconfig…' : 'Reload kubeconfig'}</Button>}
-      {retained && !connected && <Button ref={removeButton} type="button" kind="quiet" className="cluster-remove" onClick={() => setConfirmRemoval(true)}>Remove</Button>}
+      {retained && (!connected || error) && <Button ref={removeButton} type="button" kind="quiet" className="cluster-remove" onClick={() => setConfirmRemoval(true)}>Remove</Button>}
     </div>}
     {notice && <p role="status">{notice}</p>}
   </section>;

@@ -1,7 +1,7 @@
 .cluster-card { display: grid; gap: 12px; min-width: 0; width: 100%; padding: 16px; border: 1px solid var(--color-border); border-radius: var(--radius-card); background: var(--color-card); }
 .places-workspace { width: 100%; }
 .places-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
-.places-heading > h1 { flex-basis: 100%; }
+.places-heading > h1 { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
 .places-heading > p { margin: 0; }
 .places-back { margin-bottom: 16px; }
 .places-list { display: grid; gap: 16px; }

@@ -159,7 +159,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   function publishPlace(value: SelectedPlace) { setOwnPlace(value); onPlace?.(value); }
   function chooseCluster(item?: Place, selected = false) {
     retireFirstTest();
-    start(); setPanel('cluster'); setClusterName(selected && currentPlace.kind === 'cluster' ? currentPlace.target?.context_name : undefined);
+    start(); setPanel('cluster'); setClusterName(item?.context ?? (selected && currentPlace.kind === 'cluster' ? currentPlace.target?.context_name : undefined));
     setEntry(previous => ({ revision: (previous?.revision ?? 0) + 1, current: selected ? currentPlace : undefined, remembered: item }));
   }
   function chooseComputer() { publishPlace({ kind: 'thisComputer' }); }

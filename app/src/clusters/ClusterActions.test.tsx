@@ -19,7 +19,7 @@ function native(failure?: { check: string; result: string }, stage = 'discover',
     if (command === 'setup_requirements') return null;
     if (command === 'cluster_places') return { places: [place], selectedKey: place.key, persistenceState: 'complete' };
     if (command === 'overview_places') return { places: [place], historyState: 'complete', unobserved: [] };
-    if (command === 'cluster_contexts') return [context];
+    if (command === 'cluster_contexts') return failure && stage === 'contexts' ? Promise.reject(failure) : [context];
     if (command === 'cluster_discover') { if (failure && stage === 'discover') return Promise.reject(failure); return [target]; }
     if (command === 'cluster_reconnect') return failure && stage === 'reconnect' ? Promise.reject(failure) : target;
     if (command === 'cluster_use') return useReply ? useReply() : failure && stage === 'use' ? Promise.reject(failure) : { status: 'connected', providers: [provider], failure: null };
@@ -110,6 +110,42 @@ test('an unconnected remembered entry restores focus to its visible Remove actio
   await user.click(screen.getByRole('button', { name: 'Remove' }));
   await user.click(screen.getByRole('button', { name: 'Keep cluster' }));
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove' }));
+});
+
+test('removal confirmation hides maintenance and cancels when a new context is chosen', async () => {
+  const user = await added();
+  await user.click(screen.getByRole('button', { name: 'Show details' }));
+  await user.click(screen.getByRole('button', { name: 'Change context' }));
+  await user.click(screen.getByRole('button', { name: 'Remove' }));
+  for (const name of ['Change context', 'Check access again', 'Reload kubeconfig']) expect(screen.queryByRole('button', { name })).toBeNull();
+  await chooseContext(user, context.name);
+  await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
+  expect(await screen.findByRole('button', { name: 'Done' })).toBeTruthy();
+  expect(screen.queryByRole('group', { name: 'Remove cluster confirmation' })).toBeNull();
+});
+
+test('connected kubeconfig errors retain visible removal and its focus return', async () => {
+  native({ check: 'configuration', result: 'unknown' }, 'contexts');
+  localStorage.setItem('bridge.welcomeSeen.v1', '1'); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use' }));
+  await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
+  await user.click(await screen.findByRole('button', { name: 'Show details' }));
+  await user.click(screen.getByRole('button', { name: 'Change context' }));
+  await screen.findByRole('alert');
+  await user.click(screen.getByRole('button', { name: 'Remove' }));
+  await user.click(screen.getByRole('button', { name: 'Keep cluster' }));
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove' }));
+});
+
+test('returning to the same remembered entry republishes its known name', async () => {
+  native(); localStorage.setItem('bridge.welcomeSeen.v1', '1'); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name: 'Use' }));
+  await screen.findByRole('button', { name: 'Use this cluster' });
+  await user.click(screen.getByRole('button', { name: 'Back to clusters' }));
+  await user.click(await screen.findByRole('button', { name: 'Use' }));
+  await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
+  await screen.findByRole('button', { name: 'Done' });
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('team-dev');
 });
 
 test('checked clusters say Use and populated Add stays secondary', async () => {
