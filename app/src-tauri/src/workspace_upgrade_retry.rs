@@ -246,7 +246,7 @@ impl WorkspaceUpgrade {
                 .map_err(|_| RuntimeError::RetainedState)?;
             intent.retained_allocated_bytes = intent
                 .retained_allocated_bytes
-                .checked_add(allocated(&root, None)?)
+                .checked_add(allocated(&root, None, true)?)
                 .ok_or(ImageError::NoSpace)?;
             intent.incomplete.push(RetainedDestination {
                 installation: destination.clone(),

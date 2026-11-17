@@ -171,14 +171,20 @@ fn installation(root: &Path) -> Result<Option<Installation>, RuntimeError> {
         state: record.state_identity,
     }))
 }
-fn allocated(root: &Path, journal: Option<&Journal>) -> Result<u64, RuntimeError> {
+// Incomplete installations may already have native endpoints but no reopenable
+// journal. Only the installation root admits their validated native namespace.
+fn allocated(
+    root: &Path,
+    journal: Option<&Journal>,
+    _native_root: bool,
+) -> Result<u64, RuntimeError> {
     directory_identity(root)?;
     let mut bytes = 0u64;
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         let kind = entry.file_type()?;
         #[cfg(windows)]
-        if journal.is_some()
+        if _native_root
             && kind.is_dir()
             && entry
                 .file_name()
@@ -195,7 +201,7 @@ fn allocated(root: &Path, journal: Option<&Journal>) -> Result<u64, RuntimeError
             continue;
         }
         let n = if kind.is_dir() {
-            allocated(&entry.path(), None)?
+            allocated(&entry.path(), None, false)?
         } else if kind.is_file() {
             if let Some(journal) = journal.filter(|_| entry.file_name() == "owner.lock") {
                 journal.owner_allocated_bytes()?
@@ -793,7 +799,7 @@ impl WorkspaceUpgrade {
             },
             model: metadata.model.clone(),
             account: metadata.account.clone(),
-            retained_allocated_bytes: allocated(&root, Some(&journal))?,
+            retained_allocated_bytes: allocated(&root, Some(&journal), true)?,
             additional_bytes,
             restore: None,
             incomplete: vec![],
