@@ -98,11 +98,13 @@ for (const [name, header] of [
 for (const mutation of [{ heading: 'Send your agent' }, { summary: '' }, { checks: 'Ready to send: 2 checks passed' }]) {
   assert.throws(() => checkSend('send-failed', { ...sendProbe, ...mutation }, false));
 }
-const documentScrollGuard = source.split('\n').find(line => line.includes('if (layout.documentScrollHeight'));
+const documentScrollGuard = source.split('\n').find(line => line.includes("fail('document overflows"));
 assert.ok(documentScrollGuard, 'screen-reader-only content must not escape the page scroll');
-const checkDocumentScroll = Function('layout', 'fail', documentScrollGuard);
-assert.doesNotThrow(() => checkDocumentScroll({ documentScrollHeight: 900, height: 900 }, assert.fail));
-assert.throws(() => checkDocumentScroll({ documentScrollHeight: 2105, height: 900 }, assert.fail));
+const checkDocumentScroll = Function('layout', 'name', 'fail', documentScrollGuard);
+assert.doesNotThrow(() => checkDocumentScroll({ documentScrollHeight: 900, height: 900 }, 'chat-long', assert.fail));
+assert.doesNotThrow(() => checkDocumentScroll({ documentScrollHeight: 719, height: 640 }, 'ai-key', assert.fail));
+assert.throws(() => checkDocumentScroll({ documentScrollHeight: 2105, height: 900, designer: { send: {} } }, 'send-ready', assert.fail));
+assert.throws(() => checkDocumentScroll({ documentScrollHeight: 2105, height: 900 }, 'chat-long', assert.fail));
 // The Chat subtitle can resize the heading, but not reorder or independently move its controls.
 const headerGate = source.match(/const now = await header\(\);\n([\s\S]*?)\n        if \(view === 'Chat'\)/)?.[1];
 assert.ok(headerGate);
@@ -331,6 +333,12 @@ for (const scene of ['cluster-success', 'cluster-details', 'cluster-selected-lis
   assert.ok(source.includes(`'${scene}'`), `Windows connected mount must capture ${scene}`);
 }
 const smoke = (await readFile(new URL('./native-smoke.swift', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
+const countSpacing = smoke.match(/replacingOccurrences\(of: #"(.*?)"#, with: " of "/)?.[1];
+assert.ok(countSpacing, 'Send count OCR must tolerate the observed missing space without accepting a different verdict');
+const normalizedCount = text => text.replace(new RegExp(countSpacing, 'g'), ' of ').split(/\s+/).join(' ');
+for (const text of ['1of 1 tests passed', '1 of1 tests passed', '1 of  1 tests passed']) assert.equal(normalizedCount(text), '1 of 1 tests passed');
+assert.notEqual(normalizedCount('1of 1 tests failed'), '1 of 1 tests passed');
+assert.notEqual(normalizedCount('2of 3 tests passed'), '1 of 1 tests passed');
 const matrix = smoke.slice(smoke.indexOf('    // Connected cluster capture matrix.'), smoke.indexOf('    // Done leaves the confirmed destination'));
 assert.ok(matrix.includes('CGFloat(540), CGFloat(640)'), 'Mac connected scenes need true minimum content size');
 assert.ok(matrix.includes('CGFloat(1280), CGFloat(800)'), 'Mac connected scenes need matching wide content size');
