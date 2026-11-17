@@ -55,7 +55,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster }:
       {!checking && memory === 'insufficient' && result?.installedMemoryBytes != null && <section aria-label="Installed memory">
         <p className="preflight-result" role="alert"><StatusIcon state="failed" /><span><b>Installed memory: </b><span>{`about ${formatRequirementGB(result.installedMemoryBytes)} installed; about ${formatRequirementGB(requiredMemoryBytes)} needed. Not enough installed memory. See About this check for exact amounts.`}</span></span></p>
         <Disclosure label="About this check" open={memoryHelp} controls="preflight-memory-help" onOpenChange={setMemoryHelp}>
-        {memoryHelp && <div id="preflight-memory-help"><p>This is installed RAM, not currently free memory. Closing apps does not increase installed memory. Use a computer with enough installed memory (about {formatRequirementGB(requiredMemoryBytes)}), or choose a cluster instead. An unreadable check is left to local cluster startup; no memory is reserved by this check.</p>
+        {memoryHelp && <div id="preflight-memory-help"><p>This is installed RAM, not currently free memory. Closing apps does not increase installed memory. Use a computer with enough installed memory (about {formatRequirementGB(requiredMemoryBytes)}), or choose a cluster instead. An unreadable check is left to workspace startup; no memory is reserved by this check.</p>
           <p>{`Required: ${requiredMemoryBytes.toLocaleString()} bytes.${result?.installedMemoryBytes != null ? ` Installed: ${result.installedMemoryBytes.toLocaleString()} bytes.` : ''}`}</p></div>}</Disclosure>
       </section>}
     </div>

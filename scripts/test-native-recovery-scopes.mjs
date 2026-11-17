@@ -60,12 +60,12 @@ assert.match(source, /if \(runCore\) for \(const name of \['designer-connected'/
 // Exercise the real layout gate with measurements, without pretending to render a native window.
 const layoutGate = source.slice(source.indexOf('  async function checkLayout('), source.indexOf('  // Setup-progress states:'));
 assert.ok(layoutGate.includes('wide tabs must stay 180px'));
-const wide = { width: 1280, scrollWidth: 1000, clientWidth: 1000, forms: [], rows: [], checks: [],
+const wide = { width: 1280, scrollWidth: 1000, clientWidth: 1000, scrollHeight: 700, clientHeight: 700, forms: [], rows: [], checks: [],
   tabs: [0, 1, 2].map(i => ({ width: 180, grow: '0', right: 180 * (i + 1) })),
   host: { x: 556 }, hostLabel: { width: 100 }, subtitles: 3, quiet: [{ start: '0px', end: '0px' }],
   scrollbar: { width: 'thin', color: 'rgb(90, 90, 90) rgb(240, 240, 240)' }, fallback: {} };
 async function gate(layout) {
-  return Function('evaluate', 'writeFile', 'join', 'output', `${layoutGate}; return checkLayout('light', 'wide', 'probe');`)(
+  return Function('evaluate', 'writeFile', 'join', 'output', `${layoutGate}; return checkLayout('light', 'setup-fit', 'probe');`)(
     async () => layout, async () => {}, () => '', '');
 }
 await gate(wide);
@@ -75,6 +75,7 @@ for (const mutation of [
   { tabs: wide.tabs.map(tab => ({ ...tab, grow: '1' })) }, { host: { x: 555 } },
   { width: 540 }, { width: 540, subtitles: 0, hostLabel: { width: 161 } },
   { quiet: [{ start: '4px', end: '0px' }] }, { scrollbar: { width: 'auto', color: 'auto' } },
+  { scrollHeight: 703 },
 ]) await assert.rejects(() => gate({ ...wide, ...mutation }));
 const workflow = (await readFile(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clusters', 'native-chat-agent-clusters']]) {
