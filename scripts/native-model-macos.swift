@@ -796,11 +796,22 @@ func anyButton(_ label: String) -> Bool {
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
     }
 }
-func nativeHeadingExists(_ expected: String) -> Bool {
-    nativeElements().contains { element in
+func nativeHeadings(_ expected: String) -> [AXUIElement] {
+    nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXHeading"
             && ["AXValue", "AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == expected }
     }
+}
+func nativeHeadingExists(_ expected: String) -> Bool { !nativeHeadings(expected).isEmpty }
+func anchorChatHeading(_ expected: String) {
+    let headings = nativeHeadings(expected)
+    guard headings.count == 1, let bounds = nativeBounds(headings[0]),
+        let header = enabledButton("Designer").flatMap(nativeBounds) else {
+        require(false, "Cannot anchor native Chat heading: \(expected)"); return
+    }
+    // Clear fixed navigation and the 48px composer-follow threshold before freezing the frame.
+    let delta = header.maxY + 64 - bounds.minY
+    if abs(delta) > 2 { scroll(Int32(delta.rounded())) }
 }
 func nativeTextExists(_ expected: String) -> Bool {
     nativeElements().contains { element in
@@ -1174,11 +1185,10 @@ click("Send message", rows)
 waitForChatText("Read another page.")
 require(nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2"), "Two Chat versions must retain both numbered headings")
 localSize(540, 640)
-// New turns follow the composer; the conversation heading can be above the compact viewport.
-_ = try seek("Conversation 2", 100)
+anchorChatHeading("Conversation 2")
 _ = try capture("chat-new-version-minimum", ["Conversation 2", "Read another page."])
 localSize(1280, 800)
-_ = try seek("Conversation 2", 100)
+anchorChatHeading("Conversation 2")
 _ = try capture("chat-new-version-wide", ["Conversation 2", "Read another page."])
 require(enabledButton("Stop") != nil, "Working Chat must offer Stop")
 _ = try capture("chat-working-wide", ["Stop", "Read another page."])

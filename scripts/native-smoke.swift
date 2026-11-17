@@ -1685,7 +1685,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try clickSendControl("Check again", scrolling: -250)
     try clickSendControl("Reload saved files", scrolling: -250)
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "cancelling"])
-    try clickSendControl("Run cluster tests again", scrolling: 350)
+    // Before PR G the start label also depends on the retained result target, not just current preflight.
+    let beforeSendActions = ["Send and run tests", "Update agent and run tests", "Run cluster tests again"].filter {
+        nativeButtons($0, root: nativeRegion("Send and cluster tests")).count == 1
+    }
+    require(beforeSendActions.count == 1, "Baseline must expose one existing Send action")
+    try clickSendControl(beforeSendActions[0], scrolling: -350)
     try capturePreflight("send-unsupported-running", "Waiting for answers and evaluating tests")
     try clickSendControl("Cancel tests", scrolling: -350)
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "unsupported"])
@@ -1803,7 +1808,6 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     require(savedOpened, "Saved passing Send details were not reachable")
     try clickSendControl("published-checksum", scrolling: -100, region: "Past Sends")
-    try capture("send-history-answer", "Designer")
     try resultSize(1280, 800)
     // Anchor the entire saved result before looking for answer pixels, not whichever tail survived reflow.
     guard let provenance = nativeTextBounds("Saved on this computer", visibleOnly: false, exact: true).first else {
@@ -1819,6 +1823,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     require(savedWide.contains { ($0.topCandidates(1).first?.string ?? "").contains("What SHA-256 checksum does") }
         && nativeTextIsVisible("Saved on this computer", exact: true),
             "Wide saved question, answer and local provenance must remain visible after reopening offline")
+    try capture("send-history-answer", "Designer")
 }
 do {
     // Run after the sample/Send checks: a second web-reader must not make their selectors ambiguous.

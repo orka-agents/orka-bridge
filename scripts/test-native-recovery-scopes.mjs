@@ -183,7 +183,9 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
 const smoke = await readFile(new URL('./native-smoke.swift', import.meta.url), 'utf8');
 const model = await readFile(new URL('./native-model-macos.swift', import.meta.url), 'utf8');
 assert.ok(model.includes('nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2")'), 'numbered Chat versions must be verified as native headings, not body static text');
-assert.ok(model.includes('seek("Conversation 2", 100)'), 'Chat capture must search up from the composer-follow position for its heading');
+assert.ok(model.includes('anchorChatHeading("Conversation 2")'), 'Chat capture must align its native heading clear of fixed navigation');
+assert.ok(model.includes('let delta = header.maxY + 64 - bounds.minY'), 'Chat heading navigation must use actual header/heading geometry');
+assert.ok(smoke.indexOf('try capture("send-history-answer", "Designer")') > smoke.indexOf('let savedWide = try capturePreflight'), 'offline answer proof must follow its wide resize and provenance anchor');
 assert.ok(model.includes('attribute(element, "AXRole") as? String == "AXHeading"'), 'Chat heading discovery must use its actual native role');
 assert.ok(smoke.includes('("minimum", CGFloat(540), CGFloat(640))'));
 for (const name of ['send-failed', 'send-unsupported', 'send-earlier-target']) assert.ok(smoke.includes(`captureSendPresentation("${name}"`));
