@@ -1,51 +1,5 @@
 // Exercise the real compiled frontend in the separate synthetic native fixture.
 // This is UI evidence only, not a VM, OS credential-store or inference walk.
-import Foundation
-
-// One producer/configuration per cache lifetime; a different PNG must be analyzed.
-struct ExactFrameCache<Value> {
-    private var previous: (image: Data, value: Value)? = nil
-    init() {}
-    mutating func value(for image: Data, compute: () throws -> Value) rethrows -> (value: Value, reused: Bool) {
-        if let previous, previous.image == image { return (previous.value, true) }
-        let value = try compute()
-        previous = (image, value)
-        return (value, false)
-    }
-}
-
-#if NATIVE_FRAME_CACHE_TESTS
-func expect(_ condition: Bool, _ message: String) {
-    if !condition { fputs("FAIL \(message)\n", stderr); exit(1) }
-}
-var cache = ExactFrameCache<String>()
-var calls = 0
-let a = Data([0, 1])
-let b = Data([0, 0])
-let first = cache.value(for: a) { calls += 1; return "first" }
-expect(!first.reused && first.value == "first" && calls == 1, "first frame must call the producer")
-let equal = cache.value(for: Data([0, 1])) { calls += 1; return "wrong" }
-expect(equal.reused && equal.value == "first" && calls == 1, "equal bytes from another Data value must reuse")
-let changed = cache.value(for: b) { calls += 1; return "changed" }
-expect(!changed.reused && changed.value == "changed" && calls == 2, "one changed bit must call the producer")
-let older = cache.value(for: a) { calls += 1; return "older again" }
-expect(!older.reused && older.value == "older again" && calls == 3, "only the previous frame may be retained")
-enum FrameCacheTestError: Error { case expected }
-do {
-    _ = try cache.value(for: Data([2])) { calls += 1; throw FrameCacheTestError.expected }
-    expect(false, "producer errors must propagate")
-} catch FrameCacheTestError.expected {} catch { expect(false, "unexpected producer error") }
-let afterError = cache.value(for: a) { calls += 1; return "wrong" }
-expect(afterError.reused && afterError.value == "older again" && calls == 4, "failed production must preserve the previous good frame")
-let retryFailed = cache.value(for: Data([2])) { calls += 1; return "recovered" }
-expect(!retryFailed.reused && retryFailed.value == "recovered" && calls == 5, "a failed value must not be cached")
-var emptyCache = ExactFrameCache<[String]>()
-var emptyCalls = 0
-_ = emptyCache.value(for: a) { emptyCalls += 1; return [] }
-let empty = emptyCache.value(for: Data([0, 1])) { emptyCalls += 1; return ["wrong"] }
-expect(empty.reused && empty.value.isEmpty && emptyCalls == 1, "empty output is a valid cached result")
-print("PASS exact-frame cache: byte equality, changed bit, single entry, producer errors and empty values")
-#else
 import AppKit
 import CoreGraphics
 import ApplicationServices
@@ -139,7 +93,6 @@ require(window() != nil, "Native model fixture did not open")
 modelTiming("window-observed")
 NSRunningApplication(processIdentifier: child.processIdentifier)?.activate(options: [])
 Thread.sleep(forTimeInterval: 2)
-var modelOcrCache = ExactFrameCache<[VNRecognizedTextObservation]>()
 func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextObservation] {
     let captureStarted = ProcessInfo.processInfo.systemUptime
     let before = modelPerf
@@ -152,18 +105,14 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     require(command.terminationStatus == 0, "Cannot capture native model UI")
     let screenshotDone = ProcessInfo.processInfo.systemUptime
     modelTiming("screenshot-done", details: "name=\(name) screen_ms=\(Int((screenshotDone - captureStarted) * 1000))")
-    let imageData = try Data(contentsOf: URL(fileURLWithPath: file))
-    let recognized = try modelOcrCache.value(for: imageData) {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
-        return request.results ?? []
-    }
-    let rows = recognized.value
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
+    let rows = request.results ?? []
     let text = rows.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     try text.write(toFile: "\(output)/\(name).txt", atomically: true, encoding: .utf8)
     let ocrDone = ProcessInfo.processInfo.systemUptime
-    modelTiming("ocr-done", details: "name=\(name) ocr_ms=\(Int((ocrDone - screenshotDone) * 1000)) ocr_reused=\(recognized.reused ? 1 : 0)")
+    modelTiming("ocr-done", details: "name=\(name) ocr_ms=\(Int((ocrDone - screenshotDone) * 1000))")
     // Vision can interleave the adjacent setup column between wrapped lines.
     // Check phrases within the model panel, not the whole window's reading order.
     let visible: String
@@ -194,7 +143,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         require(found || nativeText || chatText || workspaceControl, "Missing \(value) in \(name): \(text)")
     }
     let assertionsDone = ProcessInfo.processInfo.systemUptime
-    guard let bitmap = NSBitmapImageRep(data: imageData),
+    guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
         else { fatalError("Cannot sample native theme") }
     let brightness = (colour.redComponent + colour.greenComponent + colour.blueComponent) / 3
@@ -239,7 +188,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
     // AX and tree timings overlap the phases; they are subsets, not extra time.
     let timings: [String] = [
         "name=\(name)", "screen_ms=\(Int((screenshotDone - captureStarted) * 1000))",
-        "ocr_ms=\(Int((ocrDone - screenshotDone) * 1000))", "ocr_reused=\(recognized.reused ? 1 : 0)",
+        "ocr_ms=\(Int((ocrDone - screenshotDone) * 1000))",
         "assert_ms=\(Int((assertionsDone - ocrDone) * 1000))",
         "image_ms=\(Int((finished - assertionsDone) * 1000))",
         "between_ms=\(Int((captureStarted - previousCaptureEnd) * 1000))",
@@ -1592,4 +1541,3 @@ for (phase, summary) in [("image-update", "This version of Bridge needs a new wo
     require(!nativeTextExists("The cluster download couldn't be verified."), "Version mismatch is not download corruption")
 }
 modelTiming("walk-complete", details: "ax_calls=\(modelPerf.attributeCalls) ax_ms=\(Int(modelPerf.attributeSeconds * 1000)) tree_calls=\(modelPerf.treeCalls) tree_ms=\(Int(modelPerf.treeSeconds * 1000)) tree_max_nodes=\(modelPerf.maxTreeNodes)")
-#endif
