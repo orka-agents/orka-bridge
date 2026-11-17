@@ -1211,14 +1211,33 @@ func requireSingleChatCopy() {
     let strings = nativeElements().flatMap { element in
         ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
     }
-    require(strings.contains("Chat on this computer") && strings.contains("Chat doesn't change test results."), "Chat heading, label or help copy missing")
+    require(strings.contains(where: { $0.contains("Chat on this computer. Chat doesn't change test results.") }), "Chat subtitle missing from the agent heading")
     require(!strings.contains(where: { $0.contains("Conversation 1") }), "A single Chat version must not be numbered, including its accessible label")
+}
+func requireChatComposerVisible() {
+    let fields = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXTextArea"
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Message" })
+    }
+    let sends = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == "Send message" })
+    }
+    require(fields.count == 1 && sends.count == 1, "Chat must retain accessible Message and Send message controls")
+    guard let field = fields.first.flatMap(nativeBounds), let send = sends.first.flatMap(nativeBounds) else {
+        require(false, "Chat composer bounds missing"); return
+    }
+    require(reachable(field) && reachable(send) && abs(field.maxY - send.maxY) < 3 && field.maxX <= send.minX,
+            "Chat composer and visible Send must fit beside one another above the footer")
+    require(nativeChatTextIsVisible("Enter sends · Shift+Enter for a new line", aboveFooter: true), "Chat keyboard hint must remain visible")
 }
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("Ask your agent a question", -100)
     requireSingleChatCopy()
-    _ = try capture("chat-empty-\(size)", ["Ask your agent a question"])
+    require(!anyButton("New conversation") && !nativeTextExists("About this conversation")
+            && !nativeTextExists("Ask your agent a question") && !nativeTextExists("Ready for your message."), "Healthy empty Chat must not show controls, invitation or routine Ready")
+    requireChatComposerVisible()
+    _ = try capture("chat-empty-\(size)", ["Message your agent", "Enter sends · Shift+Enter for a new line"])
 }
 fillMessage("Remember the checksum ALPHA.")
 waitForButton("Send message")
@@ -1246,20 +1265,36 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("The checksum is ALPHA.", -100)
     requireSingleChatCopy()
-    _ = try capture("chat-answer-\(size)", ["The checksum is ALPHA.", "<script>fixture</script>"])
+    requireChatComposerVisible()
+    require(nativeChatTextIsVisible("web_fetch"), "Chat tool use must remain visible without opening a disclosure")
+    _ = try capture("chat-answer-\(size)", ["The checksum is ALPHA.", "<script>fixture</script>", "web_fetch"])
 }
 localSize(1280, 800)
-fillMessage("What checksum did I ask you to remember?")
+// Use the existing synthetic native turn, not injected DOM or a new fixture backend.
+fillMessage("What checksum did I ask you to remember?" + String(repeating: "\n\nThis synthetic paragraph keeps earlier messages available for reading while the composer stays visible. It does not call a live model.", count: 12))
 waitForButton("Send message")
 click("Send message", [])
 waitForChatText("You asked me to remember ALPHA.")
 _ = try capture("chat-followup-wide", ["You asked me to remember ALPHA."])
 localSize(540, 900)
 _ = try capture("chat-followup-compact", ["You asked me to remember ALPHA."])
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    _ = try seek("Remember the checksum ALPHA.", -100)
+    require(nativeChatTextIsVisible("Remember the checksum ALPHA.") && !nativeChatTextIsVisible("You asked me to remember ALPHA."),
+            "Long transcript capture must read earlier messages, not the end")
+    requireChatComposerVisible()
+    _ = try capture("chat-long-early-\(size)", ["Remember the checksum ALPHA.", "Enter sends · Shift+Enter for a new line"])
+    scroll(-4000)
+    requireChatComposerVisible()
+    _ = try capture("chat-long-end-\(size)", ["You asked me to remember ALPHA.", "Enter sends · Shift+Enter for a new line"])
+}
+localSize(1280, 800); scroll(4000)
 click("New conversation", [])
+scroll(-4000)
 fillMessage("Read another page.")
 waitForButton("Send message")
-rows = try seek("Send message", -150)
+rows = try seek("Enter sends · Shift+Enter for a new line", -150)
 click("Send message", rows)
 waitForChatText("Read another page.")
 require(nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2"), "Two Chat versions must retain both numbered headings")
@@ -1276,9 +1311,9 @@ _ = try capture("chat-working-compact", ["Stop", "Read another page."])
 click("Stop", [])
 waitForChatText("Execution termination is unconfirmed.")
 waitForButton("New conversation")
-_ = try capture("chat-stop-ready-compact", ["Ready", "Execution termination is unconfirmed."])
+_ = try capture("chat-stop-ready-compact", ["Execution termination is unconfirmed."])
 localSize(1280, 800)
-_ = try capture("chat-stop-ready-wide", ["Ready", "Execution termination is unconfirmed."])
+_ = try capture("chat-stop-ready-wide", ["Execution termination is unconfirmed."])
 // Capture card actions before the final test deliberately holds the fixture busy.
 click("Overview", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 640, "minimum")] {

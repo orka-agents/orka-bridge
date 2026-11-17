@@ -28,16 +28,27 @@ test('Chat names this computer, explains test independence and numbers only mult
   await open();
   expect(screen.getByRole('region', { name: 'Chat on this computer' })).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Chat on this computer' })).toBeTruthy();
-  expect(screen.getByText("Chat doesn't change test results.")).toBeTruthy();
   expect(screen.queryByText('Conversation 1')).toBeNull();
   expect(screen.queryByRole('region', { name: 'Conversation 1' })).toBeNull();
   snapshot = { ...idle, versions: [{ turns: [turn] }, { turns: [] }] }; await poll();
   expect(screen.getByRole('heading', { name: 'Conversation 1' })).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Conversation 2' })).toBeTruthy();
 });
-test('empty Chat teaches the next action and discloses bounded, memory-only history', async () => {
-  await open(); expect(screen.getByText(/Ask your agent a question/)).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true);
+test('empty Chat is a cardless conversation with only its labelled composer, without routine status clutter', async () => {
+  await open();
+  const panel = screen.getByRole('region', { name: 'Chat on this computer' });
+  expect(panel.classList.contains('card')).toBe(false);
+  expect(screen.queryByText(/Ask your agent a question/)).toBeNull();
+  expect(screen.queryByText('Ready for your message.')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'New conversation' })).toBeNull();
+  expect(screen.getByText('Enter sends · Shift+Enter for a new line')).toBeTruthy();
+  const send = screen.getByRole('button', { name: 'Send message' });
+  expect(send.textContent).toBe('Send');
+  expect(send.parentElement).toBe(field().parentElement);
+  expect(send.hasAttribute('disabled')).toBe(true);
+});
+test('a conversation discloses bounded, memory-only history', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] }; await open();
   fireEvent.click(screen.getByText('About this conversation'));
   expect(screen.getByText(/50 messages/)).toBeTruthy(); expect(screen.queryByText(/new worker/)).toBeNull();
   expect(screen.getByText(/quit Bridge/)).toBeTruthy(); expect(screen.getByText(/remain in the workspace/)).toBeTruthy();
@@ -148,8 +159,9 @@ test('renders labelled versions and literal untrusted text, with tools behind De
   const view = await open(); expect(screen.getByRole('heading', { name: 'Conversation 2' })).toBeTruthy();
   expect(screen.getByText('<script>secret()</script>')).toBeTruthy(); expect(view.container.querySelector('img,script,iframe')).toBeNull();
   expect(screen.queryByText('private-id')).toBeNull();
-  const details = screen.getByText('Tool activity').closest('details')!; expect(details.open).toBe(false);
-  fireEvent.click(within(details).getByText('Tool activity')); expect(screen.getByText('<iframe>')).toBeTruthy();
+  const tools = screen.getByRole('list', { name: 'Tool activity' });
+  expect(tools.closest('details')).toBeNull();
+  expect(within(tools).getByText('<iframe>')).toBeTruthy();
 });
 test('read-only reconnect never resends an observation-lost message', async () => {
   snapshot = { ...idle, state: 'observationLost', canSend: false, versions: [{ turns: [{ ...turn, answer: null }] }] };

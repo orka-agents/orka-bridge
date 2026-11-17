@@ -700,7 +700,7 @@ func clickSendControl(_ label: String, scrolling pixels: Int32, region: String? 
         // Vision includes the native disclosure triangle as a bullet in this label.
         let matches = scopedSeen.filter { observation in
             guard let text = observation.topCandidates(1).first?.string else { return false }
-            return text == label || (label == "published-checksum" && text.range(of: #"published-checksum\b"#, options: [.regularExpression, .caseInsensitive]) != nil) || (label == "Details" && text.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) || (label == "Destination ready" && text.range(of: #"^\W*Destination ready\b"#, options: .regularExpression) != nil)
+            return text == label || (label == "published-checksum" && text.range(of: #"published-checksum\b"#, options: [.regularExpression, .caseInsensitive]) != nil) || (label == "Details" && text.lowercased().range(of: #"^\W*details\b"#, options: .regularExpression) != nil) || (label == "Ready to send" && text.range(of: #"^\W*Ready to send\b"#, options: .regularExpression) != nil)
         }
         if let target = matches.first, let control = target.topCandidates(1).first?.string {
             if let viewport {
@@ -1206,7 +1206,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         }.prefix(4).joined(separator: "; ")
         fail("Preflight state missing: \(expected); native candidates: \(candidates)")
     }
-    let sendActionLabels = ["Cancel tests", "Check cluster status", "Retry cancellation", "Reload saved files", "Choose a cluster", "Check again", "See in Overview", "Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent"]
+    let sendActionLabels = ["Cancel tests", "Check cluster status", "Retry cancellation", "Reload saved files", "Choose a cluster", "Check again", "See in Overview", "Fix in Designer", "Send and run tests", "Update agent and run tests", "Run cluster tests again", "Send as a separate agent"]
     func closeSendDetails() throws {
         if nativeButtons("Copy Planned agent", root: nativeRegion("Send and cluster tests")).contains(where: { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }) {
             try clickSendControl("Details", scrolling: 350)
@@ -1267,7 +1267,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         Thread.sleep(forTimeInterval: 0.5)
         try closeSendDetails()
         // Observe a real Send control after reflow. Vision can omit the small uppercase section label.
-        let actions = ["See in Overview", "Cancel tests", "Send and run tests", "Update agent and run tests", "Run cluster tests again", "Check cluster status", "Reload saved files", "Choose a cluster", "Check again"]
+        let actions = ["See in Overview", "Fix in Designer", "Cancel tests", "Send and run tests", "Update agent and run tests", "Run cluster tests again", "Check cluster status", "Reload saved files", "Choose a cluster", "Check again"]
         let root = nativeRegion("Send and cluster tests")
         guard let action = actions.first(where: { nativeButtons($0, root: root).filter { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }.count == 1 }) else { fail("Send panel has no recognized action after reflow") }
         _ = try capturePreflight("send-probe", action)
@@ -1438,7 +1438,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     require(nativeStrings().contains { $0.contains("has-a-date") }, "Captured test title must retain its code ID")
     try resultSize(540, 640)
     try capturePreflight("send-failed-minimum", "Finds the publication date", anchor: "has-a-date", requiring: visibleFailure)
-    try captureSendPresentation("send-failed", actions: ["Run cluster tests again", "See in Overview"])
+    try captureSendPresentation("send-failed", actions: ["Fix in Designer", "Run cluster tests again"])
     // Arm only the loopback fixture: first answer completes, second Task stays
     // live. Hold the cancel reply until its in-flight state has been captured.
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "cancelling"])
@@ -1708,8 +1708,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         let agent = try capture("agent-cluster-owned", "Designer")
         clickText("Send to a cluster", in: agent)
         Thread.sleep(forTimeInterval: 1)
-        let checked = try capturePreflight(name, expected)
-        clickTab("Clusters", checked)
+        for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+            try resultSize(width, height)
+            try capturePreflight("\(name)-\(size)", expected)
+            try requireSendActions(["Check again"])
+        }
+        clickTab("Clusters", [])
     }
     // Unsupported is deliberately the last Send: unfinished work must not block
     // the shared-version update and cross-target evidence above. Reuse the known

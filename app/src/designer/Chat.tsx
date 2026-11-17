@@ -119,11 +119,18 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     : snapshot?.state === 'ready' && snapshot.error === 'connection'
     ? 'The workspace could not be reached. Check Clusters, then try sending again.'
     : snapshot?.error ? chatErrors[snapshot.error] : undefined;
-  return <section className="chat-panel card" aria-label="Chat on this computer">
-    <div className="chat-heading"><h2>Chat on this computer</h2><Button type="button" kind="secondary" disabled={!canReset || !!command} title={blocked ?? (!canReset ? 'Wait for the current turn to finish or reconnect to check it.' : undefined)} onClick={() => { void act('agent_chat_new'); }}>New conversation</Button></div>
-    <p className="muted">Chat doesn't change test results.</p>
+  const hasTurns = snapshot?.versions.some(version => version.turns.length);
+  const showControls = hasTurns || blocked || error || readError || snapshotError || awaitingTurn || command || snapshot && snapshot.state !== 'ready';
+  return <section className="chat-panel" aria-label="Chat on this computer">
+    <h2 className="sr-only">Chat on this computer</h2>
+    {showControls && <div className="chat-heading"><Button type="button" kind="quiet" disabled={!canReset || !!command} title={blocked ?? (!canReset ? 'Wait for the current turn to finish or reconnect to check it.' : undefined)} onClick={() => { void act('agent_chat_new'); }}>New conversation</Button>
+      <Disclosure className="chat-about" label="About this conversation">
+        <p>Your agent remembers up to 50 messages. Interrupted replies may not be remembered; tool activity is shown separately.</p>
+        <p>This view clears when you quit Bridge. Agents and transcripts remain in the workspace; New conversation does not delete them.</p>
+        <p>Stop requests an end to the reply. A tool may still finish while you continue, and its effects are not undone. If the conversation cannot continue, start a new one. You may need to restart the workspace if its history has changed elsewhere.</p>
+      </Disclosure>
+    </div>}
     <section ref={transcript} className="chat-transcript" aria-label="Conversation">
-      {!snapshot?.versions.some(version => version.turns.length) && <p className="muted">Ask your agent a question to start a conversation.</p>}
       {snapshot?.versions.map((version, index) => <section key={index} className="chat-version" aria-label={snapshot.versions.length > 1 ? `Conversation ${index + 1}` : undefined}>
         {snapshot.versions.length > 1 && <h3>Conversation {index + 1}</h3>}
         {index > 0 && <p className="muted">New conversation. Earlier turns are shown for reference, not sent as history.</p>}
@@ -142,17 +149,17 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
                 : <p className="muted">{turn.phase === 'Failed' ? 'The turn failed without an answer.' : 'No answer was received.'}</p>}
               {turn.stopUnconfirmed ? <p className="chat-notice">{states.stopUnconfirmed}</p> : turn.terminationUnconfirmed && <p className="chat-notice">{states.stopRequested}</p>}
               {!turn.contextRetained && !waiting && !confirming && <p className="muted">This turn is not confirmed in later context.</p>}
-              {!!turn.tools.length && <Disclosure className="card-details" label="Tool activity"><ul className="chat-tools">{turn.tools.map((tool, t) => <li key={t}><code>{tool.name}</code> · {tool.phase}</li>)}</ul></Disclosure>}
+              {!!turn.tools.length && <ul className="chat-tools" aria-label="Tool activity">{turn.tools.map((tool, t) => <li key={t}><code>{tool.name}</code> · {tool.phase}</li>)}</ul>}
             </div>
           </article>;
         })}
       </section>)}
     </section>
-    <p role="status" aria-live="polite" aria-atomic="true">{status}</p>
+    <p className="chat-status" role="status" aria-live="polite" aria-atomic="true">{status === states.ready ? undefined : status}</p>
     {(error || readError || snapshotError) && <p role="alert">{error?.message ?? readError ?? snapshotError}</p>}
     <form className="chat-composer" onSubmit={event => { event.preventDefault(); void act('agent_chat_send'); }}>
-      <label htmlFor={`message-${documentId}`}>Message</label>
-      <textarea className="field" ref={composer} id={`message-${documentId}`} rows={1} value={draft} aria-describedby={`chat-hint-${documentId}`}
+      <label className="sr-only" htmlFor={`message-${documentId}`}>Message</label>
+      <div className="chat-compose-row"><textarea className="field" ref={composer} id={`message-${documentId}`} rows={1} placeholder="Message your agent" value={draft} aria-describedby={`chat-hint-${documentId}`}
         onChange={event => { draftRef.current = event.target.value; setDraft(event.target.value); }}
         onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
         onKeyDown={event => {
@@ -160,17 +167,13 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
             event.preventDefault(); void act('agent_chat_send');
           }
         }} />
-      <p className="muted" id={`chat-hint-${documentId}`}>{reason ?? 'Enter to send · Shift+Enter for a new line.'}</p>
+        <Button type="submit" kind="primary" aria-label="Send message" disabled={!!reason || !draft.trim()} title={reason ?? (!draft.trim() ? 'Write a message first.' : undefined)}>Send</Button>
+      </div>
+      <p className="muted" id={`chat-hint-${documentId}`}>{reason ?? 'Enter sends · Shift+Enter for a new line'}</p>
       <div className="chat-actions">
-        <Button type="submit" kind="primary" disabled={!!reason || !draft.trim()} title={reason ?? (!draft.trim() ? 'Write a message first.' : undefined)}>Send message</Button>
         {canStop && <Button type="button" kind="secondary" disabled={!!command || snapshot.state === 'requestingStop'} onClick={() => { void act('agent_chat_stop'); }}>Stop</Button>}
         {snapshot && snapshot.state !== 'contextUnavailable' && !snapshot.busy && (!snapshot.canSend || pending.current?.uncertain) && <Button type="button" kind="secondary" disabled={!!command} onClick={() => { void act('agent_chat_reconnect'); }}>Reconnect</Button>}
       </div>
     </form>
-    <Disclosure className="card-details" label="About this conversation">
-      <p>Your agent remembers up to 50 messages. Interrupted replies may not be remembered; tool activity is shown separately.</p>
-      <p>This view clears when you quit Bridge. Agents and transcripts remain in the workspace; New conversation does not delete them.</p>
-      <p>Stop requests an end to the reply. A tool may still finish while you continue, and its effects are not undone. If the conversation cannot continue, start a new one. You may need to restart the workspace if its history has changed elsewhere.</p>
-    </Disclosure>
   </section>;
 }
