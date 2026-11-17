@@ -1095,8 +1095,8 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     click("Agent", [])
     click("Send to a cluster", [])
     // The header action already reveals and scrolls the card into view.
-    require(exactTextIsVisible("Send your agent") && nativeChatTextIsVisible("Team clusters are early in this preview."), "Send headline and early-preview text must be visible together")
-    require(anyButton("Send and run tests") && enabledButton("Send and run tests") == nil, "Without a cluster, the opened Send must be visible but disabled")
+    require(exactTextIsVisible("Send your agent") && nativeChatTextIsVisible("Team clusters are early in this preview."), "Baseline Send retains its preview sentence")
+    require(anyButton("Send and run tests") && enabledButton("Send and run tests") == nil, "Baseline Send without a cluster stays disabled")
     _ = try capture("local-shell-send-\(size)", ["Send your agent", "Team clusters are early in this preview."])
     press("Past Sends")
     _ = try seek("Saved results and limits", -150)
@@ -1110,9 +1110,17 @@ localSize(1280, 800)
 localSize(1280, 800)
 scroll(4000)
 click("Chat", [])
+func requireSingleChatCopy() {
+    let strings = nativeElements().flatMap { element in
+        ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+    }
+    require(strings.contains("Chat on local cluster") && strings.contains("Talk to your saved agent. Chat does not run tests or change their results."), "Chat heading, label or help copy missing")
+    require(!strings.contains(where: { $0.contains("Conversation 2") }), "Baseline single version must not invent a second conversation")
+}
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("Ask your agent a question", -100)
+    requireSingleChatCopy()
     _ = try capture("chat-empty-\(size)", ["Ask your agent a question"])
 }
 fillMessage("Remember the checksum ALPHA.")
@@ -1140,6 +1148,8 @@ try FileManager.default.removeItem(at: chatPhase)
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("The checksum is ALPHA.", -100)
+    requireSingleChatCopy()
+    require(nativeTextExists("Conversation 1"), "Baseline single answer must retain Conversation 1")
     _ = try capture("chat-answer-\(size)", ["The checksum is ALPHA.", "<script>fixture</script>"])
 }
 localSize(1280, 800)
@@ -1156,7 +1166,10 @@ waitForButton("Send message")
 rows = try seek("Send message", -150)
 click("Send message", rows)
 waitForChatText("Read another page.")
-_ = try capture("chat-new-version-compact", ["Conversation 2", "Read another page."])
+require(nativeTextExists("Conversation 1") && nativeTextExists("Conversation 2"), "Two Chat versions must retain both numbered headings")
+localSize(540, 640)
+_ = try seek("Conversation 2", -100)
+_ = try capture("chat-new-version-minimum", ["Conversation 2", "Read another page."])
 localSize(1280, 800)
 _ = try capture("chat-new-version-wide", ["Conversation 2", "Read another page."])
 require(enabledButton("Stop") != nil, "Working Chat must offer Stop")
