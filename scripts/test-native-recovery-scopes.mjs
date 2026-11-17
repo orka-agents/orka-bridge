@@ -275,6 +275,15 @@ vm.runInNewContext(expandOverview, { document: { querySelectorAll(selector) {
   return [{ click() { overviewClicks++; } }, { click() { overviewClicks++; } }];
 } } });
 assert.equal(overviewClicks, 2, 'the injected expression must parse and activate each collapsed row');
+const overviewSeed = overviewDriver.match(/await evaluate\(`([\s\S]*?)`\);/)?.[1];
+assert.ok(overviewSeed);
+const overviewWindow = {};
+vm.runInNewContext(overviewSeed.replace('${JSON.stringify(variant)}', JSON.stringify('starting')).replace('${JSON.stringify(pair)}', '{}'), {
+  window: overviewWindow, localStorage: { setItem() {} }, document: { getElementById: () => ({ replaceWith() {} }), createElement: () => ({}) },
+});
+const longPlaces = await overviewWindow.__TAURI_INTERNALS__.invoke('overview_places');
+assert.equal(longPlaces.places.length, 1, 'starting must exercise a segmented remote-place control');
+assert.ok(longPlaces.places[0].context.length > 200, 'the native viewport case must include an unbroken long context label');
 assert.ok(overviewDriver.includes(".overview-agent-head button[aria-label^=\"Show places for \"]"), 'Overview fixtures must drive the real agent disclosure contract');
 assert.ok(overviewDriver.includes("document.querySelectorAll('.overview-place')"), 'Overview fixtures must prove place evidence is mounted only after expansion');
 assert.ok(overviewDriver.includes("document.querySelector('[data-card-key=\"fixture-remote/remote-uid-1\"]')"), 'expanded places must retain exact Card keys');

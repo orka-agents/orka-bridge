@@ -73,6 +73,16 @@ test.each([3, 4])('%i clusters plus this computer use a select only past four ac
   }
 });
 
+test('a long context keeps its full accessible name while filtering by the opaque place key', async () => {
+  const context = 'context-' + 'unbrokensegment'.repeat(16);
+  ipc([file()], [{ ...place('opaque-key'), context }]); render(<Overview {...props} />); await row();
+  const button = screen.getByRole('button', { name: context });
+  await userEvent.click(button);
+  expect(button.getAttribute('aria-pressed')).toBe('true');
+  expect(within(await row()).getByLabelText(`${context}: Failed`)).toBeTruthy();
+  expect(screen.queryByLabelText('This computer: Passed')).toBeNull();
+});
+
 test('removing the selected place resets its filter, including when that key returns later', async () => {
   const saved = [file(), file('22345678-1234-1234-1234-123456789abc', 'writer')];
   const clusters = Array.from({ length: 5 }, (_, i) => place(`team-${i}`));

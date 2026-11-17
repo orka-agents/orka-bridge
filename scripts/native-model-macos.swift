@@ -253,6 +253,10 @@ require(rows.contains { $0.boundingBox.minX < 0.3 && $0.boundingBox.maxY > 0.85 
 click("Overview", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    let longContext = "context-" + String(repeating: "unbrokensegment", count: 7)
+    guard let contextBounds = enabledButton(longContext).flatMap(nativeBounds) else { fatalError("Missing long Overview context filter") }
+    require(contextBounds.minX >= window()!.1.minX && contextBounds.maxX <= window()!.1.maxX,
+            "Long Overview context filter must fit the native window")
     require(!anyButton("By cluster") && !anyButton("By agent") && !anyButton("Refresh"),
             "Overview list must not retain grouping or top-level Refresh controls")
     require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer."),

@@ -1453,7 +1453,8 @@ try {
         id: '33333333-3333-4333-8333-333333333333', documentId: ids[0], plannedAgentName: 'checksum-checker', agentUid: 'remote-uid-2', verdict: 'failed', report: { verdict: 'failed', passed: 1, total: 3 } } };
       const external = { ...remote, name: 'review-helper', uid: 'external-uid', record: null };
       const extraPlaces = ['team-secondary', 'team-staging', 'team-review'].map((context, index) => ({ key: 'fixture-extra-' + index, context, service: 'control / orka', namespace: 'agents', stale: false, observedAt: now - 60000, agents: [] }));
-      const places = { historyState: 'complete', unobserved: [], places: variant === 'clusters' ? [{ key: 'fixture-remote', context: 'team-dev', service: 'control / orka', namespace: 'agents', stale: false, observedAt: now - 60000, agents: [remote, failedRemote, external] }, ...extraPlaces] : [] };
+      const longPlace = { ...extraPlaces[0], key: 'fixture-long-context', context: 'context-' + 'unbrokensegment'.repeat(16) };
+      const places = { historyState: 'complete', unobserved: [], places: variant === 'clusters' ? [{ key: 'fixture-remote', context: 'team-dev', service: 'control / orka', namespace: 'agents', stale: false, observedAt: now - 60000, agents: [remote, failedRemote, external] }, ...extraPlaces] : variant === 'starting' ? [longPlace] : [] };
       const progress = { phase: 'starting', bytes: null, totalBytes: null, elapsedMs: 12000, remainingMs: null };
       const starting = variant === 'starting';
       localStorage.setItem('bridge.welcomeSeen.v1', '1');
@@ -1484,6 +1485,8 @@ try {
     const check = async mode => {
       const body = await text();
       const fail = reason => { throw Error(`overview-${variant}/${size}/${mode}: ${reason}: ${body}`); };
+      const overflow = await evaluate(`(() => { const main = document.querySelector('main'); return Math.max(main.scrollWidth - main.clientWidth, ...[...document.querySelectorAll('.overview-filters .view-switch button')].map(button => button.scrollWidth - button.clientWidth)); })()`);
+      if (overflow > 2) fail('page or Place label overflows horizontally');
       if (variant === 'starting') {
         if (!/Starting the workspace/.test(body) || /stopped/i.test(body)) fail('startup must say starting, not stopped');
         return;
@@ -1535,11 +1538,10 @@ try {
         if (![proof.passed, proof.failed].every(c => c.buttons.join('|') === 'Run tests|Details')) fail('linked cluster fitting action or Details missing');
       }
       if (variant === 'local-only' && body.includes('team-dev')) fail('remote cluster should be absent');
-      const overflow = await evaluate(`(() => { const main = document.querySelector('main'); return main.scrollWidth - main.clientWidth; })()`);
-      if (overflow > 2) fail('page overflows horizontally');
     };
     if (variant === 'starting') {
       await until(async () => /Starting the workspace/.test(await text()), 'Overview startup note');
+      await until(() => evaluate(`[...document.querySelectorAll('section.overview .view-switch button')].some(button => button.textContent.length > 200)`), 'Overview long context label');
       await check('collapsed');
       await shoot('-collapsed');
       return;
