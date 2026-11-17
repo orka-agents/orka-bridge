@@ -142,7 +142,8 @@ try {
           await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Use this cluster').click()`);
           if (name.startsWith('cluster-reload')) {
             await until(() => evaluate(`document.body.textContent.includes('Access confirmed')`), 'confirmed fixture access');
-            await evaluate(`[...document.querySelectorAll('button')].find(button => button.textContent === 'Reload kubeconfig').click()`);
+            await evaluate(`document.querySelector('.cluster-card summary').click()`);
+            await clickAction('Reload kubeconfig');
             if (name === 'cluster-reloaded') {
               await until(() => evaluate(`!!document.querySelector('button#cluster-context:not(:disabled)')`), 'reloaded context picker');
               await evaluate(`document.querySelector('button#cluster-context').click()`);

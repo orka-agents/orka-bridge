@@ -133,6 +133,9 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
     await assert.rejects(invoke('cluster_service_account_preview', { ...args, saName: 'task-reader' }), /Only the selected account/);
   }
 }
+const reloadRecovery = source.slice(source.indexOf("if (name.startsWith('cluster-reload'))"), source.indexOf("if (name === 'model-copy') {"));
+assert.ok(reloadRecovery.includes("document.querySelector('.cluster-card summary').click()"), 'connected recovery fixtures must reveal maintenance before reloading kubeconfig');
+
 const clusterProbe = source.slice(source.indexOf("const probe = await evaluate(`({ heading: document.querySelector('h1')"), source.indexOf("throw Error('Connected cluster actions/wording:"));
 assert.ok(clusterProbe.includes('summary[role="button"]'), 'connected actions include semantic summary disclosures, not only button elements');
 assert.ok(!source.includes("await clickAction('Show details')") && !source.includes("await clickAction('Hide details')"), 'cluster disclosure uses its real summary, not the button-only helper');
