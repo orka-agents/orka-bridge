@@ -5,25 +5,6 @@ import CoreGraphics
 import ApplicationServices
 import Vision
 
-// Producer-side timings: CI can buffer stdout until long after a capture finishes.
-let modelPerfStarted = ProcessInfo.processInfo.systemUptime
-struct ModelPerfCounters {
-    var attributeCalls = 0
-    var attributeSeconds = 0.0
-    var treeCalls = 0
-    var treeSeconds = 0.0
-    var maxTreeNodes = 0
-}
-var modelPerf = ModelPerfCounters()
-var previousCapturePerf = modelPerf
-var previousCaptureEnd = modelPerfStarted
-let modelPerfTheme = CommandLine.arguments.count > 3 && ["light", "dark"].contains(CommandLine.arguments[3]) ? CommandLine.arguments[3] : "unknown"
-func modelTiming(_ event: String, details: String = "") {
-    let record = "native-model-perf event=\(event) theme=\(modelPerfTheme) epoch_ms=\(Int(Date().timeIntervalSince1970 * 1000)) elapsed_ms=\(Int((ProcessInfo.processInfo.systemUptime - modelPerfStarted) * 1000)) \(details)\n"
-    try? FileHandle.standardError.write(contentsOf: Data(record.utf8))
-}
-modelTiming("walk-start")
-
 let display = CGMainDisplayID()
 var previousDisplayMode: CGDisplayMode?
 func restoreDisplay() {
@@ -71,10 +52,7 @@ try "pending".write(to: chatPhase, atomically: true, encoding: .utf8)
 defer { try? FileManager.default.removeItem(at: chatPhase) }
 child.environment = ProcessInfo.processInfo.environment.merging(["BRIDGE_MODEL_CHECK_RELEASE": keyCheckRelease.path, "BRIDGE_SETUP_PROGRESS": setupProgress.path, "BRIDGE_FIRST_TEST_OUTCOME": firstTestOutcome.path, "BRIDGE_CHAT_PHASE": chatPhase.path, "BRIDGE_CATALOG_RELEASE": catalogRelease.path]) { _, fixture in fixture }
 try child.run()
-defer {
-    if child.isRunning { child.terminate(); child.waitUntilExit() }
-    modelTiming("child-stopped")
-}
+defer { if child.isRunning { child.terminate(); child.waitUntilExit() } }
 func window() -> (CGWindowID, CGRect)? {
     let list = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
     guard let w = list.first(where: {
@@ -90,29 +68,21 @@ for _ in 0..<30 {
     Thread.sleep(forTimeInterval: 1)
 }
 require(window() != nil, "Native model fixture did not open")
-modelTiming("window-observed")
 NSRunningApplication(processIdentifier: child.processIdentifier)?.activate(options: [])
 Thread.sleep(forTimeInterval: 2)
 func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextObservation] {
-    let captureStarted = ProcessInfo.processInfo.systemUptime
-    let before = modelPerf
-    modelTiming("capture-begin", details: "name=\(name)")
     let file = "\(output)/\(name).png"
     let command = Process()
     command.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
     command.arguments = ["-x", "-o", "-l", String(window()!.0), file]
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture native model UI")
-    let screenshotDone = ProcessInfo.processInfo.systemUptime
-    modelTiming("screenshot-done", details: "name=\(name) screen_ms=\(Int((screenshotDone - captureStarted) * 1000))")
     let request = VNRecognizeTextRequest()
     request.recognitionLevel = .accurate
     try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
     let rows = request.results ?? []
     let text = rows.compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
     try text.write(toFile: "\(output)/\(name).txt", atomically: true, encoding: .utf8)
-    let ocrDone = ProcessInfo.processInfo.systemUptime
-    modelTiming("ocr-done", details: "name=\(name) ocr_ms=\(Int((ocrDone - screenshotDone) * 1000))")
     // Vision can interleave the adjacent setup column between wrapped lines.
     // Check phrases within the model panel, not the whole window's reading order.
     let visible: String
@@ -140,9 +110,9 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || lenient && nativeChatTextIsVisible(value))
         let chatText = !found && (name.hasPrefix("chat-") || name.hasPrefix("cluster-")) && nativeChatTextIsVisible(value)
         let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
-        require(found || nativeText || chatText || workspaceControl, "Missing \(value) in \(name): \(text)")
+        let overviewControl = !found && name.hasPrefix("local-") && name.contains("overview") && nativeWorkspaceButtonIsVisible(value)
+        require(found || nativeText || chatText || workspaceControl || overviewControl, "Missing \(value) in \(name): \(text)")
     }
-    let assertionsDone = ProcessInfo.processInfo.systemUptime
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
         else { fatalError("Cannot sample native theme") }
@@ -184,27 +154,6 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
             let png = bitmap.representation(using: .png, properties: [:]) else { fatalError("Cannot compose approved comparison") }
         try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
     }
-    let finished = ProcessInfo.processInfo.systemUptime
-    // AX and tree timings overlap the phases; they are subsets, not extra time.
-    let timings: [String] = [
-        "name=\(name)", "screen_ms=\(Int((screenshotDone - captureStarted) * 1000))",
-        "ocr_ms=\(Int((ocrDone - screenshotDone) * 1000))",
-        "assert_ms=\(Int((assertionsDone - ocrDone) * 1000))",
-        "image_ms=\(Int((finished - assertionsDone) * 1000))",
-        "between_ms=\(Int((captureStarted - previousCaptureEnd) * 1000))",
-        "between_ax_calls=\(before.attributeCalls - previousCapturePerf.attributeCalls)",
-        "between_ax_ms=\(Int((before.attributeSeconds - previousCapturePerf.attributeSeconds) * 1000))",
-        "capture_ax_calls=\(modelPerf.attributeCalls - before.attributeCalls)",
-        "capture_ax_ms=\(Int((modelPerf.attributeSeconds - before.attributeSeconds) * 1000))",
-        "between_tree_calls=\(before.treeCalls - previousCapturePerf.treeCalls)",
-        "between_tree_ms=\(Int((before.treeSeconds - previousCapturePerf.treeSeconds) * 1000))",
-        "capture_tree_calls=\(modelPerf.treeCalls - before.treeCalls)",
-        "capture_tree_ms=\(Int((modelPerf.treeSeconds - before.treeSeconds) * 1000))",
-        "tree_max_nodes=\(modelPerf.maxTreeNodes)",
-    ]
-    modelTiming("capture-end", details: timings.joined(separator: " "))
-    previousCapturePerf = modelPerf
-    previousCaptureEnd = finished
     print("PASS \(name): real native frontend, synthetic IPC only")
     return rows
 }
@@ -281,6 +230,19 @@ click("Connect the AI", rows)
 rows = try capture("before-connect", ["Connect the AI"])
 // The tab subtitle is visible in the capture but isn't a separate AXStaticText value.
 require(rows.contains { $0.boundingBox.minX < 0.3 && $0.boundingBox.maxY > 0.85 && $0.topCandidates(1).first?.string == "4 saved agents" }, "Hidden Overview must report the saved-file count in the header")
+click("Overview", [])
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    for (mode, toggle) in [("by-cluster", "By cluster"), ("by-agent", "By agent")] {
+        click(toggle, []); scroll(4000)
+        require(anyButton("Run tests web-reader") && enabledButton("Run tests web-reader") == nil && enabledButton("Open web-reader") != nil,
+                "Without connected AI, Overview must disable local Run but preserve Open")
+        _ = try capture("local-overview-ai-disconnected-\(mode)-\(size)", ["Your agents", "Connect the AI in Clusters"])
+    }
+}
+localSize(1280, 800); scroll(4000)
+click("By cluster", [])
+click("Clusters", []); waitForButton("Connect the AI")
 localSize(540, 640)
 scroll(4000)
 _ = try capture("local-setup-ai-minimum-top", ["This computer", "Get your workspace ready"])
@@ -400,6 +362,19 @@ press("Retry removal")
 rows = try capture("removed", ["Saved sign-in removed.", "Connect the AI"])
 click("Connect the AI", rows)
 rows = try capture("reconnected", ["Connected", "Change"])
+click("Overview", [])
+for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    for (mode, toggle) in [("by-cluster", "By cluster"), ("by-agent", "By agent")] {
+        click(toggle, []); scroll(4000)
+        require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to chat or run tests on this computer."),
+                "Connected AI must enable local Overview actions without the connection reason")
+        _ = try capture("local-overview-ai-connected-\(mode)-\(size)", ["Your agents", "Run tests"])
+    }
+}
+localSize(1280, 800); scroll(4000)
+click("By cluster", [])
+click("Clusters", [])
 // Workspace Stop is exercised after the original baseline coverage below.
 // Reuse the setup-progress selector and the existing Places entry to remount real
 // preflight for each bounded synthetic result. No native admission command runs.
@@ -832,22 +807,11 @@ scroll(4000)
 // writer is in-memory only, so no creator file or credential can be changed.
 scroll(4000)
 func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
-    let started = ProcessInfo.processInfo.systemUptime
-    defer {
-        modelPerf.attributeCalls += 1
-        modelPerf.attributeSeconds += ProcessInfo.processInfo.systemUptime - started
-    }
     var value: CFTypeRef?
     return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
 }
 func nativeElements() -> [AXUIElement] {
-    let started = ProcessInfo.processInfo.systemUptime
     var elements = [AXUIElementCreateApplication(child.processIdentifier)]
-    defer {
-        modelPerf.treeCalls += 1
-        modelPerf.treeSeconds += ProcessInfo.processInfo.systemUptime - started
-        modelPerf.maxTreeNodes = max(modelPerf.maxTreeNodes, elements.count)
-    }
     var index = 0
     while index < elements.count && elements.count < 4000 {
         let element = elements[index]; index += 1
@@ -911,6 +875,23 @@ func anyButton(_ label: String) -> Bool {
         ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? "")
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
     }
+}
+func nativeHeadings(_ expected: String) -> [AXUIElement] {
+    nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXHeading"
+            && ["AXValue", "AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == expected }
+    }
+}
+func nativeHeadingExists(_ expected: String) -> Bool { !nativeHeadings(expected).isEmpty }
+func anchorChatHeading(_ expected: String) {
+    let headings = nativeHeadings(expected)
+    guard headings.count == 1, let bounds = nativeBounds(headings[0]),
+        let header = enabledButton("Designer").flatMap(nativeBounds) else {
+        require(false, "Cannot anchor native Chat heading: \(expected)"); return
+    }
+    // Clear fixed navigation and the 48px composer-follow threshold before freezing the frame.
+    let delta = header.maxY + 64 - bounds.minY
+    if abs(delta) > 2 { scroll(Int32(delta.rounded())) }
 }
 func nativeTextExists(_ expected: String) -> Bool {
     nativeElements().contains { element in
@@ -1203,17 +1184,17 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     click("Agent", [])
     require(nativeElements().contains { attribute($0, "AXRole") as? String == "AXPopUpButton" }, "Header agent picker missing")
     require(anyButton("Send to a cluster") && anyButton("Past Sends"), "Header Send entry and Past Sends must always exist")
-    if size == "wide" { require(!anyButton("Send and run tests"), "An unused Send must start hidden") }
-    else { require(anyButton("Send and run tests"), "Send opened earlier must stay retained and visible") }
+    if size == "wide" { require(!anyButton("Choose a cluster"), "An unused Send must start hidden") }
+    else { require(anyButton("Choose a cluster"), "Send opened earlier must stay retained and visible") }
     _ = try capture("local-shell-agent-\(size)", ["Instructions and settings"])
     click("File", [])
     _ = try capture("local-shell-file-\(size)", ["web-reader.agent.md"])
     click("Agent", [])
     click("Send to a cluster", [])
     // The header action already reveals and scrolls the card into view.
-    require(exactTextIsVisible("Send your agent") && nativeChatTextIsVisible("Team clusters are early in this preview."), "Send headline and early-preview text must be visible together")
-    require(anyButton("Send and run tests") && enabledButton("Send and run tests") == nil, "Without a cluster, the opened Send must be visible but disabled")
-    _ = try capture("local-shell-send-\(size)", ["Send your agent", "Team clusters are early in this preview."])
+    require(exactTextIsVisible("Send your agent") && !nativeChatTextIsVisible("Team clusters are early in this preview."), "Send must retain its headline without repeating Welcome's preview sentence")
+    require(enabledButton("Choose a cluster") != nil && !anyButton("Send and run tests"), "Without a cluster, Choose a cluster must replace Send outside Details")
+    _ = try capture("local-shell-send-\(size)", ["Send your agent", "Choose a cluster"])
     press("Past Sends")
     _ = try seek("Saved results and limits", -150)
     scroll(-100)
@@ -1226,9 +1207,17 @@ localSize(1280, 800)
 localSize(1280, 800)
 scroll(4000)
 click("Chat", [])
+func requireSingleChatCopy() {
+    let strings = nativeElements().flatMap { element in
+        ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
+    }
+    require(strings.contains("Chat on this computer") && strings.contains("Chat doesn't change test results."), "Chat heading, label or help copy missing")
+    require(!strings.contains(where: { $0.contains("Conversation 1") }), "A single Chat version must not be numbered, including its accessible label")
+}
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("Ask your agent a question", -100)
+    requireSingleChatCopy()
     _ = try capture("chat-empty-\(size)", ["Ask your agent a question"])
 }
 fillMessage("Remember the checksum ALPHA.")
@@ -1256,6 +1245,7 @@ try FileManager.default.removeItem(at: chatPhase)
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("The checksum is ALPHA.", -100)
+    requireSingleChatCopy()
     _ = try capture("chat-answer-\(size)", ["The checksum is ALPHA.", "<script>fixture</script>"])
 }
 localSize(1280, 800)
@@ -1272,8 +1262,12 @@ waitForButton("Send message")
 rows = try seek("Send message", -150)
 click("Send message", rows)
 waitForChatText("Read another page.")
-_ = try capture("chat-new-version-compact", ["Conversation 2", "Read another page."])
+require(nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2"), "Two Chat versions must retain both numbered headings")
+localSize(540, 640)
+anchorChatHeading("Conversation 2")
+_ = try capture("chat-new-version-minimum", ["Conversation 2", "Read another page."])
 localSize(1280, 800)
+anchorChatHeading("Conversation 2")
 _ = try capture("chat-new-version-wide", ["Conversation 2", "Read another page."])
 require(enabledButton("Stop") != nil, "Working Chat must offer Stop")
 _ = try capture("chat-working-wide", ["Stop", "Read another page."])
@@ -1291,8 +1285,8 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 
     localSize(CGFloat(width), CGFloat(height))
     scroll(4000)
     if size == "minimum" {
-        _ = try seek("2 of 2 tests on earlier files", -300)
-        let expected = ["Earlier files", "2 of 2 tests on earlier files", "Draft"]
+        _ = try seek("2 of 2 passed, before your edit", -300)
+        let expected = ["Not run since your edit", "2 of 2 passed, before your edit", "Draft"]
         let proof = try capture("local-controls-overview-\(size)", expected)
         let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(expected.allSatisfy { pixels.contains($0) }, "Cluster result and draft must be visible in OCR")
@@ -1308,7 +1302,9 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 
     if size == "minimum" {
         // The draft anchor is unique; the failed count alone also occurs on the local file.
         _ = try seek("Add instructions and a test to get started.", -300)
-        let expected = ["team-dev", "Failed", "1 of 2 tests on earlier files", "Draft"]
+        // Leave room for the draft's status below its group heading.
+        scroll(-150)
+        let expected = ["team-dev", "Failed", "1 of 2 passed, before your edit", "Draft"]
         let proof = try capture("local-overview-by-agent-\(size)", expected)
         let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         require(expected.allSatisfy { pixels.contains($0) }, "Cluster failure and draft must be visible in OCR")
@@ -1540,4 +1536,3 @@ for (phase, summary) in [("image-update", "This version of Bridge needs a new wo
     require(enabledButton("Try again") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
     require(!nativeTextExists("The cluster download couldn't be verified."), "Version mismatch is not download corruption")
 }
-modelTiming("walk-complete", details: "ax_calls=\(modelPerf.attributeCalls) ax_ms=\(Int(modelPerf.attributeSeconds * 1000)) tree_calls=\(modelPerf.treeCalls) tree_ms=\(Int(modelPerf.treeSeconds * 1000)) tree_max_nodes=\(modelPerf.maxTreeNodes)")
