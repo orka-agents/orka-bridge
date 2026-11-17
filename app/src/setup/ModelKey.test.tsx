@@ -20,6 +20,7 @@ test('key stays only in its password field and is cleared as soon as native take
   expect(screen.getByText(/never in your agent files/i)).toBeTruthy();
   expect(screen.queryByText(/Never written to a file/)).toBeNull();
   fireEvent.change(field(), { target: { value: key } });
+  expect(document.body.textContent).not.toContain(key);
   fireEvent.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect(invoke).toHaveBeenCalledExactlyOnceWith('setup_connect_key', { vendor: 'anthropic', key });
   expect(field().value).toBe(''); expect(field().disabled).toBe(true);

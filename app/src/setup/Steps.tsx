@@ -34,7 +34,8 @@ function stepRows({ status, stopping, error, modelState = 'idle', firstCheck, in
     : status.localVm === 'ready' ? ['passed', 'Ready']
     : failed ? ['failed', "Couldn't start"] : paused ? ['not-started', 'Paused']
     : infra ? ['running', status.localVm === 'starting' ? 'Starting' : 'Getting ready'] : ['not-started', 'Waiting'];
-  const model: [Status, string] = ['failed', 'resetFailed', 'removalFailed'].includes(modelState) ? ['failed', "Couldn't start"] : connected ? ['passed', 'Connected']
+  const model: [Status, string] = modelState === 'removalFailed' ? ['failed', "Couldn't remove"] : modelState === 'resetFailed' ? ['failed', "Couldn't reset"]
+    : modelState === 'failed' ? ['failed', "Couldn't start"] : connected ? ['passed', 'Connected']
     : modelState === 'resetting' ? ['running', 'Resetting'] : modelState === 'connecting' ? ['running', 'Connecting'] : modelState === 'removing' ? ['running', 'Removing sign-in']
     : modelState === 'queued' ? ['not-started', 'Queued']
     : status.localVm === 'ready' ? status.model === 'locked' ? ['not-started', 'Unavailable'] : ['needs-you', 'Needs you']

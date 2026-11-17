@@ -710,8 +710,17 @@ try {
     }
     if (name.startsWith('ai-removal-')) {
       await clickAction('Change');
-      const panelImage = await call('Page.captureScreenshot', { format: 'png' });
-      await writeFile(join(output, `${theme}-${size}-ai-change-panel.png`), Buffer.from(panelImage.data, 'base64'));
+      await until(() => evaluate(`(() => {
+        const panel = document.querySelector('.workspace-change'), main = document.querySelector('main');
+        if (!panel || !main) return false;
+        panel.scrollIntoView({ block: 'center' });
+        const rect = panel.getBoundingClientRect(), view = main.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && rect.top >= view.top && rect.bottom <= view.bottom && rect.left >= view.left && rect.right <= view.right;
+      })()`), 'visible AI Change panel');
+      if (name === 'ai-removal-confirmation') {
+        const panelImage = await call('Page.captureScreenshot', { format: 'png' });
+        await writeFile(join(output, `${theme}-${size}-ai-change-panel.png`), Buffer.from(panelImage.data, 'base64'));
+      }
       await clickAction('Remove saved sign-in');
       if (await evaluate('window.__bridgeRemovals') !== 0) throw Error('Opening confirmation removed sign-in');
       await clickAction('Cancel');

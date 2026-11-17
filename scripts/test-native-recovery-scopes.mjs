@@ -90,6 +90,26 @@ for (const mutation of [
   { quiet: [{ start: '4px', end: '0px' }] }, { scrollbar: { width: 'auto', color: 'auto' } },
   { scrollHeight: 703 },
 ]) await assert.rejects(() => gate({ ...wide, ...mutation }));
+// The compact Change image must be framed before requesting its screenshot.
+const changeCapture = source.match(/if \(name\.startsWith\('ai-removal-'\)\) \{([\s\S]*?)\n      await clickAction\('Remove saved sign-in'\);/)?.[1];
+assert.ok(changeCapture);
+async function capturePanel(canReveal, fixture = 'ai-removal-confirmation') {
+  let rect = { top: 780, bottom: 860, left: 24, right: 516, width: 492, height: 80 };
+  const viewport = { top: 60, bottom: 640, left: 0, right: 540 };
+  let captured = false;
+  const document = { querySelector: selector => selector === 'main' ? { getBoundingClientRect: () => viewport } : {
+    scrollIntoView() { if (canReveal) rect = { ...rect, top: 300, bottom: 380 }; }, getBoundingClientRect: () => rect,
+  } };
+  await Function('clickAction', 'until', 'evaluate', 'call', 'writeFile', 'join', 'output', 'theme', 'size', 'name', `return (async () => { ${changeCapture} })()`)(
+    async () => {}, async work => assert.equal(await work(), true, 'Change panel must fit before capture'),
+    async script => vm.runInNewContext(script, { document }),
+    async () => { assert.ok(rect.top >= viewport.top && rect.bottom <= viewport.bottom, 'screenshot requested with Change panel offscreen'); captured = true; return { data: '' }; },
+    async () => {}, () => '', '', 'light', 'compact', fixture);
+  return captured;
+}
+assert.equal(await capturePanel(true), true);
+await assert.rejects(() => capturePanel(false), /Change panel must fit/);
+assert.equal(await capturePanel(true, 'ai-removal-retry'), false, 'retry fixture must not overwrite the identical pre-removal panel image');
 const workflow = (await readFile(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clusters', 'native-chat-agent-clusters']]) {
   const command = `node ../scripts/native-recovery-windows.mjs src-tauri/target/debug/orka-bridge.exe windows-artifact/${directory} ${scope}`;

@@ -19,6 +19,12 @@ test('a failed test stays red in its row while the workspace remains Ready', () 
   expect(screen.getByText('Ready', { selector: '.pill' })).toBeTruthy();
 });
 
+test.each([['removalFailed', "Couldn't remove"], ['resetFailed', "Couldn't reset"]] as const)('AI %s names the failed cleanup action, not startup', (modelState, label) => {
+  render(<SetupSteps {...actions} status={ready} modelState={modelState} />);
+  const row = screen.getByText('Connect the AI', { selector: 'li b' }).closest('li')!;
+  expect(within(row).getByText(label)).toBeTruthy();
+});
+
 test('returning connected/no-evidence is finished without claiming tests passed; pending first test is not', () => {
   expect(setupView(ready, { model: 'connected' })).toMatchObject({ done: true, line: 'Workspace ready', tone: 'ready' });
   expect(setupView(ready, { model: 'connected', initialAutomatic: true })).toMatchObject({ done: false, step: 4 });

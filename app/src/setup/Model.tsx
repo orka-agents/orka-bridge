@@ -300,7 +300,7 @@ export default function Model({ enabled, queueable = false, paused = false, away
           {queued || busy ? <div ref={status} role={queued ? 'status' : undefined} tabIndex={-1} className="model-state">
             <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? 'Removing' : ready ? 'Connected' : queued ? 'Queued' : keyMode ? 'Checking' : 'Connecting'}</StatusPill>
             {busy && (busy === 'remove' || !keyMode) && <span className="status-description">{busy === 'remove' ? keyMode ? 'Removing key…' : 'Removing sign-in…' : 'Connecting the AI…'}</span>}
-            {queued && <><span className="status-description">Connects when the workspace is ready.</span>{!compact && <Button type="button" kind="secondary" aria-label="Cancel queued connection" onClick={() => setQueued(false)}>Cancel</Button>}</>}
+            {queued && <><span className="status-description">Connects when the workspace is ready.</span>{(!compact || expanded) && <Button type="button" kind="secondary" aria-label={compact ? undefined : 'Cancel queued connection'} onClick={() => { setQueued(false); if (compact) { setExpanded(false); changeButton.current?.focus(); } }}>{compact ? "Don't connect automatically" : 'Cancel'}</Button>}</>}
           </div>
           : !ready && !removalFailed && <Button key="model-connect" ref={retry} type="button" kind={primary ? 'primary' : 'secondary'} disabled={(!enabled && (!queueable || keyMode)) || paused || !!busy || (keyMode && !hasKey && !hasSignIn)} onClick={choose}>
             {error && failedAction === 'connect' ? 'Check again' : 'Connect the AI'}
