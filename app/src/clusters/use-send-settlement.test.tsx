@@ -1,5 +1,6 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { useCallback, useState } from 'react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import type { SendStatus, SendView } from './send-api';
 import { useSendSettlement } from './use-send-settlement';
@@ -111,31 +112,76 @@ test('a later rejected request cannot fence an earlier valid admission reply', a
   expect(settled).toHaveBeenCalledTimes(1);
 });
 
-test('a late older admission cannot replace the newer accepted attempt', async () => {
+test('an earlier request admitted after a later Send settles still notifies and refreshes on completion', async () => {
+  const admission = deferred<SendStatus>(); const settled = vi.fn();
+  let firstView: SendView | null = null; let secondView = other;
+  mockIPC((command, payload) => {
+    const request = payload as { documentId: string };
+    // Native awaits document_folder before admission: A's lookup can outlast all of B's Send.
+    if (command === 'send_start') return request.documentId === documentId ? admission.promise : status(secondView);
+    const view = request.documentId === documentId ? firstView : secondView;
+    return { documentId: request.documentId, view, busy: view?.state === 'running' ? { documentId: view.documentId, name: 'reader' } : null };
+  });
+  const owner = renderHook(() => {
+    const [placesRevision, setPlacesRevision] = useState(0);
+    const onSettled = useCallback(() => { settled(); setPlacesRevision(value => value + 1); }, []);
+    return { start: useSendSettlement(onSettled), placesRevision };
+  });
+  let firstStart!: Promise<SendStatus>;
+  await act(async () => {
+    firstStart = owner.result.current.start(args);
+    await owner.result.current.start({ ...args, documentId: otherDocument });
+  });
+  secondView = { ...other, state: 'unknown', stage: 'stopped' };
+  await tick();
+  expect(settled).toHaveBeenCalledTimes(1);
+  expect(owner.result.current.placesRevision).toBe(1);
+  // B is already terminal before A reaches native admission; the native owner never overlaps Sends.
+  await act(async () => { firstView = running; admission.resolve(status(firstView)); await firstStart; });
+  await tick();
+  expect(settled).toHaveBeenCalledTimes(1);
+  expect(owner.result.current.placesRevision).toBe(1);
+  firstView = { ...running, state: 'complete', stage: 'done', report: { verdict: 'failed', cases: [{ id: 'first', question: 'Read', phase: 'Succeeded', answer: 'wrong', completedTools: [], assertions: [{ id: 'answer', kind: 'contains', expected: 'page', verdict: 'failed' }], verdict: 'failed' }] } };
+  await tick();
+  expect.soft(settled).toHaveBeenCalledTimes(2);
+  expect(owner.result.current.placesRevision).toBe(2);
+  await tick(1500);
+  expect(settled).toHaveBeenCalledTimes(2);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test('a delayed older admission reply retains observation of both actual Send IDs', async () => {
   const first = deferred<SendStatus>(); const reads: unknown[] = [];
+  let secondView = other;
   mockIPC((command, payload) => {
     const request = payload as { documentId: string };
     if (command === 'send_start') return request.documentId === documentId ? first.promise : status(other);
-    reads.push(payload); return status({ ...other, state: 'unknown', stage: 'stopped' });
+    reads.push(payload); return status(request.documentId === documentId ? terminal : secondView);
   });
   const settled = vi.fn(); const owner = renderHook(() => useSendSettlement(settled));
   await act(async () => {
     const pending = owner.result.current(args);
+    // Native A finished before B was admitted, but A's Running reply was delayed.
     await owner.result.current({ ...args, documentId: otherDocument });
     first.resolve(status(running)); await pending;
   });
   await tick();
   expect(settled).toHaveBeenCalledTimes(1);
-  expect(reads).toEqual([{ documentId: otherDocument }]);
+  expect(reads).toEqual([{ documentId: otherDocument }, { documentId }]);
+  secondView = { ...other, state: 'unknown', stage: 'stopped' };
+  await tick();
+  expect(settled).toHaveBeenCalledTimes(2);
+  expect(reads).toEqual([{ documentId: otherDocument }, { documentId }, { documentId: otherDocument }]);
 });
 
-test('an in-flight old status reply cannot settle a newer accepted attempt or overlap its reads', async () => {
+test('an in-flight old status reply settles only its own attempt and never overlaps newer reads', async () => {
   const firstRead = deferred<SendStatus>(); const reads: unknown[] = [];
+  let secondView = other;
   mockIPC((command, payload) => {
     const request = payload as { documentId: string };
     if (command === 'send_start') return status(request.documentId === documentId ? running : other);
     reads.push(payload);
-    return request.documentId === documentId ? firstRead.promise : status({ ...other, state: 'unknown', stage: 'stopped' });
+    return request.documentId === documentId ? firstRead.promise : status(secondView);
   });
   const settled = vi.fn(); const owner = renderHook(() => useSendSettlement(settled));
   await act(async () => { await owner.result.current(args); }); await tick();
@@ -144,10 +190,92 @@ test('an in-flight old status reply cannot settle a newer accepted attempt or ov
   await tick(1000);
   expect(reads).toEqual([{ documentId }]);
   await act(async () => { firstRead.resolve(status(terminal)); });
-  expect(settled).not.toHaveBeenCalled();
+  expect(settled).toHaveBeenCalledTimes(1);
   await tick();
   expect(settled).toHaveBeenCalledTimes(1);
   expect(reads).toEqual([{ documentId }, { documentId: otherDocument }]);
+  secondView = { ...other, state: 'unknown', stage: 'stopped' };
+  await tick();
+  expect(settled).toHaveBeenCalledTimes(2);
+});
+
+test('a late same-document admission is invalidated by replacement without adopting its verdict or losing ID deduplication', async () => {
+  const first = deferred<SendStatus>(); let starts = 0;
+  let replacement = { ...running, id: other.id }; let reply = replacement;
+  const ipc = vi.fn((command: string) => command === 'send_start' ? starts++ === 0 ? first.promise : status(reply) : status(replacement));
+  mockIPC(ipc);
+  const settled = vi.fn(); const owner = renderHook(() => useSendSettlement(settled));
+  await act(async () => {
+    const pending = owner.result.current(args);
+    await owner.result.current(args);
+    first.resolve(status(running)); await pending;
+  });
+  expect(settled).not.toHaveBeenCalled();
+  await tick();
+  // Only the superseded ID settles: its replacement is still Running.
+  expect(settled).toHaveBeenCalledTimes(1);
+  replacement = { ...replacement, state: 'unknown', stage: 'stopped' };
+  await tick();
+  expect(settled).toHaveBeenCalledTimes(2);
+  const reads = ipc.mock.calls.filter(([command]) => command === 'send_status').length;
+  await act(async () => {
+    reply = running; await owner.result.current(args);
+    reply = replacement; await owner.result.current(args);
+  });
+  await tick(1500);
+  expect(settled).toHaveBeenCalledTimes(2);
+  expect(ipc.mock.calls.filter(([command]) => command === 'send_status')).toHaveLength(reads);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test('a failed read leaves its identity pending and proceeds serially through the same polling round', async () => {
+  const read = deferred<SendStatus>(); const reads: unknown[] = []; let firstReads = 0;
+  const ipc = vi.fn((command: string, payload: unknown) => {
+    const request = payload as { documentId: string };
+    if (command === 'send_start') return status(request.documentId === documentId ? running : other);
+    reads.push(payload);
+    return request.documentId === documentId ? ++firstReads === 1 ? read.promise : status(terminal)
+      : status({ ...other, state: 'unknown', stage: 'stopped' });
+  });
+  mockIPC(ipc); const settled = vi.fn(); const owner = renderHook(() => useSendSettlement(settled));
+  await act(async () => {
+    await owner.result.current(args);
+    await owner.result.current({ ...args, documentId: otherDocument });
+  });
+  await tick(1500);
+  expect(reads).toEqual([{ documentId }]);
+  await act(async () => { read.reject(Error('temporarily unreadable')); });
+  expect(settled).toHaveBeenCalledTimes(1);
+  expect(reads).toEqual([{ documentId }, { documentId: otherDocument }]);
+  await tick(499);
+  expect(reads).toHaveLength(2);
+  await tick(1);
+  expect(settled).toHaveBeenCalledTimes(2);
+  expect(reads).toEqual([{ documentId }, { documentId: otherDocument }, { documentId }]);
+  expect(ipc.mock.calls.filter(([command]) => command === 'send_start')).toHaveLength(2);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test('App unmount during a polling round fences the read and stops before another owned identity', async () => {
+  const read = deferred<SendStatus>(); const reads: unknown[] = [];
+  mockIPC((command, payload) => {
+    const request = payload as { documentId: string };
+    if (command === 'send_start') return status(request.documentId === documentId ? running : other);
+    reads.push(payload); return read.promise;
+  });
+  const settled = vi.fn(); const owner = renderHook(() => useSendSettlement(settled));
+  await act(async () => {
+    await owner.result.current(args);
+    await owner.result.current({ ...args, documentId: otherDocument });
+  });
+  await tick();
+  expect(reads).toEqual([{ documentId }]);
+  owner.unmount();
+  await act(async () => { read.resolve(status(terminal)); });
+  await tick(1500);
+  expect(settled).not.toHaveBeenCalled();
+  expect(reads).toEqual([{ documentId }]);
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 test.each(['same-attempt', 'replacement'] as const)('a null status stays unknown until an authoritative %s reply', async mode => {

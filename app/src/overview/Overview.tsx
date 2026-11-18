@@ -61,6 +61,8 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const toFocus = useRef<string | undefined>(undefined);
   const focusedCard = useRef<HTMLElement | undefined>(undefined);
   const autofocusRequest = useRef<{ identity: string; pending: boolean; completed: boolean } | undefined>(undefined);
+  // The first read can fulfill navigation before its absence check has settled.
+  const absencePending = useRef(false);
   const ownsFocus = useRef(false);
   useEffect(() => {
     const moved = (event: FocusEvent) => {
@@ -72,7 +74,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const [focusTick, setFocusTick] = useState(0);
   const [focusNote, setFocusNote] = useState<string>();
   useEffect(() => {
-    if (!active || !focus) { setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined; autofocusRequest.current = undefined; ownsFocus.current = false; return; }
+    if (!active || !focus) { setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined; autofocusRequest.current = undefined; absencePending.current = false; ownsFocus.current = false; return; }
     const request = ++focusEpoch.current;
     const identity = `${focus.id}/${focusRetry}`;
     const navigate = autofocusRequest.current?.identity !== identity || !!autofocusRequest.current?.pending && !focusPending;
@@ -80,12 +82,12 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     const autofocus = { identity, pending: focusPending, completed: autofocusRequest.current?.identity === identity && autofocusRequest.current.completed };
     autofocusRequest.current = autofocus;
     // Completion invalidates the read, not the user's navigation, filters or disclosure choices.
-    if (navigate) { setPlaceFilter('all'); setNameFilter(''); setReveal(undefined); setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined; }
+    if (navigate) { setPlaceFilter('all'); setNameFilter(''); setReveal(undefined); setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined; absencePending.current = true; }
     if (focusPending) return;
     const { target, sendId } = focus;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let targetFound = false;
-    async function list(navigate = false) {
+    async function list(navigate = false, resolveAbsence = false) {
       const value = target ? await readPlaces(target.key) : undefined;
       if (request !== focusEpoch.current) return;
       if (navigate) autofocus.completed = true;
@@ -97,16 +99,16 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       if (target && (seen?.agents.some(a => a.record?.verdict === 'running') || value?.unobserved.some(a => a.id === sendId && a.verdict === 'running'))) timer = setTimeout(() => { void list(); }, 500);
       // Presence supersedes the initial check; polling still preserves disclosure and focus choices.
       if (target && seen?.agents.some(a => a.uid === target.uid && a.namespace === target.namespace)) {
-        targetFound = true; setFocusNote(undefined);
+        targetFound = true; absencePending.current = false; setFocusNote(undefined);
         if (navigate) { toFocus.current = `${target.key}/${target.uid}`; setReveal(toFocus.current); setFocusTick(v => v + 1); }
         return;
       }
-      if (!navigate) return;
+      if (!resolveAbsence) return;
       const check = target ? await sendAgentCheck(sendId) : 'cannotCheck';
-      if (request === focusEpoch.current && !targetFound) setFocusNote(focusNotes[check]);
+      if (request === focusEpoch.current && !targetFound) { absencePending.current = false; setFocusNote(focusNotes[check]); }
     }
-    // A cancelled first read leaves navigation unfulfilled, but must not repeat its initialization resets.
-    void list(!autofocus.completed);
+    // Resume either unfinished step without repeating navigation's initialization resets.
+    void list(!autofocus.completed, absencePending.current);
     return () => { focusEpoch.current++; clearTimeout(timer); };
   }, [active, focus, focusRetry, focusPending, placesRevision]);
   useEffect(() => {

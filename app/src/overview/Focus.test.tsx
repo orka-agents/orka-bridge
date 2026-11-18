@@ -200,14 +200,66 @@ test.each([
   expect(within(screen.getByText(text).closest('.overview-note') as HTMLElement).getByRole('button', { name: 'Refresh' })).toBeTruthy();
   expect(calls.mock.calls.find(([command]) => command === 'send_agent_check')?.[1]).toEqual({ sendId: 's1' });
 });
-test('Refresh retries a present-but-unlisted target and clears the stale absence note once its card appears', async () => {
-  ipc(places([]));
-  render(<Overview {...props} focus={{ id: 1, sendId: 's1', target: target('uid-one') }} />);
+test.each([
+  ['present', 'Not shown in Overview yet.'],
+  ['gone', 'The original agent is no longer available. Your saved result is unchanged.'],
+  ['cannotCheck', 'Cannot check this agent. Your saved result is unchanged.'],
+])('completion during an absence check restores %s guidance without resetting user choices', async (check, text) => {
+  let release!: (value: unknown) => void; let checks = 0;
+  let inventory = places([agent('uid-other')]);
+  mockIPC(command => command === 'overview_places' ? inventory : command === 'overview_files' ? files : command === 'send_agent_check' ? ++checks === 1 ? new Promise(resolve => { release = resolve; }) : check : live);
+  const focus = { id: 1, sendId: id, target: target('uid-one') };
+  const view = render(<Overview {...props} onNewAgent={() => undefined} focus={focus} placesRevision={0} />);
+  await waitFor(() => expect(release).toBeDefined());
+  const filter = screen.getByRole('textbox', { name: 'Filter by name' }) as HTMLInputElement;
+  fireEvent.change(filter, { target: { value: 'same' } });
+  fireEvent.click(screen.getByRole('button', { name: 'team', pressed: false }));
+  const row = screen.getByRole('article', { name: 'same-name' });
+  fireEvent.click(within(row).getByRole('button', { name: 'Show places for same-name' }));
+  const card = screen.getByRole('article', { name: 'team, Passed' });
+  fireEvent.click(within(card).getByRole('button', { name: 'Details' }));
+  const control = screen.getByRole('button', { name: 'New agent' }); control.focus();
+  const expectChoices = () => {
+    expect(filter.value).toBe('same');
+    expect(screen.getByRole('button', { name: 'team', pressed: true })).toBeTruthy();
+    expect(within(card).getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe('true');
+    expect(within(row).getByRole('button', { name: 'Show places for same-name' }).getAttribute('aria-expanded')).toBe('true');
+    expect(card.isConnected).toBe(true);
+    expect(document.activeElement).toBe(control);
+  };
+  view.rerender(<Overview {...props} onNewAgent={() => undefined} focus={focus} placesRevision={1} />);
+  const note = await screen.findByText(text);
+  expect(within(note.closest('.overview-note') as HTMLElement).getByRole('button', { name: 'Refresh' })).toBeTruthy();
+  expectChoices();
+  // The target's eventual presence clears the explanation without navigating again.
+  inventory = places([agent('uid-other'), agent('uid-one')]);
+  view.rerender(<Overview {...props} onNewAgent={() => undefined} focus={focus} placesRevision={2} />);
+  await waitFor(() => expect(screen.getAllByRole('article', { name: 'same-name' })).toHaveLength(2));
+  const targetRow = screen.getAllByRole('article', { name: 'same-name' }).find(node => node !== row)!;
+  expect(within(targetRow).getByRole('button', { name: 'Show places for same-name' }).getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByText(text)).toBeNull();
+  expectChoices();
+  await act(async () => release('gone'));
+  expect(screen.queryByText(/The original agent is no longer available/)).toBeNull();
+  expect(screen.queryByText(text)).toBeNull();
+  expectChoices();
+});
+test('Refresh retries a present-but-unlisted target after completion cancels its first absence check', async () => {
+  let release!: (value: unknown) => void; let checks = 0;
+  let inventory = places([]);
+  mockIPC(command => command === 'overview_places' ? inventory : command === 'overview_files' ? files : command === 'send_agent_check' ? ++checks === 1 ? new Promise(resolve => { release = resolve; }) : 'present' : live);
+  const focus = { id: 1, sendId: 's1', target: target('uid-one') };
+  const view = render(<Overview {...props} focus={focus} placesRevision={0} />);
+  await waitFor(() => expect(release).toBeDefined());
+  view.rerender(<Overview {...props} focus={focus} placesRevision={1} />);
   const note = await screen.findByText('Not shown in Overview yet.');
-  ipc(places([agent('uid-one')]));
+  inventory = places([agent('uid-one')]);
   fireEvent.click(within(note.closest('.overview-note') as HTMLElement).getByRole('button', { name: 'Refresh' }));
   await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
   expect(screen.queryByText('Not shown in Overview yet.')).toBeNull();
+  await act(async () => release('gone'));
+  expect(screen.queryByText(/The original agent is no longer available/)).toBeNull();
+  expect(focused()).toBe(`${key}/uid-one`);
 });
 test('leaving an agent-specific request clears its warning before ordinary Overview navigation', async () => {
   const calls = ipc(places([]), 'gone');
