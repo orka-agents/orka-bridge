@@ -1363,7 +1363,15 @@ for character in "Changed fixture instructions.".utf16 {
 }
 Thread.sleep(forTimeInterval: 1)
 require((attribute(editor, "AXValue") as? String)?.contains("Changed fixture instructions.") == true, "Native keystrokes did not edit Instructions")
-require(exactTextIsVisible("Saved"), "A completed edit/save must acknowledge Saved")
+// The save starts 500 ms after the last keystroke and can take seconds on a slow runner.
+var savedShown = false
+for _ in 0..<100 {
+    if exactTextIsVisible("Saved") { savedShown = true; break }
+    if exactTextIsVisible("Not saved") { break }
+    Thread.sleep(forTimeInterval: 0.1)
+}
+let saveLabel = ["Saving…", "Unsaved changes", "Not saved"].first(where: exactTextIsVisible) ?? "no save label"
+require(savedShown, "A completed edit/save must acknowledge Saved; showing \(saveLabel)")
 // Focusing Instructions scrolls below the compact test card; return to its start.
 scroll(4000)
 _ = try seek("Not run since your edit", -250)
