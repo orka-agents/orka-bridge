@@ -219,13 +219,13 @@ pub(crate) fn tool_page(
         dropped,
     })
 }
-/// A Kubernetes object name; anything else never reaches a request path.
+/// A Kubernetes object name (an RFC 1123 subdomain: lowercase labels joined by dots, at most
+/// 253 characters, with no per-label limit); anything else never reaches a request path.
 pub(crate) fn valid_task(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 253
         && name.split('.').all(|label| {
             !label.is_empty()
-                && label.len() <= 63
                 && label
                     .bytes()
                     .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')

@@ -330,7 +330,9 @@ impl Inventory {
             // Reload/re-Use while a read was in flight revokes that response.
             if entry.generation == generation {
                 entry.view.stale = result.is_err();
-                entry.denied = matches!(result, Err(ClusterError::Denied));
+                // A refusal stands until a read succeeds; a later network error does not clear it.
+                entry.denied = matches!(result, Err(ClusterError::Denied))
+                    || (entry.denied && result.is_err());
                 if let Ok(agents) = result {
                     entry.view.agents = agents;
                     entry.view.observed_at = Some(crate::overview::now());

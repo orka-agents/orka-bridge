@@ -63,7 +63,13 @@ fn newest_uses_the_latest_recorded_time_then_name() {
 
 #[test]
 fn only_kubernetes_object_names_reach_an_event_path() {
-    for name in ["run", "bridge-task-0a", "a.b-c", &"a".repeat(63)] {
+    for name in [
+        "run",
+        "bridge-task-0a",
+        "a.b-c",
+        &"a".repeat(64),
+        &format!("{}.b", "a".repeat(251)),
+    ] {
         assert!(valid_task(name), "{name}");
     }
     for name in [
@@ -75,7 +81,7 @@ fn only_kubernetes_object_names_reach_an_event_path() {
         "a..b",
         "a?b",
         "a%2fb",
-        &"a".repeat(64),
+        &"a".repeat(254),
     ] {
         assert!(!valid_task(name), "{name}");
     }

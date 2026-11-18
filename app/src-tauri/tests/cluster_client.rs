@@ -2704,6 +2704,12 @@ async fn activity_reports_partial_denied_unavailable_and_disconnected_places() {
     session.overview().await;
     let refused = reply(bridge_engine::overview_activity::read(&session).await);
     assert_eq!(refused["places"][0]["state"], "denied");
+    // A network error after the refusal does not turn it back into a merely unreachable place.
+    *orka.fail_at.lock().unwrap() =
+        Some((OrkaResource::AgentInventory, AccessOutcome::Unavailable));
+    session.overview().await;
+    let still = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(still["places"][0]["state"], "denied");
     *orka.fail_at.lock().unwrap() = None;
     session.reload().await.unwrap();
     let revoked = reply(bridge_engine::overview_activity::read(&session).await);
