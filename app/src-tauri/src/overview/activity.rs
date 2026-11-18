@@ -267,7 +267,11 @@ fn lost(lost: Lost) -> &'static str {
 }
 /// Why a result read on connection `read_on` no longer stands, if it doesn't: the place has a
 /// new connection, or its access was refused or revoked since.
-fn superseded(session: &ClusterSession, key: &str, read_on: Option<u64>) -> Option<&'static str> {
+pub(crate) fn superseded(
+    session: &ClusterSession,
+    key: &str,
+    read_on: Option<u64>,
+) -> Option<&'static str> {
     match session.activity_connection(key) {
         (now, _) if now != read_on => Some("revoked"),
         (_, Err(why @ (Lost::Denied | Lost::Revoked))) => Some(lost(why)),
@@ -275,7 +279,7 @@ fn superseded(session: &ClusterSession, key: &str, read_on: Option<u64>) -> Opti
     }
 }
 /// `with_access`, also returning the connection revision the read used.
-async fn read_on<'a, T, F>(
+pub(crate) async fn read_on<'a, T, F>(
     session: &'a ClusterSession,
     key: &str,
     read: impl FnOnce(Arc<RemoteAccess>) -> F,
