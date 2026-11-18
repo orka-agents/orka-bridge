@@ -14,6 +14,8 @@ import { type CheckStepState, Meet, SetupProgress } from './Steps';
 import { cancelLocal, type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
 import Workspace from './Workspace';
+import Upgrade from './Upgrade';
+import { upgradeCall, type UpgradeStatus } from './upgrade';
 import './welcome.css';
 import type { RunSnapshot } from '../designer/run-api';
 import FirstPass from './FirstPass';
@@ -36,13 +38,22 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   modelUnavailable?: boolean;
   firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void;
   onStarting?: () => void;
-  onWorkspaceAction?: (pending: boolean, stopping?: boolean) => void;
+  onWorkspaceAction?: (pending: boolean, stopping?: boolean, updating?: boolean) => void;
   onPlace?: (place: SelectedPlace) => void;
   onLocalView?: (visible: boolean) => void;
   onWorkspaceMode?: (returning: boolean) => void;
   place?: SelectedPlace;
 }) {
   const [status, setStatus] = useState<SetupStatus>();
+  const [upgrade, setUpgrade] = useState<UpgradeStatus>();
+  const [upgradeBusy, setUpgradeBusy] = useState(false);
+  const upgradeAction = useCallback((value: boolean) => setUpgradeBusy(value), []);
+  const upgrading = upgradeBusy || !!upgrade?.busy;
+  const reportedUpgrade = useRef(false);
+  useEffect(() => {
+    if (upgrading || reportedUpgrade.current) onWorkspaceAction?.(upgrading, false, true);
+    reportedUpgrade.current = upgrading;
+  }, [upgrading, onWorkspaceAction]);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(true);
   const [sending, setSending] = useState(false);
@@ -134,9 +145,14 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   useEffect(() => {
     if (mutation.current) return;
     const request = ++epoch.current;
-    void setupStatus().then(result => {
+    void Promise.all([setupStatus(), upgradeCall('status')]).then(([result, update]) => {
       if (request !== epoch.current) return;
-      if (result.ok) { setStatus(result.status); setError(undefined); }
+      if (update.ok) {
+        setUpgrade(update.status);
+        if (update.status.state !== 'none') retireFirstTest();
+      } else setUpgrade(previous => previous && previous.state !== 'none'
+        ? { ...previous, state: 'conflict', canReplace: false, canRestore: false, busy: false, error: 'unknown' } : previous);
+      if (result.ok) { setStatus(result.status); setError(!update.ok && result.status.workspaceReplaced ? update.message : undefined); }
       else {
         // An unreadable observation pauses actions, not an already admitted connection.
         setError(result.message);
@@ -149,7 +165,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     return () => { epoch.current++; clearTimeout(timer.current); };
   }, [check, onStatus]);
   // Model stays mounted from preparing through ready, so it owns its queued state; no Model means no model state.
-  const modelMounted = status?.selected === 'localVm' && (status.localVm === 'ready' || canQueueModel(status));
+  const modelMounted = (!status?.workspaceReplaced || !!upgrade) && (!upgrade || ['none', 'fresh', 'consumed'].includes(upgrade.state)) && !upgradeBusy && !upgrade?.busy && upgrade?.credential !== 'attention' && upgrade?.credential !== 'eligible' && status?.selected === 'localVm' && (status.localVm === 'ready' || (!status.workspaceReplaced && canQueueModel(status)));
   useEffect(() => { if (!modelMounted) observeModel('idle'); }, [modelMounted, observeModel]);
 
   function start() {
@@ -177,7 +193,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     if (navigate) back();
   }
   async function chooseLocal(action: 'start' | 'cancel' | 'change' = 'start') {
-    if (mutation.current || !status || (action !== 'cancel' && busy)) return;
+    if (mutation.current || upgradeBusy || upgrade?.busy || !status || (action !== 'cancel' && busy)) return;
     if (action === 'start' && status.selected === 'localVm' && !['cancelled', 'closed', 'failed'].includes(status.localVm)) return;
     // Observation must not invalidate an explicit selection awaiting its reply.
     const firstStart = action === 'start' && status.selected !== 'localVm';
@@ -203,6 +219,9 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     else timer.current = setTimeout(() => setCheck(value => value + 1), 1000);
   }
 
+  const changing = sending || upgradeBusy || !!upgrade?.busy;
+  const recoveryOnly = !!upgrade && ['sourceSelected', 'sourceRetained', 'incomplete', 'restoring', 'restored', 'conflict'].includes(upgrade.state);
+  const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || !!error} onBusy={upgradeAction} onChange={value => { setUpgrade(value); setCheck(check => check + 1); }} onCheck={() => setCheck(check => check + 1)} /> : undefined;
   const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
   useImperativeHandle(ref, () => ({ stop() { setPanel('local'); void chooseLocal('change'); }, showPlaces() { if (view !== 'places') back(); } }));
   const titleId = active ? 'page-title' : undefined;
@@ -269,11 +288,11 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
           <legend>Stop the workspace?</legend><p>Any running tests or chats will end. Actions already taken are not undone. Your agents and files are kept.</p>
           <div className="workspace-step-actions"><Button type="button" kind="secondary" ref={confirmAction} disabled={busy || !!error} onClick={() => { heading.current?.focus(); void chooseLocal('change'); }}>Stop workspace</Button><Button type="button" kind="quiet" onClick={keepRunning}>Keep running</Button></div>
         </fieldset>}
-        {workspace && status && <Workspace status={status} busy={sending} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} model={modelState} onStart={() => { void chooseLocal(); }} onCancel={() => { void chooseLocal('cancel'); }} active={active && view === 'local'} onStop={requestStop} />}
-        {!workspace && selected && status && <SetupProgress modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onChange={requestStop} onOpenExample={openExample} />}
+        {workspace && status && <Workspace updating={upgradeBusy || upgrade?.busy} updateBlocked={recoveryOnly} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} model={modelState} onStart={() => { void chooseLocal(); }} onCancel={() => { void chooseLocal('cancel'); }} active={active && view === 'local'} onStop={requestStop} />}
+        {!workspace && selected && status && <SetupProgress updating={upgradeBusy || upgrade?.busy} updateBlocked={recoveryOnly} upgrade={upgradePanel} modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onChange={requestStop} onOpenExample={openExample} />}
         </div>
         <div className="setup-column setup-side">
-        {status && modelMounted && <div className="setup-model-slot"><Model inline={canQueueModel(status)} choiceTarget={stepChoice} changeRequest={providerChange} onPlaceCard={view === 'places'} recoveryTarget={view === 'places' ? placeRecovery : stepRecovery} enabled={status.model === 'available'} queueable={canQueueModel(status)} paused={!!error || sending} away={cluster} primary={status.localVm === 'ready'} onConnectRequest={() => { chooseComputer(); if (view === 'places') setPanel('local'); }} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
+        {status && modelMounted && <div className="setup-model-slot"><Model inline={!status.workspaceReplaced && canQueueModel(status)} choiceTarget={stepChoice} changeRequest={providerChange} onPlaceCard={view === 'places'} recoveryTarget={view === 'places' ? placeRecovery : stepRecovery} enabled={status.model === 'available'} queueable={!status.workspaceReplaced && canQueueModel(status)} paused={!!error || changing} away={cluster} primary={status.localVm === 'ready'} onConnectRequest={() => { chooseComputer(); if (view === 'places') setPanel('local'); }} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
         {!workspace && selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={openExample} onName={onExampleName} />}
         </div>
       </div>

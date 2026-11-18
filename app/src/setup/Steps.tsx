@@ -16,6 +16,7 @@ import { testDefinitions } from '../designer/test-definitions';
 export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
 
 type Props = {
+  upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean;
   modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement>;
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
   modelUnavailable?: boolean;
@@ -24,13 +25,13 @@ type Props = {
 };
 const rowClass: Record<Status, string> = { passed: 'step-done', failed: 'step-failed', running: 'step-current', 'needs-you': 'step-current', stale: 'step-waiting', 'not-started': 'step-waiting' };
 // Completed rows stay in place; only the active row opens its progress.
-function stepRows({ status, stopping, error, modelState = 'idle', firstCheck, initialAutomatic }: Pick<Props, 'status' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic'>) {
+function stepRows({ status, stopping, updating, updateBlocked, error, modelState = 'idle', firstCheck, initialAutomatic }: Pick<Props, 'status' | 'stopping' | 'updating' | 'updateBlocked' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic'>) {
   const view = setupView(status, { stopping, model: modelState, check: firstCheck, initialAutomatic });
   const failed = status.localVm === 'failed';
   const paused = status.localVm === 'cancelled' || status.localVm === 'closed';
   const connected = modelState === 'connected';
   const infra = stopping ? null : infraProgress(status);
-  const workspace: [Status, string] = stopping || status.localVm === 'closing' ? ['running', 'Stopping']
+  const workspace: [Status, string] = updating ? ['running', 'Updating'] : updateBlocked ? ['needs-you', 'Needs you'] : stopping || status.localVm === 'closing' ? ['running', 'Stopping']
     : status.localVm === 'ready' ? ['passed', 'Ready']
     : failed ? ['failed', "Couldn't start"] : paused ? ['not-started', 'Paused']
     : infra ? ['running', status.localVm === 'starting' ? 'Starting' : 'Getting ready'] : ['not-started', 'Waiting'];
@@ -64,10 +65,10 @@ export function SetupProgress(props: Props) {
     : status.localVm === 'closing' ? 'Stopping the workspace…'
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
     : copying ? 'Installing the workspace…' : 'Checking the cluster download…';
-  const pill: Status = error ? 'needs-you' : view.status;
-  const workspaceReady = ready && !error && !stopping;
-  const workspaceWord = error ? 'Status unavailable' : stopping || status.localVm === 'closing' ? 'Stopping' : workspaceReady ? 'Ready' : failed ? "Couldn't start" : undefined;
-  const workspaceDetails = !failed && !error && <>
+  const pill: Status = error || props.updateBlocked ? 'needs-you' : props.updating ? 'running' : view.status;
+  const workspaceReady = ready && !error && !stopping && !props.updating && !props.updateBlocked;
+  const workspaceWord = error ? 'Status unavailable' : props.updating ? 'Updating' : props.updateBlocked ? 'Needs you' : stopping || status.localVm === 'closing' ? 'Stopping' : workspaceReady ? 'Ready' : failed ? "Couldn't start" : undefined;
+  const workspaceDetails = props.upgrade ?? (!failed && !error && <>
     {infra && <><div role="progressbar" aria-label="Workspace setup progress" aria-valuemin={0} aria-valuemax={100}
       aria-valuenow={infra.value === null ? undefined : Math.round(infra.value * 100)} className={`infra-bar${infra.value === null ? ' indeterminate' : ''}`}>
       <span style={infra.value === null ? undefined : { width: `${Math.round(infra.value * 100)}%` }} /></div>
@@ -80,7 +81,7 @@ export function SetupProgress(props: Props) {
         {progress && status.localVm !== 'starting' && progress.phase !== 'starting' && <p className="muted">{Math.floor(progress.elapsedMs / 1000)} seconds {progress.phase === 'verifying' ? 'checking files' : 'installing files'}.</p>}
         {status.localVmError && <pre tabIndex={0}>{ready ? modelDetails(status.localVmError) : status.localVmError}</pre>}
       </div>}</Disclosure>
-  </>;
+  </>);
   return <section className="card workspace-steps setup-progress" aria-label="Workspace setup">
     <div className="steps-head"><h2>Workspace</h2><StatusPill state={workspaceReady ? 'passed' : pill}>{workspaceWord}</StatusPill></div>
     {view.done && <span className="status-description">{view.line !== 'Workspace ready' ? view.line : undefined}</span>}
@@ -107,7 +108,7 @@ export function SetupProgress(props: Props) {
   </section>;
 }
 
-export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster'> & { workspaceDetails?: ReactNode; modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement> }) {
+export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster' | 'upgrade' | 'updating' | 'updateBlocked'> & { workspaceDetails?: ReactNode; modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement> }) {
   const { status, busy, error, onRestart, onCluster } = props;
   const { view, failed, rows } = stepRows(props);
   return <ol className="steps-four" aria-label="Setup steps">
@@ -116,7 +117,7 @@ export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | '
         <StatusIcon state={state} /><b>{name}</b><span className="step-result">{result}</span>
         {index === 1 && props.workspaceDetails && <div className="step-more">{props.workspaceDetails}</div>}
         {index === 2 && <><div ref={props.modelChoiceRef} className="step-more model-choice-slot" /><div ref={props.modelRecoveryRef} className="step-more model-recovery-slot" /></>}
-        {failed && index === 1 && <div className="step-more">
+        {failed && !props.upgrade && index === 1 && <div className="step-more">
           <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /></div>}
       </li>; })}
     </ol>;

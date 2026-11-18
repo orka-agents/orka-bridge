@@ -306,4 +306,16 @@ assert.ok(model.includes('localSize(540, 640)') && model.includes('chat-new-vers
 assert.ok(source.includes("resizeTo({ width: 1280, height: 800 }, 'Wide')"));
 assert.ok(source.includes("resizeTo({ width: 540, height: 640 }, 'Compact')"));
 assert.ok(!source.includes('Emulation.setDeviceMetricsOverride'), 'a fake viewport cannot qualify native size evidence');
-console.log('PASS real scope parsing; 46+20 unique action cases; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
+// Upgrade presentation extends existing scope manifests, not the native safety proof.
+const upgradeManifest = JSON.parse(await readFile(new URL('./native-model-captures.json', import.meta.url), 'utf8'));
+const upgradeNames = upgradeManifest['destinations-workspace'].filter(name => name.startsWith('local-upgrade-'));
+assert.equal(upgradeNames.length, 50, 'both sizes of setup/Manage states and confirmations must stay in the destination journey');
+assert.equal(new Set(upgradeNames).size, 50);
+assert.ok(!upgradeManifest.model.some(name => name.startsWith('local-upgrade-')), 'model journey must not duplicate upgrade captures');
+const upgradeCapture = source.slice(source.indexOf('  async function captureUpgrade('), source.indexOf('  const notes = [];'));
+assert.ok(upgradeCapture.includes('if (!runCore) return;'), 'upgrade states must remain in the core scope');
+let upgradeCalls = 0;
+await Function('runCore', 'call', `${upgradeCapture}; return captureUpgrade('light', 'wide');`)(false, async () => { upgradeCalls++; });
+assert.equal(upgradeCalls, 0, 'UI scope must not create even one upgrade world');
+assert.equal((source.match(/await captureUpgrade\(theme, '(?:wide|compact)'\)/g) ?? []).length, 2);
+console.log('PASS real scope parsing; 46+20 action cases; upgrade scope/50-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');

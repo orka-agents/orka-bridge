@@ -62,7 +62,7 @@ test('Places passively lists this computer and retained identities with truthful
   expect(within(row('team-other')).getByText('Not checked yet')).toBeTruthy();
   expect(within(row('team-other')).queryByText(/0 agents/)).toBeNull();
   expect(document.body.textContent).not.toMatch(/Observation stale|Not observed yet|kept while Bridge/);
-  expect(ipc.mock.calls.map(([c]) => c).every(c => ['setup_status', 'setup_requirements', 'cluster_places'].includes(c))).toBe(true);
+  expect(ipc.mock.calls.map(([c]) => c).every(c => ['setup_status', 'workspace_upgrade_status', 'setup_requirements', 'cluster_places'].includes(c))).toBe(true);
 });
 
 test('a remembered access check stays historical rather than becoming never checked without inventory', async () => {

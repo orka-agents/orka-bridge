@@ -675,7 +675,7 @@ test('Clusters reads setup without engine diagnostics or legacy IPC', async () =
   const user = userEvent.setup(); render(<App />);
   expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
   expect(screen.queryByText('Engine diagnostics')).toBeNull();
-  expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status', 'cluster_places', 'overview_files'].includes(command))).toBe(true);
+  expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status', 'workspace_upgrade_status', 'cluster_places', 'overview_files'].includes(command))).toBe(true);
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_requirements')).toEqual([['setup_requirements', {}]]);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(screen.queryByRole('heading', { name: 'Engine available' })).toBeNull();

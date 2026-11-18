@@ -210,6 +210,116 @@ fn fixture_recovery(stage: Option<&str>) -> serde_json::Value {
     recovery
 }
 
+// Phase-selected canned UpgradeStatus DTOs only; no rename, archive, vault or real
+// mutation. `key` is the BRIDGE_SETUP_PROGRESS content with its "upgrade-" prefix
+// (and, for the returning-workspace variant, its "-manage" suffix) stripped.
+#[cfg(all(target_os = "macos", feature = "custom-protocol"))]
+fn upgrade_status(key: &str) -> serde_json::Value {
+    use serde_json::json;
+    let transaction = "40000000-0000-4000-8000-000000000004";
+    let mut status = json!({"state":"none", "transaction":null, "createdAt":null,
+        "sourceReleases":["0.1.2"], "targetRelease":"0.1.3",
+        "retainedAllocatedBytes":1200000000_i64, "additionalBytes":2400000000_i64,
+        "credential":"absent", "busy":false, "error":null,
+        "repeated":false, "canReplace":false, "canRestore":false});
+    let with_transaction = [
+        "incomplete",
+        "incomplete-stop",
+        "busy",
+        "fresh-absent",
+        "fresh-eligible",
+        "fresh-attention",
+        "fresh-transferred",
+        "fresh-removed",
+        "consumed",
+        "sourceSelected",
+        "sourceRetained",
+        "restoring",
+        "restored",
+    ]
+    .contains(&key);
+    if with_transaction {
+        status["transaction"] = json!(transaction);
+        status["createdAt"] = json!(1700000000_i64);
+    }
+    match key {
+        "eligible-absent" => {
+            status["state"] = json!("eligible");
+            status["canReplace"] = json!(true);
+        }
+        "eligible-credential" => {
+            status["state"] = json!("eligible");
+            status["credential"] = json!("eligible");
+            status["canReplace"] = json!(true);
+        }
+        "eligible-offline" => {
+            status["state"] = json!("eligible");
+            status["canReplace"] = json!(true);
+            status["error"] = json!("network");
+        }
+        "eligible-nospace" => {
+            status["state"] = json!("eligible");
+            status["canReplace"] = json!(true);
+            status["error"] = json!("noSpace");
+        }
+        "sourceSelected" | "sourceRetained" | "restoring" => {
+            status["state"] = json!(key);
+            status["canReplace"] = json!(key != "restoring");
+            status["canRestore"] = json!(true);
+        }
+        "incomplete" => {
+            status["state"] = json!("incomplete");
+            status["canReplace"] = json!(true);
+        }
+        "incomplete-stop" => {
+            status["state"] = json!("incomplete");
+            status["error"] = json!("stopUnconfirmed");
+        }
+        "busy" => {
+            status["state"] = json!("sourceSelected");
+            status["busy"] = json!(true);
+        }
+        "fresh-absent" => {
+            status["state"] = json!("fresh");
+            status["canRestore"] = json!(true);
+        }
+        "fresh-eligible" => {
+            status["state"] = json!("fresh");
+            status["credential"] = json!("eligible");
+            status["canRestore"] = json!(true);
+        }
+        "fresh-attention" => {
+            status["state"] = json!("fresh");
+            status["credential"] = json!("attention");
+            status["canRestore"] = json!(true);
+        }
+        "fresh-transferred" => {
+            status["state"] = json!("fresh");
+            status["credential"] = json!("transferred");
+            status["canRestore"] = json!(true);
+        }
+        "fresh-removed" => {
+            status["state"] = json!("fresh");
+            status["credential"] = json!("removed");
+            status["canRestore"] = json!(true);
+        }
+        "consumed" => {
+            status["state"] = json!("consumed");
+            status["canRestore"] = json!(true);
+        }
+        "restored" => {
+            status["state"] = json!("restored");
+            status["repeated"] = json!(true);
+            status["canReplace"] = json!(true);
+        }
+        "conflict" => {
+            status["state"] = json!("conflict");
+        }
+        _ => {}
+    }
+    status
+}
+
 #[cfg(all(target_os = "macos", feature = "custom-protocol"))]
 fn main() {
     use serde_json::json;
@@ -510,6 +620,11 @@ fn main() {
                                 "workspaceProgress":{"phase":"starting", "bytes":null, "totalBytes":null, "elapsedMs":45000, "remainingMs":null}})),
                             Some("image-update" | "image-unsupported") => Some(json!({"selected":"localVm", "localVm":"failed", "model":"locked", "modelSupported":true,
                                 "workspaceFailure":{"operation":"verify", "cause":if phase.as_deref() == Some("image-update") {"workspaceUpdateRequired"} else {"workspaceVersionUnsupported"}, "codes":[]}})),
+                            // Native UpgradeStatus eligibility (below) is what unlocks the card here,
+                            // not this setup_status failure shape, which matches the plain refusal above.
+                            Some(p) if p.starts_with("upgrade-") && p.ends_with("-manage") => Some(json!({"selected":"localVm", "localVm":"ready", "model":"available", "modelSupported":true, "workspaceReplaced":true})),
+                            Some(p) if p.starts_with("upgrade-") => Some(json!({"selected":"localVm", "localVm":"failed", "model":"locked", "modelSupported":true,
+                                "workspaceFailure":{"operation":"verify", "cause":"workspaceUpdateRequired", "codes":[]}})),
                             _ => None,
                         };
                         if let Some(progress) = progress {
@@ -718,6 +833,17 @@ fn main() {
                         return true;
                     }
                     json!({"ready":false})
+                }
+                // Phase-selected read-only DTO; "replace"/"retry"/"restore"/"transfer"/"remove"/
+                // "cancel" only open or dismiss the renderer's own inline confirmation in
+                // this fixture matrix and echo the same canned status back, never a rename,
+                // archive, credential transfer or real VM/cancel operation.
+                "workspace_upgrade_status" | "workspace_upgrade_replace" | "workspace_upgrade_retry"
+                | "workspace_upgrade_restore" | "workspace_upgrade_transfer" | "workspace_upgrade_remove"
+                | "workspace_upgrade_cancel" => {
+                    let phase = capture_phase.as_deref().unwrap_or("");
+                    let key = phase.strip_prefix("upgrade-").and_then(|k| k.strip_suffix("-manage")).or_else(|| phase.strip_prefix("upgrade-")).unwrap_or("");
+                    json!(upgrade_status(key))
                 }
                 _ => {
                     invoke

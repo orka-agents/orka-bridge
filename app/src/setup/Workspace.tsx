@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Button } from '../components/Button';
 import { StatusPill } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
@@ -9,7 +9,8 @@ import Recovery from './Recovery';
 import type { SetupStatus } from './state';
 
 // Returning workspace management is not another pass through first-run setup.
-export default function Workspace({ status, busy, stopping, starting, error, model, active, onStart, onCancel, onStop }: {
+export default function Workspace({ status, busy, stopping, starting, error, model, active, onStart, onCancel, onStop, upgrade, updating, updateBlocked }: {
+  upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean;
   status: SetupStatus; busy: boolean; stopping: boolean; starting: boolean; error?: string; model: ModelState; active: boolean;
   onStart: () => void; onCancel: () => void; onStop: (button: HTMLButtonElement) => void;
 }) {
@@ -32,17 +33,18 @@ export default function Workspace({ status, busy, stopping, starting, error, mod
   const seconds = elapsed === undefined ? undefined : Math.floor(elapsed / 1000);
   const clock = seconds === undefined ? undefined : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
   return <section className="card returning-workspace" aria-label="Workspace">
-    <div className="steps-head"><div className="workspace-title"><h2>Workspace</h2><StatusPill state={error ? 'needs-you' : view.status}>{error ? 'Status unavailable' : view.word}</StatusPill></div>
+    <div className="steps-head"><div className="workspace-title"><h2>Workspace</h2><StatusPill state={error || updateBlocked ? 'needs-you' : updating ? 'running' : view.status}>{error ? 'Status unavailable' : updating ? 'Updating' : updateBlocked ? 'Needs you' : view.word}</StatusPill></div>
     {!failed && !closed && <div className="workspace-actions">
       {ready ? <Button type="button" kind="secondary" disabled={busy || !!error} onClick={event => onStop(event.currentTarget)}>Stop</Button>
         : view.word === 'Starting' ? <Button type="button" kind="secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</Button>
           : <Button type="button" kind="primary" disabled={busy || !!error || view.word === 'Stopping'} onClick={onStart}>Start</Button>}
     </div>}</div>
-    <p role="status">{error ? 'Workspace status is unavailable. Check again before starting it.' : view.detail}</p>
+    <p role="status">{updating ? 'Updating the workspace. Your agent files are kept.' : error ? 'Workspace status is unavailable. Check again before starting it.' : view.detail}</p>
     {view.word === 'Stopping' && <p className="muted">Start is available once it has stopped.</p>}
     {view.word === 'Starting' && clock && <p className="muted">{clock} so far</p>}
     {closed && <p>Quit Bridge and reopen it to start the workspace.</p>}
-    {failed && <Recovery detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure}
+    {upgrade}
+    {failed && !upgrade && <Recovery detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure}
       disabled={busy || !!error || status.workspaceFailure?.operation === 'stop'} onRetry={onStart} />}
     <dl className="workspace-facts">
       <div><dt>AI</dt><dd>{ready ? model === 'connected' ? 'Connected' : 'Connect the AI below to run your agents.' : 'Connect the AI after starting the workspace.'}</dd></div>

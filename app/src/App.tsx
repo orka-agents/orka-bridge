@@ -89,12 +89,13 @@ export default function App() {
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [returningWorkspace, setReturningWorkspace] = useState(false);
   const [workspaceStopping, setWorkspaceStopping] = useState(false);
+  const [workspaceUpdating, setWorkspaceUpdating] = useState(false);
   const localCluster = useRef<LocalClusterControl>(null);
   const [localSetupView, setLocalSetupView] = useState(false);
   const catalogContext = useRef('');
   const observeModel = useCallback((value: ModelState) => { setModel(value); setCatalogEpoch(epoch => epoch + 1); }, []);
-  const observeWorkspaceAction = useCallback((pending: boolean, stopping = false) => {
-    setWorkspaceBusy(pending); setWorkspaceStopping(pending && stopping);
+  const observeWorkspaceAction = useCallback((pending: boolean, stopping = false, updating = false) => {
+    setWorkspaceBusy(pending); setWorkspaceStopping(pending && stopping); setWorkspaceUpdating(pending && updating);
     if (pending) setCatalogEpoch(epoch => epoch + 1);
   }, []);
   const choosePlace = useCallback((value: SelectedPlace) => { overviewOpenRequest.current++; setPlace(value); setCatalogEpoch(epoch => epoch + 1); }, []);
@@ -150,7 +151,14 @@ export default function App() {
     setSaveNotice(previous => ({ id, edited: value !== 'saved' || previous.id === id && previous.edited }));
     if (id === SAMPLE_DOCUMENT_ID) setSampleDirty(value !== 'saved');
   }, []);
+  const replacementObserved = useRef(false);
   const observeSetup = useCallback((status: SetupStatus | undefined) => {
+    if (status?.workspaceReplaced) {
+      retireFirstTest();
+      setFirstPass(undefined);
+      if (!replacementObserved.current) { setSampleResult(undefined); setSampleStale(false); }
+      replacementObserved.current = true;
+    } else if (status) replacementObserved.current = false;
     setSetup(status); setChecking(false);
     const context = `${status?.selected}/${status?.localVm}/${status?.model}`;
     if (context !== catalogContext.current) { catalogContext.current = context; setCatalogEpoch(epoch => epoch + 1); }
@@ -178,7 +186,7 @@ export default function App() {
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} passed` : undefined;
   const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
   const firstTest = useFirstTest({
-    ready: setup?.selected === 'localVm' && setup.localVm === 'ready' && model === 'connected' && !workspaceBusy && !remote,
+    ready: !setup?.workspaceReplaced && setup?.selected === 'localVm' && setup.localVm === 'ready' && model === 'connected' && !workspaceBusy && !remote,
     canOpen: page === 'Clusters' && localSetupView && setup?.localVm === 'ready' && !workspaceBusy && !remote,
     sampleDirty,
     onOpen: () => openDesigner(SAMPLE_DOCUMENT_ID),
@@ -191,13 +199,14 @@ export default function App() {
   const sample = sampleResult?.snapshot;
   const firstCheck = sampleSource === null ? 'unknown' : firstTest === 'running' ? 'running' : sampleResult ? sampleStale || sample?.sourceCurrent === false || (sameSource(sampleSource, sample?.source) === false && !!sample?.report) ? 'stale'
     : !sample || sample.state === 'unknown' ? 'unknown' : sample.state === 'running' ? 'running' : sample.state === 'complete' ? sample.report?.verdict === 'cancelled' ? 'unknown' : sample.report?.verdict : undefined
-    : firstTest;
+    : setup?.workspaceReplaced ? undefined : firstTest;
   // Tab, footer and Setup share the stage. The chip names the place, not AI or test health.
   const initialAutomatic = firstTest === 'running' || (model === 'connected' && firstTestPending() && (!sample || sample.state === 'idle'));
   const firstTestResult = sampleSource !== null && sample?.report ? { failed: sample.report.cases.filter(check => check.verdict === 'failed').length } : undefined;
-  const view = setupView(setup, { checking, stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping, workspace: returningWorkspace, model, check: firstCheck, initialAutomatic });
+  const ordinaryView = setupView(setup, { checking, stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping, workspace: returningWorkspace, model, check: firstCheck, initialAutomatic });
+  const view = workspaceUpdating ? { ...ordinaryView, line: 'Updating workspace', tabLine: 'Updating workspace', footerLine: 'Updating workspace', detail: 'Your agent files are kept.', tone: 'busy' as const, status: 'running' as const, done: false } : ordinaryView;
   const { line: setupLine, detail } = view;
-  const hostWorkspace = setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
+  const hostWorkspace = workspaceUpdating ? { tone: 'busy', detail: 'Updating workspace. Your agent files are kept.' } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
     ? workspaceView(setup, { stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping }) : undefined;
   const hostTone = hostWorkspace?.tone ?? view.tone;
   const workspaceReady = setup?.localVm === 'ready';
@@ -217,12 +226,12 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [page, workspaceReady, workspaceBusy, setup?.model, model]);
   const workspaceTransition = !!setup && ['preparing', 'installing', 'starting', 'closing', 'failed'].includes(setup.localVm);
-  const overviewWorkspaceNote = workspaceStopping ? 'Stopping the workspace'
+  const overviewWorkspaceNote = workspaceUpdating ? 'Updating workspace' : workspaceStopping ? 'Stopping the workspace'
     : workspaceBusy && (!workspaceTransition || setup?.localVm === 'failed') ? 'Getting your workspace ready…'
       : workspaceTransition ? setupLine : undefined;
   const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
     : { local: 'This computer', none: 'This computer', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
-  const setupDetail = setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
+  const setupDetail = workspaceUpdating ? 'Updating workspace. Your agent files are kept.' : setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
   const hostDetail = setup?.localVm === 'failed' ? setupDetail : hostWorkspace?.detail ?? detail;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
   const agentStatus = checksStale ? 'tests need running' : runUnavailable ? 'test status unavailable' : run?.cancellation === 'unconfirmed' ? 'cancellation not confirmed' : run?.state === 'unknown' ? 'test result unknown'

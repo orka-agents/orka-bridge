@@ -1543,12 +1543,124 @@ try {
     await until(() => evaluate(`document.querySelector('.view-switch button:nth-child(2)')?.getAttribute('aria-pressed') === 'true'`), 'By agent view');
     await captureCards('by-agent');
   }
+  // Standalone Workspace Upgrade captures: synthetic workspace_upgrade_* IPC only, in a fresh
+  // isolated world per variant, loading the real compiled bundle like captureSetup/captureActions.
+  // Initial-setup snapshots reuse the existing failed/workspaceUpdateRequired setup_status shape;
+  // Returning variants enter Manage through the real renderer's explicit Stop confirmation,
+  // with synthetic lifecycle replies. Nothing here stops a real VM or touches a credential.
+  async function captureUpgrade(theme, size) {
+    if (!runCore) return;
+    const transaction = '40000000-0000-4000-8000-000000000004';
+    const base = { transaction: null, createdAt: null, sourceReleases: ['0.1.2'], targetRelease: '0.1.3', retainedAllocatedBytes: 1200000000, additionalBytes: 2400000000, credential: 'absent', busy: false, error: null, repeated: false, canReplace: false, canRestore: false };
+    const withTx = extra => ({ ...base, transaction, createdAt: 1700000000, ...extra });
+    // Initial-setup group: localVm 'failed' with the plain workspaceUpdateRequired shape, no
+    // workspaceReplaced flag (mirrors Mac's 3 states captured before firstStop, into SetupProgress).
+    const initial = [
+      ['upgrade-eligible-absent', { ...base, state: 'eligible', canReplace: true }, 'Set up new workspace', 'confirm-dismiss'],
+      ['upgrade-eligible-credential', { ...base, state: 'eligible', credential: 'eligible', canReplace: true }, 'This version of Bridge needs a new workspace', null],
+      ['upgrade-incomplete', withTx({ state: 'incomplete', canReplace: true }), 'Try setup again', 'confirm-only'],
+    ];
+    // Returning Manage group: localVm 'ready' with workspaceReplaced true, matching the parent's
+    // fresh-eligible model_walk key and the real post-replacement SetupSnapshot shape.
+    const manage = [
+      ['upgrade-source-selected', withTx({ state: 'sourceSelected', canReplace: true, canRestore: true }), 'Workspace setup was interrupted', null],
+      ['upgrade-source-retained', withTx({ state: 'sourceRetained', canReplace: true, canRestore: true }), 'Workspace setup was interrupted', null],
+      ['upgrade-restoring', withTx({ state: 'restoring', canRestore: true }), 'Restore was interrupted', null],
+      ['upgrade-restoring-confirm', withTx({ state: 'restoring', canRestore: true }), 'Restore previous workspace', 'confirm-only'],
+      ['upgrade-fresh-absent', withTx({ state: 'fresh', canRestore: true }), 'Enter a new sign-in', null],
+      ['upgrade-fresh-eligible', withTx({ state: 'fresh', credential: 'eligible', canRestore: true }), 'Use saved connection', null],
+      ['upgrade-fresh-attention', withTx({ state: 'fresh', credential: 'attention', canRestore: true }), 'needs attention', null],
+      ['upgrade-fresh-removal-confirm', withTx({ state: 'fresh', credential: 'attention', canRestore: true }), 'Remove saved connection', 'confirm-only'],
+      ['upgrade-fresh-transferred', withTx({ state: 'fresh', credential: 'transferred', canRestore: true }), 'Use Connect below', null],
+      ['upgrade-fresh-removed', withTx({ state: 'fresh', credential: 'removed', canRestore: true }), 'Enter a new sign-in', null],
+      ['upgrade-consumed-restore-confirm', withTx({ state: 'consumed', canRestore: true }), 'Restore previous workspace', 'confirm-only'],
+      ['upgrade-restored-freshc-confirm', withTx({ state: 'restored', repeated: true, canReplace: true }), 'Set up another new workspace', 'confirm-only'],
+      ['upgrade-conflict', { ...base, state: 'conflict' }, 'needs attention', null],
+      ['upgrade-error-network', withTx({ state: 'fresh', canRestore: true, error: 'network' }), 'could not be downloaded', null],
+      ['upgrade-error-nospace', withTx({ state: 'fresh', canRestore: true, error: 'noSpace' }), 'not enough free space', null],
+      ['upgrade-error-stop', withTx({ state: 'incomplete', error: 'stopUnconfirmed' }), 'could not be stopped safely', null],
+      ['upgrade-busy-cancel', withTx({ state: 'sourceSelected', busy: true }), 'Cancel update', null],
+    ];
+    const variants = [...initial.map(v => ['failed', ...v]), ...manage.map(v => ['ready', ...v])];
+    for (const [localVm, name, status, expected, mode] of variants) {
+      ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `upgrade-${theme}-${size}-${name}` }));
+      await evaluate(`(() => {
+        window.__bridgeUpgradeCalls = [];
+        window.__bridgeUpgradeShown = ${JSON.stringify(localVm !== 'ready')};
+        window.__bridgeUpgradeVm = ${JSON.stringify(localVm)};
+        localStorage.setItem('bridge.welcomeSeen.v1', '1');
+        window.isTauri = true;
+        window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
+          window.__bridgeUpgradeCalls.push({ command, args: args ?? null });
+          if (command === 'workspace_upgrade_status') return window.__bridgeUpgradeShown ? ${JSON.stringify(status)} : ${JSON.stringify({ ...base, state: 'none' })};
+          // This fixture matrix only opens/cancels the renderer's own inline confirmation; it
+          // never exercises a real mutation, so no other workspace_upgrade_* call is expected.
+          if (command.startsWith('workspace_upgrade_')) throw Error('Unexpected native mutation call: ' + command);
+          if (command === 'setup_cancel_local') { window.__bridgeUpgradeVm = 'cancelled'; return { selected: 'localVm', localVm: 'cancelled', model: 'locked', workspaceReplaced: true }; }
+          if (command === 'setup_status') return { selected: 'localVm', localVm: window.__bridgeUpgradeVm, model: window.__bridgeUpgradeVm === 'ready' ? 'available' : 'locked', modelSupported: true, ...${JSON.stringify(localVm === 'ready' ? { workspaceReplaced: true } : { workspaceFailure: { operation: 'verify', cause: 'workspaceUpdateRequired', codes: [] } })} };
+          if (command === 'agents_list') return [];
+          if (command === 'agent_creation_root') return null;
+          if (command === 'setup_requirements') return null;
+          if (command === 'cluster_contexts') return [];
+          if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
+          if (command === 'engine_call') throw { kind: 'unavailable' };
+          throw Error('Unmocked fixture command: ' + command);
+        } };
+        document.getElementById('root').replaceWith(Object.assign(document.createElement('div'), { id: 'root' }));
+      })()`);
+      await evaluate(bundle);
+      if (localVm === 'ready') {
+        await clickAction('Connect the AI');
+        await clickAction('Stop the workspace');
+        await clickAction('Stop workspace');
+        await until(() => evaluate(`!!document.querySelector('.returning-workspace')`), 'returning workspace card');
+        await evaluate(`window.__bridgeUpgradeVm = 'ready'; window.__bridgeUpgradeShown = true;`);
+      }
+      await until(() => evaluate(`[...document.querySelectorAll('.workspace-upgrade')].some(item => item.getClientRects().length && item.innerText.includes(${JSON.stringify(expected)}))`), name);
+      if (!await evaluate(`!!document.querySelector('.workspace-upgrade [role="status"]')`)) throw Error(`${name}: missing announced status region`);
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+      const base64 = await call('Page.captureScreenshot', { format: 'png' });
+      await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(base64.data, 'base64'));
+      if (mode) {
+        await clickAction(expected);
+        const confirmCount = await evaluate(`document.querySelectorAll('.workspace-upgrade fieldset.workspace-stop-confirm').length`);
+        if (confirmCount !== 1) throw Error(`${name}: expected exactly one inline confirmation, found ${confirmCount}`);
+        // Tab and Shift-Tab enter keyboard modality without accepting a mutation.
+        await evaluate(`[...document.querySelectorAll('.workspace-upgrade button')].find(button => button.textContent === 'Not now').focus()`);
+        for (const modifiers of [0, 8]) {
+          for (const type of ['keyDown', 'keyUp']) await call('Input.dispatchKeyEvent', { type, key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9, modifiers });
+        }
+        await until(() => evaluate(`document.activeElement?.textContent === 'Not now' && document.activeElement.matches(':focus-visible')`), 'confirmation keyboard focus');
+        // The fresh-C and restore warnings can sit below the fold; scroll before the separate capture.
+        await evaluate(`document.querySelector('.workspace-upgrade fieldset.workspace-stop-confirm').scrollIntoView({ block: 'center' })`);
+        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
+        const confirmImage = await call('Page.captureScreenshot', { format: 'png' });
+        await writeFile(join(output, `${theme}-${size}-${name}-confirm.png`), Buffer.from(confirmImage.data, 'base64'));
+        if (mode === 'confirm-dismiss') {
+          await clickAction('Not now');
+          if (await evaluate(`document.querySelectorAll('.workspace-upgrade fieldset.workspace-stop-confirm').length`) !== 0) throw Error(`${name}: Not now must dismiss the inline confirmation`);
+        }
+      }
+      if (status.busy) {
+        const live = await evaluate(`[...document.querySelectorAll('.workspace-upgrade button')].filter(b => b.textContent !== 'Cancel update' && !b.disabled).length`);
+        if (live !== 0) throw Error(`${name}: busy must disable every ordinary mutation button except Cancel`);
+      }
+      const calls = await evaluate('window.__bridgeUpgradeCalls');
+      for (const { command, args } of calls.filter(call => call.command.startsWith('workspace_upgrade_'))) {
+        const finite = args === null || (typeof args === 'object' && Object.keys(args).length <= 1 && (!('transaction' in args) || args.transaction === transaction));
+        if (!finite) throw Error(`${name}: ${command} received unbounded or unexpected args: ${JSON.stringify(args)}`);
+      }
+      await checkLayout(theme, size, name);
+      console.log(`Captured renderer-synthetic workspace-upgrade fixture, not native IPC safety proof: ${theme}/${size}/${name}`);
+    }
+  }
   const notes = [];
   await resizeTo({ width: 1280, height: 800 }, 'Wide');
   for (const theme of ['light', 'dark']) {
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
     for (const fixture of setupFixtures) await captureSetup(theme, 'wide', fixture);
     for (const name of actionFixtures) await captureActions(theme, 'wide', name);
+    await captureUpgrade(theme, 'wide');
     for (const variant of overviewVariants) await captureOverview(theme, 'wide', variant);
   }
   // Request CSS viewport dimensions, converting once for the real native client area.
@@ -1610,6 +1722,7 @@ $c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
     await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
     for (const fixture of setupFixtures) await captureSetup(theme, 'compact', fixture);
     for (const name of actionFixtures) await captureActions(theme, 'compact', name);
+    await captureUpgrade(theme, 'compact');
     for (const variant of overviewVariants) await captureOverview(theme, 'compact', variant);
   }
   // Preserve the explicitly named Overview minimum captures alongside the compact suite.
@@ -1623,7 +1736,7 @@ $c = New-Object WinRect; [void][WinSize]::GetClientRect($h, [ref]$c)
     if (runCore) for (const name of ['designer-connected', 'designer-running', 'designer-failed', 'designer-passed', 'designer-stale']) await captureActions(theme, 'minimum', name);
   }
   await writeFile(join(output, 'compact-window.txt'), `Capture scope: ${captureScope}\n` + notes.join('\n') + '\n');
-  await writeFile(join(output, 'README.txt'), `Capture scope: ${captureScope}. CI keeps core and chat-agent-clusters artifacts separately; both are required for the complete matrix. The chat-agent-clusters scope owns all overview-* captures (wide, compact and minimum, both themes).\n` + 'Injected renderer states in the final-head embedded Windows app WebView2. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*, including ready, unknown, blocked and cluster-selected choices), Welcome (welcome*), completed local/Stop pages (local-completed, local-stopped) and action-driven returning-workspace lifecycle states (local-workspace-*, compared with the approved workspace reference), removal confirmation/retry (ai-removal-*), earlier-installation AI reset states beside approved frames 1g/1h (ai-reset-*), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Local Cancel states (local-cancel-*) exercise renderer controls with synthetic cancellation/worker results, not native cancellation proof. First-test outcomes (first-test-passed, -unknown, -lost-reply) each reload the page and own one synthetic automatic attempt with an identical source; only the acknowledged passed submission may show the first-pass story. Setup Meet/queued, AI idle/key/connected and first-pass captures have *-comparison.png images beside cropped approved light frames 1c, 1d and 1e (dark captures use the light frame). ai-key never types a key. Layout JSON records setup stacks, form widths, row alignment, card insets, Designer priority, loading/open-error fallback spacing, fixed wide tabs/host gap, compact subtitles/label, quiet padding and themed thin scrollbars. Overview states (overview-*, including 540x640 minimum) use synthetic overview_* IPC. Send failed/unsupported/earlier-target states retain captured test titles and code IDs; header/result/resources-Details frames prove the bounded action set, unsupported retry absence and captured-result versus selected-destination distinction. These are renderer-only fixtures, not native Send IPC. Chat empty/pending/running/answer, two conversation versions and waitingForSession Succeeded/null or known-answer, New agent form/blank-created, Clusters list, connected success/details/selected list and header, context picker/checking/failure, account picker/Allowed/forbidden-list typed fallback and Designer no-destination guidance are captured at wide and true 540x640 client sizes in both themes with comparisons. Chat/New agent compare the Designer design system, not a dedicated target frame; cluster states compare the approved cluster cards (light reference for both themes). compact-window.txt records verified native client resizing; an unverified resize fails rather than falling back to viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
+  await writeFile(join(output, 'README.txt'), `Capture scope: ${captureScope}. CI keeps core and chat-agent-clusters artifacts separately; both are required for the complete matrix. The chat-agent-clusters scope owns all overview-* captures (wide, compact and minimum, both themes).\n` + 'Injected renderer states in the final-head embedded Windows app WebView2. Upgrade states and inline confirmations (upgrade-*) use synthetic IPC in the core scope, not native mutation or credential proof. Setup-progress states (setup-*), Places and local size states (places-*, local-preflight*, including ready, unknown, blocked and cluster-selected choices), Welcome (welcome*), completed local/Stop pages (local-completed, local-stopped) and action-driven returning-workspace lifecycle states (local-workspace-*, compared with the approved workspace reference), removal confirmation/retry (ai-removal-*), earlier-installation AI reset states beside approved frames 1g/1h (ai-reset-*), Add-a-place stages (cluster-*) and setup actions/first-test/Designer states use synthetic IPC. Local Cancel states (local-cancel-*) exercise renderer controls with synthetic cancellation/worker results, not native cancellation proof. First-test outcomes (first-test-passed, -unknown, -lost-reply) each reload the page and own one synthetic automatic attempt with an identical source; only the acknowledged passed submission may show the first-pass story. Setup Meet/queued, AI idle/key/connected and first-pass captures have *-comparison.png images beside cropped approved light frames 1c, 1d and 1e (dark captures use the light frame). ai-key never types a key. Layout JSON records setup stacks, form widths, row alignment, card insets, Designer priority, loading/open-error fallback spacing, fixed wide tabs/host gap, compact subtitles/label, quiet padding and themed thin scrollbars. Overview states (overview-*, including 540x640 minimum) use synthetic overview_* IPC. Send failed/unsupported/earlier-target states retain captured test titles and code IDs; header/result/resources-Details frames prove the bounded action set, unsupported retry absence and captured-result versus selected-destination distinction. These are renderer-only fixtures, not native Send IPC. Chat empty/pending/running/answer, two conversation versions and waitingForSession Succeeded/null or known-answer, New agent form/blank-created, Clusters list, connected success/details/selected list and header, context picker/checking/failure, account picker/Allowed/forbidden-list typed fallback and Designer no-destination guidance are captured at wide and true 540x640 client sizes in both themes with comparisons. Chat/New agent compare the Designer design system, not a dedicated target frame; cluster states compare the approved cluster cards (light reference for both themes). compact-window.txt records verified native client resizing; an unverified resize fails rather than falling back to viewport emulation. Not native IPC, VM, credential or download-path verification. Download is reserved and unreachable from current native startup. Themes are WebView2 media emulation; system preferences are unchanged.\n');
   // Keep the source identity next to images without inferring it from branch names.
   await writeFile(join(output, 'head.txt'), await readFile(join(output, '..', 'native-lifecycle', 'head.txt')));
 } finally {

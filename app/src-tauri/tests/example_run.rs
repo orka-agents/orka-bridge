@@ -1313,3 +1313,79 @@ async fn admitted_run_freezes_source_before_busy_vm_refusal() {
     assert!(posts.lock().unwrap().is_empty());
     vm.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+async fn active_workspace_retirement_suppresses_late_results_without_losing_history() {
+    let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let id = folder.open().unwrap().document_id;
+    let run = ExampleRun::with_history_root(
+        tokio::runtime::Handle::current(),
+        true,
+        folder,
+        Some(home.path().join("local-data")),
+    );
+    assert_eq!(run.start(vm.clone()).state, RunState::Running);
+    // Current-thread execution holds the admitted task before its first poll.
+    run.retire_for_workspace_replacement();
+    let retired = run.status(&vm);
+    assert_eq!(retired.state, RunState::Idle);
+    assert_eq!(retired.busy.as_ref().unwrap().document_id, id);
+    assert!(!retired.can_run && !retired.can_cancel);
+    assert!(retired.report.is_none() && retired.stage.is_none());
+    assert!(run.overview_observation().is_none());
+    assert!(posts.lock().unwrap().is_empty());
+    run.cancel(vm.clone(), id);
+    run.check_cancellation(vm.clone(), id);
+    for _ in 0..500 {
+        if !run.is_active() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    assert!(
+        !run.is_active(),
+        "retired worker must finish without a missing-entry panic"
+    );
+    let retired = run.status(&vm);
+    assert_eq!(retired.state, RunState::Idle);
+    assert!(retired.busy.is_none() && retired.report.is_none());
+    assert!(retired.acknowledged.is_empty() && retired.source.is_none());
+    assert!(run.overview_observation().is_none());
+    assert_eq!(run.local_results().unwrap().results.len(), 1);
+    assert_eq!(posts.lock().unwrap().len(), 2);
+    // A real later admission exposes only its own results again.
+    assert_eq!(run.start(vm.clone()).state, RunState::Running);
+    assert_eq!(finished(&run, &vm).await.state, RunState::Complete);
+    assert!(run.overview_observation().is_some());
+    let history = run.local_results().unwrap();
+    assert_eq!(history.results.len(), 1); // Latest observation per document.
+    assert_eq!(history.run_agents.len(), 2); // Both installation-scoped receipts survive.
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn workspace_replacement_retires_ephemeral_result_but_keeps_saved_history() {
+    let (vm, _posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let pair = folder.open().unwrap();
+    let history_root = Some(home.path().join("local-data"));
+    let run = ExampleRun::with_history_root(
+        tokio::runtime::Handle::current(),
+        true,
+        folder,
+        history_root,
+    );
+    run.start(vm.clone());
+    let done = finished(&run, &vm).await;
+    assert_eq!(done.state, RunState::Complete);
+    // A prior pass must never paint as current on a different (B's) VM.
+    let other = LocalVm::unavailable();
+    run.retire_for_workspace_replacement();
+    let after = run.status_document(&other, pair.document_id);
+    assert_ne!(after.state, RunState::Complete);
+    assert!(after.report.is_none());
+    vm.shutdown().await.unwrap();
+}

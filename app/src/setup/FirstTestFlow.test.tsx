@@ -8,6 +8,7 @@ import App from '../App';
 const sample = '9b2b93c4-375c-4815-9717-39852a96e411';
 const pair = { agent: '---\nname: web-reader\n---\nRead a page.', tests: 'A checksum test.', source: { agent: 'a'.repeat(64), tests: 'b'.repeat(64) } };
 const other = '12345678-1234-1234-1234-123456789abc';
+const consumedUpgrade = { state: 'consumed', transaction: '10000000-0000-4000-8000-000000000001', createdAt: 1700000000, sourceReleases: ['0.1.2'], targetRelease: '0.1.3', retainedAllocatedBytes: 1200000000, additionalBytes: null, credential: 'absent', busy: false, error: null, repeated: false, canReplace: false, canRestore: true };
 const idle = { documentId: sample, busy: null, state: 'idle', canRun: true, modelConnected: true, report: null, acknowledged: [], pending: null, error: null };
 function native(holdSave = false, lostReplies = false) {
   vi.stubGlobal('isTauri', true);
@@ -15,7 +16,7 @@ function native(holdSave = false, lostReplies = false) {
   let attemptId: unknown;
   let unreadable = false; let unreadableFiles = false; let verdict = 'passed'; let saved = pair; let modelUnavailable = false;
   const status = () => ({ selected: selected ? 'localVm' : null, localVm: stopped ? 'cancelled' : selected ? 'ready' : 'idle', model: selected && !stopped ? 'available' : 'locked' });
-  const ipc = vi.fn((command: string, payload?: unknown) => {
+  const ipc = vi.fn((command: string, payload?: unknown): unknown => {
     const args = payload as Record<string, unknown> | undefined;
     if (command === 'setup_status') return status();
     if (command === 'setup_requirements') return null;
@@ -53,6 +54,21 @@ async function completeSetup() {
   return user;
 }
 
+test('a replaced workspace retires a stale pending first test even after explicit Connect and renderer reload', async () => {
+  const { ipc } = native(); const original = ipc.getMockImplementation()!;
+  ipc.mockImplementation((command, args) => command === 'setup_status'
+    ? { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true }
+    : command === 'workspace_upgrade_status' ? consumedUpgrade : original(command, args));
+  localStorage.setItem('bridge.firstTest.v1', 'pending');
+  const user = userEvent.setup(); const view = render(<App />); await openLocalSetup(user);
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await waitFor(() => expect(document.querySelector('.model-state')?.textContent).toContain('Connected'));
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([]);
+  view.unmount(); render(<App />); await openLocalSetup(user);
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([]);
+});
+
 test('first setup stays for its first-pass story, opens only on request and never replays the moment or run', async () => {
   const { ipc, finish } = native(); const user = await completeSetup();
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1));
@@ -69,6 +85,19 @@ test('first setup stays for its first-pass story, opens only on request and neve
   await user.click(screen.getByRole('button', { name: 'Open web-reader' }));
   expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page');
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample, bundledExample: true, attemptId: expect.any(String) }]]);
+});
+
+test('replacement never presents the previous workspace pass as a fresh first-pass success', async () => {
+  const { ipc, finish } = native(); await completeSetup();
+  await waitFor(() => expect(ipc.mock.calls.some(([command]) => command === 'agent_run')).toBe(true));
+  finish();
+  await screen.findByRole('heading', { name: 'Your first agent passed its test' });
+  const original = ipc.getMockImplementation()!;
+  ipc.mockImplementation((command, args) => command === 'setup_status'
+    ? { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true }
+    : command === 'workspace_upgrade_status' ? consumedUpgrade : original(command, args));
+  await waitFor(() => expect(screen.queryByRole('heading', { name: 'Your first agent passed its test' })).toBeNull(), { timeout: 2000 });
+  expect(screen.queryByText('Its test passed')).toBeNull();
 });
 
 test('opening Designer during the automatic first test defers catalog discovery until it finishes', async () => {

@@ -28,7 +28,7 @@ func runNativeModelScopeTests(_ manifest: NativeModelCaptureManifest) throws {
         try rejects("invalid invocation \(bad)") { _ = try parseNativeModelArguments(bad) }
     }
     try manifest.validate()
-    try check(manifest.model.count == 198 && manifest.destinationsWorkspace.count == 47, "198/47 baseline")
+    try check(manifest.model.count == 198 && manifest.destinationsWorkspace.count == 97, "198/97 including upgrade")
     for name in ["local-catalog-no-destination-wide", "local-stopped", "local-workspace-image-update-minimum", "local-workspace-image-unsupported-minimum"] {
         try check(manifest.destinationsWorkspace.contains(name), "complete allocated journey includes \(name)")
     }
@@ -95,12 +95,12 @@ struct NativeModelCaptureManifest: Decodable {
         }
     }
     func validate() throws {
-        guard model.count == 198, destinationsWorkspace.count == 47,
+        guard model.count == 198, destinationsWorkspace.count == 97,
               Set(model).count == model.count,
               Set(destinationsWorkspace).count == destinationsWorkspace.count,
               Set(model).isDisjoint(with: Set(destinationsWorkspace)),
               !(model + destinationsWorkspace).contains("local-probe") else {
-            throw NativeModelHarnessError("Capture manifest must partition 245 unique named captures into 198 model and 47 destination/workspace names")
+            throw NativeModelHarnessError("Capture manifest must partition 295 unique named captures into 198 model and 97 destination/workspace names")
         }
     }
 }
@@ -1620,6 +1620,10 @@ click("Clusters", [])
 waitForButton("Connect the AI"); click("Connect the AI", [])
 press("Connect the AI")
 _ = try seek("Connected", -100)
+// Capture setup before the returning-workspace lifecycle walk retires it.
+try captureUpgradeMatrix(manage: false)
+try FileManager.default.removeItem(at: setupProgress)
+waitForButton("Stop the workspace")
 func workspacePhase(_ phase: String) throws {
     try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
     Thread.sleep(forTimeInterval: 1.2)
@@ -1707,13 +1711,73 @@ try workspacePhase("workspace-stopped")
 waitForButton("Start")
 try workspaceCapture("stop-reply-recovered", ["This computer", "Stopped", "Start"])
 
-// Typed binding refusals use the existing recovery card, never an upgrade action.
+try captureUpgradeMatrix(manage: true)
+
+// Bare binding refusals without eligibility never authorize replacement.
 for (phase, summary) in [("image-update", "This version of Bridge needs a new workspace."), ("image-unsupported", "This workspace uses different cluster files.")] {
     try workspacePhase(phase)
     try workspaceCapture(phase, [summary, "Open the matching Bridge version."])
     require(enabledButton("Try again") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
     require(!nativeTextExists("The cluster download couldn't be verified."), "Version mismatch is not download corruption")
 }
+
+func captureUpgradeMatrix(manage: Bool) throws {
+    let rows: [(String, String, String?)] = manage ? [
+        ("sourceSelected", "Workspace setup was interrupted", nil),
+        ("sourceRetained", "Workspace setup was interrupted", nil),
+        ("restoring", "Restore was interrupted", "Restore previous workspace"),
+        ("fresh-absent", "Enter a new sign-in or key", nil),
+        ("fresh-eligible", "A saved connection can be reused", nil),
+        ("fresh-attention", "The saved connection needs attention", "Remove saved connection"),
+        ("fresh-transferred", "Saved connection ready", nil),
+        ("fresh-removed", "Enter a new sign-in or key", nil),
+        ("consumed", "Connect the AI explicitly", "Restore previous workspace"),
+        ("restored", "Previous workspace restored", "Set up another new workspace"),
+        ("conflict", "Workspace recovery needs attention", nil),
+        ("eligible-offline", "Check your internet connection", nil),
+        ("eligible-nospace", "not enough free space", nil),
+        ("incomplete-stop", "could not be stopped safely", nil),
+        ("busy", "Updating the workspace", nil),
+    ] : [
+        ("eligible-absent", "This version of Bridge needs a new workspace", "Set up new workspace"),
+        ("eligible-credential", "This version of Bridge needs a new workspace", "Set up new workspace"),
+        ("incomplete", "Workspace setup was interrupted", "Try setup again"),
+    ];
+    for (state, expected, confirmation) in rows {
+        let phase = "upgrade-\(state)\(manage ? "-manage" : "")"
+        try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
+        waitForNativeText([expected])
+        for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("compact", CGFloat(540), CGFloat(900))] {
+            localSize(width, height); scroll(4000)
+            _ = try seek(expected, -100)
+            _ = try capture("local-upgrade-\(manage ? "manage" : "setup")-\(state)-\(size)", [expected])
+            if state == "busy" {
+                require(enabledButton("Cancel update") != nil, "An update must remain cancellable")
+                require(enabledButton("Restore previous workspace") == nil, "Busy must not authorize restore")
+            }
+            if let action = confirmation {
+                press(action)
+                require(enabledButton("Not now") != nil, "Confirmation must offer Not now")
+                // Enter keyboard modality without accepting a destructive action.
+                guard let notNow = enabledButton("Not now") else { fatalError("Not now missing") }
+                require(AXUIElementSetAttributeValue(notNow, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus safe confirmation action")
+                for down in [true, false] { CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: down)?.post(tap: .cghidEventTap) }
+                for down in [true, false] {
+                    let event = CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: down); event?.flags = .maskShift; event?.post(tap: .cghidEventTap)
+                }
+                Thread.sleep(forTimeInterval: 0.2)
+                require(attribute(notNow, "AXFocused") as? Bool == true, "Confirmation keyboard focus was lost")
+                let warning = action == "Restore previous workspace" ? "cannot be reopened" : action == "Remove saved connection" ? "every retained workspace" : state == "restored" ? "will not be reopened" : "Do not open the older version"
+                scroll(4000); _ = try seek(warning, -100)
+                _ = try capture("local-upgrade-\(manage ? "manage" : "setup")-\(state)-confirm-\(size)", [warning])
+                press("Not now")
+                require(enabledButton(action) != nil, "Not now must leave the original action available")
+            }
+        }
+    }
+    localSize(1280, 800); scroll(4000)
+}
+
 }
 
 try coverage.finish()
