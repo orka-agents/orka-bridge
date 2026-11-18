@@ -1308,7 +1308,10 @@ try {
         window.__bridgeRestoreToolTrace = () => { window.__TAURI_INTERNALS__.invoke = original; };
         window.__TAURI_INTERNALS__.invoke = async (...args) => {
           const result = await original(...args), turn = args[0] === 'agent_chat_status' && result.versions?.at(-1)?.turns.at(-1);
-          if (turn) turn.tools = Array.from({ length: 50 }, (_, i) => ({ name: 'heavy-tool-' + i, callId: 'heavy-call-' + i, phase: 'ToolCallCompleted' }));
+          if (turn) {
+            const tools = Array.from({ length: 50 }, (_, i) => ({ name: 'heavy-tool-' + i, callId: 'heavy-call-' + i, phase: 'ToolCallCompleted' }));
+            result.versions.at(-1).turns = Array.from({ length: 20 }, (_, i) => ({ ...turn, message: 'Tool trace message ' + (i + 1), tools: i === 19 ? tools : [] }));
+          }
           return result;
         };
       })()`);
@@ -1318,7 +1321,7 @@ try {
         const trace = await evaluate(`(() => {
           const root = document.querySelector('.chat-panel'), quiet = root.querySelector('[aria-label="Tool activity"]');
           const more = [...root.querySelectorAll('details')].find(node => node.querySelector('summary')?.textContent.includes('49 more tool activities'));
-          const answer = root.querySelector('.chat-response p.reading').getBoundingClientRect(), main = document.querySelector('main').getBoundingClientRect();
+          const answer = [...root.querySelectorAll('.chat-response p.reading')].at(-1).getBoundingClientRect(), main = document.querySelector('main').getBoundingClientRect();
           return { visibleEvents: quiet.children.length, foldedEvents: more?.querySelectorAll('li').length, open: more?.open,
             answerVisible: answer.top >= main.top && answer.bottom <= root.querySelector('.chat-composer').getBoundingClientRect().top };
         })()`);
@@ -1326,6 +1329,27 @@ try {
         await writeFile(join(output, `${theme}-${size}-chat-tool-heavy.json`), JSON.stringify(trace, null, 2));
         const heavy = await call('Page.captureScreenshot', { format: 'png' });
         await writeFile(join(output, `${theme}-${size}-chat-tool-heavy.png`), Buffer.from(heavy.data, 'base64'));
+        await evaluate(`(() => {
+          const main = document.querySelector('main'), control = document.querySelector('.chat-transcript details summary');
+          const dock = document.querySelector('.chat-composer').getBoundingClientRect();
+          main.scrollTop += control.getBoundingClientRect().bottom - Math.min(main.getBoundingClientRect().bottom - 2, dock.top + 80);
+        })()`);
+        await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        const covered = await evaluate(`(() => {
+          const main = document.querySelector('main'), area = main.getBoundingClientRect(), control = document.querySelector('.chat-transcript details summary').getBoundingClientRect();
+          return control.top >= area.top && control.bottom <= area.bottom && control.bottom > document.querySelector('.chat-composer').getBoundingClientRect().top && main.scrollHeight - main.clientHeight - main.scrollTop >= 48;
+        })()`);
+        if (!covered) throw Error('Native focus probe did not reproduce a dock-covered control inside main');
+        await evaluate(`document.querySelector('.chat-transcript details summary').focus()`);
+        await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        const focus = await evaluate(`(() => {
+          const control = document.querySelector('.chat-transcript details summary'), bounds = control.getBoundingClientRect();
+          return { focused: document.activeElement === control, visible: bounds.top >= document.querySelector('main').getBoundingClientRect().top && bounds.bottom <= document.querySelector('.chat-composer').getBoundingClientRect().top };
+        })()`);
+        if (!focus.focused || !focus.visible) throw Error('Focused native transcript control is covered: ' + JSON.stringify(focus));
+        await writeFile(join(output, `${theme}-${size}-chat-tool-focus.json`), JSON.stringify(focus, null, 2));
+        const focused = await call('Page.captureScreenshot', { format: 'png' });
+        await writeFile(join(output, `${theme}-${size}-chat-tool-focus.png`), Buffer.from(focused.data, 'base64'));
       } finally { await evaluate('window.__bridgeRestoreToolTrace(); delete window.__bridgeRestoreToolTrace'); }
     }
     if (name === 'chat-two-versions') {

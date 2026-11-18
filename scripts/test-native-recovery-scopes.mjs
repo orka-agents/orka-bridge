@@ -346,6 +346,11 @@ const matchesChecksum = text => new RegExp(`${frozenChecksumParts[0]}published-c
 for (const text of ['published-checksum', 'PUBLISHED-CHECKSUM', '(published-checksum), Passed', 'Title published-checksum Passed']) assert.equal(matchesChecksum(text), true);
 for (const text of ['published-checksum-extra', 'published-checksumX', 'other-published-checksum', 'published-checksum.extra', 'published-checksu']) assert.equal(matchesChecksum(text), false);
 assert.equal(matchesChecksum(['published-', 'checksum'].reduce((text, line) => text + (text.endsWith('-') ? '' : ' ') + line)), true);
+const cropPolicy = smoke.match(/let cropEligible = ([^\n]+)/)?.[1];
+assert.ok(cropPolicy?.includes('expected == "1 of 1 tests passed"'), 'the exact passed count needs the same frozen-pixel OCR path as the small identifier');
+const matchesPassedCount = text => new RegExp(`${frozenChecksumParts[0]}1 of 1 tests passed${frozenChecksumParts[1]}`, 'i').test(text);
+for (const text of ['1 of 1 tests passed', '(1 of 1 tests passed).']) assert.equal(matchesPassedCount(text), true);
+for (const text of ['l of 1 tests passed', '11 of 1 tests passed', '1 of 11 tests passed', '1 of 1 tests failed']) assert.equal(matchesPassedCount(text), false);
 const countSpacing = smoke.match(/replacingOccurrences\(of: #"(.*?)"#, with: " of "/)?.[1];
 assert.ok(countSpacing, 'Send count OCR must tolerate the observed missing space without accepting a different verdict');
 const normalizedCount = text => text.replace(new RegExp(countSpacing, 'g'), ' of ').split(/\s+/).join(' ');

@@ -1174,13 +1174,14 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     @discardableResult
     func capturePreflight(_ name: String, _ expected: String, anchor: String? = nil,
                           region: String = "Send and cluster tests", requiring: (([VNRecognizedTextObservation]) -> Bool)? = nil) throws -> [VNRecognizedTextObservation] {
+        let cropEligible = expected == "published-checksum" || expected == "1 of 1 tests passed"
         func matchesCapturedText(_ value: String) -> Bool {
             let text = normalizedSendText(value)
-            guard expected == "published-checksum" else { return text.localizedCaseInsensitiveContains(expected) }
+            guard cropEligible else { return text.localizedCaseInsensitiveContains(expected) }
             let checksumPattern = #"(?<![\w.-])"# + NSRegularExpression.escapedPattern(for: expected) + #"(?![\w.-])"#
             return text.range(of: checksumPattern, options: [.regularExpression, .caseInsensitive]) != nil
         }
-        func enlargedChecksumVisible(_ viewport: CGRect, _ frame: CGRect) throws -> Bool {
+        func enlargedSendTextVisible(_ viewport: CGRect, _ frame: CGRect) throws -> Bool {
             guard [viewport.origin.x, viewport.origin.y, viewport.width, viewport.height,
                    frame.origin.x, frame.origin.y, frame.width, frame.height].allSatisfy({ $0.isFinite }),
                 !viewport.isEmpty, frame.width > 0, frame.height > 0,
@@ -1213,11 +1214,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             let text = rows.compactMap { $0.topCandidates(1).first?.string }.reduce("") { text, line in
                 text + (text.isEmpty || text.hasSuffix("-") ? "" : " ") + line
             }
-            guard matchesCapturedText(text) else { return false }
             try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-send-crop-2x.png"), options: .atomic)
             try rows.map { "\($0.boundingBox): \($0.topCandidates(1).first?.string ?? "")" }.joined(separator: "\n")
                 .write(toFile: "\(output)/\(name)-send-crop-2x.ocr.txt", atomically: true, encoding: .utf8)
-            return true
+            return matchesCapturedText(text)
         }
         for _ in 0..<8 {
             // Preserve a visible transient state before doing any search work.
@@ -1242,12 +1242,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             // Section labels are uppercased; Vision also varies casing in the fixed fixture ID.
             // Require Send context in this same captured frame, never later accessibility state.
             var matchesExpected = matchesCapturedText(text)
-            // Small monospace IDs may be omitted by full-window OCR. Reuse only these frozen pixels;
-            // keep the original rows for callers and require their original full-window context/guards.
-            let hasContext = (matchesExpected || expected == "published-checksum")
+            // Full-window OCR can omit small IDs or read the count's 1 as l. Re-OCR only these
+            // frozen pixels, never correct glyphs; retain the original rows, context and guards.
+            let hasContext = (matchesExpected || cropEligible)
                 && sendFrameVisible(seen) && (requiring?(seen) ?? true)
-            if !matchesExpected && expected == "published-checksum" && hasContext {
-                matchesExpected = try enlargedChecksumVisible(viewport, frame)
+            if !matchesExpected && cropEligible && hasContext {
+                matchesExpected = try enlargedSendTextVisible(viewport, frame)
             }
             if matchesExpected && hasContext {
                 // Keep the frame we verified. A transient state can end between
@@ -1401,8 +1401,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try capturePreflight("send-first-minimum", "Send and run tests")
     try clickSendControl("Send and run tests", scrolling: -350)
     Thread.sleep(forTimeInterval: 1)
-    let result = try capturePreflight("send-result", "1 of 1 tests passed")
-    require(result.contains { normalizedSendText($0.topCandidates(1).first?.string ?? "").contains("1 of 1 tests passed") }, "Fixture-backed Send did not pass its real tests")
+    try capturePreflight("send-result", "1 of 1 tests passed", requiring: { rows in
+        rows.contains { $0.topCandidates(1).first?.string.caseInsensitiveCompare("Passed") == .orderedSame }
+    })
     try resultSize(1280, 800)
     try capturePreflight("send-result-wide", "1 of 1 tests passed")
     try clickSendControl("published-checksum", scrolling: -250)

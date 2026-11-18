@@ -14,7 +14,7 @@ import FileEditor from './FileEditor';
 import FileLocation from './FileLocation';
 import NewAgent from './NewAgent';
 import { listDocuments, selectDocument, type AgentEntry } from './documents-api';
-import { readForm } from './agent-form';
+import { readAgentName, readForm } from './agent-form';
 import type { RunSnapshot } from './run-api';
 import type { SelectedPlace } from '../clusters/api';
 import Send, { SendEntry, SendHistory } from '../clusters/Send';
@@ -220,7 +220,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   }, [sampleRevision, boundDocument]);
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const instructionsMissing = !!pair && !readForm(draft).instructions.trim();
-  const savedName = useMemo(() => readForm(pair?.agent ?? '').name, [pair?.agent]);
+  const savedName = useMemo(() => readAgentName(pair?.agent ?? ''), [pair?.agent]);
   const testFile = pair?.tests;
   const definitions = useMemo(() => testFile === undefined ? undefined : testDefinitions(testFile), [testFile]);
   const testDraft = !!pair && isTestDraft(pair.tests);

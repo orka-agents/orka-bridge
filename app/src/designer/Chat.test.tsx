@@ -366,6 +366,109 @@ test('hidden Chat never follows or tracks the shared page scroll', async () => {
   view.rerender(<main className="page-content"><Chat documentId={id} active /></main>); await poll();
   expect(page.scrollTop).toBe(1000);
 });
+test('transcript focus clears the current composer after native focus scrolling, without moving visible controls', async () => {
+  const { page, summary, dock, flush } = await focusScroll();
+  summary.focus();
+  expect(page.scrollTop).toBe(100);
+  // Model the browser's own focus scroll before the animation frame runs.
+  page.scrollTop = 150; summary.getBoundingClientRect = () => ({ bottom: 600 }) as DOMRect;
+  flush(); expect(page.scrollTop).toBe(230);
+  field().focus();
+  // A taller draft, narrower window or extra status/error copy raises the dock.
+  dock.getBoundingClientRect = () => ({ top: 440 }) as DOMRect;
+  summary.focus(); flush(); expect(page.scrollTop).toBe(390);
+  field().focus(); summary.getBoundingClientRect = () => ({ bottom: 400 }) as DOMRect;
+  summary.focus(); flush(); expect(page.scrollTop).toBe(390);
+});
+test('transcript focus scrolling cancels stale focus and inactive/unmounted work without changing shared main styles', async () => {
+  const { page, summary, view, flush, cancel } = await focusScroll();
+  summary.focus(); field().focus(); flush(); expect(page.scrollTop).toBe(100);
+  summary.focus();
+  view.rerender(<main className="page-content" style={{ scrollPaddingBottom: '13px' }}><Chat documentId={id} active={false} /></main>);
+  expect(cancel).toHaveBeenCalled(); flush(); expect(page.scrollTop).toBe(100);
+  field().focus(); summary.focus(); flush(); expect(page.scrollTop).toBe(100);
+  expect(page.style.scrollPaddingBottom).toBe('13px');
+  view.rerender(<main className="page-content" style={{ scrollPaddingBottom: '13px' }}><Chat documentId={id} /></main>);
+  page.scrollTop = 100; fireEvent.scroll(page); field().focus(); summary.focus();
+  const before = cancel.mock.calls.length; view.unmount();
+  expect(cancel.mock.calls.length).toBeGreaterThan(before);
+  flush(); expect(page.scrollTop).toBe(100);
+});
+async function focusScroll() {
+  snapshot = { ...idle, versions: [{ turns: [{ ...turn, tools: [
+    { name: 'first', callId: '1', phase: 'Succeeded' }, { name: 'last', callId: '2', phase: 'Succeeded' },
+  ] }] }] };
+  const frames = new Map<number, FrameRequestCallback>(); let next = 0;
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++next, callback); return next; });
+  const cancel = vi.fn((frame: number) => { frames.delete(frame); }); vi.stubGlobal('cancelAnimationFrame', cancel);
+  const view = render(<main className="page-content" style={{ scrollPaddingBottom: '13px' }}><Chat documentId={id} /></main>);
+  await act(async () => {});
+  const page = screen.getByRole('main'); const summary = screen.getByText('1 more tool activity').closest('summary')!;
+  const dock = field().closest('form')!;
+  Object.defineProperties(page, { scrollHeight: { value: 1600 }, clientHeight: { value: 700 }, scrollTop: { value: 100, writable: true } });
+  page.getBoundingClientRect = () => ({ top: 60, bottom: 760 }) as DOMRect;
+  summary.getBoundingClientRect = () => ({ bottom: 700 }) as DOMRect;
+  dock.getBoundingClientRect = () => ({ top: 520 }) as DOMRect;
+  fireEvent.scroll(page);
+  return { page, summary, dock, view, cancel, flush: () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback(0)); } };
+}
+test.each(['busy', 'contextUnavailable'])('a definite %s Send rejection never enables follow, including while admission is pending', async error => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  let reject!: (error: string) => void; send = () => new Promise((_resolve, fail) => { reject = fail; });
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 }, scrollTop: { value: 100, writable: true } });
+  fireEvent.scroll(page); enter('Next question'); await poll();
+  expect(page.scrollTop).toBe(100);
+  await act(async () => reject(error)); await poll();
+  expect(field().value).toBe('Next question'); expect(screen.getByRole('alert')).toBeTruthy();
+  expect(page.scrollTop).toBe(100);
+});
+test.each(['preflight', 'turn'])('an uncertain Send leaves earlier reading alone until polling reconciles its %s', async reconciliation => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  send = () => Promise.reject('unknown transport error');
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 }, scrollTop: { value: 100, writable: true } });
+  fireEvent.scroll(page); enter('Next question'); await act(async () => {}); await poll();
+  expect(page.scrollTop).toBe(100);
+  snapshot = reconciliation === 'preflight' ? { ...snapshot, state: 'preparing', busy: true, canSend: false }
+    : { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Next question' }] }] };
+  await poll(); expect(page.scrollTop).toBe(1000);
+});
+test.each(['preflight', 'turn'])('pending Send ignores an older %s read and suppresses polling until its RPC settles', async evidence => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  let finishRead!: (value: ChatSnapshot) => void; let rejectSend!: (error: string) => void; let reads = 0;
+  mockIPC(command => {
+    if (command === 'agent_chat_status' && ++reads === 2) return new Promise(resolve => { finishRead = resolve; });
+    if (command === 'agent_chat_send') return new Promise((_resolve, reject) => { rejectSend = reject; });
+    return structuredClone(snapshot);
+  });
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 }, scrollTop: { value: 100, writable: true } });
+  fireEvent.scroll(page); await poll(); enter('Next question'); await act(async () => {});
+  snapshot = evidence === 'preflight' ? { ...snapshot, state: 'preparing', busy: true, canSend: false }
+    : { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Next question' }] }] };
+  await act(async () => finishRead(snapshot)); await poll();
+  expect(reads).toBe(2); expect(page.scrollTop).toBe(100); expect(field().value).toBe('Next question');
+  expect(screen.queryByText('Your agent is working…')).toBeNull();
+  expect(screen.getAllByText('Hello back')).toHaveLength(1);
+  await act(async () => rejectSend('unknown transport error')); await poll();
+  expect(reads).toBe(3); expect(page.scrollTop).toBe(1000);
+  page.scrollTop = 100; fireEvent.scroll(page); await poll(); expect(page.scrollTop).toBe(100);
+});
+test('reading earlier messages after admission stays put through preflight polls and the appended turn', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  send = () => (snapshot = { ...snapshot, state: 'preparing', busy: true, canSend: false });
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 }, scrollTop: { value: 100, writable: true } });
+  fireEvent.scroll(page); enter('Next question'); await act(async () => {}); expect(page.scrollTop).toBe(1000);
+  page.scrollTop = 100; fireEvent.scroll(page); await poll(); expect(page.scrollTop).toBe(100);
+  snapshot = { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Next question' }] }] };
+  await poll(); expect(page.scrollTop).toBe(100);
+});
 test('sending from earlier messages resumes follow while passive updates leave the reader alone', async () => {
   snapshot = { ...idle, versions: [{ turns: [turn] }] };
   render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});

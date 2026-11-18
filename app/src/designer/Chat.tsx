@@ -27,10 +27,14 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     const turns = value.versions.flatMap(version => version.turns);
     const submitted = pending.current;
     if (submitted && turns.slice(submitted.count).some(turn => turn.message === submitted.message)) {
+      if (submitted.uncertain) follow.current = true;
       if (draftRef.current === submitted.message) { draftRef.current = ''; setDraft(''); }
       pending.current = undefined; setAwaitingTurn(false);
     } else if (submitted) {
-      if (value.busy) submitted.uncertain = false;
+      if (value.busy) {
+        if (submitted.uncertain) follow.current = true;
+        submitted.uncertain = false;
+      }
       // A lost IPC reply is not a rejection. An idle snapshot alone may precede
       // admission; retain acknowledgement until a turn or its busy→idle is seen.
       if (!value.busy && (value.state === 'contextUnavailable' || !submitted.uncertain && value.state === 'ready')) {
@@ -59,12 +63,32 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
   }, [documentId]);
   useLayoutEffect(() => {
     if (!active) return;
-    const area = transcript.current?.closest<HTMLElement>('.page-content');
-    if (!area) return;
+    const conversation = transcript.current; const dock = composer.current?.closest('form');
+    const area = conversation?.closest<HTMLElement>('.page-content');
+    if (!area || !conversation || !dock) return;
     scrollArea.current = area;
+    let frame: number | undefined;
     const track = () => { follow.current = area.scrollHeight - area.clientHeight - area.scrollTop < 48; };
-    area.addEventListener('scroll', track);
-    return () => { area.removeEventListener('scroll', track); scrollArea.current = null; };
+    const reveal = () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      const target = document.activeElement;
+      if (!(target instanceof HTMLElement)) return;
+      // Native focus scrolling does not know the sticky composer obscures main.
+      // Measure after that scroll, including the dock's current draft/status height.
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        if (document.activeElement !== target) return;
+        const bottom = target.getBoundingClientRect().bottom;
+        const visibleBottom = Math.min(area.getBoundingClientRect().bottom, dock.getBoundingClientRect().top);
+        if (bottom > visibleBottom) area.scrollTop += bottom - visibleBottom;
+      });
+    };
+    area.addEventListener('scroll', track); conversation.addEventListener('focusin', reveal);
+    return () => {
+      area.removeEventListener('scroll', track); conversation.removeEventListener('focusin', reveal);
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      scrollArea.current = null;
+    };
   }, [active]);
   useLayoutEffect(() => {
     if (active && snapshot && follow.current && scrollArea.current) scrollArea.current.scrollTop = scrollArea.current.scrollHeight;
@@ -88,15 +112,16 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     if (action === 'agent_chat_send' && (blocked || !snapshot.canSend || awaitingTurn || !draftRef.current.trim())) return;
     mutation.current = true; const request = ++epoch.current; setCommand(action); setError(undefined);
     if (action === 'agent_chat_send') {
-      follow.current = true;
       pending.current = { message: draftRef.current, count: snapshot.versions.reduce((n, version) => n + version.turns.length, 0) };
       setAwaitingTurn(true);
     }
     const operation = action === 'agent_chat_reconnect' && pending.current?.uncertain ? 'agent_chat_status' : action;
     const result = await chatCall(operation, documentId, pending.current?.message);
     if (!alive.current || request !== epoch.current) return;
-    if (result.ok) receiveRef.current(result.snapshot);
-    else {
+    if (result.ok) {
+      if (action === 'agent_chat_send') follow.current = true;
+      receiveRef.current(result.snapshot);
+    } else {
       if (action === 'agent_chat_send') {
         if (result.uncertain && pending.current) pending.current.uncertain = true;
         else { pending.current = undefined; setAwaitingTurn(false); }

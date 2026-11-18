@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import Example from './Example';
 import * as definitions from './test-definitions';
+import * as form from './agent-form';
 
 const id = '9b2b93c4-375c-4815-9717-39852a96e411';
 const source = { agent: 'a'.repeat(64), tests: 'b'.repeat(64) };
@@ -99,19 +100,28 @@ test.each([
   ['commented-reader', pair.agent.replace('name: web-reader', 'name: commented-reader # saved name')],
   ['renamed-reader', pair.agent.replace('name: web-reader', 'name: "renamed-reader" # saved name')],
   ['quoted-reader', pair.agent.replace('name: web-reader', "name: 'quoted-reader'")],
+  ['renamed-reader', pair.agent.replace('name: web-reader', 'name: renamed-reader\ndescription: &desc Reader')],
   ['reader-folder', pair.agent.replace('name: web-reader\n', '')],
+  ['reader-folder', pair.agent.replace('name: web-reader', 'name: 42')],
+  ['reader-folder', pair.agent.replace('name: web-reader', 'name: first\nname: second')],
+  ['reader-folder', pair.agent.replace('name: web-reader', 'name: [unfinished')],
+  ['reader-folder', pair.agent.replace('name: web-reader', 'description: &desc reader\nname: *desc')],
 ])('Send identifies the saved front-matter name with a folder fallback: %s', async (name, agent) => {
   native(localResult, null, { ...pair, name: 'reader-folder', agent }); render(<Example remote place={place} />);
   const panel = await screen.findByRole('region', { name: 'Send and cluster tests' });
   expect(within(panel).getByRole('region', { name: 'What you send' }).textContent).toContain(`${name} and test files`);
 });
-test('editing instructions does not reparse the unchanged saved test file', async () => {
-  const parse = vi.spyOn(definitions, 'testDefinitions'); native();
+test('editing instructions does not reparse unchanged saved tests or the saved agent name', async () => {
+  const parse = vi.spyOn(definitions, 'testDefinitions');
+  const name = vi.spyOn(form, 'readAgentName'); native();
   render(<Example remote place={place} />);
   const field = await screen.findByRole('textbox', { name: 'Instructions' });
   const reads = parse.mock.calls.length;
+  const names = name.mock.calls.length;
+  expect(name).toHaveBeenLastCalledWith(pair.agent);
   const user = userEvent.setup(); await user.type(field, ' Edited');
   expect(parse.mock.calls.length).toBe(reads);
+  expect(name.mock.calls.length).toBe(names);
 });
 test('a team Send destination supplies its catalog without disabling local tests', async () => {
   let release!: (value: typeof localResult) => void;
