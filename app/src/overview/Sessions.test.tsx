@@ -104,6 +104,18 @@ test('without a connected cluster the section asks for one', async () => {
   await waitFor(() => expect(screen.getByText('Connect a cluster to see its conversations here.')).toBeTruthy());
 });
 
+test('the connect prompt waits for a read; until then the section says it is reading', async () => {
+  let answer: (v: unknown) => void = () => {};
+  ipc(undefined);
+  mockIPC(command => command === 'overview_sessions' ? new Promise(resolve => { answer = resolve; }) : null);
+  render(<SessionList active places={places} />);
+  expect(await screen.findByText('Reading conversations…')).toBeTruthy();
+  expect(screen.queryByText('Connect a cluster to see its conversations here.')).toBeNull();
+  answer({ places: [read('one', [], { state: 'disconnected', observedAt: null })] });
+  expect(await screen.findByText('Connect a cluster to see its conversations here.')).toBeTruthy();
+  expect(screen.queryByText('Reading conversations…')).toBeNull();
+});
+
 test('a new connection drops the old connection\'s conversations even when its first read fails', async () => {
   let sessions: unknown = { places: [read('one', [entry('old')])] };
   ipc(undefined);
