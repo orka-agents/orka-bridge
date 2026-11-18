@@ -15,12 +15,12 @@ export type OverviewProps = {
   focus?: { id: number; sendId: string; target?: AgentFocus };
   focusPending?: boolean;
   onRetryFocus?: (sendId: string) => void;
-  workspaceNote?: string; filesRevision?: number;
+  workspaceNote?: string; filesRevision?: number; placesRevision?: number;
 };
 const focusNotes = { present: 'Not shown in Overview yet.', gone: 'The original agent is no longer available. Your saved result is unchanged.', cannotCheck: 'Cannot check this agent. Your saved result is unchanged.' };
 const complete = (v?: LiveAgents): v is CompleteAgents => v?.state === 'complete' && v.installation !== null && v.observedAt !== null;
 const hasRunningSend = (value?: Places) => value?.places.some(p => p.agents.some(a => a.record?.verdict === 'running')) || value?.unobserved.some(a => a.verdict === 'running');
-export default function Overview({ onNewAgent, active, runBusy, localAiConnected, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, workspaceNote, filesRevision = 0, focus: navigationFocus, focusPending = false, onRetryFocus }: OverviewProps) {
+export default function Overview({ onNewAgent, active, runBusy, localAiConnected, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, workspaceNote, filesRevision = 0, placesRevision = 0, focus: navigationFocus, focusPending = false, onRetryFocus }: OverviewProps) {
   const aiReasonId = useId();
   const [dismissedFocus, setDismissedFocus] = useState<number>();
   const focus = navigationFocus?.id === dismissedFocus ? undefined : navigationFocus;
@@ -50,12 +50,12 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       if (cancelled) return;
       setPlaceError(!value);
       setPlaces(previous => value ?? (previous && { ...previous, places: previous.places.map(p => ({ ...p, stale: true })) }));
-      // Send completion is not a local-run prop change. Revalidate only while native reports unfinished work.
+      // Poll known unfinished work; completion also invalidates a read that missed the initial checkpoint.
       if (hasRunningSend(value)) timer = setTimeout(() => { void list(); }, 500);
     }
     void list();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [active, refresh, focusPending, focus?.target]);
+  }, [active, refresh, focusPending, focus?.target, placesRevision]);
   // See in Overview: refresh only the recorded destination, then focus the exact card (place key + UID, never a name).
   const focusEpoch = useRef(0);
   const toFocus = useRef<string | undefined>(undefined);

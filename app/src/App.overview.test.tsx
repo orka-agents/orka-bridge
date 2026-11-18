@@ -125,6 +125,58 @@ test('cluster Run selects the exact destination and never executes from Overview
   const panel = await screen.findByRole('region', { name: 'Send and cluster tests' }); await waitFor(() => expect(document.activeElement).toBe(panel)); expect(actions()).toEqual([]);
 });
 
+test('a hidden Send completion revalidates Overview after its first read missed the Running journal checkpoint', async () => {
+  const sendId = '00000000-0000-4000-8000-000000000004';
+  const running = { documentId, id: sendId, targetId: target.id, providerId: provider.id, targetName: target.context_name, source, model: 'literal-model', agentName: 'bridge-reader', state: 'running', stage: 'observe', acknowledged: [{ kind: 'Agent', name: 'bridge-reader', uid: 'uid' }], pending: null, report: null, error: null, storageError: false };
+  let view: unknown = null;
+  let finished = false;
+  ipc(undefined, command => {
+    if (command === 'send_start') { view = running; return { documentId, view, busy: null }; }
+    if (command === 'send_status') return { documentId, view, busy: null };
+    if (command === 'overview_places') return { historyState: 'complete', unobserved: [], places: inventory.map(place => place.key !== 'one' || !finished ? place : { ...place, agents: [
+      { ...place.agents[0], record: { ...record, id: sendId, verdict: 'failed', report: { verdict: 'failed', passed: 0, total: 1 } } },
+      { ...place.agents[0], uid: 'other-uid', record: { ...record, agentUid: 'other-uid', source: { ...source, tests: 'c'.repeat(64) } } },
+    ] }) };
+    return undefined;
+  });
+  const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' })); await expand();
+  await user.click(screen.getByRole('button', { name: 'Run tests reader on team-one' }));
+  const panel = await screen.findByRole('region', { name: 'Send and cluster tests' });
+  const start = within(panel).getByRole('button', { name: 'Send and run tests' });
+  await waitFor(() => expect(start).toHaveProperty('disabled', false)); await user.click(start);
+  await screen.findByRole('button', { name: 'Cancel tests' });
+  // Admission has returned Running, but persisted history still contains the previous Passed result.
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  const agent = await expand();
+  expect(within(agent).getByRole('article', { name: 'team-one, Passed' })).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Send and cluster tests' })).toBeNull();
+  const reads = calls.filter(c => c.command === 'overview_places').length;
+  finished = true;
+  view = { ...running, state: 'complete', stage: 'done', report: { verdict: 'failed', cases: [{ id: 'first', question: 'Read', phase: 'Succeeded', answer: 'wrong', completedTools: [], assertions: [{ id: 'answer', kind: 'contains', expected: 'page', verdict: 'failed' }], verdict: 'failed' }] } };
+  await waitFor(() => expect(within(agent).getByRole('article', { name: 'team-one, Failed' })).toBeTruthy(), { timeout: 1500 });
+  expect(within(agent).getByRole('article', { name: 'team-two, Passed' })).toBeTruthy();
+  const failed = within(agent).getByRole('article', { name: 'team-one, Failed' });
+  expect(failed.getAttribute('data-card-key')).toBe('one/uid');
+  expect(within(failed).getByText('0 of 1 passed')).toBeTruthy();
+  await user.click(within(failed).getByRole('button', { name: 'Details' }));
+  expect(within(failed).getByText(source.agent)).toBeTruthy();
+  expect(within(failed).getByText(source.tests)).toBeTruthy();
+  const other = within(agent).getByRole('article', { name: 'team-one, Not run since your edit' });
+  expect(other.getAttribute('data-card-key')).toBe('one/other-uid');
+  expect(other.textContent).not.toContain('Failed');
+  // Repeated terminal status polls must not invalidate inventory again or restart live/file reads.
+  const statusReads = calls.filter(c => c.command === 'send_status').length;
+  const fileReads = calls.filter(c => c.command === 'overview_files').length;
+  const agentReads = calls.filter(c => c.command === 'overview_agents').length;
+  await waitFor(() => expect(calls.filter(c => c.command === 'send_status').length).toBeGreaterThan(statusReads + 1), { timeout: 1500 });
+  expect(calls.filter(c => c.command === 'overview_places')).toHaveLength(reads + 1);
+  expect(calls.filter(c => c.command === 'overview_files')).toHaveLength(fileReads);
+  expect(calls.filter(c => c.command === 'overview_agents')).toHaveLength(agentReads);
+  expect(calls.filter(c => c.command === 'send_start')).toHaveLength(1);
+  expect(calls.some(c => c.command === 'send_agent_focus')).toBe(false);
+});
+
 test('opening another cluster resets an old management subview before returning to Clusters', async () => {
   let selectedKey = 'one'; const second = { ...target, id: '00000000-0000-4000-8000-000000000004', context_name: 'team-two' };
   ipc(args => { selectedKey = (args as { key: string }).key; return { target: selectedKey === 'one' ? target : second, providers: [provider] }; }, command => command === 'cluster_places' ? { places: inventory, selectedKey, persistenceState: 'complete' } : command === 'setup_status' ? { selected: 'localVm', localVm: 'ready', model: 'locked' } : undefined);

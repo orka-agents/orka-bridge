@@ -167,11 +167,12 @@ export function SendHistory({ revision, onChanged }: { revision: string; onChang
       : history ? history.length ? <ol>{history.map(attempt => <SavedSend key={attempt.id} attempt={attempt} revision={revision} onChanged={onChanged} />)}</ol> : <p>No saved Sends yet.</p> : <p role="status">Reading saved Sends…</p>}
   </Disclosure></section>;
 }
-export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID, place, source, model, local, stale, blocked, onChooseCluster, onReloadSource, onSeeInOverview, onFixLocal }: {
+export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID, place, source, model, local, stale, blocked, onChooseCluster, onReloadSource, onSeeInOverview, onFixLocal, onSendSettled }: {
   expanded?: boolean; documentId?: string; place: SelectedPlace; source?: SourceId; model?: string; local?: RunSnapshot; stale: boolean;
   blocked?: string; onChooseCluster?: () => void; onReloadSource?: () => Promise<void>;
   /** Opens Overview on the agent recorded for this native Send attempt. */
   onSeeInOverview?: (sendId: string) => void; onFixLocal?: (testId: string) => void;
+  onSendSettled?: () => void;
 }) {
   const [status, setSnapshot] = useState<SendStatus>();
   const snapshot = status?.documentId === documentId ? status.view : null;
@@ -204,15 +205,37 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
   const agentHash = source?.agent; const testsHash = source?.tests;
   const previousSend = useRef<{ id: string; state: string } | undefined>(undefined);
   const previousBusy = useRef<string | undefined>(undefined);
+  const pendingSettlement = useRef<{ id: string; documentId: string } | undefined>(undefined);
+  const settledSends = useRef(new Set<string>());
   const busyDocumentId = foreignBusy?.documentId;
   const sendId = snapshot?.id; const sendState = snapshot?.state;
   useEffect(() => {
+    // Switching documents hides the old snapshot before the new status reply; that is not settlement.
+    if (status?.documentId !== documentId) return;
     const previous = previousSend.current;
     previousSend.current = sendId && sendState ? { id: sendId, state: sendState } : undefined;
-    const foreignFinished = !!previousBusy.current && !busyDocumentId;
+    const previousBusyDocument = previousBusy.current;
+    const foreignFinished = !!previousBusyDocument && !busyDocumentId;
     previousBusy.current = busyDocumentId;
-    if (foreignFinished || (previous?.id === sendId && previous?.state === 'running' && sendState !== 'running')) setRefresh(value => value + 1);
-  }, [sendId, sendState, busyDocumentId]);
+    if (sendId && sendState === 'running') pendingSettlement.current = { id: sendId, documentId };
+    const pending = pendingSettlement.current;
+    const finished = !!sendId && !!sendState && sendState !== 'running'
+      && (previous?.id === sendId && previous.state === 'running' || pending?.id === sendId);
+    // The owner can finish before the first status reply for a newly selected document.
+    const pendingFinished = !!pending && pending.documentId !== documentId && !status.busy;
+    if (foreignFinished || finished || pendingFinished) setRefresh(value => value + 1);
+    const foreignSettled = foreignFinished && !status.busy || pendingFinished;
+    if (!finished && !foreignSettled) return;
+    // Known attempts dedupe by ID, including an already-terminal start reply. Without an ID,
+    // consuming the foreign busy-to-idle edge notifies once per observed busy generation.
+    const settledId = finished ? sendId : pendingFinished || pending?.documentId === previousBusyDocument ? pending?.id : undefined;
+    if (settledId) {
+      if (pending?.id === settledId) pendingSettlement.current = undefined;
+      if (settledSends.current.has(settledId)) return;
+      settledSends.current.add(settledId);
+    }
+    onSendSettled?.();
+  }, [documentId, status?.documentId, status?.busy, sendId, sendState, busyDocumentId, onSendSettled]);
   const checkKey = JSON.stringify([documentId, targetId, providerId, agentHash, testsHash, refresh]);
   const checkingEnabled = !blocked && !!targetId && !!providerId && !!agentHash && !!testsHash;
   useEffect(() => {
@@ -249,7 +272,11 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
     admitted.current = true; setBusy(true); const request = ++epoch.current;
     try {
       const result = await sendCall(command, { ...args, documentId });
-      if (request === epoch.current) { setSnapshot(result); setMessage(undefined); }
+      if (request === epoch.current) {
+        // Native rereads after admission, so a fast Send may finish before the start reply.
+        if (command === 'send_start' && result.view) pendingSettlement.current = { id: result.view.id, documentId };
+        setSnapshot(result); setMessage(undefined);
+      }
     } catch (error) { if (request === epoch.current) setMessage((error as Error).message); }
     finally { if (request === epoch.current) { admitted.current = false; setBusy(false); } }
   }

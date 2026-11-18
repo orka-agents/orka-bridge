@@ -21,11 +21,11 @@ import Send, { SendEntry, SendHistory } from '../clusters/Send';
 
 export type DocumentAction = { id: number; documentId: string; action: 'open' | 'chat' | 'run' | 'send' };
 
-export default function Example({ sampleRevision = 0, actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, workspaceReady = true, remote = false, catalogPaused = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview }: {
+export default function Example({ sampleRevision = 0, actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, workspaceReady = true, remote = false, catalogPaused = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview, onSendSettled }: {
   actionRequest?: DocumentAction; onActionHandled?: (id: number) => void;
   sampleRevision?: number; agentsRevision?: number; onRegistered?: () => void; documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; workspaceReady?: boolean; remote?: boolean; catalogPaused?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: AgentPair | undefined, documentId: string) => void; onRun?: (snapshot: RunSnapshot | undefined, documentId: string) => void;
-  onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void; onSeeInOverview?: (sendId: string) => void;
+  onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void; onSeeInOverview?: (sendId: string) => void; onSendSettled?: () => void;
 }) {
   const [boundDocument, setBoundDocument] = useState(documentId);
   const [requestedDocument, setRequestedDocument] = useState(documentId);
@@ -287,7 +287,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
         {setupPending && !testDraft && <><DesignerTests definitions={testDefinitions(pair.tests)} stale={false} /><Details hint="Test file">{testSource}</Details></>}
       </div></section>
       <section className="designer-checks" aria-label="Team cluster">
-        <Send expanded={sendRequest > 0} documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
+        <Send expanded={sendRequest > 0} documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} onSendSettled={onSendSettled} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} />
       </section>
       </div>
       </div>
