@@ -502,6 +502,16 @@ fn main() {
                         return true;
                     }
                     if command == "setup_status" {
+                        if phase.as_deref() == Some("setup-forced-stop") {
+                            let mut state = workspace.lock().unwrap();
+                            if state.returning {
+                                state.returning = false;
+                                invoke.message.webview().eval("localStorage.removeItem('bridge.firstTest.v1'); location.reload();").expect("fixture first-run recovery reload");
+                            }
+                            invoke.resolver.resolve(json!({"selected":"localVm", "localVm":"failed", "model":"locked", "modelSupported":true,
+                                "workspaceFailure":{"operation":"stop", "cause":"forcedStop", "codes":[]}}));
+                            return true;
+                        }
                         let progress = match phase.as_deref() {
                             Some("designer-no-destination") => Some(json!({"selected":null, "localVm":"cancelled", "model":"locked", "modelSupported":true})),
                             Some("installing") => Some(json!({"selected":"localVm", "localVm":"installing", "model":"locked", "modelSupported":true,

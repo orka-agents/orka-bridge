@@ -249,6 +249,8 @@
     "local-workspace-inside",
     "local-workspace-ready-minimum",
     "local-workspace-ready-wide",
+    "local-workspace-setup-forced-stop-minimum",
+    "local-workspace-setup-forced-stop-wide",
     "local-workspace-starting-after-quit-synthetic-minimum",
     "local-workspace-starting-after-quit-synthetic-wide",
     "local-workspace-stop-failed-details-minimum",

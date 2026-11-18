@@ -463,6 +463,57 @@ mod infrastructure_tests {
         );
         assert_eq!(probe.releases.load(Ordering::SeqCst), 0);
     }
+    #[tokio::test]
+    async fn contextual_forced_startup_error_blocks_native_restart() {
+        struct ForcedFactory(AtomicUsize);
+        impl LocalFactory for ForcedFactory {
+            fn launch(
+                &self,
+                _: watch::Receiver<bool>,
+                _: Arc<dyn Fn(LocalProgress) + Send + Sync>,
+            ) -> StartFuture<'_> {
+                self.0.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async {
+                    Err(RuntimeError::Startup(Box::new(
+                        crate::runtime::types::StartupFailure {
+                            error: RuntimeError::ShutdownForced,
+                            operation: WorkspaceOperation::Stop,
+                            diagnostic: "original handshake failed; native hard cleanup confirmed"
+                                .into(),
+                        },
+                    )))
+                })
+            }
+        }
+        let factory = Arc::new(ForcedFactory(AtomicUsize::new(0)));
+        let vm = LocalVm::new(factory.clone());
+        vm.start();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while vm.status() != LocalVmStatus::Failed {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            vm.inner
+                .state
+                .lock()
+                .unwrap()
+                .workspace_failure
+                .as_ref()
+                .unwrap()
+                .cause,
+            WorkspaceCause::ForcedStop
+        );
+        vm.start();
+        assert_eq!(
+            vm.status(),
+            LocalVmStatus::Failed,
+            "native restart bypassed forced-stop gate"
+        );
+        assert_eq!(factory.0.load(Ordering::SeqCst), 1);
+    }
     #[test]
     fn close_origin_is_stored_before_the_close_receiver_can_observe_true() {
         let vm = LocalVm::unavailable();

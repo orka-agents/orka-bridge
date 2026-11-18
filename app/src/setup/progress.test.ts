@@ -65,7 +65,7 @@ test('model and workspace trouble keep their own words and tone', () => {
 });
 
 test.each([
-  { cause: 'forcedStop', word: 'Forcibly stopped', detail: 'The workspace did not shut down in time and was forcibly stopped. Changes that had not reached disk may be lost. Quit Bridge and reopen it before trying again.' },
+  { cause: 'forcedStop', word: 'Forcibly stopped', detail: 'The workspace was forcibly stopped without a clean shutdown. Changes that had not reached disk may be lost. Quit Bridge and reopen it before trying again.' },
   { cause: 'stopUnconfirmed', word: "Couldn't stop", detail: 'The workspace may still be stopping. Quit Bridge and reopen it before trying again.' },
 ] as const)('returning $cause projection distinguishes a forced stop from an unconfirmed stop', ({ cause, word, detail }) => {
   const snapshot = status('failed', { workspaceFailure: { operation: 'stop', cause, codes: [] } });

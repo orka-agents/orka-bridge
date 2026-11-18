@@ -1455,8 +1455,9 @@ impl LocalVm {
                         &error,
                         operation,
                         matches!(
-                            error,
-                            RuntimeError::StopUnconfirmed(_) | RuntimeError::ShutdownForced
+                            WorkspaceFailure::from_error(&error, operation).cause,
+                            crate::runtime::types::WorkspaceCause::StopUnconfirmed
+                                | crate::runtime::types::WorkspaceCause::ForcedStop
                         ),
                     )
                 }

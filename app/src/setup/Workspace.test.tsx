@@ -110,7 +110,7 @@ test('a returning forced stop warns about data loss and offers only Quit Bridge 
   const user = await open();
   const card = await screen.findByRole('region', { name: 'Workspace' });
   expect(within(card).getByText('Forcibly stopped', { selector: '.pill' })).toBeTruthy();
-  expect(within(card).getByRole('status').textContent).toBe('The workspace did not shut down in time and was forcibly stopped.');
+  expect(within(card).getByRole('status').textContent).toBe('The workspace was forcibly stopped without a clean shutdown.');
   expect(within(card).getByText('Changes that had not reached disk may be lost.')).toBeTruthy();
   expect(within(card).getByText('Quit Bridge and reopen it before trying again.')).toBeTruthy();
   expect(within(card).queryByText(/didn't stop|may still be stopping|agents and files are kept/i)).toBeNull();

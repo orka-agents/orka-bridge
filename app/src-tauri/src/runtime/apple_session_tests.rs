@@ -193,7 +193,25 @@ fn failed_public_pause_or_resume_never_republishes_transport() {
 fn wrong_ready_nonce_cleans_up_without_replay_and_keeps_consumed_record() {
     let (t, journal, image) = installation();
     let resources = resource(&serving_peer("bad"));
-    assert!(AppleVmSession::launch(resources.path().to_path_buf(), journal, image, 1).is_err());
+    let error = AppleVmSession::launch(resources.path().to_path_buf(), journal, image, 1)
+        .err()
+        .expect("bad nonce admitted");
+    let failure = crate::runtime::types::WorkspaceFailure::from_error(
+        &error,
+        crate::runtime::types::WorkspaceOperation::Start,
+    );
+    assert_eq!(
+        failure.cause,
+        crate::runtime::types::WorkspaceCause::ForcedStop
+    );
+    assert_eq!(
+        failure.operation,
+        crate::runtime::types::WorkspaceOperation::Stop
+    );
+    assert!(
+        error.to_string().contains("Nonce"),
+        "original diagnostic lost: {error}"
+    );
     let reopened = Journal::open(&t.path().join("install")).unwrap();
     assert_eq!(
         reopened.record().phase,

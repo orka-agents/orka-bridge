@@ -142,7 +142,7 @@ impl WorkspaceFailure {
         Self::new(operation, cause, code)
     }
 }
-/// A startup error retained with its private diagnostic; the original stays typed.
+/// A typed startup failure with private diagnostic context, including earlier errors.
 #[derive(Debug)]
 pub struct StartupFailure {
     pub error: RuntimeError,
@@ -160,7 +160,7 @@ pub enum RuntimeError {
     Closed,
     /// A native writer may still be alive; never admit another startup.
     StopUnconfirmed(String),
-    /// Native termination was confirmed, but the graceful guest deadline expired.
+    /// Native termination was confirmed, but required destructive cleanup.
     ShutdownForced,
     Protocol(ProtocolError),
     Image(ImageError),

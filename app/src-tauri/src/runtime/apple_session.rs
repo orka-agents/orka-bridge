@@ -136,13 +136,12 @@ impl AppleVmSession {
                 .and_then(|lease| lease.handle.get::<AppleBackendHandle>())
                 .map(|handle| handle.owner.clone());
             let cleanup = session.worker.stop();
-            let hard_cancel = matches!(&error, RuntimeError::Closed)
-                && owner.as_ref().is_some_and(|owner| {
-                    matches!(
-                        owner.lock().unwrap().stop_outcome(),
-                        Some(AppleStopOutcome::HardStopped | AppleStopOutcome::ForcedStop)
-                    )
-                });
+            let hard_cleanup = owner.as_ref().is_some_and(|owner| {
+                matches!(
+                    owner.lock().unwrap().stop_outcome(),
+                    Some(AppleStopOutcome::HardStopped | AppleStopOutcome::ForcedStop)
+                )
+            });
             // Release this observer before dropping the worker: its journal can
             // explicitly unlock only after backend ownership references drop.
             drop(owner);
@@ -153,8 +152,18 @@ impl AppleVmSession {
                         "{error}; stopping the VM failed: {cleanup}"
                     ))));
             }
-            return Err(if hard_cancel {
-                RuntimeError::ShutdownForced
+            return Err(if hard_cleanup {
+                if matches!(&error, RuntimeError::Closed) {
+                    RuntimeError::ShutdownForced
+                } else {
+                    RuntimeError::Startup(Box::new(crate::runtime::types::StartupFailure {
+                        error: RuntimeError::ShutdownForced,
+                        operation: crate::runtime::types::WorkspaceOperation::Stop,
+                        diagnostic: format!(
+                            "{error}; native hard cleanup completed, not a clean guest shutdown"
+                        ),
+                    }))
+                }
             } else {
                 error
             });

@@ -102,11 +102,13 @@ for (const size of ['wide', 'minimum']) {
 }
 assert.ok(destinationCaptures.has('local-workspace-inside'));
 assert.equal(captures.model.length, 208, '202 incoming model frames plus six existing Overview list/evidence captures must remain intact');
-assert.equal(destinationCaptures.size, 49, '18 cluster/catalog frames plus31 returning workspace/Designer frames');
+assert.equal(destinationCaptures.size, 51, '18 cluster/catalog frames plus33 workspace/setup/Designer frames');
+for (const size of ['minimum', 'wide']) assert.ok(destinationCaptures.has(`local-workspace-setup-forced-stop-${size}`), 'first-run forced-stop capture missing');
 assert.ok(captures.model.every(name => !destinationCaptures.has(name)), 'native journeys must be disjoint');
 const mac = await read('./native-model-macos.swift');
 assert.ok(!mac.includes('click("Stop the workspace"'), 'Mac must not navigate via removed workspace Stop');
 assert.ok(mac.includes('workspaceCapture("starting-after-quit-synthetic"'), 'Mac synthetic startup capture must be labeled');
+assert.ok(mac.includes('workspacePhase("setup-forced-stop")') && mac.includes('First-run forced stop must offer Quit without retry'), 'Mac first-run forced-stop controls must be checked');
 const fixtureSource = await read('../app/src-tauri/examples/model_walk.rs');
 for (const state of ['ready', 'starting', 'failed', 'stopped-unexpectedly', 'stop-failed', 'closed']) {
   assert.ok(fixtureSource.includes(`"workspace-scene-${state}"`), `Mac explicit scene missing: ${state}`);

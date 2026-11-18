@@ -28,7 +28,7 @@ func runNativeModelScopeTests(_ manifest: NativeModelCaptureManifest) throws {
         try rejects("invalid invocation \(bad)") { _ = try parseNativeModelArguments(bad) }
     }
     try manifest.validate()
-    try check(manifest.model.count == 208 && manifest.destinationsWorkspace.count == 49, "208/49 model and returning-workspace capture partition")
+    try check(manifest.model.count == 208 && manifest.destinationsWorkspace.count == 51, "208/51 model and workspace capture partition")
     for name in ["local-catalog-no-destination-wide", "local-workspace-ready-wide", "local-workspace-stop-failed-details-minimum", "local-designer-waiting-chat-minimum", "local-workspace-image-update-minimum", "local-workspace-image-unsupported-minimum"] {
         try check(manifest.destinationsWorkspace.contains(name), "complete allocated journey includes \(name)")
     }
@@ -95,12 +95,12 @@ struct NativeModelCaptureManifest: Decodable {
         }
     }
     func validate() throws {
-        guard model.count == 208, destinationsWorkspace.count == 49,
+        guard model.count == 208, destinationsWorkspace.count == 51,
               Set(model).count == model.count,
               Set(destinationsWorkspace).count == destinationsWorkspace.count,
               Set(model).isDisjoint(with: Set(destinationsWorkspace)),
               !(model + destinationsWorkspace).contains("local-probe") else {
-            throw NativeModelHarnessError("Capture manifest must partition 257 unique named captures into 208 model and 49 destination/workspace names")
+            throw NativeModelHarnessError("Capture manifest must partition 259 unique named captures into 208 model and 51 destination/workspace names")
         }
     }
 }
@@ -1723,6 +1723,18 @@ for (phase, summary) in [("image-update", "This version of Bridge needs a new wo
     try workspacePhase(phase)
     try workspaceCapture(phase, [summary, "Restart workspace"])
     require(enabledButton("Restart workspace") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
+}
+try workspacePhase("setup-forced-stop")
+if !nativeTextExists("Get your workspace ready") {
+    click("Clusters", [])
+    let action = ["Continue setup", "View details", "Set up"].first { enabledButton($0) != nil }
+    require(action != nil, "Missing first-run recovery action")
+    click(action!, [])
+}
+for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+    localSize(width, height); scroll(4000)
+    _ = try capture("local-workspace-setup-forced-stop-\(size)", ["may be lost", "Quit Bridge"])
+    require(enabledButton("Quit Bridge") != nil && !anyButton("Try again") && !anyButton("Restart workspace"), "First-run forced stop must offer Quit without retry")
 }
 try "Renderer-only synthetic state captures, not VM lifecycle proof. Native Ready close notice, menu-bar dot and real quit/reopen startup remain unverified.\n".write(toFile: "\(output)/workspace-capture-gaps.txt", atomically: true, encoding: .utf8)
 }
