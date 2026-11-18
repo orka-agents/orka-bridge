@@ -371,6 +371,11 @@ assert.ok(smoke.includes('clickButton("Show details")\n    clickButton("Remove")
 // Source contracts supplement, but never substitute for, the hosted native walk.
 const model = (await readFile(new URL('./native-model-macos.swift', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const modelCaptures = JSON.parse(await readFile(new URL('./native-model-captures.json', import.meta.url), 'utf8'));
+assert.ok(model.includes('let upgradeText = !found && name.hasPrefix("local-upgrade-") && nativeChatTextIsVisible(value, aboveFooter: true)'), 'upgrade OCR fallback must prove the unchanged expected substring in a fully visible native node');
+assert.ok(model.includes('require(found || nativeText || upgradeText || chatText || workspaceControl || overviewControl'), 'native upgrade evidence must feed the original hard capture assertion');
+const nativeUpgradeVisibility = model.slice(model.indexOf('func nativeChatTextIsVisible('), model.indexOf('func waitForButton('));
+assert.ok(nativeUpgradeVisibility.includes('text.contains(expected)') && nativeUpgradeVisibility.includes('"AXStaticText"'), 'upgrade fallback must use actual expected native text, not OCR spelling aliases');
+assert.ok(nativeUpgradeVisibility.includes('bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)') && nativeUpgradeVisibility.includes('bounds.maxY <= window()!.1.maxY - 32'), 'hidden, clipped, off-window and footer text cannot satisfy upgrade fallback');
 for (const name of ['chat-long-early-wide', 'chat-long-early-minimum', 'chat-long-end-wide', 'chat-long-end-minimum']) {
   assert.ok(modelCaptures.model.includes(name), `long Chat capture must belong to model scope: ${name}`);
   assert.ok(!modelCaptures['destinations-workspace'].includes(name), `long Chat capture must not leak into destination scope: ${name}`);
