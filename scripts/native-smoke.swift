@@ -906,9 +906,12 @@ do {
     let typed = Date()
     var saved = false
     var current = before
+    var readError: Error?
     for _ in 0..<100 {
-        current = try String(contentsOf: owned, encoding: .utf8)
-        if current == before + suffix { saved = true; break }
+        // A save in progress can briefly leave the file unreadable; keep polling.
+        do { current = try String(contentsOf: owned, encoding: .utf8); readError = nil }
+        catch { readError = error }
+        if readError == nil && current == before + suffix { saved = true; break }
         Thread.sleep(forTimeInterval: 0.1)
     }
     let waited = String(format: "%.1f", Date().timeIntervalSince(typed))
@@ -918,8 +921,11 @@ do {
         let state = current == before ? "file unchanged"
             : current.hasPrefix(before) ? "file kept its contents but appended a different suffix"
             : "file contents before the suffix changed"
-        let report = "\(state) after \(waited) s\nexpected tail: \(tail(before + suffix))\nsaved tail: \(tail(current))\n"
+        let unreadable = readError.map { "last read failed: \($0)\n" } ?? ""
+        let report = "Native form did not preserve the file and append the exact instructions suffix\n"
+            + "\(state) after \(waited) s\nexpected tail: \(tail(before + suffix))\nsaved tail: \(tail(current))\n\(unreadable)"
         try? report.write(toFile: "\(output)/agent-form-save.txt", atomically: true, encoding: .utf8)
+        // Report first: capture() can itself stop the walk with a different message.
         fputs(report, stderr)
         _ = try? capture("agent-form-not-saved", "Designer")
         fail("Native form did not preserve the file and append the exact instructions suffix")
