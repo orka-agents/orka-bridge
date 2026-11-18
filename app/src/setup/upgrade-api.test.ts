@@ -1,12 +1,20 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { afterEach, expect, test, vi } from 'vitest';
-import { upgradeCall } from './upgrade';
+import ts from 'typescript';
+import { upgradeCall } from './upgrade-api';
 
 const transaction = '10000000-0000-4000-8000-000000000001';
 const status = { state: 'eligible', transaction: null, createdAt: null, sourceReleases: ['0.1.2'], targetRelease: '0.1.3', retainedAllocatedBytes: 1200, additionalBytes: 2400, credential: 'eligible', busy: false, error: null, repeated: false, canReplace: true, canRestore: false };
 afterEach(() => { clearMocks(); vi.unstubAllGlobals(); });
 function native(value: unknown) { vi.stubGlobal('isTauri', true); const ipc = vi.fn(() => value); mockIPC(ipc); return ipc; }
 
+test('case-insensitive native hosts resolve the component, not the API client', () => {
+  const files = Object.keys(import.meta.glob('./*.{ts,tsx}')).map(path => `/setup/${path.slice(2)}`.toLowerCase());
+  const resolved = ts.resolveModuleName('./Upgrade', '/setup/Setup.tsx', { moduleResolution: ts.ModuleResolutionKind.Bundler }, {
+    fileExists: path => files.includes(path.toLowerCase()), readFile: () => undefined,
+  }).resolvedModule;
+  expect(resolved?.resolvedFileName).toBe('/setup/Upgrade.tsx');
+});
 test('finite native eligibility and measured sizes survive decoding', async () => {
   native(status);
   expect(await upgradeCall('status')).toEqual({ ok: true, status });

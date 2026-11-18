@@ -15,7 +15,7 @@ import { cancelLocal, type LocalVmState, type SetupStatus, selectLocal, setupSta
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
 import Workspace from './Workspace';
 import Upgrade from './Upgrade';
-import { upgradeCall, type UpgradeStatus } from './upgrade';
+import { upgradeCall, type UpgradeStatus } from './upgrade-api';
 import './welcome.css';
 import type { RunSnapshot } from '../designer/run-api';
 import FirstPass from './FirstPass';

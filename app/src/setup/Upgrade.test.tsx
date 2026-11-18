@@ -2,7 +2,7 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import Upgrade from './Upgrade';
-import type { UpgradeStatus } from './upgrade';
+import type { UpgradeStatus } from './upgrade-api';
 
 const transaction = '10000000-0000-4000-8000-000000000001';
 const eligible: UpgradeStatus = { state: 'eligible', transaction: null, createdAt: null, sourceReleases: ['0.1.2'], targetRelease: '0.1.3', retainedAllocatedBytes: 1200000000, additionalBytes: 2400000000, credential: 'eligible', busy: false, error: null, repeated: false, canReplace: true, canRestore: false };

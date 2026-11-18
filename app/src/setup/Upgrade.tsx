@@ -3,7 +3,7 @@ import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
 import { retireFirstTest } from './first-test';
 import { formatRequirementGB } from './requirements';
-import { type UpgradeAction, type UpgradeStatus, upgradeCall } from './upgrade';
+import { type UpgradeAction, type UpgradeStatus, upgradeCall } from './upgrade-api';
 
 const failures = {
   network: 'The workspace could not be downloaded. Check your internet connection, then try again. Your old workspace is kept.',
