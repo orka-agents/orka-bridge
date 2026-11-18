@@ -110,19 +110,31 @@ async fn cancel_fixture(
     );
     (vm, run, home)
 }
+// Wait until the guest double has recorded a matching request. A loaded CI runner
+// can take more than a second to get there, so allow 10 s; a pass returns at once.
+async fn traced(script: &Script, found: impl Fn(&[(String, Option<Value>)]) -> bool) -> bool {
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if found(&script.trace.lock().unwrap()) {
+            return true;
+        }
+        if std::time::Instant::now() >= until {
+            return false;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    }
+}
 async fn observing(script: &Script) {
-    for _ in 0..500 {
-        if script.trace.lock().unwrap().iter().any(|(p, b)| {
+    let observed = traced(script, |trace| {
+        trace.iter().any(|(p, b)| {
             b.is_none()
                 && p.starts_with("tasks/")
                 && !p.ends_with("/result")
                 && !p.ends_with("/events")
-        }) {
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    }
-    panic!("no Task observation");
+        })
+    })
+    .await;
+    assert!(observed, "no Task observation");
 }
 #[tokio::test]
 async fn cancel_before_capture_creates_nothing_and_is_not_a_pass() {
@@ -284,20 +296,14 @@ async fn a_terminal_task_with_an_unfinished_worker_times_out_but_keeps_its_answe
     script.status.store(409, Ordering::SeqCst);
     *script.cancel_phase.lock().unwrap() = Some("Succeeded".into());
     run.cancel(vm.clone(), DocumentId::SAMPLE);
-    for _ in 0..500 {
-        if script
-            .trace
-            .lock()
-            .unwrap()
+    traced(&script, |trace| {
+        trace
             .iter()
             .filter(|(p, _)| p.starts_with("worker/"))
             .count()
             >= 2
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    }
+    })
+    .await;
     assert!(
         script
             .trace
@@ -420,18 +426,10 @@ async fn a_cancelled_task_waits_for_worker_proof_without_reposting_cancel() {
     run.start(vm.clone());
     observing(&script).await;
     run.cancel(vm.clone(), DocumentId::SAMPLE);
-    for _ in 0..500 {
-        if script
-            .trace
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|(p, _)| p.starts_with("worker/"))
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    }
+    traced(&script, |trace| {
+        trace.iter().any(|(p, _)| p.starts_with("worker/"))
+    })
+    .await;
     let waiting = run.status(&vm);
     assert_eq!(waiting.state, RunState::Running);
     assert_eq!(waiting.stage, Some("cancel"));
@@ -813,18 +811,12 @@ async fn ordinary_observation_keeps_a_finished_answer_when_cancellation_reads_fa
         .to_owned();
     *script.completed_task.lock().unwrap() = Some(first);
     let second_path = format!("tasks/{second}");
-    for _ in 0..500 {
-        if script
-            .trace
-            .lock()
-            .unwrap()
+    traced(&script, |trace| {
+        trace
             .iter()
             .any(|(path, body)| path == &second_path && body.is_none())
-        {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
-    }
+    })
+    .await;
     assert!(script
         .trace
         .lock()
