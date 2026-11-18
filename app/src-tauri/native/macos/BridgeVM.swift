@@ -95,7 +95,11 @@ final class BridgeVM {
             expectingGuestStop = true
             if !output(Self.frame(75, id)) { invalidate() }
         } else if opcode == 83 {
-            closing = true; supervisorSucceeded = true; reply = (75, id); cleanup()
+            // Native state can become stopped before its deferred didEnd and
+            // after Rust's last exit check. Preserve that natural-stop receipt
+            // only when G was armed; ordinary S retains its existing K reply.
+            let receipt: UInt8 = expectingGuestStop && driver.state == .stopped ? 78 : 75
+            closing = true; supervisorSucceeded = true; reply = (receipt, id); cleanup()
         } else if opcode == 80 && driver.canPause {
             let operation = Operation.pause(id)
             pending = operation

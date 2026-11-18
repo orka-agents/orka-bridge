@@ -80,12 +80,17 @@ fn close_interrupts_inflight_io_before_acquiring_session_and_preserves_forced_ou
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
             // Same order as the facade: publish close BEFORE awaiting its session mutex.
+            let began = Instant::now();
             closed.send_replace(true);
-            let stopped = tokio::time::timeout(Duration::from_secs(2), async {
-                session.lock().await.stop()
-            })
+            let stopping = session.clone();
+            let stopped = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::task::spawn_blocking(move || stopping.blocking_lock().stop()),
+            )
             .await
-            .expect("active request prevented native stop");
+            .expect("active request prevented native stop")
+            .unwrap();
+            assert!(began.elapsed() < Duration::from_secs(2));
             assert!(
                 matches!(stopped, Err(RuntimeError::ShutdownForced)),
                 "{stopped:?}"
@@ -96,6 +101,31 @@ fn close_interrupts_inflight_io_before_acquiring_session_and_preserves_forced_ou
             assert!(matches!(session.stop(), Err(RuntimeError::ShutdownForced)));
         });
     assert!(t.path().join("install/hard-stop").exists());
+}
+#[test]
+fn close_during_startup_handshake_remains_cancelled_after_confirmed_cleanup() {
+    let (t, journal, image) = installation();
+    let resources = resource(&serving_peer("startup-wait"));
+    let (closed, close) = tokio::sync::watch::channel(false);
+    let launcher = std::thread::spawn(move || {
+        let worker = RuntimeWorker::new(
+            Box::new(AppleBackend::new(resources.path().to_path_buf())),
+            journal,
+            image,
+        )
+        .unwrap();
+        AppleVmSession::start(worker, 1, Some(close))
+    });
+    let end = Instant::now() + Duration::from_secs(2);
+    while !t.path().join("install/startup-wait").exists() {
+        assert!(Instant::now() < end);
+        std::thread::yield_now();
+    }
+    closed.send_replace(true);
+    assert!(matches!(
+        launcher.join().unwrap(),
+        Err(RuntimeError::Closed)
+    ));
 }
 #[test]
 fn helper_ack_alone_never_establishes_guest_transport() {

@@ -455,12 +455,56 @@ mod infrastructure_tests {
         assert_eq!(stale.error, Some("forcedStop"));
         assert!(!stale.busy);
         vm.start();
+        assert_eq!(vm.status(), LocalVmStatus::Failed);
         assert_eq!(
             probe.starts.load(Ordering::SeqCst),
             1,
             "restart stays gated"
         );
         assert_eq!(probe.releases.load(Ordering::SeqCst), 0);
+    }
+    #[test]
+    fn upgrade_quarantine_cannot_overwrite_a_concurrently_confirmed_forced_stop() {
+        let vm = LocalVm::unavailable();
+        let gate = std::sync::Barrier::new(3);
+        let mut overwritten = false;
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for _ in 0..2000 {
+                    gate.wait();
+                    vm.quarantine_upgrade();
+                    gate.wait();
+                }
+            });
+            scope.spawn(|| {
+                for _ in 0..2000 {
+                    gate.wait();
+                    vm.inner.fail(
+                        "forced".into(),
+                        &RuntimeError::ShutdownForced,
+                        WorkspaceOperation::Stop,
+                        true,
+                    );
+                    gate.wait();
+                }
+            });
+            for _ in 0..2000 {
+                vm.inner.state.lock().unwrap().workspace_failure = None;
+                gate.wait();
+                gate.wait();
+                overwritten |= vm
+                    .inner
+                    .state
+                    .lock()
+                    .unwrap()
+                    .workspace_failure
+                    .as_ref()
+                    .unwrap()
+                    .cause
+                    != WorkspaceCause::ForcedStop;
+            }
+        });
+        assert!(!overwritten, "quarantine replaced a confirmed outcome");
     }
     #[tokio::test]
     async fn late_forced_stop_reconciles_upgrade_quarantine_without_reopening_admission() {
@@ -505,6 +549,7 @@ mod infrastructure_tests {
         assert_eq!(dto.error, Some("forcedStop"));
         assert!(!dto.busy && !dto.can_replace && !dto.can_restore);
         vm.start();
+        assert_eq!(vm.status(), LocalVmStatus::Failed);
         assert_eq!(probe.starts.load(Ordering::SeqCst), 1);
         assert_eq!(probe.releases.load(Ordering::SeqCst), 0);
     }
@@ -536,6 +581,7 @@ mod infrastructure_tests {
         );
         assert!(vm.inner.session.lock().await.is_none());
         vm.start();
+        assert_eq!(vm.status(), LocalVmStatus::Failed);
         assert_eq!(
             probe.starts.load(Ordering::SeqCst),
             1,

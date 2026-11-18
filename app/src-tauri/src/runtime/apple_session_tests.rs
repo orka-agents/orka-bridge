@@ -31,6 +31,10 @@ def guest():
         f.close()
         g.close()
         return
+    if '{mode}'=='startup-wait':
+        open(c['installationPath']+'/startup-wait','x').close()
+        time.sleep(30)
+        return
     nonce=b['body']['bootNonce']
     ready={{'type':'result','body':{{'version':1,'bootNonce':nonce,'requestId':1,'body':{{'op':'ready','body':{{}}}}}}}}
     hello={{'type':'hello','body':{{'version':1,'stage':'serve','guestNonce':'22222222-2222-4222-8222-222222222222','acceptedBootNonce':nonce}}}}
@@ -60,6 +64,7 @@ def guest():
                 if '{mode}'!='lost-ack':
                     send({{'type':'result','body':{{'version':1,'bootNonce':nonce,'requestId':request['requestId'],'body':{{'op':'ready','body':{{}}}}}}}})
                 if '{mode}'=='no-stop':
+                    open(c['installationPath']+'/shutdown-ready','x').close()
                     time.sleep(60)
                 time.sleep(0.02) # ACK is not native completion.
                 os._exit(0)
@@ -76,7 +81,7 @@ threading.Thread(target=guest,daemon=True).start()
     );
     PEER.replace("while True:", &format!("{extra}\nwhile True:")).replace(
         "    s.sendall(b'K'+b[1:])",
-        "    if b[0]==71: open(c['installationPath']+'/shutdown-armed','x').close()\n    if b[0]==83: open(c['installationPath']+'/hard-stop','x').close()\n    s.sendall(b'K'+b[1:])",
+        &format!("    if b[0]==71: open(c['installationPath']+'/shutdown-armed','x').close()\n    if b[0]==83:\n        assert '{mode}'!='no-stop' or os.path.exists(c['installationPath']+'/shutdown-ready')\n        open(c['installationPath']+'/hard-stop','x').close()\n    s.sendall(b'K'+b[1:])"),
     )
 }
 #[test]
@@ -122,6 +127,10 @@ fn ignored_shutdown_or_ack_without_poweroff_is_forced_not_clean() {
             "confirmed stop retained a lease"
         );
         assert!(t.path().join("install/hard-stop").exists());
+        assert!(t.path().join("install/shutdown-request").exists());
+        if mode == "no-stop" {
+            assert!(t.path().join("install/shutdown-ready").exists());
+        }
         assert!(matches!(session.stop(), Err(RuntimeError::ShutdownForced)));
         assert!(session.transport().is_none());
     }

@@ -177,7 +177,15 @@ jobs:
           shutil.copy2('src-tauri/gen/apple-helper/BridgeVM', root / 'resources/native/BridgeVM')
           PY
           git rev-parse HEAD > native-vm-driver/head.txt
-          tar -czf native-vm-shutdown-driver.tar.gz -C native-vm-driver .
+          tar -czf native-vm-shutdown-driver.tar.gz.tmp -C native-vm-driver .
+          mv native-vm-shutdown-driver.tar.gz.tmp native-vm-shutdown-driver.tar.gz
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && runner.os == 'macOS' && matrix.suite == 'release-checks'
+        with:
+          name: mac-native-shutdown-driver
+          path: app/native-vm-shutdown-driver.tar.gz
+          retention-days: 3
+          if-no-files-found: error
       - name: Mac deferred termination (no VM or host logout)
         if: runner.os == 'macOS' && matrix.suite == 'debug-checks'
         run: cargo +1.98.1 test --manifest-path src-tauri/Cargo.toml --locked --test native_termination --features custom-protocol
@@ -433,13 +441,6 @@ jobs:
           path: |
             app/bridge-macos-arm64.tar.gz
             app/native-walk/
-          retention-days: 3
-          if-no-files-found: error
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        if: always() && runner.os == 'macOS' && matrix.suite == 'release-checks'
-        with:
-          name: mac-native-shutdown-driver
-          path: app/native-vm-shutdown-driver.tar.gz
           retention-days: 3
           if-no-files-found: error
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

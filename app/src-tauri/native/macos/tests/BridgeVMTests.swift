@@ -57,7 +57,7 @@ private final class Harness {
         driver.disposeCheck = { t.disposedWithOpenFD = fcntl(ownedFD, F_GETFD) >= 0 }
         core = BridgeVM(driver: driver, ownershipFD: fd, queue: queue, output: { bytes in
             t.writes.append(bytes)
-            if bytes.first == 75 { t.repliesWithClosedFD.append(fcntl(ownedFD, F_GETFD) == -1) }
+            if bytes.first == 75 || bytes.first == 78 { t.repliesWithClosedFD.append(fcntl(ownedFD, F_GETFD) == -1) }
             return t.outputWorks
         }, terminal: { status in
             check(fcntl(ownedFD, F_GETFD) == -1, "terminal before ownership closed")
@@ -115,6 +115,24 @@ private struct Tests {
             check(h.trace.terminal == [true], "only completed S is success")
             h.core.start(); h.core.receive(frame(80, 4))
             check(h.driver.calls.count == 5 && h.trace.terminal.count == 1, "terminal session restarted")
+        }
+        for prepared in [false, true] {
+            let h = Harness(q); h.running()
+            if prepared { h.core.receive(frame(71, 1)) }
+            // Native state wins after Rust's last exit check; didEnd is deferred.
+            h.driver.state = .stopped
+            let delayedEnd = h.driver.didEnd
+            let id: UInt64 = prepared ? 2 : 1
+            h.core.receive(frame(83, id))
+            check(h.trace.writes.last == frame(prepared ? 78 : 75, id), "S lost natural-stop classification")
+            check(h.driver.calls == ["start", "dispose"], "already-stopped S invoked destructive stop")
+            check(h.trace.disposedWithOpenFD, "S unlocked before disposal")
+            check(h.trace.repliesWithClosedFD.last == true, "S receipt before ownership close")
+            check(h.trace.terminal == [true], "already-stopped S failed")
+            let writes = h.trace.writes.count
+            delayedEnd?()
+            check(h.trace.writes.count == writes && h.trace.terminal == [true], "deferred end repeated terminal receipt")
+            check(h.driver.calls == ["start", "dispose"], "deferred end repeated disposal")
         }
         for terminalState in [MachineState.stopped, .failed] {
             let h = Harness(q); h.running()

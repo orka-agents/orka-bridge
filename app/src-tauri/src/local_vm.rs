@@ -452,7 +452,21 @@ impl Inner {
         operation: WorkspaceOperation,
         stop_unconfirmed: bool,
     ) {
-        let mut state = self.state.lock().unwrap();
+        Self::record_failure(
+            &mut self.state.lock().unwrap(),
+            reason,
+            error,
+            operation,
+            stop_unconfirmed,
+        );
+    }
+    fn record_failure(
+        state: &mut State,
+        reason: String,
+        error: &RuntimeError,
+        operation: WorkspaceOperation,
+        stop_unconfirmed: bool,
+    ) {
         state.failure = Some(reason);
         state.preflight_failure = match error {
             RuntimeError::Preflight(failure) => Some(*failure),
@@ -791,7 +805,23 @@ impl LocalVm {
     fn quarantine_upgrade(&self) {
         // A confirmed hard stop still blocks the upgrade, but must not be
         // rewritten as an unobserved native writer by this custody guard.
-        let forced = self.stop_was_forced();
+        let forced = {
+            let mut state = self.inner.state.lock().unwrap();
+            let forced = state.workspace_failure.as_ref().is_some_and(|failure| {
+                failure.cause == crate::runtime::types::WorkspaceCause::ForcedStop
+            });
+            if !forced {
+                // Preserve-or-record is atomic with owned stop completion.
+                Inner::record_failure(
+                    &mut state,
+                    "Workspace shutdown or custody release could not be confirmed.".into(),
+                    &RuntimeError::StopUnconfirmed("Workspace recovery is required.".into()),
+                    WorkspaceOperation::Stop,
+                    false,
+                );
+            }
+            forced
+        };
         let mut dto = self
             .upgrade_cache
             .lock()
@@ -808,22 +838,6 @@ impl LocalVm {
         dto.can_replace = false;
         dto.can_restore = false;
         self.cache_upgrade_status(dto);
-        let error = if forced {
-            RuntimeError::ShutdownForced
-        } else {
-            RuntimeError::StopUnconfirmed("Workspace recovery is required.".into())
-        };
-        self.inner.fail(
-            if forced {
-                "The workspace timed out and was forcibly stopped. Workspace recovery is required."
-            } else {
-                "Workspace shutdown or custody release could not be confirmed."
-            }
-            .into(),
-            &error,
-            WorkspaceOperation::Stop,
-            false,
-        );
         // Keep upgrading=true: only process restart may release this quarantine.
     }
     fn cache_upgrade_status(&self, dto: crate::workspace_upgrade::UpgradeStatusDto) {

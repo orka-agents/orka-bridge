@@ -215,6 +215,70 @@ fn assert_reaped(d: &tempfile::TempDir) {
 }
 
 #[test]
+fn prepared_shutdown_caps_do_not_leak_into_reused_owner() {
+    let (d, mut owner, cmd) = setup("normal");
+    let defaults = AppleHelperOwner::new(owner.ownership.clone()).budgets;
+    owner.budgets = defaults;
+    let _guest = owner.start(cmd, config()).unwrap();
+    owner.prepare_shutdown(Instant::now()).unwrap();
+    assert_eq!(owner.budgets.exit, Duration::from_secs(45));
+    assert_eq!(owner.budgets.cleanup, Duration::from_secs(10));
+    assert_eq!(owner.session.as_ref().unwrap().budgets.exit, Duration::from_secs(5));
+    assert_eq!(owner.session.as_ref().unwrap().budgets.cleanup, Duration::from_secs(2));
+    owner.stop().unwrap();
+    assert_eq!(owner.stop_outcome(), Some(AppleStopOutcome::ForcedStop));
+    let mut again = Command::new(fixture().join("helper"));
+    again.arg("normal").arg(d.path().join("pid"));
+    let _guest = owner.start(again, config()).unwrap();
+    assert!(owner.graceful_end.is_none());
+    assert_eq!(owner.budgets.exit, Duration::from_secs(45));
+    assert_eq!(owner.budgets.cleanup, Duration::from_secs(10));
+    assert_eq!(owner.session.as_ref().unwrap().budgets.exit, Duration::from_secs(45));
+    assert_eq!(owner.session.as_ref().unwrap().budgets.cleanup, Duration::from_secs(10));
+    owner.stop().unwrap();
+    assert_eq!(owner.stop_outcome(), Some(AppleStopOutcome::HardStopped));
+    assert_reaped(&d);
+}
+
+#[test]
+fn prepared_s_accepts_natural_receipt_only_with_matching_id_and_observed_exit() {
+    for (mode, succeeds) in [
+        ("natural-receipt", true),
+        ("natural-stale", false),
+        ("natural-exit-bad", false),
+        ("natural-hang", false),
+        ("lost-stop-receipt", false),
+    ] {
+        let (d, mut owner, cmd) = setup(mode);
+        let _guest = owner.start(cmd, config()).unwrap();
+        owner.prepare_shutdown(Instant::now()).unwrap();
+        assert_eq!(owner.stop().is_ok(), succeeds, "{mode}");
+        assert_eq!(owner.stop_outcome(), succeeds.then_some(AppleStopOutcome::GuestStopped), "{mode}");
+        assert!(owner.session.is_none(), "{mode}");
+        assert_eq!(owner.poisoned, !succeeds, "{mode}");
+        assert_reaped(&d);
+    }
+}
+
+#[test]
+fn natural_receipt_is_invalid_for_unprepared_s_and_other_operations() {
+    for operation in *b"SGPR" {
+        let (d, mut owner, cmd) = setup("unexpected-natural");
+        let _guest = owner.start(cmd, config()).unwrap();
+        let result = match operation {
+            b'S' => owner.stop(),
+            b'G' => owner.prepare_shutdown(Instant::now()),
+            b'P' => owner.pause(),
+            _ => owner.resume(),
+        };
+        assert_eq!(result, Err(HelperError::Protocol), "opcode {operation}");
+        assert_eq!(owner.stop_outcome(), None);
+        assert!(owner.poisoned);
+        assert_reaped(&d);
+    }
+}
+
+#[test]
 fn expected_guest_stop_observes_exit_and_timeout_fallback_stays_distinct() {
     for (mode, outcome) in [
         ("guest-stop", AppleStopOutcome::GuestStopped),

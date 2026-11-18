@@ -53,6 +53,7 @@ impl AppleVmSession {
         host_utc: u64,
         closed: Option<tokio::sync::watch::Receiver<bool>>,
     ) -> Result<Self, RuntimeError> {
+        let cancellation = closed.clone();
         let mut session = Self {
             worker,
             transport: None,
@@ -105,6 +106,24 @@ impl AppleVmSession {
             Ok(())
         })();
         if let Err(error) = result {
+            let close_timeout = matches!(&error, RuntimeError::Io(error) if error.kind() == std::io::ErrorKind::TimedOut)
+                && cancellation.as_ref().is_some_and(|closed| *closed.borrow())
+                && session.worker.lease().is_some_and(|lease| {
+                    lease
+                        .handle
+                        .get::<AppleBackendHandle>()
+                        .is_some_and(|handle| {
+                            handle
+                                .guest
+                                .shutdown_deadline()
+                                .is_some_and(|end| end <= Instant::now())
+                        })
+                });
+            let error = if close_timeout {
+                RuntimeError::Closed
+            } else {
+                error
+            };
             session.transport = None;
             return Err(session.worker.startup_failed(error));
         }

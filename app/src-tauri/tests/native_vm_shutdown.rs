@@ -2,13 +2,15 @@
 //! Uses the production workspace factory/owner; no model sign-in or credentials.
 //!
 //! This is a shutdown driver, not a guest inspector. Set BRIDGE_SHUTDOWN_TEST_ROOT
-//! to a fresh disposable root and BRIDGE_SHUTDOWN_TEST_RESOURCES to the helper's
+//! to a fresh disposable workspace root (a verified image cache may be prewarmed)
+//! and BRIDGE_SHUTDOWN_TEST_RESOURCES to the helper's
 //! resources directory, then run this ignored test with --nocapture. An external
 //! observer must supply test-only console input/output and guest shell access;
 //! the production helper deliberately exposes neither. Never use a user's disks.
 //! Boot 1 permits console preparation. At boot2-ready, write a 64 MiB sentinel in
 //! /var/lib/bridge, record sha256sum and full dmesg, then create quit2 without
-//! syncing the sentinel. At boot3-ready, compare its checksum and inspect full
+//! syncing the sentinel. Continuously capture the console until the VM stops and
+//! check it for kernel filesystem errors. At boot3-ready, compare its checksum and inspect full
 //! dmesg again before quit3. Create quit1 after preparation. Any kernel filesystem
 //! error or checksum mismatch fails the external check, regardless of this test's
 //! result. The stopped markers prove only completed production shutdown calls.
@@ -30,9 +32,21 @@ async fn workspace_shutdown_reopens_the_same_disks() {
     let data = root.join("data");
     let local = root.join("local");
     assert!(
-        !data.exists() && !local.exists(),
-        "use a fresh disposable root"
+        !data.exists() && !local.join("local-vm-v1").exists(),
+        "use a fresh disposable workspace root; only an image cache may be reused"
     );
+    for boot in 1..=3 {
+        for marker in [
+            format!("quit{boot}"),
+            format!("boot{boot}-ready"),
+            format!("boot{boot}-stopped"),
+        ] {
+            assert!(
+                !root.join(marker).exists(),
+                "stale observer marker; use a new run root"
+            );
+        }
+    }
     std::fs::create_dir_all(&root).unwrap();
     // Boot 1 permits test-only console preparation. Boots 2 and 3 are the
     // write/quit/reopen comparison, using the same installed workspace identity.
@@ -59,7 +73,10 @@ async fn workspace_shutdown_reopens_the_same_disks() {
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        std::fs::write(root.join(format!("boot{boot}-ready")), b"ready\n").unwrap();
+        if let Err(error) = std::fs::write(root.join(format!("boot{boot}-ready")), b"ready\n") {
+            let stopped = vm.shutdown().await;
+            panic!("boot {boot} ready marker failed: {error}; shutdown={stopped:?}");
+        }
         // The external observer writes this only after recording the sentinel
         // checksum and full guest dmesg. Do not equate Ready with that evidence.
         let until = Instant::now() + Duration::from_secs(300);
