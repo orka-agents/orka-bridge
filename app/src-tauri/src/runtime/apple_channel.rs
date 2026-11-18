@@ -18,6 +18,7 @@ struct State {
     socket: Option<Arc<UnixStream>>,
     sealed: bool,
     active: bool,
+    shutdown_deadline: Option<Instant>,
 }
 struct Scoped {
     slot: GuestSlot,
@@ -40,6 +41,7 @@ impl GuestSlot {
                     socket: Some(Arc::new(socket)),
                     sealed: false,
                     active: false,
+                    shutdown_deadline: None,
                 }),
                 idle: Condvar::new(),
             }),
@@ -65,6 +67,10 @@ impl GuestSlot {
             slot: self.clone(),
             socket: Some(socket),
         })
+    }
+    pub(crate) fn prepare_shutdown(&self, end: Instant) {
+        let mut state = self.inner.state.lock().unwrap();
+        state.shutdown_deadline = Some(state.shutdown_deadline.map_or(end, |old| old.min(end)));
     }
     pub(crate) fn seal(&self) {
         self.inner.state.lock().unwrap().sealed = true;
@@ -99,7 +105,12 @@ pub(crate) struct Channel {
 impl Channel {
     fn budget(&self, seconds: u64) -> io::Result<Duration> {
         let budget = Duration::from_secs(seconds);
-        match self.deadline {
+        let shutdown = self.slot.inner.state.lock().unwrap().shutdown_deadline;
+        let deadline = match (self.deadline, shutdown) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        match deadline {
             Some(end) => end
                 .checked_duration_since(Instant::now())
                 .filter(|d| !d.is_zero())

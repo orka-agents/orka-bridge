@@ -778,6 +778,18 @@ impl LocalVm {
         self.cache_upgrade_status(dto);
     }
     fn quarantine_upgrade(&self) {
+        // A confirmed hard stop still blocks the upgrade, but must not be
+        // rewritten as an unobserved native writer by this custody guard.
+        let forced = self
+            .inner
+            .state
+            .lock()
+            .unwrap()
+            .workspace_failure
+            .as_ref()
+            .is_some_and(|failure| {
+                failure.cause == crate::runtime::types::WorkspaceCause::ForcedStop
+            });
         let mut dto = self
             .upgrade_cache
             .lock()
@@ -785,14 +797,28 @@ impl LocalVm {
             .clone()
             .unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
         dto.state = "conflict";
-        dto.error = Some("stopUnconfirmed");
+        dto.error = Some(if forced {
+            "forcedStop"
+        } else {
+            "stopUnconfirmed"
+        });
         dto.busy = false;
         dto.can_replace = false;
         dto.can_restore = false;
         self.cache_upgrade_status(dto);
+        let error = if forced {
+            RuntimeError::ShutdownForced
+        } else {
+            RuntimeError::StopUnconfirmed("Workspace recovery is required.".into())
+        };
         self.inner.fail(
-            "Workspace shutdown or custody release could not be confirmed.".into(),
-            &RuntimeError::StopUnconfirmed("Workspace recovery is required.".into()),
+            if forced {
+                "The workspace timed out and was forcibly stopped. Workspace recovery is required."
+            } else {
+                "Workspace shutdown or custody release could not be confirmed."
+            }
+            .into(),
+            &error,
             WorkspaceOperation::Stop,
             false,
         );
@@ -832,7 +858,7 @@ impl LocalVm {
                 dto.state = "conflict";
                 dto
             });
-            current.busy = current.error != Some("stopUnconfirmed")
+            current.busy = !matches!(current.error, Some("stopUnconfirmed" | "forcedStop"))
                 && self.upgrading.load(std::sync::atomic::Ordering::Acquire);
             return current;
         }
@@ -898,7 +924,7 @@ impl LocalVm {
         };
         if self.upgrading.load(std::sync::atomic::Ordering::Acquire) {
             let mut dto = cached.unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
-            dto.busy = dto.error != Some("stopUnconfirmed");
+            dto.busy = !matches!(dto.error, Some("stopUnconfirmed" | "forcedStop"));
             return dto;
         }
         let phase = self.status();

@@ -19,6 +19,12 @@ pub enum HelperError {
     Poisoned,
     ExitUnobserved,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppleStopOutcome {
+    GuestStopped,
+    ForcedStop,
+    HardStopped,
+}
 #[derive(Clone, Copy)]
 struct Budgets {
     read: Duration,
@@ -41,6 +47,8 @@ pub struct AppleHelperOwner {
     session: Option<Session>,
     poisoned: bool,
     unobserved: bool,
+    graceful_end: Option<Instant>,
+    stop_outcome: Option<AppleStopOutcome>,
 }
 impl AppleHelperOwner {
     pub fn new(ownership: Arc<File>) -> Self {
@@ -55,6 +63,8 @@ impl AppleHelperOwner {
             session: None,
             poisoned: false,
             unobserved: false,
+            graceful_end: None,
+            stop_outcome: None,
         }
     }
     fn available(&self) -> Result<(), HelperError> {
@@ -73,6 +83,8 @@ impl AppleHelperOwner {
         if self.session.is_some() {
             return Err(HelperError::Busy);
         }
+        self.graceful_end = None;
+        self.stop_outcome = None;
         let (session, guest) = super::spawn_guard::run_blocking(|| -> io::Result<_> {
             // Darwin sets socket CLOEXEC after socketpair: all app spawns share
             // this guard until the temporary helper ends have been closed.
@@ -187,12 +199,44 @@ impl AppleHelperOwner {
     pub fn resume(&mut self) -> Result<(), HelperError> {
         self.operation(b'R')
     }
-    /// A successful stop observes both the completed-operation ACK and child exit.
-    /// It is not a guest protocol shutdown ACK or an infrastructure-ready claim.
+    /// Arm expected natural termination before asking the guest to power off.
+    /// G is preparation only; its ACK never proves termination or a guest flush.
+    pub fn prepare_shutdown(&mut self, end: Instant) -> Result<(), HelperError> {
+        self.available()?;
+        if self.graceful_end.is_some() {
+            return Ok(()); // Never renew a prepared budget or replay G.
+        }
+        self.graceful_end = Some(end);
+        // Reserve fallback time inside AppKit's existing 30-second window.
+        // Unprepared startup-failure cleanup retains its original budgets.
+        self.budgets.exit = self.budgets.exit.min(Duration::from_secs(5));
+        self.budgets.cleanup = self.budgets.cleanup.min(Duration::from_secs(2));
+        match self.exchange(b'G', end) {
+            Ok(()) => Ok(()),
+            Err(error) => Err(self.fail(error)),
+        }
+    }
+    pub fn stop_outcome(&self) -> Option<AppleStopOutcome> {
+        self.stop_outcome
+    }
+    /// Prepared shutdown waits for natural native disposal and child exit first.
+    /// Only timeout sends destructive S. Its ACK is not a clean-guest receipt.
     pub fn stop(&mut self) -> Result<(), HelperError> {
         self.available()?;
         if self.session.is_none() {
             return Ok(());
+        }
+        if let Some(end) = self.graceful_end {
+            match wait_until(&mut self.session.as_mut().unwrap().child, end) {
+                Ok(Some(status)) if status.success() => {
+                    self.session = None;
+                    self.stop_outcome = Some(AppleStopOutcome::GuestStopped);
+                    return Ok(());
+                }
+                Ok(Some(_)) => return Err(self.fail(HelperError::Io(io::ErrorKind::Other))),
+                Err(error) => return Err(self.fail(io_error(error))),
+                Ok(None) => {} // Grace exhausted; only now use hard stop.
+            }
         }
         let end = Instant::now() + self.budgets.exit;
         let result = self.exchange(b'S', end).and_then(|()| {
@@ -205,6 +249,11 @@ impl AppleHelperOwner {
         match result {
             Ok(()) => {
                 self.session = None;
+                self.stop_outcome = Some(if self.graceful_end.is_some() {
+                    AppleStopOutcome::ForcedStop
+                } else {
+                    AppleStopOutcome::HardStopped
+                });
                 Ok(())
             }
             Err(error) => Err(self.fail(error)),

@@ -58,7 +58,9 @@ impl VmBackend for OperationBudgets {
     }
     fn start(&mut self, spec: &LaunchSpec) -> Result<BackendHandle, RuntimeError> {
         let handle = self.0.start(spec)?;
-        super::super::apple::failure_fixture::shorten(self.0.owner.as_mut().unwrap());
+        super::super::apple::failure_fixture::shorten(
+            &mut self.0.owner.as_ref().unwrap().lock().unwrap(),
+        );
         Ok(handle)
     }
     fn stop(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {

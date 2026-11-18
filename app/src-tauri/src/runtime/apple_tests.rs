@@ -215,6 +215,36 @@ fn assert_reaped(d: &tempfile::TempDir) {
 }
 
 #[test]
+fn expected_guest_stop_observes_exit_and_timeout_fallback_stays_distinct() {
+    for (mode, outcome) in [
+        ("guest-stop", AppleStopOutcome::GuestStopped),
+        ("normal", AppleStopOutcome::ForcedStop),
+    ] {
+        let (d, mut owner, cmd) = setup(mode);
+        let _guest = owner.start(cmd, config()).unwrap();
+        let end = Instant::now() + Duration::from_millis(80);
+        owner.prepare_shutdown(end).unwrap();
+        assert_eq!(owner.stop_outcome(), None, "G ACK is not termination");
+        owner.stop().unwrap();
+        assert_eq!(owner.stop_outcome(), Some(outcome));
+        if outcome == AppleStopOutcome::ForcedStop {
+            assert!(Instant::now() >= end, "hard stop before grace elapsed");
+        }
+        owner.stop().unwrap();
+        assert_eq!(owner.stop_outcome(), Some(outcome), "repeat changed outcome");
+        assert_reaped(&d);
+    }
+}
+#[test]
+fn expected_guest_native_failure_never_becomes_clean_or_forced_success() {
+    let (d, mut owner, cmd) = setup("guest-error");
+    let _guest = owner.start(cmd, config()).unwrap();
+    owner.prepare_shutdown(Instant::now() + Duration::from_millis(80)).unwrap();
+    assert!(owner.stop().is_err());
+    assert_eq!(owner.stop_outcome(), None);
+    assert_reaped(&d);
+}
+#[test]
 fn closed_helper_control_preserves_buffered_reply_and_eof() {
     let (control, mut helper) = UnixStream::pair().unwrap();
     helper.write_all(b"BRVM\x01").unwrap();

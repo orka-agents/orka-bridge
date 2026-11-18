@@ -1,5 +1,7 @@
 //! Serving composition for trusted native callers only; no app activation.
-use super::{
+use crate::engine::vm::VmTransport;
+use crate::runtime::{
+    apple::AppleStopOutcome,
     apple_backend::{AppleBackend, AppleBackendHandle},
     apple_channel::Channel,
     client::VmClient,
@@ -8,7 +10,6 @@ use super::{
     types::RuntimeError,
     RuntimeWorker,
 };
-use crate::engine::vm::VmTransport;
 use bridge_runtime_protocol::*;
 use std::{
     io::{Read, Write},
@@ -19,6 +20,8 @@ use std::{
 pub struct AppleVmSession {
     worker: RuntimeWorker,
     transport: Option<VmTransport>,
+    shutdown_deadline: Option<Instant>,
+    shutdown_forced: bool,
 }
 impl AppleVmSession {
     pub fn launch(
@@ -48,6 +51,8 @@ impl AppleVmSession {
         let mut session = Self {
             worker,
             transport: None,
+            shutdown_deadline: None,
+            shutdown_forced: false,
         };
         let result = (|| {
             session.worker.start()?;
@@ -101,8 +106,40 @@ impl AppleVmSession {
         self.transport.as_ref()
     }
     pub fn stop(&mut self) -> Result<(), RuntimeError> {
+        let owner = if let (Some(transport), Some(lease)) = (&self.transport, self.worker.lease()) {
+            let handle = lease
+                .handle
+                .get::<AppleBackendHandle>()
+                .ok_or(RuntimeError::Unavailable)?;
+            let end = *self
+                .shutdown_deadline
+                .get_or_insert_with(|| Instant::now() + Duration::from_secs(10));
+            // Prepare native observation BEFORE the guest can power off. Release
+            // the owner mutex before borrowing the single protocol client.
+            let prepared = handle.prepare_shutdown(end);
+            if prepared.is_ok() {
+                // Reply loss is not native failure. Always observe the helper,
+                // including with old guests that power off before replying.
+                let _ = transport.borrow_client(|client| client.shutdown());
+            }
+            Some(handle.owner.clone())
+        } else {
+            None // Startup failed before a serving client: retain hard cleanup.
+        };
         self.transport = None;
-        self.worker.stop()
+        // A confirmed hard fallback clears the lease just like native stop.
+        // Report it as unclean only AFTER custody has been accounted for.
+        self.worker.stop()?;
+        if let Some(owner) = owner {
+            self.shutdown_forced =
+                owner.lock().unwrap().stop_outcome() == Some(AppleStopOutcome::ForcedStop);
+        }
+        if self.shutdown_forced {
+            eprintln!("Mac workspace shutdown timed out; hard stop completed, not a clean guest shutdown.");
+            Err(RuntimeError::ShutdownForced)
+        } else {
+            Ok(())
+        }
     }
     pub fn pause(&mut self) -> Result<(), RuntimeError> {
         let result = self.worker.pause();

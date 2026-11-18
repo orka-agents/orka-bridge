@@ -65,7 +65,9 @@ fn drip_reads_do_not_renew_total_deadline() {
     let (socket, mut peer) = UnixStream::pair().unwrap();
     let slot = GuestSlot::new(socket);
     let mut channel = slot.channel();
-    channel.deadline = Some(Instant::now() + Duration::from_millis(60));
+    // The channel was already established before shutdown preparation.
+    slot.prepare_shutdown(Instant::now() + Duration::from_millis(60));
+    slot.prepare_shutdown(Instant::now() + Duration::from_secs(60)); // Cannot renew.
     let writer = std::thread::spawn(move || {
         for _ in 0..20 {
             if peer.write_all(b"x").is_err() {

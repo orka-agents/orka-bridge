@@ -46,12 +46,23 @@ def guest():
     if '{mode}'=='engine':
         f.readline()
         open(c['installationPath']+'/request-seen','x').close()
-    if '{mode}' in ['good','cleanup']:
+    if '{mode}' in ['good','cleanup','lost-ack','no-stop','ignore']:
         while True:
             line=f.readline()
             if not line: return
             request=json.loads(line)['body']
             body=request['body']
+            if body['op']=='shutdown':
+                assert os.path.exists(c['installationPath']+'/shutdown-armed')
+                open(c['installationPath']+'/shutdown-request','x').close()
+                if '{mode}'=='ignore':
+                    time.sleep(60)
+                if '{mode}'!='lost-ack':
+                    send({{'type':'result','body':{{'version':1,'bootNonce':nonce,'requestId':request['requestId'],'body':{{'op':'ready','body':{{}}}}}}}})
+                if '{mode}'=='no-stop':
+                    time.sleep(60)
+                time.sleep(0.02) # ACK is not native completion.
+                os._exit(0)
             if body['op']=='execute':
                 assert '{mode}'=='cleanup'
                 assert body['body']['action']['type']=='cleanupRunAgent'
@@ -63,7 +74,10 @@ def guest():
 threading.Thread(target=guest,daemon=True).start()
 "#
     );
-    PEER.replace("while True:", &format!("{extra}\nwhile True:"))
+    PEER.replace("while True:", &format!("{extra}\nwhile True:")).replace(
+        "    s.sendall(b'K'+b[1:])",
+        "    if b[0]==71: open(c['installationPath']+'/shutdown-armed','x').close()\n    if b[0]==83: open(c['installationPath']+'/hard-stop','x').close()\n    s.sendall(b'K'+b[1:])",
+    )
 }
 #[test]
 fn coalesced_early_ready_and_serve_hello_publish_only_after_correlated_ready() {
@@ -76,6 +90,41 @@ fn coalesced_early_ready_and_serve_hello_publish_only_after_correlated_ready() {
     session.resume().unwrap();
     session.stop().unwrap();
     assert!(session.transport().is_none());
+}
+#[test]
+fn guest_shutdown_waits_for_native_exit_even_without_an_ack() {
+    for mode in ["good", "lost-ack"] {
+        let (t, journal, image) = installation();
+        let resources = resource(&serving_peer(mode));
+        let mut session =
+            AppleVmSession::launch(resources.path().to_path_buf(), journal, image, 1).unwrap();
+        session.stop().unwrap();
+        assert!(t.path().join("install/shutdown-request").exists());
+        assert!(!t.path().join("install/hard-stop").exists());
+        session.stop().unwrap(); // No replay of G or Shutdown.
+        assert!(session.worker.lease().is_none());
+        assert!(session.transport().is_none());
+    }
+}
+#[test]
+fn ignored_shutdown_or_ack_without_poweroff_is_forced_not_clean() {
+    for mode in ["ignore", "no-stop"] {
+        let (t, journal, image) = installation();
+        let resources = resource(&serving_peer(mode));
+        let mut session =
+            AppleVmSession::launch(resources.path().to_path_buf(), journal, image, 1).unwrap();
+        session.shutdown_deadline = Some(Instant::now() + Duration::from_millis(100));
+        let start = Instant::now();
+        assert!(matches!(session.stop(), Err(RuntimeError::ShutdownForced)));
+        assert!(start.elapsed() < Duration::from_secs(2));
+        assert!(
+            session.worker.lease().is_none(),
+            "confirmed stop retained a lease"
+        );
+        assert!(t.path().join("install/hard-stop").exists());
+        assert!(matches!(session.stop(), Err(RuntimeError::ShutdownForced)));
+        assert!(session.transport().is_none());
+    }
 }
 #[test]
 fn apple_serving_hello_gates_cleanup_without_probing_legacy_guests() {

@@ -20,6 +20,7 @@ mod infrastructure_tests {
         drops: AtomicUsize,
         releases: AtomicUsize,
         fail_stop: bool,
+        forced_stop: bool,
         stop_barrier:
             std::sync::Mutex<Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
         version_refusal: bool,
@@ -93,7 +94,9 @@ mod infrastructure_tests {
                 entered.send(()).unwrap();
                 release.recv().unwrap();
             }
-            if self.0.fail_stop {
+            if self.0.forced_stop {
+                Err(RuntimeError::ShutdownForced)
+            } else if self.0.fail_stop {
                 Err(io::Error::other("stop detail").into())
             } else {
                 Ok(())
@@ -420,6 +423,44 @@ mod infrastructure_tests {
         );
         assert_eq!(dto.error, Some("stopUnconfirmed"));
         assert!(!dto.can_replace && !dto.can_restore);
+    }
+    #[tokio::test]
+    async fn forced_stop_during_upgrade_keeps_its_observed_outcome_and_blocks_retry() {
+        let probe = Arc::new(Probe {
+            forced_stop: true,
+            ..Probe::default()
+        });
+        let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
+        ready(&probe, &vm).await;
+        assert!(vm.quiesce_for_upgrade().await.is_err());
+        assert_eq!(
+            vm.inner
+                .state
+                .lock()
+                .unwrap()
+                .workspace_failure
+                .as_ref()
+                .unwrap()
+                .cause,
+            WorkspaceCause::ForcedStop
+        );
+        let home = tempfile::tempdir().unwrap();
+        let dto = vm
+            .upgrade_status(home.path().join("data"), home.path().join("local"))
+            .await;
+        assert_eq!(dto.error, Some("forcedStop"));
+        assert!(!dto.busy && !dto.can_replace && !dto.can_restore);
+        let stale =
+            vm.publish_upgrade_status(0, crate::workspace_upgrade::UpgradeStatusDto::none());
+        assert_eq!(stale.error, Some("forcedStop"));
+        assert!(!stale.busy);
+        vm.start();
+        assert_eq!(
+            probe.starts.load(Ordering::SeqCst),
+            1,
+            "restart stays gated"
+        );
+        assert_eq!(probe.releases.load(Ordering::SeqCst), 0);
     }
     #[tokio::test]
     async fn cancelled_quiescence_is_quarantined_without_an_endless_busy_projection() {
