@@ -18,13 +18,13 @@ function ToolCallList({ placeKey, task, revision }: { placeKey: string; task: st
     void readToolCalls(placeKey, task).then(value => { if (!cancelled) setCalls(value); });
     return () => { cancelled = true; };
   }, [placeKey, task, revision]);
-  if (!calls) return <p className="overview-card-meta" role="status">Reading tool calls…</p>;
-  if (calls.state === 'denied') return <p className="overview-card-meta" role="status">This account can't read this run's events.</p>;
-  if (calls.state !== 'complete' && calls.state !== 'partial') return <p className="overview-card-meta" role="status">Couldn't read tool calls just now.</p>;
-  if (!calls.calls.length && calls.state === 'complete') return <p className="overview-card-meta">No tool calls recorded.</p>;
+  if (!calls) return <p className="overview-activity-meta" role="status">Reading tool calls…</p>;
+  if (calls.state === 'denied') return <p className="overview-activity-meta" role="status">This account can't read this run's events.</p>;
+  if (calls.state !== 'complete' && calls.state !== 'partial') return <p className="overview-activity-meta" role="status">Couldn't read tool calls just now.</p>;
+  if (!calls.calls.length && calls.state === 'complete') return <p className="overview-activity-meta">No tool calls recorded.</p>;
   return <>
     {calls.calls.length > 0 && <ol className="overview-activity-tools">{calls.calls.map((c, i) => <li key={i}><code>{c.tool}</code>{c.failed && ' · failed'} · <RelativeTime value={c.at} /></li>)}</ol>}
-    {calls.state === 'partial' && <p className="overview-card-meta">Some of this run's tool calls aren't shown.</p>}
+    {calls.state === 'partial' && <p className="overview-activity-meta">Some of this run's tool calls aren't shown.</p>}
   </>;
 }
 
@@ -33,19 +33,19 @@ function Entry({ row, place, agentShown, onShowAgent }: { row: Row; place: strin
   const id = useId();
   const view = phaseView[row.phase];
   const subject = row.agent ?? row.task;
-  return <li className="card overview-activity-entry" aria-label={`${subject} on ${place}, ${view.pill}`}>
-    <header className="overview-card-head">
-      <h3>{subject}</h3>
+  return <li className="overview-activity-entry" aria-label={`${subject} on ${place}, ${view.pill}`}>
+    <div className="overview-activity-row">
+      <div className="overview-activity-name">
+        <h3 className="overview-agent-title">{subject}</h3>
+        <p className="overview-activity-meta">on <code>{place}</code> · run <code>{row.task}</code>{row.test && ' · Bridge test'}</p>
+      </div>
       <StatusPill state={view.status}>{view.pill}</StatusPill>
-      <span className="overview-card-time"><RelativeTime value={latest(row)} /></span>
-    </header>
-    <p className="overview-card-meta">on <code>{place}</code> · run <code>{row.task}</code>{row.test && ' · Bridge test'}</p>
-    {row.message && <p className="overview-card-description">{row.message}</p>}
-    <div className="overview-card-actions">
-      {agentShown && row.agentUid && <Button kind="quiet" aria-label={`Show ${subject} on ${place}`} onClick={() => onShowAgent(`${row.placeKey}/${row.agentUid}`)}>Show agent</Button>}
-      <Disclosure className="overview-details-toggle" label="Tool calls" open={open} onOpenChange={setOpen} controls={id}>{null}</Disclosure>
+      <span className="overview-time"><RelativeTime value={latest(row)} /></span>
+      {agentShown && row.agentUid && <Button size="small" aria-label={`Show ${subject} on ${place}`} onClick={() => onShowAgent(`${row.placeKey}/${row.agentUid}`)}>Show agent</Button>}
+      <Disclosure label="Tool calls" open={open} onOpenChange={setOpen} controls={id}>{null}</Disclosure>
     </div>
-    {open && <div id={id} className="overview-details"><ToolCallList placeKey={row.placeKey} task={row.task} revision={row.readAt} /></div>}
+    {row.message && <p className="overview-activity-message">{row.message}</p>}
+    {open && <div id={id} className="overview-activity-details"><ToolCallList placeKey={row.placeKey} task={row.task} revision={row.readAt} /></div>}
   </li>;
 }
 
@@ -84,6 +84,8 @@ export function RecentActivity({ active, places, onShowAgent }: { active: boolea
   }, []);
   useEffect(() => {
     if (active && places) start();
+    // Overview stays mounted while hidden: drop a queued read, and the next visit reads afresh.
+    if (!active) queued.current = false;
   }, [active, places, start]);
   useEffect(() => () => { request.current++; queued.current = false; }, []);
   const labels = placeLabels(places?.places ?? []);
@@ -100,10 +102,10 @@ export function RecentActivity({ active, places, onShowAgent }: { active: boolea
     if (p.state === 'disconnected' && p.entries.length) return `${name} isn't connected now. Showing what Bridge last saw.`;
   };
   const notes = read.map(p => [p.key, note(p)] as const).filter((n): n is readonly [string, string] => !!n[1]);
-  return <section className="overview-group overview-activity" aria-label="Recent activity">
-    <header className="overview-group-head">
+  return <section className="overview-activity" aria-label="Recent activity">
+    <header className="overview-activity-head">
       <h2>Recent activity</h2>
-      <span className="overview-group-sub">runs on connected clusters, newest first</span>
+      <span className="overview-activity-sub">runs on connected clusters, newest first</span>
       <div className="view-switch overview-activity-filter" role="group" aria-label="Show runs">
         {filters.map(f => <button key={f.id} type="button" aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}</button>)}
       </div>
@@ -111,7 +113,8 @@ export function RecentActivity({ active, places, onShowAgent }: { active: boolea
     <p className="overview-note">Runs on this computer aren't listed here yet.</p>
     {failed && <p className="overview-note" role="status">Couldn't read recent activity just now.{activity && ' Showing what Bridge last saw.'}</p>}
     {notes.map(([key, text]) => <p key={key} className="overview-note" role="status">{text}</p>)}
-    {!connected.length ? <p className="overview-note">Connect a cluster to see its runs here.</p>
+    {!activity ? places && !failed && <p className="overview-note" role="status">Reading recent runs…</p>
+      : !connected.length ? <p className="overview-note">Connect a cluster to see its runs here.</p>
       : !rows.length ? <p className="overview-note">{emptyFilter[filter]}</p>
       : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.connection}/${row.uid}`} row={row} place={labels.get(row.placeKey)!} agentShown={known.has(`${row.placeKey}/${row.agentUid}`)} onShowAgent={onShowAgent} />)}</ol>}
   </section>;
