@@ -1365,9 +1365,17 @@ Thread.sleep(forTimeInterval: 1)
 require((attribute(editor, "AXValue") as? String)?.contains("Changed fixture instructions.") == true, "Native keystrokes did not edit Instructions")
 // The save starts 500 ms after the last keystroke and can take seconds on a slow runner.
 let saveDeadline = Date().addingTimeInterval(10)
+let saveLabels = ["Saved", "Not saved", "Saving…", "Unsaved changes"]
 var saveLabel = "no save label"
 repeat {
-    saveLabel = ["Saved", "Not saved", "Saving…", "Unsaved changes"].first(where: exactTextIsVisible) ?? "no save label"
+    // Read the footer once per poll: separate searches can each miss a label that changes between them.
+    let frame = window()!.1
+    let visible = Set(nativeElements().compactMap { element -> String? in
+        guard attribute(element, "AXRole") as? String == "AXStaticText", let value = attribute(element, "AXValue") as? String,
+            saveLabels.contains(value), let bounds = nativeBounds(element), bounds.width > 1, bounds.height > 1, frame.contains(bounds) else { return nil }
+        return value
+    })
+    saveLabel = saveLabels.first(where: visible.contains) ?? "no save label"
     if saveLabel == "Saved" || saveLabel == "Not saved" { break }
     Thread.sleep(forTimeInterval: 0.1)
 } while Date() < saveDeadline
