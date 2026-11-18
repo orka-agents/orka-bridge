@@ -329,6 +329,7 @@ assert.ok(upgradeCapture.includes("clickAction('Manage')"), 'returning upgrade s
 assert.ok(upgradeCapture.includes("localStorage.setItem('bridge.firstTest.v1', 'attempted')"), 'returning upgrade scenes must own retired first-test intent');
 assert.ok(upgradeCapture.includes("localStorage.removeItem('bridge.firstTest.v1')"), 'initial upgrade scenes must retire previous returning intent');
 assert.ok(upgradeVariants.slice(0, 3).every(row => row[4]), 'every initial upgrade scene requires a confirmation capture');
+assert.ok(model.includes('if manage && index == 0 { waitForButton("Manage"); click("Manage", []) }'), 'fresh returning renderer must explicitly open Manage before observing its card');
 assert.ok(model.includes('event?.flags = backwards && down ? .maskShift : []'), 'each Tab gesture must set its modifiers and release Shift');
 const readyRow = source.match(/await until\(\(\) => evaluate\(`(\['Connect the AI', 'Manage'\][^`]+)`\), 'ready local row'\)/)?.[1];
 assert.ok(readyRow, 'ready fixtures must wait for an observed snapshot, not merely an initial Set up button');

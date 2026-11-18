@@ -1630,9 +1630,11 @@ func captureUpgradeMatrix(manage: Bool) throws {
         ("eligible-credential", "This version of Bridge needs a new workspace", "Set up new workspace"),
         ("incomplete", "Workspace setup was interrupted", "Try setup again"),
     ];
-    for (state, expected, confirmation) in rows {
+    for (index, row) in rows.enumerated() {
+        let (state, expected, confirmation) = row
         let phase = "upgrade-\(state)\(manage ? "-manage" : "")"
         try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
+        if manage && index == 0 { waitForButton("Manage"); click("Manage", []) }
         waitForNativeText([expected])
         waitForNativeText([manage ? "Agents" : "Where agents run"])
         for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("compact", CGFloat(540), CGFloat(900))] {
