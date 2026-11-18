@@ -207,6 +207,58 @@ test.each([false, true])('an active Send becomes a retained failure without leav
   expect(reads).toHaveBeenCalledTimes(stopped);
 });
 
+test('a later scoped poll clears the resolved absence note without navigating to the found target', async () => {
+  vi.useFakeTimers();
+  let found = false;
+  const team = place('team', 'running');
+  const unobserved = { id, source, targetDisplay: 'team', targetUids: team.agents[0].record.targetUids, provider: 'team-model', plannedAgentName: 'remote-reader', agentUid: 'team-uid', verdict: 'running', time: 2 };
+  mockIPC(command => command === 'overview_places' ? { places: [found ? team : { ...team, agents: [] }], historyState: 'complete', unobserved: found ? [] : [unobserved] }
+    : command === 'send_agent_check' ? 'present'
+      : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+        : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
+  const focus = { id: 1, sendId: id, target: { key: 'team', uid: 'team-uid', namespace: 'agents', name: 'remote-reader' } };
+  render(<Overview {...props} focus={focus} />);
+  await act(async () => {});
+  expect(screen.getByText('Not shown in Overview yet.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Refresh' })).toBeTruthy();
+  const filter = screen.getByRole('textbox', { name: 'Filter by name' });
+  fireEvent.change(filter, { target: { value: 'reader' } });
+  act(() => filter.focus());
+  found = true;
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(within(screen.getByRole('article', { name: 'reader' })).getByLabelText('team: Running')).toBeTruthy();
+  expect(screen.queryByText('Not shown in Overview yet.')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
+  expect(filter).toHaveProperty('value', 'reader');
+  expect(document.activeElement).toBe(filter);
+  expect(screen.getByRole('button', { name: 'Show places for reader' }).getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByRole('article', { name: 'team, Running' })).toBeNull();
+});
+
+test('an initial absence check arriving after a scoped poll finds the target cannot restore its note', async () => {
+  vi.useFakeTimers();
+  let found = false;
+  let release!: (value: unknown) => void;
+  const team = place('team', 'running');
+  const unobserved = { id, source, targetDisplay: 'team', targetUids: team.agents[0].record.targetUids, provider: 'team-model', plannedAgentName: 'remote-reader', agentUid: 'team-uid', verdict: 'running', time: 2 };
+  mockIPC(command => command === 'overview_places' ? { places: [found ? team : { ...team, agents: [] }], historyState: 'complete', unobserved: found ? [] : [unobserved] }
+    : command === 'send_agent_check' ? new Promise(resolve => { release = resolve; })
+      : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+        : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
+  const focus = { id: 1, sendId: id, target: { key: 'team', uid: 'team-uid', namespace: 'agents', name: 'remote-reader' } };
+  render(<Overview {...props} focus={focus} />);
+  await act(async () => {});
+  expect(release).toBeDefined();
+  expect(screen.queryByLabelText('team: Running')).toBeNull();
+  found = true;
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(within(screen.getByRole('article', { name: 'reader' })).getByLabelText('team: Running')).toBeTruthy();
+  await act(async () => release('gone'));
+  expect(screen.queryByText('The original agent is no longer available. Your saved result is unchanged.')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Show places for reader' }).getAttribute('aria-expanded')).toBe('false');
+});
+
 test.each([
   ['other place', true, false], ['unrelated unobserved', true, false],
   ['same place', true, true], ['focused unobserved', true, true],

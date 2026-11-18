@@ -80,6 +80,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     if (focusPending) return;
     const { target, sendId } = focus;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let targetFound = false;
     async function list(navigate = false) {
       const value = target ? await readPlaces(target.key) : undefined;
       if (request !== focusEpoch.current) return;
@@ -89,11 +90,15 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       setPlaces(previous => value ?? (target && previous && { ...previous, places: previous.places.map(p => p.key === target.key ? { ...p, stale: true } : p) }) ?? previous);
       // Scoped reads include other places' cached records; only this destination or Send can keep them polling.
       if (target && (seen?.agents.some(a => a.record?.verdict === 'running') || value?.unobserved.some(a => a.id === sendId && a.verdict === 'running'))) timer = setTimeout(() => { void list(); }, 500);
-      // Polling preserves disclosure and focus choices; only navigation reveals the recorded UID.
+      // Presence supersedes the initial check; polling still preserves disclosure and focus choices.
+      if (target && seen?.agents.some(a => a.uid === target.uid && a.namespace === target.namespace)) {
+        targetFound = true; setFocusNote(undefined);
+        if (navigate) { toFocus.current = `${target.key}/${target.uid}`; setReveal(toFocus.current); setFocusTick(v => v + 1); }
+        return;
+      }
       if (!navigate) return;
-      if (target && seen?.agents.some(a => a.uid === target.uid && a.namespace === target.namespace)) { toFocus.current = `${target.key}/${target.uid}`; setReveal(toFocus.current); setFocusTick(v => v + 1); return; }
       const check = target ? await sendAgentCheck(sendId) : 'cannotCheck';
-      if (request === focusEpoch.current) setFocusNote(focusNotes[check]);
+      if (request === focusEpoch.current && !targetFound) setFocusNote(focusNotes[check]);
     }
     void list(true);
     return () => { focusEpoch.current++; clearTimeout(timer); };
