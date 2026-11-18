@@ -1651,9 +1651,13 @@ func captureUpgradeMatrix(manage: Bool) throws {
                 print("Upgrade focus before AX:", attribute(notNow, "AXFocused") as? Bool ?? false, String(describing: nativeBounds(notNow)), reachable(nativeBounds(notNow)))
                 require(AXUIElementSetAttributeValue(notNow, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus safe confirmation action")
                 print("Upgrade focus after AX:", attribute(notNow, "AXFocused") as? Bool ?? false)
-                for down in [true, false] { CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: down)?.post(tap: .cghidEventTap) }
-                for down in [true, false] {
-                    let event = CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: down); event?.flags = .maskShift; event?.post(tap: .cghidEventTap)
+                // Specify modifiers on every event and release Shift, so one scene cannot modify the next Tab.
+                for backwards in [false, true] {
+                    for down in [true, false] {
+                        let event = CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: down)
+                        event?.flags = backwards && down ? .maskShift : []
+                        event?.post(tap: .cghidEventTap)
+                    }
                 }
                 Thread.sleep(forTimeInterval: 0.2)
                 // AX nodes can be refreshed by polling; observe the current node without extending the key deadline.

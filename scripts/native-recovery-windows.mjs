@@ -292,7 +292,8 @@ try {
     })()`);
     await evaluate(bundle);
     if (localVm === 'ready') {
-      await until(() => evaluate(`!!document.querySelector('[aria-label="This computer"] button')`), 'ready local row');
+      await until(() => evaluate(`['Connect the AI', 'Manage'].includes(document.querySelector('[aria-label="This computer"] button')?.textContent)`), 'ready local row');
+      console.log('Ready setup observation:', await evaluate(`({ action: document.querySelector('[aria-label="This computer"] button')?.textContent, pill: document.querySelector('[aria-label="This computer"] .pill')?.textContent, marker: localStorage.getItem('bridge.firstTest.v1') })`));
       if (!await evaluate(`document.querySelector('[aria-label="This computer"] button').textContent === 'Connect the AI' && document.querySelector('[aria-label="This computer"] .pill.status-needs-you') !== null`)) throw Error('A ready VM without connected AI must not advertise green Running or Manage');
       await clickAction('Connect the AI');
     }
