@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import App from '../App';
 import { openLocalSetup } from './test-navigation';
@@ -44,7 +44,7 @@ test('setup offers complete native eligibility instead of the disabled matching-
   });
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Restore previous workspace' })).toBeNull(), { timeout: 2000 });
   expect(screen.queryByRole('button', { name: 'Use saved connection' })).toBeNull();
-  expect(screen.getByText(/Workspace recovery needs attention/)).toBeTruthy();
+  expect(within(document.querySelector('.workspace-upgrade')!).getByText(/Workspace recovery needs attention/)).toBeTruthy();
 });
 
 test.each([false, true])('returning restore stays in Manage without ordinary restart or AI actions (busy=%s)', async busy => {
@@ -58,6 +58,11 @@ test.each([false, true])('returning restore stays in Manage without ordinary res
   mockIPC(ipc); render(<App />); await openLocalSetup();
   await screen.findByRole('button', { name: busy ? 'Cancel update' : 'Restore previous workspace' });
   expect(document.querySelector('.returning-workspace .workspace-upgrade')).not.toBeNull();
+  if (!busy) {
+    await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('Workspace recovery needs attention'));
+    expect(document.querySelector('.returning-workspace > [role="status"]')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Clusters' }).textContent).not.toContain('ready');
+  }
   if (busy) {
     expect(document.querySelector('.returning-workspace .pill')?.textContent).toBe('Updating');
     expect(document.querySelector('.returning-workspace .pill')?.classList.contains('status-running')).toBe(true);
@@ -66,6 +71,25 @@ test.each([false, true])('returning restore stays in Manage without ordinary res
   expect(screen.queryByRole('button', { name: /Set up.*workspace/ })).toBeNull();
   expect(document.querySelector('.setup-model')).toBeNull();
   expect(ipc.mock.calls.map(([command]) => command).filter(command => ['setup_select_local', 'setup_cancel_local', 'setup_connect_model', 'agent_run'].includes(command))).toEqual([]);
+});
+test('ready VM observations cannot override recovery and consumption clears the recovery summary', async () => {
+  vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1'); localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  let recovered = false;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return { ...eligible, state: recovered ? 'consumed' : 'sourceSelected', transaction: '10000000-0000-4000-8000-000000000001', createdAt: 1700000000, canReplace: !recovered, canRestore: true };
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true };
+    if (command === 'setup_requirements') return null;
+    throw Error('Unavailable ' + command);
+  });
+  mockIPC(ipc); render(<App />); await openLocalSetup();
+  await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('Workspace recovery needs attention'));
+  expect(document.querySelector('.returning-workspace > [role="status"]')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Clusters' }).textContent).not.toContain('ready');
+  recovered = true; fireEvent(window, new Event('focus'));
+  await screen.findByRole('button', { name: 'Use saved connection' });
+  await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('Workspace ready'));
+  expect(screen.getByRole('contentinfo').textContent).not.toContain('recovery');
+  expect(ipc.mock.calls.map(([command]) => command).filter(command => ['setup_select_local', 'setup_connect_model', 'agent_run'].includes(command))).toEqual([]);
 });
 test.each([false, true])('unreadable workspace status takes precedence over busy upgrade presentation (returning=%s)', async returning => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');

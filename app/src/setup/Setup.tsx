@@ -38,7 +38,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   modelUnavailable?: boolean;
   firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void;
   onStarting?: () => void;
-  onWorkspaceAction?: (pending: boolean, stopping?: boolean, updating?: boolean) => void;
+  onWorkspaceAction?: (pending: boolean, stopping?: boolean, updating?: boolean, recovery?: boolean) => void;
   onPlace?: (place: SelectedPlace) => void;
   onLocalView?: (visible: boolean) => void;
   onWorkspaceMode?: (returning: boolean) => void;
@@ -49,11 +49,12 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const [upgradeBusy, setUpgradeBusy] = useState(false);
   const upgradeAction = useCallback((value: boolean) => setUpgradeBusy(value), []);
   const upgrading = upgradeBusy || !!upgrade?.busy;
+  const recoveryOnly = !!upgrade && ['sourceSelected', 'sourceRetained', 'incomplete', 'restoring', 'restored', 'conflict'].includes(upgrade.state);
   const reportedUpgrade = useRef(false);
   useEffect(() => {
-    if (upgrading || reportedUpgrade.current) onWorkspaceAction?.(upgrading, false, true);
-    reportedUpgrade.current = upgrading;
-  }, [upgrading, onWorkspaceAction]);
+    if (upgrading || recoveryOnly || reportedUpgrade.current) onWorkspaceAction?.(upgrading, false, true, recoveryOnly);
+    reportedUpgrade.current = upgrading || recoveryOnly;
+  }, [upgrading, recoveryOnly, onWorkspaceAction]);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(true);
   const [sending, setSending] = useState(false);
@@ -221,7 +222,6 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   }
 
   const changing = sending || upgradeBusy || !!upgrade?.busy;
-  const recoveryOnly = !!upgrade && ['sourceSelected', 'sourceRetained', 'incomplete', 'restoring', 'restored', 'conflict'].includes(upgrade.state);
   const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || !!error} onBusy={upgradeAction} onChange={value => { setUpgrade(value); setCheck(check => check + 1); }} onCheck={() => setCheck(check => check + 1)} /> : undefined;
   const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); } }));

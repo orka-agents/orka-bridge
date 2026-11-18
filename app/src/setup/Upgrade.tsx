@@ -75,8 +75,8 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     {ready && <>
       {s.credential === 'eligible' && <><p>A saved connection can be reused without connecting automatically.</p>{!confirmation && <Button type="button" kind="primary" disabled={blocked || !canUseCredential} title={!canUseCredential ? 'Start the workspace before changing its saved connection' : undefined} onClick={() => { void act('transfer'); }}>Use saved connection</Button>}</>}
       {s.credential === 'attention' && <p>The saved connection needs attention. Remove it explicitly before entering another sign-in or key.</p>}
-      {s.credential === 'transferred' && <p>Saved connection ready. Use Connect below; no test or chat will run automatically.</p>}
-      {(s.credential === 'absent' || s.credential === 'removed') && <p>Enter a new sign-in or key below, then choose Connect.</p>}
+      {s.credential === 'transferred' && <p>Saved connection ready. Use Connect in the AI card; no test or chat will run automatically.</p>}
+      {(s.credential === 'absent' || s.credential === 'removed') && <p>Enter a new sign-in or key in the AI card, then choose Connect.</p>}
     </>}
     {confirmation && <fieldset className="workspace-stop-confirm" aria-label={confirmation.action === 'restore' ? 'Restore previous workspace?' : confirmation.action === 'remove' ? 'Remove saved connection?' : 'Set up new workspace?'} onKeyDown={event => { if (event.key === 'Escape' && !busy) { event.stopPropagation(); dismiss(); } }}>
       <legend>{confirmation.action === 'restore' ? 'Restore previous workspace?' : confirmation.action === 'remove' ? 'Remove saved connection?' : 'Set up new workspace?'}</legend>
@@ -89,13 +89,13 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
         {(s.repeated || s.state === 'restored') && <p>This creates another new workspace. The workspace kept from your last update will not be reopened.</p>}
         <p>Saved results stay historical. Setup will not connect the AI or run a test or chat.</p>
       </>}
-      <div className="workspace-step-actions"><Button type="button" kind="secondary" disabled={blocked} onClick={() => { void act(confirmation.action === 'replace' && retry ? 'retry' : confirmation.action); }}>{confirmation.action === 'restore' ? 'Restore this workspace' : confirmation.action === 'remove' ? 'Remove for all retained workspaces' : 'Keep old workspace and set up new'}</Button>
+      <div className="workspace-step-actions"><Button type="button" kind="secondary" className={confirmation.action === 'remove' ? 'button-danger' : undefined} disabled={blocked} onClick={() => { void act(confirmation.action === 'replace' && retry ? 'retry' : confirmation.action); }}>{confirmation.action === 'restore' ? 'Restore this workspace' : confirmation.action === 'remove' ? 'Remove for all retained workspaces' : 'Keep old workspace and set up new'}</Button>
         <Button ref={cancel} type="button" kind="quiet" disabled={busy} onClick={dismiss}>Not now</Button></div>
     </fieldset>}
     <div hidden={!!confirmation}><div className="workspace-step-actions">
       {s.canReplace && <Button type="button" kind="primary" disabled={blocked} onClick={event => ask('replace', event.currentTarget)}>{retry ? 'Try setup again' : s.repeated || s.state === 'restored' ? 'Set up another new workspace' : 'Set up new workspace'}</Button>}
       {s.canRestore && <Button type="button" kind="secondary" disabled={blocked} onClick={event => ask('restore', event.currentTarget)}>Restore previous workspace</Button>}
-      {ready && s.transaction && ['eligible', 'attention', 'transferred'].includes(s.credential) && <Button type="button" kind="quiet" disabled={blocked || !canUseCredential} title={!canUseCredential ? 'Start the workspace before changing its saved connection' : undefined} onClick={event => ask('remove', event.currentTarget)}>Remove saved connection</Button>}
+      {ready && s.transaction && ['eligible', 'attention', 'transferred'].includes(s.credential) && <Button type="button" kind="quiet" className="button-danger" disabled={blocked || !canUseCredential} title={!canUseCredential ? 'Start the workspace before changing its saved connection' : undefined} onClick={event => ask('remove', event.currentTarget)}>Remove saved connection</Button>}
       {s.busy && <Button type="button" kind="secondary" disabled={cancelling} onClick={() => { void cancelUpdate(); }}>Cancel update</Button>}
       {!busy && (s.state === 'conflict' || s.error || error) && <Button type="button" kind="secondary" disabled={disabled} onClick={onCheck}>Check again</Button>}
     </div></div>

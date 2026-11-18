@@ -90,12 +90,13 @@ export default function App() {
   const [returningWorkspace, setReturningWorkspace] = useState(false);
   const [workspaceStopping, setWorkspaceStopping] = useState(false);
   const [workspaceUpdating, setWorkspaceUpdating] = useState(false);
+  const [upgradeRecovery, setUpgradeRecovery] = useState(false);
   const localCluster = useRef<LocalClusterControl>(null);
   const [localSetupView, setLocalSetupView] = useState(false);
   const catalogContext = useRef('');
   const observeModel = useCallback((value: ModelState) => { setModel(value); setCatalogEpoch(epoch => epoch + 1); }, []);
-  const observeWorkspaceAction = useCallback((pending: boolean, stopping = false, updating = false) => {
-    setWorkspaceBusy(pending); setWorkspaceStopping(pending && stopping); setWorkspaceUpdating(pending && updating);
+  const observeWorkspaceAction = useCallback((pending: boolean, stopping = false, updating = false, recovery = false) => {
+    setWorkspaceBusy(pending); setWorkspaceStopping(pending && stopping); setWorkspaceUpdating(pending && updating); setUpgradeRecovery(recovery);
     if (pending) setCatalogEpoch(epoch => epoch + 1);
   }, []);
   const choosePlace = useCallback((value: SelectedPlace) => { overviewOpenRequest.current++; setPlace(value); setCatalogEpoch(epoch => epoch + 1); }, []);
@@ -206,9 +207,13 @@ export default function App() {
   const firstTestResult = !setup?.workspaceReplaced && sampleSource !== null && sample?.report ? { failed: sample.report.cases.filter(check => check.verdict === 'failed').length } : undefined;
   const ordinaryView = setupView(setup, { checking, stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping, workspace: returningWorkspace, model, check: firstCheck, initialAutomatic });
   const updating = workspaceUpdating && !!setup;
-  const view = updating ? { ...ordinaryView, line: 'Updating workspace', tabLine: 'Updating workspace', footerLine: 'Updating workspace', detail: 'Your agent files are kept.', tone: 'busy' as const, status: 'running' as const, done: false } : ordinaryView;
+  const recovery = upgradeRecovery && !!setup;
+  const upgradeAttention = updating || recovery;
+  const upgradeLine = updating ? 'Updating workspace' : 'Workspace recovery needs attention';
+  const upgradeDetail = updating ? 'Your agent files are kept.' : 'Finish recovery before using the local workspace.';
+  const view = upgradeAttention ? { ...ordinaryView, line: upgradeLine, tabLine: upgradeLine, footerLine: upgradeLine, detail: upgradeDetail, tone: updating ? 'busy' as const : 'needs-you' as const, status: updating ? 'running' as const : 'needs-you' as const, done: false } : ordinaryView;
   const { line: setupLine, detail } = view;
-  const hostWorkspace = updating ? { tone: 'busy', detail: 'Updating workspace. Your agent files are kept.' } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
+  const hostWorkspace = upgradeAttention ? { tone: view.tone, detail: `${upgradeLine}. ${upgradeDetail}` } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
     ? workspaceView(setup, { stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping }) : undefined;
   const hostTone = hostWorkspace?.tone ?? view.tone;
   const workspaceReady = setup?.localVm === 'ready';
@@ -233,7 +238,7 @@ export default function App() {
       : workspaceTransition ? setupLine : undefined;
   const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'
     : { local: 'This computer', none: 'This computer', checking: 'Checking…', unavailable: 'Status unavailable' }[view.place];
-  const setupDetail = updating ? 'Updating workspace. Your agent files are kept.' : setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
+  const setupDetail = upgradeAttention ? `${upgradeLine}. ${upgradeDetail}` : setup?.localVm === 'failed' ? (setup.preflightFailure ? preflightRecovery(setup.preflightFailure) : workspaceRecovery(setup.workspaceFailure)).summary : detail;
   const hostDetail = setup?.localVm === 'failed' ? setupDetail : hostWorkspace?.detail ?? detail;
   const failedChecks = cases?.filter(check => check.verdict === 'failed').length ?? 0;
   const agentStatus = checksStale ? 'tests need running' : runUnavailable ? 'test status unavailable' : run?.cancellation === 'unconfirmed' ? 'cancellation not confirmed' : run?.state === 'unknown' ? 'test result unknown'

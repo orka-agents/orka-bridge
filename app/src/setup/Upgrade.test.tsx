@@ -42,7 +42,8 @@ test.each(['eligible', 'absent', 'attention', 'transferred', 'removed'] as const
   } else {
     expect(screen.queryByRole('button', { name: 'Use saved connection' })).toBeNull();
     if (credential === 'attention') expect(screen.getByText(/needs attention/)).toBeTruthy();
-    if (credential === 'absent' || credential === 'removed') expect(screen.getByText(/Enter a new sign-in or key/)).toBeTruthy();
+    if (credential === 'absent' || credential === 'removed') expect(screen.getByText(/Enter a new sign-in or key in the AI card/)).toBeTruthy();
+    if (credential === 'transferred') expect(screen.getByText(/Use Connect in the AI card/)).toBeTruthy();
   }
 });
 test('restore confirmation names the exact pair and warns that the newer workspace cannot reopen', async () => {
@@ -69,10 +70,12 @@ test('a fresh workspace cannot change credentials before its first boot complete
 
 test('shared credential removal cannot happen before warning and confirmation', async () => {
   const { ipc } = mount({ ...fresh, credential: 'attention' });
+  expect(screen.getByRole('button', { name: 'Remove saved connection' }).classList.contains('button-danger')).toBe(true);
   fireEvent.click(screen.getByRole('button', { name: 'Remove saved connection' }));
   const confirm = screen.getByRole('group', { name: 'Remove saved connection?' });
   expect(within(confirm).getByText(/every retained workspace/)).toBeTruthy();
   expect(ipc).not.toHaveBeenCalled();
+  expect(within(confirm).getByRole('button', { name: 'Remove for all retained workspaces' }).classList.contains('button-danger')).toBe(true);
   fireEvent.click(within(confirm).getByRole('button', { name: 'Remove for all retained workspaces' }));
   await waitFor(() => expect(ipc).toHaveBeenCalledExactlyOnceWith('workspace_upgrade_remove', { transaction }));
 });
