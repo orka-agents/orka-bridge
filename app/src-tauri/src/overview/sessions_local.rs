@@ -1,6 +1,8 @@
-//! Read-only Sessions on this computer's VM. The guest reads them with its own read-only
-//! identity and returns bounded projections (see `bridge_runtime_protocol::sessions`). A VM
-//! image older than these actions refuses them, and the place says it needs a newer image.
+//! Read-only Sessions in this computer's workspace. The guest reads them with its own read-only
+//! identity and returns bounded projections (see `bridge_runtime_protocol::sessions`). A guest
+//! whose hello does not offer Sessions is never sent one, and the place says it needs a newer
+//! image. Like Overview's live Agents, a read is skipped while the workspace is not ready and is
+//! not retried while another request holds the workspace session.
 #[cfg(test)]
 #[path = "sessions_local_tests.rs"]
 mod tests;
@@ -13,22 +15,30 @@ use bridge_runtime_protocol::{
 use serde_json::Value;
 use std::{collections::HashSet, future::Future, io, time::Duration};
 
-/// The place key for this computer's VM.
+/// The place key for this computer's workspace.
 pub const LOCAL: &str = "local";
 /// One whole local read, every page included.
 const LOCAL_LIMIT: Duration = Duration::from_secs(30);
-/// Tries when another VM request holds the session, and the wait between them.
-const BUSY_TRIES: usize = 3;
-const BUSY_WAIT: Duration = Duration::from_millis(250);
 
-/// The VM seam: one read-only Sessions action, with the boot that answered it.
+/// The workspace seam.
 pub trait LocalSessions: Send + Sync {
+    /// Whether the workspace is ready; nothing is requested otherwise.
+    fn ready(&self) -> bool;
+    /// The boot that answered the last Sessions request, if any.
+    fn last_boot(&self) -> Option<Uuid>;
+    /// One read-only Sessions action, with the boot that answered it.
     fn sessions_request(
         &self,
         action: EngineActionWire,
     ) -> impl Future<Output = Result<(Uuid, io::Result<OrkaReply>), RuntimeError>> + Send;
 }
 impl LocalSessions for crate::local_vm::LocalVm {
+    fn ready(&self) -> bool {
+        self.status() == crate::local_vm::LocalVmStatus::Ready
+    }
+    fn last_boot(&self) -> Option<Uuid> {
+        self.sessions_boot()
+    }
     fn sessions_request(
         &self,
         action: EngineActionWire,
@@ -37,22 +47,23 @@ impl LocalSessions for crate::local_vm::LocalVm {
     }
 }
 
-/// A boot as a connection: Overview keeps a place's last Sessions only on the same one.
-fn connection(boot: Uuid) -> u64 {
-    u64::from_be_bytes(boot.as_bytes()[..8].try_into().unwrap())
+/// A boot as a connection: Overview keeps a place's last Sessions only on the same one. The
+/// value fits a JavaScript safe integer.
+pub(crate) fn connection(boot: Uuid) -> u64 {
+    u64::from_be_bytes(boot.as_bytes()[..8].try_into().unwrap()) >> 11
 }
 type Failure = (Option<u64>, &'static str);
-/// One action's 200 body. A busy session is retried briefly; a stopped VM is disconnected.
+/// One action's 200 body. A stopped or busy workspace keeps the last boot as its connection,
+/// so Overview can go on showing what it last read on that boot.
 async fn call(vm: &impl LocalSessions, action: EngineActionWire) -> Result<(u64, Value), Failure> {
-    let mut tries = 0;
-    let (boot, reply) = loop {
-        tries += 1;
-        match vm.sessions_request(action.clone()).await {
-            Ok(answer) => break answer,
-            Err(RuntimeError::Busy) if tries < BUSY_TRIES => tokio::time::sleep(BUSY_WAIT).await,
-            Err(RuntimeError::Busy) => return Err((None, "unavailable")),
-            Err(_) => return Err((None, "disconnected")),
-        }
+    let last = || vm.last_boot().map(connection);
+    if !vm.ready() {
+        return Err((last(), "disconnected"));
+    }
+    let (boot, reply) = match vm.sessions_request(action).await {
+        Ok(answer) => answer,
+        Err(RuntimeError::Busy) => return Err((last(), "unavailable")),
+        Err(_) => return Err((last(), "disconnected")),
     };
     let boot = connection(boot);
     match reply {
@@ -122,7 +133,7 @@ pub async fn read(vm: &impl LocalSessions) -> PlaceSessions {
     };
     match tokio::time::timeout(LOCAL_LIMIT, list(vm))
         .await
-        .unwrap_or(Err((None, "unavailable")))
+        .unwrap_or_else(|_| Err((vm.last_boot().map(connection), "unavailable")))
     {
         Ok((boot, list)) => {
             view.state = if list.complete { "complete" } else { "partial" };

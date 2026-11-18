@@ -7,12 +7,14 @@ type Answer = Result<(Uuid, io::Result<OrkaReply>), RuntimeError>;
 struct Fake {
     answers: Mutex<VecDeque<Answer>>,
     actions: Mutex<Vec<EngineActionWire>>,
+    stopped: bool,
+    last: Mutex<Option<Uuid>>,
 }
 impl Fake {
     fn new(answers: Vec<Answer>) -> Self {
         Self {
             answers: Mutex::new(answers.into()),
-            actions: Mutex::default(),
+            ..Self::default()
         }
     }
     fn actions(&self) -> Vec<EngineActionWire> {
@@ -20,6 +22,12 @@ impl Fake {
     }
 }
 impl LocalSessions for Fake {
+    fn ready(&self) -> bool {
+        !self.stopped
+    }
+    fn last_boot(&self) -> Option<Uuid> {
+        *self.last.lock().unwrap()
+    }
     fn sessions_request(&self, action: EngineActionWire) -> impl Future<Output = Answer> + Send {
         self.actions.lock().unwrap().push(action);
         let answer = self
@@ -28,10 +36,14 @@ impl LocalSessions for Fake {
             .unwrap()
             .pop_front()
             .expect("no answer left");
+        if let Ok((boot, _)) = &answer {
+            *self.last.lock().unwrap() = Some(*boot);
+        }
         async move { answer }
     }
 }
 const BOOT: Uuid = Uuid::from_u128(0x0102_0304_0506_0708_0000_0000_0000_0001);
+const SHOWN_BOOT: u64 = 0x0102_0304_0506_0708 >> 11;
 fn ok(body: Value) -> Answer {
     Ok((BOOT, Ok(OrkaReply { status: 200, body })))
 }
@@ -52,7 +64,7 @@ async fn pages_on_one_boot_list_newest_updated_first() {
     let view = read(&vm).await;
     assert_eq!(view.key, LOCAL);
     assert_eq!(view.state, "complete");
-    assert_eq!(view.connection, Some(0x0102_0304_0506_0708));
+    assert_eq!(view.connection, Some(SHOWN_BOOT));
     assert!(view.observed_at.is_some());
     let names: Vec<_> = view.entries.iter().map(|e| e.name.as_str()).collect();
     assert_eq!(names, ["b", "a"]);
@@ -72,7 +84,7 @@ async fn a_vm_image_without_sessions_reads_is_outdated() {
     let refused = || Ok((BOOT, Err(io::ErrorKind::Unsupported.into())));
     let view = read(&Fake::new(vec![refused()])).await;
     assert_eq!((view.state, view.entries.len()), ("outdated", 0));
-    assert_eq!(view.connection, Some(0x0102_0304_0506_0708));
+    assert_eq!(view.connection, Some(SHOWN_BOOT));
     let shown = read_transcript(&Fake::new(vec![refused()]), "a").await;
     assert_eq!(shown.state, "outdated");
 }
@@ -105,17 +117,41 @@ async fn refusals_and_a_stopped_vm_map_to_place_states() {
     }
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_busy_vm_is_retried_briefly_then_reported_unavailable() {
+#[tokio::test]
+async fn a_busy_or_stopped_workspace_is_not_retried_and_keeps_the_last_boot() {
     let vm = Fake::new(vec![
-        Err(RuntimeError::Busy),
         ok(page(vec![listed("a", "2026-01-02T00:00:00Z")], None)),
+        Err(RuntimeError::Busy),
     ]);
     assert_eq!(read(&vm).await.state, "complete");
-    let busy = Fake::new((0..BUSY_TRIES).map(|_| Err(RuntimeError::Busy)).collect());
-    let view = read(&busy).await;
+    let view = read(&vm).await;
+    assert_eq!(
+        (view.state, view.connection),
+        ("unavailable", Some(SHOWN_BOOT))
+    );
+    assert_eq!(vm.actions().len(), 2);
+    // A workspace that is not ready is never asked.
+    let stopped = Fake {
+        stopped: true,
+        last: Mutex::new(Some(BOOT)),
+        ..Fake::default()
+    };
+    let view = read(&stopped).await;
+    assert_eq!(
+        (view.state, view.connection),
+        ("disconnected", Some(SHOWN_BOOT))
+    );
+    assert_eq!(read_transcript(&stopped, "a").await.state, "disconnected");
+    assert!(stopped.actions().is_empty());
+    // Before any answer there is no boot to keep.
+    let view = read(&Fake::new(vec![Err(RuntimeError::Busy)])).await;
     assert_eq!((view.state, view.connection), ("unavailable", None));
-    assert_eq!(busy.actions().len(), BUSY_TRIES);
+}
+
+#[test]
+fn a_boot_connection_fits_a_javascript_safe_integer() {
+    assert!(connection(Uuid::max()) < 1 << 53);
+    assert_ne!(connection(BOOT), connection(Uuid::from_u128(2)));
 }
 
 #[tokio::test]

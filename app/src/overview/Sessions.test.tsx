@@ -149,6 +149,22 @@ test('an unreadable place on the same connection keeps what Bridge last saw', as
   expect(screen.getAllByRole('listitem')).toHaveLength(1);
 });
 
+test("this computer keeps what Bridge last saw while its workspace is busy or stopped on the same boot", async () => {
+  const boot = 2 ** 53 - 1;
+  let sessions: unknown = { places: [read('local', [entry('kept')], { connection: boot })] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_sessions' ? sessions : null);
+  const view = render(<SessionList active places={places} />);
+  expect(await screen.findAllByRole('listitem')).toHaveLength(1);
+  sessions = { places: [read('local', [], { state: 'unavailable', observedAt: null, connection: boot })] };
+  view.rerender(<SessionList active places={{ ...places }} />);
+  expect(await screen.findByText("Couldn't read conversations on this computer just now. Showing what Bridge last saw.")).toBeTruthy();
+  sessions = { places: [read('local', [], { state: 'disconnected', observedAt: null, connection: boot })] };
+  view.rerender(<SessionList active places={{ ...places }} />);
+  expect(await screen.findByText("The workspace on this computer isn't running now. Showing what Bridge last saw.")).toBeTruthy();
+  expect(screen.getAllByRole('listitem')).toHaveLength(1);
+});
+
 test('under StrictMode the first read still lands', async () => {
   ipc({ places: [read('one', [entry('a')])] });
   render(<StrictMode><SessionList active places={places} /></StrictMode>);

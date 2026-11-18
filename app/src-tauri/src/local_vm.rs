@@ -489,6 +489,8 @@ pub struct LocalVm {
     upgrade_cache: Mutex<Option<crate::workspace_upgrade::UpgradeStatusDto>>,
     /// Compared and advanced only under upgrade_cache; its mutex supplies ordering.
     upgrade_cache_revision: std::sync::atomic::AtomicU64,
+    /// The boot that answered the last Overview Sessions request.
+    sessions_boot: Mutex<Option<bridge_runtime_protocol::Uuid>>,
     workspace_replaced_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
     /// Present only while a replace/retry/restore/transfer/remove is in
     /// flight; cooperative, matching the existing `closed` receiver contract.
@@ -547,6 +549,7 @@ impl LocalVm {
             workspace_replaced: std::sync::atomic::AtomicBool::new(false),
             upgrade_cache: Mutex::new(None),
             upgrade_cache_revision: std::sync::atomic::AtomicU64::new(0),
+            sessions_boot: Mutex::new(None),
             workspace_replaced_observer: Mutex::new(None),
             upgrade_cancel: Mutex::new(None),
         })
@@ -1309,8 +1312,14 @@ impl LocalVm {
         ),
         RuntimeError,
     > {
-        self.with_client(move |_, client| (client.boot_nonce(), client.sessions_request(action)))
-            .await
+        let answer = self
+            .with_client(move |_, client| (client.boot_nonce(), client.sessions_request(action)))
+            .await?;
+        *self.sessions_boot.lock().unwrap() = Some(answer.0);
+        Ok(answer)
+    }
+    pub fn sessions_boot(&self) -> Option<bridge_runtime_protocol::Uuid> {
+        *self.sessions_boot.lock().unwrap()
     }
     pub async fn workspace_catalog(
         &self,

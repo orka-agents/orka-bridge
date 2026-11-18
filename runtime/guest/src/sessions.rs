@@ -73,6 +73,9 @@ fn message(line: &str) -> Option<String> {
         }
         cut = end < content.len();
         kept.insert("content".into(), json!(&content[..end]));
+    } else if value.get("content").is_some_and(|c| !c.is_null()) {
+        // Content Bridge does not show, such as structured parts, is marked as cut.
+        cut = true;
     }
     if let Some(calls) = value.get("toolCalls").and_then(Value::as_array) {
         cut |= calls.len() > TOOL_CALLS;
@@ -203,5 +206,23 @@ impl Orka {
             stdout,
             has_diagnostics: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::message;
+    use serde_json::{json, Value};
+
+    #[test]
+    fn content_bridge_does_not_show_marks_the_message_cut() {
+        let kept = |line: Value| -> Value {
+            serde_json::from_str(&message(&line.to_string()).unwrap()).unwrap()
+        };
+        let parts = kept(json!({"role":"user","content":[{"type":"image"}]}));
+        assert_eq!(parts["cut"], true);
+        assert!(parts.get("content").is_none());
+        assert_ne!(kept(json!({"role":"user","content":null}))["cut"], true);
+        assert_ne!(kept(json!({"role":"user","content":"hi"}))["cut"], true);
     }
 }
