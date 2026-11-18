@@ -931,9 +931,17 @@ do {
         fail("Native form did not preserve the file and append the exact instructions suffix")
     }
     print("Native form saved the instructions suffix \(waited) s after typing")
-    let savedForm = try capture("agent-form-saved", "Designer")
-    let savedFooter = savedForm.filter { $0.boundingBox.maxY < 0.1 }
-        .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+    // The file is written before the save's Git commit and reply, so the footer can still
+    // read "Saving…" for a moment. Re-capture until it acknowledges the save, within 5 s.
+    var savedForm = try capture("agent-form-saved", "Designer")
+    var savedFooter = ""
+    for attempt in 0..<10 {
+        if attempt > 0 { Thread.sleep(forTimeInterval: 0.5); savedForm = try capture("agent-form-saved", "Designer") }
+        savedFooter = savedForm.filter { $0.boundingBox.maxY < 0.1 }
+            .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        if savedFooter.range(of: "\\bSaved\\b", options: .regularExpression) != nil
+            && !savedFooter.localizedCaseInsensitiveContains("not saved") { break }
+    }
     require(savedFooter.range(of: "\\bSaved\\b", options: .regularExpression) != nil
         && !savedFooter.localizedCaseInsensitiveContains("not saved"),
         "Form save was not acknowledged in footer: \(savedFooter)")
@@ -1032,7 +1040,8 @@ for character in marker.utf16 {
     }
 }
 var editSaved = false
-for _ in 0..<20 {
+// As in the form probe: autosave, write and commit can take several seconds on a loaded runner.
+for _ in 0..<100 {
     if (try String(contentsOf: ownedFile, encoding: .utf8)) == bytesBeforeEdit + marker { editSaved = true; break }
     Thread.sleep(forTimeInterval: 0.1)
 }
