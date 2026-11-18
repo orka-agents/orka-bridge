@@ -2,6 +2,8 @@
 //! hides gateway (channel) Sessions (orka-agents/orka#1183). A listed Session names no Agent
 //! or initiator (orka-agents/orka#1182), so the Agent is shown only while a Task runs in it,
 //! from that Task's `agentRef`.
+#[path = "sessions_local.rs"]
+pub mod local;
 #[cfg(test)]
 #[path = "sessions_tests.rs"]
 mod tests;
@@ -189,6 +191,8 @@ pub(crate) fn transcript(
             continue;
         };
         let (text, cut) = bounded(message["content"].as_str().unwrap_or(""));
+        // A guest projection cuts long text itself and says so.
+        let cut = cut || message["cut"] == true;
         messages.push(Message {
             role,
             text,
@@ -196,6 +200,10 @@ pub(crate) fn transcript(
             tools: tool_names(&message["toolCalls"]),
             at: millis(&message["ts"]),
         });
+    }
+    // A guest projection that left older lines out says so.
+    if value["transcriptCut"] == true {
+        complete = false;
     }
     if messages.len() > MAX_MESSAGES {
         messages.drain(..messages.len() - MAX_MESSAGES);
@@ -314,4 +322,23 @@ pub async fn read_transcript(session: &ClusterSession, key: &str, name: &str) ->
         Err(state) => view.state = state,
     }
     view
+}
+/// This computer's Sessions first, then each cluster's, read at the same time.
+pub async fn read_all(session: &ClusterSession, vm: &impl local::LocalSessions) -> Sessions {
+    let (here, mut sessions) = tokio::join!(local::read(vm), read(session));
+    sessions.places.insert(0, here);
+    sessions
+}
+/// One conversation, on this computer or on a cluster place.
+pub async fn read_transcript_at(
+    session: &ClusterSession,
+    vm: &impl local::LocalSessions,
+    key: &str,
+    name: &str,
+) -> Transcript {
+    if key == local::LOCAL {
+        local::read_transcript(vm, name).await
+    } else {
+        read_transcript(session, key, name).await
+    }
 }

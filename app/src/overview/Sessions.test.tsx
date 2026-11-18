@@ -98,10 +98,31 @@ test('a revoked place asks to connect again, and its conversations read the same
   expect(await screen.findByText('Connect to this cluster again to read the conversation.')).toBeTruthy();
 });
 
-test('without a connected cluster the section asks for one', async () => {
+test('without a ready workspace or a connected cluster the section says where conversations come from', async () => {
   ipc({ places: [read('one', [], { state: 'disconnected', observedAt: null })] });
   render(<SessionList active places={places} />);
-  await waitFor(() => expect(screen.getByText('Connect a cluster to see its conversations here.')).toBeTruthy());
+  await waitFor(() => expect(screen.getByText("Conversations appear here once the workspace is ready on this computer or a cluster is connected.")).toBeTruthy());
+});
+
+test("this computer's conversations list beside the clusters' and open the same way", async () => {
+  const calls = ipc({ places: [read('local', [entry('bridge-chat-local', { updatedAt: 4000 })], { connection: 7 }), read('one', [entry('remote')])] },
+    () => ({ state: 'complete', messages: [{ role: 'user', text: 'hello here', cut: false, tools: [], at: 1 }] }));
+  render(<SessionList active places={places} />);
+  const [local, remote] = await screen.findAllByRole('listitem');
+  expect(local.getAttribute('aria-label')).toBe('bridge-chat-local on this computer, 2 messages');
+  expect(remote.getAttribute('aria-label')).toBe('remote on team-one, 2 messages');
+  await userEvent.click(within(local).getByRole('button', { name: /Conversation/ }));
+  expect(await within(local).findByText('hello here')).toBeTruthy();
+  expect(calls.find(([c]) => c === 'overview_transcript')?.[1]).toEqual({ key: 'local', name: 'bridge-chat-local' });
+});
+
+test("an older workspace image says it can't list or read this computer's conversations", async () => {
+  ipc({ places: [read('local', [], { state: 'outdated', observedAt: null }), read('one', [entry('remote')])] }, () => ({ state: 'outdated', messages: [] }));
+  render(<SessionList active places={places} />);
+  expect(await screen.findByText("Listing conversations on this computer needs a newer version of Bridge.")).toBeTruthy();
+  await userEvent.click(within(await screen.findByRole('listitem')).getByRole('button', { name: /Conversation/ }));
+  expect(await screen.findByText("Reading conversations on this computer needs a newer version of Bridge.")).toBeTruthy();
+  expect(isSessions({ places: [read('local', [entry('a')], { state: 'outdated', observedAt: null })] })).toBe(false);
 });
 
 test('a new connection drops the old connection\'s conversations even when its first read fails', async () => {

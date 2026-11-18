@@ -136,16 +136,24 @@ async fn overview_tool_calls(
 #[tauri::command]
 async fn overview_sessions(
     session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
 ) -> Result<bridge_engine::overview_sessions::Sessions, &'static str> {
-    Ok(bridge_engine::overview_sessions::read(&session).await)
+    Ok(bridge_engine::overview_sessions::read_all(&session, vm.inner().as_ref()).await)
 }
 #[tauri::command]
 async fn overview_transcript(
     session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+    vm: tauri::State<'_, Arc<LocalVm>>,
     key: String,
     name: String,
 ) -> Result<bridge_engine::overview_sessions::Transcript, &'static str> {
-    Ok(bridge_engine::overview_sessions::read_transcript(&session, &key, &name).await)
+    Ok(bridge_engine::overview_sessions::read_transcript_at(
+        &session,
+        vm.inner().as_ref(),
+        &key,
+        &name,
+    )
+    .await)
 }
 #[tauri::command]
 async fn overview_places(

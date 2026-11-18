@@ -1388,6 +1388,20 @@ mod tests {
         let operation = Uuid::new_v4();
         for (id, body) in [
             (
+                11,
+                RequestBody::Execute {
+                    operation: Uuid::new_v4(),
+                    action: EngineActionWire::SessionList { after: None },
+                    snapshot: None,
+                },
+            ),
+            (
+                12,
+                RequestBody::Engine(EngineActionWire::SessionRead {
+                    name: "bridge-chat-0123456789abcdef0123456789abcdef".into(),
+                }),
+            ),
+            (
                 9,
                 RequestBody::Execute {
                     operation: Uuid::new_v4(),

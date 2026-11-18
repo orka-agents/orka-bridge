@@ -15,6 +15,8 @@ mod chat;
 pub use chat::*;
 mod catalog;
 pub use catalog::*;
+mod sessions;
+pub use sessions::*;
 pub fn encode_chunk(bytes: &[u8]) -> String {
     STANDARD.encode(bytes)
 }
@@ -63,17 +65,41 @@ pub struct StageHello {
     pub accepted_boot_nonce: Option<Uuid>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub run_cleanup: bool,
+    /// Serves `SessionList` and `SessionRead`. An older guest exits on an unknown action, so
+    /// the host sends them only when the hello says so.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sessions: bool,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub enum EngineActionWire {
     Version {},
-    ListAgents { context: String, namespace: String },
-    Orka { request: OrkaRequest },
-    OrkaChat { request: ChatRequest },
-    RunWorker { name: String, uid: String },
-    CleanupRunAgent { uid: String },
+    ListAgents {
+        context: String,
+        namespace: String,
+    },
+    Orka {
+        request: OrkaRequest,
+    },
+    OrkaChat {
+        request: ChatRequest,
+    },
+    RunWorker {
+        name: String,
+        uid: String,
+    },
+    CleanupRunAgent {
+        uid: String,
+    },
     WorkspaceCatalog {},
+    /// One page of Overview Sessions, after Orka's cursor.
+    SessionList {
+        after: Option<String>,
+    },
+    /// One named Session's latest transcript, for Overview.
+    SessionRead {
+        name: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -244,7 +270,7 @@ pub fn validate_hello(hello: &StageHello, stage: Stage, nonce: Uuid) -> Result<(
     if hello.version != VERSION {
         return Err(ProtocolError::Version);
     }
-    if hello.stage != stage || (stage == Stage::Early && hello.run_cleanup) {
+    if hello.stage != stage || (stage == Stage::Early && (hello.run_cleanup || hello.sessions)) {
         return Err(ProtocolError::Stage);
     }
     if hello.guest_nonce.is_nil()
@@ -273,6 +299,16 @@ pub fn validate_action(action: &EngineActionWire) -> Result<(), ProtocolError> {
     }
     if let EngineActionWire::OrkaChat { request } = action {
         request.validate()?;
+    }
+    if let EngineActionWire::SessionList { after: Some(after) } = action {
+        if !valid_session_cursor(after) {
+            return Err(ProtocolError::Invalid);
+        }
+    }
+    if let EngineActionWire::SessionRead { name } = action {
+        if !valid_session_name(name) {
+            return Err(ProtocolError::Invalid);
+        }
     }
     if let EngineActionWire::ListAgents { context, namespace } = action {
         if [context, namespace]

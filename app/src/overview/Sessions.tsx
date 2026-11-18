@@ -3,7 +3,7 @@ import { Disclosure } from '../components/Disclosure';
 import { RelativeTime } from '../components/RelativeTime';
 import type { Places } from './api';
 import { placeLabels } from './model';
-import { merge, type PlaceSessions, readSessions, readTranscript, roleLabel, type Row, type Sessions, type Transcript } from './sessions-api';
+import { LOCAL, merge, type PlaceSessions, readSessions, readTranscript, roleLabel, type Row, type Sessions, type Transcript } from './sessions-api';
 
 /** An expanded conversation, read again whenever its place is read again. A new connection remounts it (see the row key). */
 function TranscriptView({ placeKey, name, revision }: { placeKey: string; name: string; revision: number | null }) {
@@ -15,6 +15,7 @@ function TranscriptView({ placeKey, name, revision }: { placeKey: string; name: 
   }, [placeKey, name, revision]);
   if (!transcript) return <p className="overview-card-meta" role="status">Reading the conversation…</p>;
   if (transcript.state === 'denied') return <p className="overview-card-meta" role="status">This account can't read this conversation.</p>;
+  if (transcript.state === 'outdated') return <p className="overview-card-meta" role="status">Reading conversations on this computer needs a newer version of Bridge.</p>;
   if (transcript.state === 'revoked') return <p className="overview-card-meta" role="status">Connect to this cluster again to read the conversation.</p>;
   if (transcript.state !== 'complete' && transcript.state !== 'partial') return <p className="overview-card-meta" role="status">Bridge couldn't read this conversation.</p>;
   if (!transcript.messages.length) return <p className="overview-card-meta">No messages yet.</p>;
@@ -37,7 +38,7 @@ function Entry({ row, place }: { row: Row; place: string }) {
       <h3>{row.name}</h3>
       <span className="overview-card-time"><RelativeTime value={row.updatedAt} /></span>
     </header>
-    <p className="overview-card-meta">on <code>{place}</code>{row.sessionType && <> · {row.sessionType}</>} · {messages} · started <RelativeTime value={row.createdAt} /></p>
+    <p className="overview-card-meta">on {row.placeKey === LOCAL ? place : <code>{place}</code>}{row.sessionType && <> · {row.sessionType}</>} · {messages} · started <RelativeTime value={row.createdAt} /></p>
     {/* `agent` is set only when Bridge read the Task and it had not finished. */}
     {row.activeTask && <p className="overview-card-meta">{row.agent ? <>Running <code>{row.activeTask}</code> with <code>{row.agent}</code></> : <>Active Task <code>{row.activeTask}</code></>}</p>}
     <div className="overview-card-actions">
@@ -47,7 +48,7 @@ function Entry({ row, place }: { row: Row; place: string }) {
   </li>;
 }
 
-/** Sessions on connected clusters, read only. Channel (gateway) Sessions and the local VM aren't listed. */
+/** Sessions in this computer's workspace and on connected clusters, read only. Channel (gateway) Sessions aren't listed. */
 export function SessionList({ active, places }: { active: boolean; places?: Places }) {
   const [sessions, setSessions] = useState<Sessions>();
   const [failed, setFailed] = useState(false);
@@ -81,29 +82,30 @@ export function SessionList({ active, places }: { active: boolean; places?: Plac
     if (active && places) start();
   }, [active, places, start]);
   useEffect(() => () => { request.current++; queued.current = false; }, []);
-  const labels = placeLabels(places?.places ?? []);
+  const labels = placeLabels(places?.places ?? []).set(LOCAL, 'this computer');
   const read = (sessions?.places ?? []).filter(p => labels.has(p.key));
   const connected = read.filter(p => p.state !== 'disconnected' || p.entries.length);
   const rows = merge(connected).slice(0, 50);
   const note = (p: PlaceSessions) => {
     const name = labels.get(p.key);
-    if (p.state === 'denied') return `Can't list conversations on ${name}: this account isn't allowed to read Sessions.`;
+    if (p.state === 'outdated') return `Listing conversations on this computer needs a newer version of Bridge.`;
+    if (p.state === 'denied') return p.key === LOCAL ? `Bridge isn't allowed to list conversations on this computer.` : `Can't list conversations on ${name}: this account isn't allowed to read Sessions.`;
     if (p.state === 'unavailable') return `Couldn't read conversations on ${name} just now.${p.entries.length ? ' Showing what Bridge last saw.' : ''}`;
-    if (p.state === 'partial') return `${name} has more conversations than Bridge reads at once, so conversations started earlier aren't listed, even if they're still in use.`;
+    if (p.state === 'partial') return `${p.key === LOCAL ? 'This computer' : name} has more conversations than Bridge reads at once, so conversations started earlier aren't listed, even if they're still in use.`;
     if (p.state === 'revoked') return `Connect to ${name} again to see its conversations.`;
-    if (p.state === 'disconnected' && p.entries.length) return `${name} isn't connected now. Showing what Bridge last saw.`;
+    if (p.state === 'disconnected' && p.entries.length) return p.key === LOCAL ? `The workspace on this computer isn't running now. Showing what Bridge last saw.` : `${name} isn't connected now. Showing what Bridge last saw.`;
   };
   const notes = read.map(p => [p.key, note(p)] as const).filter((n): n is readonly [string, string] => !!n[1]);
   return <section className="overview-group overview-activity" aria-label="Conversations">
     <header className="overview-group-head">
       <h2>Conversations</h2>
-      <span className="overview-group-sub">Sessions on connected clusters, most recent first</span>
+      <span className="overview-group-sub">On this computer and connected clusters, most recent first</span>
     </header>
-    <p className="overview-note">Conversations on this computer, and those started through Telegram, Teams or other channels, aren't listed here yet.</p>
+    <p className="overview-note">Conversations started through Telegram, Teams or other channels aren't listed here yet.</p>
     {failed && <p className="overview-note" role="status">Couldn't read conversations just now.{sessions && ' Showing what Bridge last saw.'}</p>}
     {notes.map(([key, text]) => <p key={key} className="overview-note" role="status">{text}</p>)}
-    {!connected.length ? <p className="overview-note">Connect a cluster to see its conversations here.</p>
-      : !rows.length ? <p className="overview-note">No conversations yet on connected clusters.</p>
+    {!connected.length ? <p className="overview-note">Conversations appear here once the workspace is ready on this computer or a cluster is connected.</p>
+      : !rows.length ? <p className="overview-note">No conversations yet.</p>
       : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.connection ?? ''}/${row.name}`} row={row} place={labels.get(row.placeKey)!} />)}</ol>}
   </section>;
 }

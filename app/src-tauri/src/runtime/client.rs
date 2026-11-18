@@ -15,6 +15,7 @@ pub struct VmClient {
     nonce: Uuid,
     next: u64,
     run_cleanup: bool,
+    sessions: bool,
 }
 fn invalid() -> io::Error {
     io::Error::from(io::ErrorKind::InvalidData)
@@ -38,6 +39,7 @@ impl VmClient {
             nonce,
             next: 3,
             run_cleanup: false,
+            sessions: false,
         })
     }
     /// Capabilities come from the validated serving hello, never a probe that
@@ -50,6 +52,7 @@ impl VmClient {
         validate_hello(hello, Stage::Serve, nonce).map_err(|_| invalid())?;
         let mut client = Self::established(channel, nonce)?;
         client.run_cleanup = hello.run_cleanup;
+        client.sessions = hello.sessions;
         Ok(client)
     }
     pub fn cleanup_run_agent(&mut self, uid: &str) -> io::Result<CleanupRunReply> {
@@ -347,6 +350,36 @@ impl VmClient {
         match self.call(RequestBody::Execute {
             operation,
             action: EngineActionWire::Orka { request },
+            snapshot: None,
+        })? {
+            ResultBody::Operation { operation: id, .. } if id == operation => {}
+            _ => return Err(invalid()),
+        }
+        let result = self.result(operation)?;
+        if result.exit != 0 {
+            return Err(invalid());
+        }
+        serde_json::from_slice(&result.stdout).map_err(|_| invalid())
+    }
+    /// Overview Sessions: one projected list page or one Session's latest transcript, read
+    /// only. A guest whose hello did not offer Sessions is never sent one: an older guest exits
+    /// on an unknown action.
+    pub fn sessions_request(&mut self, action: EngineActionWire) -> io::Result<OrkaReply> {
+        if !self.sessions {
+            return Err(io::ErrorKind::Unsupported.into());
+        }
+        if !matches!(
+            action,
+            EngineActionWire::SessionList { .. } | EngineActionWire::SessionRead { .. }
+        ) || validate_action(&action).is_err()
+            || self.channel.is_none()
+        {
+            return Err(invalid());
+        }
+        let operation = Uuid::new_v4();
+        match self.call(RequestBody::Execute {
+            operation,
+            action,
             snapshot: None,
         })? {
             ResultBody::Operation { operation: id, .. } if id == operation => {}

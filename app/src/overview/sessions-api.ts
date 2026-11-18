@@ -6,12 +6,15 @@ export type SessionEntry = {
   activeTask: string | null; agent: string | null;
 };
 /** `connection` is the place's connection revision: cached Sessions belong to one connection only. */
-export type PlaceSessions = { key: string; state: PlaceState; observedAt: number | null; entries: SessionEntry[]; connection: number | null };
+/** This computer's place key. `outdated` means its workspace image predates Sessions reads. */
+export const LOCAL = 'local';
+export type SessionsState = PlaceState | 'outdated';
+export type PlaceSessions = { key: string; state: SessionsState; observedAt: number | null; entries: SessionEntry[]; connection: number | null };
 export type Sessions = { places: PlaceSessions[] };
 export type Message = { role: string; text: string; cut: boolean; tools: string[]; at: number | null };
-export type Transcript = { state: PlaceState; messages: Message[] };
+export type Transcript = { state: SessionsState; messages: Message[] };
 
-const states: PlaceState[] = ['complete', 'partial', 'denied', 'unavailable', 'revoked', 'disconnected'];
+const states: SessionsState[] = ['complete', 'partial', 'denied', 'unavailable', 'revoked', 'disconnected', 'outdated'];
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const text = (v: unknown, max: number): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
 const nullable = (v: unknown, max: number) => v === null || text(v, max);
@@ -26,7 +29,7 @@ export function isSessions(v: unknown): v is Sessions {
   if (!object(v) || !Array.isArray(v.places)) return false;
   const keys = new Set<string>();
   return v.places.every(p => {
-    if (!object(p) || !text(p.key, 4096) || keys.has(p.key) || !states.includes(p.state as PlaceState) || !nullableCount(p.observedAt) || !nullableCount(p.connection) || !Array.isArray(p.entries)) return false;
+    if (!object(p) || !text(p.key, 4096) || keys.has(p.key) || !states.includes(p.state as SessionsState) || !nullableCount(p.observedAt) || !nullableCount(p.connection) || !Array.isArray(p.entries)) return false;
     keys.add(p.key);
     const read = p.state === 'complete' || p.state === 'partial';
     // Only a successful read carries entries and a time; failures carry neither.
@@ -36,7 +39,7 @@ export function isSessions(v: unknown): v is Sessions {
   });
 }
 export function isTranscript(v: unknown): v is Transcript {
-  return object(v) && states.includes(v.state as PlaceState) && Array.isArray(v.messages) && v.messages.length <= 200
+  return object(v) && states.includes(v.state as SessionsState) && Array.isArray(v.messages) && v.messages.length <= 200
     && (v.state === 'complete' || v.state === 'partial' || v.messages.length === 0)
     && v.messages.every(m => object(m) && text(m.role, 32) && typeof m.text === 'string' && m.text.length <= 16384 && typeof m.cut === 'boolean'
       && Array.isArray(m.tools) && m.tools.every(t => text(t, 256)) && nullableCount(m.at));

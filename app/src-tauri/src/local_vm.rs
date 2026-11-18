@@ -1297,6 +1297,21 @@ impl LocalVm {
         .await
         .map_err(|_| RuntimeError::Unavailable)?
     }
+    /// Overview Sessions: one read-only Sessions action on the running VM, with the boot that
+    /// answered it.
+    pub async fn sessions_request(
+        &self,
+        action: bridge_runtime_protocol::EngineActionWire,
+    ) -> Result<
+        (
+            bridge_runtime_protocol::Uuid,
+            std::io::Result<bridge_runtime_protocol::OrkaReply>,
+        ),
+        RuntimeError,
+    > {
+        self.with_client(move |_, client| (client.boot_nonce(), client.sessions_request(action)))
+            .await
+    }
     pub async fn workspace_catalog(
         &self,
         setup: Arc<crate::setup::SetupStore>,
