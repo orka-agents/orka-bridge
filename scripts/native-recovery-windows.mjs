@@ -66,7 +66,24 @@ try {
     });
   }
   let contextId;
+  const preferenceContexts = new Set();
+  // Worlds share the native DOM and origin storage, but not scenario intent.
+  // A retired old scene must not overwrite a later scene's first-test marker.
+  const fixtureStorage = `(() => {
+    const values = new Map();
+    Object.defineProperty(window, 'localStorage', { configurable: true, value: {
+      getItem: key => values.get(String(key)) ?? null,
+      setItem: (key, value) => values.set(String(key), String(value)),
+      removeItem: key => values.delete(String(key)), clear: () => values.clear(),
+      key: index => [...values.keys()][index] ?? null, get length() { return values.size; }
+    } });
+  })();`;
   async function evaluate(expression) {
+    if (contextId !== undefined && !preferenceContexts.has(contextId)) {
+      const initialized = await call('Runtime.evaluate', { expression: fixtureStorage, contextId, returnByValue: true });
+      if (initialized.exceptionDetails) throw Error(JSON.stringify(initialized.exceptionDetails));
+      preferenceContexts.add(contextId);
+    }
     const result = await call('Runtime.evaluate', { expression, contextId, awaitPromise: true, returnByValue: true });
     if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails));
     return result.result.value;

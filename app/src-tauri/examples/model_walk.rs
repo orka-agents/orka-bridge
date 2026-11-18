@@ -319,6 +319,16 @@ fn upgrade_status(key: &str) -> serde_json::Value {
     status
 }
 
+// Restore fixture-only presentation intent after old-page callbacks have gone away.
+#[cfg(all(target_os = "macos", feature = "custom-protocol"))]
+const UPGRADE_INITIALIZE: &str = r#"
+const upgradeIntent = sessionStorage.getItem('bridge.fixture.upgradeIntent');
+if (upgradeIntent === 'pending' || upgradeIntent === 'attempted') {
+    localStorage.setItem('bridge.firstTest.v1', upgradeIntent);
+    sessionStorage.removeItem('bridge.fixture.upgradeIntent');
+}
+"#;
+
 #[cfg(all(target_os = "macos", feature = "custom-protocol"))]
 fn main() {
     use serde_json::json;
@@ -371,6 +381,7 @@ fn main() {
     let run_source = std::sync::Mutex::new(source.clone());
     let run_attempt = std::sync::Mutex::new(None::<String>);
     tauri::Builder::default()
+        .append_invoke_initialization_script(UPGRADE_INITIALIZE)
         .setup(|app| {
             app.get_webview_window("main")
                 .unwrap()
@@ -617,9 +628,12 @@ fn main() {
                             let group = if manage { 2 } else { 1 };
                             if upgrade_scene.swap(group, std::sync::atomic::Ordering::SeqCst) != group {
                                 workspace.lock().unwrap().returning = manage;
+                                first_test_pending.store(true, std::sync::atomic::Ordering::SeqCst);
+                                running.store(false, std::sync::atomic::Ordering::SeqCst);
+                                connected.store(false, std::sync::atomic::Ordering::SeqCst);
                                 let intent = if manage { "attempted" } else { "pending" };
                                 invoke.message.webview()
-                                    .eval(format!("localStorage.setItem('bridge.firstTest.v1', '{intent}'); location.reload();"))
+                                    .eval(format!("sessionStorage.setItem('bridge.fixture.upgradeIntent', '{intent}'); location.reload();"))
                                     .expect("fixture upgrade renderer reload");
                             }
                         }

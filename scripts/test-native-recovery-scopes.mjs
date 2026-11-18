@@ -335,5 +335,36 @@ let upgradeCalls = 0;
 await Function('runCore', 'call', `${upgradeCapture}; return captureUpgrade('light', 'wide');`)(false, async () => { upgradeCalls++; });
 assert.equal(upgradeCalls, 0, 'UI scope must not create even one upgrade world');
 assert.equal((source.match(/await captureUpgrade\(theme, '(?:wide|compact)'\)/g) ?? []).length, 2);
+// Old isolated-world React pollers may still retire their own first-test intent;
+// their synthetic preferences must not change a later scene's identity.
+const fixtureStorage = source.match(/const fixtureStorage = `([\s\S]*?)`;/)?.[1];
+assert.ok(fixtureStorage, 'each renderer fixture world needs isolated presentation preferences');
+const nativePreferences = new Map([['native-sentinel', 'kept']]);
+const nativeStorage = { getItem: key => nativePreferences.get(key) ?? null, setItem: (key, value) => nativePreferences.set(key, value), removeItem: key => nativePreferences.delete(key) };
+const worlds = [0, 1].map(() => ({ window: { localStorage: nativeStorage } }));
+for (const world of worlds) vm.runInNewContext(fixtureStorage, world);
+worlds[0].window.localStorage.setItem('bridge.firstTest.v1', 'attempted');
+assert.equal(worlds[1].window.localStorage.getItem('bridge.firstTest.v1'), null);
+worlds[1].window.localStorage.setItem('bridge.firstTest.v1', 'pending');
+worlds[0].window.localStorage.setItem('bridge.firstTest.v1', 'attempted');
+assert.equal(worlds[1].window.localStorage.getItem('bridge.firstTest.v1'), 'pending');
+assert.deepEqual([...nativePreferences], [['native-sentinel', 'kept']], 'renderer fixtures must not touch the native profile storage');
+// Execute the fixture's document-start handshake: old-page callbacks must not
+// overwrite the next renderer's intended setup/Manage presentation.
+const upgradeFixture = await readFile(new URL('../app/src-tauri/examples/model_walk.rs', import.meta.url), 'utf8');
+const upgradeBootstrap = upgradeFixture.match(/const UPGRADE_INITIALIZE: &str = r#"([\s\S]*?)"#;/)?.[1];
+assert.ok(upgradeBootstrap, 'fixture intent must be restored at document start, not before old callbacks finish');
+for (const intent of ['pending', 'attempted']) {
+  const local = new Map([['bridge.firstTest.v1', intent === 'pending' ? 'attempted' : 'pending']]);
+  const session = new Map([['bridge.fixture.upgradeIntent', intent]]);
+  const storage = map => ({ getItem: key => map.get(key) ?? null, setItem: (key, value) => map.set(key, value), removeItem: key => map.delete(key) });
+  const context = { localStorage: storage(local), sessionStorage: storage(session) };
+  vm.runInNewContext(upgradeBootstrap, context);
+  assert.equal(local.get('bridge.firstTest.v1'), intent);
+  assert.equal(session.has('bridge.fixture.upgradeIntent'), false);
+  local.set('bridge.firstTest.v1', 'attempted');
+  vm.runInNewContext(upgradeBootstrap, { ...context });
+  assert.equal(local.get('bridge.firstTest.v1'), 'attempted', 'bootstrap must not rearm intent after the handshake');
+}
 await import('./test-native-workspace-contracts.mjs');
 console.log('PASS real scope parsing; 47+20 unique action cases; upgrade scope/50-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
