@@ -2,7 +2,7 @@ import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
-import { isActivity, isToolCalls, merge, type PlaceActivity } from './activity';
+import { isActivity, isToolCalls, merge, type PlaceActivity } from './activity-api';
 import { RecentActivity } from './Activity';
 import type { Places, RemoteAgent } from './api';
 

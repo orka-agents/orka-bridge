@@ -3,7 +3,7 @@ import { Button } from '../components/Button';
 import { StatusPill } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
 import { RelativeTime } from '../components/RelativeTime';
-import { type Activity, type Filter, latest, merge, phaseView, type PlaceActivity, readActivity, readToolCalls, type Row, type ToolCalls } from './activity';
+import { type Activity, type Filter, latest, merge, phaseView, type PlaceActivity, readActivity, readToolCalls, type Row, type ToolCalls } from './activity-api';
 import type { Places } from './api';
 import { placeLabels } from './model';
 
