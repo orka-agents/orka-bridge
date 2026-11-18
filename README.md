@@ -83,7 +83,7 @@ The proposed namespace and access model for team clusters is described in
   own images plus the kind node image are about 800 MB compressed, before the VM's operating system.
 - **Models:** Bridge uses your existing GitHub Copilot sign-in through a model gateway inside the VM. This route has
   been verified on a kind cluster: a native Orka agent fetched a real web page through Copilot with no API key and no
-  model download. You can also provide an API key for OpenAI, Anthropic, or Azure OpenAI.
+  model download. You can also provide an API key for OpenAI or Anthropic.
 
 Two projects influenced the approach: [Hermes Agent](https://github.com/NousResearch/hermes-agent), for getting from
 installation to a working agent without a terminal, and [Try Omarchy](https://github.com/omacom/try-omarchy), for
