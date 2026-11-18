@@ -1877,30 +1877,41 @@ fn facade_older_concurrent_status_reader_cannot_overwrite_first_publication() {
 #[cfg(test)]
 #[test]
 fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied() {
-    fn inventory(root: &std::path::Path) -> Vec<(std::path::PathBuf, Option<Vec<u8>>)> {
+    fn inventory(
+        root: &std::path::Path,
+        held_journal_lock: Option<&std::path::Path>,
+    ) -> Vec<(std::path::PathBuf, bool, Option<Vec<u8>>)> {
         fn walk(
             root: &std::path::Path,
             path: &std::path::Path,
-            out: &mut Vec<(std::path::PathBuf, Option<Vec<u8>>)>,
+            held_journal_lock: Option<&std::path::Path>,
+            out: &mut Vec<(std::path::PathBuf, bool, Option<Vec<u8>>)>,
         ) {
             for entry in std::fs::read_dir(path).unwrap() {
-                let path = entry.unwrap().path();
-                let directory = path.is_dir();
+                let entry = entry.unwrap();
+                let path = entry.path();
+                let directory = entry.file_type().unwrap().is_dir();
                 out.push((
                     path.strip_prefix(root).unwrap().to_owned(),
-                    if directory {
+                    directory,
+                    if cfg!(windows) && held_journal_lock == Some(path.as_path()) {
+                        // Only this held capability denies reads; retain its path and type.
+                        assert!(!directory);
+                        assert_eq!(std::fs::read(&path).unwrap_err().raw_os_error(), Some(32));
+                        None
+                    } else if directory {
                         None
                     } else {
                         Some(std::fs::read(&path).unwrap())
                     },
                 ));
                 if directory {
-                    walk(root, &path, out);
+                    walk(root, &path, held_journal_lock, out);
                 }
             }
         }
         let mut entries = Vec::new();
-        walk(root, root, &mut entries);
+        walk(root, root, held_journal_lock, &mut entries);
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         entries
     }
@@ -1909,14 +1920,27 @@ fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied(
     let local = tempfile::tempdir().unwrap();
     let _owner =
         crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path()).unwrap();
-    let _journal = crate::runtime::journal::Journal::create(
-        &local.path().join("local-vm-v1"),
-        crate::runtime::types::BackendKind::Qemu,
-        vec![1],
-    )
-    .unwrap();
-    let before_data = inventory(data.path());
-    let before_local = inventory(local.path());
+    let journal_root = local.path().join("local-vm-v1");
+    drop(
+        crate::runtime::journal::Journal::create(
+            &journal_root,
+            crate::runtime::types::BackendKind::Qemu,
+            vec![1],
+        )
+        .unwrap(),
+    );
+    let witness = local.path().join("inventory-witness.lock");
+    std::fs::write(&witness, b"before").unwrap();
+    let before_data = inventory(data.path(), None);
+    let full_before_local = inventory(local.path(), None);
+    // Ordinary reopen proves held ownership, not live creation authority.
+    let journal = crate::runtime::journal::Journal::open(&journal_root).unwrap();
+    let journal_lock = journal_root.join("owner.lock");
+    let before_local = inventory(local.path(), Some(&journal_lock));
+    std::fs::write(&witness, b"changed").unwrap();
+    assert_ne!(inventory(local.path(), Some(&journal_lock)), before_local);
+    std::fs::write(&witness, b"before").unwrap();
+    assert_eq!(inventory(local.path(), Some(&journal_lock)), before_local);
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .max_blocking_threads(1)
@@ -1952,8 +1976,8 @@ fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied(
             }
             release.send(()).unwrap();
             blocker.await.unwrap();
-            assert_eq!(inventory(data.path()), before_data);
-            assert_eq!(inventory(local.path()), before_local);
+            assert_eq!(inventory(data.path(), None), before_data);
+            assert_eq!(inventory(local.path(), Some(&journal_lock)), before_local);
             for (phase, result) in observed {
                 let std::task::Poll::Ready(dto) = result else {
                     panic!("poll must not dispatch disk work: {phase:?}");
@@ -1998,6 +2022,10 @@ fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied(
                 "consumed"
             );
         });
+    assert_eq!(inventory(local.path(), Some(&journal_lock)), before_local);
+    drop(journal);
+    assert_eq!(inventory(local.path(), None), full_before_local);
+    assert_eq!(inventory(data.path(), None), before_data);
 }
 
 #[cfg(test)]
@@ -2299,10 +2327,17 @@ fn facade_explicit_refresh_uses_phase_not_retained_startup_handle_and_preserves_
                         .state,
                     "none"
                 );
-                let file = local.path().join("not-a-directory");
-                std::fs::write(&file, b"file").unwrap();
+                // A directory cannot be opened as a read/write owner file on either OS.
+                let invalid_local = tempfile::tempdir().unwrap();
+                std::fs::create_dir_all(
+                    invalid_local
+                        .path()
+                        .join("workspace-upgrades-v1/owner.lock"),
+                )
+                .unwrap();
                 assert!(matches!(
-                    vm.refresh_upgrade_status(data.path().into(), file).await,
+                    vm.refresh_upgrade_status(data.path().into(), invalid_local.path().into())
+                        .await,
                     Err(RuntimeError::Io(_))
                 ));
                 assert_eq!(vm.status(), phase);
