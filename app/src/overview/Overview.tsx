@@ -60,7 +60,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const focusEpoch = useRef(0);
   const toFocus = useRef<string | undefined>(undefined);
   const focusedCard = useRef<HTMLElement | undefined>(undefined);
-  const autofocusRequest = useRef<{ identity: string; pending: boolean } | undefined>(undefined);
+  const autofocusRequest = useRef<{ identity: string; pending: boolean; completed: boolean } | undefined>(undefined);
   const ownsFocus = useRef(false);
   useEffect(() => {
     const moved = (event: FocusEvent) => {
@@ -77,7 +77,8 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     const identity = `${focus.id}/${focusRetry}`;
     const navigate = autofocusRequest.current?.identity !== identity || !!autofocusRequest.current?.pending && !focusPending;
     if (autofocusRequest.current?.identity !== identity) ownsFocus.current = true;
-    autofocusRequest.current = { identity, pending: focusPending };
+    const autofocus = { identity, pending: focusPending, completed: autofocusRequest.current?.identity === identity && autofocusRequest.current.completed };
+    autofocusRequest.current = autofocus;
     // Completion invalidates the read, not the user's navigation, filters or disclosure choices.
     if (navigate) { setPlaceFilter('all'); setNameFilter(''); setReveal(undefined); setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined; }
     if (focusPending) return;
@@ -87,6 +88,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     async function list(navigate = false) {
       const value = target ? await readPlaces(target.key) : undefined;
       if (request !== focusEpoch.current) return;
+      if (navigate) autofocus.completed = true;
       if (target) setPlaceError(!value);
       const seen = value?.places.find(p => p.key === target?.key);
       // Other places were not queried by this refresh, so keep their cached freshness.
@@ -103,7 +105,8 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       const check = target ? await sendAgentCheck(sendId) : 'cannotCheck';
       if (request === focusEpoch.current && !targetFound) setFocusNote(focusNotes[check]);
     }
-    void list(navigate);
+    // A cancelled first read leaves navigation unfulfilled, but must not repeat its initialization resets.
+    void list(!autofocus.completed);
     return () => { focusEpoch.current++; clearTimeout(timer); };
   }, [active, focus, focusRetry, focusPending, placesRevision]);
   useEffect(() => {

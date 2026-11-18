@@ -35,6 +35,37 @@ test('two same-name agents with different UIDs: the exact UID card takes focus, 
   view.rerender(<Overview {...props} focus={{ id: 2, sendId: 's2', target: target('uid-one') }} />);
   await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
 });
+test.each([false, true])('completion during the first scoped read still reveals the exact target without resetting filters (user moved: %s)', async moved => {
+  let release!: (value: unknown) => void; let scopedReads = 0;
+  const stale = places([agent('uid-one')]);
+  const fresh = places([agent('uid-one'), { ...agent('uid-two'), record: { ...record('uid-two'), verdict: 'failed' } }]);
+  const calls = vi.fn<(command: string, args?: unknown) => unknown>((command, args) => command === 'overview_places' ? (args as { key?: string } | undefined)?.key ? ++scopedReads === 1 ? new Promise(resolve => { release = resolve; }) : fresh : stale : command === 'overview_files' ? files : live);
+  mockIPC(calls);
+  const view = render(<Overview {...props} onNewAgent={() => undefined} />);
+  await screen.findByRole('article', { name: 'same-name' });
+  const focus = { id: 1, sendId: id, target: target('uid-two') };
+  view.rerender(<Overview {...props} onNewAgent={() => undefined} focus={focus} placesRevision={0} />);
+  await waitFor(() => expect(release).toBeDefined());
+  const filter = screen.getByRole('textbox', { name: 'Filter by name' }) as HTMLInputElement;
+  fireEvent.change(filter, { target: { value: 'same' } });
+  fireEvent.click(screen.getByRole('button', { name: 'team', pressed: false }));
+  const control = screen.getByRole('button', { name: 'New agent' });
+  if (moved) control.focus();
+  view.rerender(<Overview {...props} onNewAgent={() => undefined} focus={focus} placesRevision={1} />);
+  await screen.findByRole('img', { name: 'team: Failed' });
+  await waitFor(() => moved ? expect(document.activeElement).toBe(control) : expect(focused()).toBe(`${key}/uid-two`));
+  const row = screen.getByRole('img', { name: 'team: Failed' }).closest('article')!;
+  expect(within(row).getByRole('button', { name: 'Show places for same-name' }).getAttribute('aria-expanded')).toBe('true');
+  expect(screen.getByRole('article', { name: 'team, Failed' }).dataset.cardKey).toBe(`${key}/uid-two`);
+  expect(filter.value).toBe('same');
+  expect(screen.getByRole('button', { name: 'team', pressed: true })).toBeTruthy();
+  await act(async () => release(stale));
+  expect(screen.getByRole('article', { name: 'team, Failed' }).dataset.cardKey).toBe(`${key}/uid-two`);
+  if (moved) expect(document.activeElement).toBe(control);
+  else expect(focused()).toBe(`${key}/uid-two`);
+  expect(calls.mock.calls.filter(([command]) => command === 'overview_places').map(([, args]) => args)).toEqual([{}, { key }, { key }]);
+  expect(calls.mock.calls.some(([command]) => command === 'send_agent_check')).toBe(false);
+});
 test.each(['revealed', 'expanded', 'collapsed'])('completion revalidates the requested place without resetting %s disclosure, filters or user focus', async disclosure => {
   const other = { ...place([{ ...agent('uid-other'), name: 'other-agent' }]), key: 'other', context: 'other' };
   let inventory = { ...places([agent('uid-one')]), places: [place([agent('uid-one')]), other] };
