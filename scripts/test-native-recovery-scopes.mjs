@@ -31,8 +31,8 @@ function actions(chosen) {
   return names;
 }
 const all = actions(selection()), core = actions(selection('core')), ui = actions(selection('chat-agent-clusters'));
-assert.equal(all.length, 66);
-assert.equal(core.length, 46);
+assert.equal(all.length, 67);
+assert.equal(core.length, 47);
 assert.equal(ui.length, 20);
 assert.ok(core.includes('designer-reply-saved'), 'saved reply captures belong to the core scope');
 assert.ok(!ui.includes('designer-reply-saved'), 'UI scope must not repeat saved reply captures');
@@ -314,8 +314,26 @@ assert.equal(new Set(upgradeNames).size, 50);
 assert.ok(!upgradeManifest.model.some(name => name.startsWith('local-upgrade-')), 'model journey must not duplicate upgrade captures');
 const upgradeCapture = source.slice(source.indexOf('  async function captureUpgrade('), source.indexOf('  const notes = [];'));
 assert.ok(upgradeCapture.includes('if (!runCore) return;'), 'upgrade states must remain in the core scope');
+const upgradePrelude = upgradeCapture.slice(upgradeCapture.indexOf("    const transaction"), upgradeCapture.indexOf("    for (const [localVm"));
+const upgradeVariants = Function(upgradePrelude + '\nreturn variants;')();
+assert.deepEqual(upgradeVariants.map(row => row[1]), [
+  'upgrade-eligible-absent', 'upgrade-eligible-credential', 'upgrade-incomplete',
+  'upgrade-source-selected', 'upgrade-source-retained', 'upgrade-restoring', 'upgrade-restoring-confirm',
+  'upgrade-fresh-absent', 'upgrade-fresh-eligible', 'upgrade-fresh-attention', 'upgrade-fresh-removal-confirm',
+  'upgrade-fresh-transferred', 'upgrade-fresh-removed', 'upgrade-consumed-restore-confirm',
+  'upgrade-restored-freshc-confirm', 'upgrade-conflict', 'upgrade-error-network', 'upgrade-error-nospace',
+  'upgrade-error-stop', 'upgrade-busy-cancel',
+], 'all 20 Windows variants retain their exact existing names');
+assert.ok(!upgradeCapture.includes("clickAction('Stop"), 'upgrade fixtures must not navigate through removed Stop');
+assert.ok(upgradeCapture.includes("clickAction('Manage')"), 'returning upgrade scenes must enter Manage directly');
+assert.ok(upgradeCapture.includes("localStorage.setItem('bridge.firstTest.v1', 'attempted')"), 'returning upgrade scenes must own retired first-test intent');
+assert.ok(upgradeCapture.includes("localStorage.removeItem('bridge.firstTest.v1')"), 'initial upgrade scenes must retire previous returning intent');
+assert.ok(upgradeVariants.slice(0, 3).every(row => row[4]), 'every initial upgrade scene requires a confirmation capture');
+assert.ok(model.includes('require(currentFocus, "Confirmation keyboard focus was lost")'), 'Mac must retain its hard keyboard focus assertion');
+assert.ok(model.includes('Thread.sleep(forTimeInterval: 0.2)\n                // AX nodes'), 'Mac keyboard deadline must not be extended to pass');
 let upgradeCalls = 0;
 await Function('runCore', 'call', `${upgradeCapture}; return captureUpgrade('light', 'wide');`)(false, async () => { upgradeCalls++; });
 assert.equal(upgradeCalls, 0, 'UI scope must not create even one upgrade world');
 assert.equal((source.match(/await captureUpgrade\(theme, '(?:wide|compact)'\)/g) ?? []).length, 2);
-console.log('PASS real scope parsing; 46+20 action cases; upgrade scope/50-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
+await import('./test-native-workspace-contracts.mjs');
+console.log('PASS real scope parsing; 47+20 unique action cases; upgrade scope/50-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');

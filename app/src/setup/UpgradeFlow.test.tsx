@@ -20,7 +20,9 @@ test('setup offers complete native eligibility instead of the disabled matching-
     throw Error('Unexpected ' + command);
   });
   mockIPC(ipc); render(<App />); await openLocalSetup();
-  fireEvent.click(await screen.findByRole('button', { name: 'Set up new workspace' }));
+  await screen.findByRole('button', { name: 'Set up new workspace' });
+  expect(document.querySelector('.setup-progress .workspace-upgrade')).not.toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Set up new workspace' }));
   expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
   await screen.findByText(/New workspace selected/);
@@ -31,7 +33,7 @@ test('setup offers complete native eligibility instead of the disabled matching-
   expect(document.querySelector('.setup-model')).toBeNull();
   const original = ipc.getMockImplementation()!;
   ipc.mockImplementation(command => command === 'workspace_upgrade_status'
-    ? { ...eligible, state: 'consumed', transaction: '10000000-0000-4000-8000-000000000001', createdAt: 1700000000, credential: 'absent', canReplace: false, canRestore: true, busy: true }
+    ? { ...eligible, state: 'sourceSelected', transaction: '10000000-0000-4000-8000-000000000001', createdAt: 1700000000, credential: 'absent', canReplace: false, canRestore: true, busy: true }
     : original(command));
   await waitFor(() => expect(document.querySelector('.steps-head .pill')?.textContent).toBe('Updating'), { timeout: 2000 });
   expect(document.querySelector('.steps-head .pill')?.classList.contains('status-running')).toBe(true);
@@ -45,6 +47,46 @@ test('setup offers complete native eligibility instead of the disabled matching-
   expect(screen.getByText(/Workspace recovery needs attention/)).toBeTruthy();
 });
 
+test.each([false, true])('returning restore stays in Manage without ordinary restart or AI actions (busy=%s)', async busy => {
+  vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1'); localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return { ...eligible, state: 'restoring', transaction: '10000000-0000-4000-8000-000000000001', createdAt: 1700000000, credential: 'absent', canReplace: false, canRestore: true, busy };
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'failed', model: 'locked', workspaceReplaced: true };
+    if (command === 'setup_requirements') return null;
+    throw Error('Unavailable ' + command);
+  });
+  mockIPC(ipc); render(<App />); await openLocalSetup();
+  await screen.findByRole('button', { name: busy ? 'Cancel update' : 'Restore previous workspace' });
+  expect(document.querySelector('.returning-workspace .workspace-upgrade')).not.toBeNull();
+  if (busy) {
+    expect(document.querySelector('.returning-workspace .pill')?.textContent).toBe('Updating');
+    expect(document.querySelector('.returning-workspace .pill')?.classList.contains('status-running')).toBe(true);
+  }
+  expect(screen.queryByRole('button', { name: 'Restart workspace' })).toBeNull();
+  expect(screen.queryByRole('button', { name: /Set up.*workspace/ })).toBeNull();
+  expect(document.querySelector('.setup-model')).toBeNull();
+  expect(ipc.mock.calls.map(([command]) => command).filter(command => ['setup_select_local', 'setup_cancel_local', 'setup_connect_model', 'agent_run'].includes(command))).toEqual([]);
+});
+test.each([false, true])('unreadable workspace status takes precedence over busy upgrade presentation (returning=%s)', async returning => {
+  vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
+  if (returning) localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  let unreadable = false;
+  const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return { ...eligible, state: 'sourceSelected', transaction: '10000000-0000-4000-8000-000000000001', createdAt: 1700000000, credential: 'absent', canReplace: false, canRestore: false, busy: true };
+    if (command === 'setup_status') { if (unreadable) throw Error('Lost workspace observation'); return { selected: 'localVm', localVm: 'failed', model: 'locked', workspaceReplaced: true }; }
+    if (command === 'setup_requirements') return null;
+    throw Error('Unavailable ' + command);
+  });
+  mockIPC(ipc); render(<App />); await openLocalSetup();
+  await screen.findByRole('button', { name: 'Cancel update' });
+  await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('Updating workspace'));
+  unreadable = true; fireEvent(window, new Event('focus'));
+  await waitFor(() => expect(document.querySelector('.steps-head .pill')?.textContent).toBe('Status unavailable'));
+  expect(screen.getByRole('contentinfo').textContent).toContain('Workspace unavailable');
+  expect(screen.getByRole('contentinfo').textContent).not.toContain('Updating');
+  if (returning) expect(document.querySelector('.returning-workspace > [role="status"]')?.textContent).toContain('Workspace status is unavailable');
+  expect(ipc.mock.calls.map(([command]) => command).filter(command => ['setup_select_local', 'setup_connect_model', 'agent_run'].includes(command))).toEqual([]);
+});
 test('cold replacement status failure cannot advertise Connect before credential disposition is known', async () => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   const ipc = vi.fn((command: string) => {

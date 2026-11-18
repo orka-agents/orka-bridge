@@ -21,7 +21,7 @@ type Props = {
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
   modelUnavailable?: boolean;
   firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void; onChooseProvider?: () => void;
-  onCancel: () => void; onRestart: () => void; onCluster?: () => void; onChange: (button: HTMLButtonElement) => void; onOpenExample: () => void;
+  onCancel: () => void; onRestart: () => void; onCluster?: () => void; onOpenExample: () => void;
 };
 const rowClass: Record<Status, string> = { passed: 'step-done', failed: 'step-failed', running: 'step-current', 'needs-you': 'step-current', stale: 'step-waiting', 'not-started': 'step-waiting' };
 // Completed rows stay in place; only the active row opens its progress.
@@ -52,7 +52,7 @@ function stepRows({ status, stopping, updating, updateBlocked, error, modelState
 }
 
 export function SetupProgress(props: Props) {
-  const { status, busy, stopping, error, onCancel, onRestart, onCluster, onChange, onOpenExample } = props;
+  const { status, busy, stopping, error, onCancel, onRestart, onCluster, onOpenExample } = props;
   const [details, setDetails] = useState(false);
   const { view, failed: failedStatus, paused, infra } = stepRows(props);
   const failed = failedStatus && !error;
@@ -65,7 +65,7 @@ export function SetupProgress(props: Props) {
     : status.localVm === 'closing' ? 'Stopping the workspace…'
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
     : copying ? 'Installing the workspace…' : 'Checking the cluster download…';
-  const pill: Status = error || props.updateBlocked ? 'needs-you' : props.updating ? 'running' : view.status;
+  const pill: Status = error ? 'needs-you' : props.updating ? 'running' : props.updateBlocked ? 'needs-you' : view.status;
   const workspaceReady = ready && !error && !stopping && !props.updating && !props.updateBlocked;
   const workspaceWord = error ? 'Status unavailable' : props.updating ? 'Updating' : props.updateBlocked ? 'Needs you' : stopping || status.localVm === 'closing' ? 'Stopping' : workspaceReady ? 'Ready' : failed ? "Couldn't start" : undefined;
   const workspaceDetails = props.upgrade ?? (!failed && !error && <>
@@ -104,7 +104,6 @@ export function SetupProgress(props: Props) {
         {props.firstTestResult && <Button type="button" kind={props.firstCheck === 'stale' || props.firstCheck === 'unknown' || props.firstCheck === 'running' ? 'secondary' : 'primary'} disabled={busy || !!error} onClick={onOpenExample}>See what it answered</Button>}
       </>}{!needsModel && <Button type="button" kind="secondary" disabled={busy || !!error} onClick={onOpenExample}>Read its instructions</Button>}</>}
     </div>}
-    {ready && !failed && <div className="workspace-management"><Button type="button" kind="secondary" disabled={busy || !!error} onClick={event => onChange(event.currentTarget)}>Stop the workspace</Button></div>}
   </section>;
 }
 

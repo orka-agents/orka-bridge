@@ -14,6 +14,11 @@ use tauri::Manager;
 mod lifecycle;
 
 #[tauri::command]
+fn quit_bridge(app: tauri::AppHandle) {
+    lifecycle::stop(&app);
+}
+
+#[tauri::command]
 async fn engine_call(
     request: EngineRequest,
     state: tauri::State<'_, EngineState>,
@@ -883,6 +888,7 @@ fn main() {
             setup_status,
             setup_select_local,
             setup_cancel_local,
+            quit_bridge,
             setup_change_local,
             setup_requirements,
             setup_preflight,
@@ -1022,6 +1028,13 @@ mod upgrade_ipc_tests {
         std::fs::create_dir(&renderer).unwrap();
         let sentinel = renderer.join("keep");
         std::fs::write(&sentinel, b"untouched").unwrap();
+        // Tauri's macOS resolver canonicalizes deps/../Resources for Cargo test
+        // binaries; app-directory overrides do not override bundled resources.
+        #[cfg(target_os = "macos")]
+        {
+            let exe = tauri::utils::platform::current_exe().unwrap();
+            std::fs::create_dir_all(exe.parent().unwrap().join("../Resources")).unwrap();
+        }
         let mut context: tauri::Context<MockRuntime> = tauri::generate_context!();
         context.config_mut().app.app_directories_override = Some(
             tauri::utils::config::AppDirectoriesOverride::Root(native.clone()),
@@ -1041,6 +1054,10 @@ mod upgrade_ipc_tests {
             ])
             .build(context)
             .unwrap();
+        let (data, local, _) = upgrade_paths(app.handle())
+            .expect("IPC fixture must resolve native data, local data and resource paths");
+        assert_eq!(data, native);
+        assert_eq!(local, native);
         let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
             .build()
             .unwrap();
