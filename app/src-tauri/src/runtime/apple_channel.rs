@@ -6,6 +6,9 @@ use std::{
     sync::{Arc, Condvar, Mutex},
     time::{Duration, Instant},
 };
+// Allow measured container teardown while reserving native fallback inside AppKit30.
+pub(crate) const SHUTDOWN_GRACE: Duration = Duration::from_secs(18);
+
 #[derive(Clone)]
 pub(crate) struct GuestSlot {
     inner: Arc<Inner>,
@@ -24,6 +27,7 @@ struct State {
 struct CloseSignal {
     receiver: tokio::sync::watch::Receiver<bool>,
     grace: Duration,
+    origin: Option<Arc<Mutex<Option<Instant>>>>,
 }
 struct Scoped {
     slot: GuestSlot,
@@ -75,17 +79,28 @@ impl GuestSlot {
         })
     }
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-    pub(crate) fn bind_close(&self, receiver: tokio::sync::watch::Receiver<bool>) {
+    pub(crate) fn bind_close(
+        &self,
+        receiver: tokio::sync::watch::Receiver<bool>,
+        origin: Option<Arc<Mutex<Option<Instant>>>>,
+    ) {
         self.inner.state.lock().unwrap().close = Some(CloseSignal {
             receiver,
-            grace: Duration::from_secs(10),
+            grace: SHUTDOWN_GRACE,
+            origin,
         });
     }
     pub(crate) fn shutdown_deadline(&self) -> Option<Instant> {
         let mut state = self.inner.state.lock().unwrap();
         if let Some(close) = &state.close {
-            if *close.receiver.borrow() {
-                let end = Instant::now() + close.grace;
+            let closed = *close.receiver.borrow();
+            if closed {
+                let origin = close
+                    .origin
+                    .as_ref()
+                    .and_then(|at| *at.lock().unwrap())
+                    .unwrap_or_else(Instant::now);
+                let end = origin + close.grace;
                 state.shutdown_deadline =
                     Some(state.shutdown_deadline.map_or(end, |old| old.min(end)));
             }

@@ -215,6 +215,29 @@ fn assert_reaped(d: &tempfile::TempDir) {
 }
 
 #[test]
+fn repeated_preparation_can_shorten_but_never_renew_native_deadlines() {
+    let (_d, mut owner, cmd) = setup("good");
+    let _guest = owner.start(cmd, config()).unwrap();
+    let later = Instant::now() + Duration::from_secs(1);
+    owner.prepare_shutdown(later).unwrap();
+    let earlier = Instant::now() + Duration::from_millis(40);
+    owner.prepare_shutdown(earlier).unwrap();
+    owner.prepare_shutdown(later).unwrap();
+    assert_eq!(owner.graceful_end, Some(earlier));
+    assert_eq!(owner.session.as_ref().unwrap().stop_deadline, Some(earlier + SHUTDOWN_FALLBACK));
+    owner.stop().unwrap();
+}
+#[test]
+fn expired_total_stop_budget_does_not_grant_fresh_preparation_or_cleanup() {
+    let (_d, mut owner, cmd) = setup("good");
+    let _guest = owner.start(cmd, config()).unwrap();
+    let started = Instant::now();
+    assert!(owner.prepare_shutdown(started - Duration::from_secs(12)).is_err());
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert_eq!(owner.stop_outcome(), None);
+    if let Some(session) = owner.session.as_mut() { let _ = session.child.wait(); }
+}
+#[test]
 fn prepared_shutdown_caps_do_not_leak_into_reused_owner() {
     let (d, mut owner, cmd) = setup("normal");
     let defaults = AppleHelperOwner::new(owner.ownership.clone()).budgets;
@@ -231,6 +254,7 @@ fn prepared_shutdown_caps_do_not_leak_into_reused_owner() {
     again.arg("normal").arg(d.path().join("pid"));
     let _guest = owner.start(again, config()).unwrap();
     assert!(owner.graceful_end.is_none());
+    assert!(owner.session.as_ref().unwrap().stop_deadline.is_none());
     assert_eq!(owner.budgets.exit, Duration::from_secs(45));
     assert_eq!(owner.budgets.cleanup, Duration::from_secs(10));
     assert_eq!(owner.session.as_ref().unwrap().budgets.exit, Duration::from_secs(45));

@@ -464,6 +464,45 @@ mod infrastructure_tests {
         assert_eq!(probe.releases.load(Ordering::SeqCst), 0);
     }
     #[test]
+    fn close_origin_is_stored_before_the_close_receiver_can_observe_true() {
+        let vm = LocalVm::unavailable();
+        let closed = vm.inner.state.lock().unwrap().cancelled.subscribe();
+        let held = vm.close_origin.lock().unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let closing = vm.clone();
+        let publisher = std::thread::spawn(move || {
+            started.send(()).unwrap();
+            closing.request_close();
+        });
+        ready.recv().unwrap();
+        let end = std::time::Instant::now() + std::time::Duration::from_millis(50);
+        while !*closed.borrow() && std::time::Instant::now() < end {
+            std::thread::yield_now();
+        }
+        let published_without_origin = *closed.borrow();
+        drop(held);
+        publisher.join().unwrap();
+        assert!(!published_without_origin);
+        let first = *vm.close_origin.lock().unwrap();
+        assert!(first.is_some());
+        vm.request_close();
+        assert_eq!(*vm.close_origin.lock().unwrap(), first);
+    }
+    #[tokio::test]
+    async fn cancellation_records_close_origin_and_new_start_resets_the_epoch() {
+        let probe = Arc::new(Probe::default());
+        let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
+        ready(&probe, &vm).await;
+        vm.cancel().await.unwrap();
+        assert!(vm.close_origin.lock().unwrap().is_some());
+        vm.start();
+        assert!(vm.close_origin.lock().unwrap().is_none());
+        assert!(!*vm.inner.state.lock().unwrap().cancelled.borrow());
+        phase(&vm, LocalVmStatus::Ready).await;
+        vm.shutdown().await.unwrap();
+        assert!(vm.close_origin.lock().unwrap().is_some());
+    }
+    #[test]
     fn upgrade_quarantine_cannot_overwrite_a_concurrently_confirmed_forced_stop() {
         let vm = LocalVm::unavailable();
         let gate = std::sync::Barrier::new(3);

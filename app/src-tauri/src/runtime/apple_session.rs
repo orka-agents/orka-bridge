@@ -3,7 +3,7 @@ use crate::engine::vm::VmTransport;
 use crate::runtime::{
     apple::AppleStopOutcome,
     apple_backend::{AppleBackend, AppleBackendHandle},
-    apple_channel::Channel,
+    apple_channel::{Channel, SHUTDOWN_GRACE},
     client::VmClient,
     image_install::InstalledImageSet,
     journal::Journal,
@@ -32,7 +32,7 @@ impl AppleVmSession {
     ) -> Result<Self, RuntimeError> {
         let worker =
             RuntimeWorker::new(Box::new(AppleBackend::new(resource_root)), journal, image)?;
-        Self::start(worker, host_utc, None)
+        Self::start(worker, host_utc, None, None)
     }
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     pub(crate) fn launch_retaining(
@@ -42,16 +42,18 @@ impl AppleVmSession {
         host_utc: u64,
         custody: Arc<std::sync::Mutex<super::journal::JournalCustody>>,
         closed: tokio::sync::watch::Receiver<bool>,
+        close_origin: Arc<std::sync::Mutex<Option<Instant>>>,
     ) -> Result<Self, RuntimeError> {
         let worker =
             RuntimeWorker::new(Box::new(AppleBackend::new(resource_root)), journal, image)?
                 .retain_journal(custody);
-        Self::start(worker, host_utc, Some(closed))
+        Self::start(worker, host_utc, Some(closed), Some(close_origin))
     }
     fn start(
         worker: RuntimeWorker,
         host_utc: u64,
         closed: Option<tokio::sync::watch::Receiver<bool>>,
+        close_origin: Option<Arc<std::sync::Mutex<Option<Instant>>>>,
     ) -> Result<Self, RuntimeError> {
         let cancellation = closed.clone();
         let mut session = Self {
@@ -69,7 +71,7 @@ impl AppleVmSession {
                 .get::<AppleBackendHandle>()
                 .ok_or(RuntimeError::Unavailable)?;
             if let Some(closed) = closed {
-                handle.guest.bind_close(closed);
+                handle.guest.bind_close(closed, close_origin);
             }
             let mut channel = handle.guest.channel();
             channel.deadline = Some(Instant::now() + Duration::from_secs(120));
@@ -140,9 +142,9 @@ impl AppleVmSession {
                 .ok_or(RuntimeError::Unavailable)?;
             let end = *self
                 .shutdown_deadline
-                .get_or_insert_with(|| Instant::now() + Duration::from_secs(10));
-            // Active I/O may already have observed close while holding the
-            // facade's session mutex. Keep that earlier, non-renewable budget.
+                .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
+            // Close publication may precede this call and active I/O may have
+            // consumed its grace. Keep the earlier, non-renewable budget.
             let end = handle
                 .guest
                 .shutdown_deadline()

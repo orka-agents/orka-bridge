@@ -52,7 +52,7 @@ fn close_watch_bounds_a_read_that_started_before_shutdown() {
     let (socket, _peer) = UnixStream::pair().unwrap();
     let slot = GuestSlot::new(socket);
     let (closed, close) = tokio::sync::watch::channel(false);
-    slot.bind_close(close);
+    slot.bind_close(close, None);
     short_close(&slot);
     let mut channel = slot.channel();
     let (result, observed) = std::sync::mpsc::channel();
@@ -77,6 +77,25 @@ fn close_watch_bounds_a_read_that_started_before_shutdown() {
         std::io::ErrorKind::TimedOut
     );
     assert!(slot.shutdown_deadline().unwrap() < Instant::now());
+}
+#[test]
+fn idle_close_uses_publication_origin_even_when_observed_late() {
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    let slot = GuestSlot::new(socket);
+    let origin = Instant::now() - Duration::from_secs(20);
+    let (_closed, close) = tokio::sync::watch::channel(true);
+    slot.bind_close(close, Some(Arc::new(Mutex::new(Some(origin)))));
+    assert_eq!(
+        slot.shutdown_deadline(),
+        Some(origin + Duration::from_secs(18))
+    );
+    assert_eq!(
+        slot.channel().read(&mut [0]).unwrap_err().kind(),
+        io::ErrorKind::TimedOut
+    );
+    let earlier = origin + Duration::from_secs(1);
+    slot.prepare_shutdown(earlier);
+    assert_eq!(slot.shutdown_deadline(), Some(earlier));
 }
 #[test]
 fn scoped_reference_timeout_never_reports_success() {

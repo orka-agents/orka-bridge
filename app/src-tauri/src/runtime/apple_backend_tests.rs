@@ -74,6 +74,31 @@ impl VmBackend for OperationBudgets {
     }
 }
 #[test]
+fn expired_close_origin_caps_unprepared_native_stop_too() {
+    let (_t, journal, image) = installation();
+    let resources = resource(PEER);
+    let mut worker = crate::runtime::RuntimeWorker::new(
+        Box::new(AppleBackend::new(resources.path().to_path_buf())),
+        journal,
+        image,
+    )
+    .unwrap();
+    worker.start().unwrap();
+    let slot = worker
+        .lease()
+        .unwrap()
+        .handle
+        .get::<AppleBackendHandle>()
+        .unwrap()
+        .guest
+        .clone();
+    slot.prepare_shutdown(Instant::now() - Duration::from_secs(12));
+    let started = Instant::now();
+    assert!(worker.stop().is_err());
+    assert!(started.elapsed() < Duration::from_millis(500));
+    assert!(worker.lease().is_some());
+}
+#[test]
 fn failed_operations_revoke_guest_and_retain_original_worker_lock() {
     use std::io::Write;
     for &opcode in b"PR" {

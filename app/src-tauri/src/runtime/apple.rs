@@ -11,6 +11,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+pub(crate) const SHUTDOWN_FALLBACK: Duration = Duration::from_secs(10);
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum HelperError {
     Io(io::ErrorKind),
@@ -38,6 +40,12 @@ struct Session {
     next: u64,
     cleanup_attempted: bool,
     budgets: Budgets,
+    stop_deadline: Option<Instant>,
+}
+impl Session {
+    fn cap_end(&self, end: Instant) -> Instant {
+        self.stop_deadline.map_or(end, |limit| limit.min(end))
+    }
 }
 /// One persistent owner per native backend. Never reconstruct it from a cached
 /// ownership Arc after failure: the same worker must retain its poison status.
@@ -137,6 +145,7 @@ impl AppleHelperOwner {
                     next: 1,
                     cleanup_attempted: false,
                     budgets: self.budgets,
+                    stop_deadline: None,
                 },
                 guest,
             ))
@@ -205,14 +214,23 @@ impl AppleHelperOwner {
     pub fn resume(&mut self) -> Result<(), HelperError> {
         self.operation(b'R')
     }
+    pub(crate) fn bound_stop(&mut self, end: Instant) {
+        if let Some(session) = self.session.as_mut() {
+            session.stop_deadline = Some(session.cap_end(end));
+        }
+    }
     /// Arm expected natural termination before asking the guest to power off.
     /// G is preparation only; its ACK never proves termination or a guest flush.
     pub fn prepare_shutdown(&mut self, end: Instant) -> Result<(), HelperError> {
         self.available()?;
-        if self.graceful_end.is_some() {
+        if let Some(previous) = self.graceful_end {
+            let end = previous.min(end);
+            self.graceful_end = Some(end);
+            self.bound_stop(end + SHUTDOWN_FALLBACK);
             return Ok(()); // Never renew a prepared budget or replay G.
         }
         self.graceful_end = Some(end);
+        self.bound_stop(end + SHUTDOWN_FALLBACK);
         // Reserve fallback time inside AppKit's existing 30-second window.
         // Unprepared startup-failure cleanup retains its original budgets.
         if let Some(session) = self.session.as_mut() {
@@ -228,6 +246,10 @@ impl AppleHelperOwner {
         } else {
             end
         };
+        let preparation_end = self
+            .session
+            .as_ref()
+            .map_or(preparation_end, |s| s.cap_end(preparation_end));
         match self.exchange(b'G', preparation_end) {
             Ok(_) => Ok(()),
             Err(error) => Err(self.fail(error)),
@@ -245,6 +267,7 @@ impl AppleHelperOwner {
             return Ok(());
         }
         if let Some(end) = self.graceful_end {
+            let end = self.session.as_ref().unwrap().cap_end(end);
             match wait_until(&mut self.session.as_mut().unwrap().child, end) {
                 Ok(Some(status)) if status.success() => {
                     self.session = None;
@@ -256,7 +279,8 @@ impl AppleHelperOwner {
                 Ok(None) => {} // Grace exhausted; only now use hard stop.
             }
         }
-        let end = Instant::now() + self.session.as_ref().unwrap().budgets.exit;
+        let session = self.session.as_ref().unwrap();
+        let end = session.cap_end(Instant::now() + session.budgets.exit);
         let result = self.exchange(b'S', end).and_then(|receipt| {
             match wait_until(&mut self.session.as_mut().unwrap().child, end).map_err(io_error)? {
                 Some(status) if status.success() => Ok(receipt),
@@ -305,7 +329,8 @@ impl AppleHelperOwner {
             unsafe {
                 libc::kill(session.child.id() as i32, libc::SIGTERM);
             }
-            if wait_until(&mut session.child, Instant::now() + session.budgets.cleanup)?.is_some() {
+            let end = session.cap_end(Instant::now() + session.budgets.cleanup);
+            if wait_until(&mut session.child, end)?.is_some() {
                 return Ok(true);
             }
             if session.child.try_wait()?.is_some() {
@@ -317,7 +342,8 @@ impl AppleHelperOwner {
             if session.budgets.cleanup.is_zero() {
                 return Ok(false);
             }
-            Ok(wait_until(&mut session.child, Instant::now() + session.budgets.cleanup)?.is_some())
+            let end = session.cap_end(Instant::now() + session.budgets.cleanup);
+            Ok(wait_until(&mut session.child, end)?.is_some())
         })()
         .unwrap_or(false);
         if observed {

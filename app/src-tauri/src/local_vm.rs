@@ -487,6 +487,7 @@ impl Inner {
 pub struct LocalVm {
     inner: Arc<Inner>,
     factory: Option<Arc<dyn LocalFactory>>,
+    close_origin: Arc<Mutex<Option<std::time::Instant>>>,
     /// Only a fresh recovery-blocked owner proves factory custody was never acquired.
     recovery_without_factory: bool,
     recovery_blocked: std::sync::atomic::AtomicBool,
@@ -525,6 +526,17 @@ impl Drop for UpgradeQuiescence<'_> {
 }
 impl LocalVm {
     fn make(factory: Option<Arc<dyn LocalFactory>>, recovery_without_factory: bool) -> Arc<Self> {
+        Self::make_with_close_origin(
+            factory,
+            recovery_without_factory,
+            Arc::new(Mutex::new(None)),
+        )
+    }
+    fn make_with_close_origin(
+        factory: Option<Arc<dyn LocalFactory>>,
+        recovery_without_factory: bool,
+        close_origin: Arc<Mutex<Option<std::time::Instant>>>,
+    ) -> Arc<Self> {
         let (cancelled, _) = watch::channel(false);
         let (completion, _) = watch::channel(None);
         Arc::new(Self {
@@ -553,6 +565,7 @@ impl LocalVm {
                 session: Arc::new(AsyncMutex::new(None)),
             }),
             factory,
+            close_origin,
             recovery_without_factory,
             recovery_blocked: std::sync::atomic::AtomicBool::new(false),
             choice: Arc::new(AsyncMutex::new(())),
@@ -1266,6 +1279,7 @@ impl LocalVm {
         state.close_started = false;
         state.stopped = None;
         state.progress = None;
+        *self.close_origin.lock().unwrap() = None;
         state.cancelled = watch::channel(false).0;
         state.completion = watch::channel(None).0;
         let cancelled = state.cancelled.subscribe();
@@ -1538,6 +1552,15 @@ impl LocalVm {
             })
         })?
     }
+    fn publish_close(&self, state: &mut State) {
+        // Metadata precedes publication; idle native sessions must not grant a
+        // fresh interval after other shutdown work or delayed observation.
+        self.close_origin
+            .lock()
+            .unwrap()
+            .get_or_insert_with(std::time::Instant::now);
+        state.cancelled.send_replace(true);
+    }
     pub fn request_close(&self) {
         let mut state = self.inner.state.lock().unwrap();
         state.terminal = true;
@@ -1548,7 +1571,7 @@ impl LocalVm {
         }
         state.closing = true;
         state.progress = None;
-        state.cancelled.send_replace(true);
+        self.publish_close(&mut state);
         // Cancellation publishes progress under state; do not invert that order.
         drop(state);
         if let Some(cancel) = self.upgrade_cancel.lock().unwrap().as_ref() {
@@ -1572,7 +1595,7 @@ impl LocalVm {
                 state.closing = true;
                 state.phase = LocalVmStatus::Closing;
                 state.progress = None;
-                state.cancelled.send_replace(true);
+                self.publish_close(&mut state);
                 state.close_started = true;
                 let startup = state.startup.take();
                 let inner = self.inner.clone();

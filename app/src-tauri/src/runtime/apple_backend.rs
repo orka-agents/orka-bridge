@@ -1,6 +1,6 @@
 //! Native-only Apple backend; not registered in Setup or Run.
 use super::{
-    apple::{AppleHelperOwner, HelperError},
+    apple::{AppleHelperOwner, HelperError, SHUTDOWN_FALLBACK},
     apple_channel::GuestSlot,
     apple_input::{configuration_file, helper_path},
     image_types::{ImageTarget, LaunchMode},
@@ -167,16 +167,19 @@ impl VmBackend for AppleBackend {
     fn stop(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
         let guest = self.selected(handle)?.guest.clone();
         guest.seal();
-        let stopped = self
-            .owner
-            .as_ref()
-            .unwrap()
-            .lock()
-            .unwrap()
-            .stop()
-            .map_err(helper_error);
+        let end = guest
+            .shutdown_deadline()
+            .map(|grace| grace + SHUTDOWN_FALLBACK);
+        let stopped = {
+            let mut owner = self.owner.as_ref().unwrap().lock().unwrap();
+            if let Some(end) = end {
+                owner.bound_stop(end);
+            }
+            owner.stop().map_err(helper_error)
+        };
+        let revoke_end = Instant::now() + Duration::from_secs(10);
         let revoked = guest
-            .revoke(Instant::now() + Duration::from_secs(10))
+            .revoke(end.map_or(revoke_end, |end| end.min(revoke_end)))
             .map_err(RuntimeError::Io);
         if stopped.is_err() || revoked.is_err() {
             self.poisoned = true;

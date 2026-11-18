@@ -227,14 +227,21 @@ pub fn configured(
             development.1,
             release,
         ) {
-            return LocalVm::new(Arc::new(NativeFactory {
-                resources: resources.clone(),
-                data: data.clone(),
-                root,
-                cache: local.join("image-cache-v1"),
-                source,
-                pending: Arc::new(Mutex::new(JournalCustody(None))),
-            }));
+            let close_origin = Arc::new(Mutex::new(None));
+            return LocalVm::make_with_close_origin(
+                Some(Arc::new(NativeFactory {
+                    resources: resources.clone(),
+                    data: data.clone(),
+                    root,
+                    cache: local.join("image-cache-v1"),
+                    source,
+                    pending: Arc::new(Mutex::new(JournalCustody(None))),
+                    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+                    close_origin: close_origin.clone(),
+                })),
+                false,
+                close_origin,
+            );
         }
     }
     let _ = (resources, data, local);
@@ -375,6 +382,8 @@ struct NativeFactory {
     cache: PathBuf,
     source: image::ImageSource,
     pending: Arc<Mutex<JournalCustody>>,
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    close_origin: Arc<Mutex<Option<std::time::Instant>>>,
 }
 #[cfg(any(
     test,
@@ -444,6 +453,8 @@ impl LocalFactory for NativeFactory {
             self.source.clone(),
             self.cache.clone(),
         );
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        let close_origin = self.close_origin.clone();
         Box::pin(blocking_start(move |runtime| {
             use crate::runtime::{self, types::BackendKind};
             if *closed.borrow() {
@@ -518,6 +529,7 @@ impl LocalFactory for NativeFactory {
                         utc,
                         pending,
                         closed.clone(),
+                        close_origin,
                     )?;
                     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
                     let native = NativeSession(session, installation, cancel_supported);

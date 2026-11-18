@@ -39,6 +39,32 @@ fn stopping_with_an_inflight_engine_client_revokes_its_only_guest_capability() {
         });
 }
 #[test]
+fn idle_stop_after_consumed_origin_does_not_grant_another_guest_interval() {
+    let (t, journal, image) = installation();
+    let resources = resource(&serving_peer("good"));
+    let mut session =
+        AppleVmSession::launch(resources.path().to_path_buf(), journal, image, 1).unwrap();
+    let slot = session
+        .worker
+        .lease()
+        .unwrap()
+        .handle
+        .get::<AppleBackendHandle>()
+        .unwrap()
+        .guest
+        .clone();
+    let (_closed, close) = tokio::sync::watch::channel(true);
+    let origin = Arc::new(std::sync::Mutex::new(Some(
+        Instant::now() - Duration::from_secs(20),
+    )));
+    slot.bind_close(close, Some(origin));
+    let started = Instant::now();
+    assert!(matches!(session.stop(), Err(RuntimeError::ShutdownForced)));
+    assert!(started.elapsed() < Duration::from_secs(1));
+    assert!(!t.path().join("install/shutdown-request").exists());
+    assert!(session.worker.lease().is_none());
+}
+#[test]
 fn close_interrupts_inflight_io_before_acquiring_session_and_preserves_forced_outcome() {
     let (t, journal, image) = installation();
     let resources = resource(&serving_peer("engine"));
@@ -54,7 +80,7 @@ fn close_interrupts_inflight_io_before_acquiring_session_and_preserves_forced_ou
         .guest
         .clone();
     let (closed, close) = tokio::sync::watch::channel(false);
-    slot.bind_close(close);
+    slot.bind_close(close, None);
     crate::runtime::apple_channel::tests::short_close(&slot);
     let session = Arc::new(tokio::sync::Mutex::new(session));
     tokio::runtime::Builder::new_current_thread()
@@ -114,7 +140,7 @@ fn close_during_startup_handshake_remains_cancelled_after_confirmed_cleanup() {
             image,
         )
         .unwrap();
-        AppleVmSession::start(worker, 1, Some(close))
+        AppleVmSession::start(worker, 1, Some(close), None)
     });
     let end = Instant::now() + Duration::from_secs(2);
     while !t.path().join("install/startup-wait").exists() {
