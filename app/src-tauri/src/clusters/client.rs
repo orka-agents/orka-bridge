@@ -478,6 +478,76 @@ impl RemoteAccess {
         .await
         .unwrap_or(Err(ClusterError::Unavailable))
     }
+    /// Overview Sessions: a bounded GET-only Session list. Orka pages Sessions newest created
+    /// first; Bridge then orders them by last update, so a partial list leaves out Sessions
+    /// created earlier even when they were updated recently.
+    pub async fn sessions(&self) -> Result<crate::overview_sessions::SessionList, ClusterError> {
+        use crate::overview_sessions::{newest, session, MAX_SESSIONS};
+        if self.expired() {
+            return Err(ClusterError::Denied);
+        }
+        tokio::time::timeout(OPERATION_LIMIT, async {
+            let mut entries = Vec::new();
+            let mut after = None;
+            let mut cursors = HashSet::new();
+            let mut names = HashSet::new();
+            // Empty or all-gateway pages with fresh cursors cannot extend the read past this
+            // many pages.
+            for _ in 0..MAX_SESSIONS.div_ceil(super::forward::SESSION_PAGE) {
+                let page = self
+                    .read(OrkaResource::Sessions, after.as_deref())
+                    .await
+                    .map_err(cluster_error)?;
+                for item in items(&page).map_err(cluster_error)? {
+                    // Orka hides gateway Sessions from this list; skip any an older Orka returns.
+                    let Some(entry) = session(item, &self.binding.watched_namespace)? else {
+                        continue;
+                    };
+                    if !names.insert(entry.name.clone()) {
+                        return Err(ClusterError::Unavailable);
+                    }
+                    entries.push(entry);
+                }
+                after = continuation(&page).map_err(cluster_error)?;
+                if after.is_none() {
+                    return Ok(newest(entries, true));
+                }
+                if entries.len() >= MAX_SESSIONS {
+                    return Ok(newest(entries, false));
+                }
+                if !cursors.insert(after.clone()) {
+                    return Err(ClusterError::Unavailable);
+                }
+            }
+            Ok(newest(entries, false))
+        })
+        .await
+        .unwrap_or(Err(ClusterError::Unavailable))
+    }
+    /// Overview Sessions: one named Session or Task, read only, in the watched namespace.
+    pub(crate) async fn item(&self, item: OrkaItem, name: &str) -> Result<Value, ClusterError> {
+        if self.expired() {
+            return Err(ClusterError::Denied);
+        }
+        let value = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            self.orka.item(
+                &self.creator,
+                &self.binding,
+                &self.bearer,
+                item,
+                &self.binding.watched_namespace,
+                name,
+            ),
+        )
+        .await
+        .map_err(|_| ClusterError::Unavailable)?
+        .map_err(cluster_error)?;
+        if echoed(&value, &self.bearer) || echoed(&value, &self.creator_bearer) {
+            return Err(ClusterError::Unavailable);
+        }
+        Ok(value)
+    }
     /// Overview Activity: completed and failed tool calls for one Task, oldest first.
     pub async fn tool_calls(
         &self,

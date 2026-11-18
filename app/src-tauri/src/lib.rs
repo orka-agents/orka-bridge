@@ -16,6 +16,8 @@ pub mod overview;
 pub mod overview_activity;
 #[path = "overview/places.rs"]
 pub mod overview_places;
+#[path = "overview/sessions.rs"]
+pub mod overview_sessions;
 pub mod pair_source;
 pub mod runtime;
 pub mod send;

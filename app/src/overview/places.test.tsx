@@ -44,8 +44,8 @@ test('By cluster: This computer first, then each cluster by context name, with a
   const remote = await group('team-one');
   expect(within(remote).getByText('2 agents')).toBeTruthy();
   const order = screen.getAllByRole('heading', { level: 2 }).map(h => h.textContent);
-  expect(order[0]).toBe('This computer'); expect(order.at(-1)).toBe('Recent activity');
-  expect(order.slice(0, -1).sort()).toEqual(['This computer', 'team-one', 'team-two']);
+  expect(order[0]).toBe('This computer'); expect(order.slice(-2)).toEqual(['Recent activity', 'Conversations']);
+  expect(order.slice(0, -2).sort()).toEqual(['This computer', 'team-one', 'team-two']);
 });
 
 test('remote cards keep a verdict only from a Bridge record, link a file only on exactly one hash match, and offer Open only', async () => {
@@ -178,7 +178,7 @@ test('By agent: one group per file with a card per cluster, agents without a fil
   expect(within(none).getByRole('heading', { level: 3, name: 'external-agent' })).toBeTruthy();
   expect(within(none).getByText('team-one', { selector: 'code' }).closest('p')!.textContent).toBe('observed-model · web_fetch · on team-one');
   const titles = screen.getAllByRole('heading', { level: 2 }).map(h => h.textContent);
-  expect(titles).toEqual(['reader', 'Running agents, not saved here', 'Recent activity']);
+  expect(titles).toEqual(['reader', 'Running agents, not saved here', 'Recent activity', 'Conversations']);
 });
 
 test('By agent keeps an unreadable saved document in its own group with a cluster title', async () => {

@@ -4,6 +4,7 @@ import { type LiveAgents, type Observation, type Places, type RunAgent, readAgen
 import { agentGroups, balance, buildCards, clusterGroups, type CompleteAgents, type Inputs, isEmpty, summaryLabel } from './model';
 import { Board, GroupSection, useCompact } from './places';
 import { RecentActivity } from './Activity';
+import { SessionList } from './Sessions';
 import { type AgentFocus, sendAgentCheck } from '../clusters/send-api';
 import './overview.css';
 
@@ -178,6 +179,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     </> : <>
       <Board stacks={compact ? [groups, []] : balance(groups)} byAgent={byAgent} actions={actions} />
       <RecentActivity active={active} places={places} />
+      <SessionList active={active} places={places} />
     </>}
   </section>;
 }

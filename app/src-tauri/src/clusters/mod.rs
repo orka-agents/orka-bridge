@@ -200,14 +200,26 @@ pub enum OrkaResource {
     Tools,
     /// Overview Activity: one bounded page of the Task list, in Orka's name order.
     Tasks,
+    /// Overview Sessions: one bounded page of the Session list, newest first.
+    Sessions,
+}
+/// One named object read by Overview Sessions.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OrkaItem {
+    /// A Session with its transcript.
+    Session,
+    /// A Task, read only to name the Agent of a Session's running Task.
+    Task,
 }
 impl OrkaResource {
     pub(crate) fn check(self) -> Check {
         match self {
             Self::WhoAmI => Check::OrkaIdentity,
             // Tools are read only by Send, whose callers keep the broad category. Activity
-            // reports only whether a place could be read, so Tasks share the same label.
-            Self::Agents | Self::AgentInventory | Self::Tools | Self::Tasks => Check::Agents,
+            // and Sessions report only whether a place could be read, so they share the label.
+            Self::Agents | Self::AgentInventory | Self::Tools | Self::Tasks | Self::Sessions => {
+                Check::Agents
+            }
             Self::Providers => Check::Providers,
         }
     }
@@ -233,6 +245,20 @@ pub trait OrkaRead: Send + Sync {
         _namespace: &'a str,
         _stream: EventStream<'a>,
         _after: u64,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>> {
+        Box::pin(async { Err(AccessOutcome::Unavailable) })
+    }
+    /// One named Session or Task, for Overview Sessions. Readers without an item route
+    /// report it unavailable.
+    #[allow(clippy::too_many_arguments)]
+    fn item<'a>(
+        &'a self,
+        _creator: &'a kube::Client,
+        _binding: &'a TargetBinding,
+        _bearer: &'a str,
+        _item: OrkaItem,
+        _namespace: &'a str,
+        _name: &'a str,
     ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>> {
         Box::pin(async { Err(AccessOutcome::Unavailable) })
     }

@@ -134,6 +134,20 @@ async fn overview_tool_calls(
     Ok(bridge_engine::overview_activity::tool_calls(&session, &key, &task).await)
 }
 #[tauri::command]
+async fn overview_sessions(
+    session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+) -> Result<bridge_engine::overview_sessions::Sessions, &'static str> {
+    Ok(bridge_engine::overview_sessions::read(&session).await)
+}
+#[tauri::command]
+async fn overview_transcript(
+    session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
+    key: String,
+    name: String,
+) -> Result<bridge_engine::overview_sessions::Transcript, &'static str> {
+    Ok(bridge_engine::overview_sessions::read_transcript(&session, &key, &name).await)
+}
+#[tauri::command]
 async fn overview_places(
     session: tauri::State<'_, bridge_engine::clusters::commands::ClusterSession>,
     send: tauri::State<'_, Arc<SendOwner>>,
@@ -811,6 +825,8 @@ fn main() {
             overview_places,
             overview_activity,
             overview_tool_calls,
+            overview_sessions,
+            overview_transcript,
             agent_selected,
             agent_create,
             agent_pick_repo,

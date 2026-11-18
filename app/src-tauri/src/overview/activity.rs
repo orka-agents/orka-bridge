@@ -265,7 +265,7 @@ fn lost(lost: Lost) -> &'static str {
 }
 /// Runs `read` with the place's current access. A result is kept only if the place still has
 /// that same access afterwards, so a Reload, re-Use or refused refresh during the read wins.
-async fn with_access<'a, T, F>(
+pub(crate) async fn with_access<'a, T, F>(
     session: &'a ClusterSession,
     key: &str,
     read: impl FnOnce(Arc<RemoteAccess>) -> F,
