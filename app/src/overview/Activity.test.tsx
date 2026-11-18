@@ -1,4 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
+import { StrictMode } from 'react';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
@@ -10,7 +11,7 @@ const agent: RemoteAgent = { name: 'reader', namespace: 'agents', uid: 'agent-on
 const place = (key: string, context: string, agents: RemoteAgent[] = []) => ({ key, context, service: 'control/orka', namespace: 'agents', stale: false, observedAt: 1000, agents });
 const places: Places = { places: [place('one', 'team-one', [agent]), place('two', 'team-two')], historyState: 'complete', unobserved: [] };
 const entry = (task: string, over: object = {}) => ({ task, uid: `uid-${task}`, agent: 'reader', agentUid: null, phase: 'succeeded', createdAt: 1000, startedAt: null, completedAt: null, message: null, test: false, ...over });
-const read = (key: string, entries: unknown[], over: object = {}) => ({ key, state: 'complete', observedAt: 5000, entries, ...over });
+const read = (key: string, entries: unknown[], over: object = {}) => ({ key, state: 'complete', observedAt: 5000, entries, connection: 1, ...over });
 function ipc(activity: unknown, tools: (args: Record<string, unknown>) => unknown = () => ({ state: 'complete', calls: [] })) {
   vi.stubGlobal('isTauri', true);
   const calls: [string, unknown][] = [];
@@ -149,4 +150,39 @@ test('a place whose access was reloaded or replaced drops its runs and asks to c
   view.rerender(<RecentActivity active places={{ ...places }} />);
   expect(await screen.findByText('Connect to team-one again to see its runs.')).toBeTruthy();
   expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+});
+
+test('a new connection drops the old connection\'s runs even when its first read fails', async () => {
+  let activity: unknown = { places: [read('one', [entry('old')])] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_activity' ? activity : null);
+  const view = render(<RecentActivity active places={places} />);
+  expect(await items()).toHaveLength(1);
+  activity = { places: [read('one', [], { state: 'unavailable', observedAt: null, connection: 2 })] };
+  view.rerender(<RecentActivity active places={{ ...places }} />);
+  expect(await screen.findByText("Couldn't read runs on team-one just now.")).toBeTruthy();
+  expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+});
+
+test('an expanded run rereads its tool calls when its place is read again, and a partial empty read says so', async () => {
+  let activity: unknown = { places: [read('one', [entry('run-1', { phase: 'running' })])] };
+  let tools: unknown = { state: 'complete', calls: [] };
+  const calls = ipc(undefined);
+  mockIPC((command, args) => { calls.push([command, args]); return command === 'overview_activity' ? activity : tools; });
+  const view = render(<RecentActivity active places={places} />);
+  const [run] = await items();
+  await userEvent.click(within(run).getByRole('button', { name: 'Tool calls' }));
+  expect(await within(run).findByText('No tool calls recorded.')).toBeTruthy();
+  tools = { state: 'partial', calls: [] };
+  activity = { places: [read('one', [entry('run-1', { phase: 'succeeded' })], { observedAt: 6000 })] };
+  view.rerender(<RecentActivity active places={{ ...places }} />);
+  expect(await screen.findByText("Some of this run's tool calls aren't shown.")).toBeTruthy();
+  expect(screen.queryByText('No tool calls recorded.')).toBeNull();
+  expect(calls.filter(c => c[0] === 'overview_tool_calls')).toHaveLength(2);
+});
+
+test('under StrictMode the first read still lands', async () => {
+  ipc({ places: [read('one', [entry('a')])] });
+  render(<StrictMode><RecentActivity active places={places} /></StrictMode>);
+  expect(await items()).toHaveLength(1);
 });

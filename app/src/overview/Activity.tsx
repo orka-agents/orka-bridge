@@ -10,19 +10,20 @@ import { placeLabels } from './model';
 const filters: { id: Filter; label: string }[] = [{ id: 'all', label: 'All' }, { id: 'failed', label: 'Failed' }, { id: 'active', label: 'In progress' }];
 const emptyFilter: Record<Filter, string> = { all: 'No runs yet on connected clusters.', failed: 'No failed runs among the latest runs.', active: 'Nothing is running or waiting.' };
 
-function ToolCallList({ placeKey, task }: { placeKey: string; task: string }) {
+/** An expanded run's tool calls, read again whenever its place is read again. */
+function ToolCallList({ placeKey, task, revision }: { placeKey: string; task: string; revision: number | null }) {
   const [calls, setCalls] = useState<ToolCalls>();
   useEffect(() => {
     let cancelled = false;
     void readToolCalls(placeKey, task).then(value => { if (!cancelled) setCalls(value); });
     return () => { cancelled = true; };
-  }, [placeKey, task]);
+  }, [placeKey, task, revision]);
   if (!calls) return <p className="overview-card-meta" role="status">Reading tool calls…</p>;
   if (calls.state === 'denied') return <p className="overview-card-meta" role="status">This account can't read this run's events.</p>;
   if (calls.state !== 'complete' && calls.state !== 'partial') return <p className="overview-card-meta" role="status">Couldn't read tool calls just now.</p>;
-  if (!calls.calls.length) return <p className="overview-card-meta">No tool calls recorded.</p>;
+  if (!calls.calls.length && calls.state === 'complete') return <p className="overview-card-meta">No tool calls recorded.</p>;
   return <>
-    <ol className="overview-activity-tools">{calls.calls.map((c, i) => <li key={i}><code>{c.tool}</code>{c.failed && ' · failed'} · <RelativeTime value={c.at} /></li>)}</ol>
+    {calls.calls.length > 0 && <ol className="overview-activity-tools">{calls.calls.map((c, i) => <li key={i}><code>{c.tool}</code>{c.failed && ' · failed'} · <RelativeTime value={c.at} /></li>)}</ol>}
     {calls.state === 'partial' && <p className="overview-card-meta">Some of this run's tool calls aren't shown.</p>}
   </>;
 }
@@ -44,7 +45,7 @@ function Entry({ row, place, agentShown, onShowAgent }: { row: Row; place: strin
       {agentShown && row.agentUid && <Button kind="quiet" aria-label={`Show ${subject} on ${place}`} onClick={() => onShowAgent(`${row.placeKey}/${row.agentUid}`)}>Show agent</Button>}
       <Disclosure className="overview-details-toggle" label="Tool calls" open={open} onOpenChange={setOpen} controls={id}>{null}</Disclosure>
     </div>
-    {open && <div id={id} className="overview-details"><ToolCallList placeKey={row.placeKey} task={row.task} /></div>}
+    {open && <div id={id} className="overview-details"><ToolCallList placeKey={row.placeKey} task={row.task} revision={row.readAt} /></div>}
   </li>;
 }
 
@@ -64,17 +65,19 @@ export function RecentActivity({ active, places }: { active: boolean; places?: P
     const current = ++request.current;
     void readActivity().then(value => {
       reading.current = false;
-      if (current !== request.current) return;
-      setFailed(!value);
-      if (value) setActivity(previous => ({
-        // An unreadable place keeps what Bridge last read, so a refresh never blanks the list. A denied or
-        // revoked place drops it: access was refused or replaced, not merely interrupted.
-        places: value.places.map(p => {
-          const prior = previous?.places.find(q => q.key === p.key);
-          const keep = p.state === 'unavailable' || p.state === 'disconnected';
-          return !keep || !prior?.entries.length ? p : { ...p, entries: prior.entries, observedAt: prior.observedAt };
-        }),
-      }));
+      // A superseded response is dropped, but a read queued behind it still runs. Unmounting clears the queue.
+      if (current === request.current) {
+        setFailed(!value);
+        if (value) setActivity(previous => ({
+          // An unreadable place keeps what Bridge last read on the same connection, so a refresh never blanks the
+          // list. A denied or revoked place, or a new connection, drops it: access was refused or replaced.
+          places: value.places.map(p => {
+            const prior = previous?.places.find(q => q.key === p.key);
+            const keep = (p.state === 'unavailable' || p.state === 'disconnected') && p.connection !== null && prior?.connection === p.connection;
+            return keep && prior?.entries.length ? { ...p, entries: prior.entries, observedAt: prior.observedAt } : p;
+          }),
+        }));
+      }
       if (queued.current) { queued.current = false; next(); }
     });
   }, []);

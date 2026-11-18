@@ -198,6 +198,16 @@ impl ClusterSession {
     ) -> Result<Arc<RemoteAccess>, crate::overview_places::Lost> {
         self.6.activity_access(key)
     }
+    /// `activity_access` with the place's connection revision.
+    pub(crate) fn activity_connection(
+        &self,
+        key: &str,
+    ) -> (
+        Option<u64>,
+        Result<Arc<RemoteAccess>, crate::overview_places::Lost>,
+    ) {
+        self.6.activity_connection(key)
+    }
     /// A display-only snapshot: never reads kubeconfig, refreshes inventory or renews access.
     pub fn places(&self) -> ClusterPlaceSnapshot {
         // Do not hold the admission lock while reading the independent inventory.

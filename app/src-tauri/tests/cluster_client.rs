@@ -2709,6 +2709,22 @@ async fn activity_reports_partial_denied_unavailable_and_disconnected_places() {
     let revoked = reply(bridge_engine::overview_activity::read(&session).await);
     assert_eq!(revoked["places"][0]["state"], "revoked");
     assert_eq!(revoked["places"][0]["entries"], json!([]));
+    let old = revoked["places"][0]["connection"].as_u64().unwrap();
+
+    // Connecting again gives the place a new revision, even when its next read fails, so the
+    // frontend never shows the old connection's runs under it.
+    let context = id_of(&session.contexts().await.unwrap()[0]);
+    let target = id_of(&session.discover(&context).await.unwrap()[0]);
+    assert_eq!(
+        reply(session.use_target(&target, None).await)["status"],
+        "connected"
+    );
+    *orka.fail_at.lock().unwrap() =
+        Some((OrkaResource::AgentInventory, AccessOutcome::Unavailable));
+    session.overview().await;
+    let again = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(again["places"][0]["state"], "disconnected");
+    assert_ne!(again["places"][0]["connection"].as_u64().unwrap(), old);
 }
 
 #[tokio::test]
