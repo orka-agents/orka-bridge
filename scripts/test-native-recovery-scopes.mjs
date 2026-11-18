@@ -360,6 +360,11 @@ assert.ok(smoke.includes('clickButton("Show details")\n    clickButton("Change c
 assert.ok(smoke.includes('clickButton("Show details")\n    clickButton("Remove")'), 'restart removal must explicitly open details');
 // Source contracts supplement, but never substitute for, the hosted native walk.
 const model = await readFile(new URL('./native-model-macos.swift', import.meta.url), 'utf8');
+const modelCaptures = JSON.parse(await readFile(new URL('./native-model-captures.json', import.meta.url), 'utf8'));
+for (const name of ['chat-long-early-wide', 'chat-long-early-minimum', 'chat-long-end-wide', 'chat-long-end-minimum']) {
+  assert.ok(modelCaptures.model.includes(name), `long Chat capture must belong to model scope: ${name}`);
+  assert.ok(!modelCaptures['destinations-workspace'].includes(name), `long Chat capture must not leak into destination scope: ${name}`);
+}
 assert.ok(model.includes('nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2")'), 'numbered Chat versions must be verified as native headings, not body static text');
 assert.ok(model.includes('anchorChatHeading("Conversation 2")'), 'Chat capture must align its native heading clear of fixed navigation');
 assert.ok(model.includes('let delta = header.maxY + 64 - bounds.minY'), 'Chat heading navigation must use actual header/heading geometry');
