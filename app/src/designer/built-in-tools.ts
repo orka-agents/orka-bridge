@@ -1,4 +1,28 @@
-// Orka KnownBuiltInToolNames union at image pin 7916cd1c8c083ade6b10df6ba408f854d930190c.
+import unsupportedTools from './unsupported-tools.json';
+
+// Orka 3cb1f0df: task_controller.go approval validation and aitools/gateway_reply.go eligibility.
+// Match effective names: Orka resolves built-ins before same-named Tool resources.
+export const unsupportedLocalTool = (name: string) => unsupportedTools.includes(name.trim());
+export const unsupportedToolReason = 'Approval tools need autonomous coordination, which Bridge does not support for local tests or Chat.';
+export const unsupportedLocalToolReason = (name: string) => name.trim() === 'reply_in_conversation'
+  ? 'Conversation replies need an authenticated gateway conversation, which local tests and Chat do not have.'
+  : unsupportedToolReason;
+export const unsupportedToolWarning = 'Remove all request_approval and reply_in_conversation tools before running local tests or Chat.';
+export const unsupportedToolMessage = `${unsupportedToolWarning} No work was submitted.`;
+
+// Creator-facing descriptions for common built-ins; unknown tools keep their supplied text.
+export const builtInToolDescriptions: Readonly<Record<string, string>> = {
+  web_fetch: 'Read the contents of a web page at an address.',
+  web_search: 'Find current information on the web.',
+  file_read: 'Read a file available to the agent.',
+  file_write: 'Create or update a file available to the agent.',
+  code_exec: 'Run code and read its output.',
+  request_approval: 'Ask a person to approve an action.',
+  delegate_task: 'Pass a task to another agent.',
+  reply_in_conversation: 'Send a reply in the current conversation.',
+};
+
+// Orka KnownBuiltInToolNames union at image pin 3cb1f0df36705af9ff81cb8b4e8a0f8d36ee6eea.
 // This is a naming map, not a claim that a workspace has enabled each tool.
 export const builtInTools: Readonly<Record<string, string>> = {
   web_fetch: 'Read a web page', web_search: 'Search the web',

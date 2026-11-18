@@ -1,3 +1,4 @@
+import { Button } from '../components/Button';
 import mark from '../assets/orka-mark.svg';
 
 export const welcomePreference = 'bridge.welcomeSeen.v1';
@@ -6,23 +7,21 @@ export function hasSeenWelcome() {
   catch { return false; }
 }
 
-export default function Welcome({ titleId, onStart, unavailable }: { titleId?: string; onStart: () => void; unavailable?: string }) {
+export default function Welcome({ titleId, onStart, onCluster, unavailable }: { titleId?: string; onStart: () => void; onCluster: () => void; unavailable?: string }) {
   return <section className="welcome-screen">
     <img className="welcome-mark" src={mark} width="44" height="44" alt="" />
     <h1 id={titleId}>Build an AI agent that does a real job</h1>
-    <p className="welcome-lede">Tell it what to do in plain words, watch it work, and check that it got it right. When you're happy, share the same agent with your team. Bridge sets up everything it needs on this computer; you don't need to know Kubernetes.</p>
+    <p className="welcome-lede">Bridge runs your agent on this computer and checks its answers. No Kubernetes needed.</p>
     <ol className="welcome-journey">
-      <li><span className="journey-number" aria-hidden="true">1</span><b>Write it</b><span>Instructions in your own words, and the tools it may use.</span></li>
-      <li><span className="journey-number" aria-hidden="true">2</span><b>Test it</b><span>Bridge runs it for real and checks each answer.</span></li>
-      <li><span className="journey-number" aria-hidden="true">3</span><b>Share it</b><span>Send the same agent to your team's cluster.</span></li>
+      <li><span className="journey-number" aria-hidden="true">1</span><b>Write it</b><span>What it should do and which tools it can use.</span></li>
+      <li><span className="journey-number" aria-hidden="true">2</span><b>Test it</b><span>Run it and check each answer.</span></li>
+      <li><span className="journey-number" aria-hidden="true">3</span><b>Share it</b><span>Send it to your team's cluster (preview).</span></li>
     </ol>
     <div className="welcome-actions">
-      <button className="workspace-primary" type="button" onClick={onStart}>Get started</button>
+      <Button kind="primary" type="button" onClick={onStart}>Get started</Button>
+      <span className="muted">About 5 minutes, mostly a download</span>
       {unavailable && <p className="muted">{unavailable}</p>}
     </div>
-    <span className="workspace-coming" title="Coming" tabIndex={0} role="group" aria-label="I already run Orka on a cluster: Coming">
-      <button className="workspace-link" type="button" disabled>I already run Orka on a cluster</button>
-      <span className="workspace-tip" aria-hidden="true">Coming</span>
-    </span>
+    <Button kind="quiet" type="button" className="welcome-expert" onClick={onCluster}>I already run Orka on a cluster</Button>
   </section>;
 }

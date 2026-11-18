@@ -1,17 +1,20 @@
+import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
+import type { WorkspaceFailure } from './recovery-info';
+import Recovery from './Recovery';
 
-let detail: string | null;
-function native(error: string | null) {
-  detail = error; vi.stubGlobal('isTauri', true);
+function native(failure?: WorkspaceFailure, raw = 'PRIVATE native diagnostic') {
+  vi.stubGlobal('isTauri', true);
   let localVm = 'failed';
-  const status = () => ({ selected: 'localVm', localVm, model: localVm === 'ready' ? 'available' : 'locked', localVmError: detail });
+  const status = () => ({ selected: 'localVm', localVm, model: localVm === 'ready' ? 'available' : 'locked', localVmError: raw,
+    ...(localVm === 'failed' && failure ? { workspaceFailure: failure } : {}) });
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_status') return status();
-    if (command === 'setup_select_local') { localVm = 'starting'; detail = null; return status(); }
+    if (command === 'setup_select_local') { localVm = 'starting'; return status(); }
     if (command === 'setup_open_help') return null;
     if (command === 'setup_connect_model') throw { kind: 'modelConnect' };
     if (command === 'setup_example') return { agent: '---\nname: web-reader\n---\nRead a page.', tests: 'A check.' };
@@ -23,90 +26,72 @@ function native(error: string | null) {
 beforeEach(() => localStorage.setItem('bridge.welcomeSeen.v1', '1'));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
-// Changing classification/order makes these fail even if all button labels stay the same.
 test.each([
-  ['virtualizationDisabled', 'Virtualization is turned off on this PC.', 'virtualization'],
-  ['hypervisorUnavailable', "Windows Hypervisor Platform (Hyper-V) isn't available.", 'hypervisor'],
-  ['Image(NoSpace)', "There isn't enough free space for the workspace.", 'workspace'],
-  ['Fill private state disk: Io(Os { code: 112, kind: StorageFull })', "There isn't enough free space for the workspace.", 'workspace'],
-  ['Image(Integrity)', "The workspace files couldn't be verified.", 'workspace'],
-  ['Pin installed boot files: Io(failure)', "The workspace files couldn't be verified.", 'workspace'],
-  ['RetainedState', "The workspace files are still in use or need checking.", 'workspace'],
-])('fix-first failure %s puts working help before retry', async (error, summary, topic) => {
-  const { ipc } = native(`Starting the local VM failed: ${error}`);
-  const user = userEvent.setup(); render(<App />);
+  ['permission', 'does not have permission', 'workspace'],
+  ['noSpace', "isn't enough free space", 'workspace'],
+  ['integrity', "couldn't be verified", 'workspace'],
+  ['inUse', 'still in use', 'workspace'],
+  ['network', "couldn't be downloaded", undefined],
+  ['preparation', "couldn't be prepared", undefined],
+  ['guestConnection', "didn't finish starting", undefined],
+  ['services', "services couldn't start", undefined],
+  ['unknown', "Your workspace didn't start. Your agents are safe.", undefined],
+] as const)('finite %s cause offers recovery and a way out', async (cause, summary, topic) => {
+  const { ipc } = native({ cause, operation: cause === 'network' ? 'download' : 'start', codes: [] });
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const alert = await screen.findByRole('alert');
   expect(alert.textContent).toContain(summary);
-  const buttons = within(alert).getAllByRole('button');
-  expect(buttons.slice(0, 3).map(button => button.textContent)).toEqual(['Show me how', 'Try again', 'Copy details for help']);
-  buttons[0].focus(); await user.keyboard('{Enter}');
-  expect(ipc).toHaveBeenCalledWith('setup_open_help', { topic });
-  expect(screen.getByRole('contentinfo').textContent).toContain('Setup paused');
+  if (topic) {
+    await user.click(within(alert).getByRole('button', { name: 'Show me how' }));
+    expect(ipc).toHaveBeenCalledWith('setup_open_help', { topic });
+  }
   expect(screen.getByRole('contentinfo').textContent).toContain(summary);
-  expect(within(alert).getByText('What you downloaded is kept.')).toBeTruthy();
-  const fallback = screen.getByRole('button', { name: 'Use a cluster you already have instead' });
-  expect(fallback.matches(':disabled')).toBe(true);
-  expect(fallback.title).toBe('Connecting an existing cluster is coming');
+  expect(screen.getByRole('button', { name: 'Use a cluster you already have instead' }).matches(':disabled')).toBe(false);
+  expect(document.body.textContent).not.toContain('PRIVATE');
+  await user.click(within(alert).getByRole('button', { name: 'Show details' }));
+  expect(screen.getByText('PRIVATE native diagnostic').tagName).toBe('PRE');
 });
 
-test.each([
-  ['Image(Network("connection"))', "The workspace files couldn't be downloaded."],
-  ['Fill private state disk: Io(failure)', "The workspace files couldn't be prepared."],
-  ['Run qemu-img: Io(failure)', "The workspace files couldn't be prepared."],
-  ['Prepare QEMU control endpoint: Io(failure)', "The workspace couldn't start."],
-  ['Create QEMU process: Io(failure)', "The workspace couldn't start."],
-  ['Open QEMU standard I/O: Io(failure)', "The workspace couldn't start."],
-  ['Resume QEMU process: Io(failure)', "The workspace couldn't start."],
-  ['Negotiate QMP: Io(failure)', "The workspace couldn't start."],
-  ['Check QEMU prelaunch status: Io(failure)', "The workspace couldn't start."],
-  ['Connect guest control: Io(failure)', "The workspace didn't finish starting."],
-  ['Start guest CPUs: Io(failure)', "The workspace couldn't start."],
-  ['Establish guest session: Io(failure)', "The workspace didn't finish starting."],
-  ['Orka infrastructure failed (phase: Some(InfrastructureFailed), service: Failed)', "The workspace's services couldn't start."],
-  [null, "The workspace couldn't start."],
-  ['Mac launch error: Io(failure)', "The workspace couldn't start."],
-])('retry failure %s leads with retry and exposes real details on request', async (error, summary) => {
-  native(error); const user = userEvent.setup(); render(<App />);
-  const alert = await screen.findByRole('alert');
-  expect(alert.textContent).toContain(summary);
-  expect(within(alert).getAllByRole('button')[0].textContent).toBe('Try again');
-  if (error) expect(screen.queryByText(error)).toBeNull();
-  const disclosure = within(alert).getByRole('button', { name: 'Show details' });
-  disclosure.focus(); await user.keyboard(' ');
-  expect(disclosure.getAttribute('aria-expanded')).toBe('true');
-  expect(screen.getByRole('button', { name: 'Hide details' })).toBe(disclosure);
-  if (error) expect(screen.getByText(error).tagName).toBe('PRE');
+test('download heading and preservation do not promise rejected bytes are kept', async () => {
+  native({ cause: 'network', operation: 'download', codes: [] }); render(<App />); await openLocalSetup();
+  expect(await screen.findByRole('heading', { level: 1, name: 'This computer' })).toBeTruthy();
+  expect(screen.getByText("The workspace couldn't be downloaded")).toBeTruthy();
+  expect(screen.getByRole('alert').textContent).toContain('Your agent files are kept. Try again to continue setup.');
 });
 
-test('keyboard retry calls the existing native selection once and returns to progress', async () => {
-  const { ipc } = native('Create QEMU process: Io(failure)');
-  const user = userEvent.setup(); render(<App />);
+test('keyboard retry calls native selection once and returns to progress', async () => {
+  const { ipc } = native({ cause: 'unknown', operation: 'start', codes: [] });
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
   const retry = await screen.findByRole('button', { name: 'Try again' });
   retry.focus(); await user.keyboard('{Enter}{Enter}');
-  await screen.findByRole('progressbar', { name: 'Workspace startup' });
+  await screen.findByRole('progressbar', { name: 'Workspace setup progress' });
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toHaveLength(1);
   expect(screen.queryByRole('alert')).toBeNull();
 });
 
-test('copy includes recognized stage and error code, never arbitrary errors, paths or credentials', async () => {
-  native('Starting the local VM failed: Create QEMU process: Io(Os { code: 5, message: "ghp_NOT_FOR_HELP Bearer PRIVATE" }). QEMU: token=private-key. Details: C:\\Users\\private');
-  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
-  render(<App />);
+test('copy includes only native finite metadata, ignoring misleading raw diagnostics', async () => {
+  native({ cause: 'permission', operation: 'start', codes: [5] }, 'Image(NoSpace) code: 4294967296 Bearer PRIVATE C:\\Users\\private');
+  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Copy details for help' }));
   expect(copy).toHaveBeenCalledTimes(1);
-  const text = copy.mock.calls[0][0];
-  expect(text).toContain('Create QEMU process'); expect(text).toContain('code: 5');
-  expect(text).not.toMatch(/ghp_|Bearer|PRIVATE|private|Users|QEMU:/);
-  expect(screen.getByText('Details copied. Private diagnostic text is not included.')).toBeTruthy();
+  expect(copy.mock.calls[0][0]).toContain('Category: permission');
+  expect(copy.mock.calls[0][0]).toContain('OS code: 5');
+  expect(copy.mock.calls[0][0]).not.toMatch(/NoSpace|4294967296|Bearer|PRIVATE|private|Users/);
 });
 
-test('copy and help failures give a next action without echoing rejected text', async () => {
-  const { ipc } = native('virtualizationDisabled');
-  ipc.mockImplementation(command => {
-    if (command === 'setup_status') return { selected: 'localVm', localVm: 'failed', model: 'locked', localVmError: detail };
-    throw 'SECRET';
-  });
-  const user = userEvent.setup(); vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue('SECRET'); render(<App />);
+test('raw text can neither classify the error nor supply copied OS codes', async () => {
+  native(undefined, 'virtualizationDisabled NoSpace code: 5 startupStopFailed');
+  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(); render(<App />); await openLocalSetup();
+  expect((await screen.findByRole('alert')).textContent).toContain("Your workspace didn't start. Your agents are safe.");
+  await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
+  expect(copy.mock.calls[0][0]).not.toContain('code: 5');
+});
+
+test('copy and help failures do not echo rejected text', async () => {
+  const { ipc } = native({ cause: 'noSpace', operation: 'prepare', codes: [] });
+  const original = ipc.getMockImplementation()!;
+  ipc.mockImplementation(command => { if (command === 'setup_open_help') throw 'SECRET'; return original(command); });
+  const user = userEvent.setup(); vi.spyOn(navigator.clipboard, 'writeText').mockRejectedValue('SECRET'); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Copy details for help' }));
   expect(screen.getByText("Couldn't copy. Open Show details to read the error.")).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Show me how' }));
@@ -114,20 +99,60 @@ test('copy and help failures give a next action without echoing rejected text', 
   expect(screen.queryByText('SECRET')).toBeNull();
 });
 
-test.each(['Stopping the local VM failed: Io(stop detail)', 'Starting the local VM failed: startupStopFailed: QEMU cleanup failed'])('unconfirmed stop explains why retry cannot launch a second workspace: %s', async error => {
-  native(error); render(<App />);
-  expect((await screen.findByRole('alert')).textContent).toContain("The workspace couldn't be stopped safely.");
-  expect(screen.getByRole('button', { name: 'Try again' }).matches(':disabled')).toBe(true);
-  expect(screen.getByRole('button', { name: 'Try again' }).title).toContain('Quit Bridge');
+test.each(['insufficientMemory', 'virtualizationDisabled', 'hypervisorUnavailable', 'virtualizationUnsupported'] as const)('copied preflight category retains %s without raw details', async preflightFailure => {
+  const user = userEvent.setup(); const copy = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+  render(<Recovery preflightFailure={preflightFailure} detail="SECRET" disabled={false} onRetry={() => {}} />);
+  await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
+  expect(copy.mock.calls[0][0]).toContain(`Category: ${preflightFailure}`);
+  expect(copy.mock.calls[0][0]).not.toContain('SECRET');
 });
 
-test('model failure is not duplicated in workspace details', async () => {
-  const message = 'Guest Connect did not acknowledge a ready model. Completion is unknown.';
-  const { ready } = native(`${message} Guest Connect: {"stage":"gateway","code":"timeout"}`); ready();
-  const user = userEvent.setup(); render(<App />);
-  await user.click(await screen.findByRole('button', { name: 'Use GitHub sign-in' }));
-  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain(message));
-  await user.click(screen.getByRole('button', { name: 'Show details' }));
-  expect(document.body.textContent?.split(message)).toHaveLength(2);
-  expect(screen.getByText('Guest Connect: {"stage":"gateway","code":"timeout"}')).toBeTruthy();
+test('typed unconfirmed stop cannot admit a second workspace', async () => {
+  native({ cause: 'stopUnconfirmed', operation: 'stop', codes: [] }); render(<App />); await openLocalSetup();
+  expect((await screen.findByRole('alert')).textContent).toContain("couldn't be stopped safely");
+  expect(screen.getByRole('button', { name: 'Try again' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Try again' }).title).toBe('Quit Bridge and reopen it before trying again');
+});
+
+test.each(['workspaceUpdateRequired', 'workspaceVersionUnsupported'] as const)('version refusal %s cannot retry or replace the workspace', async cause => {
+  const { ipc } = native({ cause, operation: 'verify', codes: [] });
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('Open the matching Bridge version.');
+  expect(alert.textContent).not.toContain("download couldn't be verified");
+  const retry = within(alert).getByRole('button', { name: 'Try again' });
+  expect(retry.matches(':disabled')).toBe(true);
+  expect(retry.title).toBe('Open the matching Bridge version.');
+  await user.click(retry);
+  expect(ipc.mock.calls.filter(([command]) => command === 'setup_select_local')).toHaveLength(0);
+  expect(screen.queryByRole('button', { name: 'Set up new workspace' })).toBeNull();
+});
+
+test('sign-in removal stays in progress in the setup step and shell', async () => {
+  const { ipc, ready } = native(); ready();
+  const original = ipc.getMockImplementation()!;
+  mockIPC(command => command === 'setup_remove_model' ? new Promise(() => {}) : original(command));
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
+  // A failed Connect may have saved a sign-in, so cleanup remains available without claiming connection.
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await screen.findByRole('alert');
+  await user.click(screen.getByRole('button', { name: 'Remove sign-in' }));
+  await user.click(within(screen.getByRole('group', { name: 'Remove sign-in confirmation' })).getByRole('button', { name: 'Remove sign-in' }));
+  const step = within(screen.getByRole('list', { name: 'Setup steps' })).getByText('Connect the AI', { selector: 'li b' }).closest('li')!;
+  expect(step.textContent).toContain('Removing sign-in');
+  expect(step.querySelector('.status-running')).toBeTruthy();
+  expect(screen.getByRole('contentinfo').textContent).toContain('Removing the AI sign-in');
+});
+
+test('AI failure marks its setup step and every shell status without losing the running workspace', async () => {
+  const { ready } = native(); ready();
+  const user = userEvent.setup(); render(<App />); await openLocalSetup();
+  await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
+  await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('Bridge could not confirm the AI connection'));
+  expect(screen.getByText("Couldn't start").closest('li')?.className).toBe('step-failed');
+  expect(within(screen.getByRole('navigation')).getByText('Setting up, step 3 of 4')).toBeTruthy();
+  expect(screen.getByRole('contentinfo').textContent).toContain('AI not connected');
+  expect(document.querySelector('.host-chip')?.getAttribute('title')).toBe('The workspace is ready on this computer.');
+  expect(document.querySelector('.host-chip .live-dot')?.className).toContain('ready');
+  expect(screen.getByRole('alert').textContent).toContain('Your workspace and agent files are kept');
 });

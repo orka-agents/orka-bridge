@@ -31,7 +31,7 @@ impl AppleVmSession {
             RuntimeWorker::new(Box::new(AppleBackend::new(resource_root)), journal, image)?;
         Self::start(worker, host_utc)
     }
-    #[cfg(all(debug_assertions, target_arch = "aarch64"))]
+    #[cfg(target_arch = "aarch64")]
     pub(crate) fn launch_retaining(
         resource_root: PathBuf,
         journal: Journal,
@@ -59,12 +59,16 @@ impl AppleVmSession {
                 .ok_or(RuntimeError::Unavailable)?;
             let mut channel = handle.guest.channel();
             channel.deadline = Some(Instant::now() + Duration::from_secs(120));
-            for _ in [Stage::Early, Stage::Serve] {
+            let mut serving_hello = None;
+            for stage in [Stage::Early, Stage::Serve] {
                 let Frame::Hello(hello) = read_frame(&mut channel)? else {
                     return Err(ProtocolError::Stage.into());
                 };
                 // This consumes and flushes New before the first descriptor write.
                 let request = session.worker.boot_request(&hello, host_utc)?;
+                if stage == Stage::Serve {
+                    serving_hello = Some(hello);
+                }
                 let id = request.request_id;
                 channel.write_all(&encode(&Frame::Request(request))?)?;
                 let Frame::Result(ready) = read_frame(&mut channel)? else {
@@ -79,7 +83,11 @@ impl AppleVmSession {
             }
             // One client, one request sequence; transport takes it only after Ready.
             channel.deadline = None;
-            let client = VmClient::established(Box::new(channel), nonce)?;
+            let client = VmClient::established_with_hello(
+                Box::new(channel),
+                nonce,
+                serving_hello.as_ref().ok_or(RuntimeError::Unavailable)?,
+            )?;
             session.transport = Some(VmTransport::with_client(client));
             Ok(())
         })();

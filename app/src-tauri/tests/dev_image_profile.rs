@@ -20,26 +20,35 @@ fn actual_app_binary_contains_the_local_image_selector_only_in_debug() {
         cfg!(debug_assertions),
         "The local image selector must exist only in the debug app"
     );
-    #[cfg(not(debug_assertions))]
-    for hash in [
-        "a240b644913e1a66b2f745706b7feb739f768f5803a0672ceb9a37eb6f4c1e27",
-        "df09d3e8d8d5d75499b273a71508579c3dcb2aed7fbf35927b5f10bc213ee762",
-        "9eb75d4a9de5f2e922157dc597601d7f10d3b71f3c52fd6ffd3f18d59c6a799b",
-        "fc08e4ca4baaea87bf02659e0ee939370776a6c4ec57579c957d717b7d16de1c",
-        "27f833e233753a0a601f3a6792dcd73e2f2c7c8bd30e00b837315c71c5996dcb",
-        "4a44487bb3cfdc2be1d7697b8c71c97733d6ab2db62e6e6e8f1c6af9431ffd2e",
-        "606891f6e94ce5c4263bbc5360d7fdb6bb874b2109478e4e9e67322fd47d7f20",
-        "dc78cfd200424bdc7e98e6eb60db990b86149036c9b495e228191b71e72ab9e0",
-        "a1dead19c0d1dcef558008e556cd9bd4a8c5082daf4ecea6f531d03173748385",
-    ] {
+    #[cfg(all(
+        not(debug_assertions),
+        any(
+            all(windows, target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64")
+        )
+    ))]
+    for hash in if cfg!(windows) {
+        [
+            "9d25627b1b5e6bd7952f18f18e8850f531794c8474e7f76aff29affd9a0d8e20",
+            "226cfa6e3f7ffc3cde467a3c8e9498aeb1db2aeac68e60c3f27e8f086528850c",
+            "4a44487bb3cfdc2be1d7697b8c71c97733d6ab2db62e6e6e8f1c6af9431ffd2e",
+            "2a05265fb7e7407e389fc7518ded27f876545cd50d2e14d994b2c9e9cf3fd414",
+        ]
+    } else {
+        [
+            "2aec683295a0358a9a5b41b45e45db4ef2776ed9526d75bc7bc0d9d1b7c00c13",
+            "3d4379c1002febfb31b081b92805ffd542eca3ae5e9b65f007e20f1d8656b160",
+            "27f833e233753a0a601f3a6792dcd73e2f2c7c8bd30e00b837315c71c5996dcb",
+            "375394b72b6aeea1e6cc70e00cfba99d6269d0936ece451657449da1899dad93",
+        ]
+    } {
         let raw: Vec<u8> = (0..64)
             .step_by(2)
             .map(|index| u8::from_str_radix(&hash[index..index + 2], 16).unwrap())
             .collect();
         assert!(
-            !contains(&binary, hash.as_bytes()),
-            "Dev hex pin in release"
+            contains(&binary, hash.as_bytes()) || contains(&binary, &raw),
+            "The supported release must carry its reviewed image/runtime pins"
         );
-        assert!(!contains(&binary, &raw), "Dev raw pin in release");
     }
 }
