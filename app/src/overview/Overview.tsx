@@ -220,8 +220,8 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
         <div className="overview-card-actions">{onNewAgent && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}<Button onClick={onOpenExample}>Open web-reader</Button></div></div>
     </> : <>
       <div className="overview-list">{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="overview-note">No agents match these filters.</p>}</div>
-      <RecentActivity active={active} places={places} onShowAgent={showAgent} />
-      <SessionList active={active} places={places} />
+      <RecentActivity active={active} places={places} onShowAgent={showAgent} onCheck={actions.onCheck} />
+      <SessionList active={active} places={places} onCheck={actions.onCheck} />
     </>}
   </section>;
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
 import { RelativeTime } from '../components/RelativeTime';
 import type { Places } from './api';
@@ -49,8 +50,9 @@ function Entry({ row, place }: { row: Row; place: string }) {
   </li>;
 }
 
-/** Sessions in this computer's workspace and on connected clusters, read only. Channel (gateway) Sessions aren't listed. */
-export function SessionList({ active, places }: { active: boolean; places?: Places }) {
+/** Sessions in this computer's workspace and on connected clusters, read only. Channel (gateway) Sessions aren't listed.
+ * `onCheck` rereads Overview's places, which reads conversations again. */
+export function SessionList({ active, places, onCheck }: { active: boolean; places?: Places; onCheck: () => void }) {
   const [sessions, setSessions] = useState<Sessions>();
   const [failed, setFailed] = useState(false);
   const request = useRef(0);
@@ -67,11 +69,13 @@ export function SessionList({ active, places }: { active: boolean; places?: Plac
       if (current === request.current) {
         setFailed(!value);
         if (value) setSessions(previous => ({
-          // An unreadable place keeps what Bridge last read on the same connection. A denied or revoked place, or a
-          // new connection, drops it: access was refused or replaced, not merely interrupted.
+          // An unreadable place keeps what Bridge last read on the same connection, and a refusal stands until a
+          // Sessions read succeeds. A denied or revoked place, or a new connection, drops its conversations: access
+          // was refused or replaced, not merely interrupted.
           places: value.places.map(p => {
             const prior = previous?.places.find(q => q.key === p.key);
             const keep = (p.state === 'unavailable' || p.state === 'disconnected') && p.connection !== null && prior?.connection === p.connection;
+            if (keep && prior?.state === 'denied') return { ...prior, state: 'denied' as const };
             return keep && prior?.entries.length ? { ...p, entries: prior.entries, observedAt: prior.observedAt } : p;
           }),
         }));
@@ -79,12 +83,14 @@ export function SessionList({ active, places }: { active: boolean; places?: Plac
       if (queued.current) { queued.current = false; next(); }
     });
   }, []);
+  // Read once per places read: a revisit with cached places waits for the visit's own places read.
+  const readFor = useRef<Places>(undefined);
   useEffect(() => {
-    if (active && places) start();
+    if (active && places && places !== readFor.current) { readFor.current = places; start(); }
     // A hidden tab drops a queued read; the next places read starts a fresh one.
     if (!active) queued.current = false;
   }, [active, places, start]);
-  useEffect(() => () => { request.current++; queued.current = false; }, []);
+  useEffect(() => () => { request.current++; queued.current = false; readFor.current = undefined; }, []);
   const labels = placeLabels(places?.places ?? []).set(LOCAL, 'this computer');
   const read = (sessions?.places ?? []).filter(p => labels.has(p.key));
   const connected = read.filter(p => p.state !== 'disconnected' || p.entries.length);
@@ -99,6 +105,7 @@ export function SessionList({ active, places }: { active: boolean; places?: Plac
     if (p.state === 'disconnected' && p.entries.length) return p.key === LOCAL ? `The workspace on this computer isn't running now. Showing what Bridge last saw.` : `${name} isn't connected now. Showing what Bridge last saw.`;
   };
   const notes = read.map(p => [p.key, note(p)] as const).filter((n): n is readonly [string, string] => !!n[1]);
+  const retry = failed || read.some(p => p.state === 'unavailable' || p.state === 'denied');
   return <section className="overview-activity" aria-label="Conversations">
     <header className="overview-activity-head">
       <h2>Conversations</h2>
@@ -107,6 +114,7 @@ export function SessionList({ active, places }: { active: boolean; places?: Plac
     <p className="overview-note">Conversations started through Telegram, Teams or other channels aren't listed here yet.</p>
     {failed && <p className="overview-note" role="status">Couldn't read conversations just now.{sessions && ' Showing what Bridge last saw.'}</p>}
     {notes.map(([key, text]) => <p key={key} className="overview-note" role="status">{text}</p>)}
+    {retry && <div className="overview-note"><Button kind="quiet" onClick={onCheck}>Check conversations again</Button></div>}
     {!sessions ? places && !failed && <p className="overview-note" role="status">Reading conversations…</p>
       : !connected.length ? <p className="overview-note">Conversations appear here once the workspace is ready on this computer or a cluster is connected.</p>
       : !rows.length ? <p className="overview-note">No conversations yet.</p>

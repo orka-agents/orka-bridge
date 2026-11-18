@@ -50,8 +50,9 @@ function Entry({ row, place, agentShown, onShowAgent }: { row: Row; place: strin
 }
 
 /** Recent runs across connected clusters, read only. The local VM cannot list Tasks yet. */
-/** `onShowAgent` receives the agent's card key (`place/uid`) and moves focus to that card. */
-export function RecentActivity({ active, places, onShowAgent }: { active: boolean; places?: Places; onShowAgent: (key: string) => void }) {
+/** `onShowAgent` receives the agent's card key (`place/uid`) and moves focus to that card. `onCheck` rereads
+ * Overview's places, which reads activity again. */
+export function RecentActivity({ active, places, onShowAgent, onCheck }: { active: boolean; places?: Places; onShowAgent: (key: string) => void; onCheck: () => void }) {
   const [activity, setActivity] = useState<Activity>();
   const [failed, setFailed] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
@@ -71,10 +72,12 @@ export function RecentActivity({ active, places, onShowAgent }: { active: boolea
         setFailed(!value);
         if (value) setActivity(previous => ({
           // An unreadable place keeps what Bridge last read on the same connection, so a refresh never blanks the
-          // list. A denied or revoked place, or a new connection, drops it: access was refused or replaced.
+          // list, and a refusal stands until a Task read succeeds. A denied or revoked place, or a new connection,
+          // drops its runs: access was refused or replaced.
           places: value.places.map(p => {
             const prior = previous?.places.find(q => q.key === p.key);
             const keep = (p.state === 'unavailable' || p.state === 'disconnected') && p.connection !== null && prior?.connection === p.connection;
+            if (keep && prior?.state === 'denied') return { ...prior, state: 'denied' as const };
             return keep && prior?.entries.length ? { ...p, entries: prior.entries, observedAt: prior.observedAt } : p;
           }),
         }));
@@ -82,12 +85,14 @@ export function RecentActivity({ active, places, onShowAgent }: { active: boolea
       if (queued.current) { queued.current = false; next(); }
     });
   }, []);
+  // Read once per places read: a revisit with cached places waits for the visit's own places read.
+  const readFor = useRef<Places>(undefined);
   useEffect(() => {
-    if (active && places) start();
+    if (active && places && places !== readFor.current) { readFor.current = places; start(); }
     // Overview stays mounted while hidden: drop a queued read, and the next visit reads afresh.
     if (!active) queued.current = false;
   }, [active, places, start]);
-  useEffect(() => () => { request.current++; queued.current = false; }, []);
+  useEffect(() => () => { request.current++; queued.current = false; readFor.current = undefined; }, []);
   const labels = placeLabels(places?.places ?? []);
   const known = new Set(places?.places.flatMap(p => p.agents.map(a => `${p.key}/${a.uid}`)) ?? []);
   const read = (activity?.places ?? []).filter(p => labels.has(p.key));
@@ -102,6 +107,7 @@ export function RecentActivity({ active, places, onShowAgent }: { active: boolea
     if (p.state === 'disconnected' && p.entries.length) return `${name} isn't connected now. Showing what Bridge last saw.`;
   };
   const notes = read.map(p => [p.key, note(p)] as const).filter((n): n is readonly [string, string] => !!n[1]);
+  const retry = failed || read.some(p => p.state === 'unavailable' || p.state === 'denied');
   return <section className="overview-activity" aria-label="Recent activity">
     <header className="overview-activity-head">
       <h2>Recent activity</h2>
@@ -113,6 +119,7 @@ export function RecentActivity({ active, places, onShowAgent }: { active: boolea
     <p className="overview-note">Runs on this computer aren't listed here yet.</p>
     {failed && <p className="overview-note" role="status">Couldn't read recent activity just now.{activity && ' Showing what Bridge last saw.'}</p>}
     {notes.map(([key, text]) => <p key={key} className="overview-note" role="status">{text}</p>)}
+    {retry && <div className="overview-note"><Button kind="quiet" onClick={onCheck}>Check runs again</Button></div>}
     {!activity ? places && !failed && <p className="overview-note" role="status">Reading recent runs…</p>
       : !connected.length ? <p className="overview-note">Connect a cluster to see its runs here.</p>
       : !rows.length ? <p className="overview-note">{emptyFilter[filter]}</p>
