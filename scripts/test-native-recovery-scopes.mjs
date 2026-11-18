@@ -31,8 +31,8 @@ function actions(chosen) {
   return names;
 }
 const all = actions(selection()), core = actions(selection('core')), ui = actions(selection('chat-agent-clusters'));
-assert.equal(all.length, 66);
-assert.equal(core.length, 46);
+assert.equal(all.length, 67);
+assert.equal(core.length, 47);
 assert.equal(ui.length, 20);
 assert.ok(core.includes('designer-reply-saved'), 'saved reply captures belong to the core scope');
 assert.ok(!ui.includes('designer-reply-saved'), 'UI scope must not repeat saved reply captures');
@@ -268,8 +268,8 @@ assert.ok(smoke.includes('clickButton("Show details")\n    clickButton("Remove")
 const model = await readFile(new URL('./native-model-macos.swift', import.meta.url), 'utf8');
 const captureManifest = JSON.parse(await readFile(new URL('./native-model-captures.json', import.meta.url), 'utf8'));
 assert.equal(captureManifest.model.length, 204);
-assert.equal(captureManifest['destinations-workspace'].length, 47);
-assert.equal(new Set([...captureManifest.model, ...captureManifest['destinations-workspace']]).size, 251);
+assert.equal(captureManifest['destinations-workspace'].length, 45);
+assert.equal(new Set([...captureManifest.model, ...captureManifest['destinations-workspace']]).size, 249);
 const overviewCaptures = [
   ...['disconnected', 'connected'].flatMap(ai => ['wide', 'minimum'].flatMap(size => ['collapsed', 'expanded'].map(state => `local-overview-ai-${ai}-${state}-${size}`))),
   ...['wide', 'compact', 'minimum'].flatMap(size => ['collapsed', 'expanded-earlier-pass', 'expanded-earlier-failed', 'expanded-draft'].map(state => `local-controls-overview-${state}-${size}`)),
@@ -352,4 +352,5 @@ assert.ok(model.includes('localSize(540, 640)') && model.includes('chat-new-vers
 assert.ok(source.includes("resizeTo({ width: 1280, height: 800 }, 'Wide')"));
 assert.ok(source.includes("resizeTo({ width: 540, height: 640 }, 'Compact')"));
 assert.ok(!source.includes('Emulation.setDeviceMetricsOverride'), 'a fake viewport cannot qualify native size evidence');
-console.log('PASS real scope parsing; 46+20 unique action cases; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
+await import('./test-native-workspace-contracts.mjs');
+console.log('PASS real scope parsing; 47+20 unique action cases; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
