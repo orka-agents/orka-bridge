@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import Overview from './Overview';
@@ -23,7 +23,7 @@ function ipc(saved = [file()], places = [place()]) {
 }
 const row = () => screen.findByRole('article', { name: 'reader' });
 beforeEach(() => vi.stubGlobal('isTauri', true));
-afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 test('one row per document, one mark per place, one primary; evidence and actions wait behind expansion', async () => {
   ipc(); const counts = vi.fn(); const open = vi.fn(); const run = vi.fn();
@@ -164,6 +164,155 @@ test('navigation clears filters and reveals the exact UID among repeated agents 
   expect(within(await row()).getAllByRole('article', { name: 'team, Failed' })).toHaveLength(2);
   await userEvent.click(within(await row()).getByRole('button', { name: 'Show places for reader' }));
   expect(within(await row()).queryByRole('article', { name: 'team, Failed' })).toBeNull();
+});
+
+test.each([false, true])('an active Send becomes a retained failure without leaving Overview (targeted: %s)', async targeted => {
+  vi.useFakeTimers();
+  let finished = false;
+  const inventory = () => {
+    const team = place('team', finished ? 'failed' : 'running');
+    const other = place('team', 'passed').agents[0];
+    team.agents.push({ ...other, uid: 'other-uid', record: { ...other.record, agentUid: 'other-uid' } });
+    return { places: [team], historyState: 'complete', unobserved: [] };
+  };
+  const reads = vi.fn<(args?: unknown) => ReturnType<typeof inventory>>(inventory);
+  mockIPC((command, args) => command === 'overview_places' ? reads(args)
+    : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+      : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
+  const run = vi.fn();
+  const focus = targeted ? { id: 1, sendId: id, target: { key: 'team', uid: 'team-uid', namespace: 'agents', name: 'remote-reader' } } : undefined;
+  render(<Overview {...props} focus={focus} onRunDocument={run} />);
+  await act(async () => {});
+  const agent = screen.getByRole('article', { name: 'reader' });
+  expect(within(agent).getByLabelText('team: Running')).toBeTruthy();
+  if (!targeted) fireEvent.click(within(agent).getByRole('button', { name: 'Show places for reader' }));
+  const remote = within(agent).getByRole('article', { name: 'team, Running' });
+  expect(remote.getAttribute('data-card-key')).toBe('team/team-uid');
+  if (targeted) expect(document.activeElement).toBe(remote);
+  fireEvent.click(within(remote).getByRole('button', { name: 'Details' }));
+  finished = true;
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(within(agent).getByLabelText('team: Failed')).toBeTruthy();
+  expect(within(agent).queryByLabelText('team: Running')).toBeNull();
+  expect(within(agent).getByRole('article', { name: 'team, Failed' })).toBe(remote);
+  expect(within(remote).getByText('1 of 2 passed')).toBeTruthy();
+  expect(within(remote).getByText('team-uid')).toBeTruthy();
+  expect(within(remote).getByText(source.agent)).toBeTruthy();
+  expect(within(remote).getByText(source.tests)).toBeTruthy();
+  expect(reads.mock.calls.every(([args]) => targeted ? (args as { key?: string })?.key === 'team' : (args as { key?: string })?.key === undefined)).toBe(true);
+  fireEvent.click(within(remote).getByRole('button', { name: 'Run tests reader on team' }));
+  expect(run).toHaveBeenLastCalledWith(id, 'team');
+  const stopped = reads.mock.calls.length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(reads).toHaveBeenCalledTimes(stopped);
+});
+
+test.each([
+  ['other place', true, false], ['unrelated unobserved', true, false],
+  ['same place', true, true], ['focused unobserved', true, true],
+  ['other place', false, true], ['unrelated unobserved', false, true],
+] as const)('polling respects %s work (targeted: %s)', async (work, targeted, continues) => {
+  vi.useFakeTimers();
+  let targetFinished = false; let otherFinished = false; let reads = 0;
+  const inventory = () => {
+    const team = place('team', targetFinished ? 'failed' : 'running');
+    const other = place('other', otherFinished ? 'passed' : 'running');
+    other.agents[0].record.id = '22345678-1234-1234-1234-123456789abc';
+    if (work === 'same place') team.agents.push({ ...other.agents[0], record: { ...other.agents[0].record, targetDisplay: 'team' } });
+    // The focused Send may still be unobserved while this UID retains an earlier result.
+    if (work === 'focused unobserved') team.agents[0].record.id = other.agents[0].record.id;
+    const unobserved = work.includes('unobserved') ? [{
+      id: work === 'focused unobserved' ? id : '22345678-1234-1234-1234-123456789abc', source,
+      targetDisplay: 'other', targetUids: other.agents[0].record.targetUids, provider: 'team-model',
+      plannedAgentName: 'remote-reader', agentUid: null, verdict: otherFinished ? 'passed' : 'running', time: 2,
+    }] : [];
+    return { places: work === 'other place' ? [team, other] : [team], historyState: 'complete', unobserved };
+  };
+  mockIPC(command => command === 'overview_places' ? (reads++, inventory())
+    : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+      : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
+  const focus = targeted ? { id: 1, sendId: id, target: { key: 'team', uid: 'team-uid', namespace: 'agents', name: 'remote-reader' } } : undefined;
+  render(<Overview {...props} focus={focus} />);
+  await act(async () => {});
+  if (!targeted) fireEvent.click(screen.getByRole('button', { name: 'Show places for reader' }));
+  const remote = screen.getAllByRole('article', { name: 'team, Running' }).find(node => node.getAttribute('data-card-key') === 'team/team-uid');
+  expect(remote).toBeTruthy();
+  targetFinished = true;
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(screen.getByRole('article', { name: 'team, Failed' })).toBe(remote);
+  expect(reads).toBe(2);
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(reads).toBe(continues ? 3 : 2);
+  otherFinished = true;
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  const stopped = reads;
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(reads).toBe(stopped);
+});
+
+test.each([false, true])('a late poll cannot replace a newer scoped navigation (previously targeted: %s)', async targeted => {
+  vi.useFakeTimers();
+  let release!: (value: unknown) => void;
+  let reads = 0;
+  mockIPC(command => command === 'overview_places'
+    ? ++reads === 2 ? new Promise(resolve => { release = resolve; }) : { places: [place('team', reads === 1 ? 'running' : 'failed')], historyState: 'complete', unobserved: [] }
+    : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+      : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
+  const target = { key: 'team', uid: 'team-uid', namespace: 'agents', name: 'remote-reader' };
+  const view = render(<Overview {...props} focus={targeted ? { id: 1, sendId: id, target } : undefined} />);
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(release).toBeDefined();
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(reads).toBe(2); // Slow reads must not overlap.
+  view.rerender(<Overview {...props} focus={{ id: 2, sendId: id, target }} />);
+  await act(async () => {});
+  const remote = screen.getByRole('article', { name: 'team, Failed' });
+  expect(document.activeElement).toBe(remote);
+  await act(async () => release({ places: [place('team', 'running')], historyState: 'complete', unobserved: [] }));
+  expect(screen.getByRole('article', { name: 'team, Failed' })).toBe(remote);
+  expect(document.activeElement).toBe(remote);
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(reads).toBe(3);
+});
+
+test.each([false, true])('inactive Overview cancels pending polling and ignores its late reply (targeted: %s)', async targeted => {
+  vi.useFakeTimers();
+  let release!: (value: unknown) => void;
+  let reads = 0;
+  mockIPC(command => command === 'overview_places'
+    ? ++reads === 1 ? { places: [place('team', 'running')], historyState: 'complete', unobserved: [] } : new Promise(resolve => { release = resolve; })
+    : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+      : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
+  const focus = targeted ? { id: 1, sendId: id, target: { key: 'team', uid: 'team-uid', namespace: 'agents', name: 'remote-reader' } } : undefined;
+  const view = render(<Overview {...props} active={false} focus={focus} />);
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(reads).toBe(0);
+  view.rerender(<Overview {...props} focus={focus} />);
+  await act(async () => {});
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(release).toBeDefined();
+  view.rerender(<Overview {...props} active={false} focus={focus} />);
+  await act(async () => release({ places: [place('team', 'failed')], historyState: 'complete', unobserved: [] }));
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(reads).toBe(2);
+  expect(view.container.querySelector('[aria-label="team: Running"]')).toBeTruthy();
+  expect(view.container.querySelector('[aria-label="team: Failed"]')).toBeNull();
+});
+
+test.each(['passed', 'failed', 'unknown', 'cancelled'])('a terminal %s Send never starts polling', async verdict => {
+  vi.useFakeTimers();
+  const team = place('team', verdict);
+  if (verdict === 'unknown' || verdict === 'cancelled') team.agents[0].record.report = null;
+  let reads = 0;
+  mockIPC(command => command === 'overview_places' ? (reads++, { places: [team], historyState: 'complete', unobserved: [] })
+    : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+      : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
+  render(<Overview {...props} />);
+  await act(async () => {});
+  expect(screen.getByRole('article', { name: 'reader' })).toBeTruthy();
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+  expect(reads).toBe(1);
 });
 
 test('an empty remembered place still explains its empty inventory instead of leaving a blank list', async () => {

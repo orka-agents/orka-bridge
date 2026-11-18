@@ -19,6 +19,7 @@ export type OverviewProps = {
 };
 const focusNotes = { present: 'Not shown in Overview yet.', gone: 'The original agent is no longer available. Your saved result is unchanged.', cannotCheck: 'Cannot check this agent. Your saved result is unchanged.' };
 const complete = (v?: LiveAgents): v is CompleteAgents => v?.state === 'complete' && v.installation !== null && v.observedAt !== null;
+const hasRunningSend = (value?: Places) => value?.places.some(p => p.agents.some(a => a.record?.verdict === 'running')) || value?.unobserved.some(a => a.verdict === 'running');
 export default function Overview({ onNewAgent, active, runBusy, localAiConnected, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, workspaceNote, filesRevision = 0, focus: navigationFocus, focusPending = false, onRetryFocus }: OverviewProps) {
   const aiReasonId = useId();
   const [dismissedFocus, setDismissedFocus] = useState<number>();
@@ -43,12 +44,17 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   useEffect(() => {
     if (!active || focusPending || focus?.target) return;
     let cancelled = false;
-    void readPlaces().then(value => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function list() {
+      const value = await readPlaces();
       if (cancelled) return;
       setPlaceError(!value);
       setPlaces(previous => value ?? (previous && { ...previous, places: previous.places.map(p => ({ ...p, stale: true })) }));
-    });
-    return () => { cancelled = true; };
+      // Send completion is not a local-run prop change. Revalidate only while native reports unfinished work.
+      if (hasRunningSend(value)) timer = setTimeout(() => { void list(); }, 500);
+    }
+    void list();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [active, refresh, focusPending, focus?.target]);
   // See in Overview: refresh only the recorded destination, then focus the exact card (place key + UID, never a name).
   const focusEpoch = useRef(0);
@@ -72,19 +78,25 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     if (autofocusRequest.current !== identity) { autofocusRequest.current = identity; ownsFocus.current = true; }
     setPlaceFilter('all'); setNameFilter(''); setReveal(undefined); setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined;
     if (focusPending) return;
-    const { target } = focus;
-    void (async () => {
+    const { target, sendId } = focus;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function list(navigate = false) {
       const value = target ? await readPlaces(target.key) : undefined;
       if (request !== focusEpoch.current) return;
       if (target) setPlaceError(!value);
       const seen = value?.places.find(p => p.key === target?.key);
       // Other places were not queried by this refresh, so keep their cached freshness.
       setPlaces(previous => value ?? (target && previous && { ...previous, places: previous.places.map(p => p.key === target.key ? { ...p, stale: true } : p) }) ?? previous);
+      // Scoped reads include other places' cached records; only this destination or Send can keep them polling.
+      if (target && (seen?.agents.some(a => a.record?.verdict === 'running') || value?.unobserved.some(a => a.id === sendId && a.verdict === 'running'))) timer = setTimeout(() => { void list(); }, 500);
+      // Polling preserves disclosure and focus choices; only navigation reveals the recorded UID.
+      if (!navigate) return;
       if (target && seen?.agents.some(a => a.uid === target.uid && a.namespace === target.namespace)) { toFocus.current = `${target.key}/${target.uid}`; setReveal(toFocus.current); setFocusTick(v => v + 1); return; }
-      const check = target ? await sendAgentCheck(focus.sendId) : 'cannotCheck';
+      const check = target ? await sendAgentCheck(sendId) : 'cannotCheck';
       if (request === focusEpoch.current) setFocusNote(focusNotes[check]);
-    })();
-    return () => { focusEpoch.current++; };
+    }
+    void list(true);
+    return () => { focusEpoch.current++; clearTimeout(timer); };
   }, [active, focus, focusRetry, focusPending]);
   useEffect(() => {
     // A navigation request reveals its exact place/UID before focus moves.
