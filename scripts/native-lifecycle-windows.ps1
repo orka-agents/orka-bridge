@@ -285,11 +285,20 @@ function Tray-Menu {
     # after Explorer's hit test names Bridge at the same point on two polls in a row.
     $overflow = $null
     $settled = $null
-    $target = $null
-    $hit = $null
+    # The latest hit test survives a moved icon or an opened overflow, so every timeout can report it.
+    $last = 'no hit test was made'
     for ($i = 0; ; $i++) {
-        $point = if ($overflow) { Find-TrayPoint $overflow 'overflow' } else { Find-TrayPoint $area 'visible' }
-        if (!$point -and !$overflow) {
+        $point = $null
+        $lost = $false
+        try {
+            # Explorer can move a promoted icon back, so search the visible area on every poll.
+            $point = Find-TrayPoint $area 'visible'
+            if (!$point -and $overflow) { $point = Find-TrayPoint $overflow 'overflow' }
+        } catch [System.Windows.Automation.ElementNotAvailableException], [System.Windows.Automation.NoClickablePointException] {
+            # An icon removed or moved mid-read is an unsettled poll, not a failure.
+            $lost = $true
+        }
+        if (!$point -and !$overflow -and !$lost) {
             $chevron = Find-Control $area 'Show hidden icons' $button
             if (!$chevron) { $chevron = Find-Control $area 'Notification Chevron' $button }
             if (!$chevron) { $chevron = $area.FindFirst($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'NotificationChevron')) }
@@ -297,27 +306,26 @@ function Tray-Menu {
                 $p = [NativeWalk]::TrayPoint($notify, @('Show hidden icons', 'Notification Chevron'), (Join-Path $script:themeOutput 'tray-chevron-msaa.txt'))
                 if ($p) { $chevron = [Drawing.Point]::new($p[0], $p[1]) }
             }
-            if (!$chevron) { throw 'Native notification chevron missing in UIA and MSAA' }
+            if (!$chevron) { throw "Native notification chevron missing in UIA and MSAA; $last" }
             Press $chevron
-            $overflow = Wait-For 'Native notification overflow not visible' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
+            try { $overflow = Wait-For 'Native notification overflow not visible' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } } }
+            catch { if ($_.Exception.Message -ceq 'Native notification overflow not visible') { throw "Native notification overflow not visible; $last" }; throw }
             $i = 0
             $settled = $null
-            $target = $null
-            $hit = $null
             continue
         }
         if ($point) {
             $target = [Drawing.Point]::new([int]$point.X, [int]$point.Y)
             [NativeWalk]::SetCursorPos($target.X, $target.Y) | Out-Null
             $hit = [NativeWalk]::NameAt($target.X, $target.Y)
+            $last = "Explorer's last hit test at $($target.X),$($target.Y) named $(if ([string]::IsNullOrEmpty($hit)) { 'nothing' } else { "'$hit'" })"
             if ($hit -notlike '*Bridge*') { $settled = $null }
             elseif ($settled -eq $target) { break }
             else { $settled = $target }
         } else { $settled = $null }
         if ($i -ge 100) {
-            $named = if (!$target) { "no icon was found$(if ($overflow) { ' in the overflow' })" } else { "Explorer's last hit test at $($target.X),$($target.Y) named $(if ([string]::IsNullOrEmpty($hit)) { 'nothing' } else { "'$hit'" })" }
-            if (!$point) { throw "Native Bridge notification icon missing; $named" }
-            throw "Bridge notification icon not settled under the cursor; $named"
+            if (!$point) { throw "Native Bridge notification icon missing$(if ($overflow) { ' from the visible area and overflow' }); $last" }
+            throw "Bridge notification icon not settled under the cursor; $last"
         }
         Start-Sleep -Milliseconds 100
     }
