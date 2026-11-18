@@ -924,11 +924,12 @@ do {
     let typed = Date()
     var saved = false
     var current = before
+    var readAny = false
     var readError: Error?
     for _ in 0..<100 {
-        // Saves replace the file atomically; still record a failed read rather than
-        // throwing past fail(), which restores the original files.
-        do { current = try String(contentsOf: owned, encoding: .utf8); readError = nil }
+        // Saves replace the file atomically. Still record a failed read: an uncaught
+        // throw at top level would end the walk without restoring the display.
+        do { current = try String(contentsOf: owned, encoding: .utf8); readError = nil; readAny = true }
         catch { readError = error }
         if readError == nil && current == before + suffix { saved = true; break }
         Thread.sleep(forTimeInterval: 0.1)
@@ -937,16 +938,18 @@ do {
     if !saved {
         // Keep what was saved, so a lost keystroke, a rewrite or a missing save are distinguishable.
         let tail = { (text: String) in String(text.suffix(suffix.count + 80)).debugDescription }
-        let state = current == before ? "file unchanged"
+        let state = !readAny ? "file unreadable"
+            : current == before ? "file unchanged"
             : current.hasPrefix(before) ? "file kept its contents but appended a different suffix"
             : "file contents before the suffix changed"
         let unreadable = readError.map { "last read failed: \($0)\n" } ?? ""
         let report = "Native form did not preserve the file and append the exact instructions suffix\n"
-            + "\(state) after \(waited) s\nexpected tail: \(tail(before + suffix))\nsaved tail: \(tail(current))\n\(unreadable)"
+            + "\(state) after \(waited) s\nexpected tail: \(tail(before + suffix))\nlast saved tail read: \(tail(current))\n\(unreadable)"
         try? report.write(toFile: "\(output)/agent-form-save.txt", atomically: true, encoding: .utf8)
-        // Report first: capture() can itself stop the walk with a different message.
+        // Report first: capture() can itself stop the walk with a different message,
+        // and it needs Bridge's window, which a crashed app no longer has.
         fputs(report, stderr)
-        _ = try? capture("agent-form-not-saved", "Designer")
+        if window() != nil { _ = try? capture("agent-form-not-saved", "Designer") }
         fail("Native form did not preserve the file and append the exact instructions suffix")
     }
     print("Native form saved the instructions suffix \(waited) s after typing")
@@ -1048,18 +1051,23 @@ for character in marker.utf16 {
 }
 var editSaved = false
 var editedBytes = bytesBeforeEdit
+var editReadAny = false
 var editReadError: Error?
 // As in the form probe: autosave, write and commit can take several seconds on a loaded runner.
 for _ in 0..<100 {
-    do { editedBytes = try String(contentsOf: ownedFile, encoding: .utf8); editReadError = nil }
+    do { editedBytes = try String(contentsOf: ownedFile, encoding: .utf8); editReadError = nil; editReadAny = true }
     catch { editReadError = error }
     if editReadError == nil && editedBytes == bytesBeforeEdit + marker { editSaved = true; break }
     Thread.sleep(forTimeInterval: 0.1)
 }
 if !editSaved {
     let tail = { (text: String) in String(text.suffix(marker.count + 80)).debugDescription }
+    let state = !editReadAny ? "file unreadable" : editedBytes == bytesBeforeEdit ? "file unchanged" : "file changed"
     let unreadable = editReadError.map { "last read failed: \($0)\n" } ?? ""
-    fputs("expected tail: \(tail(bytesBeforeEdit + marker))\nsaved tail: \(tail(editedBytes))\n\(unreadable)", stderr)
+    let report = "Setup edit did not append the exact bytes to the owned file\n\(state)\n"
+        + "expected tail: \(tail(bytesBeforeEdit + marker))\nlast saved tail read: \(tail(editedBytes))\n\(unreadable)"
+    try? report.write(toFile: "\(output)/setup-edit-save.txt", atomically: true, encoding: .utf8)
+    fputs(report, stderr)
     fail("Setup edit did not append the exact bytes to the owned file")
 }
 scrollMain(1000)
