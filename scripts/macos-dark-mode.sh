@@ -29,3 +29,4 @@ for attempt in 1 2 3 4 5; do
   echo "System Events connection closed; retrying ($attempt of 5)" >&2
   sleep 1
 done
+exit 1
