@@ -458,6 +458,67 @@ test.each(['preflight', 'turn'])('pending Send ignores an older %s read and supp
   expect(reads).toBe(3); expect(page.scrollTop).toBe(1000);
   page.scrollTop = 100; fireEvent.scroll(page); await poll(); expect(page.scrollTop).toBe(100);
 });
+test.each([
+  { initial: 800, deferred: false }, { initial: 100, deferred: false },
+  { initial: 800, deferred: true }, { initial: 100, deferred: true },
+])('accepted Send preserves reading after submission from $initial (deferred event: $deferred)', async ({ initial, deferred }) => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  let finish!: (value: ChatSnapshot) => void; send = () => new Promise(resolve => { finish = resolve; });
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 }, scrollTop: { value: initial, writable: true } });
+  fireEvent.scroll(page); enter('Next question');
+  page.scrollTop = 50; if (!deferred) fireEvent.scroll(page);
+  snapshot = { ...snapshot, state: 'preparing', busy: true, canSend: false };
+  await act(async () => finish(snapshot)); expect(page.scrollTop).toBe(50);
+  fireEvent.scroll(page);
+  await poll(); expect(page.scrollTop).toBe(50);
+  snapshot = { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Next question' }] }] };
+  await poll(); expect(page.scrollTop).toBe(50); expect(field().value).toBe('');
+});
+test.each([
+  { reconciliation: 'preflight', deferred: false }, { reconciliation: 'turn', deferred: false },
+  { reconciliation: 'preflight', deferred: true }, { reconciliation: 'turn', deferred: true },
+])('uncertain Send preserves new reading before $reconciliation reconciliation (deferred event: $deferred)', async ({ reconciliation, deferred }) => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  let reject!: (error: string) => void; send = () => new Promise((_resolve, fail) => { reject = fail; });
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 }, scrollTop: { value: 800, writable: true } });
+  fireEvent.scroll(page); enter('Next question');
+  await act(async () => reject('unknown transport error'));
+  page.scrollTop = 50; if (!deferred) { fireEvent.scroll(page); await poll(); expect(page.scrollTop).toBe(50); }
+  snapshot = reconciliation === 'preflight' ? { ...snapshot, state: 'preparing', busy: true, canSend: false }
+    : { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Next question' }] }] };
+  await poll(); expect(page.scrollTop).toBe(50);
+  fireEvent.scroll(page);
+  snapshot = { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Next question' }] }] };
+  await poll(); expect(page.scrollTop).toBe(50); expect(field().value).toBe('');
+});
+test.each([false, true])('queued pre-submission scroll resumes unless the reader moved away and back (moved: %s)', async moved => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  let finish!: (value: ChatSnapshot) => void; send = () => new Promise(resolve => { finish = resolve; });
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 }, scrollTop: { value: 100, writable: true } });
+  enter('Next question'); fireEvent.scroll(page);
+  if (moved) { page.scrollTop = 50; fireEvent.scroll(page); page.scrollTop = 100; fireEvent.scroll(page); }
+  snapshot = { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Next question' }] }] };
+  await act(async () => finish(snapshot)); expect(page.scrollTop).toBe(moved ? 100 : 1000);
+  await poll(); expect(page.scrollTop).toBe(moved ? 100 : 1000);
+});
+test('returning to the end while Send is pending keeps current follow intent', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  let finish!: (value: ChatSnapshot) => void; send = () => new Promise(resolve => { finish = resolve; });
+  render(<main className="page-content"><Chat documentId={id} /></main>); await act(async () => {});
+  const page = screen.getByRole('main');
+  Object.defineProperties(page, { scrollHeight: { value: 1000 }, clientHeight: { value: 200 }, scrollTop: { value: 800, writable: true } });
+  fireEvent.scroll(page); enter('Next question');
+  page.scrollTop = 50; fireEvent.scroll(page); page.scrollTop = 800; fireEvent.scroll(page);
+  snapshot = { ...idle, versions: [{ turns: [turn, { ...turn, message: 'Next question' }] }] };
+  await act(async () => finish(snapshot)); expect(page.scrollTop).toBe(1000);
+  await poll(); expect(page.scrollTop).toBe(1000);
+});
 test('reading earlier messages after admission stays put through preflight polls and the appended turn', async () => {
   snapshot = { ...idle, versions: [{ turns: [turn] }] };
   send = () => (snapshot = { ...snapshot, state: 'preparing', busy: true, canSend: false });

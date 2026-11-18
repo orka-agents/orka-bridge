@@ -19,20 +19,27 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
   const [error, setError] = useState<{ message: string; uncertainSend?: boolean }>(); const [readError, setReadError] = useState<string>();
   const [command, setCommand] = useState<ChatCommand>();
   const mutation = useRef(false); const epoch = useRef(0); const alive = useRef(true);
-  const pending = useRef<{ message: string; count: number; uncertain?: boolean } | undefined>(undefined);
+  const pending = useRef<{ message: string; count: number; scrollTop?: number; uncertain?: boolean; readerMovedAway?: boolean } | undefined>(undefined);
   const [awaitingTurn, setAwaitingTurn] = useState(false);
   const composer = useRef<HTMLTextAreaElement>(null); const composing = useRef(false);
   const transcript = useRef<HTMLElement>(null); const scrollArea = useRef<HTMLElement | null>(null); const follow = useRef(true);
+  const resumeFollow = () => {
+    const submitted = pending.current; const area = scrollArea.current;
+    // Geometry can change before the browser delivers its scroll event.
+    if (submitted && area && (submitted.readerMovedAway || area.scrollTop !== submitted.scrollTop)) {
+      follow.current = area.scrollHeight - area.clientHeight - area.scrollTop < 48;
+    } else if (!submitted?.readerMovedAway) follow.current = true;
+  };
   const receive = (value: ChatSnapshot) => {
     const turns = value.versions.flatMap(version => version.turns);
     const submitted = pending.current;
     if (submitted && turns.slice(submitted.count).some(turn => turn.message === submitted.message)) {
-      if (submitted.uncertain) follow.current = true;
+      if (submitted.uncertain) resumeFollow();
       if (draftRef.current === submitted.message) { draftRef.current = ''; setDraft(''); }
       pending.current = undefined; setAwaitingTurn(false);
     } else if (submitted) {
       if (value.busy) {
-        if (submitted.uncertain) follow.current = true;
+        if (submitted.uncertain) resumeFollow();
         submitted.uncertain = false;
       }
       // A lost IPC reply is not a rejection. An idle snapshot alone may precede
@@ -68,7 +75,11 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     if (!area || !conversation || !dock) return;
     scrollArea.current = area;
     let frame: number | undefined;
-    const track = () => { follow.current = area.scrollHeight - area.clientHeight - area.scrollTop < 48; };
+    const track = () => {
+      follow.current = area.scrollHeight - area.clientHeight - area.scrollTop < 48;
+      // A pending Send must not override reading begun after submission.
+      if (pending.current && !follow.current && area.scrollTop !== pending.current.scrollTop) pending.current.readerMovedAway = true;
+    };
     const reveal = () => {
       if (frame !== undefined) cancelAnimationFrame(frame);
       const target = document.activeElement;
@@ -112,14 +123,14 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     if (action === 'agent_chat_send' && (blocked || !snapshot.canSend || awaitingTurn || !draftRef.current.trim())) return;
     mutation.current = true; const request = ++epoch.current; setCommand(action); setError(undefined);
     if (action === 'agent_chat_send') {
-      pending.current = { message: draftRef.current, count: snapshot.versions.reduce((n, version) => n + version.turns.length, 0) };
+      pending.current = { message: draftRef.current, count: snapshot.versions.reduce((n, version) => n + version.turns.length, 0), scrollTop: scrollArea.current?.scrollTop };
       setAwaitingTurn(true);
     }
     const operation = action === 'agent_chat_reconnect' && pending.current?.uncertain ? 'agent_chat_status' : action;
     const result = await chatCall(operation, documentId, pending.current?.message);
     if (!alive.current || request !== epoch.current) return;
     if (result.ok) {
-      if (action === 'agent_chat_send') follow.current = true;
+      if (action === 'agent_chat_send') resumeFollow();
       receiveRef.current(result.snapshot);
     } else {
       if (action === 'agent_chat_send') {
