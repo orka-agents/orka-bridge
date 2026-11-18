@@ -81,6 +81,8 @@ test('shared credential removal cannot happen before warning and confirmation', 
 });
 test('interrupted setup retries only its transaction and busy cancellation preserves recovery', async () => {
   const { ipc, rerender, onChange, onBusy } = mount({ ...fresh, state: 'incomplete', canReplace: true });
+  expect(screen.getByText(/Choose Try setup again to continue/)).toBeTruthy();
+  expect(screen.getByText(/Reopen this version of Bridge if recovery is interrupted again/)).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Try setup again' }));
   fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
   await waitFor(() => expect(ipc).toHaveBeenCalledExactlyOnceWith('workspace_upgrade_retry', { transaction }));

@@ -76,17 +76,35 @@ test.each(['sourceSelected', 'restoring'] as const)('recovery %s blocks local De
     ? { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true }
     : command === 'workspace_upgrade_status' ? { ...consumedUpgrade, state, canReplace: state === 'sourceSelected' }
     : command === 'agent_chat_status' ? { documentId: sample, state: 'ready', busy: false, canSend: true, versions: [], error: null }
+    : command === 'agent_run_status' ? { ...idle, model: 'capable-run-snapshot' }
     : original(command, args));
   localStorage.setItem('bridge.firstTest.v1', 'attempted');
   const user = userEvent.setup(); render(<App />);
   await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('Workspace recovery needs attention'));
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   const run = await screen.findByRole('button', { name: 'Run tests' });
+  await within(document.querySelector('.example-run')!).findByText('capable-run-snapshot');
   expect(run.matches(':disabled')).toBe(true); fireEvent.click(run);
   await user.click(screen.getByRole('button', { name: 'Chat' }));
   const message = await screen.findByRole('textbox', { name: 'Message' });
   fireEvent.change(message, { target: { value: 'Do not send during recovery' } }); fireEvent.keyDown(message, { key: 'Enter' });
   expect(screen.getByRole('button', { name: 'Send message' }).matches(':disabled')).toBe(true);
+  expect(ipc.mock.calls.filter(([command]) => ['agent_run', 'agent_chat_send', 'setup_connect_model'].includes(command))).toEqual([]);
+});
+test.each(['eligible', 'fresh'] as const)('update attention distinguishes required replacement from a usable %s workspace error', async state => {
+  const { ipc } = native(); const original = ipc.getMockImplementation()!;
+  ipc.mockImplementation((command, args) => command === 'setup_status'
+    ? { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true }
+    : command === 'workspace_upgrade_status' ? { ...consumedUpgrade, state, error: 'network', ...(state === 'eligible' ? { transaction: null, createdAt: null, canReplace: true, canRestore: false } : {}) }
+    : command === 'agent_run_status' ? { ...idle, model: 'capable-run-snapshot' }
+    : original(command, args));
+  localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  const user = userEvent.setup(); render(<App />);
+  await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('Workspace update needs attention'));
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  const run = await screen.findByRole('button', { name: 'Run tests' });
+  await within(document.querySelector('.example-run')!).findByText('capable-run-snapshot');
+  expect(run.matches(':disabled')).toBe(state === 'eligible');
   expect(ipc.mock.calls.filter(([command]) => ['agent_run', 'agent_chat_send', 'setup_connect_model'].includes(command))).toEqual([]);
 });
 test('first setup stays for its first-pass story, opens only on request and never replays the moment or run', async () => {

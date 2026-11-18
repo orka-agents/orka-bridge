@@ -25,6 +25,7 @@ const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting',
 const runtimeCopy = {
   notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
 };
+export type UpgradeNotice = 'recovery' | 'required' | 'error';
 export type LocalClusterControl = { showPlaces: () => void };
 export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, active = true }: {
   ref?: Ref<LocalClusterControl>;
@@ -38,7 +39,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   modelUnavailable?: boolean;
   firstTestResult?: { failed: number }; initialAutomatic?: boolean; onCheckFirstTest?: () => void;
   onStarting?: () => void;
-  onWorkspaceAction?: (pending: boolean, stopping?: boolean, updating?: boolean, recovery?: boolean) => void;
+  onWorkspaceAction?: (pending: boolean, stopping?: boolean, updating?: boolean, notice?: UpgradeNotice) => void;
   onPlace?: (place: SelectedPlace) => void;
   onLocalView?: (visible: boolean) => void;
   onWorkspaceMode?: (returning: boolean) => void;
@@ -50,11 +51,12 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const upgradeAction = useCallback((value: boolean) => setUpgradeBusy(value), []);
   const upgrading = upgradeBusy || !!upgrade?.busy;
   const recoveryOnly = !!upgrade && ['sourceSelected', 'sourceRetained', 'incomplete', 'restoring', 'restored', 'conflict'].includes(upgrade.state);
+  const notice: UpgradeNotice | undefined = recoveryOnly ? 'recovery' : upgrade?.state === 'eligible' ? 'required' : upgrade?.error ? 'error' : undefined;
   const reportedUpgrade = useRef(false);
   useEffect(() => {
-    if (upgrading || recoveryOnly || reportedUpgrade.current) onWorkspaceAction?.(upgrading, false, true, recoveryOnly);
-    reportedUpgrade.current = upgrading || recoveryOnly;
-  }, [upgrading, recoveryOnly, onWorkspaceAction]);
+    if (upgrading || notice || reportedUpgrade.current) onWorkspaceAction?.(upgrading, false, true, notice);
+    reportedUpgrade.current = upgrading || !!notice;
+  }, [upgrading, notice, onWorkspaceAction]);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(true);
   const [sending, setSending] = useState(false);
@@ -285,8 +287,8 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
           </section>
         </>}
         <div className="setup-column setup-main">
-        {workspace && status && <Workspace updating={upgrading} updateBlocked={recoveryOnly} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} onStart={() => { void chooseLocal(); }} active={active && view === 'local'} />}
-        {!workspace && selected && status && <SetupProgress updating={upgrading} updateBlocked={recoveryOnly} upgrade={upgradePanel} modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} />}
+        {workspace && status && <Workspace updating={upgrading} updateBlocked={!!notice} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} onStart={() => { void chooseLocal(); }} active={active && view === 'local'} />}
+        {!workspace && selected && status && <SetupProgress updating={upgrading} updateBlocked={!!notice} upgrade={upgradePanel} modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} />}
         </div>
         <div className="setup-column setup-side">
         {workspace && status?.localVm !== 'ready' && <section className="card"><h2>AI</h2><p className="muted">Waiting for the workspace to start.</p></section>}

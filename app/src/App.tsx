@@ -13,7 +13,7 @@ import type { ModelState } from './setup/Model';
 import { preflightRecovery } from './setup/preflight-state';
 import { setupView, workspaceView } from './setup/progress';
 import { workspaceRecovery } from './setup/recovery-info';
-import Setup, { type LocalClusterControl } from './setup/Setup';
+import Setup, { type LocalClusterControl, type UpgradeNotice } from './setup/Setup';
 import type { ExamplePair, SetupStatus } from './setup/state';
 
 const pages = ['Overview', 'Designer', 'Clusters'] as const;
@@ -90,13 +90,13 @@ export default function App() {
   const [returningWorkspace, setReturningWorkspace] = useState(false);
   const [workspaceStopping, setWorkspaceStopping] = useState(false);
   const [workspaceUpdating, setWorkspaceUpdating] = useState(false);
-  const [upgradeRecovery, setUpgradeRecovery] = useState(false);
+  const [upgradeNotice, setUpgradeNotice] = useState<UpgradeNotice>();
   const localCluster = useRef<LocalClusterControl>(null);
   const [localSetupView, setLocalSetupView] = useState(false);
   const catalogContext = useRef('');
   const observeModel = useCallback((value: ModelState) => { setModel(value); setCatalogEpoch(epoch => epoch + 1); }, []);
-  const observeWorkspaceAction = useCallback((pending: boolean, stopping = false, updating = false, recovery = false) => {
-    setWorkspaceBusy(pending); setWorkspaceStopping(pending && stopping); setWorkspaceUpdating(pending && updating); setUpgradeRecovery(recovery);
+  const observeWorkspaceAction = useCallback((pending: boolean, stopping = false, updating = false, notice?: UpgradeNotice) => {
+    setWorkspaceBusy(pending); setWorkspaceStopping(pending && stopping); setWorkspaceUpdating(pending && updating); setUpgradeNotice(notice);
     if (pending) setCatalogEpoch(epoch => epoch + 1);
   }, []);
   const choosePlace = useCallback((value: SelectedPlace) => { overviewOpenRequest.current++; setPlace(value); setCatalogEpoch(epoch => epoch + 1); }, []);
@@ -207,16 +207,17 @@ export default function App() {
   const firstTestResult = !setup?.workspaceReplaced && sampleSource !== null && sample?.report ? { failed: sample.report.cases.filter(check => check.verdict === 'failed').length } : undefined;
   const ordinaryView = setupView(setup, { checking, stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping, workspace: returningWorkspace, model, check: firstCheck, initialAutomatic });
   const updating = workspaceUpdating && !!setup;
-  const recovery = upgradeRecovery && !!setup;
-  const upgradeAttention = updating || recovery;
-  const upgradeLine = updating ? 'Updating workspace' : 'Workspace recovery needs attention';
-  const upgradeDetail = updating ? 'Your agent files are kept.' : 'Finish recovery before using the local workspace.';
+  const recovery = upgradeNotice === 'recovery' && !!setup;
+  const required = upgradeNotice === 'required' && !!setup;
+  const upgradeAttention = updating || !!upgradeNotice && !!setup;
+  const upgradeLine = updating ? 'Updating workspace' : recovery ? 'Workspace recovery needs attention' : 'Workspace update needs attention';
+  const upgradeDetail = recovery && !updating ? 'Finish recovery before using the local workspace.' : 'Your agent files are kept.';
   const view = upgradeAttention ? { ...ordinaryView, line: upgradeLine, tabLine: upgradeLine, footerLine: upgradeLine, detail: upgradeDetail, tone: updating ? 'busy' as const : 'needs-you' as const, status: updating ? 'running' as const : 'needs-you' as const, done: false } : ordinaryView;
   const { line: setupLine, detail } = view;
   const hostWorkspace = upgradeAttention ? { tone: view.tone, detail: `${upgradeLine}. ${upgradeDetail}` } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
     ? workspaceView(setup, { stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping }) : undefined;
   const hostTone = hostWorkspace?.tone ?? view.tone;
-  const workspaceReady = setup?.localVm === 'ready' && !recovery;
+  const workspaceReady = setup?.localVm === 'ready' && !recovery && !required;
   useEffect(() => {
     setOverviewAiConnected(false);
     if (page !== 'Overview' || !workspaceReady || workspaceBusy || setup?.model !== 'available') return;

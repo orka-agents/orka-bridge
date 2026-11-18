@@ -78,29 +78,6 @@ try {
       key: index => [...values.keys()][index] ?? null, get length() { return values.size; }
     } });
   })();`;
-  // Isolated worlds keep their React effects alive after root replacement.
-  // Retire only the completed synthetic scene; never touch the main world.
-  const fixtureTimers = `(() => {
-    const intervals = new Set(), start = window.setInterval.bind(window), stop = window.clearInterval.bind(window);
-    window.setInterval = (...args) => { const id = start(...args); intervals.add(id); return id; };
-    window.clearInterval = id => { intervals.delete(id); stop(id); };
-    window.__bridgeRetireFixture = () => { for (const id of intervals) stop(id); intervals.clear(); };
-  })();`;
-  let fixtureContext;
-  async function retireFixture() {
-    if (fixtureContext === undefined) return;
-    const result = await call('Runtime.evaluate', { expression: 'window.__bridgeRetireFixture()', contextId: fixtureContext, returnByValue: true });
-    if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails));
-    fixtureContext = undefined;
-  }
-  async function fixtureWorld(params) {
-    await retireFixture();
-    const world = await call('Page.createIsolatedWorld', params);
-    fixtureContext = world.executionContextId;
-    const result = await call('Runtime.evaluate', { expression: fixtureTimers, contextId: fixtureContext, returnByValue: true });
-    if (result.exceptionDetails) throw Error(JSON.stringify(result.exceptionDetails));
-    return world;
-  }
   async function evaluate(expression) {
     if (contextId !== undefined && !preferenceContexts.has(contextId)) {
       const initialized = await call('Runtime.evaluate', { expression: fixtureStorage, contextId, returnByValue: true });
@@ -140,7 +117,7 @@ try {
     for (const [name, failure, expected] of fixtures) {
       const cluster = name.startsWith('cluster-');
       const model = typeof failure === 'string';
-      ({ executionContextId: contextId } = await fixtureWorld({ frameId: frameTree.frame.id, worldName: `recovery-${theme}-${name}` }));
+      ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `recovery-${theme}-${name}` }));
       await evaluate(`(() => {
         const failure = ${JSON.stringify(failure)};
         const context = { id: '00000000-0000-4000-8000-000000000001', name: 'fixture-context', current: true };
@@ -232,7 +209,7 @@ try {
       };
     })()`);
     const fail = reason => { throw Error(`${name}/${size}: ${reason}: ${JSON.stringify(layout)}`); };
-    if ((layout.designer?.send || name.startsWith('chat-')) && layout.documentScrollHeight > layout.height + 2) fail('document overflows outside the page scroll');
+    if ((layout.designer?.send || name.startsWith('chat-') || name.startsWith('upgrade-')) && layout.documentScrollHeight > layout.height + 2) fail('document overflows outside the page scroll');
     if (layout.scrollWidth > layout.clientWidth + 2) fail('page overflows horizontally');
     if (size === 'setup-fit' && layout.scrollHeight > layout.clientHeight + 2) fail('page overflows vertically');
     if (layout.width > 820 && (layout.tabs.length !== 3 || layout.tabs.some(tab => Math.abs(tab.width - 180) > 1 || tab.grow !== '0') || layout.host.x - layout.tabs.at(-1).right < 16)) fail('wide tabs must stay 180px/non-growing with a 16px host gap');
@@ -295,7 +272,7 @@ try {
   // Meet derives its rows from the file, so setup captures use the sample's real tool declaration.
   const samplePair = { ...pair, agent: '---\nname: web-reader\ndescription: Answers from the web page named in the request\nmodel: gpt-5.6-terra\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools:\n    - kind: builtin\n      name: web_fetch\n---\nFetch before answering.' };
   async function captureSetup(theme, size, [name, localVm, progress, queue, expected, failLater, modelSupported = true, failure]) {
-    ({ executionContextId: contextId } = await fixtureWorld({ frameId: frameTree.frame.id, worldName: `setup-${theme}-${size}-${name}` }));
+    ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `setup-${theme}-${size}-${name}` }));
     await evaluate(`(() => {
       const pair = ${JSON.stringify(samplePair)};
       let reads = 0;
@@ -578,7 +555,6 @@ try {
     if (first) {
       // Replacing a DOM root does not unmount React in older isolated worlds.
       // Destroy their polling effects before arming another shared one-shot preference.
-      await retireFixture();
       contextId = undefined;
       const previous = initialFrame.loaderId;
       await call('Page.reload');
@@ -590,7 +566,7 @@ try {
         catch { return false; } // The old execution context can disappear during navigation.
       }, 'fresh page before automatic-test fixture');
     }
-    ({ executionContextId: contextId } = await fixtureWorld({ frameId, worldName: `actions-${theme}-${size}-${name}` }));
+    ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId, worldName: `actions-${theme}-${size}-${name}` }));
     const preflight = name.startsWith('local-preflight');
     const clusterScreen = name.startsWith('cluster-');
     const accountScene = name.startsWith('cluster-account-');
@@ -1584,7 +1560,7 @@ try {
   // Chat's generated Agent is in the live list on purpose and must never be shown.
   const overviewVariants = runUi ? ['clusters', 'local-only', 'starting'] : [];
   async function captureOverview(theme, size, variant) {
-    ({ executionContextId: contextId } = await fixtureWorld({ frameId: frameTree.frame.id, worldName: `overview-${theme}-${size}-${variant}` }));
+    ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `overview-${theme}-${size}-${variant}` }));
     await evaluate(`(() => {
       const variant = ${JSON.stringify(variant)};
       const hex = (c, n) => c.repeat(n);
@@ -1745,7 +1721,7 @@ try {
     ];
     const variants = [...initial.map(v => ['failed', ...v]), ...manage.map(v => ['ready', ...v])];
     for (const [localVm, name, status, expected, mode] of variants) {
-      ({ executionContextId: contextId } = await fixtureWorld({ frameId: frameTree.frame.id, worldName: `upgrade-${theme}-${size}-${name}` }));
+      ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `upgrade-${theme}-${size}-${name}` }));
       await evaluate(`(() => {
         window.__bridgeUpgradeCalls = [];
         window.__bridgeUpgradeShown = true;

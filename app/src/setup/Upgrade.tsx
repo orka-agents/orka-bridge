@@ -65,7 +65,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     : s.state === 'restoring' ? 'Restore was interrupted. Restore the previous workspace to finish recovery.'
     : ready ? 'New workspace selected. Connect the AI explicitly before running your agents.'
     : s.state === 'conflict' ? 'Workspace recovery needs attention. Your workspaces are kept. Open the matching Bridge version or ask for help.'
-    : retry ? 'Workspace setup was interrupted. Reopen this version of Bridge to finish recovery.'
+    : retry ? 'Workspace setup was interrupted. Choose Try setup again to continue. Reopen this version of Bridge if recovery is interrupted again.'
     : 'This version of Bridge needs a new workspace.';
   return <div className="workspace-upgrade">
     <p ref={announcement} tabIndex={-1} role="status">{line}</p>

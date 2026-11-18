@@ -72,6 +72,19 @@ test.each([false, true])('returning restore stays in Manage without ordinary res
   expect(document.querySelector('.setup-model')).toBeNull();
   expect(ipc.mock.calls.map(([command]) => command).filter(command => ['setup_select_local', 'setup_cancel_local', 'setup_connect_model', 'agent_run'].includes(command))).toEqual([]);
 });
+test.each(['eligible', 'fresh'] as const)('ready VM observations cannot advertise success for unresolved %s upgrade errors', async state => {
+  vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1'); localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return { ...eligible, state, error: 'network', ...(state === 'fresh' ? { transaction: '10000000-0000-4000-8000-000000000001', createdAt: 1700000000, canReplace: false, canRestore: true } : {}) };
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true };
+    if (command === 'setup_requirements') return null;
+    throw Error('Unavailable ' + command);
+  });
+  render(<App />); await openLocalSetup();
+  await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('Workspace update needs attention'));
+  expect(document.querySelector('.returning-workspace .pill')?.textContent).toBe('Needs you');
+  expect(screen.getByRole('button', { name: 'Clusters' }).textContent).not.toContain('ready');
+});
 test('ready VM observations cannot override recovery and consumption clears the recovery summary', async () => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1'); localStorage.setItem('bridge.firstTest.v1', 'attempted');
   let recovered = false;
