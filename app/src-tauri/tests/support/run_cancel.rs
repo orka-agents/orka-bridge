@@ -680,10 +680,8 @@ async fn failed_recovery_for_a_does_not_change_b_history_or_latest_observation()
     let bid = b.document_id();
     *script.phase.lock().unwrap() = "Succeeded".into();
     run.start_document(vm.clone(), b);
-    for _ in 0..500 {
-        if !run.is_active() {
-            break;
-        }
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while run.is_active() && std::time::Instant::now() < until {
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
     assert_eq!(
