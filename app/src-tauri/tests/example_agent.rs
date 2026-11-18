@@ -68,18 +68,26 @@ fn example_test_passes_only_with_the_fetched_page() {
     let fences = test_fences(TESTS);
     assert_eq!(fences.len(), 1, "keep one example test");
     let case = &fences[0];
-    assert!(
-        field(case, "mocks:").is_empty(),
-        "recorded tool results would pass without fetching"
-    );
+    // Any other key, such as recorded tool results, could let it pass without fetching.
+    let keys: Vec<_> = case
+        .iter()
+        .filter(|line| !line.starts_with(' '))
+        .map(|line| line.split(':').next().unwrap())
+        .collect();
+    assert_eq!(keys, ["id", "title", "input", "assertions"]);
 
     let input = field(case, "input: ");
     assert_eq!(input.len(), 1);
-    let url = input[0]
+    let urls: Vec<_> = input[0]
         .split_whitespace()
-        .find(|word| word.starts_with("https://"))
-        .expect("the input names the page to fetch");
-    assert!(is_pinned_release_page(url), "unpinned page: {url}");
+        .filter(|word| word.contains("://"))
+        .collect();
+    assert_eq!(urls.len(), 1, "the input names one page to fetch");
+    assert!(
+        is_pinned_release_page(urls[0]),
+        "unpinned page: {}",
+        urls[0]
+    );
 
     let types = field(case, "type: ");
     let values = field(case, "value: ");
@@ -92,15 +100,23 @@ fn example_test_passes_only_with_the_fetched_page() {
         checksum.len() == 64 && checksum.bytes().all(lower_hex),
         "expect the page's whole SHA-256 checksum"
     );
-    // The answer may appear only on the line that checks it, in any letter case.
-    let fence = case.join("\n").to_ascii_lowercase();
-    assert_eq!(
-        fence.matches(checksum).count(),
-        1,
-        "the input or another field gives away the answer"
-    );
-    assert!(
-        !AGENT.to_ascii_lowercase().contains(checksum),
-        "the prompt gives away the answer"
-    );
+    // No part of the answer may appear outside the line that checks it, in any
+    // letter case, including escaped or partial copies.
+    let value_line = format!("value: {checksum}");
+    let elsewhere = case
+        .iter()
+        .filter(|line| line.trim() != value_line)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n")
+        .to_ascii_lowercase();
+    let prompt = AGENT.to_ascii_lowercase();
+    for piece in checksum.as_bytes().windows(16) {
+        let piece = std::str::from_utf8(piece).unwrap();
+        assert!(
+            !elsewhere.contains(piece),
+            "the input or another field gives away the answer"
+        );
+        assert!(!prompt.contains(piece), "the prompt gives away the answer");
+    }
 }
