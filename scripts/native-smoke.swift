@@ -901,12 +901,30 @@ do {
             event.post(tap: .cghidEventTap)
         }
     }
+    // Autosave waits 500 ms after the last keystroke, then writes and commits through IPC.
+    // Allow a loaded runner up to 10 s; the saved file must still match exactly.
+    let typed = Date()
     var saved = false
-    for _ in 0..<20 {
-        if (try String(contentsOf: owned, encoding: .utf8)) == before + suffix { saved = true; break }
+    var current = before
+    for _ in 0..<100 {
+        current = try String(contentsOf: owned, encoding: .utf8)
+        if current == before + suffix { saved = true; break }
         Thread.sleep(forTimeInterval: 0.1)
     }
-    require(saved, "Native form did not preserve the file and append the exact instructions suffix")
+    let waited = String(format: "%.1f", Date().timeIntervalSince(typed))
+    if !saved {
+        // Keep what was saved, so a lost keystroke, a rewrite or a missing save are distinguishable.
+        let tail = { (text: String) in String(text.suffix(suffix.count + 80)).debugDescription }
+        let state = current == before ? "file unchanged"
+            : current.hasPrefix(before) ? "file kept its contents but appended a different suffix"
+            : "file contents before the suffix changed"
+        let report = "\(state) after \(waited) s\nexpected tail: \(tail(before + suffix))\nsaved tail: \(tail(current))\n"
+        try? report.write(toFile: "\(output)/agent-form-save.txt", atomically: true, encoding: .utf8)
+        fputs(report, stderr)
+        _ = try? capture("agent-form-not-saved", "Designer")
+        fail("Native form did not preserve the file and append the exact instructions suffix")
+    }
+    print("Native form saved the instructions suffix \(waited) s after typing")
     let savedForm = try capture("agent-form-saved", "Designer")
     let savedFooter = savedForm.filter { $0.boundingBox.maxY < 0.1 }
         .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
