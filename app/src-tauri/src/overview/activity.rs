@@ -191,10 +191,8 @@ pub(crate) fn tool_page(
         if seq <= last
             || seq > latest
             || event["namespace"].as_str() != Some(namespace)
+            // Orka identifies an event's Task by streamID; taskName is metadata and may be stale.
             || event["streamID"].as_str() != Some(task)
-            || event["taskName"]
-                .as_str()
-                .is_some_and(|s| !s.is_empty() && s != task)
         {
             return Err(bad);
         }

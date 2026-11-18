@@ -125,6 +125,18 @@ test("an older workspace image says it can't list or read this computer's conver
   expect(isSessions({ places: [read('local', [entry('a')], { state: 'outdated', observedAt: null })] })).toBe(false);
 });
 
+test('the connect prompt waits for a read; until then the section says it is reading', async () => {
+  let answer: (v: unknown) => void = () => {};
+  ipc(undefined);
+  mockIPC(command => command === 'overview_sessions' ? new Promise(resolve => { answer = resolve; }) : null);
+  render(<SessionList active places={places} />);
+  expect(await screen.findByText('Reading conversations…')).toBeTruthy();
+  expect(screen.queryByText('Conversations appear here once the workspace is ready on this computer or a cluster is connected.')).toBeNull();
+  answer({ places: [read('one', [], { state: 'disconnected', observedAt: null })] });
+  expect(await screen.findByText('Conversations appear here once the workspace is ready on this computer or a cluster is connected.')).toBeTruthy();
+  expect(screen.queryByText('Reading conversations…')).toBeNull();
+});
+
 test('a new connection drops the old connection\'s conversations even when its first read fails', async () => {
   let sessions: unknown = { places: [read('one', [entry('old')])] };
   ipc(undefined);

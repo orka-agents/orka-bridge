@@ -13,18 +13,18 @@ function TranscriptView({ placeKey, name, revision }: { placeKey: string; name: 
     void readTranscript(placeKey, name).then(value => { if (!cancelled) setTranscript(value); });
     return () => { cancelled = true; };
   }, [placeKey, name, revision]);
-  if (!transcript) return <p className="overview-card-meta" role="status">Reading the conversation…</p>;
-  if (transcript.state === 'denied') return <p className="overview-card-meta" role="status">This account can't read this conversation.</p>;
-  if (transcript.state === 'outdated') return <p className="overview-card-meta" role="status">Reading conversations on this computer needs a newer version of Bridge.</p>;
-  if (transcript.state === 'revoked') return <p className="overview-card-meta" role="status">Connect to this cluster again to read the conversation.</p>;
-  if (transcript.state !== 'complete' && transcript.state !== 'partial') return <p className="overview-card-meta" role="status">Bridge couldn't read this conversation.</p>;
-  if (!transcript.messages.length) return <p className="overview-card-meta">No messages yet.</p>;
+  if (!transcript) return <p className="overview-activity-meta" role="status">Reading the conversation…</p>;
+  if (transcript.state === 'denied') return <p className="overview-activity-meta" role="status">This account can't read this conversation.</p>;
+  if (transcript.state === 'outdated') return <p className="overview-activity-meta" role="status">Reading conversations on this computer needs a newer version of Bridge.</p>;
+  if (transcript.state === 'revoked') return <p className="overview-activity-meta" role="status">Connect to this cluster again to read the conversation.</p>;
+  if (transcript.state !== 'complete' && transcript.state !== 'partial') return <p className="overview-activity-meta" role="status">Bridge couldn't read this conversation.</p>;
+  if (!transcript.messages.length) return <p className="overview-activity-meta">No messages yet.</p>;
   return <>
-    {transcript.state === 'partial' && <p className="overview-card-meta">Showing the latest {transcript.messages.length} messages Bridge could read.</p>}
+    {transcript.state === 'partial' && <p className="overview-activity-meta">Showing the latest {transcript.messages.length} messages Bridge could read.</p>}
     <ol className="overview-transcript">{transcript.messages.map((m, i) => <li key={i} className={`overview-transcript-${m.role === 'user' ? 'user' : 'other'}`}>
-      <p className="overview-card-meta">{roleLabel(m.role)}{m.at !== null && <> · <RelativeTime value={m.at} /></>}</p>
+      <p className="overview-activity-meta">{roleLabel(m.role)}{m.at !== null && <> · <RelativeTime value={m.at} /></>}</p>
       {m.text && <p className="overview-transcript-text">{m.text}{m.cut && '…'}</p>}
-      {!!m.tools.length && <p className="overview-card-meta">Called {m.tools.map((t, j) => <span key={j}>{j > 0 && ', '}<code>{t}</code></span>)}</p>}
+      {!!m.tools.length && <p className="overview-activity-meta">Called {m.tools.map((t, j) => <span key={j}>{j > 0 && ', '}<code>{t}</code></span>)}</p>}
     </li>)}</ol>
   </>;
 }
@@ -33,18 +33,19 @@ function Entry({ row, place }: { row: Row; place: string }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   const messages = `${row.messageCount} ${row.messageCount === 1 ? 'message' : 'messages'}`;
-  return <li className="card overview-activity-entry" aria-label={`${row.name} on ${place}, ${messages}`}>
-    <header className="overview-card-head">
-      <h3>{row.name}</h3>
-      <span className="overview-card-time"><RelativeTime value={row.updatedAt} /></span>
-    </header>
-    <p className="overview-card-meta">on {row.placeKey === LOCAL ? place : <code>{place}</code>}{row.sessionType && <> · {row.sessionType}</>} · {messages} · started <RelativeTime value={row.createdAt} /></p>
-    {/* `agent` is set only when Bridge read the Task and it had not finished. */}
-    {row.activeTask && <p className="overview-card-meta">{row.agent ? <>Running <code>{row.activeTask}</code> with <code>{row.agent}</code></> : <>Active Task <code>{row.activeTask}</code></>}</p>}
-    <div className="overview-card-actions">
-      <Disclosure className="overview-details-toggle" label="Conversation" open={open} onOpenChange={setOpen} controls={id}>{null}</Disclosure>
+  // Laid out like a Recent activity row: name and facts, the time, then the disclosure at the end.
+  return <li className="overview-activity-entry" aria-label={`${row.name} on ${place}, ${messages}`}>
+    <div className="overview-activity-row">
+      <div className="overview-activity-name">
+        <h3 className="overview-agent-title">{row.name}</h3>
+        <p className="overview-activity-meta">on {row.placeKey === LOCAL ? place : <code>{place}</code>}{row.sessionType && <> · {row.sessionType}</>} · {messages} · started <RelativeTime value={row.createdAt} /></p>
+        {/* `agent` is set only when Bridge read the Task and it had not finished. */}
+        {row.activeTask && <p className="overview-activity-meta">{row.agent ? <>Running <code>{row.activeTask}</code> with <code>{row.agent}</code></> : <>Active Task <code>{row.activeTask}</code></>}</p>}
+      </div>
+      <span className="overview-time"><RelativeTime value={row.updatedAt} /></span>
+      <Disclosure label="Conversation" open={open} onOpenChange={setOpen} controls={id}>{null}</Disclosure>
     </div>
-    {open && <div id={id} className="overview-details"><TranscriptView placeKey={row.placeKey} name={row.name} revision={row.readAt} /></div>}
+    {open && <div id={id} className="overview-activity-details"><TranscriptView placeKey={row.placeKey} name={row.name} revision={row.readAt} /></div>}
   </li>;
 }
 
@@ -80,6 +81,8 @@ export function SessionList({ active, places }: { active: boolean; places?: Plac
   }, []);
   useEffect(() => {
     if (active && places) start();
+    // A hidden tab drops a queued read; the next places read starts a fresh one.
+    if (!active) queued.current = false;
   }, [active, places, start]);
   useEffect(() => () => { request.current++; queued.current = false; }, []);
   const labels = placeLabels(places?.places ?? []).set(LOCAL, 'this computer');
@@ -96,15 +99,16 @@ export function SessionList({ active, places }: { active: boolean; places?: Plac
     if (p.state === 'disconnected' && p.entries.length) return p.key === LOCAL ? `The workspace on this computer isn't running now. Showing what Bridge last saw.` : `${name} isn't connected now. Showing what Bridge last saw.`;
   };
   const notes = read.map(p => [p.key, note(p)] as const).filter((n): n is readonly [string, string] => !!n[1]);
-  return <section className="overview-group overview-activity" aria-label="Conversations">
-    <header className="overview-group-head">
+  return <section className="overview-activity" aria-label="Conversations">
+    <header className="overview-activity-head">
       <h2>Conversations</h2>
-      <span className="overview-group-sub">On this computer and connected clusters, most recent first</span>
+      <span className="overview-activity-sub">on this computer and connected clusters, most recent first</span>
     </header>
     <p className="overview-note">Conversations started through Telegram, Teams or other channels aren't listed here yet.</p>
     {failed && <p className="overview-note" role="status">Couldn't read conversations just now.{sessions && ' Showing what Bridge last saw.'}</p>}
     {notes.map(([key, text]) => <p key={key} className="overview-note" role="status">{text}</p>)}
-    {!connected.length ? <p className="overview-note">Conversations appear here once the workspace is ready on this computer or a cluster is connected.</p>
+    {!sessions ? places && !failed && <p className="overview-note" role="status">Reading conversations…</p>
+      : !connected.length ? <p className="overview-note">Conversations appear here once the workspace is ready on this computer or a cluster is connected.</p>
       : !rows.length ? <p className="overview-note">No conversations yet.</p>
       : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.connection ?? ''}/${row.name}`} row={row} place={labels.get(row.placeKey)!} />)}</ol>}
   </section>;
