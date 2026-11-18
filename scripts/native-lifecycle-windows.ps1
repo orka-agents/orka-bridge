@@ -279,28 +279,44 @@ function Tray-Menu {
     $notify = [NativeWalk]::FindWindowEx($taskbar, [IntPtr]::Zero, 'TrayNotifyWnd', $null)
     if ($notify -eq [IntPtr]::Zero) { throw 'Native notification area missing (interactive CI desktop required)' }
     $area = [System.Windows.Automation.AutomationElement]::FromHandle($notify)
-    $point = Find-TrayPoint $area 'visible'
-    if (!$point) {
-        $chevron = Find-Control $area 'Show hidden icons' $button
-        if (!$chevron) { $chevron = Find-Control $area 'Notification Chevron' $button }
-        if (!$chevron) { $chevron = $area.FindFirst($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'NotificationChevron')) }
-        if (!$chevron) {
-            $p = [NativeWalk]::TrayPoint($notify, @('Show hidden icons', 'Notification Chevron'), (Join-Path $script:themeOutput 'tray-chevron-msaa.txt'))
-            if ($p) { $chevron = [Drawing.Point]::new($p[0], $p[1]) }
+    # A first launch's icon sits in Explorer's temporary promoted area, which Explorer
+    # can lay out again or collapse into the overflow; a right-click at a stale point
+    # opens the taskbar's own menu. Locate the icon afresh on each poll and click once,
+    # after Explorer's hit test names Bridge at the same point on two polls in a row.
+    $overflow = $null
+    $settled = $null
+    $hit = $null
+    for ($i = 0; ; $i++) {
+        $point = if ($overflow) { Find-TrayPoint $overflow 'overflow' } else { Find-TrayPoint $area 'visible' }
+        if (!$point -and !$overflow) {
+            $chevron = Find-Control $area 'Show hidden icons' $button
+            if (!$chevron) { $chevron = Find-Control $area 'Notification Chevron' $button }
+            if (!$chevron) { $chevron = $area.FindFirst($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'NotificationChevron')) }
+            if (!$chevron) {
+                $p = [NativeWalk]::TrayPoint($notify, @('Show hidden icons', 'Notification Chevron'), (Join-Path $script:themeOutput 'tray-chevron-msaa.txt'))
+                if ($p) { $chevron = [Drawing.Point]::new($p[0], $p[1]) }
+            }
+            if (!$chevron) { throw 'Native notification chevron missing in UIA and MSAA' }
+            Press $chevron
+            $overflow = Wait-For 'Native notification overflow not visible' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
+            $i = 0
+            continue
         }
-        if (!$chevron) { throw 'Native notification chevron missing in UIA and MSAA' }
-        Press $chevron
-        $overflow = Wait-For 'Native notification overflow not visible' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
-        $point = Wait-For 'Native Bridge notification icon missing' { Find-TrayPoint $overflow 'overflow' }
+        if ($point) {
+            $target = [Drawing.Point]::new([int]$point.X, [int]$point.Y)
+            [NativeWalk]::SetCursorPos($target.X, $target.Y) | Out-Null
+            $hit = [NativeWalk]::NameAt($target.X, $target.Y)
+            if ($hit -notlike '*Bridge*') { $settled = $null }
+            elseif ($settled -eq $target) { break }
+            else { $settled = $target }
+        } else { $settled = $null }
+        if ($i -ge 100) {
+            if (!$point) { throw 'Native Bridge notification icon missing' }
+            throw "Bridge notification icon not settled under the cursor at $($target.X),$($target.Y); Explorer's hit test there names $(if ([string]::IsNullOrEmpty($hit)) { 'nothing' } else { "'$hit'" })"
+        }
+        Start-Sleep -Milliseconds 100
     }
     # Right-click the actual Explorer notification icon; do not invoke a product test command.
-    [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y) | Out-Null
-    # A first launch's icon sits in Explorer's temporary promoted area, which Explorer
-    # can lay out again; a right-click there then opens the taskbar's own menu. Click
-    # once, after Explorer's hit test at the cursor reaches the Bridge icon.
-    $script:trayHit = $null
-    try { Wait-For 'tray hit test' { $script:trayHit = [NativeWalk]::NameAt([int]$point.X, [int]$point.Y); $script:trayHit -like '*Bridge*' } | Out-Null }
-    catch { throw "Bridge notification icon not under the cursor at $([int]$point.X),$([int]$point.Y); Explorer reports '$($script:trayHit)'" }
     [NativeWalk]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)
     [NativeWalk]::mouse_event(16, 0, 0, 0, [UIntPtr]::Zero)
     # Both providers require enabled, on-screen native items; MSAA yields real click points.
