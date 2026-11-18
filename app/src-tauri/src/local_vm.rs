@@ -141,6 +141,10 @@ pub enum LocalProgress {
 pub type StartFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Box<dyn LocalSession>, RuntimeError>> + Send + 'a>>;
 pub trait LocalFactory: Send + Sync {
+    /// Observe only retained in-memory journal custody; never reopen native state.
+    fn creation_consumed(&self) -> Option<bool> {
+        None
+    }
     fn launch(
         &self,
         closed: watch::Receiver<bool>,
@@ -1373,8 +1377,40 @@ impl LocalVm {
                 },
             )
     }
+    fn publish_startup_consumption(&self, consumed: Option<bool>, unconfirmed: bool) {
+        let mut cache = self.upgrade_cache.lock().unwrap();
+        if unconfirmed {
+            self.upgrading
+                .store(true, std::sync::atomic::Ordering::Release);
+            cache.get_or_insert_with(UpgradeStatusDto::none);
+        }
+        let Some(dto) = cache.as_mut().filter(|dto| {
+            (unconfirmed || dto.state == "fresh") && dto.error != Some("stopUnconfirmed")
+        }) else {
+            return;
+        };
+        if consumed == Some(false) && !unconfirmed {
+            return;
+        }
+        dto.busy = false;
+        if consumed == Some(true) && !unconfirmed {
+            dto.state = "consumed";
+        } else {
+            dto.state = "conflict";
+            dto.error = Some(if unconfirmed {
+                "stopUnconfirmed"
+            } else {
+                "unknown"
+            });
+            dto.can_replace = false;
+            dto.can_restore = false;
+            dto.can_cancel = false;
+        }
+        self.upgrade_cache_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
     fn publish_ready(&self) {
-        // Commit consumption with Ready, not a later poll. Match refresh's cache -> State order.
+        // Defensive Ready publication shares refresh's cache -> State lock order.
         let mut cache = self.upgrade_cache.lock().unwrap();
         let mut state = self.inner.state.lock().unwrap();
         if state.closing {
@@ -1452,6 +1488,19 @@ impl LocalVm {
                 || matches!(&result, Err(RuntimeError::Preflight(_)
                     | RuntimeError::Image(crate::runtime::image_types::ImageError::WorkspaceUpdateRequired
                         | crate::runtime::image_types::ImageError::WorkspaceVersionUnsupported)));
+            // Launch has joined native cleanup. Sample custody before taking facade locks.
+            let consumed = if result.is_ok() {
+                Some(true)
+            } else {
+                // A failed journal write may rename before its in-memory phase changes.
+                factory
+                    .creation_consumed()
+                    .filter(|consumed| *consumed || custody_safe)
+            };
+            vm.publish_startup_consumption(
+                consumed,
+                matches!(&result, Err(RuntimeError::StopUnconfirmed(_))),
+            );
             let mut session = inner.session.lock().await;
             match result {
                 Ok(live) => {
@@ -2086,10 +2135,98 @@ fn facade_ready_publication_preserves_closing_and_newer_cache_fences() {
     vm.quarantine_upgrade();
     let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
     vm.publish_ready();
+    vm.publish_startup_consumption(Some(true), false);
     assert_eq!(
         serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
         before
     );
+}
+
+#[cfg(test)]
+#[test]
+fn facade_startup_consumption_preserves_metadata_and_fences_old_readers_and_quarantine() {
+    for (consumed, unconfirmed, expected) in [
+        (Some(true), false, "consumed"),
+        (None, false, "conflict"),
+        (Some(true), true, "conflict"),
+        (Some(false), true, "conflict"),
+    ] {
+        let vm = LocalVm::unavailable();
+        let mut fresh = UpgradeStatusDto::none();
+        fresh.state = "fresh";
+        fresh.transaction = Some(bridge_runtime_protocol::Uuid::new_v4());
+        fresh.can_replace = true;
+        fresh.can_restore = true;
+        vm.cache_upgrade_status(fresh.clone());
+        let revision = vm
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        vm.publish_startup_consumption(consumed, unconfirmed);
+        let current = vm.upgrade_cache.lock().unwrap().clone().unwrap();
+        assert_eq!(current.state, expected);
+        assert_eq!(current.transaction, fresh.transaction);
+        assert_eq!(vm.publish_upgrade_status(revision, fresh).state, expected);
+        if unconfirmed {
+            vm.clear_upgrade_busy();
+            assert!(vm.upgrading.load(std::sync::atomic::Ordering::Acquire));
+            assert_eq!(
+                vm.upgrade_cache.lock().unwrap().as_ref().unwrap().error,
+                Some("stopUnconfirmed")
+            );
+        }
+        if expected == "conflict" {
+            assert!(!current.can_replace && !current.can_restore);
+        }
+        let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+        vm.publish_startup_consumption(Some(true), false);
+        assert_eq!(
+            serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+            before
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn facade_unconfirmed_startup_quarantines_consumed_and_missing_cache() {
+    for initial in [Some("consumed"), None, Some("conflict")] {
+        let vm = LocalVm::unavailable();
+        let transaction = bridge_runtime_protocol::Uuid::new_v4();
+        if let Some(state) = initial {
+            let mut dto = UpgradeStatusDto::none();
+            dto.state = state;
+            dto.transaction = Some(transaction);
+            dto.can_replace = true;
+            dto.can_restore = true;
+            vm.cache_upgrade_status(dto);
+        }
+        vm.publish_startup_consumption(None, true);
+        let current = vm
+            .upgrade_cache
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("quarantine must be published");
+        assert_eq!(current.state, "conflict");
+        assert_eq!(current.error, Some("stopUnconfirmed"));
+        assert!(
+            !current.busy && !current.can_replace && !current.can_restore && !current.can_cancel
+        );
+        assert_eq!(current.transaction, initial.map(|_| transaction));
+        assert!(vm.upgrading.load(std::sync::atomic::Ordering::Acquire));
+        vm.clear_upgrade_busy();
+        assert!(vm.upgrading.load(std::sync::atomic::Ordering::Acquire));
+        let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+        vm.publish_startup_consumption(Some(true), true);
+        assert_eq!(
+            serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+            before
+        );
+        assert_eq!(
+            serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+            serde_json::to_value(Some(current)).unwrap()
+        );
+    }
 }
 
 #[cfg(test)]
