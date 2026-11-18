@@ -50,8 +50,9 @@ try {
     Write-Host 'PASS native ready wait is bounded and records its failure'
 
     $script:app = [pscustomobject]@{ Id = 123; HasExited = $true; ExitCode = 3 }
-    try { Wait-NativeReady 60000; throw 'Ready wait ignored an exited process' }
+    try { Wait-NativeReady 1500; throw 'Ready wait ignored an exited process' }
     catch { if ($_.Exception.Message -cne 'Bridge exited with code 3 before native startup was ready') { throw } }
+    if ((Get-Content $timeline | ConvertFrom-Json)[-1].event -cne 'native-ready-wait-failed') { throw 'Exited ready wait did not record its failure' }
     $script:app = [pscustomobject]@{ Id = 123 }
     Write-Host 'PASS native ready wait stops when Bridge exits before ready'
 

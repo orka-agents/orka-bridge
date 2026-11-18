@@ -231,6 +231,8 @@ function Start-Bridge {
     $script:startupLog = Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).err.log"
     Write-StartupEvent 'launch-begin'
     $script:app = Start-Process $Executable -NoNewWindow -PassThru -RedirectStandardOutput (Join-Path $script:themeOutput "app-$([Guid]::NewGuid().ToString('N')).out.log") -RedirectStandardError $script:startupLog
+    # Cache the process handle now, so ExitCode stays readable after an early exit.
+    $null = $script:app.Handle
     Write-StartupEvent 'launch-returned'
     # Process.MainWindowHandle can select Tao's hidden event target. Identify
     # the real app frame by its configured title and this launch's process ID.
