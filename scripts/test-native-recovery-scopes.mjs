@@ -434,7 +434,6 @@ assert.equal(upgradeNames.length, 50, 'both sizes of setup/Manage states and con
 assert.equal(new Set(upgradeNames).size, 50);
 assert.ok(!upgradeManifest.model.some(name => name.startsWith('local-upgrade-')), 'model journey must not duplicate upgrade captures');
 const upgradeCapture = source.slice(source.indexOf('  async function captureUpgrade('), source.indexOf('  const notes = [];'));
-assert.ok(upgradeCapture.includes('if (!runCore) return;'), 'upgrade states must remain in the core scope');
 const upgradePrelude = upgradeCapture.slice(upgradeCapture.indexOf("    const transaction"), upgradeCapture.indexOf("    for (const [localVm"));
 const upgradeVariants = Function(upgradePrelude + '\nreturn variants;')();
 assert.deepEqual(upgradeVariants.map(row => row[1]), [
@@ -459,9 +458,22 @@ for (const [label, expected] of [['Set up', false], ['Connect the AI', true], ['
 }
 assert.ok(model.includes('require(currentFocus, "Confirmation keyboard focus was lost")'), 'Mac must retain its hard keyboard focus assertion');
 assert.ok(model.includes('Thread.sleep(forTimeInterval: 0.2)\n                // AX nodes'), 'Mac keyboard deadline must not be extended to pass');
-let upgradeCalls = 0;
-await Function('runCore', 'call', `${upgradeCapture}; return captureUpgrade('light', 'wide');`)(false, async () => { upgradeCalls++; });
-assert.equal(upgradeCalls, 0, 'UI scope must not create even one upgrade world');
+for (const theme of ['light', 'dark']) for (const size of ['wide', 'compact']) {
+  for (const scope of ['core', 'chat-agent-clusters', 'all']) {
+    const chosen = selection(scope), calls = [], stop = new Error('first upgrade world');
+    const capture = Function('runCore', 'runUi', 'frameTree', 'call', `${upgradeCapture}; return captureUpgrade;`)(
+      chosen.runCore, chosen.runUi, { frame: { id: 'fixture-frame' } }, async (method, args) => { calls.push([method, args]); throw stop; });
+    if (scope === 'core') {
+      await capture(theme, size);
+      assert.equal(calls.length, 0, 'Core must not duplicate any upgrade world');
+    } else {
+      await assert.rejects(capture(theme, size), error => error === stop);
+      assert.equal(calls.length, 1, 'UI and all must admit the complete upgrade matrix');
+      assert.equal(calls[0][0], 'Page.createIsolatedWorld');
+      assert.equal(calls[0][1].worldName, `upgrade-${theme}-${size}-upgrade-eligible-absent`);
+    }
+  }
+}
 assert.equal((source.match(/await captureUpgrade\(theme, '(?:wide|compact)'\)/g) ?? []).length, 2);
 // Old isolated-world React pollers may still retire their own first-test intent;
 // their synthetic preferences must not change a later scene's identity.
