@@ -8,7 +8,7 @@ $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'native-lifecycle-windows.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw "Lifecycle script parse errors: $errors" }
 # Timestamp writes must stay off the success pipeline: callers return controls/handles.
-foreach ($name in @('Write-StartupEvent', 'Test-NativeReady')) {
+foreach ($name in @('Write-StartupEvent', 'Test-NativeReady', 'Write-TrayEvent')) {
     $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if (!$definition) { throw "$name missing" }
     . ([scriptblock]::Create($definition.Extent.Text))
@@ -43,6 +43,35 @@ try {
     Write-Host 'PASS unavailable timeline destination does not fail startup or leak output'
 } finally {
     Remove-Item -LiteralPath (Split-Path $script:startupLog) -Recurse -Force
+}
+
+$script:themeOutput = Join-Path ([IO.Path]::GetTempPath()) "bridge-tray-test-$([Guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory $script:themeOutput | Out-Null
+$owned = $script:themeOutput
+try {
+    $before = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $details = @{ attempt = 2; positioned = $true; requested = @{ x = 847; y = 748 }; lookup = @{ provider = 'MSAA'; rect = @(835, 728, 24, 40) }; popups = @(@{ hwnd = 789; pid = 123; class = '#32768' }) }
+    $output = @(Write-TrayEvent 'right-click-dispatched' $details)
+    $after = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $events = @(Get-Content (Join-Path $script:themeOutput 'tray-timeline.jsonl') | ConvertFrom-Json)
+    if ($output.Count -or $events.Count -ne 1) { throw 'Tray event leaked success output or was not written once' }
+    $event = $events[0]
+    if ($event.event -cne 'right-click-dispatched' -or $event.epoch_ms -lt $before -or $event.epoch_ms -gt $after -or $event.hostPid -ne 123 -or $event.hwnd -ne 456) { throw 'Tray correlation fields incorrect' }
+    if ($event.details.attempt -ne 2 -or !$event.details.positioned -or $event.details.requested.x -ne 847 -or $event.details.requested.y -ne 748 -or $event.details.lookup.provider -cne 'MSAA' -or ($event.details.lookup.rect -join ',') -cne '835,728,24,40' -or $event.details.popups[0].pid -ne 123) { throw 'Tray event lost nested target/menu data' }
+    Write-Host 'PASS tray event retains nested coordinates, provider bounds and popup ownership without success output'
+
+    $script:themeOutput = Join-Path $owned 'absent'
+    $output = @(Write-TrayEvent 'right-click-dispatched' $details 3>$null)
+    if ($output.Count) { throw 'Failed tray write leaked success output' }
+    $failure = $null
+    try {
+        try { throw 'frozen menu verdict' }
+        catch { Write-TrayEvent 'menu-result' @{ failed = $true } 3>$null; throw }
+    } catch { $failure = $_ }
+    if ($failure.Exception.Message -cne 'frozen menu verdict') { throw 'Tray logging replaced the original failure' }
+    Write-Host 'PASS unavailable tray diagnostics neither fail the walk nor replace its frozen failure'
+} finally {
+    Remove-Item -LiteralPath $owned -Recurse -Force -ErrorAction SilentlyContinue
 }
 
 $lookup = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Find-Action' }, $true)

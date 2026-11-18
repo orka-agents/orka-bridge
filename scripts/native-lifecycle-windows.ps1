@@ -24,6 +24,50 @@ public static class NativeWalk {
   private delegate bool EnumWindow(IntPtr h, IntPtr l);
   [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr h, EnumWindow callback, IntPtr l);
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] private static extern int GetClassName(IntPtr h, System.Text.StringBuilder name, int size);
+  [StructLayout(LayoutKind.Sequential)] private struct POINT { public int X, Y; }
+  [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
+  [DllImport("user32.dll")] private static extern bool GetCursorPos(out POINT point);
+  [DllImport("user32.dll")] private static extern IntPtr WindowFromPoint(POINT point);
+  [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr h, out RECT rect);
+  [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindow callback, IntPtr l);
+  [DllImport("user32.dll")] private static extern uint GetDpiForWindow(IntPtr h);
+  [DllImport("user32.dll")] private static extern IntPtr GetThreadDpiAwarenessContext();
+  [DllImport("user32.dll")] private static extern int GetAwarenessFromDpiAwarenessContext(IntPtr context);
+  private static System.Collections.Generic.Dictionary<string, object> WindowInfo(IntPtr h) {
+    var cls = new System.Text.StringBuilder(256); GetClassName(h, cls, cls.Capacity);
+    uint pid; uint tid = GetWindowThreadProcessId(h, out pid);
+    RECT rect; bool rectOk = GetWindowRect(h, out rect);
+    return new System.Collections.Generic.Dictionary<string, object> {
+      { "hwnd", h.ToInt64() }, { "pid", pid }, { "tid", tid }, { "class", cls.ToString() },
+      { "visible", IsWindowVisible(h) }, { "rect_ok", rectOk },
+      // GetWindowRect is DPI-virtualized, not an independent physical-coordinate oracle.
+      { "rect_ltrb", new int[] { rect.Left, rect.Top, rect.Right, rect.Bottom } }, { "dpi", GetDpiForWindow(h) }
+    };
+  }
+  // Read-only, near-input evidence: no menu scan, COM, file I/O or input here.
+  public static System.Collections.Generic.Dictionary<string, object> CursorSnapshot(int x, int y) {
+    long begin = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    POINT actual; bool ok = GetCursorPos(out actual);
+    var snapshot = new System.Collections.Generic.Dictionary<string, object> {
+      { "begin_epoch_ms", begin }, { "cursor_ok", ok },
+      { "cursor", ok ? new int[] { actual.X, actual.Y } : null },
+      { "requested_hit", WindowInfo(WindowFromPoint(new POINT { X = x, Y = y })) },
+      { "actual_hit", ok ? WindowInfo(WindowFromPoint(actual)) : null },
+      { "foreground", WindowInfo(GetForegroundWindow()) },
+      { "thread_dpi_awareness", GetAwarenessFromDpiAwarenessContext(GetThreadDpiAwarenessContext()) }
+    };
+    snapshot["end_epoch_ms"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+    return snapshot;
+  }
+  public static System.Collections.Generic.Dictionary<string, object> PopupSnapshot() {
+    var popups = new System.Collections.Generic.List<object>();
+    bool ok = EnumWindows((h, l) => {
+      var cls = new System.Text.StringBuilder(256); GetClassName(h, cls, cls.Capacity);
+      if (cls.ToString() == "#32768" && IsWindowVisible(h)) popups.Add(WindowInfo(h));
+      return true;
+    }, IntPtr.Zero);
+    return new System.Collections.Generic.Dictionary<string, object> { { "enum_ok", ok }, { "windows", popups.ToArray() } };
+  }
   public static string[] ChildClasses(IntPtr root) {
     var classes = new System.Collections.Generic.List<string>();
     EnumChildWindows(root, (h, l) => {
@@ -63,7 +107,7 @@ public static class NativeWalk {
           log.AppendLine("Child=" + i + "; Name=" + label + "; Role=" + node.get_accRole(id) + "; State=" + state + "; Rect=" + x + "," + y + "," + width + "," + height);
           // Reject unavailable, invisible and offscreen controls; click only an exact accessible name.
           if (Array.IndexOf(names, label) >= 0 && visible && (state & 0x18001) == 0 && width > 0 && height > 0) {
-            matches++; point = new int[] { x + width / 2, y + height / 2 };
+            matches++; point = new int[] { x + width / 2, y + height / 2, x, y, width, height };
           }
         }
       } catch (COMException e) { log.AppendLine("MSAA error: " + e); }
@@ -240,15 +284,68 @@ function Find-ReadyClusters {
     }
     Find-Control $script:window 'Clusters' $button
 }
+function Write-TrayEvent([string]$Event, $Details) {
+    try {
+        $entry = [ordered]@{
+            event = $Event
+            epoch_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            hostPid = $script:app.Id
+            hwnd = $script:hwnd.ToInt64()
+            details = $Details
+        } | ConvertTo-Json -Compress -Depth 8
+        [IO.File]::AppendAllText((Join-Path $script:themeOutput 'tray-timeline.jsonl'), "$entry`n")
+    } catch { Write-Warning "Tray diagnostics unavailable: $($_.Exception.Message)" }
+}
+function Get-MenuControlEvidence($Control) {
+    try {
+        if (!$Control) { return $null }
+        if ($Control -is [Drawing.Point]) { return @{ provider = 'MSAA'; point = @($Control.X, $Control.Y) } }
+        $current = $Control.Current
+        $rect = $current.BoundingRectangle
+        return @{ provider = 'UIA'; name = $current.Name; pid = $current.ProcessId; hwnd = $current.NativeWindowHandle; rect_xywh = @($rect.X, $rect.Y, $rect.Width, $rect.Height) }
+    } catch { return @{ capture_error = $_.Exception.Message } }
+}
+function Write-TrayMenuEvidence($Dispatch, [bool]$Failed, $Open, $Quit) {
+    $begin = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    try {
+        # Freeze all owners before output or accessibility calls can delay the failure PNG.
+        $popupSnapshot = [NativeWalk]::PopupSnapshot()
+        $popups = @($popupSnapshot.windows)
+        $observed = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Write-TrayEvent 'right-click-dispatched' $Dispatch
+        Write-TrayEvent 'menu-result' @{ attempt = $Dispatch.attempt; failed = $Failed; begin_epoch_ms = $begin; observed_epoch_ms = $observed; enum_ok = $popupSnapshot.enum_ok; popups = $popups }
+        Write-TrayEvent 'menu-controls' @{ attempt = $Dispatch.attempt; open = (Get-MenuControlEvidence $Open); quit = (Get-MenuControlEvidence $Quit) }
+        if ($Failed) {
+            foreach ($popup in $popups) {
+                # Empty exact-name set never matches; dump only, never use its returned point.
+                $dump = Join-Path $script:themeOutput "tray-$($Dispatch.attempt)-popup-$($popup.pid)-$($popup.hwnd)-msaa.txt"
+                [void][NativeWalk]::TrayPoint([IntPtr][long]$popup.hwnd, [string[]]@(), $dump)
+            }
+        }
+    } catch { Write-TrayEvent 'menu-evidence-error' @{ attempt = $Dispatch.attempt; error = $_.Exception.Message } }
+    finally { Write-TrayEvent 'menu-evidence-finished' @{ attempt = $Dispatch.attempt; begin_epoch_ms = $begin } }
+}
 function Find-TrayPoint($Root, [string]$Label) {
+    $script:trayTarget = $null
     $all = @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
     @("UIA descendants=$($all.Count)"; $all | ForEach-Object { "Name=$($_.Current.Name); Type=$($_.Current.ControlType.ProgrammaticName); Offscreen=$($_.Current.IsOffscreen)" }) | Set-Content (Join-Path $script:themeOutput "tray-$Label.txt")
     # Explorer may expose tooltip text with extra notification copy and a non-Button role.
     $matches = @($all | Where-Object { $_.Current.Name -like '*Bridge*' -and !$_.Current.IsOffscreen })
-    if ($matches.Count -eq 1) { return $matches[0].GetClickablePoint() }
+    if ($matches.Count -eq 1) {
+        $point = $matches[0].GetClickablePoint()
+        try {
+            $current = $matches[0].Current
+            $rect = $current.BoundingRectangle
+            $script:trayTarget = @{ provider = 'UIA'; scope = $Label; name = $current.Name; rect_xywh = @($rect.X, $rect.Y, $rect.Width, $rect.Height); epoch_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+        } catch { $script:trayTarget = @{ provider = 'UIA'; scope = $Label; capture_error = $_.Exception.Message } }
+        return $point
+    }
     if ($matches.Count -gt 1) { throw 'More than one Bridge icon in native notification area' }
     $p = [NativeWalk]::TrayPoint([IntPtr]$Root.Current.NativeWindowHandle, 'Bridge', (Join-Path $script:themeOutput "tray-$Label-msaa.txt"))
-    if ($p) { return [Drawing.Point]::new($p[0], $p[1]) }
+    if ($p) {
+        $script:trayTarget = @{ provider = 'MSAA'; scope = $Label; name = 'Bridge'; rect_xywh = @($p[2], $p[3], $p[4], $p[5]); epoch_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+        return [Drawing.Point]::new($p[0], $p[1])
+    }
 }
 function Find-PopupControl([string]$Name) {
     $control = Find-Control $desktop $Name $menuItem
@@ -263,6 +360,7 @@ function Find-PopupControl([string]$Name) {
     }
 }
 function Tray-Menu {
+    $script:trayAttempt = [int]$script:trayAttempt + 1
     $taskbar = [NativeWalk]::FindWindow('Shell_TrayWnd', $null)
     $notify = [NativeWalk]::FindWindowEx($taskbar, [IntPtr]::Zero, 'TrayNotifyWnd', $null)
     if ($notify -eq [IntPtr]::Zero) { throw 'Native notification area missing (interactive CI desktop required)' }
@@ -282,12 +380,23 @@ function Tray-Menu {
         $point = Wait-For 'Native Bridge notification icon missing' { Find-TrayPoint $overflow 'overflow' }
     }
     # Right-click the actual Explorer notification icon; do not invoke a product test command.
-    [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y) | Out-Null
+    $positioned = [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y)
+    $snapshot = $null
+    try { $snapshot = [NativeWalk]::CursorSnapshot([int]$point.X, [int]$point.Y) }
+    catch { $snapshot = @{ capture_error = $_.Exception.Message } }
     [NativeWalk]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)
     [NativeWalk]::mouse_event(16, 0, 0, 0, [UIntPtr]::Zero)
-    # Both providers require enabled, on-screen native items; MSAA yields real click points.
-    $open = Wait-For 'Open Bridge menu item missing' { Find-PopupControl 'Open Bridge' }
-    $stop = Wait-For 'Quit Bridge menu item missing' { Find-PopupControl 'Quit Bridge' }
+    $dispatch = @{ attempt = $script:trayAttempt; requested = @([int]$point.X, [int]$point.Y); positioned = $positioned; lookup = $script:trayTarget; snapshot = $snapshot; dispatched_epoch_ms = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() }
+    $open = $null; $stop = $null; $failed = $true
+    try {
+        # Both providers require enabled, on-screen native items; MSAA yields real click points.
+        $open = Wait-For 'Open Bridge menu item missing' { Find-PopupControl 'Open Bridge' }
+        $stop = Wait-For 'Quit Bridge menu item missing' { Find-PopupControl 'Quit Bridge' }
+        $failed = $false
+    } finally {
+        # No diagnostic file I/O before the original waits; never mask their result or emit controls.
+        try { Write-TrayMenuEvidence $dispatch $failed $open $stop | Out-Null } catch { }
+    }
     return @($open, $stop)
 }
 function Retained {
