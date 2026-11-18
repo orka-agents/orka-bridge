@@ -116,8 +116,9 @@ jobs:
             theme: dark
             rust-cache: app-macos-15-bundle-rust-1.98.1
     runs-on: ${{ matrix.os }}
-    # The model walk alone takes about 21 minutes on a typical hosted Mac.
-    timeout-minutes: ${{ matrix.suite == 'model-fixtures' && 45 || 30 }}
+    # Model fixtures, bundles and release checks typically take 20-25 minutes and
+    # have reached 28-29 on a slow hosted runner. Debug and lifecycle checks keep 30.
+    timeout-minutes: ${{ contains(fromJSON('["model-fixtures","bundle","release-checks"]'), matrix.suite) && 45 || 30 }}
     defaults:
       run:
         shell: bash
