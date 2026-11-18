@@ -2260,7 +2260,10 @@ async fn native_factory_releases_retained_handles_before_identity_preserving_ren
     let identity = file_identity(&dir.into_std_file()).unwrap();
     fs::write(root.join("efi.vars"), b"stand-in firmware bytes").unwrap();
     let state = file_identity(&fs::File::open(root.join("state.disk")).unwrap()).unwrap();
+    let close_origin = Arc::new(Mutex::new(None));
     let factory = Arc::new(NativeFactory {
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        close_origin: close_origin.clone(),
         resources: temp.path().into(),
         data: temp.path().into(),
         root: root.clone(),
@@ -2275,7 +2278,7 @@ async fn native_factory_releases_retained_handles_before_identity_preserving_ren
         },
         pending: Arc::new(Mutex::new(JournalCustody(Some(journal)))),
     });
-    let vm = LocalVm::new(factory);
+    let vm = LocalVm::make_with_close_origin(Some(factory), false, close_origin);
     vm.cancel().await.unwrap();
     // Stop alone retains the native factory's owner lock.
     assert!(matches!(Journal::open(&root), Err(RuntimeError::Busy)));
