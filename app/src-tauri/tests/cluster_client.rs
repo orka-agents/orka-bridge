@@ -2656,6 +2656,30 @@ async fn activity_reports_partial_denied_unavailable_and_disconnected_places() {
         assert_eq!(read["places"][0]["entries"], json!([]));
     }
 
+    // Empty pages with fresh cursors stop at the page cap instead of reading until the timeout.
+    *orka.task_pages.lock().unwrap() = (0..30)
+        .map(|page| json!({"items":[],"metadata":{"continue":format!("p{}", page + 1)}}))
+        .collect();
+    let tasks_before = orka
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|c| c.0 == OrkaResource::Tasks)
+        .count();
+    let empty = reply(bridge_engine::overview_activity::read(&session).await);
+    assert_eq!(empty["places"][0]["state"], "partial");
+    assert_eq!(
+        orka.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|c| c.0 == OrkaResource::Tasks)
+            .count()
+            - tasks_before,
+        10
+    );
+
     *orka.fail_at.lock().unwrap() = Some((
         OrkaResource::Tasks,
         failed(Check::Agents, CheckResult::PermissionDenied),
