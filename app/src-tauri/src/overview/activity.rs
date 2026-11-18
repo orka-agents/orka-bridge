@@ -244,6 +244,8 @@ pub struct PlaceActivity {
     pub state: &'static str,
     pub observed_at: Option<u64>,
     pub entries: Vec<Entry>,
+    /// The place's connection revision; earlier runs are only shown again under the same one.
+    pub connection: Option<u64>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -263,8 +265,38 @@ fn lost(lost: Lost) -> &'static str {
         Lost::Disconnected => "disconnected",
     }
 }
-/// Runs `read` with the place's current access. A result is kept only if the place still has
-/// that same access afterwards, so a Reload, re-Use or refused refresh during the read wins.
+/// Why a result read on connection `read_on` no longer stands, if it doesn't: the place has a
+/// new connection, or its access was refused or revoked since.
+fn superseded(session: &ClusterSession, key: &str, read_on: Option<u64>) -> Option<&'static str> {
+    match session.activity_connection(key) {
+        (now, _) if now != read_on => Some("revoked"),
+        (_, Err(why @ (Lost::Denied | Lost::Revoked))) => Some(lost(why)),
+        _ => None,
+    }
+}
+/// `with_access`, also returning the connection revision the read used.
+async fn read_on<'a, T, F>(
+    session: &'a ClusterSession,
+    key: &str,
+    read: impl FnOnce(Arc<RemoteAccess>) -> F,
+) -> (Option<u64>, Result<T, &'static str>)
+where
+    F: Future<Output = Result<T, ClusterError>> + 'a,
+{
+    let (connection, access) = session.activity_connection(key);
+    let access = match access {
+        Ok(access) => access,
+        Err(why) => return (connection, Err(lost(why))),
+    };
+    let result = read(access).await.map_err(failure);
+    match superseded(session, key, connection) {
+        Some(state) => (connection, Err(state)),
+        None => (connection, result),
+    }
+}
+/// Runs `read` with the place's current access. The result stands only if the place still has
+/// the same connection afterwards and was not refused or revoked meanwhile; otherwise the
+/// error says which (`revoked` for a new connection).
 pub(crate) async fn with_access<'a, T, F>(
     session: &'a ClusterSession,
     key: &str,
@@ -273,13 +305,7 @@ pub(crate) async fn with_access<'a, T, F>(
 where
     F: Future<Output = Result<T, ClusterError>> + 'a,
 {
-    let access = session.activity_access(key).map_err(lost)?;
-    let result = read(access.clone()).await;
-    match session.activity_access(key) {
-        Ok(current) if Arc::ptr_eq(&current, &access) => result.map_err(failure),
-        Ok(_) => Err("disconnected"),
-        Err(why) => Err(lost(why)),
-    }
+    read_on(session, key, read).await.1
 }
 pub async fn read(session: &ClusterSession) -> Activity {
     let mut places = Vec::new();
@@ -289,14 +315,17 @@ pub async fn read(session: &ClusterSession) -> Activity {
             state: "disconnected",
             observed_at: None,
             entries: Vec::new(),
+            connection: None,
         };
-        match with_access(
-            session,
-            &place.key,
-            |access| async move { access.tasks().await },
-        )
-        .await
-        {
+        let (connection, read) =
+            read_on(
+                session,
+                &place.key,
+                |access| async move { access.tasks().await },
+            )
+            .await;
+        view.connection = connection;
+        match read {
             Ok(tasks) => {
                 view.state = if tasks.complete {
                     "complete"
@@ -309,6 +338,16 @@ pub async fn read(session: &ClusterSession) -> Activity {
             Err(state) => view.state = state,
         }
         places.push(view);
+    }
+    // Places are read one after another, so recheck each before answering: one reloaded,
+    // reconnected or refused while a later place was read must not report its old runs.
+    for view in &mut places {
+        if let Some(state) = superseded(session, &view.key, view.connection) {
+            view.state = state;
+            view.observed_at = None;
+            view.entries.clear();
+            view.connection = session.activity_connection(&view.key).0;
+        }
     }
     Activity { places }
 }

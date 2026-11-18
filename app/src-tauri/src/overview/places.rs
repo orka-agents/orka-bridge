@@ -119,6 +119,8 @@ struct Entry {
     denied: bool,
     /// Reload or re-Use removed access this session had.
     revoked: bool,
+    /// Which confirmed connection `access` came from; a re-Use gets a new one.
+    connection: Option<u64>,
 }
 /// Why Activity has no live access to a place.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -190,6 +192,7 @@ impl Inventory {
                     access: None,
                     denied: false,
                     revoked: false,
+                    connection: None,
                 },
             );
         }
@@ -218,15 +221,26 @@ impl Inventory {
     /// Activity's access to a place, or why it has none. A place whose access was replaced,
     /// revoked or refused since `access` was handed out no longer returns the same access.
     pub(crate) fn activity_access(&self, key: &str) -> Result<Arc<RemoteAccess>, Lost> {
+        self.activity_connection(key).1
+    }
+    /// `activity_access` with the place's connection revision, read under one lock. The
+    /// revision changes only when a new connection is confirmed for the place.
+    pub(crate) fn activity_connection(
+        &self,
+        key: &str,
+    ) -> (Option<u64>, Result<Arc<RemoteAccess>, Lost>) {
         let state = self.state.lock().unwrap();
-        let entry = state.entries.get(key).ok_or(Lost::Disconnected)?;
-        match &entry.access {
+        let Some(entry) = state.entries.get(key) else {
+            return (None, Err(Lost::Disconnected));
+        };
+        let access = match &entry.access {
             None if entry.revoked => Err(Lost::Revoked),
             None => Err(Lost::Disconnected),
             Some(_) if entry.view.stale && entry.denied => Err(Lost::Denied),
             Some(_) if entry.view.stale => Err(Lost::Disconnected),
             Some(access) => Ok(access.clone()),
-        }
+        };
+        (entry.connection, access)
     }
     pub(crate) fn forget(&self, key: &str) -> Result<(), &'static str> {
         let mut state = self.state.lock().unwrap();
@@ -254,6 +268,7 @@ impl Inventory {
                 generation,
                 denied: false,
                 revoked: false,
+                connection: Some(generation),
             },
         );
         // Live access is still usable if remembering fails; the snapshot reports unavailable.
