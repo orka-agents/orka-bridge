@@ -1373,6 +1373,24 @@ impl LocalVm {
                 },
             )
     }
+    fn publish_ready(&self) {
+        // Commit consumption with Ready, not a later poll. Match refresh's cache -> State order.
+        let mut cache = self.upgrade_cache.lock().unwrap();
+        let mut state = self.inner.state.lock().unwrap();
+        if state.closing {
+            return;
+        }
+        state.phase = LocalVmStatus::Ready;
+        state.upgrade_cancel = None;
+        state.progress = None;
+        // Mutate only current Fresh; never replace newer recovery/quarantine data.
+        if let Some(dto) = cache.as_mut().filter(|dto| dto.state == "fresh") {
+            dto.state = "consumed";
+            dto.busy = false;
+            self.upgrade_cache_revision
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
     pub fn start(self: &Arc<Self>) {
         let mut state = self.inner.state.lock().unwrap();
         self.start_locked(&mut state);
@@ -1412,6 +1430,7 @@ impl LocalVm {
         let cancelled = state.cancelled.subscribe();
         let upgrade_startup = state.upgrade_cancel.as_ref().is_some_and(|c| c.startup);
         let inner = self.inner.clone();
+        let vm = self.clone();
         // Stored before releasing the admission lock. Dropping an IPC waiter does
         // not drop this task or any installation/handshake job it awaits.
         state.startup = Some(tokio::spawn(async move {
@@ -1438,7 +1457,7 @@ impl LocalVm {
                 Ok(live) => {
                     inner.state.lock().unwrap().run_cancel_supported = live.run_cancel_supported();
                     *session = Some(live);
-                    inner.publish(LocalProgress::Status(LocalVmStatus::Ready));
+                    vm.publish_ready();
                 }
                 Err(
                     RuntimeError::Closed
@@ -1879,12 +1898,12 @@ fn facade_older_concurrent_status_reader_cannot_overwrite_first_publication() {
 fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied() {
     fn inventory(
         root: &std::path::Path,
-        held_journal_lock: Option<&std::path::Path>,
+        held_locks: Option<(&std::path::Path, &std::path::Path)>,
     ) -> Vec<(std::path::PathBuf, bool, Option<Vec<u8>>)> {
         fn walk(
             root: &std::path::Path,
             path: &std::path::Path,
-            held_journal_lock: Option<&std::path::Path>,
+            held_locks: Option<(&std::path::Path, &std::path::Path)>,
             out: &mut Vec<(std::path::PathBuf, bool, Option<Vec<u8>>)>,
         ) {
             for entry in std::fs::read_dir(path).unwrap() {
@@ -1894,10 +1913,17 @@ fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied(
                 out.push((
                     path.strip_prefix(root).unwrap().to_owned(),
                     directory,
-                    if cfg!(windows) && held_journal_lock == Some(path.as_path()) {
-                        // Only this held capability denies reads; retain its path and type.
+                    if cfg!(windows)
+                        && held_locks
+                            .is_some_and(|(journal, store)| path == journal || path == store)
+                    {
+                        // Journal denies sharing; the store's byte-range lock denies reads.
+                        let (journal, _) = held_locks.unwrap();
                         assert!(!directory);
-                        assert_eq!(std::fs::read(&path).unwrap_err().raw_os_error(), Some(32));
+                        assert_eq!(
+                            std::fs::read(&path).unwrap_err().raw_os_error(),
+                            Some(if path == journal { 32 } else { 33 })
+                        );
                         None
                     } else if directory {
                         None
@@ -1906,20 +1932,20 @@ fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied(
                     },
                 ));
                 if directory {
-                    walk(root, &path, held_journal_lock, out);
+                    walk(root, &path, held_locks, out);
                 }
             }
         }
         let mut entries = Vec::new();
-        walk(root, root, held_journal_lock, &mut entries);
+        walk(root, root, held_locks, &mut entries);
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         entries
     }
     let vm = LocalVm::unavailable();
     let data = tempfile::tempdir().unwrap();
     let local = tempfile::tempdir().unwrap();
-    let _owner =
-        crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path()).unwrap();
+    // Release BOTH owners before capturing the full unlocked byte baseline.
+    drop(crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path()).unwrap());
     let journal_root = local.path().join("local-vm-v1");
     drop(
         crate::runtime::journal::Journal::create(
@@ -1933,14 +1959,18 @@ fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied(
     std::fs::write(&witness, b"before").unwrap();
     let before_data = inventory(data.path(), None);
     let full_before_local = inventory(local.path(), None);
-    // Ordinary reopen proves held ownership, not live creation authority.
+    // Regular reopened ownership, not the original creator's live creation authority.
+    let owner =
+        crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path()).unwrap();
     let journal = crate::runtime::journal::Journal::open(&journal_root).unwrap();
     let journal_lock = journal_root.join("owner.lock");
-    let before_local = inventory(local.path(), Some(&journal_lock));
+    let store_lock = local.path().join("workspace-upgrades-v1/owner.lock");
+    let held_locks = Some((journal_lock.as_path(), store_lock.as_path()));
+    let before_local = inventory(local.path(), held_locks);
     std::fs::write(&witness, b"changed").unwrap();
-    assert_ne!(inventory(local.path(), Some(&journal_lock)), before_local);
+    assert_ne!(inventory(local.path(), held_locks), before_local);
     std::fs::write(&witness, b"before").unwrap();
-    assert_eq!(inventory(local.path(), Some(&journal_lock)), before_local);
+    assert_eq!(inventory(local.path(), held_locks), before_local);
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .max_blocking_threads(1)
@@ -1977,7 +2007,7 @@ fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied(
             release.send(()).unwrap();
             blocker.await.unwrap();
             assert_eq!(inventory(data.path(), None), before_data);
-            assert_eq!(inventory(local.path(), Some(&journal_lock)), before_local);
+            assert_eq!(inventory(local.path(), held_locks), before_local);
             for (phase, result) in observed {
                 let std::task::Poll::Ready(dto) = result else {
                     panic!("poll must not dispatch disk work: {phase:?}");
@@ -2022,10 +2052,44 @@ fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied(
                 "consumed"
             );
         });
-    assert_eq!(inventory(local.path(), Some(&journal_lock)), before_local);
+    assert_eq!(inventory(local.path(), held_locks), before_local);
     drop(journal);
+    drop(owner);
     assert_eq!(inventory(local.path(), None), full_before_local);
     assert_eq!(inventory(data.path(), None), before_data);
+}
+
+#[cfg(test)]
+#[test]
+fn facade_ready_publication_preserves_closing_and_newer_cache_fences() {
+    for closing in [false, true] {
+        let vm = LocalVm::unavailable();
+        let mut fresh = UpgradeStatusDto::none();
+        fresh.state = "fresh";
+        vm.cache_upgrade_status(fresh.clone());
+        let revision = vm
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        vm.inner.state.lock().unwrap().closing = closing;
+        vm.publish_ready();
+        assert_eq!(
+            vm.upgrade_cache.lock().unwrap().as_ref().unwrap().state,
+            if closing { "fresh" } else { "consumed" }
+        );
+        if !closing {
+            assert_eq!(vm.publish_upgrade_status(revision, fresh).state, "consumed");
+        } else {
+            assert_ne!(vm.status(), LocalVmStatus::Ready);
+        }
+    }
+    let vm = LocalVm::unavailable();
+    vm.quarantine_upgrade();
+    let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+    vm.publish_ready();
+    assert_eq!(
+        serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+        before
+    );
 }
 
 #[cfg(test)]

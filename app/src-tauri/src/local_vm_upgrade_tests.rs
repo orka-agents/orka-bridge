@@ -820,6 +820,72 @@ fn facade_replace_hands_live_creation_authority_to_launch_and_reports_fresh() {
 }
 
 #[test]
+fn facade_ready_then_stop_without_upgrade_poll_keeps_consumed_but_refusal_keeps_fresh() {
+    for refuse_before_ready in [false, true] {
+        let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+        seed_cache(&mut scene);
+        let (vm, factory) = facade(&scene, None);
+        let (entered, entered_rx) = tokio::sync::oneshot::channel();
+        let (release, release_rx) = tokio::sync::oneshot::channel();
+        *factory.launch_gate.lock().unwrap() = Some((entered, release_rx));
+        runtime().block_on(async {
+            let reply = vm
+                .replace_workspace(scene.data.clone(), scene.local.clone(), target(&scene))
+                .await
+                .unwrap();
+            assert_eq!(completed(reply).state, "fresh");
+            entered_rx.await.unwrap();
+            if refuse_before_ready {
+                // Losing the creator forces ordinary reopen, which cannot format Fresh B.
+                drop(factory.destination.lock().unwrap().take());
+            }
+            release.send(()).unwrap();
+            let expected = if refuse_before_ready {
+                LocalVmStatus::Failed
+            } else {
+                LocalVmStatus::Ready
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                while vm.status() != expected {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            if !refuse_before_ready {
+                // No upgrade-status poll between actual startup completion and stop.
+                vm.cancel().await.unwrap();
+                assert_eq!(vm.status(), LocalVmStatus::Cancelled);
+            }
+            let status = vm
+                .upgrade_status(scene.data.clone(), scene.local.clone())
+                .await;
+            assert_eq!(
+                status.state,
+                if refuse_before_ready {
+                    "fresh"
+                } else {
+                    "consumed"
+                }
+            );
+            assert_eq!(
+                read_record(&scene.local.join("local-vm-v1")).unwrap().phase
+                    == StatePhase::Consumed,
+                !refuse_before_ready
+            );
+            if refuse_before_ready {
+                assert!(matches!(
+                    vm.shutdown().await,
+                    Err(RuntimeError::Unavailable)
+                ));
+            } else {
+                vm.shutdown().await.unwrap();
+            }
+        });
+    }
+}
+
+#[test]
 fn facade_dropped_forward_waiter_never_releases_lifecycle_before_work_finishes() {
     for retry in [false, true] {
         let mut scene = Scene::new(ImageTarget::WindowsAmd64);
