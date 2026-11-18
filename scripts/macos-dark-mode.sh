@@ -3,8 +3,8 @@
 # Usage: macos-dark-mode.sh get | macos-dark-mode.sh set true|false
 #
 # System Events quits when idle. An Apple event sent while it is quitting fails
-# with "Connection is invalid. (-609)"; the next request relaunches it. Retry
-# only that error, and fail on anything else.
+# with "Connection is invalid. (-609)" or "Application isn't running. (-600)";
+# the next request relaunches it. Retry only those errors, and fail on anything else.
 set -uo pipefail
 
 case "${1:-}" in
@@ -25,8 +25,8 @@ for attempt in 1 2 3 4 5; do
     exit 0
   fi
   cat "$errors" >&2
-  if ! grep -Fq '(-609)' "$errors" || [[ $attempt == 5 ]]; then exit 1; fi
-  echo "System Events connection closed; retrying ($attempt of 5)" >&2
+  if ! grep -Fq -e '(-609)' -e '(-600)' "$errors" || [[ $attempt == 5 ]]; then exit 1; fi
+  echo "System Events is quitting; retrying ($attempt of 5)" >&2
   sleep 1
 done
 exit 1

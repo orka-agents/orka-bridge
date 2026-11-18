@@ -14,6 +14,7 @@ reply() { case "$2" in *"get dark mode") echo false ;; esac; }
 case "$FAKE_MODE" in
   flaky) if (( calls < 3 )); then echo "71:80: execution error: System Events got an error: Connection is invalid. (-609)" >&2; exit 1; fi; reply "$@" ;;
   always) echo "execution error: Connection is invalid. (-609)" >&2; exit 1 ;;
+  stopping) if (( calls < 2 )); then echo "execution error: System Events got an error: Application isn't running. (-600)" >&2; exit 1; fi; reply "$@" ;;
   noisy) echo "osascript warning: unrelated" >&2; reply "$@" ;;
   stdout609) echo "(-609)"; exit 1 ;;
   denied) echo "execution error: Not authorized to send Apple events to System Events. (-1743)" >&2; exit 1 ;;
@@ -42,6 +43,7 @@ expect always 1 "" 5 get
 expect always 1 "" 5 set false
 expect noisy 0 false 1 get
 expect stdout609 1 "" 1 get
+expect stopping 0 false 2 get
 expect denied 1 "" 1 get
 expect denied 1 "" 1 set false
 expect flaky 2 "" 0 set maybe
