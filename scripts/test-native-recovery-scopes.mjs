@@ -266,6 +266,15 @@ assert.ok(smoke.includes('clickButton("Show details")\n    clickButton("Change c
 assert.ok(smoke.includes('clickButton("Show details")\n    clickButton("Remove")'), 'restart removal must explicitly open details');
 // Source contracts supplement, but never substitute for, the hosted native walk.
 const model = await readFile(new URL('./native-model-macos.swift', import.meta.url), 'utf8');
+const captureManifest = JSON.parse(await readFile(new URL('./native-model-captures.json', import.meta.url), 'utf8'));
+assert.equal(captureManifest.model.length, 204);
+assert.equal(captureManifest['destinations-workspace'].length, 47);
+assert.equal(new Set([...captureManifest.model, ...captureManifest['destinations-workspace']]).size, 251);
+const overviewCaptures = [
+  ...['disconnected', 'connected'].flatMap(ai => ['wide', 'minimum'].flatMap(size => ['collapsed', 'expanded'].map(state => `local-overview-ai-${ai}-${state}-${size}`))),
+  ...['wide', 'compact', 'minimum'].flatMap(size => ['collapsed', 'expanded-earlier-pass', 'expanded-earlier-failed', 'expanded-draft'].map(state => `local-controls-overview-${state}-${size}`)),
+];
+assert.deepEqual(captureManifest.model.filter(name => name.includes('overview')).sort(), overviewCaptures.sort(), 'scoped manifest must retain every list/evidence capture with no obsolete grouping names');
 const overviewDriver = source.slice(source.indexOf('  // Overview renderer fixtures:'), source.indexOf('  const notes = []'));
 const expandOverview = overviewDriver.match(/await evaluate\(`(\[\.\.\.document\.querySelectorAll\('\.overview-agent-head[^`]+)`\);/)?.[1];
 assert.ok(expandOverview, 'Overview must activate its real disclosure controls');
