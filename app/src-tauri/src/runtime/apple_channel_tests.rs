@@ -4,6 +4,9 @@ use std::{
     os::unix::net::UnixStream,
     time::{Duration, Instant},
 };
+pub(crate) fn hold_scope(slot: &GuestSlot) -> impl Drop {
+    slot.acquire().unwrap()
+}
 pub(crate) fn short_close(slot: &GuestSlot) {
     slot.inner
         .state
@@ -101,8 +104,8 @@ fn idle_close_uses_publication_origin_even_when_observed_late() {
 fn scoped_reference_timeout_never_reports_success() {
     let (socket, _) = UnixStream::pair().unwrap();
     let slot = GuestSlot::new(socket);
-    let scoped = slot.acquire().unwrap();
-    let socket = Arc::downgrade(scoped.socket.as_ref().unwrap());
+    let socket = Arc::downgrade(slot.inner.state.lock().unwrap().socket.as_ref().unwrap());
+    let scoped = hold_scope(&slot);
     slot.seal();
     assert_eq!(
         slot.revoke(Instant::now()).unwrap_err().kind(),

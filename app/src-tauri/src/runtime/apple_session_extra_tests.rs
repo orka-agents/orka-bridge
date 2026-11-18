@@ -29,7 +29,8 @@ fn stopping_with_an_inflight_engine_client_revokes_its_only_guest_capability() {
                 assert!(Instant::now() < end, "engine request did not reach peer");
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
-            session.stop().unwrap();
+            // Taking the serving transport leaves only destructive cleanup.
+            assert!(matches!(session.stop(), Err(RuntimeError::ShutdownForced)));
             assert!(tokio::time::timeout(Duration::from_secs(2), task)
                 .await
                 .unwrap()
@@ -129,7 +130,37 @@ fn close_interrupts_inflight_io_before_acquiring_session_and_preserves_forced_ou
     assert!(t.path().join("install/hard-stop").exists());
 }
 #[test]
-fn close_during_startup_handshake_remains_cancelled_after_confirmed_cleanup() {
+fn forced_outcome_survives_revoke_failure_and_transportless_retry() {
+    let (_t, journal, image) = installation();
+    let resources = resource(&serving_peer("good"));
+    let mut session =
+        AppleVmSession::launch(resources.path().to_path_buf(), journal, image, 1).unwrap();
+    let slot = session
+        .worker
+        .lease()
+        .unwrap()
+        .handle
+        .get::<AppleBackendHandle>()
+        .unwrap()
+        .guest
+        .clone();
+    // Simulate delayed entry with one second left for native cleanup. The
+    // real scoped reference models a descheduled I/O thread after native exit.
+    slot.prepare_shutdown(Instant::now() - Duration::from_secs(9));
+    let scope = crate::runtime::apple_channel::tests::hold_scope(&slot);
+    let first = session.stop();
+    assert!(
+        matches!(first, Err(RuntimeError::Io(ref error)) if error.kind() == std::io::ErrorKind::TimedOut),
+        "{first:?}"
+    );
+    assert!(session.worker.lease().is_some());
+    drop(scope);
+    assert!(matches!(session.stop(), Err(RuntimeError::ShutdownForced)));
+    assert!(session.worker.lease().is_none());
+    assert!(matches!(session.stop(), Err(RuntimeError::ShutdownForced)));
+}
+#[test]
+fn close_during_startup_handshake_reports_confirmed_hard_cleanup_as_unclean() {
     let (t, journal, image) = installation();
     let resources = resource(&serving_peer("startup-wait"));
     let (closed, close) = tokio::sync::watch::channel(false);
@@ -150,7 +181,7 @@ fn close_during_startup_handshake_remains_cancelled_after_confirmed_cleanup() {
     closed.send_replace(true);
     assert!(matches!(
         launcher.join().unwrap(),
-        Err(RuntimeError::Closed)
+        Err(RuntimeError::ShutdownForced)
     ));
 }
 #[test]

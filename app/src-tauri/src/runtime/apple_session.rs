@@ -127,7 +127,37 @@ impl AppleVmSession {
                 error
             };
             session.transport = None;
-            return Err(session.worker.startup_failed(error));
+            if matches!(&error, RuntimeError::StopUnconfirmed(_)) {
+                return Err(session.worker.startup_failed(error));
+            }
+            let owner = session
+                .worker
+                .lease()
+                .and_then(|lease| lease.handle.get::<AppleBackendHandle>())
+                .map(|handle| handle.owner.clone());
+            let cleanup = session.worker.stop();
+            let hard_cancel = matches!(&error, RuntimeError::Closed)
+                && owner.as_ref().is_some_and(|owner| {
+                    matches!(
+                        owner.lock().unwrap().stop_outcome(),
+                        Some(AppleStopOutcome::HardStopped | AppleStopOutcome::ForcedStop)
+                    )
+                });
+            // Release this observer before dropping the worker: its journal can
+            // explicitly unlock only after backend ownership references drop.
+            drop(owner);
+            if let Err(cleanup) = cleanup {
+                return Err(session
+                    .worker
+                    .startup_failed(RuntimeError::StopUnconfirmed(format!(
+                        "{error}; stopping the VM failed: {cleanup}"
+                    ))));
+            }
+            return Err(if hard_cancel {
+                RuntimeError::ShutdownForced
+            } else {
+                error
+            });
         }
         Ok(session)
     }
@@ -135,7 +165,12 @@ impl AppleVmSession {
         self.transport.as_ref()
     }
     pub fn stop(&mut self) -> Result<(), RuntimeError> {
-        let owner = if let (Some(transport), Some(lease)) = (&self.transport, self.worker.lease()) {
+        let owner = self
+            .worker
+            .lease()
+            .and_then(|lease| lease.handle.get::<AppleBackendHandle>())
+            .map(|handle| handle.owner.clone());
+        if let (Some(transport), Some(lease)) = (&self.transport, self.worker.lease()) {
             let handle = lease
                 .handle
                 .get::<AppleBackendHandle>()
@@ -158,20 +193,20 @@ impl AppleVmSession {
                 // including with old guests that power off before replying.
                 let _ = transport.borrow_client(|client| client.shutdown());
             }
-            Some(handle.owner.clone())
-        } else {
-            None // Startup failed before a serving client: retain hard cleanup.
-        };
+        }
         self.transport = None;
         // A confirmed hard fallback clears the lease just like native stop.
         // Report it as unclean only AFTER custody has been accounted for.
-        self.worker.stop()?;
+        let stopped = self.worker.stop();
         if let Some(owner) = owner {
-            self.shutdown_forced =
-                owner.lock().unwrap().stop_outcome() == Some(AppleStopOutcome::ForcedStop);
+            self.shutdown_forced |= matches!(
+                owner.lock().unwrap().stop_outcome(),
+                Some(AppleStopOutcome::ForcedStop | AppleStopOutcome::HardStopped)
+            );
         }
+        stopped?;
         if self.shutdown_forced {
-            eprintln!("Mac workspace shutdown timed out; hard stop completed, not a clean guest shutdown.");
+            eprintln!("Mac workspace required a hard stop; not a clean guest shutdown.");
             Err(RuntimeError::ShutdownForced)
         } else {
             Ok(())
