@@ -104,6 +104,21 @@ fn events_the_type_filter_missed_are_skipped_but_advance_the_cursor() {
 }
 
 #[test]
+fn events_follow_the_stream_id_not_stale_task_name_metadata() {
+    let event = |stream: &str| {
+        json!({"namespace":"agents","streamID":stream,"seq":1,"type":"ToolCallCompleted",
+            "taskName":"stale-task-metadata","toolName":"shell","createdAt":"2026-01-01T00:00:00Z"})
+    };
+    let page = |stream: &str| {
+        json!({"namespace":"agents","streamType":"task","streamID":"run","afterSeq":0,
+            "latestSeq":1,"events":[event(stream)]})
+    };
+    let read = tool_page(&page("run"), "agents", "run", 0, 200).unwrap();
+    assert_eq!(read.calls.len(), 1);
+    assert!(tool_page(&page("other"), "agents", "run", 0, 200).is_err());
+}
+
+#[test]
 fn event_streams_are_built_only_from_object_names() {
     use crate::clusters::{EventKind, EventStream};
     let stream = EventStream::task_tool_calls("run-1").unwrap();
