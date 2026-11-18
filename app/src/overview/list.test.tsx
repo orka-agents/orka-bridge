@@ -78,6 +78,21 @@ test.each([3, 4])('%i clusters plus this computer use a select only past four ac
   }
 });
 
+test('unavailable test history can be retried in place without restoring top-level Refresh', async () => {
+  let recovered = false;
+  const files = vi.fn(() => ({ state: 'complete', historyState: recovered ? 'complete' : 'unavailable', runAgents: [], runActive: false, files: [recovered ? file() : { ...file(), localResult: null }] }));
+  mockIPC(command => command === 'overview_files' ? files() : command === 'overview_places' ? { places: [], historyState: 'complete', unobserved: [] }
+    : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
+  render(<Overview {...props} />);
+  await screen.findByText(/Test history is unavailable/);
+  recovered = true;
+  await userEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  await waitFor(() => expect(files).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.queryByText(/Test history is unavailable/)).toBeNull());
+  expect(within(await row()).getByLabelText('This computer: Passed')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
+});
+
 test('a long context keeps its full accessible name while filtering by the opaque place key', async () => {
   const context = 'context-' + 'unbrokensegment'.repeat(16);
   ipc([file()], [{ ...place('opaque-key'), context }]); render(<Overview {...props} />); await row();

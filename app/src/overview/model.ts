@@ -155,7 +155,7 @@ export function clusterGroups(i: Inputs, built: Built): Group[] {
   if (state === 'busy') notes.push({ text: 'The workspace is busy right now.', seen, check: true });
   if (state === 'stopped') notes.push({ text: 'The workspace is stopped. Start it to test or chat.', clusters: true });
   if (state === 'read') notes.push({ text: "Couldn't check just now.", seen, check: true });
-  if (i.files?.state === 'complete' && !history && !i.filesStale) notes.push({ text: "Test history is unavailable, so other agents on this cluster aren't shown and results are unknown." });
+  if (i.files?.state === 'complete' && !history && !i.filesStale) notes.push({ text: "Test history is unavailable, so other agents on this cluster aren't shown and results are unknown.", check: true });
   if (history && state === 'ok' && !local.length && !strays.length) notes.push({ text: 'No agents on this computer yet.' });
   const groups: Group[] = [{ key: 'local', title: 'This computer', notes, cards: [...local, ...strays], count: local.length + strays.length || undefined }];
   (i.places?.places ?? []).forEach(place => {
