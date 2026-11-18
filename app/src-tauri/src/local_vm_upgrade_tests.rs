@@ -5,6 +5,10 @@ use crate::local_vm::{
 };
 use std::sync::{Arc, Mutex};
 
+// How long a test waits for the upgrade worker to reach a gated step. A loaded
+// Windows runner has taken more than 5 s; a passing test returns at once.
+const ENTERED_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
 use crate::engine::{types::EngineRequest, TransportFuture};
 use crate::local_vm::LocalSession;
 use crate::runtime::{
@@ -301,13 +305,9 @@ fn facade_busy_restore_transfer_remove_and_quarantine_have_no_cancel_authority()
                     _ => unreachable!(),
                 }
             });
-            tokio::task::spawn_blocking(move || {
-                entered_rx
-                    .recv_timeout(std::time::Duration::from_secs(5))
-                    .unwrap()
-            })
-            .await
-            .unwrap();
+            tokio::task::spawn_blocking(move || entered_rx.recv_timeout(ENTERED_WAIT).unwrap())
+                .await
+                .unwrap();
             let status = vm
                 .upgrade_status(scene.data.clone(), scene.local.clone())
                 .await;
@@ -357,13 +357,9 @@ fn facade_adoption_failures_are_not_user_cancellation() {
             runtime().block_on(async {
                 let release = ReleaseOnDrop(release);
                 let worker = forward_task(&scene, &vm, transaction);
-                tokio::task::spawn_blocking(move || {
-                    entered_rx
-                        .recv_timeout(std::time::Duration::from_secs(5))
-                        .unwrap()
-                })
-                .await
-                .unwrap();
+                tokio::task::spawn_blocking(move || entered_rx.recv_timeout(ENTERED_WAIT).unwrap())
+                    .await
+                    .unwrap();
                 let can_cancel = vm
                     .upgrade_status(scene.data.clone(), scene.local.clone())
                     .await
@@ -745,13 +741,9 @@ fn facade_dropped_forward_waiter_never_releases_lifecycle_before_work_finishes()
                     }
                 })
             };
-            tokio::task::spawn_blocking(move || {
-                entered_rx
-                    .recv_timeout(std::time::Duration::from_secs(5))
-                    .unwrap()
-            })
-            .await
-            .unwrap();
+            tokio::task::spawn_blocking(move || entered_rx.recv_timeout(ENTERED_WAIT).unwrap())
+                .await
+                .unwrap();
             worker.abort();
             assert!(worker.await.unwrap_err().is_cancelled());
             vm.start();
@@ -824,13 +816,9 @@ fn facade_shutdown_joins_forward_handoff_before_returning() {
                     }
                 })
             };
-            tokio::task::spawn_blocking(move || {
-                entered_rx
-                    .recv_timeout(std::time::Duration::from_secs(5))
-                    .unwrap()
-            })
-            .await
-            .unwrap();
+            tokio::task::spawn_blocking(move || entered_rx.recv_timeout(ENTERED_WAIT).unwrap())
+                .await
+                .unwrap();
             let shutdown = vm.shutdown();
             tokio::pin!(shutdown);
             let finished_early = std::future::poll_fn(|cx| {
@@ -1383,11 +1371,10 @@ fn facade_cancel_local_during_forward_handoff_retains_b_without_launching() {
                     }
                 })
             };
-            let entered = tokio::task::spawn_blocking(move || {
-                entered_rx.recv_timeout(std::time::Duration::from_secs(5))
-            })
-            .await
-            .unwrap();
+            let entered =
+                tokio::task::spawn_blocking(move || entered_rx.recv_timeout(ENTERED_WAIT))
+                    .await
+                    .unwrap();
             let store = Arc::new(SetupStore::with_upgrade_root(
                 Some(scene.data.clone()),
                 Some(scene.local.clone()),
