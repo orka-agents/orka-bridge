@@ -704,6 +704,9 @@ impl LocalVm {
     }
     fn with_upgrade_capability(&self, mut dto: UpgradeStatusDto) -> UpgradeStatusDto {
         let state = self.inner.state.lock().unwrap();
+        if state.stopped == Some(false) {
+            return UpgradeStatusDto::conflict(Some("stopUnconfirmed"));
+        }
         dto.can_cancel = !state.terminal
             && state.stopped != Some(false)
             && state
@@ -1144,6 +1147,10 @@ impl LocalVm {
         }
         let dto = match &result {
             Ok(dto) => dto.clone(),
+            Err(RuntimeError::Busy) => {
+                self.set_workspace_replaced(true);
+                return Err(RuntimeError::Busy);
+            }
             Err(error) => {
                 UpgradeStatusDto::conflict(crate::workspace_upgrade::classify_error(error))
             }
@@ -1314,6 +1321,10 @@ impl LocalVm {
     }
     /// Atomic Run/Chat admission, separate from each bounded VM request.
     pub fn try_authoring(&self) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let state = self.inner.state.lock().unwrap();
+        if state.stopped == Some(false) {
+            return None;
+        }
         self.authoring.lock().unwrap().clone().try_lock_owned().ok()
     }
     /// Reject a captured operation whose admission belongs to an earlier boot.
@@ -2501,20 +2512,17 @@ fn facade_explicit_refresh_uses_phase_not_retained_startup_handle_and_preserves_
                     state.phase = phase;
                     state.startup = Some(tokio::spawn(async { true }));
                 }
+                assert!(!vm.workspace_replaced());
                 assert!(matches!(
                     vm.refresh_upgrade_status(data.path().into(), local.path().into())
                         .await,
                     Err(RuntimeError::Busy)
                 ));
-                let dto = vm
-                    .upgrade_cache
-                    .lock()
-                    .unwrap()
-                    .clone()
-                    .expect("query must publish its classified error");
-                assert_eq!(dto.error, Some("inUse"));
-                assert_eq!(dto.state, "conflict");
-                assert!(!dto.can_replace && !dto.can_restore);
+                assert!(vm.workspace_replaced(), "Busy must latch uncertain history");
+                assert!(
+                    vm.upgrade_cache.lock().unwrap().is_none(),
+                    "Busy must not invent a cached observation when none was known"
+                );
                 assert_eq!(
                     vm.status(),
                     phase,
@@ -2527,6 +2535,10 @@ fn facade_explicit_refresh_uses_phase_not_retained_startup_handle_and_preserves_
                         .unwrap()
                         .state,
                     "none"
+                );
+                assert!(
+                    vm.workspace_replaced(),
+                    "later success must not clear uncertain history"
                 );
                 // A directory cannot be opened as a read/write owner file on either OS.
                 let invalid_local = tempfile::tempdir().unwrap();
@@ -2571,6 +2583,73 @@ fn facade_explicit_refresh_uses_phase_not_retained_startup_handle_and_preserves_
             ));
             assert!(vm.upgrade_cache.lock().unwrap().is_none());
         });
+}
+
+#[cfg(test)]
+#[test]
+fn facade_busy_refresh_preserves_known_cache_and_latches_uncertainty() {
+    for known in ["eligible", "consumed"] {
+        let vm = LocalVm::unavailable();
+        let mut dto = UpgradeStatusDto::none();
+        dto.state = known;
+        dto.created_at = Some(123);
+        dto.target_release = Some("test-release".into());
+        if known == "consumed" {
+            dto.transaction = Some(bridge_runtime_protocol::Uuid::new_v4());
+            dto.can_restore = true;
+        }
+        vm.cache_upgrade_status(dto);
+        let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+        let revision = vm
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(!vm.workspace_replaced());
+        assert!(matches!(
+            vm.complete_upgrade_refresh(revision, Err(RuntimeError::Busy)),
+            Err(RuntimeError::Busy)
+        ));
+        assert!(
+            vm.workspace_replaced(),
+            "Busy must latch history without replacing the known DTO"
+        );
+        assert_eq!(
+            serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+            before
+        );
+        vm.complete_upgrade_refresh(revision, Ok(UpgradeStatusDto::none()))
+            .unwrap();
+        vm.set_workspace_replaced(false);
+        assert!(
+            vm.workspace_replaced(),
+            "successful refresh and false setter must not clear history"
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn facade_unconfirmed_stop_denies_authoring_and_retains_internal_cache() {
+    let vm = LocalVm::unavailable();
+    let mut consumed = UpgradeStatusDto::none();
+    consumed.state = "consumed";
+    consumed.transaction = Some(bridge_runtime_protocol::Uuid::new_v4());
+    consumed.created_at = Some(123);
+    consumed.can_restore = true;
+    vm.cache_upgrade_status(consumed);
+    let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+    assert!(vm.try_authoring().is_some());
+    vm.inner.state.lock().unwrap().stopped = Some(false);
+    assert!(
+        vm.try_authoring().is_none(),
+        "unconfirmed stop must refuse new authoring leases"
+    );
+    let dto = vm.with_upgrade_capability(vm.upgrade_cache.lock().unwrap().clone().unwrap());
+    assert_eq!(dto.error, Some("stopUnconfirmed"));
+    assert!(dto.transaction.is_none() && !dto.can_restore && !dto.can_replace && !dto.can_cancel);
+    assert_eq!(
+        serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+        before
+    );
 }
 
 #[cfg(test)]
