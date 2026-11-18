@@ -216,7 +216,7 @@ export default function App() {
   const hostWorkspace = upgradeAttention ? { tone: view.tone, detail: `${upgradeLine}. ${upgradeDetail}` } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
     ? workspaceView(setup, { stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping }) : undefined;
   const hostTone = hostWorkspace?.tone ?? view.tone;
-  const workspaceReady = setup?.localVm === 'ready';
+  const workspaceReady = setup?.localVm === 'ready' && !recovery;
   useEffect(() => {
     setOverviewAiConnected(false);
     if (page !== 'Overview' || !workspaceReady || workspaceBusy || setup?.model !== 'available') return;
