@@ -94,15 +94,15 @@ for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps
 const captures = JSON.parse(await read('./native-model-captures.json'));
 const destinationCaptures = new Set(captures['destinations-workspace']);
 for (const size of ['wide', 'minimum']) {
-  for (const state of ['ready', 'starting-after-quit-synthetic', 'failed', 'stopped-unexpectedly', 'stop-failed', 'closed', 'image-update', 'image-unsupported']) {
+  for (const state of ['ready', 'starting-after-quit-synthetic', 'failed', 'stopped-unexpectedly', 'stop-failed', 'forced-stop', 'closed', 'image-update', 'image-unsupported']) {
     assert.ok(destinationCaptures.has(`local-workspace-${state}-${size}`), `allocated capture missing: ${state}/${size}`);
-    if (['failed', 'stopped-unexpectedly', 'stop-failed'].includes(state)) assert.ok(destinationCaptures.has(`local-workspace-${state}-details-${size}`), `expanded diagnostic capture missing: ${state}/${size}`);
+    if (['failed', 'stopped-unexpectedly', 'stop-failed', 'forced-stop'].includes(state)) assert.ok(destinationCaptures.has(`local-workspace-${state}-details-${size}`), `expanded diagnostic capture missing: ${state}/${size}`);
   }
   for (const view of ['tests', 'chat']) assert.ok(destinationCaptures.has(`local-designer-waiting-${view}-${size}`), `allocated Designer waiting capture missing: ${view}/${size}`);
 }
 assert.ok(destinationCaptures.has('local-workspace-inside'));
 assert.equal(captures.model.length, 208, '202 incoming model frames plus six existing Overview list/evidence captures must remain intact');
-assert.equal(destinationCaptures.size, 45, '18 cluster/catalog frames plus27 returning workspace/Designer frames');
+assert.equal(destinationCaptures.size, 49, '18 cluster/catalog frames plus31 returning workspace/Designer frames');
 assert.ok(captures.model.every(name => !destinationCaptures.has(name)), 'native journeys must be disjoint');
 const mac = await read('./native-model-macos.swift');
 assert.ok(!mac.includes('click("Stop the workspace"'), 'Mac must not navigate via removed workspace Stop');

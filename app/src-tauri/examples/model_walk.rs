@@ -522,7 +522,7 @@ fn main() {
                         let scene = match phase.as_deref() {
                             Some("workspace-scene-ready") => Some("ready"),
                             Some("workspace-scene-starting") => Some("starting"),
-                            Some("workspace-scene-failed" | "workspace-scene-stopped-unexpectedly" | "workspace-scene-stop-failed") => Some("failed"),
+                            Some("workspace-scene-failed" | "workspace-scene-stopped-unexpectedly" | "workspace-scene-stop-failed" | "workspace-scene-forced-stop") => Some("failed"),
                             Some("workspace-scene-closed") => Some("closed"),
                             _ => None,
                         };
@@ -531,7 +531,7 @@ fn main() {
                             state.selected = true;
                             state.phase = scene;
                             state.returning = true;
-                            state.stop_failed = phase.as_deref() == Some("workspace-scene-stop-failed");
+                            state.stop_failed = matches!(phase.as_deref(), Some("workspace-scene-stop-failed" | "workspace-scene-forced-stop"));
                             if reload {
                                 // Retire setup presentation once, then observe the saved selection
                                 // on a fresh renderer, just as a returning fixture session would.
@@ -540,6 +540,9 @@ fn main() {
                                     .expect("fixture returning renderer reload");
                             }
                             let mut status = state.status();
+                            if phase.as_deref() == Some("workspace-scene-forced-stop") {
+                                status["workspaceFailure"]["cause"] = json!("forcedStop");
+                            }
                             if phase.as_deref() == Some("workspace-scene-stopped-unexpectedly") {
                                 status["workspaceFailure"] = json!({"operation":"start", "cause":"unknown", "codes":[]});
                                 status["localVmError"] = json!("Synthetic workspace stopped unexpectedly.");
