@@ -15,6 +15,7 @@ pub enum ModelCommand {
 pub struct Outcome {
     pub connection: Option<ModelConnection>,
     pub success: bool,
+    pub diagnostic: Option<ModelDiagnostic>,
 }
 pub trait Runner {
     fn execute(&mut self, command: &ModelCommand) -> Outcome;
@@ -58,21 +59,78 @@ pub struct ModelLifecycle<R = Kmx> {
     runner: R,
     phase: ModelPhase,
     connection: Option<ModelConnection>,
+    attempted: Option<(Uuid, ModelSelection)>,
+    diagnostic: Option<ModelDiagnostic>,
+    // Same-boot acknowledgment survives a failed host metadata write, not a VM reboot.
+    retained: Option<(ModelConnection, bool)>,
 }
 impl Runner for Kmx {
     fn execute(&mut self, command: &ModelCommand) -> Outcome {
-        let run = || {
-            let child = self.command(command).spawn()?;
-            crate::engine::collect(child, MODEL_TIMEOUT)
-        };
-        match run() {
-            Ok(output) => parse_reply(command, output.exit, &output.stdout),
-            Err(_) => Outcome {
-                connection: None,
-                success: false,
-            },
+        let start = std::time::Instant::now();
+        match self.command(command).spawn() {
+            Ok(child) => collected_reply(
+                command,
+                crate::engine::collect_diagnostic(child, MODEL_TIMEOUT),
+            ),
+            Err(_) => collected_reply(
+                command,
+                crate::engine::Collected {
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                    elapsed_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                    exit_code: None,
+                    error: Some(std::io::ErrorKind::Other.into()),
+                },
+            ),
         }
     }
+}
+fn collected_reply(command: &ModelCommand, collected: crate::engine::Collected) -> Outcome {
+    // A terminal success cannot discard stage evidence until collection also succeeded.
+    let mut out = parse_reply(
+        command,
+        if collected.error.is_some() {
+            -1
+        } else {
+            collected.exit_code.unwrap_or(-1)
+        },
+        &collected.stdout,
+    );
+    if let Some(error) = collected.error {
+        out.success = false;
+        out.diagnostic
+            .get_or_insert(ModelDiagnostic {
+                classification: ModelDiagnosticClass::Process,
+                elapsed_ms: 0,
+                exit_code: None,
+                stage: None,
+                error_code: None,
+                stderr: None,
+            })
+            .classification = match error.kind() {
+            std::io::ErrorKind::TimedOut => ModelDiagnosticClass::Timeout,
+            std::io::ErrorKind::FileTooLarge => ModelDiagnosticClass::OutputLimit,
+            _ => ModelDiagnosticClass::Process,
+        };
+    }
+    if let Some(diagnostic) = &mut out.diagnostic {
+        diagnostic.elapsed_ms = collected.elapsed_ms;
+        diagnostic.exit_code = collected.exit_code;
+        if !collected.stderr.is_empty() {
+            // Match the entire message. In particular, never strip Error:/ANSI/provider prefixes.
+            let bytes = collected
+                .stderr
+                .strip_suffix(b"\n")
+                .unwrap_or(&collected.stderr);
+            diagnostic.stderr = Some(
+                std::str::from_utf8(bytes)
+                    .ok()
+                    .and_then(|s| serde_json::from_value(serde_json::Value::String(s.into())).ok())
+                    .unwrap_or(ModelStderr::Withheld),
+            );
+        }
+    }
+    out
 }
 fn argv(command: &ModelCommand, cluster: &str) -> Vec<String> {
     let mut args: Vec<String> = ["--container-engine=docker", "cluster", "orka", "model"]
@@ -84,14 +142,26 @@ fn argv(command: &ModelCommand, cluster: &str) -> Vec<String> {
         ModelCommand::Connect {
             generation,
             selection,
-        } => args.extend([
-            "connect".into(),
-            "--namespace=orka-system".into(),
-            "--route=copilot".into(),
-            format!("--provider={}", selection.provider),
-            format!("--model={}", selection.model),
-            format!("--credential-generation={generation}"),
-        ]),
+        } => {
+            args.extend([
+                "connect".into(),
+                "--namespace=orka-system".into(),
+                format!(
+                    "--route={}",
+                    if selection.vendor.is_some() {
+                        "key"
+                    } else {
+                        "copilot"
+                    }
+                ),
+                format!("--provider={}", selection.provider),
+                format!("--model={}", selection.model),
+                format!("--credential-generation={generation}"),
+            ]);
+            if let Some(vendor) = selection.vendor {
+                args.push(format!("--vendor={}", vendor.as_str()));
+            }
+        }
         ModelCommand::Disconnect { connection } => args.extend([
             "disconnect".into(),
             "--namespace=orka-system".into(),
@@ -108,10 +178,18 @@ impl<R: Runner> ModelLifecycle<R> {
             runner,
             phase: ModelPhase::Idle,
             connection: None,
+            attempted: None,
+            diagnostic: None,
+            retained: None,
         }
     }
+    pub fn ready_connection(&self) -> Option<&ModelConnection> {
+        self.connection
+            .as_ref()
+            .filter(|_| self.phase == ModelPhase::Ready)
+    }
     pub fn allows_credential_mutation(&self) -> bool {
-        self.phase == ModelPhase::Idle
+        self.phase == ModelPhase::Idle && self.retained.as_ref().is_none_or(|(_, done)| *done)
     }
     // The serving loop supplies actual store status and guards physical-root dispatch.
     pub fn handle(
@@ -121,22 +199,64 @@ impl<R: Runner> ModelLifecycle<R> {
     ) -> Option<ResultBody> {
         match request {
             RequestBody::ModelStatus {} => {}
+            RequestBody::ModelDisconnectRetained { connection } => {
+                // No token or current-boot model may coexist with prior-boot cleanup.
+                let pristine = self.phase == ModelPhase::Idle
+                    && self.attempted.is_none()
+                    && !credential.installed
+                    && credential.generation.is_none();
+                if !pristine
+                    || self
+                        .retained
+                        .as_ref()
+                        .is_some_and(|(known, _)| known != connection)
+                {
+                    return Some(ResultBody::Error {
+                        code: ErrorCode::Unavailable,
+                    });
+                }
+                if !self.retained.as_ref().is_some_and(|(_, done)| *done) {
+                    self.retained = Some((connection.clone(), false));
+                    let result = self.runner.execute(&ModelCommand::Disconnect {
+                        connection: connection.clone(),
+                    });
+                    let done = result.success && result.connection.as_ref() == Some(connection);
+                    self.retained = Some((connection.clone(), done));
+                    if !done {
+                        return Some(ResultBody::Error {
+                            code: ErrorCode::Unavailable,
+                        });
+                    }
+                }
+                return Some(ResultBody::Ready {});
+            }
             RequestBody::ModelConnect {
                 generation,
                 selection,
             } => {
-                if self.phase == ModelPhase::Idle
+                let same_attempt = self
+                    .attempted
+                    .as_ref()
+                    .is_some_and(|(g, s)| g == generation && s == selection);
+                if (self.phase == ModelPhase::Idle
+                    || (self.phase == ModelPhase::Unknown
+                        && self.connection.is_none()
+                        && same_attempt))
+                    && self.retained.as_ref().is_none_or(|(_, done)| *done)
                     && credential.installed
+                    && credential.profile == selection.credential_profile()
                     && credential.generation == Some(*generation)
                     && selection.valid()
                 {
-                    // An attempted external mutation is not implicitly safe to retry.
+                    // Only an explicit identical attempt may consult kmx's retained-state guard.
+                    self.attempted = Some((*generation, selection.clone()));
                     self.phase = ModelPhase::Unknown;
                     let result = self.runner.execute(&ModelCommand::Connect {
                         generation: *generation,
                         selection: selection.clone(),
                     });
                     self.connection = result.connection;
+                    self.diagnostic = result.diagnostic;
                     if result.success && self.connection.is_some() {
                         self.phase = ModelPhase::Ready;
                     }
@@ -149,9 +269,11 @@ impl<R: Runner> ModelLifecycle<R> {
                         let result = self.runner.execute(&ModelCommand::Disconnect {
                             connection: known.clone(),
                         });
+                        self.diagnostic = result.diagnostic;
                         if result.success && result.connection == Some(known) {
                             self.phase = ModelPhase::Idle;
                             self.connection = None;
+                            self.attempted = None;
                         }
                     }
                 }
@@ -159,9 +281,11 @@ impl<R: Runner> ModelLifecycle<R> {
             _ => return None,
         }
         Some(ResultBody::ModelState(ModelState {
+            retained_cleanup: true,
             phase: self.phase,
             connection: self.connection.clone(),
             credential,
+            diagnostic: self.diagnostic.clone(),
         }))
     }
 }
@@ -194,15 +318,22 @@ fn parse_reply(command: &ModelCommand, exit: i32, bytes: &[u8]) -> Outcome {
     let mut out = Outcome {
         connection: None,
         success: false,
+        diagnostic: Some(ModelDiagnostic {
+            classification: ModelDiagnosticClass::InvalidReply,
+            elapsed_ms: 0,
+            exit_code: Some(exit),
+            stage: None,
+            error_code: None,
+            stderr: None,
+        }),
     };
     let valid = (|| {
-        if bytes.len() > MAX_FILE {
-            return None;
-        }
-        let text = std::str::from_utf8(bytes).ok()?;
+        let oversized = bytes.len() > MAX_FILE;
+        let bytes = &bytes[..bytes.len().min(MAX_FILE)];
         let (mut invocation, mut terminal, mut success) = (None, false, false);
-        for (index, line) in text.lines().enumerate() {
-            let row: Value = serde_json::from_str(line).ok()?;
+        // Validate each row independently so an incomplete/invalid tail cannot erase prior evidence.
+        for (index, line) in bytes.split_inclusive(|b| *b == b'\n').enumerate() {
+            let row: Value = serde_json::from_slice(line).ok()?;
             let id = canonical_uuid(&row["operationId"])?;
             if terminal
                 || row["schemaVersion"] != 1
@@ -213,13 +344,27 @@ fn parse_reply(command: &ModelCommand, exit: i32, bytes: &[u8]) -> Outcome {
                 return None;
             }
             match row["kind"].as_str()? {
-                "kmx.event" => {}
+                "kmx.event" => {
+                    if let Ok(stage) = serde_json::from_value(row["stage"].clone()) {
+                        out.diagnostic.as_mut()?.stage = Some(stage);
+                    }
+                }
                 "kmx.result" => {
                     terminal = true;
+                    let diagnostic = out.diagnostic.as_mut()?;
+                    if let Ok(stage) = serde_json::from_value(row["error"]["stage"].clone()) {
+                        diagnostic.stage = Some(stage);
+                    }
+                    diagnostic.error_code =
+                        serde_json::from_value(row["error"]["code"].clone()).ok();
                     if !row["connection"].is_null() {
                         let c = &row["connection"];
                         let id = canonical_uuid(&c["id"])?;
-                        if c["route"] != "copilot"
+                        let identity_matches = match selection.vendor {
+                            Some(vendor) => c["route"] == "key" && c["vendor"] == vendor.as_str(),
+                            None => c["route"] == "copilot" && c.get("vendor").is_none(),
+                        };
+                        if !identity_matches
                             || c["provider"] != selection.provider
                             || c["model"] != selection.model
                             || c["credentialGeneration"] != generation.to_string()
@@ -249,9 +394,17 @@ fn parse_reply(command: &ModelCommand, exit: i32, bytes: &[u8]) -> Outcome {
                 _ => return None,
             }
         }
-        Some(terminal && success)
+        (!oversized && terminal).then_some(success)
     })();
     out.success = valid.unwrap_or(false);
+    if out.success {
+        out.diagnostic = None;
+    } else if valid.is_some() {
+        out.diagnostic
+            .as_mut()
+            .expect("failure diagnostic")
+            .classification = ModelDiagnosticClass::Exit;
+    }
     out
 }
 
@@ -276,6 +429,7 @@ mod tests {
     }
     fn selection() -> ModelSelection {
         ModelSelection {
+            vendor: None,
             provider: "copilot".into(),
             model: "gpt-4.1".into(),
         }
@@ -322,6 +476,328 @@ mod tests {
             selection: selection(),
         }
     }
+    fn key_command(vendor: ModelVendor) -> ModelCommand {
+        ModelCommand::Connect {
+            generation: id(1),
+            selection: ModelSelection {
+                vendor: Some(vendor),
+                provider: "workspace-model".into(),
+                model: "gpt-4.1".into(),
+            },
+        }
+    }
+    fn key_reply(vendor: ModelVendor) -> String {
+        READY
+            .replace(
+                r#""route":"copilot""#,
+                &format!(r#""route":"key","vendor":"{}""#, vendor.as_str()),
+            )
+            .replace(r#""provider":"copilot""#, r#""provider":"workspace-model""#)
+    }
+    #[test]
+    fn key_routes_bind_vendor_profile_and_reply_identity_through_disconnect() {
+        for vendor in [ModelVendor::Openai, ModelVendor::Anthropic] {
+            let command = key_command(vendor);
+            let args = argv(&command, "bridge-owned");
+            assert_eq!(args[0], "--context=kind-bridge-owned");
+            for want in [
+                "--container-engine=docker",
+                "--namespace=orka-system",
+                "--route=key",
+                "--provider=workspace-model",
+                "--model=gpt-4.1",
+                "-o=jsonl",
+            ] {
+                assert!(args.iter().any(|a| a == want), "{want}");
+            }
+            assert!(args.contains(&format!("--vendor={}", vendor.as_str())));
+            assert!(!args.iter().any(|a| a.contains("synthetic-key")));
+            let reply = key_reply(vendor);
+            let outcome = parse_reply(&command, 0, reply.as_bytes());
+            assert!(outcome.success);
+            let retained = outcome.connection.clone().unwrap();
+            assert_eq!(retained.selection.vendor, Some(vendor));
+            let disconnect = ModelCommand::Disconnect {
+                connection: retained.clone(),
+            };
+            let stopped = reply
+                .replace(
+                    "cluster.orka.model.connect",
+                    "cluster.orka.model.disconnect",
+                )
+                .replace("model_ready", "gateway_stopped");
+            assert!(parse_reply(&disconnect, 0, stopped.as_bytes()).success);
+            for bad in [
+                reply.replace(r#""route":"key""#, r#""route":"copilot""#),
+                reply.replace(&format!(r#","vendor":"{}""#, vendor.as_str()), ""),
+                reply.replace(
+                    &format!(r#""vendor":"{}""#, vendor.as_str()),
+                    r#""vendor":"other""#,
+                ),
+            ] {
+                let out = parse_reply(&command, 0, bad.as_bytes());
+                assert!(!out.success);
+                assert!(out.connection.is_none());
+                let bad_stop = bad
+                    .replace(
+                        "cluster.orka.model.connect",
+                        "cluster.orka.model.disconnect",
+                    )
+                    .replace("model_ready", "gateway_stopped");
+                assert!(!parse_reply(&disconnect, 0, bad_stop.as_bytes()).success);
+            }
+            let ModelCommand::Connect { selection, .. } = command else {
+                unreachable!()
+            };
+            let request = RequestBody::ModelConnect {
+                generation: id(1),
+                selection,
+            };
+            let mut m = lifecycle(vec![outcome]);
+            m.handle(credential(), &request);
+            assert!(
+                m.runner.calls.is_empty(),
+                "key must not consume Copilot credential"
+            );
+            let key_credential = CredentialState {
+                profile: 2,
+                ..credential()
+            };
+            m.handle(key_credential.clone(), &connect());
+            assert!(
+                m.runner.calls.is_empty(),
+                "Copilot must not consume key credential"
+            );
+            let Some(ResultBody::ModelState(s)) = m.handle(key_credential, &request) else {
+                panic!("state")
+            };
+            assert_eq!(s.phase, ModelPhase::Ready);
+            let mut reboot = lifecycle(vec![parse_reply(&disconnect, 0, stopped.as_bytes())]);
+            assert_eq!(
+                reboot.handle(
+                    pristine(),
+                    &RequestBody::ModelDisconnectRetained {
+                        connection: retained
+                    }
+                ),
+                Some(ResultBody::Ready {})
+            );
+        }
+        for vendor in ["", "openai"] {
+            let bad = READY.replace(
+                r#""route":"copilot""#,
+                &format!(r#""route":"copilot","vendor":"{vendor}""#),
+            );
+            assert!(!parse_reply(&command(), 0, bad.as_bytes()).success);
+        }
+    }
+    #[test]
+    fn key_failures_keep_safe_codes_and_stderr_without_vendor_output() {
+        for vendor in [ModelVendor::Openai, ModelVendor::Anthropic] {
+            for (code, message) in [
+                (
+                    "credential_rejected",
+                    "The model company rejected the credential.",
+                ),
+                (
+                    "provider_unreachable",
+                    "The workspace could not reach the model company.",
+                ),
+                (
+                    "model_unavailable",
+                    "The selected model is not advertised for this credential.",
+                ),
+            ] {
+                let reply = key_reply(vendor).replace(r#""outcome":"complete""#, &format!(r#""error":{{"code":"{code}","stage":"gateway","message":"synthetic-private-output"}},"outcome":"failed""#)).replace(r#""exitCode":0""#, r#""exitCode":1""#);
+                for stderr in [message, "synthetic-private-output"] {
+                    let out = collected_reply(
+                        &key_command(vendor),
+                        crate::engine::Collected {
+                            stdout: reply.as_bytes().to_vec(),
+                            stderr: format!("{stderr}\n").into_bytes(),
+                            elapsed_ms: 1,
+                            exit_code: Some(1),
+                            error: None,
+                        },
+                    );
+                    assert!(!out.success);
+                    assert!(
+                        out.connection.is_some(),
+                        "partial failure retains checked identity"
+                    );
+                    let diagnostic = serde_json::to_value(out.diagnostic.unwrap()).unwrap();
+                    assert_eq!(diagnostic["errorCode"], code);
+                    assert_eq!(
+                        diagnostic["stderr"],
+                        if stderr == message {
+                            message
+                        } else {
+                            "Stderr withheld."
+                        }
+                    );
+                    assert!(!diagnostic.to_string().contains("synthetic-private-output"));
+                }
+            }
+        }
+    }
+    fn retained_request() -> RequestBody {
+        serde_json::from_value(serde_json::json!({"op": "modelDisconnectRetained", "body": {"connection": connection()}})).unwrap()
+    }
+    fn pristine() -> CredentialState {
+        CredentialState {
+            profile: CREDENTIAL_PROFILE,
+            installed: false,
+            generation: None,
+        }
+    }
+    #[test]
+    fn retained_cleanup_uses_verified_disconnect_and_replays_ack_without_another_command() {
+        let mut m = lifecycle(vec![Outcome {
+            connection: Some(connection()),
+            success: true,
+            diagnostic: None,
+        }]);
+        assert!(matches!(
+            m.handle(pristine(), &RequestBody::ModelStatus {}),
+            Some(ResultBody::ModelState(ModelState {
+                retained_cleanup: true,
+                ..
+            }))
+        ));
+        for _ in 0..2 {
+            assert_eq!(
+                m.handle(pristine(), &retained_request()),
+                Some(ResultBody::Ready {})
+            );
+        }
+        assert_eq!(
+            m.runner.calls,
+            vec![ModelCommand::Disconnect {
+                connection: connection()
+            }]
+        );
+        assert!(m.ready_connection().is_none());
+    }
+    #[test]
+    fn retained_cleanup_then_connect_uses_the_new_generation() {
+        let old = connection();
+        let mut next = old.clone();
+        next.generation = id(7);
+        next.id = id(8);
+        let mut m = lifecycle(vec![
+            Outcome {
+                connection: Some(old.clone()),
+                success: true,
+                diagnostic: None,
+            },
+            Outcome {
+                connection: Some(next.clone()),
+                success: true,
+                diagnostic: None,
+            },
+        ]);
+        assert_eq!(
+            m.handle(pristine(), &retained_request()),
+            Some(ResultBody::Ready {})
+        );
+        assert!(m.allows_credential_mutation());
+        let result = m.handle(
+            CredentialState {
+                generation: Some(id(7)),
+                ..credential()
+            },
+            &RequestBody::ModelConnect {
+                generation: id(7),
+                selection: selection(),
+            },
+        );
+        assert!(matches!(
+            result,
+            Some(ResultBody::ModelState(ModelState {
+                phase: ModelPhase::Ready,
+                ..
+            }))
+        ));
+        assert_eq!(m.ready_connection(), Some(&next));
+        assert_eq!(
+            m.runner.calls,
+            vec![
+                ModelCommand::Disconnect { connection: old },
+                ModelCommand::Connect {
+                    generation: id(7),
+                    selection: selection()
+                }
+            ]
+        );
+    }
+    #[test]
+    fn retained_cleanup_refuses_current_boot_credentials_or_a_different_identity() {
+        let mut m = lifecycle(vec![Outcome {
+            connection: Some(connection()),
+            success: true,
+            diagnostic: None,
+        }]);
+        for current in [
+            credential(),
+            CredentialState {
+                installed: false,
+                ..credential()
+            },
+        ] {
+            assert_eq!(
+                m.handle(current, &retained_request()),
+                Some(ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                })
+            );
+        }
+        assert!(m.runner.calls.is_empty());
+        assert_eq!(
+            m.handle(pristine(), &retained_request()),
+            Some(ResultBody::Ready {})
+        );
+        let mut other = connection();
+        other.id = id(8);
+        let request = serde_json::from_value(
+            serde_json::json!({"op": "modelDisconnectRetained", "body": {"connection": other}}),
+        )
+        .unwrap();
+        assert_eq!(
+            m.handle(pristine(), &request),
+            Some(ResultBody::Error {
+                code: ErrorCode::Unavailable
+            })
+        );
+        assert_eq!(m.runner.calls.len(), 1);
+    }
+    #[test]
+    fn failed_retained_cleanup_is_not_acknowledged_and_can_only_retry_same_identity() {
+        let mut m = lifecycle(vec![
+            Outcome {
+                connection: Some(connection()),
+                success: false,
+                diagnostic: None,
+            },
+            Outcome {
+                connection: Some(connection()),
+                success: true,
+                diagnostic: None,
+            },
+        ]);
+        assert_eq!(
+            m.handle(pristine(), &retained_request()),
+            Some(ResultBody::Error {
+                code: ErrorCode::Unavailable
+            })
+        );
+        assert!(!m.allows_credential_mutation());
+        assert_eq!(
+            m.handle(pristine(), &retained_request()),
+            Some(ResultBody::Ready {})
+        );
+        assert!(m.allows_credential_mutation());
+        assert_eq!(m.runner.calls.len(), 2);
+    }
     #[test]
     fn wrong_generation_absent_credentials_and_invalid_selection_never_run() {
         let cases = [
@@ -344,6 +820,7 @@ mod tests {
                 RequestBody::ModelConnect {
                     generation: id(1),
                     selection: ModelSelection {
+                        vendor: None,
                         provider: "".into(),
                         model: "x".into(),
                     },
@@ -354,6 +831,7 @@ mod tests {
                 RequestBody::ModelConnect {
                     generation: id(1),
                     selection: ModelSelection {
+                        vendor: None,
                         provider: "x".into(),
                         model: "x\0".into(),
                     },
@@ -364,6 +842,7 @@ mod tests {
                 RequestBody::ModelConnect {
                     generation: id(1),
                     selection: ModelSelection {
+                        vendor: None,
                         provider: "x".into(),
                         model: "x".repeat(4097),
                     },
@@ -381,13 +860,323 @@ mod tests {
         }
     }
     #[test]
-    fn unknown_without_an_id_cannot_guess_cleanup_or_retry() {
+    fn explicit_same_attempt_retry_can_reconcile_unknown_without_a_connection() {
+        let mut m = lifecycle(vec![
+            Outcome {
+                connection: None,
+                success: false,
+                diagnostic: None,
+            },
+            parse_reply(&command(), 0, READY.as_bytes()),
+        ]);
+        assert_eq!(state(&mut m, &connect()).phase, ModelPhase::Unknown);
+        assert_eq!(
+            state(&mut m, &RequestBody::ModelStatus {}).phase,
+            ModelPhase::Unknown
+        );
+        assert_eq!(m.runner.calls.len(), 1);
+        assert_eq!(state(&mut m, &connect()).phase, ModelPhase::Ready);
+        assert_eq!(m.runner.calls.len(), 2);
+    }
+    const REFUSED: &str = r#"{"schemaVersion":1,"kind":"kmx.event","operation":"cluster.orka.model.connect","operationId":"00000000-0000-4000-8000-000000000004","seq":1,"elapsedMs":0,"event":"stage.started","stage":"gateway"}
+{"schemaVersion":1,"kind":"kmx.result","operation":"cluster.orka.model.connect","operationId":"00000000-0000-4000-8000-000000000004","seq":2,"elapsedMs":2,"outcome":"failed","verdict":"not_applicable","exitCode":1,"error":{"code":"execution_unknown","stage":"preflight","message":"The execution outcome is unknown.","recovery":"inspect_execution"},"mode":"apply","effects":[],"remoteState":"unknown"}
+"#;
+    fn failed_state(outcome: Outcome) -> serde_json::Value {
+        serde_json::to_value(state(&mut lifecycle(vec![outcome]), &connect())).unwrap()
+    }
+    #[test]
+    fn completed_parent_with_open_pipe_retains_validated_stage_on_timeout() {
+        use std::{
+            os::unix::process::CommandExt,
+            process::{Command, Stdio},
+            time::Duration,
+        };
+        let child = Command::new("/bin/sh")
+            .args(["-c", "printf '%s' \"$EVENT\"; sleep 60 & exit 0"])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("EVENT", READY)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let collected = crate::engine::collect_diagnostic(child, Duration::from_millis(100));
+        assert_eq!(
+            collected.error.as_ref().unwrap().kind(),
+            std::io::ErrorKind::TimedOut
+        );
+        assert_eq!(collected.exit_code, Some(0));
+        let state = failed_state(collected_reply(&command(), collected));
+        assert_eq!(state["phase"], "unknown");
+        assert_eq!(state["diagnostic"]["classification"], "timeout");
+        assert_eq!(state["diagnostic"]["stage"], "gateway");
+    }
+
+    #[test]
+    fn timeout_retains_partial_stage_and_withholds_stderr_without_stripping_prefixes() {
+        use std::{
+            os::unix::process::CommandExt,
+            process::{Command, Stdio},
+            time::Duration,
+        };
+        let event = READY.lines().next().unwrap();
+        let child = Command::new("/bin/sh")
+            .args(["-c", "printf '%s\\n' \"$EVENT\"; printf '%s\\n' 'Error: synthetic-private-output' >&2; sleep 60"])
+            .env_clear().env("PATH", "/usr/bin:/bin").env("EVENT", event)
+            .stdout(Stdio::piped()).stderr(Stdio::piped()).process_group(0).spawn().unwrap();
+        let collected = crate::engine::collect_diagnostic(child, Duration::from_millis(100));
+        assert_eq!(
+            collected.error.as_ref().unwrap().kind(),
+            std::io::ErrorKind::TimedOut
+        );
+        let s = failed_state(collected_reply(&command(), collected));
+        assert_eq!(s["diagnostic"]["classification"], "timeout");
+        assert_eq!(s["diagnostic"]["stage"], "gateway");
+        assert_eq!(s["diagnostic"]["stderr"], "Stderr withheld.");
+        assert!(s["diagnostic"]["elapsedMs"].as_u64().unwrap() >= 100);
+        assert!(!s.to_string().contains("synthetic-private-output"));
+    }
+    #[test]
+    fn stderr_allows_only_whole_fixed_messages_and_success_clears_diagnostics() {
+        for (stderr, expected) in [
+            (
+                b"The execution outcome is unknown.\n".as_slice(),
+                Some("The execution outcome is unknown."),
+            ),
+            (
+                b"Error: The execution outcome is unknown.\n".as_slice(),
+                Some("Stderr withheld."),
+            ),
+            (
+                b"The execution outcome is unknown.\nsynthetic-private-output",
+                Some("Stderr withheld."),
+            ),
+            (
+                b"\x1b[31mThe execution outcome is unknown.",
+                Some("Stderr withheld."),
+            ),
+            (b"\xff", Some("Stderr withheld.")),
+            (b"", None),
+        ] {
+            let out = collected_reply(
+                &command(),
+                crate::engine::Collected {
+                    stdout: REFUSED.as_bytes().to_vec(),
+                    stderr: stderr.to_vec(),
+                    elapsed_ms: 12,
+                    exit_code: Some(1),
+                    error: None,
+                },
+            );
+            let s = failed_state(out);
+            assert_eq!(s["diagnostic"]["stderr"].as_str(), expected);
+            assert!(!s.to_string().contains("synthetic-private-output"));
+        }
+        let mut m = lifecycle(vec![
+            parse_reply(&command(), 1, REFUSED.as_bytes()),
+            parse_reply(&command(), 0, READY.as_bytes()),
+        ]);
+        assert!(state(&mut m, &connect()).diagnostic.is_some());
+        assert!(state(&mut m, &connect()).diagnostic.is_none());
+    }
+    #[test]
+    fn malformed_tail_and_output_limit_do_not_erase_prior_validated_stage() {
+        let event = READY.lines().next().unwrap();
+        let mut bytes = format!("{event}\n").into_bytes();
+        bytes.push(0xff);
+        let s = failed_state(parse_reply(&command(), 0, &bytes));
+        assert_eq!(s["diagnostic"]["stage"], "gateway");
+        use std::{
+            os::unix::process::CommandExt,
+            process::{Command, Stdio},
+            time::Duration,
+        };
+        let child = Command::new("/bin/sh")
+            .args(["-c", "printf '%s\\n' \"$EVENT\"; head -c 1048577 /dev/zero"])
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("EVENT", event)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let collected = crate::engine::collect_diagnostic(child, Duration::from_secs(3));
+        assert_eq!(collected.stdout.len(), MAX_FILE + 1);
+        assert_eq!(
+            collected.error.as_ref().unwrap().kind(),
+            std::io::ErrorKind::FileTooLarge
+        );
+        let s = failed_state(collected_reply(&command(), collected));
+        assert_eq!(s["diagnostic"]["classification"], "outputLimit");
+        assert_eq!(s["diagnostic"]["stage"], "gateway");
+    }
+    #[test]
+    fn acknowledged_disconnect_unlocks_a_new_generation_and_selection() {
+        let stopped = READY
+            .replace(
+                "cluster.orka.model.connect",
+                "cluster.orka.model.disconnect",
+            )
+            .replace("model_ready", "gateway_stopped");
+        let next_selection = ModelSelection {
+            model: "other".into(),
+            ..selection()
+        };
+        let next_command = ModelCommand::Connect {
+            generation: id(3),
+            selection: next_selection.clone(),
+        };
+        let next_reply = READY
+            .replace("gpt-4.1", "other")
+            .replace("000000000001", "000000000003");
+        let mut m = lifecycle(vec![
+            parse_reply(&command(), 1, READY.as_bytes()),
+            parse_reply(
+                &ModelCommand::Disconnect {
+                    connection: connection(),
+                },
+                0,
+                stopped.as_bytes(),
+            ),
+            parse_reply(&next_command, 0, next_reply.as_bytes()),
+        ]);
+        assert_eq!(state(&mut m, &connect()).phase, ModelPhase::Unknown);
+        assert_eq!(state(&mut m, &connect()).phase, ModelPhase::Unknown);
+        assert_eq!(
+            m.runner.calls.len(),
+            1,
+            "known connection requires explicit disconnect"
+        );
+        assert_eq!(
+            state(&mut m, &RequestBody::ModelDisconnect { connection: id(2) }).phase,
+            ModelPhase::Idle
+        );
+        let reply = m
+            .handle(
+                CredentialState {
+                    generation: Some(id(3)),
+                    ..credential()
+                },
+                &RequestBody::ModelConnect {
+                    generation: id(3),
+                    selection: next_selection,
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            reply,
+            ResultBody::ModelState(ModelState {
+                phase: ModelPhase::Ready,
+                ..
+            })
+        ));
+        assert_eq!(m.runner.calls[2], next_command);
+    }
+    #[test]
+    fn parser_retains_validated_failure_stage_and_safe_error_code() {
+        let s = failed_state(parse_reply(&command(), 1, REFUSED.as_bytes()));
+        assert_eq!(s["diagnostic"]["classification"], "exit");
+        assert_eq!(s["diagnostic"]["stage"], "preflight");
+        assert_eq!(s["diagnostic"]["errorCode"], "execution_unknown");
+        assert_eq!(s["diagnostic"]["exitCode"], 1);
+    }
+    #[test]
+    fn malformed_reply_retains_only_prior_validated_stage_and_connection() {
+        let s = failed_state(parse_reply(&command(), 0, format!("{READY}{{").as_bytes()));
+        assert_eq!(s["diagnostic"]["classification"], "invalidReply");
+        assert_eq!(s["diagnostic"]["stage"], "gateway");
+        assert_eq!(s["connection"]["id"], id(2).to_string());
+        for reply in [
+            READY.replace("cluster.orka.model.connect", "wrong"),
+            READY.replace(r#""seq":1"#, r#""seq":3"#),
+            READY.replace("000000000004", "not-a-uuid"),
+        ] {
+            let s = failed_state(parse_reply(&command(), 0, reply.as_bytes()));
+            assert!(s["diagnostic"]["stage"].is_null());
+        }
+        let unsafe_reply = REFUSED
+            .replace("gateway", "synthetic-private-output")
+            .replace("preflight", "synthetic-private-output")
+            .replace("execution_unknown", "synthetic-private-output")
+            .replace(
+                "The execution outcome is unknown.",
+                "synthetic-private-output",
+            );
+        let s = failed_state(parse_reply(&command(), 1, unsafe_reply.as_bytes()));
+        assert!(!s.to_string().contains("synthetic-private-output"));
+    }
+    #[test]
+    fn explicit_retry_refusal_stays_unknown_and_rejects_mismatched_attempts() {
+        let mut m = lifecycle(vec![
+            parse_reply(&command(), 1, REFUSED.as_bytes()),
+            parse_reply(&command(), 1, REFUSED.as_bytes()),
+        ]);
+        assert_eq!(state(&mut m, &connect()).phase, ModelPhase::Unknown);
+        for selection in [
+            ModelSelection {
+                model: "other".into(),
+                ..selection()
+            },
+            ModelSelection {
+                vendor: None,
+                provider: "other".into(),
+                ..selection()
+            },
+        ] {
+            state(
+                &mut m,
+                &RequestBody::ModelConnect {
+                    generation: id(1),
+                    selection,
+                },
+            );
+        }
+        let RequestBody::ModelConnect { selection, .. } = connect() else {
+            unreachable!()
+        };
+        let reply = m
+            .handle(
+                CredentialState {
+                    generation: Some(id(3)),
+                    ..credential()
+                },
+                &RequestBody::ModelConnect {
+                    generation: id(3),
+                    selection,
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            reply,
+            ResultBody::ModelState(ModelState {
+                phase: ModelPhase::Unknown,
+                ..
+            })
+        ));
+        m.handle(
+            CredentialState {
+                installed: false,
+                ..credential()
+            },
+            &connect(),
+        );
+        state(&mut m, &RequestBody::ModelStatus {});
+        assert_eq!(m.runner.calls.len(), 1);
+        assert_eq!(state(&mut m, &connect()).phase, ModelPhase::Unknown);
+        assert_eq!(m.runner.calls.len(), 2);
+        assert_eq!(m.runner.calls[0], m.runner.calls[1]);
+        assert!(!m.allows_credential_mutation());
+    }
+    #[test]
+    fn unknown_without_an_id_cannot_guess_cleanup() {
         let mut m = lifecycle(vec![Outcome {
             connection: None,
             success: false,
+            diagnostic: None,
         }]);
         assert_eq!(state(&mut m, &connect()).phase, ModelPhase::Unknown);
-        state(&mut m, &connect());
         state(&mut m, &RequestBody::ModelDisconnect { connection: id(2) });
         assert!(!m.allows_credential_mutation());
         assert_eq!(m.runner.calls.len(), 1);
@@ -442,7 +1231,7 @@ mod tests {
             assert!(!parsed.success);
             let mut m = lifecycle(vec![parsed]);
             assert_eq!(state(&mut m, &connect()).phase, ModelPhase::Unknown);
-            state(&mut m, &connect());
+            state(&mut m, &RequestBody::ModelStatus {});
             assert_eq!(m.runner.calls.len(), 1);
         }
         // A valid observed ID survives a later malformed row, but never grants readiness.
@@ -546,10 +1335,12 @@ mod tests {
             Outcome {
                 connection: Some(connection()),
                 success: true,
+                diagnostic: None,
             },
             Outcome {
                 connection: Some(connection()),
                 success: true,
+                diagnostic: None,
             },
         ]);
         state(&mut m, &RequestBody::ModelDisconnect { connection: id(2) });
@@ -593,14 +1384,17 @@ mod tests {
             Outcome {
                 connection: Some(connection()),
                 success: false,
+                diagnostic: None,
             },
             Outcome {
                 connection: Some(connection()),
                 success: false,
+                diagnostic: None,
             },
             Outcome {
                 connection: Some(connection()),
                 success: true,
+                diagnostic: None,
             },
         ]);
         assert_eq!(state(&mut m, &connect()).phase, ModelPhase::Unknown);
@@ -634,6 +1428,7 @@ mod tests {
         let mut m = lifecycle(vec![Outcome {
             connection: Some(connection()),
             success: true,
+            diagnostic: None,
         }]);
         assert_eq!(
             state(&mut m, &RequestBody::ModelStatus {}).phase,

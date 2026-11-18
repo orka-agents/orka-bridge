@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::{
     fs::File,
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     path::Path,
 };
 use tokio::sync::{mpsc, watch};
@@ -139,6 +139,29 @@ pub struct InstalledImageSet {
     identity: ImageIdentity,
 }
 impl InstalledImageSet {
+    /// Binding self-consistency does not authenticate its claims. Reuse the
+    /// app-selected manifest for immutable boot facts, not the writable OS bytes.
+    #[cfg_attr(test, allow(dead_code))] // Some protocol harnesses omit the native caller.
+    pub(crate) fn validate_pinned(&self, image: &ResolvedImage) -> Result<(), ImageError> {
+        let manifest: serde_json::Value =
+            serde_json::from_slice(image.manifest_bytes()).map_err(|_| ImageError::Integrity)?;
+        let boot: Boot = serde_json::from_value(manifest["directBoot"].clone())
+            .map_err(|_| ImageError::Integrity)?;
+        let identity = image.identity();
+        if self.identity.manifest_sha256 != identity.manifest_sha256
+            || self.identity.image_id != identity.image_id
+            || self.identity.state_compatibility_id != identity.state_compatibility_id
+            || self.identity.build_source_commit != identity.build_source_commit
+            || self.target() != image.target()
+            || self.launch_mode() != image.launch_mode()
+            || self.binding.boot != boot
+            || self.binding.os.initial_bytes != image.disk_bytes()
+            || self.binding.os.initial_sha256 != image.disk_sha256()
+        {
+            return Err(ImageError::Integrity);
+        }
+        Ok(())
+    }
     pub fn installation_id(&self) -> Uuid {
         self.binding.installation_id
     }
@@ -393,7 +416,6 @@ fn validate_binding(
         || binding.image_generation != 1
         || binding.installation_id != target.id
         || binding.target != target_name(target.target)
-        || binding.identity.state_compatibility_id != target.compatibility
         || binding.installation_directory != dir_id(target.root)?
         || !valid_hash(&binding.identity.manifest_sha256)
         || binding.identity.image_id.is_empty()
@@ -515,18 +537,40 @@ fn verify_files(
 pub fn open_installed_image(
     target: &InstallationImageTarget<'_>,
 ) -> Result<InstalledImageSet, ImageError> {
+    let image = read_installed_image(target)?.ok_or(ImageError::RetainedImage)?;
+    if image.identity().state_compatibility_id != target.compatibility {
+        return Err(ImageError::RetainedImage);
+    }
+    Ok(image)
+}
+/// Owned structural inspection is not permission to boot a different image.
+#[cfg_attr(test, allow(dead_code))] // Some actual-source harnesses omit the native caller.
+pub(crate) fn inspect_installed_image(
+    target: &InstallationImageTarget<'_>,
+) -> Result<InstalledImageSet, ImageError> {
+    // Only absence can mean an unfinished new install. A committed malformed
+    // binding must not fall through to acquisition as RetainedImage does.
+    read_installed_image(target)
+        .map_err(|error| match error {
+            ImageError::RetainedImage => ImageError::Integrity,
+            other => other,
+        })?
+        .ok_or(ImageError::RetainedImage)
+}
+fn read_installed_image(
+    target: &InstallationImageTarget<'_>,
+) -> Result<Option<InstalledImageSet>, ImageError> {
     validate_target(target.root, target.owner, target.id)?;
-    let binding: Binding = json(target.root, "image-binding.json").map_err(|e| {
-        if missing(&e) {
-            ImageError::RetainedImage
-        } else {
-            e
-        }
-    })?;
+    match target.root.symlink_metadata("image-binding.json") {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(storage(error)),
+        Ok(_) => {}
+    }
+    let binding: Binding = json(target.root, "image-binding.json")?;
     validate_binding(&binding, target)?;
     verify_files(target.root, &binding, false, || Ok(()))?;
     sync_namespace(target, &binding)?;
-    Ok(installed(binding))
+    Ok(Some(installed(binding)))
 }
 fn sync_namespace(
     target: &InstallationImageTarget<'_>,
@@ -680,6 +724,14 @@ impl PreparedImage {
     pub fn target(&self) -> ImageTarget {
         self.target
     }
+    #[allow(dead_code)] // Portable image-only harnesses omit the native upgrade owner.
+    pub(crate) fn required_install_bytes(&self) -> Result<u64, ImageError> {
+        self.disk_bytes
+            .checked_add(self.boot.kernel.bytes)
+            .and_then(|n| n.checked_add(self.boot.initrd.bytes))
+            .and_then(|n| n.checked_add(bridge_runtime_protocol::STATE_BYTES))
+            .ok_or(ImageError::Integrity)
+    }
     pub async fn materialize(
         self,
         target: &InstallationImageTarget<'_>,
@@ -772,7 +824,7 @@ fn write_json<T: Serialize>(root: &Dir, name: &str, value: &T) -> Result<(), Ima
     file.sync_all().map_err(storage)
 }
 #[cfg(unix)]
-fn allocation(file: &File) -> Result<u64, ImageError> {
+pub(crate) fn allocation(file: &File) -> Result<u64, ImageError> {
     use std::os::unix::fs::MetadataExt;
     file.metadata()
         .map_err(storage)?
@@ -781,7 +833,7 @@ fn allocation(file: &File) -> Result<u64, ImageError> {
         .ok_or(ImageError::NoSpace)
 }
 #[cfg(windows)]
-fn allocation(file: &File) -> Result<u64, ImageError> {
+pub(crate) fn allocation(file: &File) -> Result<u64, ImageError> {
     use std::os::windows::io::AsRawHandle;
     use windows_sys::Win32::Storage::FileSystem::{
         FileStandardInfo, GetFileInformationByHandleEx, FILE_STANDARD_INFO,
@@ -799,6 +851,39 @@ fn allocation(file: &File) -> Result<u64, ImageError> {
         return Err(storage(std::io::Error::last_os_error()));
     }
     u64::try_from(info.AllocationSize).map_err(|_| ImageError::NoSpace)
+}
+fn resume_prefix(
+    context: &Context,
+    output: &mut File,
+    source: &mut File,
+    bytes: u64,
+) -> Result<(u64, Sha256), ImageError> {
+    let len = output.metadata().map_err(storage)?.len();
+    let mut count = 0;
+    let mut hashed = Sha256::new();
+    let mut retained = [0; 65536];
+    let mut original = [0; 65536];
+    if len <= bytes {
+        while count < len {
+            context.stop()?;
+            let n = (len - count).min(retained.len() as u64) as usize;
+            output.read_exact(&mut retained[..n]).map_err(storage)?;
+            source.read_exact(&mut original[..n]).map_err(storage)?;
+            if retained[..n] != original[..n] {
+                break;
+            }
+            hashed.update(&retained[..n]);
+            count += n as u64;
+        }
+        if count == len {
+            return Ok((count, hashed));
+        }
+    }
+    context.stop()?;
+    output.set_len(0).map_err(storage)?;
+    output.rewind().map_err(storage)?;
+    source.rewind().map_err(storage)?;
+    Ok((0, Sha256::new()))
 }
 fn copy(
     context: &Context,
@@ -821,10 +906,15 @@ fn copy(
     };
     if !reusable {
         let mut output = regular(stage, name, true, true)?;
-        output.set_len(0).map_err(storage)?;
-        context.space(bytes)?;
-        let mut count = 0u64;
-        let mut hashed = Sha256::new();
+        let (mut count, mut hashed) = resume_prefix(context, &mut output, &mut source, bytes)?;
+        context.space(bytes - count)?;
+        context
+            .events
+            .blocking_send(ImageProgress::Retained {
+                bytes: *done + count,
+                total,
+            })
+            .map_err(|_| ImageError::Cancelled)?;
         let mut buffer = [0; 65536];
         loop {
             context.stop()?;
@@ -853,6 +943,14 @@ fn copy(
         }
         output.sync_all().map_err(storage)?;
         drop(output);
+    } else {
+        context
+            .events
+            .blocking_send(ImageProgress::Retained {
+                bytes: *done + bytes,
+                total,
+            })
+            .map_err(|_| ImageError::Cancelled)?;
     }
     context.point(&format!("written-{name}"))?;
     let mut actual = regular(stage, name, true, false)?;
@@ -953,24 +1051,32 @@ fn run(image: PreparedImage, context: Context) -> Result<InstalledImageSet, Imag
             (FILES[1], boot.kernel.bytes, boot.kernel.sha256.as_str()),
             (FILES[2], boot.initrd.bytes, boot.initrd.sha256.as_str()),
         ] {
-            let missing = match read_file(&stage, name) {
-                Ok(mut file) => match digest(&mut file, bytes, sha, || context.stop()) {
-                    Ok(()) => false,
-                    Err(ImageError::Integrity) => {
-                        drop(file);
-                        regular(&stage, name, true, false)?
-                            .set_len(0)
-                            .map_err(storage)?;
-                        true
+            context.stop()?;
+            let remaining = match read_file(&stage, name) {
+                Ok(mut file) => {
+                    let len = file.metadata().map_err(storage)?.len();
+                    if len < bytes {
+                        // Keep the prefix; copy compares it to the source before appending.
+                        bytes - len
+                    } else {
+                        match digest(&mut file, bytes, sha, || context.stop()) {
+                            Ok(()) => 0,
+                            Err(ImageError::Integrity) => {
+                                context.stop()?;
+                                drop(file);
+                                regular(&stage, name, true, false)?
+                                    .set_len(0)
+                                    .map_err(storage)?;
+                                bytes
+                            }
+                            Err(e) => return Err(e),
+                        }
                     }
-                    Err(e) => return Err(e),
-                },
-                Err(e) if missing(&e) => true,
+                }
+                Err(e) if missing(&e) => bytes,
                 Err(e) => return Err(e),
             };
-            if missing {
-                needed = needed.checked_add(bytes).ok_or(ImageError::NoSpace)?;
-            }
+            needed = needed.checked_add(remaining).ok_or(ImageError::NoSpace)?;
         }
         context.space(needed)?;
         let mut done = 0;

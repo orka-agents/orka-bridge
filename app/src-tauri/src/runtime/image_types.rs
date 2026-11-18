@@ -17,7 +17,7 @@ pub struct TransferLimits {
     pub kernel_bytes: u64,
     pub initrd_bytes: u64,
 }
-/// Supplied only by trusted Rust selection. No shipping catalog or live pin is provided.
+/// Supplied only by trusted Rust selection, never renderer input.
 #[derive(Clone, Debug)]
 pub struct ImagePin {
     pub release_id: String,
@@ -50,13 +50,16 @@ pub enum ImageError {
     UnsafePath,
     Busy,
     RetainedImage,
+    WorkspaceUpdateRequired,
+    WorkspaceVersionUnsupported,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaunchMode {
     Uefi,
     LinuxDirect,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageIdentity {
     pub manifest_sha256: String,
     pub image_id: String,
@@ -65,10 +68,21 @@ pub struct ImageIdentity {
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ImageProgress {
-    Download { bytes: u64, total: u64 },
+    Download {
+        bytes: u64,
+        total: u64,
+    },
     Verifying,
     Verified,
-    Materializing { bytes: u64, total: u64 },
+    Materializing {
+        bytes: u64,
+        total: u64,
+    },
+    /// Retained bytes are a baseline, not fresh movement for transfer-rate estimates.
+    Retained {
+        bytes: u64,
+        total: u64,
+    },
 }
 
 /// A revalidated factory read capability; private installed copies still require verification.

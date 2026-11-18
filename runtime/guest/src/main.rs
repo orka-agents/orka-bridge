@@ -327,29 +327,41 @@ fn control(
             RequestBody::CredentialStatus {}
             | RequestBody::ModelStatus {}
             | RequestBody::ModelConnect { .. }
-            | RequestBody::ModelDisconnect { .. } => serving.2.status(),
+            | RequestBody::ModelDisconnect { .. }
+            | RequestBody::ModelDisconnectRetained { .. } => serving.2.status(),
             RequestBody::CredentialPublish {
                 expected_generation,
                 token,
-            } => serving.2.publish(*expected_generation, token.as_bytes()),
+                profile,
+            } => serving
+                .2
+                .publish(*profile, *expected_generation, token.as_bytes()),
             RequestBody::CredentialClear {
                 expected_generation,
             } => serving.2.clear(*expected_generation),
             _ => unreachable!("credential dispatcher selects only its closed operations"),
         })
     });
-    // Orka authoring is physical-channel authority, never the root-local socket.
-    let local_orka = peer != "channel"
-        && matches!(
-            &r.body,
-            RequestBody::Execute {
-                action: EngineActionWire::Orka { .. },
-                ..
-            } | RequestBody::Engine(EngineActionWire::Orka { .. })
-        );
+    let catalog = matches!(
+        &r.body,
+        RequestBody::Execute {
+            action: EngineActionWire::WorkspaceCatalog {},
+            ..
+        } | RequestBody::Engine(EngineActionWire::WorkspaceCatalog {})
+    );
+    let provider = serving
+        .3
+        .ready_connection()
+        .map(|c| (c.selection.provider.clone(), c.selection.vendor));
+    serving.0.runner_mut().catalog_provider = if peer == "channel" && catalog {
+        provider.clone()
+    } else {
+        None
+    };
+    let local_orka = !service::authoring_allowed(peer == "channel", &r.body);
     let (body, stop) = if let Some(reply) = credentials {
         (reply, false)
-    } else if local_orka {
+    } else if local_orka || (catalog && provider.is_none()) {
         (
             ResultBody::Error {
                 code: ErrorCode::Unavailable,
@@ -369,6 +381,7 @@ fn control(
             false,
         )
     };
+    serving.0.runner_mut().catalog_provider = None;
     let reply = write(
         diagnostics::Context::new("serve", write_phase),
         io.get_mut(),
@@ -402,7 +415,7 @@ fn private_result<R: model::Runner>(
     match run() {
         Ok(s) => {
             let credential = CredentialState {
-                profile: CREDENTIAL_PROFILE,
+                profile: s.profile,
                 generation: s.generation,
                 installed: s.installed,
             };
@@ -682,11 +695,13 @@ mod tests {
             model::Outcome {
                 connection: Some(connection),
                 success: true,
+                diagnostic: None,
             }
         }
     }
     fn metadata() -> io::Result<bridge_guest::credentials::State> {
         Ok(bridge_guest::credentials::State {
+            profile: CREDENTIAL_PROFILE,
             generation: Some(Uuid::from_u128(5)),
             installed: true,
         })
@@ -705,11 +720,39 @@ mod tests {
         }
     }
     #[test]
+    fn private_dispatch_returns_api_key_profile_without_local_authority() {
+        let request = RequestBody::CredentialPublish {
+            profile: MODEL_API_KEY_PROFILE,
+            expected_generation: None,
+            token: CredentialPayload::new(b"synthetic-key").unwrap(),
+        };
+        assert_eq!(
+            service::credential_request(false, &request, || panic!("local credential callback")),
+            Some(ResultBody::Error {
+                code: ErrorCode::Unavailable
+            })
+        );
+        let mut lifecycle = model::ModelLifecycle::new(ModelRunner);
+        let result = private_result(&mut lifecycle, &request, || {
+            Ok(bridge_guest::credentials::State {
+                profile: MODEL_API_KEY_PROFILE,
+                generation: Some(Uuid::from_u128(5)),
+                installed: true,
+            })
+        });
+        let ResultBody::CredentialState(state) = result else {
+            panic!("credential reply")
+        };
+        assert_eq!(state.profile, 2);
+        assert!(state.installed);
+    }
+    #[test]
     fn private_dispatch_connect_status_disconnect_preserves_one_lifecycle() {
         let mut lifecycle = model::ModelLifecycle::new(ModelRunner);
         let connect = RequestBody::ModelConnect {
             generation: Uuid::from_u128(5),
             selection: ModelSelection {
+                vendor: None,
                 provider: "copilot".into(),
                 model: "gpt-4.1".into(),
             },
@@ -742,6 +785,7 @@ mod tests {
         let connect = RequestBody::ModelConnect {
             generation: Uuid::from_u128(5),
             selection: ModelSelection {
+                vendor: None,
                 provider: "copilot".into(),
                 model: "gpt-4.1".into(),
             },
@@ -770,6 +814,7 @@ mod tests {
         );
         for request in [
             RequestBody::CredentialPublish {
+                profile: CREDENTIAL_PROFILE,
                 expected_generation: Some(Uuid::from_u128(5)),
                 token: CredentialPayload::new(b"synthetic").unwrap(),
             },
@@ -804,6 +849,7 @@ mod tests {
                 model::Outcome {
                     connection: None,
                     success: false,
+                    diagnostic: None,
                 }
             }
         }
@@ -811,6 +857,7 @@ mod tests {
         let connect = RequestBody::ModelConnect {
             generation: Uuid::from_u128(5),
             selection: ModelSelection {
+                vendor: None,
                 provider: "copilot".into(),
                 model: "gpt-4.1".into(),
             },
@@ -828,6 +875,7 @@ mod tests {
         ));
         for request in [
             RequestBody::CredentialPublish {
+                profile: CREDENTIAL_PROFILE,
                 expected_generation: Some(Uuid::from_u128(5)),
                 token: CredentialPayload::new(b"synthetic").unwrap(),
             },
@@ -872,6 +920,7 @@ mod tests {
         };
         let reply = private_result(&mut idle, &clear, || {
             Ok(bridge_guest::credentials::State {
+                profile: CREDENTIAL_PROFILE,
                 generation: Some(Uuid::from_u128(5)),
                 installed: false,
             })
@@ -1300,6 +1349,9 @@ mod tests {
     fn local_socket_orka_is_refused_before_operations_even_with_a_valid_id() {
         struct NoSystem;
         impl BootSystem for NoSystem {
+            fn infrastructure(&mut self, _: &BootDescriptor) -> io::Result<InfrastructureState> {
+                unreachable!()
+            }
             fn probe(&mut self) -> io::Result<early::Disk> {
                 unreachable!()
             }
@@ -1345,6 +1397,26 @@ mod tests {
         let operation = Uuid::new_v4();
         for (id, body) in [
             (
+                9,
+                RequestBody::Execute {
+                    operation: Uuid::new_v4(),
+                    action: serde_json::from_value(
+                        serde_json::json!({"type":"cleanupRunAgent","uid":"recorded-uid"}),
+                    )
+                    .unwrap(),
+                    snapshot: None,
+                },
+            ),
+            (
+                10,
+                RequestBody::Engine(
+                    serde_json::from_value(
+                        serde_json::json!({"type":"cleanupRunAgent","uid":"recorded-uid"}),
+                    )
+                    .unwrap(),
+                ),
+            ),
+            (
                 3,
                 RequestBody::Execute {
                     operation,
@@ -1355,6 +1427,50 @@ mod tests {
                 },
             ),
             (4, RequestBody::Engine(EngineActionWire::Orka { request })),
+            (
+                7,
+                RequestBody::Execute {
+                    operation: Uuid::new_v4(),
+                    action: EngineActionWire::RunWorker {
+                        name: "bridge-task-0123456789abcdef0123456789abcdef".into(),
+                        uid: "ack-uid".into(),
+                    },
+                    snapshot: None,
+                },
+            ),
+            (
+                8,
+                RequestBody::Engine(EngineActionWire::RunWorker {
+                    name: "bridge-task-0123456789abcdef0123456789abcdef".into(),
+                    uid: "ack-uid".into(),
+                }),
+            ),
+            (
+                5,
+                RequestBody::Execute {
+                    operation: Uuid::new_v4(),
+                    action: EngineActionWire::OrkaChat {
+                        request: ChatRequest {
+                            method: ChatMethod::Delete,
+                            path: "tasks/bridge-chat-task-0123456789abcdef0123456789abcdef".into(),
+                            after: None,
+                            body: None,
+                        },
+                    },
+                    snapshot: None,
+                },
+            ),
+            (
+                6,
+                RequestBody::Engine(EngineActionWire::OrkaChat {
+                    request: ChatRequest {
+                        method: ChatMethod::Get,
+                        path: "sessions/bridge-chat-0123456789abcdef0123456789abcdef".into(),
+                        after: None,
+                        body: None,
+                    },
+                }),
+            ),
         ] {
             let (mut host, guest) = UnixStream::pair().unwrap();
             host.write_all(
@@ -1429,6 +1545,9 @@ mod tests {
             unreachable!()
         }
         fn ready(&mut self, _: &BootDescriptor) -> io::Result<()> {
+            unreachable!()
+        }
+        fn infrastructure(&mut self, _: &BootDescriptor) -> io::Result<InfrastructureState> {
             unreachable!()
         }
         fn save_boot(&mut self, _: &BootDescriptor) -> io::Result<()> {

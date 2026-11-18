@@ -29,6 +29,7 @@ impl Session {
                 stage,
                 guest_nonce: Uuid::new_v4(),
                 accepted_boot_nonce: saved.as_ref().map(|b| b.boot_nonce),
+                run_cleanup: stage == Stage::Serve,
             },
             saved,
             bytes: Vec::new(),
@@ -125,15 +126,17 @@ pub fn handle(
     r: &WireRequest,
 ) -> (ResultBody, bool) {
     match &r.body {
-        RequestBody::Readiness {} => match system.ready(b) {
-            Ok(()) => (ResultBody::Ready {}, false),
-            Err(_) => (
-                ResultBody::Error {
-                    code: ErrorCode::IncompatibleState,
-                },
-                false,
-            ),
-        },
+        RequestBody::Readiness {} => {
+            match system.ready(b).and_then(|()| system.infrastructure(b)) {
+                Ok(state) => (ResultBody::Infrastructure(state), false),
+                Err(_) => (
+                    ResultBody::Error {
+                        code: ErrorCode::IncompatibleState,
+                    },
+                    false,
+                ),
+            }
+        }
         // Acceptance only: the caller acknowledges before requesting poweroff,
         // because poweroff stops this endpoint and can drop a later reply.
         RequestBody::Shutdown {} => (ResultBody::Ready {}, true),
@@ -144,6 +147,27 @@ pub fn handle(
             false,
         ),
     }
+}
+/// Authoring and catalogs share physical-channel authority, not the root-local socket.
+pub fn authoring_allowed(host_channel: bool, request: &RequestBody) -> bool {
+    host_channel
+        || !matches!(
+            request,
+            RequestBody::Execute {
+                action: EngineActionWire::Orka { .. }
+                    | EngineActionWire::OrkaChat { .. }
+                    | EngineActionWire::RunWorker { .. }
+                    | EngineActionWire::CleanupRunAgent { .. }
+                    | EngineActionWire::WorkspaceCatalog {},
+                ..
+            } | RequestBody::Engine(
+                EngineActionWire::Orka { .. }
+                    | EngineActionWire::OrkaChat { .. }
+                    | EngineActionWire::RunWorker { .. }
+                    | EngineActionWire::CleanupRunAgent { .. }
+                    | EngineActionWire::WorkspaceCatalog {}
+            )
+        )
 }
 /// Credential authority is the owned physical channel, not the local kmx socket.
 pub fn credential_request(
@@ -159,6 +183,7 @@ pub fn credential_request(
             | RequestBody::ModelStatus {}
             | RequestBody::ModelConnect { .. }
             | RequestBody::ModelDisconnect { .. }
+            | RequestBody::ModelDisconnectRetained { .. }
     ) {
         Some(if host_channel {
             run()
@@ -192,19 +217,33 @@ mod credential_tests {
             RequestBody::ModelConnect {
                 generation: id,
                 selection: ModelSelection {
+                    vendor: None,
                     provider: "copilot".into(),
                     model: "gpt-4.1".into(),
                 },
             },
             RequestBody::ModelDisconnect { connection: id },
+            RequestBody::ModelDisconnectRetained {
+                connection: ModelConnection {
+                    id,
+                    generation: id,
+                    selection: ModelSelection {
+                        vendor: None,
+                        provider: "copilot".into(),
+                        model: "gpt-4.1".into(),
+                    },
+                },
+            },
         ] {
             for host in [false, true] {
                 let called = std::cell::Cell::new(false);
                 let reply = credential_request(host, &request, || {
                     called.set(true);
                     ResultBody::ModelState(ModelState {
+                        retained_cleanup: true,
                         phase: ModelPhase::Idle,
                         connection: None,
+                        diagnostic: None,
                         credential: CredentialState {
                             profile: CREDENTIAL_PROFILE,
                             generation: None,
