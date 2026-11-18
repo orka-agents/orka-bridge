@@ -1,9 +1,147 @@
 // Exercise the real compiled frontend in the separate synthetic native fixture.
 // This is UI evidence only, not a VM, OS credential-store or inference walk.
+import Foundation
 import AppKit
 import CoreGraphics
 import ApplicationServices
 import Vision
+
+// Test scope policy without opening a display or launching the fixture.
+func runNativeModelScopeTests(_ manifest: NativeModelCaptureManifest) throws {
+    func check(_ value: Bool, _ message: String) throws {
+        if !value { throw NativeModelHarnessError("Scope self-test: \(message)") }
+    }
+    func rejects(_ message: String, _ body: () throws -> Void) throws {
+        var rejected = false
+        do { try body() } catch { rejected = true }
+        try check(rejected, message)
+    }
+    let normal = ["output", "fixture", "light"]
+    let defaultRun = try parseNativeModelArguments(normal)
+    try check(defaultRun.scope == .all && defaultRun.scope.startsInstalling, "three arguments retain the full installing journey")
+    for (name, model, destinations, installing) in [("all", true, true, true), ("model", true, false, true), ("destinations-workspace", false, true, false)] {
+        let parsed = try parseNativeModelArguments(normal + [name])
+        try check(parsed.scope.runsModel == model && parsed.scope.runsDestinations == destinations && parsed.scope.startsInstalling == installing, "scope dispatch \(name)")
+    }
+    try check(try parseNativeModelArguments(["output", "fixture", "dark"]).theme == "dark", "dark theme")
+    for bad in [[], ["output"], ["output", "fixture"], ["output", "fixture", "sepia"], normal + ["unknown"], normal + ["all", "extra"], ["--self-test", "extra"]] {
+        try rejects("invalid invocation \(bad)") { _ = try parseNativeModelArguments(bad) }
+    }
+    try manifest.validate()
+    try check(manifest.model.count == 198 && manifest.destinationsWorkspace.count == 45, "198/45 returning-workspace partition")
+    for name in ["local-catalog-no-destination-wide", "local-workspace-ready-wide", "local-workspace-stop-failed-details-minimum", "local-designer-waiting-chat-minimum", "local-workspace-image-update-minimum", "local-workspace-image-unsupported-minimum"] {
+        try check(manifest.destinationsWorkspace.contains(name), "complete allocated journey includes \(name)")
+    }
+    for scope in NativeModelScope.allCases {
+        var coverage = NativeModelCoverage(expected: Set(manifest.names(for: scope)))
+        try coverage.record("local-probe"); try coverage.record("local-probe")
+        for name in manifest.names(for: scope) { try coverage.record(name) }
+        try coverage.finish()
+        try check(coverage.names.count == manifest.names(for: scope).count, "probes do not count as named captures")
+    }
+    var complete = NativeModelCoverage(expected: ["first", "second"])
+    try complete.record("first"); try complete.record("second")
+    try complete.finish()
+    try rejects("duplicate capture rejected") { try complete.record("first") }
+    try rejects("wrong scope capture rejected") { try complete.record("elsewhere") }
+    var missing = NativeModelCoverage(expected: ["first", "second"])
+    try missing.record("first")
+    try rejects("missing capture rejected at completion") { try missing.finish() }
+    var duplicate = manifest
+    duplicate.model[1] = duplicate.model[0]
+    try rejects("duplicate manifest entry rejected") { try duplicate.validate() }
+    var overlap = manifest
+    overlap.destinationsWorkspace[0] = overlap.model[0]
+    try rejects("overlapping manifest groups rejected") { try overlap.validate() }
+}
+
+enum NativeModelScope: String, CaseIterable {
+    case all, model
+    case destinationsWorkspace = "destinations-workspace"
+    var runsModel: Bool { self != .destinationsWorkspace }
+    var runsDestinations: Bool { self != .model }
+    var startsInstalling: Bool { self != .destinationsWorkspace }
+}
+struct NativeModelInvocation {
+    let output: String
+    let binary: String
+    let theme: String
+    let scope: NativeModelScope
+}
+struct NativeModelHarnessError: Error, CustomStringConvertible {
+    let description: String
+    init(_ description: String) { self.description = description }
+}
+func parseNativeModelArguments(_ arguments: [String]) throws -> NativeModelInvocation {
+    guard arguments.count == 3 || arguments.count == 4,
+          ["light", "dark"].contains(arguments[2]),
+          let scope = NativeModelScope(rawValue: arguments.count == 4 ? arguments[3] : "all") else {
+        throw NativeModelHarnessError("Usage: native-model-macos.swift OUTPUT FIXTURE light|dark [all|model|destinations-workspace], or --self-test")
+    }
+    return NativeModelInvocation(output: arguments[0], binary: arguments[1], theme: arguments[2], scope: scope)
+}
+struct NativeModelCaptureManifest: Decodable {
+    var model: [String]
+    var destinationsWorkspace: [String]
+    enum CodingKeys: String, CodingKey {
+        case model
+        case destinationsWorkspace = "destinations-workspace"
+    }
+    func names(for scope: NativeModelScope) -> [String] {
+        switch scope {
+        case .all: return model + destinationsWorkspace
+        case .model: return model
+        case .destinationsWorkspace: return destinationsWorkspace
+        }
+    }
+    func validate() throws {
+        guard model.count == 198, destinationsWorkspace.count == 45,
+              Set(model).count == model.count,
+              Set(destinationsWorkspace).count == destinationsWorkspace.count,
+              Set(model).isDisjoint(with: Set(destinationsWorkspace)),
+              !(model + destinationsWorkspace).contains("local-probe") else {
+            throw NativeModelHarnessError("Capture manifest must partition 243 unique named captures into 198 model and 45 destination/workspace names")
+        }
+    }
+}
+struct NativeModelCoverage {
+    let expected: Set<String>
+    private(set) var names: [String] = []
+    mutating func record(_ name: String) throws {
+        if name == "local-probe" { return }
+        guard expected.contains(name) else { throw NativeModelHarnessError("Named capture outside selected scope: \(name)") }
+        guard !names.contains(name) else { throw NativeModelHarnessError("Duplicate named capture: \(name)") }
+        names.append(name)
+    }
+    func finish() throws {
+        guard Set(names) == expected else {
+            throw NativeModelHarnessError("Missing named captures: \(expected.subtracting(names).sorted())")
+        }
+    }
+}
+func nativeModelStartup() -> (NativeModelInvocation, NativeModelCaptureManifest) {
+    do {
+        let arguments = Array(CommandLine.arguments.dropFirst())
+        let manifestURL = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("native-model-captures.json")
+        if arguments == ["--self-test"] {
+            let manifest = try JSONDecoder().decode(NativeModelCaptureManifest.self, from: Data(contentsOf: manifestURL))
+            try runNativeModelScopeTests(manifest)
+            print("PASS native model scope arguments, manifest partition and runtime coverage checker")
+            exit(0)
+        }
+        let invocation = try parseNativeModelArguments(arguments)
+        let manifest = try JSONDecoder().decode(NativeModelCaptureManifest.self, from: Data(contentsOf: manifestURL))
+        try manifest.validate()
+        return (invocation, manifest)
+    } catch {
+        FileHandle.standardError.write(Data("\(error)\n".utf8))
+        exit(2)
+    }
+}
+// All argument/self-test paths finish before the first native global initializer.
+let (invocation, captureManifest) = nativeModelStartup()
+let scope = invocation.scope
+var coverage = NativeModelCoverage(expected: Set(captureManifest.names(for: scope)))
 
 let display = CGMainDisplayID()
 var previousDisplayMode: CGDisplayMode?
@@ -32,12 +170,12 @@ if CGDisplayBounds(display).width < 1280 || CGDisplayBounds(display).height < 10
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 1))
 }
 defer { restoreDisplay() }
-let output = CommandLine.arguments[1]
-let theme = CommandLine.arguments[3]
+let output = invocation.output
+let theme = invocation.theme
 require(["light", "dark"].contains(theme), "Expected light or dark")
 try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
 let child = Process()
-child.executableURL = URL(fileURLWithPath: CommandLine.arguments[2])
+child.executableURL = URL(fileURLWithPath: invocation.binary)
 let keyCheckRelease = URL(fileURLWithPath: output).appendingPathComponent("key-check-release-\(UUID().uuidString)")
 let setupProgress = URL(fileURLWithPath: output).appendingPathComponent("setup-progress-\(UUID().uuidString)")
 let catalogRelease = URL(fileURLWithPath: output).appendingPathComponent("catalog-release-\(UUID().uuidString)")
@@ -45,7 +183,9 @@ defer { try? FileManager.default.removeItem(at: catalogRelease) }
 // Written only for the fresh-profile first-test outcomes; absent keeps the fixed failed report.
 let firstTestOutcome = URL(fileURLWithPath: output).appendingPathComponent("first-test-outcome-\(UUID().uuidString)")
 defer { try? FileManager.default.removeItem(at: firstTestOutcome) }
-try "installing".write(to: setupProgress, atomically: true, encoding: .utf8)
+if scope.startsInstalling {
+    try "installing".write(to: setupProgress, atomically: true, encoding: .utf8)
+}
 defer { try? FileManager.default.removeItem(at: setupProgress) }
 let chatPhase = URL(fileURLWithPath: output).appendingPathComponent("chat-phase-\(UUID().uuidString)")
 try "pending".write(to: chatPhase, atomically: true, encoding: .utf8)
@@ -154,6 +294,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
             let png = bitmap.representation(using: .png, properties: [:]) else { fatalError("Cannot compose approved comparison") }
         try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
     }
+    try coverage.record(name)
     print("PASS \(name): real native frontend, synthetic IPC only")
     return rows
 }
@@ -180,6 +321,9 @@ func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     }
     Thread.sleep(forTimeInterval: 1)
 }
+// Keep journey bodies unchanged; only execution is partitioned.
+var rows: [VNRecognizedTextObservation] = []
+if scope.runsModel {
 // Exercise the four-step list with only synthetic IPC, at the actual minimum and wide sizes.
 waitForButton("Change")
 for (phase, expected) in [("installing", "Downloading, 1.1 of 2.1 GB"), ("starting", "45 seconds elapsed")] {
@@ -223,7 +367,7 @@ Thread.sleep(forTimeInterval: 0.6)
 click("Clusters", [])
 waitForButton("Connect the AI")
 // A running VM is not completed setup: its local row offers the current AI action.
-var rows = try capture("local-places-wide", ["Choose where agents run", "This computer", "Connect the AI"])
+rows = try capture("local-places-wide", ["Choose where agents run", "This computer", "Connect the AI"])
 require(enabledButton("Connect the AI") != nil && enabledButton("Manage") == nil && enabledButton("Set up") == nil,
         "VM-ready local card must offer Connect the AI, not Manage")
 click("Connect the AI", rows)
@@ -312,7 +456,7 @@ localSize(1280, 800)
 scroll(4000)
 require(enabledButton("Remove sign-in") == nil, "Remove must be absent before the first sign-in attempt")
 click("Connect the AI", rows)
-rows = try capture("local-completed", ["This computer", "Workspace ready", "Stop the workspace", "Run your first agent"])
+rows = try capture("local-completed", ["This computer", "Workspace ready", "Run your first agent"])
 require(!rows.contains { ($0.topCandidates(1).first?.string ?? "").range(of: "[Ss]tep [0-9]+ of [45]", options: .regularExpression) != nil },
         "Completed local page must not keep a setup counter")
 // Connected now only exposes Change; it opens a panel before the existing removal confirmation.
@@ -375,7 +519,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
 localSize(1280, 800); scroll(4000)
 click("By cluster", [])
 click("Clusters", [])
-// Workspace Stop is exercised after the original baseline coverage below.
+// Returning workspace observations follow the original baseline coverage below.
 // Reuse the setup-progress selector and the existing Places entry to remount real
 // preflight for each bounded synthetic result. No native admission command runs.
 // This synthetic reset is a fresh choice, so acknowledge Welcome explicitly;
@@ -491,6 +635,7 @@ click("Close picker", [])
 localSize(1280, 800); scroll(4000)
 click("Clusters", [])
 rows = try capture("local-first-test-failed", ["This computer", "Its test failed", "See what it answered"])
+}
 func reveal(_ label: String) {
     for _ in 0..<8 {
         let frame = window()!.1
@@ -507,6 +652,7 @@ func waitForNativeText(_ text: String) {
     }
     require(false, "Native text did not appear: \(text)")
 }
+if scope.runsModel {
 // Fresh-profile automatic outcomes use the explicit preflight fixture reset, never Stop.
 // This restores the sample and reloads the renderer without its first-test claim; no VM or files.
 for outcome in ["passed", "unknown"] {
@@ -545,6 +691,7 @@ for outcome in ["passed", "unknown"] {
 }
 try FileManager.default.removeItem(at: firstTestOutcome)
 localSize(1280, 800); scroll(4000)
+}
 // Compare a real accessibility control before/after scrolling, not an image hash or a viewport guess.
 func setupFitCapture(_ name: String, _ expected: [String], _ anchor: String) throws {
     localSize(1028, 729); scroll(4000)
@@ -620,6 +767,7 @@ func keyCapture(_ state: String, _ expected: [String], compact: Bool = false) th
     }
     if compact { localSize(1280, 800); scroll(4000) }
 }
+if scope.runsModel {
 // Change opens a panel with a quiet Remove action, then the existing removal confirmation.
 click("Change", [])
 click("Remove saved sign-in", [])
@@ -740,6 +888,7 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     scroll(4000)
     click("Agent", [])
 }
+}
 func focusedButtonTitle() -> String? {
     var focused: CFTypeRef?
     let app = AXUIElementCreateApplication(child.processIdentifier)
@@ -748,6 +897,7 @@ func focusedButtonTitle() -> String? {
     let element = focused as! AXUIElement
     return attribute(element, "AXTitle") as? String ?? attribute(element, "AXDescription") as? String
 }
+if scope.runsModel {
 for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact")] {
     localSize(CGFloat(width), CGFloat(height))
     scroll(4000)
@@ -806,6 +956,7 @@ scroll(4000)
 // Edit the fixture's Instructions field through the native text control. Its
 // writer is in-memory only, so no creator file or credential can be changed.
 scroll(4000)
+}
 func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
     var value: CFTypeRef?
     return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
@@ -1003,6 +1154,7 @@ func typeUnicode(_ text: String) {
     }
     Thread.sleep(forTimeInterval: 0.3)
 }
+if scope.runsModel {
 // Controls use the compiled frontend with a synthetic catalog, not real tools.
 for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 900, "compact")] {
     localSize(CGFloat(width), CGFloat(height))
@@ -1079,6 +1231,7 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
 }
 // Saved reply declaration, edited through File view (the existing in-memory fixture writer) so it works while the
 // picker blocks adding the tool. Each size ends with the original file text restored.
+}
 func fileEditor() -> AXUIElement {
     let found = nativeElements().filter { attribute($0, "AXRole") as? String == "AXTextArea" && (attribute($0, "AXValue") as? String)?.hasPrefix("---") == true }
     require(found.count == 1, "Expected the File view editor")
@@ -1119,6 +1272,7 @@ func requireSavedReply(_ present: Bool, _ label: String) {
     require(replyChipVisible() == present, "\(label): reply chip should be \(present ? "present" : "absent")")
     require(replyWarningVisible() == present, "\(label): saved reply warning should be \(present)")
 }
+if scope.runsModel {
 let originalFile = currentFileText()
 let toolAnchor = "      name: web_fetch\n"
 require(originalFile.contains(toolAnchor), "Fixture agent must declare web_fetch")
@@ -1180,6 +1334,7 @@ _ = try capture("local-stale", ["Not run since your edit"])
 // Shell evidence beside the approved Designer frame: Agent, File, then Send and Past Sends opened on request.
 // Blocked Chat is captured in the remote section above. The first (wide) pass sees the unused Send hidden; opening it
 // keeps it retained, so the minimum pass must see it already visible.
+}
 func exactTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXStaticText", attribute(element, "AXValue") as? String == expected,
@@ -1187,6 +1342,7 @@ func exactTextIsVisible(_ expected: String) -> Bool {
         return bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)
     }
 }
+if scope.runsModel {
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     click("Agent", [])
@@ -1215,6 +1371,7 @@ localSize(1280, 800)
 localSize(1280, 800)
 scroll(4000)
 click("Chat", [])
+}
 func requireSingleChatCopy() {
     let strings = nativeElements().flatMap { element in
         ["AXValue", "AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
@@ -1222,6 +1379,7 @@ func requireSingleChatCopy() {
     require(strings.contains("Chat on this computer") && strings.contains("Chat doesn't change test results."), "Chat heading, label or help copy missing")
     require(!strings.contains(where: { $0.contains("Conversation 1") }), "A single Chat version must not be numbered, including its accessible label")
 }
+if scope.runsModel {
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     _ = try seek("Ask your agent a question", -100)
@@ -1356,6 +1514,18 @@ click("Cancel", [])
 click("Done", [])
 click("Clusters", [])
 _ = try capture("local-places-compact", ["Choose where agents run", "This computer"])
+}
+
+if scope.runsDestinations {
+if scope == .destinationsWorkspace {
+    // Fresh defaults: selected/ready local workspace, no installing/returning reset.
+    localSize(1280, 800)
+    press("Clusters")
+    if anyButton("Get started") { press("Get started") }
+    if !anyButton("Add a cluster") { press("Clusters") }
+    waitForButton("Add a cluster")
+    require(!FileManager.default.fileExists(atPath: setupProgress.path), "Allocated bootstrap must not write setup progress before its journey")
+}
 // Explicit context actions only: opening the picker never starts discovery.
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
@@ -1438,109 +1608,64 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
 }
 try FileManager.default.removeItem(at: setupProgress)
 
-// Stop/restart uses real UI actions. The existing selector settles only pending
-// synthetic IPC; no VM, credentials or provider is accessed.
-localSize(1280, 800)
-scroll(4000)
-click("Clusters", [])
-// The first click returns from Designer; the second opens the Clusters list.
-click("Clusters", [])
-// The unavailable snapshot unmounted Model and retired its in-memory consent.
-// Open the local page, then reconnect only the synthetic AI before the existing Stop walk.
-waitForButton("Connect the AI"); click("Connect the AI", [])
-press("Connect the AI")
-_ = try seek("Connected", -100)
+// Explicit scenes use only the existing synthetic fixture's IPC owner.
 func workspacePhase(_ phase: String) throws {
     try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
     Thread.sleep(forTimeInterval: 1.2)
 }
 func workspaceCapture(_ state: String, _ expected: [String]) throws {
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
-        localSize(width, height)
-        scroll(4000)
+        localSize(width, height); scroll(4000)
         _ = try capture("local-workspace-\(state)-\(size)", expected)
+        require(enabledButton("Stop the workspace") == nil && enabledButton("Start") == nil && enabledButton("Cancel") == nil, "Returning workspace must not expose Start/Stop/Cancel")
+        if ["failed", "stopped-unexpectedly", "stop-failed"].contains(state) {
+            require(!anyButton("Hide details"), "Diagnostics must start folded")
+            click("Show details", [])
+            _ = try capture("local-workspace-\(state)-details-\(size)", state == "stopped-unexpectedly" ? ["Synthetic workspace stopped unexpectedly.", "Hide details"] : ["Hide details"])
+            click("Hide details", [])
+        }
     }
-    localSize(1280, 800)
-    scroll(4000)
+    localSize(1280, 800); scroll(4000)
 }
-try workspacePhase("workspace-wait")
-click("Stop the workspace", [])
-try workspaceCapture("confirmation", ["Stop the workspace?", "Stop workspace", "Keep running"])
-click("Keep running", [])
-require(enabledButton("Stop the workspace") != nil, "Keep running must not stop the workspace")
-click("Stop the workspace", [])
-click("Stop workspace", [])
-try workspaceCapture("stopping", ["This computer", "Workspace", "Stopping"])
-require(enabledButton("Start") == nil, "Start must be disabled until stop acknowledgement")
-try workspacePhase("workspace-stopped")
-waitForButton("Start")
-try workspaceCapture("stopped", ["This computer", "Workspace", "Stopped", "Start"])
-_ = try capture("local-stopped", ["This computer", "Stopped", "Start"])
-require(!nativeElements().contains { attribute($0, "AXRole") as? String == "AXRadioButton" }, "Stop must not return to first-run choices")
-click("Start", [])
-waitForButton("Cancel")
-try workspaceCapture("starting", ["This computer", "Starting", "0:18 so far", "Cancel"])
-try workspacePhase("workspace-wait")
-click("Cancel", [])
-try workspacePhase("workspace-stopped")
-waitForButton("Start")
-try workspaceCapture("cancelled", ["This computer", "Stopped", "Start"])
-click("Start", [])
-try workspacePhase("workspace-failed")
-waitForButton("Try again")
-try workspaceCapture("failed", ["This computer", "Couldn't start", "Try again"])
-try workspacePhase("workspace-wait")
-click("Try again", [])
-try workspacePhase("workspace-running")
-waitForButton("Stop")
-try workspaceCapture("running", ["This computer", "Running", "Stop"])
-try workspacePhase("workspace-wait")
-click("Stop", [])
-click("Stop workspace", [])
-try workspacePhase("workspace-stopped")
-waitForButton("Start")
-try workspacePhase("workspace-unavailable")
-try workspaceCapture("unavailable", ["This computer", "Status unavailable"])
-require(enabledButton("Start") == nil, "Unreadable status must not authorize Start")
-try workspacePhase("workspace-stopped")
-waitForButton("Start")
-click("Start", [])
-try workspacePhase("workspace-running")
-waitForButton("Stop")
-try workspacePhase("workspace-wait")
-click("Stop", [])
-click("Stop workspace", [])
-try workspacePhase("workspace-closed")
-try workspaceCapture("closed", ["This computer", "Stopped", "Quit Bridge and reopen it"])
-require(enabledButton("Start") == nil, "Terminal closed state must not offer an inert Start")
-// Closed and failed are terminal: reset only the bounded fixture selector for
-// independent Stop failures, rather than duplicating the full restart walk.
-try workspacePhase("workspace-reset-ready")
-waitForButton("Stop")
-try workspacePhase("workspace-wait")
-click("Stop", [])
-click("Stop workspace", [])
-try workspacePhase("workspace-stop-failed")
-try workspaceCapture("stop-failed", ["This computer", "Couldn't stop", "Try again"])
-require(enabledButton("Try again") == nil, "Unconfirmed Stop must not authorize Try again")
-require(enabledButton("Start") == nil, "Unconfirmed Stop must not authorize Start")
-
-try workspacePhase("workspace-reset-ready")
-waitForButton("Stop")
-try workspacePhase("workspace-wait")
-click("Stop", [])
-click("Stop workspace", [])
-try workspacePhase("workspace-stop-lost-reply")
-try workspaceCapture("stop-lost-reply", ["This computer", "Status unavailable", "Workspace status is unavailable"])
-require(enabledButton("Stop") == nil && enabledButton("Start") == nil, "Lost Stop reply must pause workspace actions")
-try workspacePhase("workspace-stopped")
-waitForButton("Start")
-try workspaceCapture("stop-reply-recovered", ["This computer", "Stopped", "Start"])
-
-// Typed binding refusals use the existing recovery card, never an upgrade action.
+// First scene reloads once with selected localVm plus the attempted marker.
+try workspacePhase("workspace-scene-ready")
+waitForButton("Manage"); click("Manage", [])
+try workspaceCapture("ready", ["This computer", "Ready", "Agents", "Files"])
+require(nativeHeadingExists("AI"), "Returning Model must be headed AI")
+click("What's inside", [])
+_ = try capture("local-workspace-inside", ["4 GB of memory"])
+click("What's inside", [])
+try workspacePhase("workspace-scene-starting")
+try workspaceCapture("starting-after-quit-synthetic", ["This computer", "Starting", "0:18 so far"])
+click("Designer", [])
+for (view, label) in [("Agent", "tests"), ("Chat", "chat")] {
+    localSize(1280, 800); scroll(4000)
+    click(view, [])
+    for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+        localSize(width, height); scroll(view == "Chat" ? -12000 : 4000)
+        _ = try seek("Waiting for the workspace to start.", -100)
+        _ = try capture("local-designer-waiting-\(label)-\(size)", ["Waiting for the workspace to start."])
+    }
+}
+click("Clusters", [])
+try workspacePhase("workspace-scene-failed")
+try workspaceCapture("failed", ["This computer", "Couldn't start", "Restart workspace"])
+try workspacePhase("workspace-scene-stopped-unexpectedly")
+try workspaceCapture("stopped-unexpectedly", ["This computer", "Your workspace didn't start.", "Restart workspace"])
+try workspacePhase("workspace-scene-stop-failed")
+try workspaceCapture("stop-failed", ["This computer", "The workspace didn't stop.", "Quit Bridge"])
+require(enabledButton("Restart workspace") == nil, "Unconfirmed Stop must not authorize restart")
+try workspacePhase("workspace-scene-closed")
+try workspaceCapture("closed", ["This computer", "Stopped", "Quit Bridge"])
 for (phase, summary) in [("image-update", "This version of Bridge needs a new workspace."), ("image-unsupported", "This workspace uses different cluster files.")] {
     try workspacePhase(phase)
-    try workspaceCapture(phase, [summary, "Open the matching Bridge version."])
-    require(enabledButton("Try again") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
-    require(!nativeTextExists("The cluster download couldn't be verified."), "Version mismatch is not download corruption")
+    try workspaceCapture(phase, [summary, "Restart workspace"])
+    require(enabledButton("Restart workspace") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
 }
+try "Renderer-only synthetic state captures, not VM lifecycle proof. Native Ready close notice, menu-bar dot and real quit/reopen startup remain unverified.\n".write(toFile: "\(output)/workspace-capture-gaps.txt", atomically: true, encoding: .utf8)
+}
+
+try coverage.finish()
+let scopeResult: [String: Any] = ["scope": scope.rawValue, "names": coverage.names]
+try JSONSerialization.data(withJSONObject: scopeResult, options: [.prettyPrinted, .sortedKeys]).write(to: URL(fileURLWithPath: output).appendingPathComponent("scope-manifest.json"))
+print("PASS native scope \(scope.rawValue): \(coverage.names.count) unique named captures")
