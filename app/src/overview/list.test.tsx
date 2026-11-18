@@ -93,6 +93,21 @@ test('unavailable test history can be retried in place without restoring top-lev
   expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
 });
 
+test('unavailable Send history has an in-page retry even when place inventory is healthy', async () => {
+  let recovered = false;
+  const places = vi.fn(() => ({ places: [place()], historyState: recovered ? 'complete' : 'unavailable', unobserved: [] }));
+  mockIPC(command => command === 'overview_files' ? { state: 'complete', historyState: 'complete', runAgents: [], runActive: false, files: [file()] }
+    : command === 'overview_places' ? places() : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
+  render(<Overview {...props} />);
+  const notice = await screen.findByRole('alert');
+  recovered = true;
+  await userEvent.click(within(notice).getByRole('button', { name: 'Check again' }));
+  await waitFor(() => expect(places).toHaveBeenCalledTimes(2));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  expect(within(await row()).getByLabelText('team: Failed')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Refresh' })).toBeNull();
+});
+
 test('a long context keeps its full accessible name while filtering by the opaque place key', async () => {
   const context = 'context-' + 'unbrokensegment'.repeat(16);
   ipc([file()], [{ ...place('opaque-key'), context }]); render(<Overview {...props} />); await row();
