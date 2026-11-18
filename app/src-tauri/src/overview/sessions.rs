@@ -6,7 +6,7 @@
 #[path = "sessions_tests.rs"]
 mod tests;
 use crate::clusters::{commands::ClusterSession, ClusterError, OrkaItem, RemoteAccess};
-use crate::overview_activity::{valid_task, with_access};
+use crate::overview_activity::{read_on, superseded, valid_task, with_access};
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -214,6 +214,8 @@ pub struct PlaceSessions {
     pub state: &'static str,
     pub observed_at: Option<u64>,
     pub entries: Vec<Session>,
+    /// The place's connection revision; earlier Sessions are only shown again under the same one.
+    pub connection: Option<u64>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -255,8 +257,11 @@ pub async fn read(session: &ClusterSession) -> Sessions {
             state: "disconnected",
             observed_at: None,
             entries: Vec::new(),
+            connection: None,
         };
-        match with_access(session, &place.key, list).await {
+        let (connection, read) = read_on(session, &place.key, list).await;
+        view.connection = connection;
+        match read {
             Ok(list) => {
                 view.state = if list.complete { "complete" } else { "partial" };
                 view.observed_at = Some(crate::overview::now());
@@ -265,6 +270,16 @@ pub async fn read(session: &ClusterSession) -> Sessions {
             Err(state) => view.state = state,
         }
         places.push(view);
+    }
+    // Places are read one after another, so recheck each before answering: one reloaded,
+    // reconnected or refused while a later place was read must not report its old Sessions.
+    for view in &mut places {
+        if let Some(state) = superseded(session, &view.key, view.connection) {
+            view.state = state;
+            view.observed_at = None;
+            view.entries.clear();
+            view.connection = session.activity_connection(&view.key).0;
+        }
     }
     Sessions { places }
 }

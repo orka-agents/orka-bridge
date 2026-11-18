@@ -60,17 +60,19 @@ export function SessionList({ active, places }: { active: boolean; places?: Plac
     const current = ++request.current;
     void readSessions().then(value => {
       reading.current = false;
-      if (current !== request.current) return;
-      setFailed(!value);
-      if (value) setSessions(previous => ({
-        // An unreadable place keeps what Bridge last read. A denied or revoked place drops it: access was
-        // refused or replaced, not merely interrupted.
-        places: value.places.map(p => {
-          const prior = previous?.places.find(q => q.key === p.key);
-          const keep = p.state === 'unavailable' || p.state === 'disconnected';
-          return !keep || !prior?.entries.length ? p : { ...p, entries: prior.entries, observedAt: prior.observedAt };
-        }),
-      }));
+      // A superseded response is dropped, but a read queued behind it still runs. Unmounting clears the queue.
+      if (current === request.current) {
+        setFailed(!value);
+        if (value) setSessions(previous => ({
+          // An unreadable place keeps what Bridge last read on the same connection. A denied or revoked place, or a
+          // new connection, drops it: access was refused or replaced, not merely interrupted.
+          places: value.places.map(p => {
+            const prior = previous?.places.find(q => q.key === p.key);
+            const keep = (p.state === 'unavailable' || p.state === 'disconnected') && p.connection !== null && prior?.connection === p.connection;
+            return keep && prior?.entries.length ? { ...p, entries: prior.entries, observedAt: prior.observedAt } : p;
+          }),
+        }));
+      }
       if (queued.current) { queued.current = false; next(); }
     });
   }, []);

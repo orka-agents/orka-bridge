@@ -1,6 +1,7 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { StrictMode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { Places } from './api';
 import { isSessions, isTranscript, merge, type PlaceSessions } from './sessions-api';
@@ -9,7 +10,7 @@ import { SessionList } from './Sessions';
 const place = (key: string, context: string) => ({ key, context, service: 'control/orka', namespace: 'agents', stale: false, observedAt: 1000, agents: [] });
 const places: Places = { places: [place('one', 'team-one'), place('two', 'team-two')], historyState: 'complete', unobserved: [] };
 const entry = (name: string, over: object = {}) => ({ name, sessionType: 'chat', messageCount: 2, createdAt: 1000, updatedAt: 2000, activeTask: null, agent: null, ...over });
-const read = (key: string, entries: unknown[], over: object = {}) => ({ key, state: 'complete', observedAt: 5000, entries, ...over });
+const read = (key: string, entries: unknown[], over: object = {}) => ({ key, state: 'complete', observedAt: 5000, entries, connection: 1, ...over });
 function ipc(sessions: unknown, transcript: (args: Record<string, unknown>) => unknown = () => ({ state: 'complete', messages: [] })) {
   vi.stubGlobal('isTauri', true);
   const calls: [string, unknown][] = [];
@@ -101,4 +102,34 @@ test('without a connected cluster the section asks for one', async () => {
   ipc({ places: [read('one', [], { state: 'disconnected', observedAt: null })] });
   render(<SessionList active places={places} />);
   await waitFor(() => expect(screen.getByText('Connect a cluster to see its conversations here.')).toBeTruthy());
+});
+
+test('a new connection drops the old connection\'s conversations even when its first read fails', async () => {
+  let sessions: unknown = { places: [read('one', [entry('old')])] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_sessions' ? sessions : null);
+  const view = render(<SessionList active places={places} />);
+  expect(await screen.findAllByRole('listitem')).toHaveLength(1);
+  sessions = { places: [read('one', [], { state: 'unavailable', observedAt: null, connection: 2 })] };
+  view.rerender(<SessionList active places={{ ...places }} />);
+  expect(await screen.findByText("Couldn't read conversations on team-one just now.")).toBeTruthy();
+  expect(screen.queryAllByRole('listitem')).toHaveLength(0);
+});
+
+test('an unreadable place on the same connection keeps what Bridge last saw', async () => {
+  let sessions: unknown = { places: [read('one', [entry('kept')])] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_sessions' ? sessions : null);
+  const view = render(<SessionList active places={places} />);
+  expect(await screen.findAllByRole('listitem')).toHaveLength(1);
+  sessions = { places: [read('one', [], { state: 'unavailable', observedAt: null })] };
+  view.rerender(<SessionList active places={{ ...places }} />);
+  expect(await screen.findByText(/Showing what Bridge last saw/)).toBeTruthy();
+  expect(screen.getAllByRole('listitem')).toHaveLength(1);
+});
+
+test('under StrictMode the first read still lands', async () => {
+  ipc({ places: [read('one', [entry('a')])] });
+  render(<StrictMode><SessionList active places={places} /></StrictMode>);
+  expect(await screen.findAllByRole('listitem')).toHaveLength(1);
 });

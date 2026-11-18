@@ -5,7 +5,8 @@ export type SessionEntry = {
   name: string; sessionType: string | null; messageCount: number; createdAt: number; updatedAt: number;
   activeTask: string | null; agent: string | null;
 };
-export type PlaceSessions = { key: string; state: PlaceState; observedAt: number | null; entries: SessionEntry[] };
+/** `connection` is the place's connection revision: cached Sessions belong to one connection only. */
+export type PlaceSessions = { key: string; state: PlaceState; observedAt: number | null; entries: SessionEntry[]; connection: number | null };
 export type Sessions = { places: PlaceSessions[] };
 export type Message = { role: string; text: string; cut: boolean; tools: string[]; at: number | null };
 export type Transcript = { state: PlaceState; messages: Message[] };
@@ -25,7 +26,7 @@ export function isSessions(v: unknown): v is Sessions {
   if (!object(v) || !Array.isArray(v.places)) return false;
   const keys = new Set<string>();
   return v.places.every(p => {
-    if (!object(p) || !text(p.key, 4096) || keys.has(p.key) || !states.includes(p.state as PlaceState) || !nullableCount(p.observedAt) || !Array.isArray(p.entries)) return false;
+    if (!object(p) || !text(p.key, 4096) || keys.has(p.key) || !states.includes(p.state as PlaceState) || !nullableCount(p.observedAt) || !nullableCount(p.connection) || !Array.isArray(p.entries)) return false;
     keys.add(p.key);
     const read = p.state === 'complete' || p.state === 'partial';
     // Only a successful read carries entries and a time; failures carry neither.
