@@ -456,6 +456,24 @@ let upgradeCalls = 0;
 await Function('runCore', 'call', `${upgradeCapture}; return captureUpgrade('light', 'wide');`)(false, async () => { upgradeCalls++; });
 assert.equal(upgradeCalls, 0, 'UI scope must not create even one upgrade world');
 assert.equal((source.match(/await captureUpgrade\(theme, '(?:wide|compact)'\)/g) ?? []).length, 2);
+// Finished upgrade scenes must stop polling, not leave every detached React
+// tree consuming the same fixed core budget. Active scenes keep their timers.
+const upgradeTimers = source.match(/const upgradeTimers = `([\s\S]*?)`;/)?.[1];
+assert.ok(upgradeTimers, 'upgrade scenes need scoped interval retirement after capture and validation');
+let nextTimer = 0;
+const timers = new Map();
+const timedWorld = () => ({ window: { setInterval: callback => { const id = ++nextTimer; timers.set(id, callback); return id; }, clearInterval: id => timers.delete(id) } });
+const timedA = timedWorld(), timedB = timedWorld();
+for (const world of [timedA, timedB]) vm.runInNewContext(upgradeTimers, world);
+let ticksA = 0, ticksB = 0;
+timedA.window.setInterval(() => ticksA++, 500); timedB.window.setInterval(() => ticksB++, 500);
+for (const tick of timers.values()) tick();
+assert.deepEqual([ticksA, ticksB], [1, 1]);
+timedA.window.__bridgeRetireUpgrade();
+for (const tick of timers.values()) tick();
+assert.deepEqual([ticksA, ticksB], [1, 2], 'only the completed world stops; active scene polling is unchanged');
+timedB.window.__bridgeRetireUpgrade();
+assert.equal(timers.size, 0);
 // Old isolated-world React pollers may still retire their own first-test intent;
 // their synthetic preferences must not change a later scene's identity.
 const fixtureStorage = source.match(/const fixtureStorage = `([\s\S]*?)`;/)?.[1];

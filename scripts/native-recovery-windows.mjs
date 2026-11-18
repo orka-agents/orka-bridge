@@ -1688,6 +1688,14 @@ try {
   // directly. No obsolete Stop walk or polling cycle is needed to prepare a static scene.
   async function captureUpgrade(theme, size) {
     if (!runCore) return;
+    // Each new world mounts React again; retire only this completed scene's
+    // intervals after its final checks, rather than polling every detached tree.
+    const upgradeTimers = `(() => {
+      const intervals = new Set(), start = window.setInterval.bind(window), stop = window.clearInterval.bind(window);
+      window.setInterval = (...args) => { const id = start(...args); intervals.add(id); return id; };
+      window.clearInterval = id => { intervals.delete(id); stop(id); };
+      window.__bridgeRetireUpgrade = () => { for (const id of intervals) stop(id); intervals.clear(); };
+    })();`;
     const transaction = '40000000-0000-4000-8000-000000000004';
     const base = { transaction: null, createdAt: null, sourceReleases: ['0.1.2'], targetRelease: '0.1.3', retainedAllocatedBytes: 1200000000, additionalBytes: 2400000000, credential: 'absent', busy: false, error: null, repeated: false, canReplace: false, canRestore: false };
     const withTx = extra => ({ ...base, transaction, createdAt: 1700000000, ...extra });
@@ -1709,7 +1717,7 @@ try {
       ['upgrade-fresh-eligible', withTx({ state: 'fresh', credential: 'eligible', canRestore: true }), 'Use saved connection', null],
       ['upgrade-fresh-attention', withTx({ state: 'fresh', credential: 'attention', canRestore: true }), 'needs attention', null],
       ['upgrade-fresh-removal-confirm', withTx({ state: 'fresh', credential: 'attention', canRestore: true }), 'Remove saved connection', 'confirm-only'],
-      ['upgrade-fresh-transferred', withTx({ state: 'fresh', credential: 'transferred', canRestore: true }), 'Use Connect below', null],
+      ['upgrade-fresh-transferred', withTx({ state: 'fresh', credential: 'transferred', canRestore: true }), 'Use Connect in the AI card', null],
       ['upgrade-fresh-removed', withTx({ state: 'fresh', credential: 'removed', canRestore: true }), 'Enter a new sign-in', null],
       ['upgrade-consumed-restore-confirm', withTx({ state: 'consumed', canRestore: true }), 'Restore previous workspace', 'confirm-only'],
       ['upgrade-restored-freshc-confirm', withTx({ state: 'restored', repeated: true, canReplace: true }), 'Set up another new workspace', 'confirm-only'],
@@ -1722,6 +1730,7 @@ try {
     const variants = [...initial.map(v => ['failed', ...v]), ...manage.map(v => ['ready', ...v])];
     for (const [localVm, name, status, expected, mode] of variants) {
       ({ executionContextId: contextId } = await call('Page.createIsolatedWorld', { frameId: frameTree.frame.id, worldName: `upgrade-${theme}-${size}-${name}` }));
+      await evaluate(upgradeTimers);
       await evaluate(`(() => {
         window.__bridgeUpgradeCalls = [];
         window.__bridgeUpgradeShown = true;
@@ -1791,6 +1800,7 @@ try {
       }
       await checkLayout(theme, size, name);
       console.log(`Captured renderer-synthetic workspace-upgrade fixture, not native IPC safety proof: ${theme}/${size}/${name}`);
+      await evaluate('window.__bridgeRetireUpgrade()');
     }
   }
   const notes = [];
