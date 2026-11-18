@@ -116,6 +116,6 @@ export function RecentActivity({ active, places }: { active: boolean; places?: P
     {notes.map(([key, text]) => <p key={key} className="overview-note" role="status">{text}</p>)}
     {!connected.length ? <p className="overview-note">Connect a cluster to see its runs here.</p>
       : !rows.length ? <p className="overview-note">{emptyFilter[filter]}</p>
-      : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.uid}`} row={row} place={labels.get(row.placeKey)!} agentShown={known.has(`${row.placeKey}/${row.agentUid}`)} onShowAgent={showAgent} />)}</ol>}
+      : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.connection}/${row.uid}`} row={row} place={labels.get(row.placeKey)!} agentShown={known.has(`${row.placeKey}/${row.agentUid}`)} onShowAgent={showAgent} />)}</ol>}
   </section>;
 }

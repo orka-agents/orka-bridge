@@ -181,6 +181,22 @@ test('an expanded run rereads its tool calls when its place is read again, and a
   expect(calls.filter(c => c[0] === 'overview_tool_calls')).toHaveLength(2);
 });
 
+test('a run read on a new connection starts collapsed, without the old connection\'s tool calls', async () => {
+  let activity: unknown = { places: [read('one', [entry('run-1')])] };
+  let tools: Promise<unknown> = Promise.resolve({ state: 'complete', calls: [{ tool: 'old_tool', failed: false, at: 1000 }] });
+  ipc(undefined);
+  mockIPC(command => command === 'overview_activity' ? activity : tools);
+  const view = render(<RecentActivity active places={places} />);
+  const [run] = await items();
+  await userEvent.click(within(run).getByRole('button', { name: 'Tool calls' }));
+  expect(await within(run).findByText('old_tool')).toBeTruthy();
+  tools = new Promise(() => undefined);
+  activity = { places: [read('one', [entry('run-1')], { connection: 2, observedAt: 6000 })] };
+  view.rerender(<RecentActivity active places={{ ...places }} />);
+  await waitFor(() => expect(screen.queryByText('old_tool')).toBeNull());
+  expect(screen.getByRole('button', { name: 'Tool calls' }).getAttribute('aria-expanded')).toBe('false');
+});
+
 test('under StrictMode the first read still lands', async () => {
   ipc({ places: [read('one', [entry('a')])] });
   render(<StrictMode><RecentActivity active places={places} /></StrictMode>);
