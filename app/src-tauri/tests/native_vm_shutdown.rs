@@ -1,5 +1,17 @@
 //! Opt-in physical-Mac check. CI builds this driver but cannot boot nested VZ.
 //! Uses the production workspace factory/owner; no model sign-in or credentials.
+//!
+//! This is a shutdown driver, not a guest inspector. Set BRIDGE_SHUTDOWN_TEST_ROOT
+//! to a fresh disposable root and BRIDGE_SHUTDOWN_TEST_RESOURCES to the helper's
+//! resources directory, then run this ignored test with --nocapture. An external
+//! observer must supply test-only console input/output and guest shell access;
+//! the production helper deliberately exposes neither. Never use a user's disks.
+//! Boot 1 permits console preparation. At boot2-ready, write a 64 MiB sentinel in
+//! /var/lib/bridge, record sha256sum and full dmesg, then create quit2 without
+//! syncing the sentinel. At boot3-ready, compare its checksum and inspect full
+//! dmesg again before quit3. Create quit1 after preparation. Any kernel filesystem
+//! error or checksum mismatch fails the external check, regardless of this test's
+//! result. The stopped markers prove only completed production shutdown calls.
 #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires a physical Mac, disposable workspace and external guest data/kernel-log inspection"]

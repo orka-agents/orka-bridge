@@ -32,22 +32,27 @@ impl AppleVmSession {
     ) -> Result<Self, RuntimeError> {
         let worker =
             RuntimeWorker::new(Box::new(AppleBackend::new(resource_root)), journal, image)?;
-        Self::start(worker, host_utc)
+        Self::start(worker, host_utc, None)
     }
-    #[cfg(target_arch = "aarch64")]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     pub(crate) fn launch_retaining(
         resource_root: PathBuf,
         journal: Journal,
         image: Arc<InstalledImageSet>,
         host_utc: u64,
         custody: Arc<std::sync::Mutex<super::journal::JournalCustody>>,
+        closed: tokio::sync::watch::Receiver<bool>,
     ) -> Result<Self, RuntimeError> {
         let worker =
             RuntimeWorker::new(Box::new(AppleBackend::new(resource_root)), journal, image)?
                 .retain_journal(custody);
-        Self::start(worker, host_utc)
+        Self::start(worker, host_utc, Some(closed))
     }
-    fn start(worker: RuntimeWorker, host_utc: u64) -> Result<Self, RuntimeError> {
+    fn start(
+        worker: RuntimeWorker,
+        host_utc: u64,
+        closed: Option<tokio::sync::watch::Receiver<bool>>,
+    ) -> Result<Self, RuntimeError> {
         let mut session = Self {
             worker,
             transport: None,
@@ -62,6 +67,9 @@ impl AppleVmSession {
                 .handle
                 .get::<AppleBackendHandle>()
                 .ok_or(RuntimeError::Unavailable)?;
+            if let Some(closed) = closed {
+                handle.guest.bind_close(closed);
+            }
             let mut channel = handle.guest.channel();
             channel.deadline = Some(Instant::now() + Duration::from_secs(120));
             let mut serving_hello = None;
@@ -114,6 +122,13 @@ impl AppleVmSession {
             let end = *self
                 .shutdown_deadline
                 .get_or_insert_with(|| Instant::now() + Duration::from_secs(10));
+            // Active I/O may already have observed close while holding the
+            // facade's session mutex. Keep that earlier, non-renewable budget.
+            let end = handle
+                .guest
+                .shutdown_deadline()
+                .map_or(end, |earlier| earlier.min(end));
+            self.shutdown_deadline = Some(end);
             // Prepare native observation BEFORE the guest can power off. Release
             // the owner mutex before borrowing the single protocol client.
             let prepared = handle.prepare_shutdown(end);

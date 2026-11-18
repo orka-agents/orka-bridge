@@ -4,6 +4,16 @@ use std::{
     os::unix::net::UnixStream,
     time::{Duration, Instant},
 };
+pub(crate) fn short_close(slot: &GuestSlot) {
+    slot.inner
+        .state
+        .lock()
+        .unwrap()
+        .close
+        .as_mut()
+        .unwrap()
+        .grace = Duration::from_millis(60);
+}
 #[test]
 fn surviving_wrapper_has_no_fd_and_blocked_read_stops_without_io_lock_deadlock() {
     let (socket, mut peer) = UnixStream::pair().unwrap();
@@ -36,6 +46,37 @@ fn surviving_wrapper_has_no_fd_and_blocked_read_stops_without_io_lock_deadlock()
         std::io::ErrorKind::NotConnected
     );
     assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+}
+#[test]
+fn close_watch_bounds_a_read_that_started_before_shutdown() {
+    let (socket, _peer) = UnixStream::pair().unwrap();
+    let slot = GuestSlot::new(socket);
+    let (closed, close) = tokio::sync::watch::channel(false);
+    slot.bind_close(close);
+    short_close(&slot);
+    let mut channel = slot.channel();
+    let (result, observed) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        result.send(channel.read(&mut [0])).unwrap();
+    });
+    let until = Instant::now() + Duration::from_secs(2);
+    while !slot.inner.state.lock().unwrap().active {
+        assert!(Instant::now() < until);
+        std::thread::yield_now();
+    }
+    closed.send_replace(true);
+    let stopped = observed.recv_timeout(Duration::from_secs(1));
+    slot.revoke(Instant::now() + Duration::from_secs(1))
+        .unwrap();
+    reader.join().unwrap();
+    assert_eq!(
+        stopped
+            .expect("pre-existing read ignored close")
+            .unwrap_err()
+            .kind(),
+        std::io::ErrorKind::TimedOut
+    );
+    assert!(slot.shutdown_deadline().unwrap() < Instant::now());
 }
 #[test]
 fn scoped_reference_timeout_never_reports_success() {

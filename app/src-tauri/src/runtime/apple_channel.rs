@@ -19,6 +19,11 @@ struct State {
     sealed: bool,
     active: bool,
     shutdown_deadline: Option<Instant>,
+    close: Option<CloseSignal>,
+}
+struct CloseSignal {
+    receiver: tokio::sync::watch::Receiver<bool>,
+    grace: Duration,
 }
 struct Scoped {
     slot: GuestSlot,
@@ -42,6 +47,7 @@ impl GuestSlot {
                     sealed: false,
                     active: false,
                     shutdown_deadline: None,
+                    close: None,
                 }),
                 idle: Condvar::new(),
             }),
@@ -67,6 +73,24 @@ impl GuestSlot {
             slot: self.clone(),
             socket: Some(socket),
         })
+    }
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) fn bind_close(&self, receiver: tokio::sync::watch::Receiver<bool>) {
+        self.inner.state.lock().unwrap().close = Some(CloseSignal {
+            receiver,
+            grace: Duration::from_secs(10),
+        });
+    }
+    pub(crate) fn shutdown_deadline(&self) -> Option<Instant> {
+        let mut state = self.inner.state.lock().unwrap();
+        if let Some(close) = &state.close {
+            if *close.receiver.borrow() {
+                let end = Instant::now() + close.grace;
+                state.shutdown_deadline =
+                    Some(state.shutdown_deadline.map_or(end, |old| old.min(end)));
+            }
+        }
+        state.shutdown_deadline
     }
     pub(crate) fn prepare_shutdown(&self, end: Instant) {
         let mut state = self.inner.state.lock().unwrap();
@@ -105,7 +129,7 @@ pub(crate) struct Channel {
 impl Channel {
     fn budget(&self, seconds: u64) -> io::Result<Duration> {
         let budget = Duration::from_secs(seconds);
-        let shutdown = self.slot.inner.state.lock().unwrap().shutdown_deadline;
+        let shutdown = self.slot.shutdown_deadline();
         let deadline = match (self.deadline, shutdown) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -122,22 +146,40 @@ impl Channel {
     fn io(
         &self,
         write: bool,
-        action: impl FnOnce(&UnixStream) -> io::Result<usize>,
+        mut action: impl FnMut(&UnixStream) -> io::Result<usize>,
     ) -> io::Result<usize> {
         let scoped = self.slot.acquire()?;
         let socket = scoped.socket.as_ref().unwrap();
-        if write {
-            socket.set_write_timeout(Some(self.budget(30)?))?;
-        } else {
-            socket.set_read_timeout(Some(self.budget(120)?))?;
-        }
-        action(socket).map_err(|e| {
-            if e.kind() == io::ErrorKind::WouldBlock {
-                io::ErrorKind::TimedOut.into()
+        let seconds = if write { 30 } else { 120 };
+        let end = Instant::now() + self.budget(seconds)?;
+        loop {
+            let remaining = end
+                .checked_duration_since(Instant::now())
+                .filter(|d| !d.is_zero())
+                .ok_or(io::ErrorKind::TimedOut)?;
+            // Observe an existing close watch even when this syscall began
+            // before shutdown admission, without renewing either deadline.
+            let slice = self
+                .budget(seconds)?
+                .min(remaining)
+                .min(Duration::from_millis(100));
+            if write {
+                socket.set_write_timeout(Some(slice))?;
             } else {
-                e
+                socket.set_read_timeout(Some(slice))?;
             }
-        })
+            match action(socket) {
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    continue
+                }
+                result => return result,
+            }
+        }
     }
 }
 impl Read for Channel {
@@ -155,4 +197,4 @@ impl Write for Channel {
 }
 #[cfg(test)]
 #[path = "apple_channel_tests.rs"]
-mod tests;
+pub(crate) mod tests;

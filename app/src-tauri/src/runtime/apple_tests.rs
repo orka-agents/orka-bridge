@@ -236,6 +236,33 @@ fn expected_guest_stop_observes_exit_and_timeout_fallback_stays_distinct() {
     }
 }
 #[test]
+fn prepared_shutdown_observes_exited_child_after_deadline() {
+    for mode in ["guest-stop", "guest-error"] {
+        let (d, mut owner, cmd) = setup(mode);
+        let _guest = owner.start(cmd, config()).unwrap();
+        owner.prepare_shutdown(Instant::now() + Duration::from_millis(80)).unwrap();
+        // Synchronize with real child exit, not a scheduling-dependent sleep.
+        // wait() retains its status in Child for the owner's next observation.
+        let status = owner.session.as_mut().unwrap().child.wait().unwrap();
+        owner.graceful_end = Some(Instant::now() - Duration::from_millis(1));
+        let result = owner.stop();
+        if mode == "guest-stop" {
+            assert!(status.success());
+            assert_eq!(result, Ok(()), "late stop sent S to an exited helper");
+            assert_eq!(owner.stop_outcome(), Some(AppleStopOutcome::GuestStopped));
+            assert!(!owner.poisoned);
+            owner.stop().unwrap();
+        } else {
+            assert!(!status.success());
+            assert_eq!(result, Err(HelperError::Io(io::ErrorKind::Other)));
+            assert_eq!(owner.stop_outcome(), None);
+            assert!(owner.poisoned);
+        }
+        assert!(owner.session.is_none());
+        assert_reaped(&d);
+    }
+}
+#[test]
 fn expected_guest_native_failure_never_becomes_clean_or_forced_success() {
     let (d, mut owner, cmd) = setup("guest-error");
     let _guest = owner.start(cmd, config()).unwrap();

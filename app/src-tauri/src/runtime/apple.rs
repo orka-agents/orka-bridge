@@ -211,7 +211,16 @@ impl AppleHelperOwner {
         // Unprepared startup-failure cleanup retains its original budgets.
         self.budgets.exit = self.budgets.exit.min(Duration::from_secs(5));
         self.budgets.cleanup = self.budgets.cleanup.min(Duration::from_secs(2));
-        match self.exchange(b'G', end) {
+        // Draining a cancelled guest call can consume all grace before the
+        // session mutex becomes available. Still arm native observation with
+        // a bounded preparation exchange; never renew the stored guest grace.
+        let now = Instant::now();
+        let preparation_end = if end <= now {
+            now + Duration::from_secs(1)
+        } else {
+            end
+        };
+        match self.exchange(b'G', preparation_end) {
             Ok(()) => Ok(()),
             Err(error) => Err(self.fail(error)),
         }
@@ -292,6 +301,11 @@ impl AppleHelperOwner {
                 return Ok(true);
             }
             let _ = session.child.kill();
+            // An explicitly absent cleanup budget keeps the killed child
+            // quarantined; do not turn it into a scheduling-dependent observation.
+            if self.budgets.cleanup.is_zero() {
+                return Ok(false);
+            }
             Ok(wait_until(&mut session.child, Instant::now() + self.budgets.cleanup)?.is_some())
         })()
         .unwrap_or(false);
@@ -377,15 +391,18 @@ fn write_until(mut stream: &UnixStream, mut bytes: &[u8], end: Instant) -> Resul
     Ok(())
 }
 fn wait_until(child: &mut Child, end: Instant) -> io::Result<Option<ExitStatus>> {
-    while Instant::now() < end {
+    loop {
+        // Even a late caller must observe an exited helper before sending S.
         if let Some(status) = child.try_wait()? {
             return Ok(Some(status));
+        }
+        if Instant::now() >= end {
+            return Ok(None);
         }
         std::thread::sleep(
             Duration::from_millis(2).min(end.saturating_duration_since(Instant::now())),
         );
     }
-    Ok(None)
 }
 #[cfg(test)]
 pub mod failure_fixture {

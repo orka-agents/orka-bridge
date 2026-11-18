@@ -777,11 +777,8 @@ impl LocalVm {
         self.set_workspace_replaced(dto.transaction.is_some());
         self.cache_upgrade_status(dto);
     }
-    fn quarantine_upgrade(&self) {
-        // A confirmed hard stop still blocks the upgrade, but must not be
-        // rewritten as an unobserved native writer by this custody guard.
-        let forced = self
-            .inner
+    fn stop_was_forced(&self) -> bool {
+        self.inner
             .state
             .lock()
             .unwrap()
@@ -789,7 +786,12 @@ impl LocalVm {
             .as_ref()
             .is_some_and(|failure| {
                 failure.cause == crate::runtime::types::WorkspaceCause::ForcedStop
-            });
+            })
+    }
+    fn quarantine_upgrade(&self) {
+        // A confirmed hard stop still blocks the upgrade, but must not be
+        // rewritten as an unobserved native writer by this custody guard.
+        let forced = self.stop_was_forced();
         let mut dto = self
             .upgrade_cache
             .lock()
@@ -847,6 +849,7 @@ impl LocalVm {
         observed_revision: u64,
         dto: crate::workspace_upgrade::UpgradeStatusDto,
     ) -> crate::workspace_upgrade::UpgradeStatusDto {
+        let forced = self.stop_was_forced(); // Never nest state and cache guards.
         let mut cache = self.upgrade_cache.lock().unwrap();
         if self
             .upgrade_cache_revision
@@ -858,6 +861,12 @@ impl LocalVm {
                 dto.state = "conflict";
                 dto
             });
+            if forced && current.error == Some("stopUnconfirmed") {
+                current.error = Some("forcedStop");
+                *cache = Some(current.clone());
+                self.upgrade_cache_revision
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             current.busy = !matches!(current.error, Some("stopUnconfirmed" | "forcedStop"))
                 && self.upgrading.load(std::sync::atomic::Ordering::Acquire);
             return current;
@@ -924,6 +933,13 @@ impl LocalVm {
         };
         if self.upgrading.load(std::sync::atomic::Ordering::Acquire) {
             let mut dto = cached.unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
+            if dto.error == Some("stopUnconfirmed") && self.stop_was_forced() {
+                // The quiescence waiter may have timed out before the owned
+                // stop task confirmed hard termination. Keep admission closed.
+                dto.error = Some("forcedStop");
+                dto.busy = false;
+                self.cache_upgrade_status(dto.clone());
+            }
             dto.busy = !matches!(dto.error, Some("stopUnconfirmed" | "forcedStop"));
             return dto;
         }
@@ -1278,7 +1294,10 @@ impl LocalVm {
                         format!("Starting the local VM failed: {}", failure_reason(&error)),
                         &error,
                         operation,
-                        matches!(error, RuntimeError::StopUnconfirmed(_)),
+                        matches!(
+                            error,
+                            RuntimeError::StopUnconfirmed(_) | RuntimeError::ShutdownForced
+                        ),
                     )
                 }
             }

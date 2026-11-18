@@ -463,6 +463,86 @@ mod infrastructure_tests {
         assert_eq!(probe.releases.load(Ordering::SeqCst), 0);
     }
     #[tokio::test]
+    async fn late_forced_stop_reconciles_upgrade_quarantine_without_reopening_admission() {
+        let probe = Arc::new(Probe {
+            forced_stop: true,
+            ..Probe::default()
+        });
+        let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
+        ready(&probe, &vm).await;
+        let (entered, entered_rx) = std::sync::mpsc::channel();
+        let (release, release_rx) = std::sync::mpsc::channel();
+        *probe.stop_barrier.lock().unwrap() = Some((entered, release_rx));
+        let stopping = vm.clone();
+        let waiter = tokio::spawn(async move {
+            let _guard = stopping.quiesce_for_upgrade().await;
+        });
+        tokio::task::spawn_blocking(move || {
+            entered_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap()
+        })
+        .await
+        .unwrap();
+        waiter.abort();
+        let _ = waiter.await; // Guard quarantines before stop completion.
+        assert_eq!(
+            vm.upgrade_cache.lock().unwrap().as_ref().unwrap().error,
+            Some("stopUnconfirmed")
+        );
+        release.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while vm.inner.state.lock().unwrap().stopped.is_none() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let dto = vm
+            .upgrade_status(home.path().join("data"), home.path().join("local"))
+            .await;
+        assert_eq!(dto.error, Some("forcedStop"));
+        assert!(!dto.busy && !dto.can_replace && !dto.can_restore);
+        vm.start();
+        assert_eq!(probe.starts.load(Ordering::SeqCst), 1);
+        assert_eq!(probe.releases.load(Ordering::SeqCst), 0);
+    }
+    #[tokio::test]
+    async fn infrastructure_failure_preserves_forced_stop_and_drops_confirmed_session() {
+        let probe = Arc::new(Probe {
+            state: AtomicU8::new(2),
+            forced_stop: true,
+            ..Probe::default()
+        });
+        let vm = LocalVm::new(Arc::new(Factory(probe.clone())));
+        vm.start();
+        phase(&vm, LocalVmStatus::Failed).await;
+        assert_eq!(
+            vm.inner
+                .state
+                .lock()
+                .unwrap()
+                .workspace_failure
+                .as_ref()
+                .unwrap()
+                .cause,
+            WorkspaceCause::ForcedStop
+        );
+        assert_eq!(
+            probe.drops.load(Ordering::SeqCst),
+            1,
+            "confirmed session leaked"
+        );
+        assert!(vm.inner.session.lock().await.is_none());
+        vm.start();
+        assert_eq!(
+            probe.starts.load(Ordering::SeqCst),
+            1,
+            "unclean startup must stay gated"
+        );
+    }
+    #[tokio::test]
     async fn cancelled_quiescence_is_quarantined_without_an_endless_busy_projection() {
         let probe = Arc::new(Probe::default());
         let vm = LocalVm::new(Arc::new(Factory(probe.clone())));

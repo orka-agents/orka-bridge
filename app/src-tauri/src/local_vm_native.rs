@@ -99,6 +99,12 @@ fn wait_for_infrastructure(
         Ok(()) => Ok(session),
         Err(error) => {
             if let Err(cleanup) = session.stop() {
+                if matches!(cleanup, RuntimeError::ShutdownForced) {
+                    // The worker has confirmed termination and cleared its
+                    // lease. Drop this wrapper; the failure still gates retry.
+                    eprintln!("Orka infrastructure startup failed: {}; guest shutdown timed out and hard stop completed.", failure_reason(&error));
+                    return Err(cleanup);
+                }
                 // Keep the entire session, not just its error, until process exit.
                 std::mem::forget(session);
                 return Err(RuntimeError::StopUnconfirmed(format!(
@@ -506,7 +512,12 @@ impl LocalFactory for NativeFactory {
                         start_windows_session(inputs, journal, installed, &root, utc, pending)?;
                     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
                     let session = runtime::apple_session::AppleVmSession::launch_retaining(
-                        resources, journal, installed, utc, pending,
+                        resources,
+                        journal,
+                        installed,
+                        utc,
+                        pending,
+                        closed.clone(),
                     )?;
                     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
                     let native = NativeSession(session, installation, cancel_supported);

@@ -85,6 +85,11 @@ final class BridgeVM {
               let next = Self.successor(id) else { invalidate(); return }
         expectedID = next
         if opcode == 71 {
+            // A deferred delegate may follow the native terminal state. G must
+            // not reclassify that already-unsolicited exit as guest-requested.
+            guard driver.state != .stopped && driver.state != .failed else {
+                closing = true; reply = (69, id); cleanup(); return
+            }
             // Arm before acknowledging: the guest may power off immediately
             // after the host receives this preparation receipt.
             expectingGuestStop = true

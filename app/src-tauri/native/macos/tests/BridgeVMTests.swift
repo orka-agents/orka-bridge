@@ -127,6 +127,21 @@ private struct Tests {
             check(h.trace.disposedWithOpenFD, "guest stop unlocked before disposal")
             check(h.trace.terminal == [terminalState == .stopped], "expected guest stop classification")
         }
+        for terminalState in [MachineState.stopped, .failed] {
+            let h = Harness(q); h.running()
+            // Native state changes before its deferred didEnd callback runs.
+            h.driver.state = terminalState
+            let delayedEnd = h.driver.didEnd
+            h.core.receive(frame(71, 1))
+            check(h.trace.writes.last == frame(69, 1), "terminal VM acknowledged G")
+            check(h.driver.calls == ["start", "dispose"], "terminal G used destructive stop or leaked")
+            check(h.trace.disposedWithOpenFD, "terminal G unlocked before disposal")
+            check(h.trace.terminal == [false], "terminal-before-G became clean guest poweroff")
+            let writes = h.trace.writes.count
+            delayedEnd?()
+            check(h.trace.terminal == [false] && h.trace.writes.count == writes, "deferred end changed rejected G")
+            check(h.driver.calls == ["start", "dispose"], "deferred end repeated disposal")
+        }
         do {
             let h = Harness(q); h.running(); h.driver.ended(.stopped)
             check(h.trace.terminal == [false], "unsolicited stop became expected guest poweroff")
