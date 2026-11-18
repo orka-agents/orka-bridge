@@ -35,6 +35,19 @@ impl VmBackend for Backend {
         unreachable!()
     }
 }
+// Own this inside block_on so unwinding releases blocking workers before Runtime::drop.
+struct ReleaseOnDrop(std::sync::mpsc::Sender<()>);
+impl Drop for ReleaseOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+impl std::ops::Deref for ReleaseOnDrop {
+    type Target = std::sync::mpsc::Sender<()>;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 type StopBarrier = (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>);
 struct Session(
     RuntimeWorker,
@@ -261,6 +274,7 @@ fn facade_busy_restore_transfer_remove_and_quarantine_have_no_cancel_authority()
             .unwrap();
             let (entered, entered_rx) = std::sync::mpsc::channel();
             let (release, release_rx) = std::sync::mpsc::channel();
+            let release = ReleaseOnDrop(release);
             *factory.stop_gate.lock().unwrap() = Some((entered, release_rx));
             // Fail custody release after stop, before any credential-store access.
             factory
@@ -297,12 +311,23 @@ fn facade_busy_restore_transfer_remove_and_quarantine_have_no_cancel_authority()
             let status = vm
                 .upgrade_status(scene.data.clone(), scene.local.clone())
                 .await;
-            let cancel = vm.cancel_workspace_upgrade().await;
+            let mut cancel = Box::pin(vm.cancel_workspace_upgrade());
+            let observed = std::future::poll_fn(|cx| {
+                std::task::Poll::Ready(std::future::Future::poll(cancel.as_mut(), cx))
+            })
+            .await;
             release.send(()).unwrap();
-            assert!(work.await.unwrap().is_err());
+            let work_result = work.await.unwrap();
+            if observed.is_pending() {
+                let _ = cancel.await;
+            }
+            assert!(work_result.is_err());
             assert!(status.busy);
             assert!(!status.can_cancel);
-            assert_eq!(cancel.unwrap(), UpgradeCancelOutcome::NotCancellable);
+            assert!(matches!(
+                observed,
+                std::task::Poll::Ready(Ok(UpgradeCancelOutcome::NotCancellable))
+            ));
             let quarantined = vm
                 .upgrade_status(scene.data.clone(), scene.local.clone())
                 .await;
@@ -330,6 +355,7 @@ fn facade_adoption_failures_are_not_user_cancellation() {
                 RuntimeError::Io(std::io::Error::other("adoption I/O failure"))
             });
             runtime().block_on(async {
+                let release = ReleaseOnDrop(release);
                 let worker = forward_task(&scene, &vm, transaction);
                 tokio::task::spawn_blocking(move || {
                     entered_rx
@@ -338,17 +364,25 @@ fn facade_adoption_failures_are_not_user_cancellation() {
                 })
                 .await
                 .unwrap();
-                assert!(
-                    vm.upgrade_status(scene.data.clone(), scene.local.clone())
-                        .await
-                        .can_cancel
-                );
-                assert_eq!(
-                    vm.cancel_workspace_upgrade().await.unwrap(),
-                    UpgradeCancelOutcome::Requested
-                );
+                let can_cancel = vm
+                    .upgrade_status(scene.data.clone(), scene.local.clone())
+                    .await
+                    .can_cancel;
+                let mut cancel = Box::pin(vm.cancel_workspace_upgrade());
+                let observed = std::future::poll_fn(|cx| {
+                    std::task::Poll::Ready(std::future::Future::poll(cancel.as_mut(), cx))
+                })
+                .await;
                 release.send(()).unwrap();
                 let result = worker.await.unwrap();
+                if observed.is_pending() {
+                    let _ = cancel.await;
+                }
+                assert!(can_cancel);
+                assert!(matches!(
+                    observed,
+                    std::task::Poll::Ready(Ok(UpgradeCancelOutcome::Requested))
+                ));
                 if closed {
                     assert!(matches!(result, Err(RuntimeError::Closed)));
                 } else {
