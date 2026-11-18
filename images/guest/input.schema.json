@@ -5,7 +5,7 @@
   "type": "object",
   "properties": {
     "schemaVersion": {
-      "const": "bridge-guest-inputs/v1"
+      "enum": ["bridge-guest-inputs/v1", "bridge-guest-inputs/v2"]
     },
     "architecture": {
       "enum": [
@@ -50,7 +50,7 @@
     "components": {
       "type": "array",
       "minItems": 9,
-      "maxItems": 9,
+      "maxItems": 10,
       "items": {
         "$ref": "#/$defs/component"
       },
@@ -216,6 +216,13 @@
     "kmxProfileSha256"
   ],
   "additionalProperties": false,
+  "oneOf": [
+    {"properties": {"schemaVersion": {"const": "bridge-guest-inputs/v1"}, "components": {"maxItems": 9}}},
+    {"properties": {"schemaVersion": {"const": "bridge-guest-inputs/v2"}, "components": {
+      "minItems": 10,
+      "contains": {"properties": {"name": {"const": "model-launcher"}}, "required": ["name"]}
+    }}}
+  ],
   "$defs": {
     "component": {
       "type": "object",
@@ -230,7 +237,8 @@
             "session-loader",
             "vekil",
             "telegram",
-            "teams"
+            "teams",
+            "model-launcher"
           ]
         },
         "repository": {

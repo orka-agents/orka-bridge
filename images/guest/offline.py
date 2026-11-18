@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING
 
 if __package__ or TYPE_CHECKING:
     from .cache import encoded, inspect_archive, write_archive
-    from .lock import checked_file, file_hash, read_json, relative_path, require, validate_source_offline
+    from .lock import checked_file, file_hash, read_json, relative_path, require, validate_source_offline, model_images
 else:
     from cache import encoded, inspect_archive, write_archive
-    from lock import checked_file, file_hash, read_json, relative_path, require, validate_source_offline
+    from lock import checked_file, file_hash, read_json, relative_path, require, validate_source_offline, model_images
 
 NATIVE = {'kind-node', 'controller', 'ai-worker', 'general-worker', 'publisher', 'session-loader'}
 
@@ -74,9 +74,17 @@ def stage_bundle(lock, *, source, out):
         repository = 'docker.io/kindest/node' if name == 'kind-node' and row['repository'] == 'kindest/node' else row['repository']
         require(repository == components[name]['repository'] and all(row[k] == components[name][k] for k in ('manifestDigest', 'configDigest', 'indexDigest')), 'native image identity mismatch')
         inspect_archive(components[name], source, lock['architecture'])
+    models = model_images(lock)
+    model_names = {c['name'] for c in models}
+    for component in models:
+        inspect_archive(component, source, lock['architecture'])
     destinations = ['install.json', 'inputs.json', 'node.docker.tar', manifest['chart']['path'], manifest['artifacts']['path'], *['tools/' + name for name in ('kmx', 'kind', 'helm', 'kubectl')]]
     for name, row in rows:
         destinations += ['components/' + name + '.oci.tar', *[row[key] for key in ('manifestPath', 'configPath', 'indexPath')]]
+    for component in models:
+        destinations.append('components/' + component['name'] + '.oci.tar')
+        if 'indexPath' in component:
+            destinations.append('models/' + component['name'] + '-index.json')
     for name in destinations:
         relative_path(name)
     require(len(destinations) == len(set(destinations)), 'bundle destination collision')
@@ -112,6 +120,17 @@ def stage_bundle(lock, *, source, out):
                 hashes[row[field]] = digest[7:]
         copy(checked_file(source, component['indexPath'], component['indexDigest'][7:]), row['indexPath'], component['indexDigest'][7:])
         selected[name]['indexPath'] = row['indexPath']
+    for component in models:
+        name = component['name']
+        dest = 'components/' + name + '.oci.tar'
+        reference = component['repository'] + '@' + component['manifestDigest']
+        write_archive(component, inspect_archive(component, source, lock['architecture']), source, out / dest, reference)
+        hashes[dest] = file_hash(out / dest)
+        selected[name].update(archive=dest, archiveSha256=hashes[dest])
+        if 'indexPath' in component:
+            dest = 'models/' + name + '-index.json'
+            copy(checked_file(source, component['indexPath'], component['indexDigest'][7:]), dest, component['indexDigest'][7:])
+            selected[name]['indexPath'] = dest
     copy(checked_file(source, lock['orka']['chartPath'], lock['orka']['chartSha256']), manifest['chart']['path'], lock['orka']['chartSha256'])
     copy(paths['orka-images'], manifest['artifacts']['path'], tools['orka-images']['sha256'])
     copy(paths['kmx-offline-manifest'], 'install.json', tools['kmx-offline-manifest']['sha256'])
@@ -128,7 +147,7 @@ def stage_bundle(lock, *, source, out):
     next(t for t in runtime['tools'] if t['name'] == 'kmx-offline-manifest')['path'] = 'install.json'
     next(t for t in runtime['tools'] if t['name'] == 'orka-images')['path'] = manifest['artifacts']['path']
     for component in runtime['components']:
-        if component['name'] in NATIVE:
+        if component['name'] in NATIVE or component['name'] in model_names:
             inspect_archive(component, out, lock['architecture'])
     (out / 'inputs.json').write_bytes(encoded(runtime) + b'\n')
     hashes['inputs.json'] = file_hash(out / 'inputs.json')

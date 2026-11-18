@@ -17,7 +17,7 @@ pub struct TransferLimits {
     pub kernel_bytes: u64,
     pub initrd_bytes: u64,
 }
-/// Supplied only by trusted Rust selection. No shipping catalog or live pin is provided.
+/// Supplied only by trusted Rust selection, never renderer input.
 #[derive(Clone, Debug)]
 pub struct ImagePin {
     pub release_id: String,
@@ -47,19 +47,56 @@ pub enum ImageError {
     Network(&'static str),
     Storage(std::io::ErrorKind),
     NoSpace,
+    UnsafePath,
+    Busy,
+    RetainedImage,
+    WorkspaceUpdateRequired,
+    WorkspaceVersionUnsupported,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LaunchMode {
     Uefi,
     LinuxDirect,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ImageIdentity {
     pub manifest_sha256: String,
     pub image_id: String,
     pub state_compatibility_id: String,
     pub build_source_commit: String,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageProgress {
+    Download {
+        bytes: u64,
+        total: u64,
+    },
+    Verifying,
+    Verified,
+    Materializing {
+        bytes: u64,
+        total: u64,
+    },
+    /// Retained bytes are a baseline, not fresh movement for transfer-rate estimates.
+    Retained {
+        bytes: u64,
+        total: u64,
+    },
+}
+
+/// A revalidated factory read capability; private installed copies still require verification.
+#[derive(Clone)]
+pub struct VerifiedImageSet {
+    pub(crate) directory: std::sync::Arc<cap_std::fs::Dir>,
+    pub(crate) image: ResolvedImage,
+}
+impl VerifiedImageSet {
+    pub fn image(&self) -> &ResolvedImage {
+        &self.image
+    }
+}
+
 /// Base and validated leaf stay separate; the future HTTP adapter owns URL parsing/policy.
 #[derive(Clone, Debug)]
 pub struct AssetLocation {
@@ -115,8 +152,12 @@ pub struct ResolvedImage {
     pub(crate) compressed_bytes: u64,
     pub(crate) disk_sha256: String,
     pub(crate) disk_bytes: u64,
+    pub(crate) manifest_bytes: std::sync::Arc<[u8]>,
 }
 impl ResolvedImage {
+    pub fn manifest_bytes(&self) -> &[u8] {
+        &self.manifest_bytes
+    }
     pub fn identity(&self) -> &ImageIdentity {
         &self.identity
     }

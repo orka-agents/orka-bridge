@@ -7,32 +7,48 @@ fn contains(binary: &[u8], needle: &[u8]) -> bool {
 #[test]
 fn actual_app_binary_contains_the_local_image_selector_only_in_debug() {
     let binary = fs::read(env!("CARGO_BIN_EXE_orka-bridge")).unwrap();
-    // Positive control: inspecting the wrong/empty file must not pass exclusion.
-    assert!(contains(&binary, b"error while running Bridge"));
+    // Cargo supplies the actual app target. Check its executable format, not
+    // an unrelated message whose wording can change without changing this gate.
+    #[cfg(windows)]
+    assert!(binary.starts_with(b"MZ"));
+    #[cfg(target_os = "macos")]
+    assert!(binary.starts_with(&[0xcf, 0xfa, 0xed, 0xfe]));
+    #[cfg(target_os = "linux")]
+    assert!(binary.starts_with(b"\x7fELF"));
     assert_eq!(
         contains(&binary, b"BRIDGE_DEV_IMAGE_DIR"),
         cfg!(debug_assertions),
         "The local image selector must exist only in the debug app"
     );
-    #[cfg(not(debug_assertions))]
-    for hash in [
-        "77518696b514004b78fd3390dd6103565b54c2f5b0bb01fad6d035e19ef97a22",
-        "4c8007757f1814eab249c84fbdbc51cbd8736aa16938b006a063079adf2c583b",
-        "b99c4e062151f1a8ad3fe68fdcc6d81ca4c550bbc5e3d4e64dfc7c405c81a075",
-        "56f75f268bc1739ae80edd12a5a5e5c11241286d71608b145a0087e1c8a2eed0",
-        "27f833e233753a0a601f3a6792dcd73e2f2c7c8bd30e00b837315c71c5996dcb",
-        "4a44487bb3cfdc2be1d7697b8c71c97733d6ab2db62e6e6e8f1c6af9431ffd2e",
-        "0b5b9f353e5acfa91a6e0ed2f0f28ee6d22ce48664d2a7b7b98d45f0439aa369",
-        "dc96ba25f698e17d041d87046ddd33cde9a0c5757f4bf6c6356e44776fd8f2d2",
-    ] {
+    #[cfg(all(
+        not(debug_assertions),
+        any(
+            all(windows, target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64")
+        )
+    ))]
+    for hash in if cfg!(windows) {
+        [
+            "9d25627b1b5e6bd7952f18f18e8850f531794c8474e7f76aff29affd9a0d8e20",
+            "226cfa6e3f7ffc3cde467a3c8e9498aeb1db2aeac68e60c3f27e8f086528850c",
+            "4a44487bb3cfdc2be1d7697b8c71c97733d6ab2db62e6e6e8f1c6af9431ffd2e",
+            "2a05265fb7e7407e389fc7518ded27f876545cd50d2e14d994b2c9e9cf3fd414",
+        ]
+    } else {
+        [
+            "2aec683295a0358a9a5b41b45e45db4ef2776ed9526d75bc7bc0d9d1b7c00c13",
+            "3d4379c1002febfb31b081b92805ffd542eca3ae5e9b65f007e20f1d8656b160",
+            "27f833e233753a0a601f3a6792dcd73e2f2c7c8bd30e00b837315c71c5996dcb",
+            "375394b72b6aeea1e6cc70e00cfba99d6269d0936ece451657449da1899dad93",
+        ]
+    } {
         let raw: Vec<u8> = (0..64)
             .step_by(2)
             .map(|index| u8::from_str_radix(&hash[index..index + 2], 16).unwrap())
             .collect();
         assert!(
-            !contains(&binary, hash.as_bytes()),
-            "Dev hex pin in release"
+            contains(&binary, hash.as_bytes()) || contains(&binary, &raw),
+            "The supported release must carry its reviewed image/runtime pins"
         );
-        assert!(!contains(&binary, &raw), "Dev raw pin in release");
     }
 }

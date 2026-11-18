@@ -10,7 +10,7 @@ use std::{cmp::Ordering, collections::BTreeSet, fmt};
 
 const MAX_MANIFEST: usize = 8 * 1024 * 1024;
 const SCHEMA: &[u8] = include_bytes!("../../../../images/manifest.schema.json");
-const SCHEMA_SHA256: &str = "0347452bb75e172985c252def74cd9380f59c79655ad2dfb8ace48c5e61f596e";
+const SCHEMA_SHA256: &str = "80a867ef73ef29685f3d7e7d4d72365ca823cc9a56ce6e0ea9e1ee3e39b92d21";
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
@@ -24,7 +24,7 @@ fn check(ok: bool, why: &'static str) -> Result<(), ImageError> {
 
 // serde_json::Value alone silently overwrites duplicate keys. Visit every map first,
 // comparing decoded keys (so "kind" and "k\\u0069nd" collide too).
-struct Unique(Value);
+pub(crate) struct Unique(pub(crate) Value);
 impl<'de> Deserialize<'de> for Unique {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         struct V;
@@ -199,7 +199,7 @@ fn hex(s: &str, n: usize) -> bool {
 fn id(s: &str) -> bool {
     name(s, 63, false)
 }
-fn name(s: &str, max: usize, plus: bool) -> bool {
+pub(crate) fn name(s: &str, max: usize, plus: bool) -> bool {
     !s.is_empty()
         && s.len() <= max
         && (s.as_bytes()[0].is_ascii_lowercase() || s.as_bytes()[0].is_ascii_digit())
@@ -217,7 +217,7 @@ fn version(s: &str) -> bool {
         && s.bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"._+-".contains(&b))
 }
-fn tool_version(s: &str) -> bool {
+pub(crate) fn tool_version(s: &str) -> bool {
     let n = s.chars().count();
     (1..=4096).contains(&n)
         && s.chars()
@@ -256,7 +256,10 @@ fn host_cmp(a: &str, b: &str) -> Ordering {
 }
 fn validate_components(c: &Components) -> Result<(), ImageError> {
     check(
-        c.input_schema_version == "bridge-guest-inputs/v1",
+        matches!(
+            c.input_schema_version.as_str(),
+            "bridge-guest-inputs/v1" | "bridge-guest-inputs/v2"
+        ),
         "component schema",
     )?;
     check(
@@ -610,5 +613,6 @@ pub fn resolve_image(
         compressed_bytes: a.compressed_bytes,
         disk_sha256: a.uncompressed_sha256.clone(),
         disk_bytes: a.uncompressed_bytes,
+        manifest_bytes: bytes.into(),
     })
 }

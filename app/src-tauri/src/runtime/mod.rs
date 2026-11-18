@@ -1,20 +1,38 @@
 pub mod acquire;
 #[cfg(unix)]
 pub mod apple;
+#[cfg(unix)]
+pub mod apple_backend;
+#[cfg(unix)]
+pub(crate) mod apple_channel;
+#[cfg(unix)]
+pub mod apple_input;
+#[cfg(target_os = "macos")]
+pub mod apple_session;
 pub mod client;
+pub mod credential_store;
 pub mod credentials;
+pub mod handshake;
 pub mod identity;
+pub mod image_cache;
+pub mod image_install;
 pub mod image_types;
 pub mod journal;
 pub mod manifest;
+pub mod setup_adapter;
 pub mod snapshot;
 pub mod spawn_guard;
 pub mod types;
+pub mod windows;
 pub mod wire;
 
 use bridge_runtime_protocol::*;
+use image_install::InstalledImageSet;
 use journal::{Journal, StatePhase};
-use std::{mem::ManuallyDrop, sync::Mutex};
+use std::{
+    mem::ManuallyDrop,
+    sync::{Arc, Mutex},
+};
 use types::*;
 
 /// Serialized owner of backend capabilities and the installation lock.
@@ -22,19 +40,54 @@ use types::*;
 pub struct RuntimeWorker {
     backend: ManuallyDrop<Box<dyn VmBackend>>,
     journal: ManuallyDrop<Journal>,
+    image: Arc<InstalledImageSet>,
     lease: ManuallyDrop<Option<VmLease>>,
     next_stage: Option<Stage>,
     early_guest: Option<Uuid>,
+    retry_custody: Option<Arc<Mutex<journal::JournalCustody>>>,
 }
 impl RuntimeWorker {
-    pub fn new(backend: Box<dyn VmBackend>, journal: Journal) -> Self {
-        Self {
+    pub fn new(
+        backend: Box<dyn VmBackend>,
+        journal: Journal,
+        image: Arc<InstalledImageSet>,
+    ) -> Result<Self, RuntimeError> {
+        journal.validate_image(&image)?;
+        Ok(Self {
             backend: ManuallyDrop::new(backend),
             journal: ManuallyDrop::new(journal),
+            image,
             lease: ManuallyDrop::new(None),
             next_stage: None,
             early_guest: None,
+            retry_custody: None,
+        })
+    }
+    #[cfg(any(
+        test,
+        all(windows, target_arch = "x86_64"),
+        all(target_os = "macos", target_arch = "aarch64")
+    ))]
+    // Protocol integration tests import this module without the native app owner.
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn retain_journal(mut self, custody: Arc<Mutex<journal::JournalCustody>>) -> Self {
+        self.retry_custody = Some(custody);
+        self
+    }
+    #[cfg(any(test, windows, target_os = "macos"))]
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn startup_failed(mut self, error: RuntimeError) -> RuntimeError {
+        if matches!(error, RuntimeError::StopUnconfirmed(_)) {
+            std::mem::forget(self);
+            return error;
         }
+        if let Err(cleanup) = self.stop() {
+            std::mem::forget(self);
+            return RuntimeError::StopUnconfirmed(format!(
+                "{error}; stopping the VM failed: {cleanup}"
+            ));
+        }
+        error
     }
     pub fn lease(&self) -> Option<&VmLease> {
         self.lease.as_ref()
@@ -44,14 +97,15 @@ impl RuntimeWorker {
             return Err(RuntimeError::Busy);
         }
         self.journal.verify_state()?;
+        self.journal.validate_image(&self.image)?;
         if self.journal.record().phase == StatePhase::Empty {
             self.journal.require_fresh_creation()?;
             self.journal.set_phase(StatePhase::Preparing)?;
             self.backend
-                .create_state(&self.journal.spec(Uuid::new_v4()))?;
+                .create_state(&self.journal.spec(Uuid::new_v4(), self.image.clone()))?;
             self.journal.finish_preparation()?;
         }
-        let spec = self.journal.begin_boot()?;
+        let spec = self.journal.begin_boot(self.image.clone())?;
         let handle = self.backend.start(&spec)?;
         *self.lease = Some(VmLease { spec, handle });
         self.next_stage = Some(Stage::Early);
@@ -124,7 +178,12 @@ impl Drop for RuntimeWorker {
             unsafe {
                 ManuallyDrop::drop(&mut self.lease);
                 ManuallyDrop::drop(&mut self.backend);
-                ManuallyDrop::drop(&mut self.journal);
+                let journal = ManuallyDrop::take(&mut self.journal);
+                if let Some(custody) = self.retry_custody.take() {
+                    if let Ok(mut held) = custody.lock() {
+                        held.0 = Some(journal);
+                    }
+                }
             }
         }
     }

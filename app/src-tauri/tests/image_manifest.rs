@@ -33,6 +33,13 @@ fn host(target: ImageTarget) -> HostTarget {
         app_version: "1.0.0".into(),
     }
 }
+#[test]
+fn cache_receives_the_exact_pinned_manifest_not_a_json_reserialization() {
+    let p = pin(WINDOWS, ImageTarget::WindowsAmd64);
+    let image = resolve_image(&p, WINDOWS, &host(p.target)).unwrap();
+    assert_eq!(image.manifest_bytes(), WINDOWS);
+    assert_eq!(image.clone().manifest_bytes(), WINDOWS);
+}
 fn verdict(result: &Result<ResolvedImage, ImageError>) -> String {
     match result {
         Ok(_) => "compatible".into(),

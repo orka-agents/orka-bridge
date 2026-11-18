@@ -37,12 +37,12 @@ not caller-controlled paths or tar headers. A profile cannot authorize replacing
 an individual worker image or executable. A bundle cannot self-assert
 that it supports the release. Source qualification and production stay distinct.
 
-For source qualification, use the existing same-commit development descriptor
-from [the restricted-worker build](https://github.com/orka-agents/orka/actions/runs/42129731205),
-whose `sourceSHA` matches `versions.json`. It records the controller, AI worker,
+For source qualification, obtain the same-commit development descriptor selected
+by `sourceOfflineProfile.artifactsSha256` in `versions.json`, and verify its
+`sourceSHA` against `orkaSource` there. It records the controller, AI worker,
 general-worker and publisher indexes for both architectures; select their
 platform children and record the actual byte hashes. Restore the exact pinned
-staged chart using [kmx's retained-chart extraction instructions](https://github.com/kaimahi-agents/kaimahi/blob/fc811336bfdf4d972525eb78f1cba8a7b7e45b19/docs/kmx.md#source-packaged-restricted-profile),
+staged chart using [kmx's retained-chart extraction instructions](https://github.com/kaimahi-agents/kaimahi/blob/503b3ffcbdcc0a966e3b6de6235a8a98077b989e/docs/kmx.md#source-packaged-restricted-profile),
 not a fresh Helm package or the older checked-in release chart. A local rebuild
 instead requires approved **native builders for each architecture**; no builder
 is provisioned here. Obtain the session loader, node,
@@ -54,13 +54,16 @@ identity. Review the build receipts and selected lock before using it.
 
 `input.schema.json` describes the lock's JSON shape. `lock.py` additionally checks
 version policy, duplicate names/JSON keys, mandatory roles and cross-field rules.
-Use one `bridge-guest-inputs/v1` lock per architecture:
+Use one `bridge-guest-inputs/v2` lock per architecture for the native model route.
+Legacy `bridge-guest-inputs/v1` locks retain their original nine-role closure.
+The v2 closure adds an explicit `model-launcher`; it is not the session loader:
 
 - `architecture`: `amd64` or `arm64`; `sourceCommit`: full Orka commit.
 - `orka`: `mode` (`source` or `release`), `identity` (full commit or approved
   release), `chartPath` and unprefixed `chartSha256`.
 - `components`: exactly `kind-node`, `controller`, `ai-worker`, `general-worker`,
-  `publisher`, `session-loader`, `vekil`, `telegram` and `teams`. Each has `name`,
+  `publisher`, `session-loader`, `vekil`, `telegram`, `teams` and, for v2,
+  `model-launcher`. Each has `name`,
   explicit untagged `repository`, prefixed `manifestDigest` and `configDigest`,
   relative `archive` path and unprefixed `archiveSha256`.
 - When the selected child came from a multi-platform release index, include
@@ -120,6 +123,22 @@ Output contains:
 - `collection.json`: canonical input identity, normalized lock hash, output byte
   hashes, architecture, source/release and kmx profile identities. No host paths
   or time-dependent fields are copied. `publicationReady` is always false.
+
+For v2 source inputs, `lock.py` binds Vekil and the distinct BusyBox launcher to
+platform manifests from the selected kmx `copilot-v1` profile. A directly pinned
+platform manifest does not need an original multi-platform index. When supplied,
+index evidence is still verified and retained. The model pins are keyed by kmx
+source revision; the complete input identity binds both model roles. They are not
+additional entries in kmx's unchanged core install manifest.
+
+Offline assembly stages those two model archives alongside the six core roles.
+Bootstrap imports them through the same containerd and exact-CRI checks, and
+selects `--credential-mount copilot-v1` before kind first creates the node. Resume
+uses kmx's existing mount validation, not a remount or directory-permission repair.
+Vekil is not started by bootstrap: credential delivery followed by kmx Connect
+remains a separate runtime operation. Telegram and Teams are still unstaged.
+The public manifest records the v2 input identity and lock hash; it does not add
+a separate launcher digest field or claim publication or credential qualification.
 
 These are OCI archives, not Docker-save archives. Do not feed the node archive
 directly to a Docker version that cannot load OCI layout; the later cluster
@@ -296,9 +315,9 @@ To enable the native six-role profile, select additional hash-locked tools `kmx`
 original supported `kmx-offline/v1` install.json, selected by hash, not another
 Bridge schema. Its source, platform, complete profile, chart, descriptor, tool and
 six image identities must agree with the input lock. Source bundles use the
-`versions.json` pins: kmx `fc811336bfdf4d972525eb78f1cba8a7b7e45b19`, Orka
-`7916cd1c8c083ade6b10df6ba408f854d930190c` and profile
-`orka-7916cd1c-native/v1`. The profile selects restricted AI-worker RBAC and
+`versions.json` pins: kmx `503b3ffcbdcc0a966e3b6de6235a8a98077b989e`, Orka
+`3cb1f0df36705af9ff81cb8b4e8a0f8d36ee6eea` and profile
+`orka-3cb1f0df-native/v1`. The profile selects restricted AI-worker RBAC and
 controller context-token enforcement. This does not approve a production release.
 Missing tools or references fail rather than download.
 
@@ -326,6 +345,7 @@ reported Ready after the node container last started, and Orka's API answers
 reason and the journal stays at orka-ready. On a slow first boot the unit's 900 s start
 timeout can stop the run before that refusal; the journal still stays at orka-ready.
 The unit does not retry, and the next run, such as the next boot, repeats every check.
+A kmx refusal keeps leading context (including progress) and its closing lines in the lifecycle's error, without terminal escapes or its confirmation box. Long output keeps up to 40 leading lines and three closing lines with an omission marker, bounded to 8,192 characters; shorter output keeps all filtered lines. Other commands keep only their fixed name. The unit sends that error to the journal and the serial console.
 Freshness compares kubelet and Docker timestamps, so it relies on the guest clock the
 early endpoint sets from the host.
 This marker is not authority: every resume rechecks ownership, caches and kmx.

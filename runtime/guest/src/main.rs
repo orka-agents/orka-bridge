@@ -2,7 +2,7 @@ use bridge_guest::{
     diagnostics,
     early::{self, BootSystem},
     linux::{self, Linux},
-    peer,
+    model, peer,
     service::{self, Session},
 };
 use bridge_runtime_protocol::*;
@@ -307,10 +307,9 @@ fn control(
     peer: &'static str,
     io: &mut BufReader<impl Read + Write + AsRawFd>,
     session: &mut Session,
-    system: &mut Linux,
+    system: &mut impl BootSystem,
     b: &BootDescriptor,
-    operations: &mut bridge_guest::engine::Operations<bridge_guest::engine::Kmx>,
-    staging: &mut bridge_guest::staging::Staging,
+    serving: &mut Serving,
 ) -> io::Result<bool> {
     let read_phase = if peer == "channel" {
         "channel-read"
@@ -323,18 +322,66 @@ fn control(
         "local-reply-write"
     };
     let r = read(diagnostics::Context::new("serve", read_phase), io, session)?;
-    let (body, stop) = if matches!(r.body, RequestBody::Readiness {} | RequestBody::Shutdown {}) {
+    let credentials = service::credential_request(peer == "channel", &r.body, || {
+        private_result(&mut serving.3, &r.body, || match &r.body {
+            RequestBody::CredentialStatus {}
+            | RequestBody::ModelStatus {}
+            | RequestBody::ModelConnect { .. }
+            | RequestBody::ModelDisconnect { .. }
+            | RequestBody::ModelDisconnectRetained { .. } => serving.2.status(),
+            RequestBody::CredentialPublish {
+                expected_generation,
+                token,
+                profile,
+            } => serving
+                .2
+                .publish(*profile, *expected_generation, token.as_bytes()),
+            RequestBody::CredentialClear {
+                expected_generation,
+            } => serving.2.clear(*expected_generation),
+            _ => unreachable!("credential dispatcher selects only its closed operations"),
+        })
+    });
+    let catalog = matches!(
+        &r.body,
+        RequestBody::Execute {
+            action: EngineActionWire::WorkspaceCatalog {},
+            ..
+        } | RequestBody::Engine(EngineActionWire::WorkspaceCatalog {})
+    );
+    let provider = serving
+        .3
+        .ready_connection()
+        .map(|c| (c.selection.provider.clone(), c.selection.vendor));
+    serving.0.runner_mut().catalog_provider = if peer == "channel" && catalog {
+        provider.clone()
+    } else {
+        None
+    };
+    let local_orka = !service::authoring_allowed(peer == "channel", &r.body);
+    let (body, stop) = if let Some(reply) = credentials {
+        (reply, false)
+    } else if local_orka || (catalog && provider.is_none()) {
+        (
+            ResultBody::Error {
+                code: ErrorCode::Unavailable,
+            },
+            false,
+        )
+    } else if matches!(r.body, RequestBody::Readiness {} | RequestBody::Shutdown {}) {
         service::handle(system, b, &r)
     } else {
         (
-            operations
-                .handle(staging, &r.body)
+            serving
+                .0
+                .handle(&mut serving.1, &r.body)
                 .unwrap_or(ResultBody::Error {
                     code: ErrorCode::InvalidRequest,
                 }),
             false,
         )
     };
+    serving.0.runner_mut().catalog_provider = None;
     write(
         diagnostics::Context::new("serve", write_phase),
         io.get_mut(),
@@ -342,24 +389,65 @@ fn control(
     )?;
     Ok(stop)
 }
+fn private_result<R: model::Runner>(
+    lifecycle: &mut model::ModelLifecycle<R>,
+    request: &RequestBody,
+    run: impl FnOnce() -> io::Result<bridge_guest::credentials::State>,
+) -> ResultBody {
+    if matches!(
+        request,
+        RequestBody::CredentialPublish { .. } | RequestBody::CredentialClear { .. }
+    ) && !lifecycle.allows_credential_mutation()
+    {
+        return ResultBody::Error {
+            code: ErrorCode::Unavailable,
+        };
+    }
+    match run() {
+        Ok(s) => {
+            let credential = CredentialState {
+                profile: s.profile,
+                generation: s.generation,
+                installed: s.installed,
+            };
+            lifecycle
+                .handle(credential.clone(), request)
+                .unwrap_or(ResultBody::CredentialState(credential))
+        }
+        Err(_) => ResultBody::Error {
+            code: ErrorCode::Unavailable,
+        },
+    }
+}
 type Serving = (
-    bridge_guest::engine::Operations<bridge_guest::engine::Kmx>,
+    bridge_guest::engine::Operations<bridge_guest::engine::GuestRunner>,
     bridge_guest::staging::Staging,
+    bridge_guest::credentials::CredentialStore,
+    model::ModelLifecycle<model::Kmx>,
 );
 fn serve_ready(
     root: &std::path::Path,
+    installation: Uuid,
     ready: impl FnOnce() -> io::Result<()>,
 ) -> io::Result<Serving> {
     let operations = diagnostics::context(
         diagnostics::Context::new("serve", "operations-store-init"),
-        bridge_guest::engine::Operations::new(root.join("operations"), bridge_guest::engine::Kmx),
+        bridge_guest::engine::Operations::new(
+            root.join("operations"),
+            bridge_guest::engine::GuestRunner::new(installation),
+        ),
     )?;
     let staging = diagnostics::context(
         diagnostics::Context::new("serve", "staging-store-init"),
         bridge_guest::staging::Staging::new(root.join("snapshots")),
     )?;
     ready()?;
-    Ok((operations, staging))
+    Ok((
+        operations,
+        staging,
+        bridge_guest::credentials::CredentialStore::default(),
+        model::ModelLifecycle::new(model::Kmx::new(installation)),
+    ))
 }
 fn run(mode: &str) -> io::Result<()> {
     let stage: &'static str = if mode == "--early" { "early" } else { "serve" };
@@ -441,14 +529,17 @@ fn run(mode: &str) -> io::Result<()> {
         return Ok(());
     }
     let socket = socket.ok_or_else(early::invalid)?;
-    let (mut operations, mut staging) =
-        serve_ready(std::path::Path::new("/var/lib/bridge"), || {
+    let mut serving = serve_ready(
+        std::path::Path::new("/var/lib/bridge"),
+        b.installation_id,
+        || {
             write(
                 diagnostics::Context::new(stage, "ready-reply-write"),
                 channel.get_mut(),
                 service::result(&r, ResultBody::Ready {}),
             )
-        })?;
+        },
+    )?;
     loop {
         if !channel.buffer().is_empty() {
             if control(
@@ -457,8 +548,7 @@ fn run(mode: &str) -> io::Result<()> {
                 &mut session,
                 &mut system,
                 b,
-                &mut operations,
-                &mut staging,
+                &mut serving,
             )? {
                 return Ok(());
             }
@@ -494,8 +584,7 @@ fn run(mode: &str) -> io::Result<()> {
                 &mut session,
                 &mut system,
                 b,
-                &mut operations,
-                &mut staging,
+                &mut serving,
             )?
         {
             return Ok(());
@@ -529,8 +618,7 @@ fn run(mode: &str) -> io::Result<()> {
                 &mut local,
                 &mut system,
                 b,
-                &mut operations,
-                &mut staging,
+                &mut serving,
             )
             .unwrap_or(false)
             {
@@ -580,6 +668,262 @@ mod tests {
             state_bytes: STATE_BYTES,
             host_utc: 1,
         }
+    }
+    struct ModelRunner;
+    impl model::Runner for ModelRunner {
+        fn execute(&mut self, command: &model::ModelCommand) -> model::Outcome {
+            let connection = match command {
+                model::ModelCommand::Connect {
+                    generation,
+                    selection,
+                } => ModelConnection {
+                    id: Uuid::from_u128(7),
+                    generation: *generation,
+                    selection: selection.clone(),
+                },
+                model::ModelCommand::Disconnect { connection } => connection.clone(),
+            };
+            model::Outcome {
+                connection: Some(connection),
+                success: true,
+                diagnostic: None,
+            }
+        }
+    }
+    fn metadata() -> io::Result<bridge_guest::credentials::State> {
+        Ok(bridge_guest::credentials::State {
+            profile: CREDENTIAL_PROFILE,
+            generation: Some(Uuid::from_u128(5)),
+            installed: true,
+        })
+    }
+    fn private_state(
+        lifecycle: &mut model::ModelLifecycle<ModelRunner>,
+        request: &RequestBody,
+    ) -> ModelState {
+        match service::credential_request(true, request, || {
+            private_result(lifecycle, request, metadata)
+        })
+        .unwrap()
+        {
+            ResultBody::ModelState(s) => s,
+            other => panic!("model dispatch returned {other:?}"),
+        }
+    }
+    #[test]
+    fn private_dispatch_returns_api_key_profile_without_local_authority() {
+        let request = RequestBody::CredentialPublish {
+            profile: MODEL_API_KEY_PROFILE,
+            expected_generation: None,
+            token: CredentialPayload::new(b"synthetic-key").unwrap(),
+        };
+        assert_eq!(
+            service::credential_request(false, &request, || panic!("local credential callback")),
+            Some(ResultBody::Error {
+                code: ErrorCode::Unavailable
+            })
+        );
+        let mut lifecycle = model::ModelLifecycle::new(ModelRunner);
+        let result = private_result(&mut lifecycle, &request, || {
+            Ok(bridge_guest::credentials::State {
+                profile: MODEL_API_KEY_PROFILE,
+                generation: Some(Uuid::from_u128(5)),
+                installed: true,
+            })
+        });
+        let ResultBody::CredentialState(state) = result else {
+            panic!("credential reply")
+        };
+        assert_eq!(state.profile, 2);
+        assert!(state.installed);
+    }
+    #[test]
+    fn private_dispatch_connect_status_disconnect_preserves_one_lifecycle() {
+        let mut lifecycle = model::ModelLifecycle::new(ModelRunner);
+        let connect = RequestBody::ModelConnect {
+            generation: Uuid::from_u128(5),
+            selection: ModelSelection {
+                vendor: None,
+                provider: "copilot".into(),
+                model: "gpt-4.1".into(),
+            },
+        };
+        assert_eq!(
+            private_state(&mut lifecycle, &RequestBody::ModelStatus {}).phase,
+            ModelPhase::Idle
+        );
+        let ready = private_state(&mut lifecycle, &connect);
+        assert_eq!(ready.phase, ModelPhase::Ready);
+        assert_eq!(ready.connection.unwrap().id, Uuid::from_u128(7));
+        assert_eq!(ready.credential.generation, Some(Uuid::from_u128(5)));
+        assert_eq!(
+            private_state(&mut lifecycle, &RequestBody::ModelStatus {}).phase,
+            ModelPhase::Ready
+        );
+        let stopped = private_state(
+            &mut lifecycle,
+            &RequestBody::ModelDisconnect {
+                connection: Uuid::from_u128(7),
+            },
+        );
+        assert_eq!(stopped.phase, ModelPhase::Idle);
+        assert!(stopped.connection.is_none());
+        assert!(stopped.credential.installed);
+    }
+    #[test]
+    fn private_dispatch_denies_local_and_blocks_live_credential_mutation_before_store_call() {
+        let mut lifecycle = model::ModelLifecycle::new(ModelRunner);
+        let connect = RequestBody::ModelConnect {
+            generation: Uuid::from_u128(5),
+            selection: ModelSelection {
+                vendor: None,
+                provider: "copilot".into(),
+                model: "gpt-4.1".into(),
+            },
+        };
+        for request in [
+            &RequestBody::ModelStatus {},
+            &connect,
+            &RequestBody::ModelDisconnect {
+                connection: Uuid::from_u128(7),
+            },
+        ] {
+            assert_eq!(
+                service::credential_request(false, request, || panic!("local callback executed")),
+                Some(ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                })
+            );
+        }
+        lifecycle.handle(
+            CredentialState {
+                profile: CREDENTIAL_PROFILE,
+                generation: Some(Uuid::from_u128(5)),
+                installed: true,
+            },
+            &connect,
+        );
+        for request in [
+            RequestBody::CredentialPublish {
+                profile: CREDENTIAL_PROFILE,
+                expected_generation: Some(Uuid::from_u128(5)),
+                token: CredentialPayload::new(b"synthetic").unwrap(),
+            },
+            RequestBody::CredentialClear {
+                expected_generation: Uuid::from_u128(5),
+            },
+        ] {
+            let called = std::cell::Cell::new(false);
+            let reply = service::credential_request(true, &request, || {
+                private_result(&mut lifecycle, &request, || {
+                    called.set(true);
+                    metadata()
+                })
+            });
+            assert_eq!(
+                reply,
+                Some(ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                })
+            );
+            assert!(
+                !called.get(),
+                "live credential mutation must not touch the store"
+            );
+        }
+    }
+    #[test]
+    fn private_dispatch_unknown_retains_mutation_gate_and_status_but_store_errors_are_safe() {
+        struct Uncertain;
+        impl model::Runner for Uncertain {
+            fn execute(&mut self, _: &model::ModelCommand) -> model::Outcome {
+                model::Outcome {
+                    connection: None,
+                    success: false,
+                    diagnostic: None,
+                }
+            }
+        }
+        let mut lifecycle = model::ModelLifecycle::new(Uncertain);
+        let connect = RequestBody::ModelConnect {
+            generation: Uuid::from_u128(5),
+            selection: ModelSelection {
+                vendor: None,
+                provider: "copilot".into(),
+                model: "gpt-4.1".into(),
+            },
+        };
+        let reply = service::credential_request(true, &connect, || {
+            private_result(&mut lifecycle, &connect, metadata)
+        });
+        assert!(matches!(
+            reply,
+            Some(ResultBody::ModelState(ModelState {
+                phase: ModelPhase::Unknown,
+                connection: None,
+                ..
+            }))
+        ));
+        for request in [
+            RequestBody::CredentialPublish {
+                profile: CREDENTIAL_PROFILE,
+                expected_generation: Some(Uuid::from_u128(5)),
+                token: CredentialPayload::new(b"synthetic").unwrap(),
+            },
+            RequestBody::CredentialClear {
+                expected_generation: Uuid::from_u128(5),
+            },
+        ] {
+            assert_eq!(
+                private_result(&mut lifecycle, &request, || panic!(
+                    "unknown mutation touched store"
+                )),
+                ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                }
+            );
+        }
+        for request in [
+            RequestBody::CredentialStatus {},
+            RequestBody::ModelStatus {},
+        ] {
+            let reply = private_result(&mut lifecycle, &request, metadata);
+            match reply {
+                ResultBody::CredentialState(s) => assert!(s.installed),
+                ResultBody::ModelState(s) => {
+                    assert_eq!(s.phase, ModelPhase::Unknown);
+                    assert!(s.credential.installed);
+                }
+                _ => panic!("status must remain allowed"),
+            }
+            assert_eq!(
+                private_result(&mut lifecycle, &request, || Err(
+                    io::ErrorKind::PermissionDenied.into()
+                )),
+                ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                }
+            );
+        }
+        let mut idle = model::ModelLifecycle::new(Uncertain);
+        let clear = RequestBody::CredentialClear {
+            expected_generation: Uuid::from_u128(5),
+        };
+        let reply = private_result(&mut idle, &clear, || {
+            Ok(bridge_guest::credentials::State {
+                profile: CREDENTIAL_PROFILE,
+                generation: Some(Uuid::from_u128(5)),
+                installed: false,
+            })
+        });
+        assert_eq!(
+            reply,
+            ResultBody::CredentialState(CredentialState {
+                profile: CREDENTIAL_PROFILE,
+                generation: Some(Uuid::from_u128(5)),
+                installed: false,
+            })
+        );
     }
     #[test]
     fn initial_hello_waits_through_host_not_connected_hup() {
@@ -993,18 +1337,189 @@ mod tests {
         sender.join().unwrap();
     }
     #[test]
+    fn local_socket_orka_is_refused_before_operations_even_with_a_valid_id() {
+        struct NoSystem;
+        impl BootSystem for NoSystem {
+            fn infrastructure(&mut self, _: &BootDescriptor) -> io::Result<InfrastructureState> {
+                unreachable!()
+            }
+            fn probe(&mut self) -> io::Result<early::Disk> {
+                unreachable!()
+            }
+            fn format(&mut self, _: Uuid) -> io::Result<()> {
+                unreachable!()
+            }
+            fn mount_state(&mut self) -> io::Result<()> {
+                unreachable!()
+            }
+            fn identity(&mut self) -> io::Result<Option<early::Identity>> {
+                unreachable!()
+            }
+            fn initialize(&mut self, _: &early::Identity) -> io::Result<()> {
+                unreachable!()
+            }
+            fn bind_persistent(&mut self) -> io::Result<()> {
+                unreachable!()
+            }
+            fn credentials(&mut self) -> io::Result<()> {
+                unreachable!()
+            }
+            fn ready(&mut self, _: &BootDescriptor) -> io::Result<()> {
+                unreachable!()
+            }
+            fn save_boot(&mut self, _: &BootDescriptor) -> io::Result<()> {
+                unreachable!()
+            }
+            fn shutdown(&mut self) -> io::Result<()> {
+                unreachable!()
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let b = boot();
+        let mut serving = serve_ready(root.path(), b.installation_id, || Ok(())).unwrap();
+        let request = OrkaRequest {
+            path: "agents".into(),
+            after: None,
+            body: Some(
+                serde_json::json!({"name":"bridge-run-0123456789abcdef0123456789abcdef",
+                "namespace":"orka-system","spec":{}}),
+            ),
+        };
+        let operation = Uuid::new_v4();
+        for (id, body) in [
+            (
+                9,
+                RequestBody::Execute {
+                    operation: Uuid::new_v4(),
+                    action: serde_json::from_value(
+                        serde_json::json!({"type":"cleanupRunAgent","uid":"recorded-uid"}),
+                    )
+                    .unwrap(),
+                    snapshot: None,
+                },
+            ),
+            (
+                10,
+                RequestBody::Engine(
+                    serde_json::from_value(
+                        serde_json::json!({"type":"cleanupRunAgent","uid":"recorded-uid"}),
+                    )
+                    .unwrap(),
+                ),
+            ),
+            (
+                3,
+                RequestBody::Execute {
+                    operation,
+                    action: EngineActionWire::Orka {
+                        request: request.clone(),
+                    },
+                    snapshot: None,
+                },
+            ),
+            (4, RequestBody::Engine(EngineActionWire::Orka { request })),
+            (
+                7,
+                RequestBody::Execute {
+                    operation: Uuid::new_v4(),
+                    action: EngineActionWire::RunWorker {
+                        name: "bridge-task-0123456789abcdef0123456789abcdef".into(),
+                        uid: "ack-uid".into(),
+                    },
+                    snapshot: None,
+                },
+            ),
+            (
+                8,
+                RequestBody::Engine(EngineActionWire::RunWorker {
+                    name: "bridge-task-0123456789abcdef0123456789abcdef".into(),
+                    uid: "ack-uid".into(),
+                }),
+            ),
+            (
+                5,
+                RequestBody::Execute {
+                    operation: Uuid::new_v4(),
+                    action: EngineActionWire::OrkaChat {
+                        request: ChatRequest {
+                            method: ChatMethod::Delete,
+                            path: "tasks/bridge-chat-task-0123456789abcdef0123456789abcdef".into(),
+                            after: None,
+                            body: None,
+                        },
+                    },
+                    snapshot: None,
+                },
+            ),
+            (
+                6,
+                RequestBody::Engine(EngineActionWire::OrkaChat {
+                    request: ChatRequest {
+                        method: ChatMethod::Get,
+                        path: "sessions/bridge-chat-0123456789abcdef0123456789abcdef".into(),
+                        after: None,
+                        body: None,
+                    },
+                }),
+            ),
+        ] {
+            let (mut host, guest) = UnixStream::pair().unwrap();
+            host.write_all(
+                &encode(&Frame::Request(WireRequest {
+                    version: VERSION,
+                    boot_nonce: b.boot_nonce,
+                    request_id: id,
+                    body,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let mut guest = BufReader::new(guest);
+            let mut local = Session::local(b.clone()).unwrap();
+            assert!(!control(
+                "local",
+                &mut guest,
+                &mut local,
+                &mut NoSystem,
+                &b,
+                &mut serving
+            )
+            .unwrap());
+            drop(guest);
+            let mut bytes = Vec::new();
+            host.read_to_end(&mut bytes).unwrap();
+            let Frame::Result(reply) = serde_json::from_slice(&bytes).unwrap() else {
+                panic!("expected result");
+            };
+            assert_eq!(
+                reply.body,
+                ResultBody::Error {
+                    code: ErrorCode::Unavailable
+                }
+            );
+        }
+        assert_eq!(
+            fs::read_dir(root.path().join("operations"))
+                .unwrap()
+                .filter(|e| e.as_ref().unwrap().file_type().unwrap().is_file())
+                .count(),
+            0,
+            "no operation record was created"
+        );
+    }
+    #[test]
     fn readiness_is_not_acknowledged_if_serving_store_initialization_fails() {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("operations"), b"not a directory").unwrap();
         let mut acknowledged = false;
-        assert!(serve_ready(root.path(), || {
+        assert!(serve_ready(root.path(), Uuid::new_v4(), || {
             acknowledged = true;
             Ok(())
         })
         .is_err());
         assert!(!acknowledged);
         fs::remove_file(root.path().join("operations")).unwrap();
-        assert!(serve_ready(root.path(), || {
+        assert!(serve_ready(root.path(), Uuid::new_v4(), || {
             acknowledged = true;
             Ok(())
         })

@@ -5,6 +5,16 @@ pub use uuid::Uuid;
 
 mod operations;
 pub use operations::*;
+mod credentials;
+pub use credentials::*;
+mod model;
+pub use model::*;
+mod orka;
+pub use orka::*;
+mod chat;
+pub use chat::*;
+mod catalog;
+pub use catalog::*;
 pub fn encode_chunk(bytes: &[u8]) -> String {
     STANDARD.encode(bytes)
 }
@@ -17,6 +27,8 @@ pub const VERSION: u16 = 1;
 pub const MAX_FRAME: usize = 128 * 1024;
 pub const MAX_CHUNK: usize = 32 * 1024;
 pub const STATE_BYTES: u64 = 34_359_738_368;
+/// Guest RAM allocated by every native launcher (6 GiB).
+pub const MEMORY_BYTES: u64 = 6 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -49,12 +61,19 @@ pub struct StageHello {
     pub stage: Stage,
     pub guest_nonce: Uuid,
     pub accepted_boot_nonce: Option<Uuid>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub run_cleanup: bool,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", deny_unknown_fields)]
 pub enum EngineActionWire {
     Version {},
     ListAgents { context: String, namespace: String },
+    Orka { request: OrkaRequest },
+    OrkaChat { request: ChatRequest },
+    RunWorker { name: String, uid: String },
+    CleanupRunAgent { uid: String },
+    WorkspaceCatalog {},
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(
@@ -65,6 +84,31 @@ pub enum EngineActionWire {
 )]
 pub enum RequestBody {
     Boot(BootDescriptor),
+    ModelStatus {},
+    ModelConnect {
+        generation: Uuid,
+        selection: ModelSelection,
+    },
+    ModelDisconnect {
+        connection: Uuid,
+    },
+    /// Explicit cleanup of a known prior-boot connection, before any new credential.
+    ModelDisconnectRetained {
+        connection: ModelConnection,
+    },
+    CredentialStatus {},
+    CredentialPublish {
+        #[serde(
+            default = "default_credential_profile",
+            skip_serializing_if = "is_copilot_profile"
+        )]
+        profile: u16,
+        expected_generation: Option<Uuid>,
+        token: CredentialPayload,
+    },
+    CredentialClear {
+        expected_generation: Uuid,
+    },
     Engine(EngineActionWire),
     Chunk {
         data: String,
@@ -113,6 +157,9 @@ pub struct WireRequest {
     deny_unknown_fields
 )]
 pub enum ResultBody {
+    ModelState(ModelState),
+    CredentialState(CredentialState),
+    Infrastructure(InfrastructureState),
     Ready {},
     Snapshot {
         snapshot: SnapshotId,
@@ -127,6 +174,29 @@ pub enum ResultBody {
     Error {
         code: ErrorCode,
     },
+}
+/// Post-boot observation only; Boot and Shutdown retain their plain Ready reply.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InfrastructureState {
+    pub phase: Option<BootstrapPhase>,
+    pub service: InfrastructureService,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum BootstrapPhase {
+    IdentityPrepared,
+    ClusterReady,
+    CacheVerified,
+    OrkaReady,
+    InfrastructureReady,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum InfrastructureService {
+    Starting,
+    Ready,
+    Failed,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -174,7 +244,7 @@ pub fn validate_hello(hello: &StageHello, stage: Stage, nonce: Uuid) -> Result<(
     if hello.version != VERSION {
         return Err(ProtocolError::Version);
     }
-    if hello.stage != stage {
+    if hello.stage != stage || (stage == Stage::Early && hello.run_cleanup) {
         return Err(ProtocolError::Stage);
     }
     if hello.guest_nonce.is_nil()
@@ -188,6 +258,22 @@ pub fn validate_hello(hello: &StageHello, stage: Stage, nonce: Uuid) -> Result<(
     Ok(())
 }
 pub fn validate_action(action: &EngineActionWire) -> Result<(), ProtocolError> {
+    if let EngineActionWire::CleanupRunAgent { uid } = action {
+        if !orka::valid_run_uid(uid) {
+            return Err(ProtocolError::Invalid);
+        }
+    }
+    if let EngineActionWire::RunWorker { name, uid } = action {
+        if !valid_run_worker(name, uid) {
+            return Err(ProtocolError::Invalid);
+        }
+    }
+    if let EngineActionWire::Orka { request } = action {
+        request.validate()?;
+    }
+    if let EngineActionWire::OrkaChat { request } = action {
+        request.validate()?;
+    }
     if let EngineActionWire::ListAgents { context, namespace } = action {
         if [context, namespace]
             .iter()
@@ -214,6 +300,34 @@ impl Frame {
             Self::Hello(h) => (h.version, h.guest_nonce, 1),
             Self::Request(r) => {
                 match &r.body {
+                    RequestBody::ModelConnect {
+                        generation,
+                        selection,
+                    } if generation.is_nil() || !selection.valid() => {
+                        return Err(ProtocolError::Invalid)
+                    }
+                    RequestBody::ModelDisconnect { connection } if connection.is_nil() => {
+                        return Err(ProtocolError::Invalid)
+                    }
+                    RequestBody::ModelDisconnectRetained { connection }
+                        if connection.id.is_nil()
+                            || connection.generation.is_nil()
+                            || !connection.selection.valid() =>
+                    {
+                        return Err(ProtocolError::Invalid)
+                    }
+                    RequestBody::CredentialPublish {
+                        profile,
+                        expected_generation,
+                        ..
+                    } if !valid_credential_profile(*profile)
+                        || expected_generation.is_some_and(|id| id.is_nil()) =>
+                    {
+                        return Err(ProtocolError::Invalid)
+                    }
+                    RequestBody::CredentialClear {
+                        expected_generation,
+                    } if expected_generation.is_nil() => return Err(ProtocolError::Invalid),
                     RequestBody::Boot(b)
                         if b.installation_id.is_nil()
                             || b.state_fs_uuid != b.installation_id
@@ -255,7 +369,10 @@ impl Frame {
                     {
                         return Err(ProtocolError::Invalid)
                     }
-                    RequestBody::Execute { action, .. } => validate_action(action)?,
+                    RequestBody::Execute { action, .. }
+                    | RequestBody::Engine(action @ EngineActionWire::CleanupRunAgent { .. }) => {
+                        validate_action(action)?;
+                    }
                     RequestBody::Chunk { data } => chunk(data)?,
                     RequestBody::Engine(EngineActionWire::ListAgents { context, namespace }) => {
                         if context.trim().is_empty() || namespace.trim().is_empty() {
@@ -270,6 +387,16 @@ impl Frame {
                 (r.version, r.boot_nonce, r.request_id)
             }
             Self::Result(r) => {
+                if let ResultBody::ModelState(state) = &r.body {
+                    if !state.valid() {
+                        return Err(ProtocolError::Invalid);
+                    }
+                }
+                if let ResultBody::CredentialState(state) = &r.body {
+                    if !state.valid() {
+                        return Err(ProtocolError::Invalid);
+                    }
+                }
                 if let ResultBody::Chunk { data } = &r.body {
                     chunk(data)?;
                 }

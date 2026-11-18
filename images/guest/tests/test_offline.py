@@ -14,8 +14,8 @@ SYNTHETIC_PROFILE = {'profile': 'native-fixture', 'profileSha256': 'a' * 64,
                      'kmxSourceCommit': '1' * 40, 'chartSha256': sha(b'synthetic-chart'), 'artifactsSha256': sha(b'{}')}
 
 
-def native_inputs(root):
-    value = lock(root)
+def native_inputs(root, architecture="amd64"):
+    value = lock(root, architecture)
     value['kmxProfileSha256'] = 'a' * 64
     for name in ('kmx', 'kubectl', 'helm'):
         (root / name).write_bytes(name.encode())
@@ -27,14 +27,14 @@ def native_inputs(root):
         name = component['name']
         with tarfile.open(root / component['archive']) as archive:
             index_value = json.load(member(archive, 'index.json'))
-            index_value['manifests'][0]['platform'] = {'os': 'linux', 'architecture': 'amd64'}
+            index_value['manifests'][0]['platform'] = {'os': 'linux', 'architecture': architecture}
             index = encoded(index_value)
         (root / (name + '-index.json')).write_bytes(index)
         component.update(indexPath=name + '-index.json', indexDigest='sha256:' + sha(index))
         rows.append({'component': name, 'repository': component['repository'], 'manifestDigest': component['manifestDigest'], 'configDigest': component['configDigest'], 'indexPath': name + '-index.json', 'indexDigest': component['indexDigest'], 'manifestPath': name + '-manifest.json', 'configPath': name + '-config.json', 'pullPolicy': 'IfNotPresent'})
     node = {k: v for k, v in rows.pop(0).items() if k not in ('component', 'pullPolicy')}
     node['localRef'] = value['nodeLocalRef']
-    manifest = {'schemaVersion': 'kmx-offline/v1', 'profile': 'native-fixture', 'profileSha256': value['kmxProfileSha256'], 'platform': {'os': 'linux', 'architecture': 'amd64'}, 'kmx': {'version': 'v1', 'revision': '1' * 40, 'sha256': sha(b'kmx')}, 'orka': {'mode': 'source', 'identity': value['sourceCommit']}, 'chart': {'path': 'chart.tgz', 'sha256': value['orka']['chartSha256']}, 'artifacts': {'path': 'images.json', 'sha256': sha(b'{}')}, 'node': node, 'images': rows, 'components': {}}
+    manifest = {'schemaVersion': 'kmx-offline/v1', 'profile': 'native-fixture', 'profileSha256': value['kmxProfileSha256'], 'platform': {'os': 'linux', 'architecture': architecture}, 'kmx': {'version': 'v1', 'revision': '1' * 40, 'sha256': sha(b'kmx')}, 'orka': {'mode': 'source', 'identity': value['sourceCommit']}, 'chart': {'path': 'chart.tgz', 'sha256': value['orka']['chartSha256']}, 'artifacts': {'path': 'images.json', 'sha256': sha(b'{}')}, 'node': node, 'images': rows, 'components': {}}
     (root / 'install.json').write_bytes(encoded(manifest))
     value['tools'].append({'name': 'kmx-offline-manifest', 'path': 'install.json', 'version': 'v1', 'sha256': sha(encoded(manifest))})
     return value, manifest

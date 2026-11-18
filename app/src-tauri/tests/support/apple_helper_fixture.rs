@@ -2,9 +2,11 @@ use std::{fs::File, io::{Read, Write}, os::fd::FromRawFd, os::unix::net::UnixStr
 unsafe extern "C" { fn fcntl(fd: i32, command: i32, ...) -> i32; fn signal(sig: i32, handler: usize) -> usize; }
 fn main() {
     let a: Vec<_> = std::env::args().collect();
-    assert_eq!(a.len(), 9);
-    assert_eq!((&a[3][..], &a[5][..], &a[7][..]), ("--supervisor-fd", "--guest-fd", "--ownership-fd"));
-    let fds: Vec<i32> = [4,6,8].map(|i| a[i].parse().unwrap()).into();
+    assert_eq!(a.len(), 11);
+    assert_eq!((&a[3][..], &a[5][..], &a[7][..], &a[9][..]), ("--config-fd", "--supervisor-fd", "--guest-fd", "--ownership-fd"));
+    let config = unsafe { File::from_raw_fd(a[4].parse().unwrap()) };
+    assert!(config.metadata().unwrap().is_file());
+    let fds: Vec<i32> = [6,8,10].map(|i| a[i].parse().unwrap()).into();
     assert!(std::env::vars_os().next().is_none(), "ambient environment reached helper");
     for &fd in &fds { assert_eq!(unsafe { fcntl(fd, 1) } & 1, 0); }
     let mut control = unsafe { UnixStream::from_raw_fd(fds[0]) };

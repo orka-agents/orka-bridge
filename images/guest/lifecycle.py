@@ -3,6 +3,7 @@ import argparse
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -19,6 +20,7 @@ if __package__ or TYPE_CHECKING:
         input_identity,
         load_lock,
         matches,
+        model_images,
         read_json,
         require,
         validate_lock,
@@ -30,6 +32,7 @@ else:
         input_identity,
         load_lock,
         matches,
+        model_images,
         read_json,
         require,
         validate_lock,
@@ -45,10 +48,28 @@ WORKLOADS = (('kube-system', 'coredns'), ('orka-system', 'orka-api-controller'),
 ORKA_READYZ = '/api/v1/namespaces/orka-system/services/http:orka-api:api/proxy/readyz'
 
 
+def refusal(stderr):
+    """Bounded kmx context and closing lines, without terminal escapes or its confirmation box."""
+    if len(stderr) > 64 * 1024:
+        stderr = stderr[:48 * 1024] + b'\n... stderr omitted ...\n' + stderr[-16 * 1024:]
+    text = re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', stderr.decode(errors='replace'))
+    lines = [''.join(c for c in line if c.isprintable()).strip() for line in text.splitlines()]
+    lines = [line for line in lines if line and line[0] not in '\u2502\u256d\u2570\u250c\u2514\u2500']
+    joined = ' | '.join(lines)
+    if len(lines) <= 43 and len(joined) <= 8192:
+        return joined
+    # A kind/kubeadm stack can bury the cause far above kmx's closing summary.
+    return ' | '.join(lines[:40])[:6144] + ' | ... | ' + ' | '.join(lines[-3:])[-2039:]
+
+
 def execute(argv, *, env=None, stdin=None, timeout=600):
     with open(stdin, 'rb') if stdin is not None else open(os.devnull, 'rb') as stream:
         result = subprocess.run(argv, env=env, stdin=stream, capture_output=True, timeout=timeout, check=False)
-    require(result.returncode == 0, 'command failed: ' + Path(argv[0]).name)
+    if result.returncode != 0:
+        name = Path(argv[0]).name
+        # kmx states why it refused; other children's raw output stays out of the journal.
+        reason = refusal(result.stderr) if name == 'kmx' else ''
+        raise ValueError('command failed: ' + name + (': ' + reason if reason else ''))
     require(len(result.stdout) <= 1024 * 1024, 'command output exceeds bound')
     return result.stdout.decode()
 
@@ -167,6 +188,10 @@ def verified_inputs(lock):
         require(repository == component['repository'] and all(row[k] == component[k] for k in ('manifestDigest', 'configDigest')), 'native image identity mismatch')
         for path, digest in ((row['manifestPath'], row['manifestDigest']), (row['configPath'], row['configDigest']), (row['indexPath'], row['indexDigest'])):
             checked_file(BUNDLE, path, digest[7:])
+    for component in model_images(lock):
+        checked_file(BUNDLE, component['archive'], component['archiveSha256'])
+        if 'indexPath' in component:
+            checked_file(BUNDLE, component['indexPath'], component['indexDigest'][7:])
     checked_file(BUNDLE, manifest['chart']['path'], manifest['chart']['sha256'])
     return manifest, tools, components
 
@@ -220,16 +245,20 @@ def initialize(lock, state, *, require_existing):
         os.fsync(fd)
         os.close(fd)
         save(state, journal)  # Flush the directory containing the durable creation intent.
-    execute([*kmx, 'up', '--step', 'cluster', '--offline-bundle', str(BUNDLE)], env=env)
+    # Select at creation; kmx validates existing mounts on resume, never repairs them.
+    mount = ['--credential-mount', 'copilot-v1'] if model_images(lock) else []
+    execute([*kmx, 'up', '--step', 'cluster', '--offline-bundle', str(BUNDLE), *mount], env=env)
     nodes = node_inventory(env, manifest)
     require(len(nodes) == 1 and nodes[0]['State']['Running'], 'cluster node unavailable')
     require(not journal['nodeIds'] or journal['nodeIds'] == [nodes[0]['Id']], 'node identity changed')
     journal.update(nodeIds=[nodes[0]['Id']], phase='cluster-ready')
     save(state, journal)
     (state / 'cluster-create.intent').unlink(missing_ok=True)
-    for row in manifest['images']:
+    images = [(row['component'], row) for row in manifest['images']]
+    images += [(c['name'], c) for c in model_images(lock)]
+    for name, row in images:
         node = journal['nodeIds'][0]
-        component = components[row['component']]
+        component = components[name]
         execute(['docker', 'exec', '-i', node, 'ctr', '--namespace', 'k8s.io', 'images', 'import', '--all-platforms', '--digests', '-'], env=env, stdin=BUNDLE / component['archive'])
         reference = row['repository'] + '@' + row['manifestDigest']
         # The normalized archive must supply this exact reference; no fallback tag.

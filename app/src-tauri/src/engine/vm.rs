@@ -9,6 +9,19 @@ impl VmTransport {
     pub fn with_client(client: VmClient) -> Self {
         Self(Some(Arc::new(Mutex::new(client))))
     }
+    /// Lends the original client inside its native session's blocking worker.
+    pub fn borrow_client<T>(
+        &self,
+        work: impl FnOnce(&mut VmClient) -> T,
+    ) -> Result<T, EngineError> {
+        let mut client = self
+            .0
+            .as_ref()
+            .ok_or_else(|| EngineError::new(ErrorKind::Unavailable))?
+            .try_lock()
+            .map_err(|_| EngineError::new(ErrorKind::Execution))?;
+        Ok(work(&mut client))
+    }
 }
 impl EngineTransport for VmTransport {
     fn execute(&self, request: EngineRequest) -> TransportFuture<'_> {
@@ -64,6 +77,25 @@ mod tests {
         fn flush(&mut self) -> io::Result<()> {
             Ok(())
         }
+    }
+    #[tokio::test]
+    async fn native_borrow_lends_the_original_client_once_and_refuses_a_held_lock() {
+        let id = bridge_runtime_protocol::Uuid::new_v4();
+        let vm = VmTransport::with_client(VmClient::established(Box::new(Closed), id).unwrap());
+        let guard = vm.0.as_ref().unwrap().try_lock().unwrap();
+        assert!(vm
+            .borrow_client(|_| panic!("busy must not call work"))
+            .is_err());
+        drop(guard);
+        let mut count = 0;
+        for _ in 0..2 {
+            vm.borrow_client(|client| {
+                count += 1;
+                assert_eq!(client.boot_nonce(), id);
+            })
+            .unwrap();
+        }
+        assert_eq!(count, 2);
     }
     #[tokio::test]
     async fn concurrent_admission_never_parks_a_blocking_worker_on_the_client_lock() {

@@ -1,22 +1,61 @@
-name: Apple helper core
+name: Apple helper core and I/O
 on:
   push:
     paths:
       - 'app/src-tauri/native/macos/**'
       - 'scripts/test-vm-helper-macos.sh'
+      - 'scripts/build-vm-helper-macos.sh'
+      - 'app/src-tauri/build.rs'
+      - 'app/src-tauri/tauri.macos.conf.json'
       - '.github/workflows/apple-helper.yml'
+      - 'app/src-tauri/src/runtime/apple.rs'
+      - 'app/src-tauri/src/runtime/apple_tests.rs'
+      - 'app/src-tauri/src/runtime/credentials.rs'
+      - 'app/src-tauri/src/runtime/credential_spawn_tests.rs'
+      - 'app/src-tauri/src/runtime/credential_tests.rs'
+      - 'app/src-tauri/src/runtime/spawn_descriptor_fixture.rs'
+      - 'app/src-tauri/src/runtime/spawn_guard.rs'
+      - 'app/src-tauri/tests/support/apple_helper_fixture.rs'
+      - 'runtime/protocol/tests/apple_backend.rs'
+      - 'runtime/Cargo.toml'
+      - 'runtime/Cargo.lock'
+      - 'runtime/rust-toolchain.toml'
+      - 'runtime/protocol/Cargo.toml'
+      - 'runtime/protocol/src/**'
   pull_request:
     paths:
       - 'app/src-tauri/native/macos/**'
       - 'scripts/test-vm-helper-macos.sh'
+      - 'scripts/build-vm-helper-macos.sh'
+      - 'app/src-tauri/build.rs'
+      - 'app/src-tauri/tauri.macos.conf.json'
       - '.github/workflows/apple-helper.yml'
+      - 'app/src-tauri/src/runtime/apple.rs'
+      - 'app/src-tauri/src/runtime/apple_tests.rs'
+      - 'app/src-tauri/src/runtime/credentials.rs'
+      - 'app/src-tauri/src/runtime/credential_spawn_tests.rs'
+      - 'app/src-tauri/src/runtime/credential_tests.rs'
+      - 'app/src-tauri/src/runtime/spawn_descriptor_fixture.rs'
+      - 'app/src-tauri/src/runtime/spawn_guard.rs'
+      - 'app/src-tauri/tests/support/apple_helper_fixture.rs'
+      - 'runtime/protocol/tests/apple_backend.rs'
+      - 'runtime/Cargo.toml'
+      - 'runtime/Cargo.lock'
+      - 'runtime/rust-toolchain.toml'
+      - 'runtime/protocol/Cargo.toml'
+      - 'runtime/protocol/src/**'
 permissions:
   contents: read
 jobs:
   swift:
     runs-on: macos-15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: '1.98.1'
+      - run: bash scripts/build-vm-helper-macos.sh
       - run: bash scripts/test-vm-helper-macos.sh

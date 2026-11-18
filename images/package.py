@@ -65,7 +65,7 @@ def layout(fmt):
 def components_valid(c):
     shape(c, ("inputSchemaVersion", "inputIdentity", "canonicalLockSha256", "versionPolicySha256", "orka",
               "kmxProfileSha256", "kind", "kubernetes", "vekil", "tools"))
-    require(c["inputSchemaVersion"] == "bridge-guest-inputs/v1", "unsupported component lock schema")
+    require(c["inputSchemaVersion"] in ("bridge-guest-inputs/v1", "bridge-guest-inputs/v2"), "unsupported component lock schema")
     for key in ("inputIdentity", "canonicalLockSha256", "versionPolicySha256"):
         require(matches(c[key], HEX), "invalid component identity")
     require(c["kmxProfileSha256"] is None or matches(c["kmxProfileSha256"], HEX), "invalid kmx profile")
