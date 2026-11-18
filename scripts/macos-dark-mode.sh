@@ -15,14 +15,17 @@ case "${1:-}" in
   *) echo "usage: $0 get | set true|false" >&2; exit 2 ;;
 esac
 
+errors="$(mktemp)"
+trap 'rm -f "$errors"' EXIT
 for attempt in 1 2 3 4 5; do
-  # osascript writes the result to stdout and an error to stderr only on failure.
-  if output="$(osascript -e "$script" 2>&1)"; then
+  # Keep stdout exactly as osascript printed it; callers compare it.
+  if output="$(osascript -e "$script" 2>"$errors")"; then
+    cat "$errors" >&2
     [[ -n $output ]] && printf '%s\n' "$output"
     exit 0
   fi
-  printf '%s\n' "$output" >&2
-  if [[ $output != *'(-609)'* || $attempt == 5 ]]; then exit 1; fi
+  cat "$errors" >&2
+  if ! grep -Fq '(-609)' "$errors" || [[ $attempt == 5 ]]; then exit 1; fi
   echo "System Events connection closed; retrying ($attempt of 5)" >&2
   sleep 1
 done
