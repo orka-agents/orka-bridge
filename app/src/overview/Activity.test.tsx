@@ -118,6 +118,40 @@ test('without a connected cluster the section says how to see runs, and an inact
   expect(await screen.findByText('Connect a cluster to see its runs here.')).toBeTruthy();
 });
 
+test('until the first read answers the section says it is reading, and a failed first read never asks to connect', async () => {
+  let answer: (value: unknown) => void = () => undefined;
+  vi.stubGlobal('isTauri', true);
+  mockIPC(() => new Promise(resolve => { answer = resolve; }));
+  render(<RecentActivity onShowAgent={noShow} active places={places} />);
+  expect(await screen.findByText('Reading recent runs…')).toBeTruthy();
+  expect(screen.queryByText('Connect a cluster to see its runs here.')).toBeNull();
+  answer('not activity');
+  expect(await screen.findByText("Couldn't read recent activity just now.")).toBeTruthy();
+  expect(screen.queryByText('Reading recent runs…')).toBeNull();
+  expect(screen.queryByText('Connect a cluster to see its runs here.')).toBeNull();
+});
+
+test('leaving the tab drops a queued read', async () => {
+  let release: () => void = () => undefined;
+  const calls: string[] = [];
+  vi.stubGlobal('isTauri', true);
+  mockIPC(async command => {
+    calls.push(command);
+    if (calls.length === 1) await new Promise<void>(resolve => { release = resolve; });
+    return { places: [read('one', [entry('run')])] };
+  });
+  const view = render(<RecentActivity onShowAgent={noShow} active places={places} />);
+  await waitFor(() => expect(calls).toHaveLength(1));
+  view.rerender(<RecentActivity onShowAgent={noShow} active places={{ ...places }} />);
+  view.rerender(<RecentActivity onShowAgent={noShow} active={false} places={{ ...places }} />);
+  release();
+  expect(await items()).toHaveLength(1);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(calls).toHaveLength(1);
+  view.rerender(<RecentActivity onShowAgent={noShow} active places={{ ...places }} />);
+  await waitFor(() => expect(calls).toHaveLength(2));
+});
+
 test('a denied place drops its runs, and places that change during a read queue one more read', async () => {
   let release: () => void = () => undefined;
   let activity: unknown = { places: [read('one', [entry('kept')])] };

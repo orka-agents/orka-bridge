@@ -84,6 +84,8 @@ export function RecentActivity({ active, places, onShowAgent }: { active: boolea
   }, []);
   useEffect(() => {
     if (active && places) start();
+    // Overview stays mounted while hidden: drop a queued read, and the next visit reads afresh.
+    if (!active) queued.current = false;
   }, [active, places, start]);
   useEffect(() => () => { request.current++; queued.current = false; }, []);
   const labels = placeLabels(places?.places ?? []);
@@ -111,7 +113,8 @@ export function RecentActivity({ active, places, onShowAgent }: { active: boolea
     <p className="overview-note">Runs on this computer aren't listed here yet.</p>
     {failed && <p className="overview-note" role="status">Couldn't read recent activity just now.{activity && ' Showing what Bridge last saw.'}</p>}
     {notes.map(([key, text]) => <p key={key} className="overview-note" role="status">{text}</p>)}
-    {!connected.length ? <p className="overview-note">Connect a cluster to see its runs here.</p>
+    {!activity ? places && !failed && <p className="overview-note" role="status">Reading recent runs…</p>
+      : !connected.length ? <p className="overview-note">Connect a cluster to see its runs here.</p>
       : !rows.length ? <p className="overview-note">{emptyFilter[filter]}</p>
       : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.connection}/${row.uid}`} row={row} place={labels.get(row.placeKey)!} agentShown={known.has(`${row.placeKey}/${row.agentUid}`)} onShowAgent={onShowAgent} />)}</ol>}
   </section>;
