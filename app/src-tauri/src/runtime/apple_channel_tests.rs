@@ -6,18 +6,27 @@ use std::{
 };
 #[test]
 fn surviving_wrapper_has_no_fd_and_blocked_read_stops_without_io_lock_deadlock() {
+    // Bound every wait, so a missed wake fails here and names the wait instead of
+    // stalling the test binary until the CI job is cancelled.
+    let bound = Duration::from_secs(10);
     let (socket, mut peer) = UnixStream::pair().unwrap();
+    peer.set_read_timeout(Some(bound)).unwrap();
     let slot = GuestSlot::new(socket);
-    let client = slot.channel();
+    let mut client = slot.channel();
+    client.deadline = Some(Instant::now() + bound);
     let (configured, ready) = std::sync::mpsc::channel();
+    let (finished, read) = std::sync::mpsc::channel();
     let reader = std::thread::spawn(move || {
         let mut b = [0];
-        client.io(false, |mut socket| {
+        let result = client.io(false, |mut socket| {
             configured.send(()).unwrap(); // Timeout is configured before revocation.
             socket.read(&mut b)
-        })
+        });
+        finished.send(result).unwrap();
     });
-    ready.recv().unwrap();
+    ready
+        .recv_timeout(bound)
+        .expect("the reader configured its read");
     let mut second = slot.channel();
     assert_eq!(
         second.write(b"x").unwrap_err().kind(),
@@ -29,13 +38,21 @@ fn surviving_wrapper_has_no_fd_and_blocked_read_stops_without_io_lock_deadlock()
     if let Err(error) = slot.revoke(Instant::now()) {
         assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
     }
-    assert_eq!(reader.join().unwrap().unwrap(), 0);
+    let woken = read
+        .recv_timeout(bound * 2)
+        .expect("revocation woke the blocked read");
+    assert_eq!(woken.expect("the woken read reported end of file"), 0);
+    reader.join().unwrap();
     slot.revoke(Instant::now()).unwrap();
     assert_eq!(
         second.read(&mut [0]).unwrap_err().kind(),
         std::io::ErrorKind::NotConnected
     );
-    assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+    assert_eq!(
+        peer.read(&mut [0])
+            .expect("the peer saw end of file after revocation"),
+        0
+    );
 }
 #[test]
 fn scoped_reference_timeout_never_reports_success() {
