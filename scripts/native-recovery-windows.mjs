@@ -1625,6 +1625,7 @@ try {
         if (await evaluate(`localStorage.getItem('bridge.firstTest.v1')`) !== 'attempted') throw Error(name + ': returning intent missing');
       }
       await until(() => evaluate(`[...document.querySelectorAll('.workspace-upgrade')].some(item => item.getClientRects().length && item.innerText.includes(${JSON.stringify(expected)}))`), name);
+      if (!await evaluate(`!!document.querySelector('${localVm === 'ready' ? '.returning-workspace' : '.setup-progress'} .workspace-upgrade')`)) throw Error(name + ': wrong setup/Manage fixture mount');
       if (!await evaluate(`!!document.querySelector('.workspace-upgrade [role="status"]')`)) throw Error(`${name}: missing announced status region`);
       await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const base64 = await call('Page.captureScreenshot', { format: 'png' });

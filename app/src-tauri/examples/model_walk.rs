@@ -354,6 +354,7 @@ fn main() {
     // selector creates it; reset clears this flag, never a real store or file.
     let mismatched = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let first_test_pending = std::sync::atomic::AtomicBool::new(false);
+    let upgrade_scene = std::sync::atomic::AtomicU8::new(0);
     let cluster_selected = std::sync::atomic::AtomicBool::new(false);
     let target = json!({"id":"42345678-1234-4234-8234-123456789abc",
         "context_id":"52345678-1234-4234-8234-123456789abc", "context_name":"team-dev",
@@ -611,6 +612,17 @@ fn main() {
                         return true;
                     }
                     if command == "setup_status" {
+                        if let Some(p) = phase.as_deref().filter(|p| p.starts_with("upgrade-")) {
+                            let manage = p.ends_with("-manage");
+                            let group = if manage { 2 } else { 1 };
+                            if upgrade_scene.swap(group, std::sync::atomic::Ordering::SeqCst) != group {
+                                workspace.lock().unwrap().returning = manage;
+                                let intent = if manage { "attempted" } else { "pending" };
+                                invoke.message.webview()
+                                    .eval(format!("localStorage.setItem('bridge.firstTest.v1', '{intent}'); location.reload();"))
+                                    .expect("fixture upgrade renderer reload");
+                            }
+                        }
                         let progress = match phase.as_deref() {
                             Some("designer-no-destination") => Some(json!({"selected":null, "localVm":"cancelled", "model":"locked", "modelSupported":true})),
                             Some("installing") => Some(json!({"selected":"localVm", "localVm":"installing", "model":"locked", "modelSupported":true,

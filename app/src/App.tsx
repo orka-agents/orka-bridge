@@ -110,12 +110,14 @@ export default function App() {
   // Setup keeps the sample's latest evidence even while Designer shows another document.
   const [sampleResult, setSampleResult] = useState<{ snapshot?: RunSnapshot }>();
   const [firstPass, setFirstPass] = useState<RunSnapshot>();
+  const replacementObserved = useRef(false);
   // null records an unsuccessful sample open; a retained run report cannot prove its files readable.
   const [sampleSource, setSampleSource] = useState<SourceId | null>();
   const [sampleStale, setSampleStale] = useState(false);
   const [sampleDirty, setSampleDirty] = useState(false);
   const [sampleRevision, setSampleRevision] = useState(0);
   const observeSampleRun = useCallback((snapshot: RunSnapshot | undefined) => {
+    if (replacementObserved.current) return;
     // Observed sample completion consumes held setup intent; a later unreadable poll must not re-arm it.
     if (snapshot?.state === 'complete' && snapshot.report) retireFirstTest();
     setSampleResult({ snapshot });
@@ -151,7 +153,6 @@ export default function App() {
     setSaveNotice(previous => ({ id, edited: value !== 'saved' || previous.id === id && previous.edited }));
     if (id === SAMPLE_DOCUMENT_ID) setSampleDirty(value !== 'saved');
   }, []);
-  const replacementObserved = useRef(false);
   const observeSetup = useCallback((status: SetupStatus | undefined) => {
     if (status?.workspaceReplaced) {
       retireFirstTest();
@@ -197,12 +198,12 @@ export default function App() {
     onUnavailable: () => setFirstPass(undefined),
   });
   const sample = sampleResult?.snapshot;
-  const firstCheck = sampleSource === null ? 'unknown' : firstTest === 'running' ? 'running' : sampleResult ? sampleStale || sample?.sourceCurrent === false || (sameSource(sampleSource, sample?.source) === false && !!sample?.report) ? 'stale'
+  const firstCheck = setup?.workspaceReplaced ? undefined : sampleSource === null ? 'unknown' : firstTest === 'running' ? 'running' : sampleResult ? sampleStale || sample?.sourceCurrent === false || (sameSource(sampleSource, sample?.source) === false && !!sample?.report) ? 'stale'
     : !sample || sample.state === 'unknown' ? 'unknown' : sample.state === 'running' ? 'running' : sample.state === 'complete' ? sample.report?.verdict === 'cancelled' ? 'unknown' : sample.report?.verdict : undefined
-    : setup?.workspaceReplaced ? undefined : firstTest;
+    : firstTest;
   // Tab, footer and Setup share the stage. The chip names the place, not AI or test health.
   const initialAutomatic = firstTest === 'running' || (model === 'connected' && firstTestPending() && (!sample || sample.state === 'idle'));
-  const firstTestResult = sampleSource !== null && sample?.report ? { failed: sample.report.cases.filter(check => check.verdict === 'failed').length } : undefined;
+  const firstTestResult = !setup?.workspaceReplaced && sampleSource !== null && sample?.report ? { failed: sample.report.cases.filter(check => check.verdict === 'failed').length } : undefined;
   const ordinaryView = setupView(setup, { checking, stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping, workspace: returningWorkspace, model, check: firstCheck, initialAutomatic });
   const updating = workspaceUpdating && !!setup;
   const view = updating ? { ...ordinaryView, line: 'Updating workspace', tabLine: 'Updating workspace', footerLine: 'Updating workspace', detail: 'Your agent files are kept.', tone: 'busy' as const, status: 'running' as const, done: false } : ordinaryView;

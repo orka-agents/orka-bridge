@@ -1634,6 +1634,7 @@ func captureUpgradeMatrix(manage: Bool) throws {
         let phase = "upgrade-\(state)\(manage ? "-manage" : "")"
         try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
         waitForNativeText([expected])
+        waitForNativeText([manage ? "Agents" : "Where agents run"])
         for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("compact", CGFloat(540), CGFloat(900))] {
             localSize(width, height); scroll(4000)
             _ = try seek(expected, -100)
@@ -1645,8 +1646,11 @@ func captureUpgradeMatrix(manage: Bool) throws {
             if let action = confirmation {
                 press(action)
                 require(enabledButton("Not now") != nil, "Confirmation must offer Not now")
+                reveal("Not now")
                 guard let notNow = enabledButton("Not now") else { fatalError("Not now missing") }
+                print("Upgrade focus before AX:", attribute(notNow, "AXFocused") as? Bool ?? false, String(describing: nativeBounds(notNow)), reachable(nativeBounds(notNow)))
                 require(AXUIElementSetAttributeValue(notNow, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus safe confirmation action")
+                print("Upgrade focus after AX:", attribute(notNow, "AXFocused") as? Bool ?? false)
                 for down in [true, false] { CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: down)?.post(tap: .cghidEventTap) }
                 for down in [true, false] {
                     let event = CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: down); event?.flags = .maskShift; event?.post(tap: .cghidEventTap)
@@ -1655,6 +1659,7 @@ func captureUpgradeMatrix(manage: Bool) throws {
                 // AX nodes can be refreshed by polling; observe the current node without extending the key deadline.
                 let currentFocus = enabledButton("Not now").map { attribute($0, "AXFocused") as? Bool == true } == true
                 if !currentFocus {
+                    _ = try capture("local-probe", [])
                     let focused = nativeElements().filter { attribute($0, "AXFocused") as? Bool == true }
                     print("Upgrade confirmation focus:", focused.map { attribute($0, "AXTitle") as? String ?? attribute($0, "AXRole") as? String ?? "unavailable" })
                 }
