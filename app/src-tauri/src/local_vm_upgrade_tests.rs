@@ -195,6 +195,119 @@ fn facade(
     });
     (LocalVm::new(factory.clone()), factory)
 }
+#[test]
+fn facade_external_repair_is_explicit_and_refresh_latches_observed_history_and_uncertainty() {
+    let scene = Scene::new(ImageTarget::WindowsAmd64);
+    drop(WorkspaceUpgrade::open(&scene.data, &scene.local).unwrap());
+    let intent = scene.local.join(STORE).join("intent.json");
+    fs::write(&intent, b"broken transaction").unwrap();
+    let (vm, factory) = facade(&scene, None);
+    vm.seed_upgrade_status(&scene.data, &scene.local);
+    assert!(vm.workspace_replaced());
+    runtime().block_on(async {
+        let before = vm
+            .upgrade_status(scene.data.clone(), scene.local.clone())
+            .await;
+        assert_eq!(before.error, Some("unknown"));
+        fs::remove_file(&intent).unwrap();
+        let stale = vm
+            .upgrade_status(scene.data.clone(), scene.local.clone())
+            .await;
+        assert_eq!(stale.state, "conflict");
+        assert_eq!(stale.error, Some("unknown"));
+        assert_eq!(
+            vm.refresh_upgrade_status(scene.data.clone(), scene.local.clone())
+                .await
+                .unwrap()
+                .state,
+            "none"
+        );
+        assert_eq!(
+            vm.upgrade_status(scene.data.clone(), scene.local.clone())
+                .await
+                .state,
+            "none"
+        );
+        assert!(vm.workspace_replaced());
+        let (unseeded, _) = facade(&scene, None);
+        fs::write(&intent, b"broken transaction").unwrap();
+        assert!(matches!(
+            unseeded
+                .refresh_upgrade_status(scene.data.clone(), scene.local.clone())
+                .await,
+            Err(RuntimeError::RetainedState)
+        ));
+        assert!(
+            unseeded.workspace_replaced(),
+            "query failure must latch uncertainty"
+        );
+        fs::remove_file(&intent).unwrap();
+        unseeded
+            .refresh_upgrade_status(scene.data.clone(), scene.local.clone())
+            .await
+            .unwrap();
+        assert!(unseeded.workspace_replaced());
+        assert_eq!(factory.stops.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(
+            factory.releases.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        assert!(factory.launched.lock().unwrap().is_empty());
+    });
+    let mut scene = Scene::new(ImageTarget::WindowsAmd64);
+    scene.replace(Some("intent")).unwrap_err();
+    let (vm, _) = facade(&scene, None);
+    runtime().block_on(async {
+        let dto = vm
+            .refresh_upgrade_status(scene.data.clone(), scene.local.clone())
+            .await
+            .unwrap();
+        assert!(dto.transaction.is_some());
+        assert!(
+            vm.workspace_replaced(),
+            "actual transaction observation must latch history"
+        );
+    });
+}
+
+async fn ready_real_journal_refresh_is_busy_without_stopping_or_releasing(
+    scene: &Scene,
+    vm: &Arc<LocalVm>,
+    factory: &DestinationFactory,
+) {
+    let root = scene.local.join("local-vm-v1");
+    assert!(matches!(Journal::open(&root), Err(RuntimeError::Busy)));
+    let stops = factory.stops.load(std::sync::atomic::Ordering::SeqCst);
+    let releases = factory.releases.load(std::sync::atomic::Ordering::SeqCst);
+    let starts = factory.launched.lock().unwrap().len();
+    let authoring = vm.try_authoring().unwrap();
+    vm.on_workspace_replaced(Arc::new(|| {
+        panic!("read-only refresh must not retire authoring")
+    }));
+    let result = vm
+        .refresh_upgrade_status(scene.data.clone(), scene.local.clone())
+        .await;
+    assert!(matches!(result, Err(RuntimeError::Busy)));
+    let status = vm
+        .upgrade_status(scene.data.clone(), scene.local.clone())
+        .await;
+    assert_eq!(status.state, "conflict");
+    assert_eq!(status.error, Some("inUse"));
+    assert!(!status.can_restore && !status.can_replace && !status.can_cancel);
+    assert_eq!(vm.status(), LocalVmStatus::Ready);
+    assert_eq!(
+        factory.stops.load(std::sync::atomic::Ordering::SeqCst),
+        stops
+    );
+    assert_eq!(
+        factory.releases.load(std::sync::atomic::Ordering::SeqCst),
+        releases
+    );
+    assert_eq!(factory.launched.lock().unwrap().len(), starts);
+    assert!(vm.authoring_current(&authoring));
+    drop(authoring);
+}
+
 fn completed(reply: UpgradeActionReply) -> UpgradeStatusDto {
     match reply {
         UpgradeActionReply::Completed { status } => status,
@@ -700,6 +813,8 @@ fn facade_replace_hands_live_creation_authority_to_launch_and_reports_fresh() {
             StatePhase::Consumed
         );
         assert!(!vm.model_connected());
+        ready_real_journal_refresh_is_busy_without_stopping_or_releasing(&scene, &vm, &factory)
+            .await;
         vm.shutdown().await.unwrap();
     });
 }
