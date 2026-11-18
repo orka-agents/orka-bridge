@@ -302,6 +302,8 @@ function Tray-Menu {
             $overflow = Wait-For 'Native notification overflow not visible' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
             $i = 0
             $settled = $null
+            $target = $null
+            $hit = $null
             continue
         }
         if ($point) {
@@ -313,7 +315,7 @@ function Tray-Menu {
             else { $settled = $target }
         } else { $settled = $null }
         if ($i -ge 100) {
-            $named = if (!$target) { 'no icon was found' } else { "Explorer's last hit test at $($target.X),$($target.Y) named $(if ([string]::IsNullOrEmpty($hit)) { 'nothing' } else { "'$hit'" })" }
+            $named = if (!$target) { "no icon was found$(if ($overflow) { ' in the overflow' })" } else { "Explorer's last hit test at $($target.X),$($target.Y) named $(if ([string]::IsNullOrEmpty($hit)) { 'nothing' } else { "'$hit'" })" }
             if (!$point) { throw "Native Bridge notification icon missing; $named" }
             throw "Bridge notification icon not settled under the cursor; $named"
         }
