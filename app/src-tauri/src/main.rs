@@ -14,6 +14,11 @@ use tauri::Manager;
 mod lifecycle;
 
 #[tauri::command]
+fn quit_bridge(app: tauri::AppHandle) {
+    lifecycle::stop(&app);
+}
+
+#[tauri::command]
 async fn engine_call(
     request: EngineRequest,
     state: tauri::State<'_, EngineState>,
@@ -706,13 +711,15 @@ fn main() {
                 }
                 _ => Err(bridge_engine::runtime::types::RuntimeError::Unavailable),
             };
+            let vm = local_vm::configured(
+                app.path().resource_dir().ok(),
+                app.path().app_data_dir().ok(),
+                app.path().app_local_data_dir().ok(),
+            );
             let vm = if recovery.is_ok() {
-                local_vm::configured(
-                    app.path().resource_dir().ok(),
-                    app.path().app_local_data_dir().ok(),
-                )
+                vm
             } else {
-                LocalVm::recovery_blocked()
+                vm.for_recovery()
             };
             #[cfg(debug_assertions)]
             startup_marker("local VM configured");
@@ -765,6 +772,7 @@ fn main() {
             setup_status,
             setup_select_local,
             setup_cancel_local,
+            quit_bridge,
             setup_change_local,
             setup_requirements,
             setup_preflight,
