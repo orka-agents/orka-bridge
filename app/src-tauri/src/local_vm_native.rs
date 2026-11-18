@@ -376,6 +376,14 @@ struct NativeFactory {
     all(target_os = "macos", target_arch = "aarch64")
 ))]
 impl JournalCustody {
+    fn preflight_replacement(&self, target: &UpgradeTarget) -> Result<(), RuntimeError> {
+        if let Some(journal) = &self.0 {
+            // Use the live journal's verified handles, never reopen or recreate
+            // its new-only authority just to inspect replacement eligibility.
+            target.source.upgrade_eligibility(journal)?;
+        }
+        Ok(())
+    }
     fn take_for_launch(&mut self, closed: &watch::Receiver<bool>) -> Result<Journal, RuntimeError> {
         // Keep original creation authority through the very last cancellation checkpoint.
         if *closed.borrow() {
@@ -389,6 +397,12 @@ impl JournalCustody {
     all(target_os = "macos", target_arch = "aarch64")
 ))]
 impl LocalFactory for NativeFactory {
+    fn preflight_replacement(&self, target: &UpgradeTarget) -> Result<(), RuntimeError> {
+        self.pending
+            .lock()
+            .map_err(|_| RuntimeError::Unavailable)?
+            .preflight_replacement(target)
+    }
     fn release_stopped(&self) -> Result<(), RuntimeError> {
         self.pending
             .lock()

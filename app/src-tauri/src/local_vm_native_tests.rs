@@ -1820,6 +1820,122 @@ mod release_image_tests {
         }
     }
 
+    #[tokio::test]
+    async fn invalid_replacement_after_cancel_preserves_original_creator() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        // Portable adapter for NativeFactory's retained-journal boundary; no VM
+        // process is launched, but start must retain real creation permission.
+        struct Factory {
+            pending: Mutex<JournalCustody>,
+            releases: AtomicUsize,
+            started_with_creator: AtomicBool,
+            installation: bridge_runtime_protocol::Uuid,
+        }
+        impl LocalFactory for Factory {
+            fn preflight_replacement(&self, target: &UpgradeTarget) -> Result<(), RuntimeError> {
+                self.pending.lock().unwrap().preflight_replacement(target)
+            }
+            fn release_stopped(&self) -> Result<(), RuntimeError> {
+                self.releases.fetch_add(1, Ordering::SeqCst);
+                self.pending.lock().unwrap().0.take();
+                Ok(())
+            }
+            fn launch(
+                &self,
+                closed: watch::Receiver<bool>,
+                _: Arc<dyn Fn(LocalProgress) + Send + Sync>,
+            ) -> StartFuture<'_> {
+                Box::pin(async move {
+                    let journal = self.pending.lock().unwrap().take_for_launch(&closed)?;
+                    assert_eq!(journal.record().installation_id, self.installation);
+                    journal.require_fresh_creation()?;
+                    self.started_with_creator.store(true, Ordering::SeqCst);
+                    Err(RuntimeError::Closed)
+                })
+            }
+        }
+
+        let (temp, profile, _) = profile();
+        let source = source(profile);
+        let local = temp.path().join("local");
+        let data = temp.path().join("data");
+        fs::create_dir(&local).unwrap();
+        fs::create_dir(&data).unwrap();
+        let root = local.join("local-vm-v1");
+        let journal = Journal::create(&root, BackendKind::Qemu, vec![1]).unwrap();
+        let installation = journal.record().installation_id;
+        fs::create_dir(temp.path().join("source")).unwrap();
+        let verified =
+            image_fixture::verified(&temp.path().join("source"), ImageTarget::WindowsAmd64);
+        let (cancel, closed) = watch::channel(false);
+        crate::runtime::image_install::materialize_image(
+            &verified,
+            &journal.image_target(source.compatibility()).unwrap(),
+            closed.clone(),
+            |_| {},
+        )
+        .await
+        .unwrap();
+        let mut custody = JournalCustody(Some(journal));
+        // Ordinary setup cancelled after binding, before its first native launch.
+        cancel.send_replace(true);
+        assert!(matches!(
+            custody.take_for_launch(&closed),
+            Err(RuntimeError::Closed)
+        ));
+        assert!(matches!(
+            source.upgrade_eligibility(custody.0.as_ref().unwrap()),
+            Err(RuntimeError::Image(ImageError::WorkspaceVersionUnsupported))
+        ));
+        let factory = Arc::new(Factory {
+            pending: Mutex::new(custody),
+            releases: AtomicUsize::new(0),
+            started_with_creator: AtomicBool::new(false),
+            installation,
+        });
+        let vm = LocalVm::new(factory.clone());
+        vm.cancel().await.unwrap();
+        assert_eq!(vm.status(), LocalVmStatus::Cancelled);
+        assert!(!local.join("workspace-upgrades-v1").exists());
+        let record = fs::read(root.join("record.json")).unwrap();
+        let binding = fs::read(root.join("image-binding.json")).unwrap();
+        let result = vm
+            .replace_workspace(
+                data,
+                local.clone(),
+                UpgradeTarget {
+                    source,
+                    machine_id: vec![2],
+                },
+            )
+            .await;
+        assert!(matches!(
+            result,
+            Err(RuntimeError::Image(ImageError::WorkspaceVersionUnsupported))
+        ));
+        assert!(
+            factory.pending.lock().unwrap().0.is_some(),
+            "invalid replacement discarded the original creator journal"
+        );
+        assert_eq!(factory.releases.load(Ordering::SeqCst), 0);
+        assert_eq!(vm.status(), LocalVmStatus::Cancelled);
+        assert!(!vm.workspace_replaced());
+        assert!(vm.upgrade_cancel.lock().unwrap().is_none());
+        assert!(!local.join("workspace-upgrades-v1").exists());
+        assert_eq!(fs::read(root.join("record.json")).unwrap(), record);
+        assert_eq!(fs::read(root.join("image-binding.json")).unwrap(), binding);
+        assert!(matches!(Journal::open(&root), Err(RuntimeError::Busy)));
+        vm.start();
+        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            while !factory.started_with_creator.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
     #[test]
     fn cancelled_pinned_startup_retains_original_owner() {
         let (temp, profile, _) = profile();

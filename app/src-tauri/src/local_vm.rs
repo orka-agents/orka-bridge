@@ -145,6 +145,11 @@ pub trait LocalFactory: Send + Sync {
         closed: watch::Receiver<bool>,
         progress: Arc<dyn Fn(LocalProgress) + Send + Sync>,
     ) -> StartFuture<'_>;
+    /// Refuse invalid replacement before quiescence can discard live creation authority.
+    /// Read-only; the upgrade backend must still validate after custody release.
+    fn preflight_replacement(&self, _target: &UpgradeTarget) -> Result<(), RuntimeError> {
+        Ok(())
+    }
     /// Drop retained factory handles only after native stop and all queued work joined.
     fn release_stopped(&self) -> Result<(), RuntimeError> {
         Ok(())
@@ -953,6 +958,7 @@ impl LocalVm {
         }
         crate::workspace_upgrade::validate_new_replacement(&data, &local)?;
         let factory = self.factory.clone().ok_or(RuntimeError::Unavailable)?;
+        factory.preflight_replacement(&target)?;
         let rx = self.upgrade_cancellation();
         let vm = self.clone();
         tokio::spawn(async move {
