@@ -59,6 +59,67 @@ async fn merge256_forced_projection_preserves_cache_and_revision() {
 }
 
 #[tokio::test]
+async fn facade_recorded_stop_failure_projects_quarantine_before_stop() {
+    for forced in [false, true] {
+        for contextual in [false, true] {
+            let vm = LocalVm::unavailable();
+            assert!(vm.try_authoring().is_some());
+            vm.inner.state.lock().unwrap().stopped = Some(true);
+            assert!(vm.try_authoring().is_some());
+            vm.inner.state.lock().unwrap().stopped = None;
+            let mut cached = UpgradeStatusDto::none();
+            cached.state = "consumed";
+            cached.transaction = Some(bridge_runtime_protocol::Uuid::new_v4());
+            cached.can_restore = true;
+            vm.cache_upgrade_status(cached);
+            let error = if forced {
+                RuntimeError::ShutdownForced
+            } else {
+                RuntimeError::StopUnconfirmed("fixture".into())
+            };
+            let error = if contextual {
+                RuntimeError::Startup(Box::new(crate::runtime::types::StartupFailure {
+                    error,
+                    operation: WorkspaceOperation::Stop,
+                    diagnostic: "fixture".into(),
+                }))
+            } else {
+                error
+            };
+            vm.inner
+                .fail("fixture".into(), &error, WorkspaceOperation::Start, true);
+            assert_eq!(vm.inner.state.lock().unwrap().stopped, None);
+            let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+            let revision = vm
+                .upgrade_cache_revision
+                .load(std::sync::atomic::Ordering::Relaxed);
+            let dto = vm.upgrade_status("unused".into(), "unused".into()).await;
+            assert_eq!(
+                dto.error,
+                Some(if forced {
+                    "forcedStop"
+                } else {
+                    "stopUnconfirmed"
+                })
+            );
+            assert_eq!(dto.state, "conflict");
+            assert!(!dto.busy && !dto.can_replace && !dto.can_restore && !dto.can_cancel);
+            assert!(dto.transaction.is_none());
+            assert!(vm.try_authoring().is_none());
+            assert_eq!(
+                serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+                before
+            );
+            assert_eq!(
+                vm.upgrade_cache_revision
+                    .load(std::sync::atomic::Ordering::Relaxed),
+                revision
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn merge256_owned_startup_quarantines_direct_and_contextual_stop_failures() {
     struct FailedFactory {
         forced: bool,
@@ -120,12 +181,11 @@ async fn merge256_owned_startup_quarantines_direct_and_contextual_stop_failures(
                         "unclean cleanup must not release original creation custody"
                     );
                     assert_eq!(vm.status(), LocalVmStatus::Failed);
-                    if forced {
-                        assert!(
-                            vm.try_authoring().is_none(),
-                            "forced startup must refuse new authoring"
-                        );
-                    }
+                    assert_eq!(vm.inner.state.lock().unwrap().stopped, None);
+                    assert!(
+                        vm.try_authoring().is_none(),
+                        "unclean startup must refuse authoring before any separate stop: forced={forced}, contextual={contextual}"
+                    );
                     let cached = vm
                         .upgrade_cache
                         .lock()
@@ -619,10 +679,22 @@ mod infrastructure_tests {
             .await;
         assert_eq!(dto.error, Some("forcedStop"));
         assert!(!dto.busy && !dto.can_replace && !dto.can_restore);
-        let stale =
-            vm.publish_upgrade_status(0, crate::workspace_upgrade::UpgradeStatusDto::none());
-        assert_eq!(stale.error, Some("forcedStop"));
-        assert!(!stale.busy);
+        let before = serde_json::to_vec(&*vm.upgrade_cache.lock().unwrap()).unwrap();
+        let revision = vm
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let current = vm.upgrade_status("unused".into(), "unused".into()).await;
+        assert_eq!(current.error, Some("forcedStop"));
+        assert!(!current.busy);
+        assert_eq!(
+            serde_json::to_vec(&*vm.upgrade_cache.lock().unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(
+            vm.upgrade_cache_revision
+                .load(std::sync::atomic::Ordering::Relaxed),
+            revision
+        );
         vm.start();
         assert_eq!(vm.status(), LocalVmStatus::Failed);
         assert_eq!(
