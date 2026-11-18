@@ -137,9 +137,9 @@ Review those captures for visible changes; they do not exercise a real VM or
 model connection.
 
 Each capture keeps the text OCR read beside it in `<name>.ocr.txt`. A failed
-check prints its reason followed by the latest capture's text and adds the
-reason to that file, so an
-unrendered page can be told apart from a page showing a different state.
+check prints its reason followed by the latest capture's text, and writes the
+reason above that text in the capture's file, so an unrendered page can be told
+apart from a page showing a different state.
 
 ## Platform builds
 
