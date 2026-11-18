@@ -651,6 +651,24 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     print("PASS \(name): native \(page) heading observed")
     return observations
 }
+// Saves replace the file before their Git commit and reply, so the footer can still
+// read "Saving…" for a moment after the file matches. Re-capture for up to 5 s.
+func captureSavedFooter(_ name: String, _ page: String) throws -> (rows: [VNRecognizedTextObservation], footer: String) {
+    var rows: [VNRecognizedTextObservation] = []
+    var footer = ""
+    for attempt in 0..<10 {
+        if attempt > 0 { Thread.sleep(forTimeInterval: 0.5) }
+        rows = try capture(name, page)
+        footer = rows.filter { $0.boundingBox.maxY < 0.1 }
+            .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
+        if footerSaved(footer) { break }
+    }
+    return (rows, footer)
+}
+func footerSaved(_ footer: String) -> Bool {
+    footer.range(of: "\\bSaved\\b", options: .regularExpression) != nil
+        && !footer.localizedCaseInsensitiveContains("not saved")
+}
 func scrollMain(_ pixels: Int32) {
     let rect = window()!.1
     let scroll = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 1, wheel1: pixels, wheel2: 0, wheel3: 0)
@@ -908,7 +926,8 @@ do {
     var current = before
     var readError: Error?
     for _ in 0..<100 {
-        // A save in progress can briefly leave the file unreadable; keep polling.
+        // Saves replace the file atomically; still record a failed read rather than
+        // throwing past fail(), which restores the original files.
         do { current = try String(contentsOf: owned, encoding: .utf8); readError = nil }
         catch { readError = error }
         if readError == nil && current == before + suffix { saved = true; break }
@@ -931,20 +950,8 @@ do {
         fail("Native form did not preserve the file and append the exact instructions suffix")
     }
     print("Native form saved the instructions suffix \(waited) s after typing")
-    // The file is written before the save's Git commit and reply, so the footer can still
-    // read "Saving…" for a moment. Re-capture until it acknowledges the save, within 5 s.
-    var savedForm = try capture("agent-form-saved", "Designer")
-    var savedFooter = ""
-    for attempt in 0..<10 {
-        if attempt > 0 { Thread.sleep(forTimeInterval: 0.5); savedForm = try capture("agent-form-saved", "Designer") }
-        savedFooter = savedForm.filter { $0.boundingBox.maxY < 0.1 }
-            .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        if savedFooter.range(of: "\\bSaved\\b", options: .regularExpression) != nil
-            && !savedFooter.localizedCaseInsensitiveContains("not saved") { break }
-    }
-    require(savedFooter.range(of: "\\bSaved\\b", options: .regularExpression) != nil
-        && !savedFooter.localizedCaseInsensitiveContains("not saved"),
-        "Form save was not acknowledged in footer: \(savedFooter)")
+    let (savedForm, savedFooter) = try captureSavedFooter("agent-form-saved", "Designer")
+    require(footerSaved(savedFooter), "Form save was not acknowledged in footer: \(savedFooter)")
     clickTab("Clusters", savedForm)
     initial = try capture("places-after-form", "Clusters")
     // This is a real release with an active image pin. Leave Continue untouched;
@@ -1040,18 +1047,24 @@ for character in marker.utf16 {
     }
 }
 var editSaved = false
+var editedBytes = bytesBeforeEdit
+var editReadError: Error?
 // As in the form probe: autosave, write and commit can take several seconds on a loaded runner.
 for _ in 0..<100 {
-    if (try String(contentsOf: ownedFile, encoding: .utf8)) == bytesBeforeEdit + marker { editSaved = true; break }
+    do { editedBytes = try String(contentsOf: ownedFile, encoding: .utf8); editReadError = nil }
+    catch { editReadError = error }
+    if editReadError == nil && editedBytes == bytesBeforeEdit + marker { editSaved = true; break }
     Thread.sleep(forTimeInterval: 0.1)
 }
-require(editSaved, "Setup edit did not append the exact bytes to the owned file")
+if !editSaved {
+    let tail = { (text: String) in String(text.suffix(marker.count + 80)).debugDescription }
+    let unreadable = editReadError.map { "last read failed: \($0)\n" } ?? ""
+    fputs("expected tail: \(tail(bytesBeforeEdit + marker))\nsaved tail: \(tail(editedBytes))\n\(unreadable)", stderr)
+    fail("Setup edit did not append the exact bytes to the owned file")
+}
 scrollMain(1000)
-let editedFile = try capture("file-edited", "Designer")
-let savedFooter = editedFile.filter { $0.boundingBox.maxY < 0.1 }
-    .compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-require(savedFooter.range(of: "\\bSaved\\b", options: .regularExpression) != nil
-    && !savedFooter.localizedCaseInsensitiveContains("not saved"), "Setup file save not acknowledged: \(savedFooter)")
+let (_, editedFooter) = try captureSavedFooter("file-edited", "Designer")
+require(footerSaved(editedFooter), "Setup file save not acknowledged: \(editedFooter)")
 print("PASS owned setup editor: native keyboard append persisted exact bytes, without a ready VM")
 // Exercise the real settings disclosure; reveal controls are observed, not
 // activated, so the walk never opens Finder or touches the clipboard.
