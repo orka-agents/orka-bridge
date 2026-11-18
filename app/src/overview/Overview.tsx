@@ -60,7 +60,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const focusEpoch = useRef(0);
   const toFocus = useRef<string | undefined>(undefined);
   const focusedCard = useRef<HTMLElement | undefined>(undefined);
-  const autofocusRequest = useRef<string | undefined>(undefined);
+  const autofocusRequest = useRef<{ identity: string; pending: boolean } | undefined>(undefined);
   const ownsFocus = useRef(false);
   useEffect(() => {
     const moved = (event: FocusEvent) => {
@@ -75,8 +75,11 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     if (!active || !focus) { setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined; autofocusRequest.current = undefined; ownsFocus.current = false; return; }
     const request = ++focusEpoch.current;
     const identity = `${focus.id}/${focusRetry}`;
-    if (autofocusRequest.current !== identity) { autofocusRequest.current = identity; ownsFocus.current = true; }
-    setPlaceFilter('all'); setNameFilter(''); setReveal(undefined); setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined;
+    const navigate = autofocusRequest.current?.identity !== identity || !!autofocusRequest.current?.pending && !focusPending;
+    if (autofocusRequest.current?.identity !== identity) ownsFocus.current = true;
+    autofocusRequest.current = { identity, pending: focusPending };
+    // Completion invalidates the read, not the user's navigation, filters or disclosure choices.
+    if (navigate) { setPlaceFilter('all'); setNameFilter(''); setReveal(undefined); setFocusNote(undefined); toFocus.current = undefined; focusedCard.current = undefined; }
     if (focusPending) return;
     const { target, sendId } = focus;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -100,9 +103,9 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       const check = target ? await sendAgentCheck(sendId) : 'cannotCheck';
       if (request === focusEpoch.current && !targetFound) setFocusNote(focusNotes[check]);
     }
-    void list(true);
+    void list(navigate);
     return () => { focusEpoch.current++; clearTimeout(timer); };
-  }, [active, focus, focusRetry, focusPending]);
+  }, [active, focus, focusRetry, focusPending, placesRevision]);
   useEffect(() => {
     // A navigation request reveals its exact place/UID before focus moves.
     const key = toFocus.current; if (!active || !localReady || !ownsFocus.current || !key) return;

@@ -35,6 +35,61 @@ test('two same-name agents with different UIDs: the exact UID card takes focus, 
   view.rerender(<Overview {...props} focus={{ id: 2, sendId: 's2', target: target('uid-one') }} />);
   await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
 });
+test.each(['revealed', 'expanded', 'collapsed'])('completion revalidates the requested place without resetting %s disclosure, filters or user focus', async disclosure => {
+  const other = { ...place([{ ...agent('uid-other'), name: 'other-agent' }]), key: 'other', context: 'other' };
+  let inventory = { ...places([agent('uid-one')]), places: [place([agent('uid-one')]), other] };
+  const calls = vi.fn<(command: string, args?: unknown) => unknown>(command => command === 'overview_places' ? inventory : command === 'overview_files' ? files : live);
+  mockIPC(calls);
+  // S2 is admitted but not journalled yet: navigation to S1 sees only the old terminal result, so no poll starts.
+  const focus = { id: 1, sendId: id, target: target('uid-one') };
+  const view = render(<Overview {...props} onNewAgent={() => undefined} focus={focus} placesRevision={0} />);
+  await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
+  expect(screen.getByRole('img', { name: 'team: Passed' })).toBeTruthy();
+  const filter = screen.getByRole('textbox', { name: 'Filter by name' }) as HTMLInputElement;
+  if (disclosure !== 'revealed') {
+    fireEvent.click(screen.getByRole('button', { name: 'team', pressed: false }));
+    fireEvent.change(filter, { target: { value: 'same' } });
+    if (disclosure === 'expanded') fireEvent.click(screen.getByRole('button', { name: 'Show places for same-name' }));
+  }
+  const before = screen.queryByRole('article', { name: 'team, Passed' });
+  if (before) fireEvent.click(within(before).getByRole('button', { name: 'Details' }));
+  const control = screen.getByRole('button', { name: 'New agent' }); control.focus();
+  inventory = { ...inventory, places: [place([{ ...agent('uid-one'), record: { ...record('uid-one'), id: '22345678-1234-1234-1234-123456789abc', source: { ...source, agent: 'c'.repeat(64) }, verdict: 'failed' } }]), other] };
+  view.rerender(<Overview {...props} onNewAgent={() => undefined} focus={focus} placesRevision={1} />);
+  await screen.findByRole('img', { name: 'team: Failed' });
+  expect(filter.value).toBe(disclosure === 'revealed' ? '' : 'same');
+  expect(screen.getByRole('button', { name: disclosure === 'revealed' ? 'All' : 'team', pressed: true })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Show places for same-name' }).getAttribute('aria-expanded')).toBe(String(disclosure !== 'collapsed'));
+  if (before) {
+    expect(screen.getByRole('article', { name: 'team, Failed' })).toBe(before);
+    expect(within(before).getByRole('button', { name: 'Details' }).getAttribute('aria-expanded')).toBe('true');
+    expect(within(before).getByText('c'.repeat(64))).toBeTruthy();
+  } else expect(screen.queryByRole('article', { name: 'team, Failed' })).toBeNull();
+  expect(document.activeElement).toBe(control);
+  if (disclosure === 'revealed') expect(screen.getByRole('img', { name: 'other: Passed' })).toBeTruthy();
+  expect(calls.mock.calls.filter(([command]) => command === 'overview_places').map(([, args]) => args)).toEqual([{ key }, { key }]);
+  expect(calls.mock.calls.filter(([command]) => command === 'overview_files')).toHaveLength(1);
+  expect(calls.mock.calls.filter(([command]) => command === 'overview_agents')).toHaveLength(1);
+  expect(calls.mock.calls.some(([command]) => command === 'send_agent_check')).toBe(false);
+});
+test('a late scoped reply cannot undo a newer completion revision for the same focus identity', async () => {
+  let release!: (value: unknown) => void; let reads = 0;
+  const passed = places([agent('uid-one')]);
+  const failed = places([{ ...agent('uid-one'), record: { ...record('uid-one'), verdict: 'failed' } }]);
+  const calls = vi.fn<(command: string, args?: unknown) => unknown>(command => command === 'overview_places' ? ++reads === 2 ? new Promise(resolve => { release = resolve; }) : reads === 1 ? passed : failed : command === 'overview_files' ? files : live);
+  mockIPC(calls);
+  const focus = { id: 1, sendId: id, target: target('uid-one') };
+  const view = render(<Overview {...props} focus={focus} placesRevision={0} />);
+  await waitFor(() => expect(focused()).toBe(`${key}/uid-one`));
+  view.rerender(<Overview {...props} focus={focus} placesRevision={1} />);
+  await waitFor(() => expect(release).toBeDefined());
+  view.rerender(<Overview {...props} focus={focus} placesRevision={2} />);
+  await screen.findByRole('img', { name: 'team: Failed' });
+  await act(async () => release(passed));
+  expect(screen.getByRole('img', { name: 'team: Failed' })).toBeTruthy();
+  expect(screen.queryByRole('img', { name: 'team: Passed' })).toBeNull();
+  expect(calls.mock.calls.filter(([command]) => command === 'overview_places').map(([, args]) => args)).toEqual([{ key }, { key }, { key }]);
+});
 test('a late local inventory preserves the exact place node and destination focus', async () => {
   let release!: (value: unknown) => void;
   const inventory = { ...places([agent('uid-one')]), places: [{ ...place([agent('a'), agent('b'), agent('c')]), key: 'other', context: 'other' }, place([agent('uid-one')])] };
