@@ -6,6 +6,9 @@ import CoreGraphics
 import ApplicationServices
 import Vision
 
+// Flush each PASS line so the CI log shows where a slow walk is.
+setvbuf(stdout, nil, _IOLBF, 0)
+
 // Test scope policy without opening a display or launching the fixture.
 func runNativeModelScopeTests(_ manifest: NativeModelCaptureManifest) throws {
     func check(_ value: Bool, _ message: String) throws {

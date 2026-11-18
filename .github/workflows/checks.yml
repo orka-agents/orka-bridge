@@ -116,7 +116,8 @@ jobs:
             theme: dark
             rust-cache: app-macos-15-bundle-rust-1.98.1
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    # The model walk alone takes about 21 minutes on a typical hosted Mac.
+    timeout-minutes: ${{ matrix.suite == 'model-fixtures' && 45 || 30 }}
     defaults:
       run:
         shell: bash
