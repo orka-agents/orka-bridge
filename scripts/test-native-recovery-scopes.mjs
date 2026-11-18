@@ -234,6 +234,7 @@ for (const name of ['cluster-account-picker-open', 'cluster-account-allowed', 'c
   const capture = vm.runInNewContext(`(${captureActions})`, {
     pair: { agent: '', tests: '' }, replySavedAgent: '', GiB: 1024 ** 3, fixtureAccount: 'synthetic-user',
     call: async () => ({ frameTree: { frame: { id: 'fixture' } }, executionContextId: 1 }),
+    fixtureWorld: async () => ({ executionContextId: 1 }),
     evaluate: async script => { injection = script; throw stop; },
   });
   await assert.rejects(capture('light', 'wide', name), error => error === stop);
@@ -318,6 +319,7 @@ assert.ok(!source.includes("await clickAction('Show details')") && !source.inclu
   const capture = vm.runInNewContext(`(${captureActions})`, {
     pair: { agent: '', tests: '' }, replySavedAgent: '', GiB: 1024 ** 3, fixtureAccount: 'synthetic-user',
     call: async () => ({ frameTree: { frame: { id: 'fixture' } }, executionContextId: 1 }),
+    fixtureWorld: async () => ({ executionContextId: 1 }),
     evaluate: async script => { injection = script; throw stop; },
   });
   await assert.rejects(capture('light', 'wide', 'cluster-connected'), error => error === stop);
@@ -456,24 +458,38 @@ let upgradeCalls = 0;
 await Function('runCore', 'call', `${upgradeCapture}; return captureUpgrade('light', 'wide');`)(false, async () => { upgradeCalls++; });
 assert.equal(upgradeCalls, 0, 'UI scope must not create even one upgrade world');
 assert.equal((source.match(/await captureUpgrade\(theme, '(?:wide|compact)'\)/g) ?? []).length, 2);
-// Finished upgrade scenes must stop polling, not leave every detached React
-// tree consuming the same fixed core budget. Active scenes keep their timers.
-const upgradeTimers = source.match(/const upgradeTimers = `([\s\S]*?)`;/)?.[1];
-assert.ok(upgradeTimers, 'upgrade scenes need scoped interval retirement after capture and validation');
+// Replacing a finished fixture must stop polling its detached React tree.
+// Real-page reloads retain their original cold-start checks.
+const fixtureTimers = source.match(/const fixtureTimers = `([\s\S]*?)`;/)?.[1];
+assert.ok(fixtureTimers, 'fixture worlds need scoped interval retirement before the next scene');
 let nextTimer = 0;
 const timers = new Map();
 const timedWorld = () => ({ window: { setInterval: callback => { const id = ++nextTimer; timers.set(id, callback); return id; }, clearInterval: id => timers.delete(id) } });
 const timedA = timedWorld(), timedB = timedWorld();
-for (const world of [timedA, timedB]) vm.runInNewContext(upgradeTimers, world);
+for (const world of [timedA, timedB]) vm.runInNewContext(fixtureTimers, world);
 let ticksA = 0, ticksB = 0;
 timedA.window.setInterval(() => ticksA++, 500); timedB.window.setInterval(() => ticksB++, 500);
 for (const tick of timers.values()) tick();
 assert.deepEqual([ticksA, ticksB], [1, 1]);
-timedA.window.__bridgeRetireUpgrade();
+timedA.window.__bridgeRetireFixture();
 for (const tick of timers.values()) tick();
 assert.deepEqual([ticksA, ticksB], [1, 2], 'only the completed world stops; active scene polling is unchanged');
-timedB.window.__bridgeRetireUpgrade();
+timedB.window.__bridgeRetireFixture();
 assert.equal(timers.size, 0);
+const worldLifecycle = source.slice(source.indexOf('  async function retireFixture()'), source.indexOf('  async function evaluate(expression)'));
+assert.ok(worldLifecycle.includes('async function fixtureWorld(params)'), 'new scenes must retire the previous world, not just upgrade scenes');
+const worldCalls = [];
+let nextContext = 0;
+const lifecycle = vm.runInNewContext(`(async () => { let fixtureContext; ${worldLifecycle}; await fixtureWorld({worldName:'a'}); await fixtureWorld({worldName:'b'}); await retireFixture(); })()`, {
+  fixtureTimers, Error,
+  call: async (method, args) => { worldCalls.push([method, args]); return method === 'Page.createIsolatedWorld' ? { executionContextId: ++nextContext } : {}; },
+});
+await lifecycle;
+assert.deepEqual(worldCalls.map(([method, args]) => [method, args.contextId ?? args.worldName]), [
+  ['Page.createIsolatedWorld', 'a'], ['Runtime.evaluate', 1], ['Runtime.evaluate', 1],
+  ['Page.createIsolatedWorld', 'b'], ['Runtime.evaluate', 2], ['Runtime.evaluate', 2],
+]);
+assert.ok(source.includes('await retireFixture();\n      contextId = undefined;'), 'retire before the original real-page reload, never address a destroyed context');
 // Old isolated-world React pollers may still retire their own first-test intent;
 // their synthetic preferences must not change a later scene's identity.
 const fixtureStorage = source.match(/const fixtureStorage = `([\s\S]*?)`;/)?.[1];

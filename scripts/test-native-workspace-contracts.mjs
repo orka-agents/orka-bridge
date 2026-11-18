@@ -18,7 +18,7 @@ let setupInjection;
 const setupStop = new Error('setup injection captured');
 const setupCapture = vm.runInNewContext(`(${captureSetup})`, {
   frameTree: { frame: { id: 'fixture' } }, samplePair: { agent: '', tests: '' },
-  call: async () => ({ executionContextId: 1 }), evaluate: async script => { setupInjection = script; throw setupStop; },
+  fixtureWorld: async () => ({ executionContextId: 1 }), evaluate: async script => { setupInjection = script; throw setupStop; },
 });
 await assert.rejects(setupCapture('dark', 'setup-fit', ['setup-transfer', 'installing', null, false, 'Downloading']), error => error === setupStop);
 const setupValues = new Map([['bridge.firstTest.v1', 'attempted']]);
@@ -33,6 +33,7 @@ async function fixture(name) {
   const capture = vm.runInNewContext(`(${captureActions})`, {
     pair: { agent: '', tests: '' }, replySavedAgent: '', GiB: 1024 ** 3, fixtureAccount: 'synthetic-user',
     call: async () => ({ frameTree: { frame: { id: 'fixture' } }, executionContextId: 1 }),
+    fixtureWorld: async () => ({ executionContextId: 1 }), retireFixture: async () => {},
     until: async () => {},
     evaluate: async script => { injection = script; throw stop; },
   });
