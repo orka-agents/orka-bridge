@@ -5,9 +5,10 @@ use crate::local_vm::{
 };
 use std::sync::{Arc, Mutex};
 
-// How long a test waits for the upgrade worker to reach a gated step. A loaded
-// Windows runner has taken more than 5 s; a passing test returns at once.
-const ENTERED_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+// How long a test waits for the upgrade worker to make progress: reach a gated
+// step, become Ready or retire. A loaded Windows runner has taken more than 5 s;
+// a passing test returns as soon as the progress is seen.
+const WORKER_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 use crate::engine::{types::EngineRequest, TransportFuture};
 use crate::local_vm::LocalSession;
@@ -269,7 +270,7 @@ fn facade_busy_restore_transfer_remove_and_quarantine_have_no_cancel_authority()
         let (vm, factory) = facade(&scene, None);
         runtime().block_on(async {
             let dto = completed(forward_task(&scene, &vm, None).await.unwrap().unwrap());
-            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::time::timeout(WORKER_WAIT, async {
                 while vm.status() != LocalVmStatus::Ready {
                     tokio::task::yield_now().await;
                 }
@@ -305,7 +306,7 @@ fn facade_busy_restore_transfer_remove_and_quarantine_have_no_cancel_authority()
                     _ => unreachable!(),
                 }
             });
-            tokio::task::spawn_blocking(move || entered_rx.recv_timeout(ENTERED_WAIT).unwrap())
+            tokio::task::spawn_blocking(move || entered_rx.recv_timeout(WORKER_WAIT).unwrap())
                 .await
                 .unwrap();
             let status = vm
@@ -357,7 +358,7 @@ fn facade_adoption_failures_are_not_user_cancellation() {
             runtime().block_on(async {
                 let release = ReleaseOnDrop(release);
                 let worker = forward_task(&scene, &vm, transaction);
-                tokio::task::spawn_blocking(move || entered_rx.recv_timeout(ENTERED_WAIT).unwrap())
+                tokio::task::spawn_blocking(move || entered_rx.recv_timeout(WORKER_WAIT).unwrap())
                     .await
                     .unwrap();
                 let can_cancel = vm
@@ -524,7 +525,7 @@ fn facade_cancel_marked_startup_joins_late_session_without_releasing_creator() {
             );
             assert_eq!(vm.status(), LocalVmStatus::Preparing);
             release.send(()).unwrap();
-            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::time::timeout(WORKER_WAIT, async {
                 while vm.status() != LocalVmStatus::Ready {
                     tokio::task::yield_now().await;
                 }
@@ -632,7 +633,7 @@ fn facade_late_upgrade_cancel_cannot_stop_ready_destination() {
                 }
             }
             .unwrap();
-            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::time::timeout(WORKER_WAIT, async {
                 while vm.status() != LocalVmStatus::Ready {
                     tokio::task::yield_now().await;
                 }
@@ -673,7 +674,7 @@ fn facade_replace_hands_live_creation_authority_to_launch_and_reports_fresh() {
         assert_eq!(dto.state, "fresh");
         assert!(!dto.busy);
         assert!(vm.workspace_replaced());
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::time::timeout(WORKER_WAIT, async {
             while factory.launched.lock().unwrap().is_empty() {
                 tokio::task::yield_now().await;
             }
@@ -741,7 +742,7 @@ fn facade_dropped_forward_waiter_never_releases_lifecycle_before_work_finishes()
                     }
                 })
             };
-            tokio::task::spawn_blocking(move || entered_rx.recv_timeout(ENTERED_WAIT).unwrap())
+            tokio::task::spawn_blocking(move || entered_rx.recv_timeout(WORKER_WAIT).unwrap())
                 .await
                 .unwrap();
             worker.abort();
@@ -750,7 +751,7 @@ fn facade_dropped_forward_waiter_never_releases_lifecycle_before_work_finishes()
             let held_status = vm.status();
             let launched_early = !factory.launched.lock().unwrap().is_empty();
             release.send(()).unwrap();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            let _ = tokio::time::timeout(WORKER_WAIT, async {
                 while retired.load(std::sync::atomic::Ordering::SeqCst) == 0 {
                     tokio::task::yield_now().await;
                 }
@@ -816,7 +817,7 @@ fn facade_shutdown_joins_forward_handoff_before_returning() {
                     }
                 })
             };
-            tokio::task::spawn_blocking(move || entered_rx.recv_timeout(ENTERED_WAIT).unwrap())
+            tokio::task::spawn_blocking(move || entered_rx.recv_timeout(WORKER_WAIT).unwrap())
                 .await
                 .unwrap();
             let shutdown = vm.shutdown();
@@ -854,7 +855,7 @@ fn facade_rejects_foreign_nil_and_replayed_transactions_without_mutating_identit
                 .await
                 .unwrap();
             let dto = completed(dto);
-            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::time::timeout(WORKER_WAIT, async {
                 while vm.status() != LocalVmStatus::Ready {
                     tokio::task::yield_now().await;
                 }
@@ -950,7 +951,7 @@ fn facade_explicit_retry_from_blocked_startup_boots_only_new_b() {
             Arc::ptr_eq(&configured, &vm),
             "recovery must retain the configured owner and factory"
         );
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::time::timeout(WORKER_WAIT, async {
             while vm.status() != LocalVmStatus::Ready {
                 tokio::task::yield_now().await;
             }
@@ -968,7 +969,7 @@ fn facade_explicit_retry_from_blocked_startup_boots_only_new_b() {
         vm.transfer_workspace_credential(scene.data.clone(), scene.local.clone(), transaction)
             .await
             .unwrap();
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::time::timeout(WORKER_WAIT, async {
             while vm.status() != LocalVmStatus::Ready {
                 tokio::task::yield_now().await;
             }
@@ -1011,7 +1012,7 @@ fn facade_cold_consumed_restart_seeds_transaction_before_ordinary_startup() {
             .await
             .unwrap();
         let before = completed(before);
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::time::timeout(WORKER_WAIT, async {
             while vm.status() != LocalVmStatus::Ready {
                 tokio::task::yield_now().await;
             }
@@ -1022,7 +1023,7 @@ fn facade_cold_consumed_restart_seeds_transaction_before_ordinary_startup() {
         let (reopened, _) = facade(&scene, None);
         reopened.seed_upgrade_status(&scene.data, &scene.local);
         reopened.start();
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::time::timeout(WORKER_WAIT, async {
             while reopened.status() != LocalVmStatus::Ready {
                 tokio::task::yield_now().await;
             }
@@ -1095,7 +1096,7 @@ fn facade_restore_stops_current_b_and_restores_a_without_starting_it() {
             .await
             .unwrap();
         let dto = completed(dto);
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::time::timeout(WORKER_WAIT, async {
             while vm.status() != LocalVmStatus::Ready {
                 tokio::task::yield_now().await;
             }
@@ -1164,7 +1165,7 @@ fn facade_simultaneous_forward_requests_admit_exactly_one_without_stopping_its_b
             assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
             let rejected = first.as_ref().err().or(second.as_ref().err());
             assert!(matches!(rejected, Some(RuntimeError::Busy)), "the second call must lose admission, not stop B and fail in storage; retry={retry}: {rejected:?}");
-            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::time::timeout(WORKER_WAIT, async {
                 while vm.status() != LocalVmStatus::Ready { tokio::task::yield_now().await; }
             }).await.unwrap();
             assert_eq!(factory.stops.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -1186,7 +1187,7 @@ fn facade_completed_removal_ack_refuses_replay_before_stopping_b() {
             .await
             .unwrap();
         let dto = completed(dto);
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::time::timeout(WORKER_WAIT, async {
             while vm.status() != LocalVmStatus::Ready {
                 tokio::task::yield_now().await;
             }
@@ -1231,7 +1232,7 @@ fn facade_transfer_rejects_removal_outcomes_before_stopping_b() {
                 .await
                 .unwrap();
             let dto = completed(dto);
-            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::time::timeout(WORKER_WAIT, async {
                 while vm.status() != LocalVmStatus::Ready {
                     tokio::task::yield_now().await;
                 }
@@ -1371,10 +1372,9 @@ fn facade_cancel_local_during_forward_handoff_retains_b_without_launching() {
                     }
                 })
             };
-            let entered =
-                tokio::task::spawn_blocking(move || entered_rx.recv_timeout(ENTERED_WAIT))
-                    .await
-                    .unwrap();
+            let entered = tokio::task::spawn_blocking(move || entered_rx.recv_timeout(WORKER_WAIT))
+                .await
+                .unwrap();
             let store = Arc::new(SetupStore::with_upgrade_root(
                 Some(scene.data.clone()),
                 Some(scene.local.clone()),
@@ -1419,7 +1419,7 @@ fn facade_transfer_rejects_conflicting_current_metadata_before_stopping_b() {
                 .await
                 .unwrap();
             let dto = completed(dto);
-            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::time::timeout(WORKER_WAIT, async {
                 while vm.status() != LocalVmStatus::Ready {
                     tokio::task::yield_now().await;
                 }
