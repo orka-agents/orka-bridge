@@ -33,6 +33,18 @@ public static class NativeWalk {
     return classes.ToArray();
   }
   [DllImport("oleacc.dll")] private static extern int AccessibleObjectFromWindow(IntPtr h, uint id, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible);
+  [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
+  [DllImport("oleacc.dll")] private static extern int AccessibleObjectFromPoint(Point pt, [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible, out object child);
+  // Explorer's own hit test at a screen point: the name of the control a click there reaches.
+  // https://learn.microsoft.com/windows/win32/api/oleacc/nf-oleacc-accessibleobjectfrompoint
+  public static string NameAt(int x, int y) {
+    Accessibility.IAccessible acc = null; object child;
+    try {
+      if (AccessibleObjectFromPoint(new Point { X = x, Y = y }, out acc, out child) != 0 || acc == null) return null;
+      return acc.get_accName(child);
+    } catch (COMException) { return null; }
+    finally { if (acc != null) Marshal.ReleaseComObject(acc); }
+  }
   [DllImport("oleacc.dll")] private static extern int AccessibleChildren(Accessibility.IAccessible accessible, int start, int count, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex=2)] object[] children, out int obtained);
   // Legacy Explorer toolbars may have no UIA children. Use MSAA, never toolbar process memory.
   // https://learn.microsoft.com/windows/win32/winauto/toolbar-control
@@ -283,10 +295,26 @@ function Tray-Menu {
     }
     # Right-click the actual Explorer notification icon; do not invoke a product test command.
     [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y) | Out-Null
+    # A first launch's icon sits in Explorer's temporary promoted area, which Explorer
+    # can lay out again; a right-click there then opens the taskbar's own menu. Click
+    # once, after Explorer's hit test at the cursor reaches the Bridge icon.
+    $script:trayHit = $null
+    try { Wait-For 'tray hit test' { $script:trayHit = [NativeWalk]::NameAt([int]$point.X, [int]$point.Y); $script:trayHit -like '*Bridge*' } | Out-Null }
+    catch { throw "Bridge notification icon not under the cursor at $([int]$point.X),$([int]$point.Y); Explorer reports '$($script:trayHit)'" }
     [NativeWalk]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)
     [NativeWalk]::mouse_event(16, 0, 0, 0, [UIntPtr]::Zero)
     # Both providers require enabled, on-screen native items; MSAA yields real click points.
-    $open = Wait-For 'Open Bridge menu item missing' { Find-PopupControl 'Open Bridge' }
+    try { $open = Wait-For 'Open Bridge menu item missing' { Find-PopupControl 'Open Bridge' } }
+    catch {
+        $explorer = @(Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object Id)
+        $h = [IntPtr]::Zero
+        while (($h = [NativeWalk]::FindWindowEx([IntPtr]::Zero, $h, '#32768', $null)) -ne [IntPtr]::Zero) {
+            [uint32]$owner = 0
+            [NativeWalk]::GetWindowThreadProcessId($h, [ref]$owner) | Out-Null
+            if ($owner -in $explorer -and [NativeWalk]::IsWindowVisible($h)) { throw 'Open Bridge menu item missing: Explorer opened its own menu, so the right-click reached the taskbar, not the icon' }
+        }
+        throw
+    }
     $stop = Wait-For 'Quit Bridge menu item missing' { Find-PopupControl 'Quit Bridge' }
     return @($open, $stop)
 }
