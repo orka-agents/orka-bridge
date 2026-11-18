@@ -73,11 +73,11 @@ test('a persistent polite status announces the final Send verdict', async () => 
   await waitFor(() => expect(live?.textContent).toBe('Test result failed. 0 of 1 passed.'));
   expect(live?.isConnected).toBe(true);
 });
-test('settlement follows foreign busy generations across document changes without notifying on navigation or idle polls', async () => {
+test('foreign busy release refreshes destination checks across document changes', async () => {
   vi.useFakeTimers(); vi.stubGlobal('isTauri', true);
   const otherDocument = '22345678-1234-1234-1234-123456789abc';
   let active = true;
-  mockIPC((command, args) => {
+  const ipc = vi.fn((command: string, args: unknown) => {
     const documentId = (args as { documentId?: string })?.documentId;
     if (command === 'send_history') return [];
     if (command === 'send_preflight') return { ...allowed, documentId };
@@ -85,38 +85,32 @@ test('settlement follows foreign busy generations across document changes withou
       view: documentId === pair.documentId ? active ? running : { ...running, state: 'complete', stage: 'done', report } : null };
     throw Error('Unsupported');
   });
-  const settled = vi.fn();
-  const panel = (documentId: string) => <Send documentId={documentId} place={place} source={source} stale={false} onSendSettled={() => settled()} />;
-  const view = render(panel(pair.documentId));
-  await act(async () => {});
+  mockIPC(ipc);
+  const panel = (documentId: string) => <Send documentId={documentId} place={place} source={source} stale={false} />;
+  const view = render(panel(pair.documentId)); await act(async () => {});
   view.rerender(panel(otherDocument)); await act(async () => {});
   expect(screen.getByText('web-reader is sending tests.')).toBeTruthy();
-  // Returning to the owner is not a foreign settlement: native still reports it busy.
   view.rerender(panel(pair.documentId)); await act(async () => {});
-  expect(settled).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Cancel tests' })).toBeTruthy();
   view.rerender(panel(otherDocument)); await act(async () => {});
-  active = false;
-  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-  expect(screen.queryByText('web-reader is sending tests.')).toBeNull();
-  expect(settled).toHaveBeenCalledTimes(1);
-  view.rerender(panel(otherDocument));
-  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
-  expect(settled).toHaveBeenCalledTimes(1);
-  // Another busy episode for the same document is a distinct Send generation.
-  active = true; await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-  expect(settled).toHaveBeenCalledTimes(1);
+  const checks = ipc.mock.calls.filter(([command]) => command === 'send_preflight').length;
   active = false; await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-  expect(settled).toHaveBeenCalledTimes(2);
+  expect(screen.queryByText('web-reader is sending tests.')).toBeNull();
+  expect(ipc.mock.calls.filter(([command]) => command === 'send_preflight')).toHaveLength(checks + 1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+  expect(ipc.mock.calls.filter(([command]) => command === 'send_preflight')).toHaveLength(checks + 1);
+  // A later busy generation for the same document refreshes independently.
+  active = true; await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  active = false; await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(ipc.mock.calls.filter(([command]) => command === 'send_preflight')).toHaveLength(checks + 2);
   view.rerender(panel(pair.documentId)); await act(async () => {});
   expect(screen.getByText('0 of 1 tests passed')).toBeTruthy();
-  expect(settled).toHaveBeenCalledTimes(2);
 });
 
-test('a deferred first status reply for another document settles the pending owner only after authoritative idle', async () => {
+test('a deferred status for the selected document cannot display the previous owner as its own Send', async () => {
   vi.useFakeTimers(); vi.stubGlobal('isTauri', true);
   const otherDocument = '22345678-1234-1234-1234-123456789abc';
-  let finish!: (value: unknown) => void;
-  let active = true;
+  let finish!: (value: unknown) => void; let active = true;
   mockIPC((command, args) => {
     const documentId = (args as { documentId?: string })?.documentId;
     if (command === 'send_history') return [];
@@ -128,55 +122,33 @@ test('a deferred first status reply for another document settles the pending own
     }
     throw Error('Unsupported');
   });
-  const settled = vi.fn();
-  const panel = (documentId: string) => <Send documentId={documentId} place={place} source={source} stale={false} onSendSettled={() => settled()} />;
+  const panel = (documentId: string) => <Send documentId={documentId} place={place} source={source} stale={false} />;
   const view = render(panel(pair.documentId)); await act(async () => {});
   expect(screen.getByRole('button', { name: 'Cancel tests' })).toBeTruthy();
   view.rerender(panel(otherDocument)); await act(async () => {});
   expect(finish).toBeTypeOf('function');
-  expect(settled).not.toHaveBeenCalled();
-  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-  expect(settled).not.toHaveBeenCalled();
-  // The owner completes before B's first reply, so B never observes a foreign busy value.
+  expect(screen.queryByRole('button', { name: 'Cancel tests' })).toBeNull();
   active = false;
   await act(async () => { finish({ documentId: otherDocument, view: null, busy: null }); });
-  expect(settled).toHaveBeenCalledTimes(1);
-  view.rerender(panel(otherDocument));
-  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
-  expect(settled).toHaveBeenCalledTimes(1);
   view.rerender(panel(pair.documentId)); await act(async () => {});
   expect(screen.getByText('0 of 1 tests passed')).toBeTruthy();
-  expect(settled).toHaveBeenCalledTimes(1);
 });
 
-test.each(['complete', 'unknown'])('an already-%s start reply settles once per Send ID without treating saved terminal loads as completion', async state => {
+test.each(['complete', 'unknown'])('an already-%s start reply refreshes destination checks and renders the result', async state => {
   vi.useFakeTimers(); vi.stubGlobal('isTauri', true);
-  let nextId = '00000000-0000-4000-8000-000000000005';
   let current = { ...running, state: 'complete', stage: 'done', report };
-  mockIPC(command => {
+  const ipc = vi.fn((command: string) => {
     if (command === 'send_history') return [];
     if (command === 'send_preflight') return allowed;
-    if (command === 'send_start') current = { ...running, id: nextId, state, stage: 'done', report };
+    if (command === 'send_start') current = { ...running, state, stage: 'done', report };
     if (command === 'send_status' || command === 'send_start') return { documentId: pair.documentId, view: current, busy: null };
     throw Error('Unsupported');
   });
-  const settled = vi.fn();
-  const panel = () => <Send place={place} source={source} stale={false} onSendSettled={() => settled()} />;
-  const view = render(panel()); await act(async () => {});
-  await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
-  expect(settled).not.toHaveBeenCalled();
+  mockIPC(ipc); render(<Send place={place} source={source} stale={false} />); await act(async () => {});
+  const checks = ipc.mock.calls.filter(([command]) => command === 'send_preflight').length;
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Send and run tests' })); });
   expect(screen.getByRole('heading', { name: state === 'complete' ? '0 of 1 tests passed' : 'Outcome not confirmed' })).toBeTruthy();
-  expect(settled).toHaveBeenCalledTimes(1);
-  view.rerender(panel());
-  await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
-  expect(settled).toHaveBeenCalledTimes(1);
-  // Re-observing the same terminal reply is not a new settlement.
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Send and run tests' })); });
-  expect(settled).toHaveBeenCalledTimes(1);
-  nextId = '00000000-0000-4000-8000-000000000006';
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Send and run tests' })); });
-  expect(settled).toHaveBeenCalledTimes(2);
+  expect(ipc.mock.calls.filter(([command]) => command === 'send_preflight')).toHaveLength(checks + 1);
 });
 
 test('stale local results do not gate sending and destination refresh is in Details', async () => {

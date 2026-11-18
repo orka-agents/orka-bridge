@@ -5,6 +5,7 @@ import { SAMPLE_DOCUMENT_ID, type SourceId, sameSource } from '../designer/agent
 import type { RunSnapshot } from '../designer/run-api';
 import { modelLabel } from '../designer/model-label';
 import type { SelectedPlace } from './api';
+import type { SendStart } from './use-send-settlement';
 import { type AttemptSummary, type Cancellation, type SendCheck, type SendHistoryDetail, type SendStatus, sendCall, sendErrors, sendHistory, sendHistoryDetail, sendPreflight } from './send-api';
 import './clusters.css';
 import { CardSection, Details, Elapsed, GeneratedValue, LongCard, type Status, StatusIcon, StatusPill } from '../components/DesignSystem';
@@ -167,12 +168,12 @@ export function SendHistory({ revision, onChanged }: { revision: string; onChang
       : history ? history.length ? <ol>{history.map(attempt => <SavedSend key={attempt.id} attempt={attempt} revision={revision} onChanged={onChanged} />)}</ol> : <p>No saved Sends yet.</p> : <p role="status">Reading saved Sends…</p>}
   </Disclosure></section>;
 }
-export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID, place, source, model, agentName, testCount, local, stale, blocked, onChooseCluster, onReloadSource, onSeeInOverview, onFixLocal, onFixInDesigner, onSendSettled }: {
+export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID, place, source, model, agentName, testCount, local, stale, blocked, onChooseCluster, onReloadSource, onSeeInOverview, onFixLocal, onFixInDesigner, startSend: startOwnedSend }: {
   expanded?: boolean; documentId?: string; place: SelectedPlace; source?: SourceId; model?: string; agentName?: string; testCount?: number; local?: RunSnapshot; stale: boolean;
   blocked?: string; onChooseCluster?: () => void; onReloadSource?: () => Promise<void>; onFixInDesigner?: () => void;
   /** Opens Overview on the agent recorded for this native Send attempt. */
   onSeeInOverview?: (sendId: string) => void; onFixLocal?: (testId: string) => void;
-  onSendSettled?: () => void;
+  startSend?: SendStart;
 }) {
   const [status, setSnapshot] = useState<SendStatus>();
   const snapshot = status?.documentId === documentId ? status.view : null;
@@ -205,8 +206,6 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
   const agentHash = source?.agent; const testsHash = source?.tests;
   const previousSend = useRef<{ id: string; state: string } | undefined>(undefined);
   const previousBusy = useRef<string | undefined>(undefined);
-  const pendingSettlement = useRef<{ id: string; documentId: string } | undefined>(undefined);
-  const settledSends = useRef(new Set<string>());
   const busyDocumentId = foreignBusy?.documentId;
   const sendId = snapshot?.id; const sendState = snapshot?.state;
   useEffect(() => {
@@ -217,25 +216,10 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
     const previousBusyDocument = previousBusy.current;
     const foreignFinished = !!previousBusyDocument && !busyDocumentId;
     previousBusy.current = busyDocumentId;
-    if (sendId && sendState === 'running') pendingSettlement.current = { id: sendId, documentId };
-    const pending = pendingSettlement.current;
     const finished = !!sendId && !!sendState && sendState !== 'running'
-      && (previous?.id === sendId && previous.state === 'running' || pending?.id === sendId);
-    // The owner can finish before the first status reply for a newly selected document.
-    const pendingFinished = !!pending && pending.documentId !== documentId && !status.busy;
-    if (foreignFinished || finished || pendingFinished) setRefresh(value => value + 1);
-    const foreignSettled = foreignFinished && !status.busy || pendingFinished;
-    if (!finished && !foreignSettled) return;
-    // Known attempts dedupe by ID, including an already-terminal start reply. Without an ID,
-    // consuming the foreign busy-to-idle edge notifies once per observed busy generation.
-    const settledId = finished ? sendId : pendingFinished || pending?.documentId === previousBusyDocument ? pending?.id : undefined;
-    if (settledId) {
-      if (pending?.id === settledId) pendingSettlement.current = undefined;
-      if (settledSends.current.has(settledId)) return;
-      settledSends.current.add(settledId);
-    }
-    onSendSettled?.();
-  }, [documentId, status?.documentId, status?.busy, sendId, sendState, busyDocumentId, onSendSettled]);
+      && previous?.id === sendId && previous.state === 'running';
+    if (foreignFinished || finished) setRefresh(value => value + 1);
+  }, [documentId, status?.documentId, sendId, sendState, busyDocumentId]);
   const checkKey = JSON.stringify([documentId, targetId, providerId, agentHash, testsHash, refresh]);
   const checkingEnabled = !blocked && !!targetId && !!providerId && !!agentHash && !!testsHash;
   useEffect(() => {
@@ -271,10 +255,11 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
     }
     admitted.current = true; setBusy(true); const request = ++epoch.current;
     try {
-      const result = await sendCall(command, { ...args, documentId });
+      // App observes admission before this editor's epoch/unmount guards can discard its reply.
+      const result = await (command === 'send_start' && startOwnedSend ? startOwnedSend({ ...args, documentId }) : sendCall(command, { ...args, documentId }));
       if (request === epoch.current) {
-        // Native rereads after admission, so a fast Send may finish before the start reply.
-        if (command === 'send_start' && result.view) pendingSettlement.current = { id: result.view.id, documentId };
+        // A fast terminal admission still refreshes this card's destination checks.
+        if (command === 'send_start' && result.view && result.view.state !== 'running') setRefresh(value => value + 1);
         setSnapshot(result); setMessage(undefined);
       }
     } catch (error) { if (request === epoch.current) setMessage((error as Error).message); }
