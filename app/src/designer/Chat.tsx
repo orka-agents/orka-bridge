@@ -100,10 +100,14 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
       });
     };
     // Polls render only changed snapshots, so keep a following reader at the end when the
-    // page, transcript or composer changes size without one (a growing draft, a resize).
+    // page's content changes size without one (a growing draft, an opened disclosure, a
+    // resize). The scroller's own box doesn't grow with its content, so observe the content:
+    // the page's children, and every box from the transcript up to the page.
     const resized = typeof ResizeObserver === 'undefined' ? undefined
       : new ResizeObserver(() => { if (follow.current) area.scrollTop = area.scrollHeight; });
-    for (const element of [area, conversation, dock]) resized?.observe(element);
+    const observed = new Set<Element>([area, dock, ...area.children]);
+    for (let box: Element | null = conversation; box && box !== area; box = box.parentElement) observed.add(box);
+    for (const element of observed) resized?.observe(element);
     area.addEventListener('scroll', track); conversation.addEventListener('focusin', reveal);
     return () => {
       resized?.disconnect();

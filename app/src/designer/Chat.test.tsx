@@ -396,6 +396,21 @@ test('a following reader stays at the end when the layout grows without a new sn
   height = 1080; await resize(); expect(page.scrollTop).toBe(880);
   page.scrollTop = 100; fireEvent.scroll(page); height = 1200; await resize(); expect(page.scrollTop).toBe(100);
 });
+test('growth above the transcript is observed, not only the page scroller', async () => {
+  const observed: Element[] = [];
+  vi.stubGlobal('ResizeObserver', class {
+    observe(target: Element) { observed.push(target); }
+    disconnect() {}
+  });
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  render(<main className="page-content"><h2>Designer heading</h2><div className="panel"><Chat documentId={id} /></div></main>); await act(async () => {});
+  const about = screen.getByText('About this conversation').closest('details, section, div')!;
+  expect(observed).toEqual(expect.arrayContaining([
+    screen.getByRole('heading', { name: 'Designer heading' }), document.querySelector('.panel'), screen.getByRole('region', { name: 'Conversation' }),
+  ]));
+  // Opening About grows a box inside the page; one of those boxes must be observed.
+  expect(observed.some(target => target !== screen.getByRole('main') && target.contains(about))).toBe(true);
+});
 test('hidden Chat stops observing layout changes', async () => {
   const observers: { callback: ResizeObserverCallback; targets: Element[] }[] = [];
   vi.stubGlobal('ResizeObserver', class {
