@@ -10,7 +10,6 @@ fn surviving_wrapper_has_no_fd_and_blocked_read_stops_without_io_lock_deadlock()
     // stalling the test binary until the CI job is cancelled.
     let bound = Duration::from_secs(10);
     let (socket, mut peer) = UnixStream::pair().unwrap();
-    peer.set_read_timeout(Some(bound)).unwrap();
     let slot = GuestSlot::new(socket);
     let mut client = slot.channel();
     client.deadline = Some(Instant::now() + bound);
@@ -40,14 +39,22 @@ fn surviving_wrapper_has_no_fd_and_blocked_read_stops_without_io_lock_deadlock()
     }
     let woken = read
         .recv_timeout(bound * 2)
-        .expect("revocation woke the blocked read");
-    assert_eq!(woken.expect("the woken read reported end of file"), 0);
+        .expect("the blocked read returned within its deadline");
+    match woken {
+        Ok(read) => assert_eq!(read, 0, "the woken read reported end of file"),
+        Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
+            panic!("revocation did not wake the blocked read")
+        }
+        Err(error) => panic!("the woken read failed: {error}"),
+    }
     reader.join().unwrap();
     slot.revoke(Instant::now()).unwrap();
     assert_eq!(
         second.read(&mut [0]).unwrap_err().kind(),
         std::io::ErrorKind::NotConnected
     );
+    // Revocation has shut the socket down, so end of file is already readable.
+    peer.set_nonblocking(true).unwrap();
     assert_eq!(
         peer.read(&mut [0])
             .expect("the peer saw end of file after revocation"),
