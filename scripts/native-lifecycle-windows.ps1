@@ -285,6 +285,7 @@ function Tray-Menu {
     # after Explorer's hit test names Bridge at the same point on two polls in a row.
     $overflow = $null
     $settled = $null
+    $target = $null
     $hit = $null
     for ($i = 0; ; $i++) {
         $point = if ($overflow) { Find-TrayPoint $overflow 'overflow' } else { Find-TrayPoint $area 'visible' }
@@ -300,6 +301,7 @@ function Tray-Menu {
             Press $chevron
             $overflow = Wait-For 'Native notification overflow not visible' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
             $i = 0
+            $settled = $null
             continue
         }
         if ($point) {
@@ -311,8 +313,9 @@ function Tray-Menu {
             else { $settled = $target }
         } else { $settled = $null }
         if ($i -ge 100) {
-            if (!$point) { throw 'Native Bridge notification icon missing' }
-            throw "Bridge notification icon not settled under the cursor at $($target.X),$($target.Y); Explorer's hit test there names $(if ([string]::IsNullOrEmpty($hit)) { 'nothing' } else { "'$hit'" })"
+            $named = if (!$target) { 'no icon was found' } else { "Explorer's last hit test at $($target.X),$($target.Y) named $(if ([string]::IsNullOrEmpty($hit)) { 'nothing' } else { "'$hit'" })" }
+            if (!$point) { throw "Native Bridge notification icon missing; $named" }
+            throw "Bridge notification icon not settled under the cursor; $named"
         }
         Start-Sleep -Milliseconds 100
     }
@@ -322,6 +325,7 @@ function Tray-Menu {
     # Both providers require enabled, on-screen native items; MSAA yields real click points.
     try { $open = Wait-For 'Open Bridge menu item missing' { Find-PopupControl 'Open Bridge' } }
     catch {
+        if ($_.Exception.Message -cne 'Open Bridge menu item missing') { throw }
         $explorer = @(Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object Id)
         $h = [IntPtr]::Zero
         while (($h = [NativeWalk]::FindWindowEx([IntPtr]::Zero, $h, '#32768', $null)) -ne [IntPtr]::Zero) {
