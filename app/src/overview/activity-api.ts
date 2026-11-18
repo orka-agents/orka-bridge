@@ -55,11 +55,12 @@ export const latest = (e: ActivityEntry) => Math.max(e.createdAt, e.startedAt ??
 export type Filter = 'all' | 'failed' | 'active';
 const active: Phase[] = ['pending', 'scheduled', 'running', 'finalizing'];
 export const matches = (e: ActivityEntry, filter: Filter) => filter === 'all' || (filter === 'failed' ? e.phase === 'failed' : active.includes(e.phase));
-/** `readAt` is when Bridge read the run's place, so expanded details can follow refreshes. */
-export type Row = ActivityEntry & { placeKey: string; readAt: number | null };
+/** `readAt` is when Bridge read the run's place, so expanded details can follow refreshes; `connection` is the
+ * connection that read it, so a run read on another connection is a different row. */
+export type Row = ActivityEntry & { placeKey: string; readAt: number | null; connection: number | null };
 /** Every read place's entries, newest first across places, then by place and Task name for a stable order. */
 export function merge(places: PlaceActivity[], filter: Filter): Row[] {
-  return places.flatMap(p => p.entries.map(e => ({ ...e, placeKey: p.key, readAt: p.observedAt })))
+  return places.flatMap(p => p.entries.map(e => ({ ...e, placeKey: p.key, readAt: p.observedAt, connection: p.connection })))
     .filter(e => matches(e, filter))
     .sort((a, b) => latest(b) - latest(a) || a.placeKey.localeCompare(b.placeKey) || a.task.localeCompare(b.task));
 }
