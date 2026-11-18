@@ -218,13 +218,10 @@ impl Inventory {
         let entry = state.entries.get(key)?;
         (!entry.view.stale).then(|| entry.access.clone()).flatten()
     }
-    /// Activity's access to a place, or why it has none. A place whose access was replaced,
-    /// revoked or refused since `access` was handed out no longer returns the same access.
-    pub(crate) fn activity_access(&self, key: &str) -> Result<Arc<RemoteAccess>, Lost> {
-        self.activity_connection(key).1
-    }
-    /// `activity_access` with the place's connection revision, read under one lock. The
-    /// revision changes only when a new connection is confirmed for the place.
+    /// Activity's access to a place, or why it has none, with the place's connection revision,
+    /// read under one lock. The revision changes only when a new connection is confirmed for
+    /// the place, so a place whose access was replaced, revoked or refused since no longer
+    /// returns the same access and revision.
     pub(crate) fn activity_connection(
         &self,
         key: &str,

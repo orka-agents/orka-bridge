@@ -190,15 +190,8 @@ impl ClusterSession {
     pub async fn overview_one(&self, key: &str) -> Vec<crate::overview_places::Place> {
         self.6.refresh_one(key).await
     }
-    /// Access for Activity reads: only a place this session confirmed and last read
-    /// successfully, otherwise why not.
-    pub(crate) fn activity_access(
-        &self,
-        key: &str,
-    ) -> Result<Arc<RemoteAccess>, crate::overview_places::Lost> {
-        self.6.activity_access(key)
-    }
-    /// `activity_access` with the place's connection revision.
+    /// Access for Activity reads, with the place's connection revision: only a place this
+    /// session confirmed and last read successfully, otherwise why not.
     pub(crate) fn activity_connection(
         &self,
         key: &str,
