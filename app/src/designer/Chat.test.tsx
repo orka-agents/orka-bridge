@@ -310,6 +310,19 @@ test('New conversation retains earlier transcript and adds no message', async ()
   expect(calls.some(c => c.command === 'agent_chat_new')).toBe(true); expect(sends()).toEqual([]);
   expect(screen.getByText('Hello back')).toBeTruthy();
 });
+test('a long tool trace stays bounded while every event remains available on demand', async () => {
+  const tools = Array.from({ length: 50 }, (_, index) => ({ name: `tool-${index}`, callId: `call-${index}`, phase: 'Succeeded' }));
+  snapshot = { ...idle, versions: [{ turns: [{ ...turn, tools }] }] }; await open();
+  const activity = screen.getByRole('list', { name: 'Tool activity' });
+  expect(within(activity).getAllByRole('listitem')).toHaveLength(1);
+  expect(within(activity).getByText('tool-49')).toBeTruthy();
+  const more = screen.getByText('49 more tool activities').closest('details')!;
+  expect(more.open).toBe(false);
+  expect(within(more).getAllByRole('listitem', { hidden: true })).toHaveLength(49);
+  expect(within(more).getByText('tool-0')).toBeTruthy();
+  expect(screen.getByText('Hello back').closest('details')).toBeNull();
+  fireEvent.click(more.querySelector('summary')!); expect(more.open).toBe(true);
+});
 test('state announcement stays the same when only polled tools change', async () => {
   snapshot = { ...idle, state: 'working', busy: true, canSend: false, versions: [{ turns: [turn] }] };
   await open(); const announcement = screen.getByRole('status'); const before = announcement.textContent;

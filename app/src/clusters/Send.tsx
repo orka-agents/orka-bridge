@@ -347,6 +347,7 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
     : fixResult || passedResult && seeOverview ? sendButton('secondary') : overviewButton('secondary');
   // canSend means an attempt is permitted; advisory "unverified" rows (inference, create proof) stay with the collapsed checks.
   const destinationReady = !!checked?.value?.canSend && !mismatched;
+  const readyToSend = destinationReady && !reason && !busy && !running && !message;
   const destinationModel = checked?.value?.model ?? model;
   const hasHappened = !!(foreignBusy || message || snapshot || controlCancelling);
   // Only an unused local Send may be hidden. Keep all existing work and recovery visible.
@@ -373,7 +374,7 @@ export default function Send({ expanded = true, documentId = SAMPLE_DOCUMENT_ID,
       {!checked && <Elapsed />}
       {reloadError && <p role="alert">{reloadError}</p>}
     </section>}
-    {checkingEnabled && checked && rows.length > 0 && <Disclosure className="send-checks send-preflight" label={`${destinationReady ? 'Ready to send: ' : ''}${passedChecks} check${passedChecks === 1 ? '' : 's'} passed`} hint="Show checks">
+    {checkingEnabled && checked && rows.length > 0 && <Disclosure className="send-checks send-preflight" label={`${readyToSend ? 'Ready to send: ' : ''}${passedChecks} check${passedChecks === 1 ? '' : 's'} passed`} hint="Show checks">
       {checkRows(destinationReady ? rows : rows.filter(row => row.status !== 'blocked' && row.status !== 'cannotCheck'))}
       {reloadError && destinationReady && <p role="alert">{reloadError}</p>}
     </Disclosure>}

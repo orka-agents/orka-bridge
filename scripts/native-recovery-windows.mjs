@@ -471,7 +471,7 @@ try {
     if (probe.header.map(button => button.label).join('|') !== labels.join('|')
         || probe.header[0]?.primary !== (name !== 'send-sending') || probe.header.slice(1).some(button => button.primary)) throw Error('Wrong Send header actions: ' + JSON.stringify(probe));
     if (probe.heading !== 'To fixture-selected' || !probe.summary.includes('web-reader') || !probe.summary.includes('1 test')) throw Error('Send destination/compact summary missing: ' + JSON.stringify(probe));
-    const checks = name === 'send-blocked' ? '1 check passed' : 'Ready to send: 1 check passed';
+    const checks = ['send-blocked', 'send-sending'].includes(name) ? '1 check passed' : 'Ready to send: 1 check passed';
     if (!probe.checks.startsWith(checks) || probe.checksOpen || probe.inlineChecks.join('|') !== (name === 'send-blocked' ? 'blocked' : '')) throw Error('Send must fold allowed/advisory checks, count only allowed and retain inline blockers: ' + JSON.stringify(probe));
     if (probe.changeDisabled !== (name === 'send-sending')) throw Error('Change must be disabled only during Send');
     if (name === 'send-unsupported' && probe.buttons.includes('Retry cancellation')) throw Error('Unsupported cancellation must not offer retry, including in Details');
@@ -1293,6 +1293,33 @@ try {
     await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     const image = await call('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
+    if (name === 'chat-answer') {
+      // Preserve the ordinary comparison above, then exercise a large event trace in the same native renderer.
+      await evaluate(`(() => {
+        const original = window.__TAURI_INTERNALS__.invoke;
+        window.__bridgeRestoreToolTrace = () => { window.__TAURI_INTERNALS__.invoke = original; };
+        window.__TAURI_INTERNALS__.invoke = async (...args) => {
+          const result = await original(...args), turn = args[0] === 'agent_chat_status' && result.versions?.at(-1)?.turns.at(-1);
+          if (turn) turn.tools = Array.from({ length: 50 }, (_, i) => ({ name: 'heavy-tool-' + i, callId: 'heavy-call-' + i, phase: 'ToolCallCompleted' }));
+          return result;
+        };
+      })()`);
+      try {
+        await until(() => evaluate(`document.querySelector('.chat-panel')?.textContent.includes('heavy-tool-49')`), 'large native tool trace');
+        await evaluate('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        const trace = await evaluate(`(() => {
+          const root = document.querySelector('.chat-panel'), quiet = root.querySelector('[aria-label="Tool activity"]');
+          const more = [...root.querySelectorAll('details')].find(node => node.querySelector('summary')?.textContent.includes('49 more tool activities'));
+          const answer = root.querySelector('.chat-response p.reading').getBoundingClientRect(), main = document.querySelector('main').getBoundingClientRect();
+          return { visibleEvents: quiet.children.length, foldedEvents: more?.querySelectorAll('li').length, open: more?.open,
+            answerVisible: answer.top >= main.top && answer.bottom <= root.querySelector('.chat-composer').getBoundingClientRect().top };
+        })()`);
+        if (trace.visibleEvents !== 1 || trace.foldedEvents !== 49 || trace.open !== false || !trace.answerVisible) throw Error(`Unbounded native tool trace: ${JSON.stringify(trace)}`);
+        await writeFile(join(output, `${theme}-${size}-chat-tool-heavy.json`), JSON.stringify(trace, null, 2));
+        const heavy = await call('Page.captureScreenshot', { format: 'png' });
+        await writeFile(join(output, `${theme}-${size}-chat-tool-heavy.png`), Buffer.from(heavy.data, 'base64'));
+      } finally { await evaluate('window.__bridgeRestoreToolTrace(); delete window.__bridgeRestoreToolTrace'); }
+    }
     if (name === 'chat-two-versions') {
       await evaluate(`document.querySelector('.chat-version:nth-child(2) h3').scrollIntoView({ block: 'start' })`);
       const second = await call('Page.captureScreenshot', { format: 'png' });

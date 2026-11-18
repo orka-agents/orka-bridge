@@ -14,9 +14,9 @@ const allowed = { label: 'Access', status: 'allowed', message: 'Access is ready.
 const check = { documentId, source, targetId: id, providerId: id, model: 'gpt-5.6-terra', rows: [allowed, { label: 'Inference', status: 'unverified', message: 'Checked when tests run.' }], canSend: true, canSeparate: false, action: 'unchanged' };
 const failed = { id: 'reads-page', question: 'Read it?', phase: 'Succeeded', answer: 'No page', completedTools: [], assertions: [{ id: 'value', kind: 'contains', expected: 'page', verdict: 'failed' }], verdict: 'failed' };
 const result = { documentId, id, targetId: id, providerId: id, targetName: 'team-dev', source, model: 'gpt-5.6-terra', agentName: 'generated-agent', agentAction: 'unchanged', state: 'complete', stage: 'done', acknowledged: [{ kind: 'Agent', name: 'generated-agent', uid: 'uid' }], pending: null, report: { verdict: 'failed', cases: [failed] }, error: null, storageError: false, cancellation: null };
-function native(view: unknown = null, preflight: unknown = check, start?: Promise<unknown>) {
+function native(view: unknown = null, preflight: unknown = check, start?: Promise<unknown>, busy: unknown = null) {
   vi.stubGlobal('isTauri', true);
-  mockIPC(command => command === 'send_history' ? [] : command === 'send_preflight' ? preflight : command === 'send_start' && start ? start : { documentId, view, busy: null });
+  mockIPC(command => command === 'send_history' ? [] : command === 'send_preflight' ? preflight : command === 'send_start' && start ? start : { documentId, view, busy });
 }
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 const card = () => screen.getByRole('region', { name: 'Send and cluster tests' });
@@ -81,6 +81,14 @@ test.each(['foreign', 'stale', 'status', 'reload', 'check'] as const)('%s result
   await waitFor(() => expect(card().querySelector('[aria-busy="true"]')).toBeNull());
   expect(screen.queryByRole('button', { name: 'Fix in Designer' })).toBeNull();
 });
+test.each(['running', 'foreign'] as const)('%s Send keeps passed checks neutral while a new Send is unavailable', async mode => {
+  native(mode === 'running' ? { ...result, state: 'running', stage: 'observe', report: null } : null, check, undefined,
+    mode === 'foreign' ? { documentId: '00000000-0000-4000-8000-000000000005', name: 'another-agent' } : null);
+  render(<Send place={place} source={source} stale={false} />);
+  await screen.findByText(mode === 'running' ? 'Waiting for answers and evaluating tests' : 'another-agent is sending tests.');
+  expect(screen.queryByText(/^Ready to send:/)).toBeNull();
+  expect(screen.getByText('1 check passed')).toBeTruthy();
+});
 test('Change is disabled with a reason during admission, before a running snapshot arrives', async () => {
   native(null, check, new Promise(() => {}));
   render(<Send place={place} source={source} stale={false} onChooseCluster={() => {}} />);
@@ -90,4 +98,6 @@ test('Change is disabled with a reason during admission, before a running snapsh
   const change = screen.getByRole('button', { name: 'Change' });
   expect(change.hasAttribute('disabled')).toBe(true);
   expect(change.title).toContain('Wait');
+  expect(screen.queryByText(/^Ready to send:/)).toBeNull();
+  expect(screen.getByText('1 check passed')).toBeTruthy();
 });

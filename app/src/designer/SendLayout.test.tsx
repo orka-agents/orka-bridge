@@ -96,9 +96,12 @@ test('a failed cluster Send offers Fix in Designer and focuses the instructions,
 });
 test.each([
   ['frontmatter-reader', pair.agent.replace('name: web-reader', 'name: frontmatter-reader')],
-  ['web-reader', pair.agent.replace('name: web-reader\n', '')],
+  ['commented-reader', pair.agent.replace('name: web-reader', 'name: commented-reader # saved name')],
+  ['renamed-reader', pair.agent.replace('name: web-reader', 'name: "renamed-reader" # saved name')],
+  ['quoted-reader', pair.agent.replace('name: web-reader', "name: 'quoted-reader'")],
+  ['reader-folder', pair.agent.replace('name: web-reader\n', '')],
 ])('Send identifies the saved front-matter name with a folder fallback: %s', async (name, agent) => {
-  native(localResult, null, { ...pair, agent }); render(<Example remote place={place} />);
+  native(localResult, null, { ...pair, name: 'reader-folder', agent }); render(<Example remote place={place} />);
   const panel = await screen.findByRole('region', { name: 'Send and cluster tests' });
   expect(within(panel).getByRole('region', { name: 'What you send' }).textContent).toContain(`${name} and test files`);
 });

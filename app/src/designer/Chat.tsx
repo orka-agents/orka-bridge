@@ -150,7 +150,10 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
                 : <p className="muted">{turn.phase === 'Failed' ? 'The turn failed without an answer.' : 'No answer was received.'}</p>}
               {turn.stopUnconfirmed ? <p className="chat-notice">{states.stopUnconfirmed}</p> : turn.terminationUnconfirmed && <p className="chat-notice">{states.stopRequested}</p>}
               {!turn.contextRetained && !waiting && !confirming && <p className="muted">This turn is not confirmed in later context.</p>}
-              {!!turn.tools.length && <ul className="chat-tools" aria-label="Tool activity">{turn.tools.map((tool, t) => <li key={t}><code>{tool.name}</code> · {tool.phase}</li>)}</ul>}
+              {!!turn.tools.length && <ul className="chat-tools" aria-label="Tool activity">{turn.tools.slice(-1).map((tool, t) => <li key={t}><code>{tool.name}</code> · {tool.phase}</li>)}</ul>}
+              {turn.tools.length > 1 && <Disclosure label={`${turn.tools.length - 1} more tool activit${turn.tools.length === 2 ? 'y' : 'ies'}`}>
+                <ul className="chat-tools">{turn.tools.slice(0, -1).map((tool, t) => <li key={t}><code>{tool.name}</code> · {tool.phase}</li>)}</ul>
+              </Disclosure>}
             </div>
           </article>;
         })}

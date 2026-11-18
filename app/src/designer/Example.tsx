@@ -220,7 +220,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   }, [sampleRevision, boundDocument]);
   const info = { ...agentInfo(draft), description: readForm(draft).description };
   const instructionsMissing = !!pair && !readForm(draft).instructions.trim();
-  const savedName = useMemo(() => agentInfo(pair?.agent).name, [pair?.agent]);
+  const savedName = useMemo(() => readForm(pair?.agent ?? '').name, [pair?.agent]);
   const testFile = pair?.tests;
   const definitions = useMemo(() => testFile === undefined ? undefined : testDefinitions(testFile), [testFile]);
   const testDraft = !!pair && isTestDraft(pair.tests);

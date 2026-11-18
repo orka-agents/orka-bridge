@@ -96,11 +96,14 @@ for (const [name, header] of [
   ['send-passed', [{ label: 'See in Overview', primary: true }, { label: 'Run cluster tests again', primary: false }]],
 ]) {
   const probe = { ...sendProbe, header, title: name === 'send-passed' ? sendProbe.title : '', id: name === 'send-passed' ? sendProbe.id : '',
-    checks: name === 'send-blocked' ? '1 check passed Show checks' : sendProbe.checks,
+    checks: ['send-blocked', 'send-sending'].includes(name) ? '1 check passed Show checks' : sendProbe.checks,
     inlineChecks: name === 'send-blocked' ? ['blocked'] : [], changeDisabled: name === 'send-sending' };
   checkSend(name, probe, false);
   assert.throws(() => checkSend(name, { ...probe, checksOpen: true }, false));
-  if (name === 'send-sending') assert.throws(() => checkSend(name, { ...probe, changeDisabled: false }, false));
+  if (name === 'send-sending') {
+    assert.throws(() => checkSend(name, { ...probe, changeDisabled: false }, false));
+    assert.throws(() => checkSend(name, { ...probe, checks: sendProbe.checks }, false), 'running Send must not advertise readiness');
+  }
   if (name === 'send-blocked') assert.throws(() => checkSend(name, { ...probe, inlineChecks: ['allowed', 'blocked'] }, false));
 }
 for (const mutation of [{ heading: 'Send your agent' }, { summary: '' }, { checks: 'Ready to send: 2 checks passed' }]) {
