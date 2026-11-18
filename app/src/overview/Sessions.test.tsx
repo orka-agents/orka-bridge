@@ -133,3 +133,23 @@ test('under StrictMode the first read still lands', async () => {
   render(<StrictMode><SessionList active places={places} /></StrictMode>);
   expect(await screen.findAllByRole('listitem')).toHaveLength(1);
 });
+
+test('an open conversation is read again on refresh, and a new connection closes it', async () => {
+  let sessions: unknown = { places: [read('one', [entry('bridge-chat-1')])] };
+  let messages = [{ role: 'user', text: 'First', cut: false, tools: [], at: 1000 }];
+  const calls = ipc(undefined);
+  mockIPC((command, args) => { calls.push([command, args]); return command === 'overview_sessions' ? sessions : { state: 'complete', messages }; });
+  const view = render(<SessionList active places={places} />);
+  await screen.findByRole('listitem');
+  await userEvent.click(screen.getByRole('button', { name: /Conversation/ }));
+  expect(await screen.findByText('First')).toBeTruthy();
+  messages = [...messages, { role: 'assistant', text: 'Second', cut: false, tools: [], at: 2000 }];
+  sessions = { places: [read('one', [entry('bridge-chat-1', { updatedAt: 3000 })], { observedAt: 6000 })] };
+  view.rerender(<SessionList active places={{ ...places }} />);
+  expect(await screen.findByText('Second')).toBeTruthy();
+  expect(calls.filter(c => c[0] === 'overview_transcript')).toHaveLength(2);
+  sessions = { places: [read('one', [entry('bridge-chat-1', { updatedAt: 3000 })], { observedAt: 7000, connection: 2 })] };
+  view.rerender(<SessionList active places={{ ...places }} />);
+  await waitFor(() => expect(screen.queryByText('Second')).toBeNull());
+  expect(screen.getByRole('button', { name: /Conversation/ }).getAttribute('aria-expanded')).toBe('false');
+});

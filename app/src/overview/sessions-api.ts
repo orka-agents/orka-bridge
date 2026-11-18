@@ -49,10 +49,11 @@ export async function readTranscript(key: string, name: string): Promise<Transcr
   return { state: 'unavailable', messages: [] };
 }
 
-export type Row = SessionEntry & { placeKey: string };
+/** `connection` and `readAt` are the place's connection revision and read time, so expanded details follow both. */
+export type Row = SessionEntry & { placeKey: string; connection: number | null; readAt: number | null };
 /** Every read place's Sessions, most recently updated first, then by place and name for a stable order. */
 export function merge(places: PlaceSessions[]): Row[] {
-  return places.flatMap(p => p.entries.map(e => ({ ...e, placeKey: p.key })))
+  return places.flatMap(p => p.entries.map(e => ({ ...e, placeKey: p.key, connection: p.connection, readAt: p.observedAt })))
     .sort((a, b) => b.updatedAt - a.updatedAt || a.placeKey.localeCompare(b.placeKey) || a.name.localeCompare(b.name));
 }
 const roles: Record<string, string> = { user: 'User', assistant: 'Agent', tool: 'Tool result', system: 'System' };

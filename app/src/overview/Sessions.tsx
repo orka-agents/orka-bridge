@@ -5,13 +5,14 @@ import type { Places } from './api';
 import { placeLabels } from './model';
 import { merge, type PlaceSessions, readSessions, readTranscript, roleLabel, type Row, type Sessions, type Transcript } from './sessions-api';
 
-function TranscriptView({ placeKey, name }: { placeKey: string; name: string }) {
+/** An expanded conversation, read again whenever its place is read again. A new connection remounts it (see the row key). */
+function TranscriptView({ placeKey, name, revision }: { placeKey: string; name: string; revision: number | null }) {
   const [transcript, setTranscript] = useState<Transcript>();
   useEffect(() => {
     let cancelled = false;
     void readTranscript(placeKey, name).then(value => { if (!cancelled) setTranscript(value); });
     return () => { cancelled = true; };
-  }, [placeKey, name]);
+  }, [placeKey, name, revision]);
   if (!transcript) return <p className="overview-card-meta" role="status">Reading the conversation…</p>;
   if (transcript.state === 'denied') return <p className="overview-card-meta" role="status">This account can't read this conversation.</p>;
   if (transcript.state === 'revoked') return <p className="overview-card-meta" role="status">Connect to this cluster again to read the conversation.</p>;
@@ -42,7 +43,7 @@ function Entry({ row, place }: { row: Row; place: string }) {
     <div className="overview-card-actions">
       <Disclosure className="overview-details-toggle" label="Conversation" open={open} onOpenChange={setOpen} controls={id}>{null}</Disclosure>
     </div>
-    {open && <div id={id} className="overview-details"><TranscriptView placeKey={row.placeKey} name={row.name} /></div>}
+    {open && <div id={id} className="overview-details"><TranscriptView placeKey={row.placeKey} name={row.name} revision={row.readAt} /></div>}
   </li>;
 }
 
@@ -103,6 +104,6 @@ export function SessionList({ active, places }: { active: boolean; places?: Plac
     {notes.map(([key, text]) => <p key={key} className="overview-note" role="status">{text}</p>)}
     {!connected.length ? <p className="overview-note">Connect a cluster to see its conversations here.</p>
       : !rows.length ? <p className="overview-note">No conversations yet on connected clusters.</p>
-      : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.name}`} row={row} place={labels.get(row.placeKey)!} />)}</ol>}
+      : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.connection ?? ''}/${row.name}`} row={row} place={labels.get(row.placeKey)!} />)}</ol>}
   </section>;
 }
