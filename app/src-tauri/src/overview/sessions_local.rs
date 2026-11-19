@@ -6,7 +6,9 @@
 #[cfg(test)]
 #[path = "sessions_local_tests.rs"]
 mod tests;
-use super::{newest, session, transcript, PlaceSessions, SessionList, Transcript, MAX_SESSIONS};
+use super::{
+    newest, session, transcript, Listed, PlaceSessions, SessionList, Transcript, MAX_SESSIONS,
+};
 use crate::runtime::types::RuntimeError;
 use bridge_runtime_protocol::{
     valid_session_cursor, valid_session_name, EngineActionWire, OrkaReply, Uuid, ORKA_NAMESPACE,
@@ -81,6 +83,7 @@ async fn list(vm: &impl LocalSessions) -> Result<(u64, SessionList), Failure> {
     let mut after: Option<String> = None;
     let mut cursors = HashSet::new();
     let mut names = HashSet::new();
+    let mut unsupported = 0;
     let mut boot = None;
     for _ in 0..MAX_SESSIONS.div_ceil(SESSION_PAGE) {
         let (answered, page) = call(
@@ -96,8 +99,13 @@ async fn list(vm: &impl LocalSessions) -> Result<(u64, SessionList), Failure> {
         }
         let bad = (Some(answered), "unavailable");
         for item in page["items"].as_array().ok_or(bad)? {
-            let Some(entry) = session(item, ORKA_NAMESPACE).map_err(|_| bad)? else {
-                continue;
+            let entry = match session(item, ORKA_NAMESPACE).map_err(|_| bad)? {
+                Listed::Shown(entry) => entry,
+                Listed::Gateway => continue,
+                Listed::Unsupported => {
+                    unsupported += 1;
+                    continue;
+                }
             };
             if !names.insert(entry.name.clone()) {
                 return Err(bad);
@@ -111,16 +119,19 @@ async fn list(vm: &impl LocalSessions) -> Result<(u64, SessionList), Failure> {
             _ => return Err(bad),
         };
         let Some(next) = &after else {
-            return Ok((answered, newest(entries, true)));
+            return Ok((answered, newest(entries, true, unsupported)));
         };
         if entries.len() >= MAX_SESSIONS {
-            return Ok((answered, newest(entries, false)));
+            return Ok((answered, newest(entries, false, unsupported)));
         }
         if !cursors.insert(next.clone()) {
             return Err(bad);
         }
     }
-    Ok((boot.unwrap_or_default(), newest(entries, false)))
+    Ok((
+        boot.unwrap_or_default(),
+        newest(entries, false, unsupported),
+    ))
 }
 /// This computer's Sessions. A Task holding a Session is named, but its Agent is not read.
 pub async fn read(vm: &impl LocalSessions) -> PlaceSessions {
@@ -130,6 +141,7 @@ pub async fn read(vm: &impl LocalSessions) -> PlaceSessions {
         observed_at: None,
         entries: Vec::new(),
         connection: None,
+        unsupported: 0,
     };
     match tokio::time::timeout(LOCAL_LIMIT, list(vm))
         .await
@@ -139,6 +151,7 @@ pub async fn read(vm: &impl LocalSessions) -> PlaceSessions {
             view.state = if list.complete { "complete" } else { "partial" };
             view.observed_at = Some(crate::overview::now());
             view.entries = list.entries;
+            view.unsupported = list.unsupported;
             view.connection = Some(boot);
         }
         Err((boot, state)) => {

@@ -10,7 +10,9 @@ fn listed(name: &str, updated: &str) -> Value {
 fn listed_sessions_keep_identity_times_and_running_task_only() {
     let mut value = listed("bridge-chat-1", "2026-01-02T00:00:00Z");
     value["activeTask"] = json!("run-1");
-    let read = session(&value, "agents").unwrap().unwrap();
+    let Listed::Shown(read) = session(&value, "agents").unwrap() else {
+        panic!("not shown")
+    };
     assert_eq!(
         read,
         Session {
@@ -29,7 +31,9 @@ fn listed_sessions_keep_identity_times_and_running_task_only() {
     // An empty or malformed running Task name is absent; an odd type is dropped, not trusted.
     value["activeTask"] = json!("../x");
     value["sessionType"] = json!("chat type");
-    let read = session(&value, "agents").unwrap().unwrap();
+    let Listed::Shown(read) = session(&value, "agents").unwrap() else {
+        panic!("not shown")
+    };
     assert_eq!((read.active_task, read.session_type), (None, None));
 }
 
@@ -37,16 +41,20 @@ fn listed_sessions_keep_identity_times_and_running_task_only() {
 fn gateway_and_malformed_sessions_are_skipped_or_rejected() {
     let mut gateway = listed("g", "2026-01-02T00:00:00Z");
     gateway["sessionType"] = json!("gateway");
-    assert_eq!(session(&gateway, "agents"), Ok(None));
+    assert_eq!(session(&gateway, "agents"), Ok(Listed::Gateway));
     // A gateway Session's channel-derived name, or another namespace, does not fail the list.
     gateway["name"] = json!("telegram:12345@bot");
     gateway["namespace"] = json!("other");
-    assert_eq!(session(&gateway, "agents"), Ok(None));
+    assert_eq!(session(&gateway, "agents"), Ok(Listed::Gateway));
+    // A chat Session keeps a caller's ID as is; one Bridge can't request is left out, not fatal.
+    for id in ["team:chat", "a/b", ".hidden", "a b"] {
+        let value = listed(id, "2026-01-02T00:00:00Z");
+        assert_eq!(session(&value, "agents"), Ok(Listed::Unsupported), "{id}");
+    }
     for (field, bad) in [
         ("namespace", json!("other")),
-        ("name", json!("a/b")),
         ("name", json!("")),
-        ("name", json!(".hidden")),
+        ("name", Value::Null),
         ("messageCount", json!(-1)),
         ("createdAt", json!("yesterday")),
         ("updatedAt", Value::Null),
@@ -72,17 +80,21 @@ fn newest_sorts_by_update_then_name_and_marks_overflow_partial() {
                 ),
                 "agents",
             )
-            .unwrap()
+            .map(|listed| match listed {
+                Listed::Shown(entry) => entry,
+                _ => panic!("not shown"),
+            })
             .unwrap()
         })
         .collect();
-    let list = newest(entries.clone(), true);
+    let list = newest(entries.clone(), true, 0);
     assert!(!list.complete);
     assert_eq!(list.entries.len(), SHOWN);
     assert_eq!(list.entries[0].name, "s-29");
     assert_eq!(list.entries[1].name, "s-59");
-    let list = newest(entries[..3].to_vec(), true);
+    let list = newest(entries[..3].to_vec(), true, 2);
     assert!(list.complete);
+    assert_eq!(list.unsupported, 2);
     assert_eq!(
         list.entries
             .iter()
@@ -154,6 +166,24 @@ fn transcript_keeps_roles_text_tools_and_the_latest_messages() {
     assert_eq!(read.messages[0].text, "5");
     let last = read.messages.last().unwrap();
     assert!(last.cut && last.text.len() <= MESSAGE_TEXT && last.text.len() > MESSAGE_TEXT - 2);
+
+    // Structured (non-text) content is left out and marked cut; absent content is not.
+    let lines = [
+        json!({"role":"user","content":[{"type":"text","text":"hi"}]}).to_string(),
+        json!({"role":"assistant","toolCalls":[{"name":"shell"}]}).to_string(),
+    ]
+    .join("\n");
+    let reply = json!({"name":"s","namespace":"agents","transcript":lines});
+    let read = transcript(&reply, "agents", "s").unwrap();
+    assert!(read.complete);
+    assert_eq!(
+        (read.messages[0].text.as_str(), read.messages[0].cut),
+        ("", true)
+    );
+    assert_eq!(
+        (read.messages[1].text.as_str(), read.messages[1].cut),
+        ("", false)
+    );
 
     // An empty Session has no transcript text.
     let empty = json!({"name":"s","namespace":"agents","transcript":""});

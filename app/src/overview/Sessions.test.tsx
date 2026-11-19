@@ -4,13 +4,13 @@ import userEvent from '@testing-library/user-event';
 import { StrictMode } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 import type { Places } from './api';
-import { isSessions, isTranscript, merge, type PlaceSessions } from './sessions-api';
+import { isSessions, isTranscript, merge, type PlaceSessions, roleLabel } from './sessions-api';
 import { SessionList } from './Sessions';
 
 const place = (key: string, context: string) => ({ key, context, service: 'control/orka', namespace: 'agents', stale: false, observedAt: 1000, agents: [] });
 const places: Places = { places: [place('one', 'team-one'), place('two', 'team-two')], historyState: 'complete', unobserved: [] };
 const entry = (name: string, over: object = {}) => ({ name, sessionType: 'chat', messageCount: 2, createdAt: 1000, updatedAt: 2000, activeTask: null, agent: null, ...over });
-const read = (key: string, entries: unknown[], over: object = {}) => ({ key, state: 'complete', observedAt: 5000, entries, connection: 1, ...over });
+const read = (key: string, entries: unknown[], over: object = {}) => ({ key, state: 'complete', observedAt: 5000, entries, connection: 1, unsupported: 0, ...over });
 function ipc(sessions: unknown, transcript: (args: Record<string, unknown>) => unknown = () => ({ state: 'complete', messages: [] })) {
   vi.stubGlobal('isTauri', true);
   const calls: [string, unknown][] = [];
@@ -41,6 +41,8 @@ test('native payloads are accepted only when each state carries what it promises
     { places: [read('one', [entry('a', { agent: 'reader' })])] },
     { places: [read('one', [entry('a', { messageCount: -1 })])] },
     { places: [read('one', Array.from({ length: 51 }, (_, i) => entry(`s${i}`)))] },
+    { places: [read('one', [], { state: 'denied', observedAt: null, unsupported: 1 })] },
+    { places: [read('one', [], { unsupported: -1 })] },
   ]) expect(isSessions(bad)).toBe(false);
   expect(isTranscript({ state: 'partial', messages: [{ role: 'user', text: 'hi', cut: false, tools: [], at: 1 }] })).toBe(true);
   expect(isTranscript({ state: 'denied', messages: [{ role: 'user', text: 'hi', cut: false, tools: [], at: 1 }] })).toBe(false);
@@ -249,4 +251,47 @@ test('a failed or unreadable Sessions read offers Check conversations again, and
   sessions = { places: [read('one', [entry('a')]), read('two', [])] };
   view.rerender(<SessionList onCheck={check} active places={{ ...places }} />);
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Check conversations again' })).toBeNull());
+});
+
+test('only known roles are relabelled; an inherited property name shows as it is', async () => {
+  expect(roleLabel('assistant')).toBe('Agent');
+  for (const role of ['__proto__', 'constructor', 'toString']) expect(roleLabel(role)).toBe(role);
+  ipc({ places: [read('one', [entry('a')])] }, () => ({ state: 'complete', messages: [{ role: '__proto__', text: 'odd', cut: false, tools: [], at: null }] }));
+  render(<SessionList onCheck={noop} active places={places} />);
+  await userEvent.click(await screen.findByRole('button', { name: /Conversation/ }));
+  expect(await screen.findByText('odd')).toBeTruthy();
+  expect(screen.getByText('__proto__')).toBeTruthy();
+});
+
+test('a partial read with no readable messages says so, and content left out is marked', async () => {
+  let transcript: unknown = { state: 'partial', messages: [] };
+  ipc({ places: [read('one', [entry('a'), entry('b', { updatedAt: 1500 })])] }, () => transcript);
+  render(<SessionList onCheck={noop} active places={places} />);
+  const [a, b] = await screen.findAllByRole('listitem');
+  await userEvent.click(within(a).getByRole('button', { name: /Conversation/ }));
+  expect(await within(a).findByText("Bridge couldn't read this conversation's messages.")).toBeTruthy();
+  expect(within(a).queryByText('No messages yet.')).toBeNull();
+  transcript = { state: 'complete', messages: [{ role: 'user', text: '', cut: true, tools: [], at: null }, { role: 'assistant', text: '', cut: false, tools: ['shell'], at: null }] };
+  await userEvent.click(within(b).getByRole('button', { name: /Conversation/ }));
+  expect(await within(b).findByText("Content Bridge doesn't show here.")).toBeTruthy();
+  expect(within(b).getAllByText("Content Bridge doesn't show here.")).toHaveLength(1);
+});
+
+test('a connected place whose last read failed offers Check conversations again; a never-connected one does not', async () => {
+  let sessions: unknown = { places: [read('one', [], { state: 'disconnected', observedAt: null, connection: null })] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_sessions' ? sessions : null);
+  const view = render(<SessionList onCheck={noop} active places={places} />);
+  expect(await screen.findByText('Conversations appear here once the workspace is ready on this computer or a cluster is connected.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Check conversations again' })).toBeNull();
+  sessions = { places: [read('one', [], { state: 'disconnected', observedAt: null, connection: 3 })] };
+  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  expect(await screen.findByRole('button', { name: 'Check conversations again' })).toBeTruthy();
+});
+
+test('conversations whose IDs Bridge cannot open are counted for their place', async () => {
+  ipc({ places: [read('one', [entry('a')], { unsupported: 1 }), read('two', [entry('b')], { unsupported: 3 })] });
+  render(<SessionList onCheck={noop} active places={places} />);
+  expect(await screen.findByText("1 conversation on team-one has an ID Bridge can't open yet, so it isn't listed.")).toBeTruthy();
+  expect(screen.getByText("3 conversations on team-two have IDs Bridge can't open yet, so they aren't listed.")).toBeTruthy();
 });

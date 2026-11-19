@@ -19,12 +19,13 @@ function TranscriptView({ placeKey, name, revision }: { placeKey: string; name: 
   if (transcript.state === 'outdated') return <p className="overview-activity-meta" role="status">Reading conversations on this computer needs a newer version of Bridge.</p>;
   if (transcript.state === 'revoked') return <p className="overview-activity-meta" role="status">Connect to this cluster again to read the conversation.</p>;
   if (transcript.state !== 'complete' && transcript.state !== 'partial') return <p className="overview-activity-meta" role="status">Bridge couldn't read this conversation.</p>;
-  if (!transcript.messages.length) return <p className="overview-activity-meta">No messages yet.</p>;
+  // A partial read with nothing readable is not an empty conversation.
+  if (!transcript.messages.length) return <p className="overview-activity-meta" role={transcript.state === 'partial' ? 'status' : undefined}>{transcript.state === 'partial' ? "Bridge couldn't read this conversation's messages." : 'No messages yet.'}</p>;
   return <>
     {transcript.state === 'partial' && <p className="overview-activity-meta">Showing the latest {transcript.messages.length} messages Bridge could read.</p>}
     <ol className="overview-transcript">{transcript.messages.map((m, i) => <li key={i} className={`overview-transcript-${m.role === 'user' ? 'user' : 'other'}`}>
       <p className="overview-activity-meta">{roleLabel(m.role)}{m.at !== null && <> · <RelativeTime value={m.at} /></>}</p>
-      {m.text && <p className="overview-transcript-text">{m.text}{m.cut && '…'}</p>}
+      {m.text ? <p className="overview-transcript-text">{m.text}{m.cut && '…'}</p> : m.cut && <p className="overview-activity-meta">Content Bridge doesn't show here.</p>}
       {!!m.tools.length && <p className="overview-activity-meta">Called {m.tools.map((t, j) => <span key={j}>{j > 0 && ', '}<code>{t}</code></span>)}</p>}
     </li>)}</ol>
   </>;
@@ -76,7 +77,7 @@ export function SessionList({ active, places, onCheck }: { active: boolean; plac
             const prior = previous?.places.find(q => q.key === p.key);
             const keep = (p.state === 'unavailable' || p.state === 'disconnected') && p.connection !== null && prior?.connection === p.connection;
             if (keep && prior?.state === 'denied') return { ...prior, state: 'denied' as const };
-            return keep && prior?.entries.length ? { ...p, entries: prior.entries, observedAt: prior.observedAt } : p;
+            return keep && prior?.entries.length ? { ...p, entries: prior.entries, observedAt: prior.observedAt, unsupported: prior.unsupported } : p;
           }),
         }));
       }
@@ -104,8 +105,11 @@ export function SessionList({ active, places, onCheck }: { active: boolean; plac
     if (p.state === 'revoked') return `Connect to ${name} again to see its conversations.`;
     if (p.state === 'disconnected' && p.entries.length) return p.key === LOCAL ? `The workspace on this computer isn't running now. Showing what Bridge last saw.` : `${name} isn't connected now. Showing what Bridge last saw.`;
   };
-  const notes = read.map(p => [p.key, note(p)] as const).filter((n): n is readonly [string, string] => !!n[1]);
-  const retry = failed || read.some(p => p.state === 'unavailable' || p.state === 'denied');
+  const unsupported = (p: PlaceSessions) => p.unsupported > 0
+    && `${p.unsupported === 1 ? '1 conversation' : `${p.unsupported} conversations`} on ${labels.get(p.key)} ${p.unsupported === 1 ? 'has an ID' : 'have IDs'} Bridge can't open yet, so ${p.unsupported === 1 ? "it isn't" : "they aren't"} listed.`;
+  const notes = read.flatMap(p => [[p.key, note(p)] as const, [`${p.key}/unsupported`, unsupported(p) || undefined] as const]).filter((n): n is readonly [string, string] => !!n[1]);
+  // A connected place whose last read failed reports `disconnected` with its connection kept, and can be read again.
+  const retry = failed || read.some(p => p.state === 'unavailable' || p.state === 'denied' || (p.state === 'disconnected' && p.connection !== null));
   return <section className="overview-activity" aria-label="Conversations">
     <header className="overview-activity-head">
       <h2>Conversations</h2>
