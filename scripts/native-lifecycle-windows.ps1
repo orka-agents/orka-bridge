@@ -37,12 +37,14 @@ public static class NativeWalk {
   [DllImport("oleacc.dll")] private static extern int AccessibleObjectFromPoint(Point pt, [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible, out object child);
   // Explorer's own hit test at a screen point: the name of the control a click there reaches.
   // https://learn.microsoft.com/windows/win32/api/oleacc/nf-oleacc-accessibleobjectfrompoint
-  public static string NameAt(int x, int y) {
-    Accessibility.IAccessible acc = null; object child;
+  // A failed hit test sets failure, so it is not mistaken for a control with no name.
+  public static string NameAt(int x, int y, out string failure) {
+    Accessibility.IAccessible acc = null; object child; failure = null;
     try {
-      if (AccessibleObjectFromPoint(new Point { X = x, Y = y }, out acc, out child) != 0 || acc == null) return null;
+      int hr = AccessibleObjectFromPoint(new Point { X = x, Y = y }, out acc, out child);
+      if (hr != 0 || acc == null) { failure = "AccessibleObjectFromPoint returned 0x" + hr.ToString("X8"); return null; }
       return acc.get_accName(child);
-    } catch (COMException) { return null; }
+    } catch (COMException e) { failure = "hit test threw 0x" + e.HResult.ToString("X8"); return null; }
     finally { if (acc != null) Marshal.ReleaseComObject(acc); }
   }
   [DllImport("oleacc.dll")] private static extern int AccessibleChildren(Accessibility.IAccessible accessible, int start, int count, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex=2)] object[] children, out int obtained);
@@ -287,6 +289,7 @@ function Tray-Menu {
     $settled = $null
     # The latest hit test survives a moved icon or an opened overflow, so every timeout can report it.
     $last = 'no hit test was made'
+    $uiaError = ''
     for ($i = 0; ; $i++) {
         $point = $null
         $lost = $false
@@ -295,8 +298,10 @@ function Tray-Menu {
             $point = Find-TrayPoint $area 'visible'
             if (!$point -and $overflow) { $point = Find-TrayPoint $overflow 'overflow' }
         } catch [System.Windows.Automation.ElementNotAvailableException], [System.Windows.Automation.NoClickablePointException] {
-            # An icon removed or moved mid-read is an unsettled poll, not a failure.
+            # An icon removed or moved mid-read is an unsettled poll, not a failure; keep the
+            # error so a timeout can show it if the reads never recover.
             $lost = $true
+            $uiaError = "; the last UIA read failed: $($_.Exception.Message)"
         }
         if (!$point -and !$overflow -and !$lost) {
             $chevron = Find-Control $area 'Show hidden icons' $button
@@ -317,15 +322,16 @@ function Tray-Menu {
         if ($point) {
             $target = [Drawing.Point]::new([int]$point.X, [int]$point.Y)
             [NativeWalk]::SetCursorPos($target.X, $target.Y) | Out-Null
-            $hit = [NativeWalk]::NameAt($target.X, $target.Y)
-            $last = "Explorer's last hit test at $($target.X),$($target.Y) named $(if ([string]::IsNullOrEmpty($hit)) { 'nothing' } else { "'$hit'" })"
+            $failure = $null
+            $hit = [NativeWalk]::NameAt($target.X, $target.Y, [ref]$failure)
+            $last = "Explorer's last hit test at $($target.X),$($target.Y) $(if ($failure) { "failed: $failure" } elseif ([string]::IsNullOrEmpty($hit)) { 'named nothing' } else { "named '$hit'" })"
             if ($hit -notlike '*Bridge*') { $settled = $null }
             elseif ($settled -eq $target) { break }
             else { $settled = $target }
         } else { $settled = $null }
         if ($i -ge 100) {
-            if (!$point) { throw "Native Bridge notification icon missing$(if ($overflow) { ' from the visible area and overflow' }); $last" }
-            throw "Bridge notification icon not settled under the cursor; $last"
+            if (!$point) { throw "Native Bridge notification icon missing$(if ($overflow) { ' from the visible area and overflow' }); $last$uiaError" }
+            throw "Bridge notification icon not settled under the cursor; $last$uiaError"
         }
         Start-Sleep -Milliseconds 100
     }
