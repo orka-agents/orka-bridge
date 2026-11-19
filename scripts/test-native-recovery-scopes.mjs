@@ -6,14 +6,25 @@ import vm from 'node:vm';
 
 const source = (await readFile(new URL('./native-recovery-windows.mjs', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const prefix = source.slice(0, source.indexOf('for (const root of')).replace(/^import .*;\n/gm, '');
-function selection(scope) {
-  const argv = ['node', 'driver', 'app.exe', 'captures', ...(scope === undefined ? [] : [scope])];
-  return vm.runInNewContext(`${prefix}\n({ executable, output, scope: typeof captureScope === 'undefined' ? undefined : captureScope, runCore: typeof runCore === 'undefined' ? true : runCore, runUi: typeof runUi === 'undefined' ? true : runUi })`, {
+function selection(scope, ...extra) {
+  const argv = ['node', 'driver', 'app.exe', 'captures', ...(scope === undefined ? [] : [scope]), ...extra];
+  return vm.runInNewContext(`${prefix}\n({ executable, output, scope: captureScope, runCore, runUi, runUpgrade })`, {
     process: { platform: 'win32', env: { GITHUB_ACTIONS: 'true' }, argv }, resolve,
   });
 }
 assert.throws(() => selection('typo'), /capture scope/i, 'unknown scope must not silently run the full suite');
 assert.equal(selection().scope, 'all');
+for (const [scope, expected] of [
+  ['all', [true, true, true]], ['core', [true, false, false]],
+  ['chat-agent-clusters', [false, true, false]], ['workspace-upgrade', [false, false, true]],
+]) {
+  const chosen = selection(scope);
+  assert.deepEqual([chosen.runCore, chosen.runUi, chosen.runUpgrade], expected, scope);
+  assert.equal(chosen.output, resolve('captures'));
+}
+for (const args of [['typo'], ['--scope'], ['--scope', 'core'], ['core', 'core'], ['workspace-upgrade', 'all']]) {
+  assert.throws(() => selection(...args), /all\|core\|chat-agent-clusters\|workspace-upgrade/, `invalid arguments must list finite positional scopes: ${args}`);
+}
 assert.equal(selection('core').runUi, false);
 assert.equal(selection('chat-agent-clusters').runCore, false);
 assert.equal(selection('chat-agent-clusters').output, resolve('captures'), 'scope must not become a path');
@@ -34,6 +45,7 @@ const all = actions(selection()), core = actions(selection('core')), ui = action
 assert.equal(all.length, 72);
 assert.equal(core.length, 47);
 assert.equal(ui.length, 25);
+assert.deepEqual(actions(selection('workspace-upgrade')), [], 'upgrade scope must not repeat any of the 47+25 actions');
 assert.ok(core.includes('designer-reply-saved'), 'saved reply captures belong to the core scope');
 assert.ok(!ui.includes('designer-reply-saved'), 'UI scope must not repeat saved reply captures');
 assert.equal(new Set([...core, ...ui]).size, all.length, 'scopes must partition, not repeat or omit cases');
@@ -65,12 +77,14 @@ assert.equal(twoVersions.versions[1].turns[0].message, 'What did the page say?')
 for (const name of ['fixtures', 'setupFixtures']) {
   assert.equal(roster(name, selection('chat-agent-clusters')).length, 0, `UI scope must not repeat ${name}`);
   assert.ok(roster(name, selection('core')).length > 0);
+  assert.equal(roster(name, selection('workspace-upgrade')).length, 0, `upgrade scope must not repeat ${name}`);
 }
 const overviewAll = roster('overviewVariants', selection());
 const overviewCore = roster('overviewVariants', selection('core'));
 const overviewUi = roster('overviewVariants', selection('chat-agent-clusters'));
 assert.deepEqual(overviewAll, ['clusters', 'local-only', 'starting']);
 assert.deepEqual(overviewCore, [], 'Overview must leave the constrained Core scope');
+assert.deepEqual(roster('overviewVariants', selection('workspace-upgrade')), [], 'upgrade scope must not repeat Overview');
 assert.deepEqual(overviewUi, overviewAll, 'UI must own the complete Overview matrix');
 assert.deepEqual([...overviewCore, ...overviewUi], overviewAll, 'split Overview coverage must match all');
 assert.equal(new Set([...overviewCore, ...overviewUi]).size, overviewAll.length, 'Overview must not repeat between scopes');
@@ -209,7 +223,7 @@ assert.equal(await capturePanel(true), true);
 await assert.rejects(() => capturePanel(false), /Change panel must fit/);
 assert.equal(await capturePanel(true, 'ai-removal-retry'), false, 'retry fixture must not overwrite the identical pre-removal panel image');
 const workflow = (await readFile(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
-for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clusters', 'native-chat-agent-clusters']]) {
+for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clusters', 'native-chat-agent-clusters'], ['workspace-upgrade', 'native-workspace-upgrade']]) {
   const command = `node ../scripts/native-recovery-windows.mjs src-tauri/target/debug/orka-bridge.exe windows-artifact/${directory} ${scope}`;
   assert.ok(workflow.includes(command), `CI must run ${scope} into its own artifact directory`);
   const before = workflow.slice(0, workflow.indexOf(command));
@@ -529,22 +543,46 @@ for (const [label, expected] of [['Set up', false], ['Connect the AI', true], ['
 }
 assert.ok(model.includes('require(currentFocus, "Confirmation keyboard focus was lost")'), 'Mac must retain its hard keyboard focus assertion');
 assert.ok(model.includes('Thread.sleep(forTimeInterval: 0.2)\n                // AX nodes'), 'Mac keyboard deadline must not be extended to pass');
+const cachedFilename = upgradeCapture.match(/await writeFile\(join\(output, (`[^`]*upgrade-refresh-cached\.png`)/)?.[1];
+assert.ok(cachedFilename, 'cached observation must still write its separate frame');
+const cachedName = Function('theme', 'size', `return ${cachedFilename};`)('light', 'wide');
+assert.equal(cachedName, 'light-wide-upgrade-refresh-cached.png');
+const upgradeSlots = [...frameNames, cachedName.replace('light-wide-', '').replace('.png', '')];
+assert.equal(upgradeSlots.length, 37, '27 baseline plus ten integration frames per theme/size');
+assert.equal(new Set(upgradeSlots).size, 37);
+assert.equal(frameNames.filter(name => !upgradeVariants.slice(20).some(row => row[1] === name)).length, 27);
+const scopeSlots = new Map(['core', 'chat-agent-clusters', 'workspace-upgrade', 'all'].map(scope => [scope, []]));
 for (const theme of ['light', 'dark']) for (const size of ['wide', 'compact']) {
-  for (const scope of ['core', 'chat-agent-clusters', 'all']) {
-    const chosen = selection(scope), calls = [], stop = new Error('first upgrade world');
-    const capture = Function('runCore', 'runUi', 'frameTree', 'call', `${upgradeCapture}; return captureUpgrade;`)(
-      chosen.runCore, chosen.runUi, { frame: { id: 'fixture-frame' } }, async (method, args) => { calls.push([method, args]); throw stop; });
-    if (scope === 'core') {
-      await capture(theme, size);
-      assert.equal(calls.length, 0, 'Core must not duplicate any upgrade world');
-    } else {
-      await assert.rejects(capture(theme, size), error => error === stop);
-      assert.equal(calls.length, 1, 'UI and all must admit the complete upgrade matrix');
-      assert.equal(calls[0][0], 'Page.createIsolatedWorld');
-      assert.equal(calls[0][1].worldName, `upgrade-${theme}-${size}-upgrade-eligible-absent`);
+  for (const scope of scopeSlots.keys()) {
+    const chosen = selection(scope);
+    const actionNames = actions(chosen).map(name => `${theme}-${size}-${name}`);
+    assert.equal(actionNames.length, { core: 47, 'chat-agent-clusters': 25, 'workspace-upgrade': 0, all: 72 }[scope]);
+    const partition = ['core', 'chat-agent-clusters', 'workspace-upgrade'].flatMap(part => actions(selection(part))).map(name => `${theme}-${size}-${name}`);
+    assert.deepEqual(partition, actions(selection('all')).map(name => `${theme}-${size}-${name}`));
+    assert.equal(new Set(partition).size, 72);
+    for (const [, name] of upgradeVariants) {
+      const calls = [], stop = new Error('upgrade world boundary');
+      const capture = Function('runUpgrade', 'selectedFixture', 'frameTree', 'call',
+        `${upgradeCapture.replace('of variants)', 'of variants.filter(v => v[1] === selectedFixture))')}; return captureUpgrade;`)(
+        chosen.runUpgrade, name, { frame: { id: 'fixture-frame' } }, async (method, args) => { calls.push([method, args]); throw stop; });
+      if (scope === 'core' || scope === 'chat-agent-clusters') {
+        await capture(theme, size);
+        assert.equal(calls.length, 0, `${scope} must not duplicate any upgrade world`);
+      } else {
+        await assert.rejects(capture(theme, size), error => error === stop);
+        assert.equal(calls.length, 1, `${scope} must admit every upgrade variant`);
+        assert.equal(calls[0][0], 'Page.createIsolatedWorld');
+        assert.equal(calls[0][1].worldName, `upgrade-${theme}-${size}-${name}`);
+      }
     }
+    if (chosen.runUpgrade) scopeSlots.get(scope).push(...upgradeSlots.map(name => `${theme}-${size}-${name}.png`));
   }
 }
+assert.equal(scopeSlots.get('workspace-upgrade').length, 148);
+assert.deepEqual(scopeSlots.get('workspace-upgrade'), scopeSlots.get('all'));
+const splitSlots = ['core', 'chat-agent-clusters', 'workspace-upgrade'].flatMap(scope => scopeSlots.get(scope));
+assert.deepEqual(splitSlots, scopeSlots.get('all'), 'split scopes preserve every upgrade frame exactly once');
+assert.equal(new Set(splitSlots).size, 148, 'no theme/size/frame overwrites across split scopes');
 assert.equal((source.match(/await captureUpgrade\(theme, '(?:wide|compact)'\)/g) ?? []).length, 2);
 // The capture is passive even if React catches a rejected mutation reply.
 const upgradeAudit = upgradeCapture.slice(upgradeCapture.indexOf('      for (const { command, args }'), upgradeCapture.indexOf('      await checkLayout('));
@@ -585,12 +623,9 @@ const upgradeFixture = await readFile(new URL('../app/src-tauri/examples/model_w
 assert.ok(upgradeFixture.includes('assert!(expected_call, "Unexpected upgrade capture call:'), 'Mac must fail even caught passive mutations and nonempty status args');
 assert.ok(upgradeFixture.includes('args.len() == 1') && upgradeFixture.includes('Some(&json!(true))'), 'Mac manual refresh must use the exact finite refresh:true argument');
 assert.ok(upgradeFixture.includes('if key == "sourceRetained"') && upgradeFixture.includes('40000000-0000-4000-8000-000000000005'), 'visually identical retained scene needs a distinct synthetic transaction witness');
-assert.ok(model.includes('if state == "sourceRetained"') && model.includes('waitForNativeText(["4000…0005"], diagnosePhaseWitness: true)'), 'Mac must observe the requested scene in rendered details before naming its screenshot');
+assert.ok(model.includes('if state == "sourceRetained"') && model.includes('waitForNativeText(["4000…0005"])'), 'Mac must observe the requested scene in rendered details before naming its screenshot');
 const nativeTextWait = model.slice(model.indexOf('func waitForNativeText(_ any:'), model.indexOf('func reachable('));
-assert.ok(nativeTextWait.includes('for _ in 0..<40') && nativeTextWait.includes('Thread.sleep(forTimeInterval: 0.1)'), 'phase diagnostics must not extend the native text deadline');
-assert.ok(nativeTextWait.includes('if diagnosePhaseWitness') && nativeTextWait.includes('"AXParent"') && nativeTextWait.includes('"AXExpanded"'), 'failed witness needs indexed AX parent/expanded-state evidence');
-assert.ok(nativeTextWait.includes('String(contentsOf: setupProgress') && nativeTextWait.includes('"/usr/sbin/screencapture"'), 'failed witness needs the current selector and raw screenshot');
-assert.ok(!nativeTextWait.includes('try capture('), 'failure diagnostics must not consume a named capture or bypass coverage');
+assert.ok(nativeTextWait.includes('for _ in 0..<40') && nativeTextWait.includes('Thread.sleep(forTimeInterval: 0.1)'), 'the native text deadline must remain unchanged');
 const upgradeBootstrap = upgradeFixture.match(/const UPGRADE_INITIALIZE: &str = r#"([\s\S]*?)"#;/)?.[1];
 assert.ok(upgradeBootstrap, 'fixture intent must be restored at document start, not before old callbacks finish');
 for (const intent of ['pending', 'attempted']) {
@@ -606,4 +641,4 @@ for (const intent of ['pending', 'attempted']) {
   assert.equal(local.get('bridge.firstTest.v1'), 'attempted', 'bootstrap must not rearm intent after the handshake');
 }
 await import('./test-native-workspace-contracts.mjs');
-console.log('PASS real scope parsing; 47+25 unique action cases; upgrade scope/50 baseline+20 integration-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
+console.log('PASS real scope parsing; 47+25 unique action cases; 29 upgrade variants/148 disjoint Windows frame slots; upgrade scope/50 baseline+20 integration-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');

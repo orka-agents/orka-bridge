@@ -1086,36 +1086,10 @@ func nativeTextExists(_ expected: String) -> Bool {
         attribute(element, "AXRole") as? String == "AXStaticText" && (attribute(element, "AXValue") as? String)?.contains(expected) == true
     }
 }
-func waitForNativeText(_ any: [String], diagnosePhaseWitness: Bool = false) {
+func waitForNativeText(_ any: [String]) {
     for _ in 0..<40 {
         if any.contains(where: nativeTextExists) { return }
         Thread.sleep(forTimeInterval: 0.1)
-    }
-    if diagnosePhaseWitness {
-        // Preserve the failed state before exiting: DOM text fragmentation,
-        // a closed disclosure and a stale observation need different fixes.
-        let prefix = "\(output)/upgrade-phase-witness-failure"
-        let elements = nativeElements()
-        let rows: [[String: Any]] = elements.enumerated().map { index, element in
-            let parent = attribute(element, "AXParent")
-            return ["index": index, "parent": parent.flatMap { value in elements.firstIndex(where: { CFEqual($0, value) }) } ?? -1,
-                "role": attribute(element, "AXRole") as? String ?? "", "subrole": attribute(element, "AXSubrole") as? String ?? "",
-                "value": attribute(element, "AXValue").map { String(describing: $0) } ?? "",
-                "title": attribute(element, "AXTitle") as? String ?? "", "description": attribute(element, "AXDescription") as? String ?? "",
-                "expanded": attribute(element, "AXExpanded").map { String(describing: $0) } ?? "",
-                "bounds": nativeBounds(element).map { String(describing: $0) } ?? ""]
-        }
-        do {
-            let data = try JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: URL(fileURLWithPath: prefix + ".json"))
-            try String(contentsOf: setupProgress, encoding: .utf8).write(toFile: prefix + "-selector.txt", atomically: true, encoding: .utf8)
-            if let current = window() {
-                let screenshot = Process()
-                screenshot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-                screenshot.arguments = ["-x", "-o", "-l", String(current.0), prefix + ".png"]
-                try screenshot.run(); screenshot.waitUntilExit()
-            }
-        } catch { fputs("Cannot save phase-witness diagnostics: \(error)\n", stderr) }
     }
     require(false, "Native text did not appear: \(any)")
 }
@@ -1729,7 +1703,7 @@ func captureUpgradeMatrix(manage: Bool) throws {
             // Identical recovery prose cannot prove this scene reached React.
             // Observe its synthetic transaction in real rendered native details.
             press("Update details")
-            waitForNativeText(["4000…0005"], diagnosePhaseWitness: true)
+            waitForNativeText(["4000…0005"])
             click("Update details", [])
             var closed = false
             for _ in 0..<40 {

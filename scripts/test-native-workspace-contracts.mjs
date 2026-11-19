@@ -122,7 +122,7 @@ async function upgradeFixture(name) {
   let injection;
   const stop = new Error('upgrade injection captured');
   const capture = vm.runInNewContext(`(${captureUpgrade.replace('of variants)', 'of variants.filter(v => v[1] === selectedFixture))')})`, {
-    runUi: true, selectedFixture: name, frameTree: { frame: { id: 'fixture' } },
+    runUpgrade: true, selectedFixture: name, frameTree: { frame: { id: 'fixture' } },
     call: async () => ({ executionContextId: 1 }),
     evaluate: async script => { injection = script; throw stop; },
   });

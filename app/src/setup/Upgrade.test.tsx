@@ -14,6 +14,15 @@ function mount(status = eligible) {
   const view = render(<Upgrade status={status} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   return { ...view, ipc, onChange, onBusy };
 }
+test('transaction witness is one text run for the native accessibility phase acknowledgement', () => {
+  const { container, ipc } = mount({ ...fresh, state: 'sourceRetained', transaction: '40000000-0000-4000-8000-000000000005', canReplace: true });
+  fireEvent.click(screen.getByText('Update details'));
+  const code = container.querySelector('code');
+  expect(code?.textContent).toBe('4000…0005');
+  // WebKit exposes adjacent DOM Text nodes as separate AXStaticText values.
+  expect(Array.from(code!.childNodes).filter(node => node.nodeType === Node.TEXT_NODE).map(node => node.textContent)).toEqual(['4000…0005']);
+  expect(ipc).not.toHaveBeenCalled();
+});
 test('new workspace is explicit, measured, and Not now cannot switch or reuse a credential', () => {
   const { ipc } = mount();
   const size = (gb: number) => `${new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(gb)} GB`;

@@ -135,7 +135,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     </div></div>
     <Disclosure label="Update details" open={details} controls="workspace-upgrade-details" onOpenChange={setDetails}>
       {details && <div id="workspace-upgrade-details"><p>Previous: {source}. New: Bridge {s.targetRelease ?? 'unknown'}.</p>
-        {s.transaction && <p>Transaction: <code>{s.transaction.slice(0, 4)}…{s.transaction.slice(-4)}</code></p>}
+        {s.transaction && <p>Transaction: <code>{`${s.transaction.slice(0, 4)}…${s.transaction.slice(-4)}`}</code></p>}
         <p>Recovery keeps the newer workspace on disk, but does not offer version switching. Nothing is pruned automatically.</p></div>}
     </Disclosure>
   </div>;
