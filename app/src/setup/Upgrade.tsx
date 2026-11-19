@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '../components/Button';
 import { Disclosure } from '../components/Disclosure';
 import { retireFirstTest } from './first-test';
@@ -42,7 +42,8 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
   const mutation = useRef(false);
   const operationEpoch = useRef(0);
   const observedTransaction = useRef(s.transaction);
-  useEffect(() => {
+  // A layout effect, so a Cancel click on the newly rendered operation sees its epoch already advanced.
+  useLayoutEffect(() => {
     // A cached object for the same active operation is not new cancellation evidence.
     if (observedTransaction.current !== s.transaction || !s.busy && !s.canCancel) {
       ++operationEpoch.current;
