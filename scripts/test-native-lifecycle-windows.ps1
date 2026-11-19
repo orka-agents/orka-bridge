@@ -8,7 +8,7 @@ $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'native-lifecycle-windows.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw "Lifecycle script parse errors: $errors" }
 # Timestamp writes must stay off the success pipeline: callers return controls/handles.
-foreach ($name in @('Write-StartupEvent', 'Test-NativeReady')) {
+foreach ($name in @('Write-StartupEvent', 'Test-NativeReady', 'Wait-NativeReady')) {
     $definition = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
     if (!$definition) { throw "$name missing" }
     . ([scriptblock]::Create($definition.Extent.Text))
@@ -35,6 +35,26 @@ try {
     $ready = @(Test-NativeReady)
     if ($ready.Count -ne 1 -or $ready[0] -ne $true) { throw 'Timestamped readiness prefix no longer yields exactly one Boolean' }
     Write-Host 'PASS startup readiness still requires the existing ready marker with timestamp suffixes'
+
+    $timeline = Join-Path $script:themeOutput 'startup-timeline.jsonl'
+    $output = @(Wait-NativeReady 1000)
+    $events = @(Get-Content $timeline | ConvertFrom-Json | ForEach-Object event)
+    if ($output.Count -or ($events[-2..-1] -join ',') -cne 'native-ready-wait-begin,native-ready-wait-ended') { throw 'Ready wait leaked output or did not record its bounds' }
+    Write-Host 'PASS native ready wait returns once the ready marker exists'
+
+    [IO.File]::WriteAllText($script:startupLog, "bridge-startup: main epoch_ms=1`n")
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    try { Wait-NativeReady 300; throw 'Ready wait accepted a startup log without ready' }
+    catch { if ($_.Exception.Message -cne 'Native startup was not ready within 0.3 s') { throw } }
+    if ($clock.ElapsedMilliseconds -lt 300 -or (Get-Content $timeline | ConvertFrom-Json)[-1].event -cne 'native-ready-wait-failed') { throw 'Ready wait ended early or did not record its failure' }
+    Write-Host 'PASS native ready wait is bounded and records its failure'
+
+    $script:app = [pscustomobject]@{ Id = 123; HasExited = $true; ExitCode = 3 }
+    try { Wait-NativeReady 1500; throw 'Ready wait ignored an exited process' }
+    catch { if ($_.Exception.Message -cne 'Bridge exited with code 3 before native startup was ready') { throw } }
+    if ((Get-Content $timeline | ConvertFrom-Json)[-1].event -cne 'native-ready-wait-failed') { throw 'Exited ready wait did not record its failure' }
+    $script:app = [pscustomobject]@{ Id = 123 }
+    Write-Host 'PASS native ready wait stops when Bridge exits before ready'
 
     # A missing destination makes the best-effort diagnostic write fail, not the walk.
     $script:themeOutput = Join-Path $script:themeOutput 'absent'
