@@ -231,6 +231,21 @@ fn upgrade_refresh_bytes(key: &str, refresh: bool, failed: &mut bool) -> Result<
         1200000000
     })
 }
+#[cfg(all(target_os = "macos", feature = "custom-protocol"))]
+// Whether a new upgrade scene may reload the renderer: never while a held refresh is
+// unanswered (Some(None)), nor within 500 ms of its reply (Some(Some(resolved))).
+fn upgrade_reload_allowed(
+    held: Option<Option<std::time::Instant>>,
+    now: std::time::Instant,
+) -> bool {
+    match held {
+        Some(None) => false,
+        Some(Some(resolved)) => {
+            now.duration_since(resolved) >= std::time::Duration::from_millis(500)
+        }
+        None => true,
+    }
+}
 
 #[cfg(all(target_os = "macos", feature = "custom-protocol"))]
 fn upgrade_status(key: &str) -> serde_json::Value {
@@ -704,12 +719,8 @@ fn main() {
                                 Some("incomplete-forced") => 11,
                                 _ => if manage { 2 } else { 1 },
                             };
-                            let reply_pending = match *upgrade_held.lock().unwrap() {
-                                Some(None) => true,
-                                Some(Some(resolved)) => resolved.elapsed() < std::time::Duration::from_millis(500),
-                                None => false,
-                            };
-                            if !reply_pending && upgrade_scene.swap(group, std::sync::atomic::Ordering::SeqCst) != group {
+                            let reload_allowed = upgrade_reload_allowed(*upgrade_held.lock().unwrap(), std::time::Instant::now());
+                            if reload_allowed && upgrade_scene.swap(group, std::sync::atomic::Ordering::SeqCst) != group {
                                 workspace.lock().unwrap().returning = manage;
                                 first_test_pending.store(true, std::sync::atomic::Ordering::SeqCst);
                                 running.store(false, std::sync::atomic::Ordering::SeqCst);
