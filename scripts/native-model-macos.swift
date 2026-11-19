@@ -1853,9 +1853,9 @@ for state in ["refresh-pending", "refresh-busy", "refresh-io", "cancel-requested
     // Each finite interactive phase remounts with retired first-test intent.
     waitForButton("Manage"); click("Manage", [])
     var expected = state == "incomplete-forced" ? "forcibly stopped" : state == "busy-locked" ? "The workspace is busy. Your agent files are kept." : state.hasPrefix("cancel-") ? "Cancel update" : state == "forward-cancelled" ? "Try setup again" : "Check again"
-    waitForNativeText([expected])
+    if state.hasPrefix("cancel-") || state == "forward-cancelled" || state.hasPrefix("refresh-") { waitForButton(expected) } else { waitForNativeText([expected]) }
     if state.hasPrefix("refresh-") {
-        waitForNativeText(["Retained workspace: 1.2 GB allocated."])
+        waitForNativeText(["1.2 GB"])
         require(!nativeTextExists("Workspace files checked on request."), "Cached observation must not claim owner freshness")
         if state == "refresh-pending" { try integrationUpgradeShots("refresh-cached", "Check again") }
         press("Check again")

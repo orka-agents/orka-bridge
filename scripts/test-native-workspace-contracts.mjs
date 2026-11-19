@@ -283,4 +283,28 @@ try {
   execFileSync('rustc', ['--edition=2021', `${scratch}/main.rs`, '-o', executable]);
   execFileSync(executable);
 } finally { await rm(scratch, { recursive: true, force: true }); }
+// The bare ACK can render before the next cached DTO withdraws cancellation.
+// Exercise that gap in the real capture block: neither server assignment nor ACK
+// text is a renderer acknowledgement of the new capability.
+const cancelStart = source.indexOf("      if (name.startsWith('upgrade-cancel-')) {");
+const cancelEnd = source.indexOf("      if (name === 'upgrade-forward-cancelled') {", cancelStart);
+assert.ok(cancelStart >= 0 && cancelEnd > cancelStart);
+for (const name of ['upgrade-cancel-requested', 'upgrade-cancel-not-cancellable']) {
+  let cancelVisible = true; let observations = 0;
+  const clicks = [];
+  const text = name === 'upgrade-cancel-requested' ? 'Cancellation requested. Waiting for the workspace operation to stop.' : 'This workspace operation can no longer be cancelled. Check the latest status.';
+  const document = { querySelector: () => ({ innerText: text }), querySelectorAll: () => cancelVisible ? [{ textContent: 'Cancel update', disabled: false }] : [] };
+  await vm.runInNewContext(`(async () => { ${source.slice(cancelStart, cancelEnd)} })()`, {
+    name, clickAction: async label => { clicks.push(label); }, evaluate: async script => vm.runInNewContext(script, { document }),
+    until: async (predicate, label) => {
+      if (label.endsWith('cancellation capability observation')) {
+        assert.equal(await predicate(), false, 'ACK may precede the cached capability render');
+        cancelVisible = false; observations += 1;
+      }
+      assert.equal(await predicate(), true, label);
+    },
+  });
+  assert.equal(observations, 1, `${name}: capture must await the rendered capability, not just its ACK`);
+  assert.deepEqual(clicks, ['Cancel update'], 'waiting must not repeat cancellation');
+}
 console.log('PASS native workspace driver contracts: returning intent, explicit states, Quit IPC, presentation gates, idle Close and exact Upgrade wire/refresh/cancel transitions');

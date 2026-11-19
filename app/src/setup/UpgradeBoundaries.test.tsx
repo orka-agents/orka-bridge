@@ -196,6 +196,18 @@ test('fallback Check again uses owner refresh without serialising independent se
   expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && isRefresh(a))).toHaveLength(1);
 });
 
+test('identity loss retires an earlier successful check without carrying its freshness forward', async () => {
+  let cached: UpgradeStatus = { ...current, error: 'inUse' };
+  fixture(args => args.refresh ? { ...current, error: null } : cached);
+  render(<App />); await openLocalSetup();
+  fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+  await screen.findByText('Workspace files checked on request.');
+  cached = { ...current, state: 'conflict', transaction: null, createdAt: null, canReplace: false, canRestore: false, error: 'unknown' };
+  fireEvent(window, new Event('focus'));
+  await screen.findByText('Workspace recovery needs attention. Your workspaces are kept. Open the matching Bridge version or ask for help.');
+  expect(screen.queryByText('Workspace files checked on request.')).toBeNull();
+});
+
 test('an old manual response cannot overwrite a newer transaction or claim freshness for it', async () => {
   const owner = deferred<unknown>(); let changed = false;
   fixture(args => args.refresh ? owner.promise : { ...current, transaction: changed ? '20000000-0000-4000-8000-000000000002' : current.transaction, error: changed ? null : 'inUse' });
@@ -278,6 +290,64 @@ test('manual failure retains the known transaction even if an independent cached
   fireEvent.click(screen.getByRole('button', { name: 'Update details' }));
   expect(screen.getByText(/Transaction:/).textContent).toContain('1000');
   expect(screen.getByText(/Could not check workspace files/)).toBeTruthy();
+});
+
+test.each(['conflict', 'none'] as const)('identityless %s after manual failure retains history and fences mutations until explicit refresh', async state => {
+  let cached: UpgradeStatus = { ...current, error: 'inUse' }; let repaired = false;
+  const ipc = fixture(args => {
+    if (args.refresh) { if (!repaired) throw Error('IO'); cached = current; }
+    return cached;
+  });
+  render(<App />); await openLocalSetup();
+  fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+  await screen.findByText(/Could not check workspace files/);
+  fireEvent.click(screen.getByRole('button', { name: 'Update details' }));
+  const poll = async (value: UpgradeStatus) => {
+    cached = value;
+    await act(async () => { fireEvent(window, new Event('focus')); });
+  };
+  const assertFenced = () => {
+    expect(screen.getByText(/Could not check workspace files/)).toBeTruthy();
+    expect(screen.getByText(/Showing last observed workspace information/)).toBeTruthy();
+    expect(screen.getByText(/Transaction:/).textContent).toContain('1000');
+    expect(screen.getByText(/Previous: Bridge 0.1.2. New: Bridge 0.1.3./)).toBeTruthy();
+    expect(screen.getByText(/Retained workspace: 1.2 GB allocated. Up to 2.4 GB additional/)).toBeTruthy();
+    expect(screen.queryByText('Workspace files checked on request.')).toBeNull();
+    for (const name of ['Restore previous workspace', 'Set up new workspace', 'Try setup again', 'Use saved connection', 'Remove saved connection']) {
+      expect(screen.queryByRole('button', { name })?.matches(':disabled') ?? true).toBe(true);
+    }
+    expect(screen.getByRole('button', { name: 'Check again' }).matches(':disabled')).toBe(false);
+    expect(document.querySelector('.setup-model')).toBeNull();
+  };
+  await poll({ ...eligible, state, transaction: null, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, canReplace: false, error: state === 'conflict' ? 'unknown' : null });
+  assertFenced();
+  // Neither old metadata nor a metadata change within the old transaction proves repair.
+  await poll(current); assertFenced();
+  await poll({ ...current, sourceReleases: ['0.1.3'], targetRelease: '0.1.4' }); assertFenced();
+  repaired = true;
+  fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  await screen.findByText('Workspace files checked on request.');
+  expect(screen.queryByText(/Could not check workspace files/)).toBeNull();
+  expect(screen.getByRole('button', { name: 'Restore previous workspace' }).matches(':disabled')).toBe(false);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['workspace_upgrade_restore', 'workspace_upgrade_replace', 'setup_select_local', 'setup_connect_model', 'agent_run', 'agent_chat_start'].includes(c))).toEqual([]);
+});
+
+test('a positively different known transaction retires an identityless manual failure fence', async () => {
+  let cached: UpgradeStatus = { ...current, error: 'inUse' };
+  fixture(args => { if (args.refresh) throw Error('IO'); return cached; });
+  render(<App />); await openLocalSetup();
+  fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+  await screen.findByText(/Could not check workspace files/);
+  cached = { ...current, state: 'conflict', transaction: null, canRestore: false, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, error: 'unknown' };
+  await act(async () => { fireEvent(window, new Event('focus')); });
+  expect(screen.getByText(/Could not check workspace files/)).toBeTruthy();
+  cached = { ...current, transaction: '20000000-0000-4000-8000-000000000002' };
+  await act(async () => { fireEvent(window, new Event('focus')); });
+  await waitFor(() => expect(screen.queryByText(/Could not check workspace files/)).toBeNull());
+  expect(screen.getByRole('button', { name: 'Restore previous workspace' }).matches(':disabled')).toBe(false);
+  fireEvent.click(screen.getByRole('button', { name: 'Update details' }));
+  expect(screen.getByText(/Transaction:/).textContent).toContain('2000');
+  expect(screen.queryByText('Workspace files checked on request.')).toBeNull();
 });
 
 test('ordinary setup observation retry does not retire pending first-test intent or query its owned journal', async () => {

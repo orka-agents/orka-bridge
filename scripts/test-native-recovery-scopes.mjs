@@ -632,7 +632,15 @@ assert.ok(upgradeFixture.includes('if key == "sourceRetained"') && upgradeFixtur
 assert.ok(model.includes('if state == "sourceRetained"') && model.includes('waitForNativeText(["4000…0005"])'), 'Mac must observe the requested scene in rendered details before naming its screenshot');
 const nativeTextWait = model.slice(model.indexOf('func waitForNativeText(_ any:'), model.indexOf('func reachable('));
 assert.ok(nativeTextWait.includes('for _ in 0..<40') && nativeTextWait.includes('Thread.sleep(forTimeInterval: 0.1)'), 'the native text deadline must remain unchanged');
-assert.ok(model.includes('waitForNativeText(["1.3 GB"])'), 'Mac cached-response witness must match one rendered AX text value, not an interpolated paragraph');
+for (const size of ['1.2 GB', '1.3 GB']) assert.ok(model.includes(`waitForNativeText(["${size}"])`), 'Mac allocation witnesses must match one rendered AX text value, not an interpolated paragraph');
+const integrationStart = model.indexOf('for state in ["refresh-pending"');
+const integrationEntry = model.slice(integrationStart, model.indexOf('    if state.hasPrefix("refresh-") {', integrationStart));
+const buttonCondition = integrationEntry.match(/if (.+) \{ waitForButton\(expected\) \}/)?.[1];
+assert.ok(buttonCondition, 'Mac integration action anchors must wait for AXButton, not AXStaticText');
+for (const state of ['refresh-pending', 'refresh-busy', 'refresh-io', 'cancel-requested', 'cancel-completed', 'cancel-not-cancellable', 'forward-cancelled', 'busy-locked', 'incomplete-forced']) {
+  const button = vm.runInNewContext(buttonCondition.replaceAll('.hasPrefix(', '.startsWith('), { state });
+  assert.equal(button, !['busy-locked', 'incomplete-forced'].includes(state), `${state}: action and static-text witness roles must remain distinct`);
+}
 const upgradeBootstrap = upgradeFixture.match(/const UPGRADE_INITIALIZE: &str = r#"([\s\S]*?)"#;/)?.[1];
 assert.ok(upgradeBootstrap, 'fixture intent must be restored at document start, not before old callbacks finish');
 for (const intent of ['pending', 'attempted']) {

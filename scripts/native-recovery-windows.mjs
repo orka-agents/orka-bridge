@@ -1855,6 +1855,9 @@ try {
         const outcomeText = name === 'upgrade-cancel-requested' ? 'Cancellation requested. Waiting for the workspace operation to stop.'
           : name === 'upgrade-cancel-completed' ? 'Workspace setup was interrupted. Choose Try setup again to continue. Reopen this version of Bridge if recovery is interrupted again.' : 'This workspace operation can no longer be cancelled. Check the latest status.';
         await until(() => evaluate(`document.querySelector('.workspace-upgrade').innerText.includes(${JSON.stringify(outcomeText)})`), name + ' cancellation outcome');
+        // These fixtures withdraw canCancel after the ACK; wait for its cached
+        // observation to render before comparing controls with the new DTO.
+        if (name !== 'upgrade-cancel-completed') await until(() => evaluate(`![...document.querySelectorAll('.workspace-upgrade button')].some(b => b.textContent === 'Cancel update')`), name + ' cancellation capability observation');
         if (name === 'upgrade-cancel-completed') {
           if (!await evaluate(`![...document.querySelectorAll('.workspace-upgrade button')].some(b => b.textContent === 'Cancel update') && [...document.querySelectorAll('.workspace-upgrade button')].some(b => b.textContent === 'Try setup again' && !b.disabled)`)) throw Error(name + ': completed cancellation must expose terminal recovery');
         } else if (await evaluate(`[...document.querySelectorAll('.workspace-upgrade button')].some(b => ['Try setup again', 'Restore previous workspace'].includes(b.textContent) && !b.disabled)`)) throw Error(name + ': acknowledgement released operation fence');

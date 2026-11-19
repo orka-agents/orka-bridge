@@ -55,13 +55,14 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const manualEpoch = useRef(0);
   const manualPending = useRef(false);
   const manualFailed = useRef(false);
+  const manualIdentityless = useRef(false);
   const upgradeIdentity = useRef<string | null>(undefined);
   const [upgradeObservation, setUpgradeObservation] = useState<UpgradeObservationState>({ pending: false });
   const workspaceReplaced = useRef(false);
   const upgradeAction = useCallback((value: boolean) => {
     // A mutation invalidates both kinds of reads, including a lost mutation reply.
     ++epoch.current; ++upgradeEpoch.current; ++manualEpoch.current;
-    manualPending.current = false; manualFailed.current = false; setUpgradeObservation({ pending: false });
+    manualPending.current = false; manualFailed.current = false; manualIdentityless.current = false; setUpgradeObservation({ pending: false });
     setUpgradeBusy(value); setUpgradeKnown(false);
     setCheck(check => check + 1);
   }, []);
@@ -208,9 +209,15 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   }, [check, upgradeCheck]);
   function observeUpgrade(value: UpgradeStatus) {
     // Cached observations may discover another workspace, but never certify a manual recheck.
-    if (upgradeIdentity.current !== undefined && upgradeIdentity.current !== value.transaction) {
-      ++manualEpoch.current; manualPending.current = false; manualFailed.current = false;
+    if ((value.transaction !== null || !manualFailed.current) && upgradeIdentity.current !== undefined && upgradeIdentity.current !== value.transaction) {
+      ++manualEpoch.current; manualPending.current = false; manualFailed.current = false; manualIdentityless.current = false;
       setUpgradeObservation({ pending: false });
+    }
+    if (manualFailed.current && upgradeIdentity.current && (value.transaction === null || manualIdentityless.current)) {
+      // Identity loss is not another workspace or proof of repair. Keep history, not authority.
+      manualIdentityless.current = true;
+      setUpgrade(previous => previous && { ...previous, state: 'conflict', canReplace: false, canRestore: false, canCancel: false, busy: false, error: value.error ?? 'unknown' });
+      return;
     }
     upgradeIdentity.current = value.transaction;
     setUpgrade(value);
@@ -226,7 +233,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     if (!mounted.current || request !== manualEpoch.current) return;
     manualPending.current = false;
     if (result.ok) {
-      manualFailed.current = false;
+      manualFailed.current = false; manualIdentityless.current = false;
       ++upgradeEpoch.current;
       observeUpgrade(result.status);
       setUpgradeKnown(true); setUpgradeError(undefined);
