@@ -560,8 +560,9 @@ pub struct LocalVm {
     upgrade_cache: Mutex<Option<crate::workspace_upgrade::UpgradeStatusDto>>,
     /// Compared and advanced only under upgrade_cache; its mutex supplies ordering.
     upgrade_cache_revision: std::sync::atomic::AtomicU64,
-    /// The boot that answered the last Overview Sessions request.
-    sessions_boot: Mutex<Option<bridge_runtime_protocol::Uuid>>,
+    /// Workspace starts so far, and the boot that answered the last Overview Sessions request
+    /// since the latest start. One lock, so a request that outlives a start can't record its boot.
+    sessions_boot: Mutex<(u64, Option<bridge_runtime_protocol::Uuid>)>,
     workspace_replaced_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 /// Keep native launch admission and setup choice serialized through the switch.
@@ -637,7 +638,7 @@ impl LocalVm {
             workspace_replaced: std::sync::atomic::AtomicBool::new(false),
             upgrade_cache: Mutex::new(None),
             upgrade_cache_revision: std::sync::atomic::AtomicU64::new(0),
-            sessions_boot: Mutex::new(None),
+            sessions_boot: Mutex::new((0, None)),
             workspace_replaced_observer: Mutex::new(None),
         })
     }
@@ -1499,7 +1500,11 @@ impl LocalVm {
         state.phase = LocalVmStatus::Preparing;
         state.model_connected = false;
         // A new boot is a new Sessions connection: a busy first read must not report the old one.
-        *self.sessions_boot.lock().unwrap() = None;
+        {
+            let mut sessions = self.sessions_boot.lock().unwrap();
+            sessions.0 += 1;
+            sessions.1 = None;
+        }
         state.run_cancel_supported = false;
         state.failure = None;
         state.preflight_failure = None;
@@ -1638,14 +1643,22 @@ impl LocalVm {
         ),
         RuntimeError,
     > {
+        let start = self.sessions_boot.lock().unwrap().0;
         let answer = self
             .with_client(move |_, client| (client.boot_nonce(), client.sessions_request(action)))
             .await?;
-        *self.sessions_boot.lock().unwrap() = Some(answer.0);
+        self.note_sessions_boot(start, answer.0);
         Ok(answer)
     }
+    /// Record the boot that answered, unless a workspace start came after the request began.
+    fn note_sessions_boot(&self, start: u64, boot: bridge_runtime_protocol::Uuid) {
+        let mut sessions = self.sessions_boot.lock().unwrap();
+        if sessions.0 == start {
+            sessions.1 = Some(boot);
+        }
+    }
     pub fn sessions_boot(&self) -> Option<bridge_runtime_protocol::Uuid> {
-        *self.sessions_boot.lock().unwrap()
+        self.sessions_boot.lock().unwrap().1
     }
     pub async fn workspace_catalog(
         &self,

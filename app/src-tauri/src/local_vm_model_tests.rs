@@ -61,13 +61,21 @@ async fn a_new_boot_forgets_the_last_sessions_boot_but_a_stop_keeps_it() {
     vm.inner
         .publish(LocalProgress::Status(LocalVmStatus::Ready));
     let boot = Uuid::from_bytes([7; 16]);
-    *vm.sessions_boot.lock().unwrap() = Some(boot);
+    let start = vm.sessions_boot.lock().unwrap().0;
+    vm.note_sessions_boot(start, boot);
     // Stopping keeps the boot, so Overview can keep what it last read there.
     vm.inner
         .publish(LocalProgress::Status(LocalVmStatus::Cancelled));
     assert_eq!(vm.sessions_boot(), Some(boot));
     vm.start();
     assert_eq!(vm.sessions_boot(), None);
+    // A request that began before the start answers afterwards: its boot is not recorded.
+    vm.note_sessions_boot(start, boot);
+    assert_eq!(vm.sessions_boot(), None);
+    let after = Uuid::from_bytes([8; 16]);
+    let current = vm.sessions_boot.lock().unwrap().0;
+    vm.note_sessions_boot(current, after);
+    assert_eq!(vm.sessions_boot(), Some(after));
     vm.shutdown().await.unwrap();
 }
 
