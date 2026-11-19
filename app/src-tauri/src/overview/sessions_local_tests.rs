@@ -9,6 +9,8 @@ struct Fake {
     actions: Mutex<Vec<EngineActionWire>>,
     stopped: bool,
     last: Mutex<Option<Uuid>>,
+    /// The boot a restart leaves once a request has answered.
+    restart: Option<Option<Uuid>>,
 }
 impl Fake {
     fn new(answers: Vec<Answer>) -> Self {
@@ -37,7 +39,7 @@ impl LocalSessions for Fake {
             .pop_front()
             .expect("no answer left");
         if let Ok((boot, _)) = &answer {
-            *self.last.lock().unwrap() = Some(*boot);
+            *self.last.lock().unwrap() = self.restart.unwrap_or(Some(*boot));
         }
         async move { answer }
     }
@@ -264,4 +266,34 @@ async fn a_long_id_from_the_guest_is_counted_and_the_rest_listed() {
     assert_eq!(view.state, "complete");
     assert_eq!(view.unsupported, 1);
     assert_eq!(view.entries.len(), 1);
+}
+
+#[tokio::test]
+async fn a_page_cut_for_a_long_cursor_lists_its_rows_as_partial() {
+    let body = json!({"items":[listed("a", "2026-01-02T00:00:00Z")],"metadata":{"continue":null,"cut":true}});
+    let view = read(&Fake::new(vec![ok(body)])).await;
+    assert_eq!(view.state, "partial");
+    assert_eq!(view.entries.len(), 1);
+}
+
+#[tokio::test]
+async fn a_transcript_answered_by_a_boot_a_restart_replaced_is_not_shown() {
+    let body = json!({"name":"a","namespace":ORKA_NAMESPACE,
+        "transcript":"{\"role\":\"user\",\"content\":\"old\"}","transcriptCut":false});
+    for (restart, state, shown) in [
+        (None, "complete", 1),
+        (Some(None), "unavailable", 0),
+        (Some(Some(Uuid::from_u128(2))), "unavailable", 0),
+    ] {
+        let vm = Fake {
+            restart,
+            ..Fake::new(vec![ok(body.clone())])
+        };
+        let view = read_transcript(&vm, "a").await;
+        assert_eq!(
+            (view.state, view.messages.len()),
+            (state, shown),
+            "{restart:?}"
+        );
+    }
 }

@@ -119,7 +119,9 @@ async fn list(vm: &impl LocalSessions) -> Result<(u64, SessionList), Failure> {
             _ => return Err(bad),
         };
         let Some(next) = &after else {
-            return Ok((answered, newest(entries, true, unsupported)));
+            // The guest marks a page cut when Orka's next cursor was too long to pass on.
+            let complete = page["metadata"]["cut"] != true;
+            return Ok((answered, newest(entries, complete, unsupported)));
         };
         if entries.len() >= MAX_SESSIONS {
             return Ok((answered, newest(entries, false, unsupported)));
@@ -187,6 +189,8 @@ pub async fn read_transcript(vm: &impl LocalSessions, name: &str) -> Transcript 
         .await
         .unwrap_or(Err((None, "unavailable")))
     {
+        // A restart while the answer was on its way: the old boot's messages are not shown.
+        Ok((answered, _)) if vm.last_boot().map(connection) != Some(answered) => {}
         Ok((_, body)) => match transcript(&body, ORKA_NAMESPACE, name) {
             Ok(read) => {
                 view.state = if read.complete { "complete" } else { "partial" };

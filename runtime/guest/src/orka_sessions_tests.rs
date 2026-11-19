@@ -154,7 +154,6 @@ fn session_list_refuses_bad_cursors_and_reports_only_status_on_refusal() {
     let s = server(vec![
         ok(&json!({"items":[],"metadata":{"continue":"a b"}})),
         ok(&json!({"items":[],"metadata":{"continue":7}})),
-        ok(&json!({"items":[],"metadata":{"continue":"a".repeat(MAX_SESSION_CURSOR + 1)}})),
         ok(&json!({"items":{}})),
         ok(&json!({"items":["s"]})),
         ok(&json!({ "items": many })),
@@ -164,7 +163,7 @@ fn session_list_refuses_bad_cursors_and_reports_only_status_on_refusal() {
         http("500 Internal Server Error", r#"{"items":[]}"#),
     ]);
     let (_dir, mut sessions) = sessions_kube(s.port);
-    for _ in 0..7 {
+    for _ in 0..6 {
         assert!(sessions.session_list(None).is_err());
     }
     for status in [403, 401, 500] {
@@ -178,7 +177,7 @@ fn session_list_refuses_bad_cursors_and_reports_only_status_on_refusal() {
             }
         );
     }
-    assert_eq!(s.seen.lock().unwrap().len(), 10, "no retries");
+    assert_eq!(s.seen.lock().unwrap().len(), 9, "no retries");
 }
 
 #[test]

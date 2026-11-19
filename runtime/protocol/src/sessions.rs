@@ -1,8 +1,9 @@
 //! Read-only Orka Sessions for Overview. The guest reads them with its own identity and
 //! returns an `OrkaReply` whose body is a bounded projection, never the raw Session.
 //!
-//! A list page body is `{"items":[Session…],"metadata":{"continue":String|null}}`; each
-//! Session keeps only `name`, `namespace`, `sessionType`, `messageCount`, `createdAt`,
+//! A list page body is `{"items":[Session…],"metadata":{"continue":String|null}}`, with
+//! `"cut":true` in `metadata` when Orka's next cursor was too long to pass on; each Session
+//! keeps only `name`, `namespace`, `sessionType`, `messageCount`, `createdAt`,
 //! `updatedAt` and `activeTask`.
 //!
 //! A Session body is `{"name","namespace","transcript","transcriptCut"}`. `transcript` holds

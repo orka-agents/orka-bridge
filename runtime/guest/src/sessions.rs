@@ -62,6 +62,11 @@ pub(super) fn list_body(page: &Value) -> io::Result<Value> {
         None | Some(Value::Null) => Value::Null,
         Some(Value::String(s)) if s.is_empty() => Value::Null,
         Some(Value::String(s)) if valid_session_cursor(s) => json!(s),
+        // Orka's cursor carries the page's last Session ID, so a long ID makes a cursor too long
+        // to pass on. The rows are still good: they are returned, marked cut, with no next page.
+        Some(Value::String(s)) if s.len() > MAX_SESSION_CURSOR => {
+            return Ok(json!({"items":out,"metadata":{"continue":null,"cut":true}}));
+        }
         _ => return Err(failed()),
     };
     Ok(json!({"items":out,"metadata":{"continue":next}}))
@@ -224,6 +229,17 @@ mod tests {
     use super::{list_body, message, LONG_NAME, SHORT_TEXT};
     use bridge_runtime_protocol::valid_session_name;
     use serde_json::{json, Value};
+
+    #[test]
+    fn a_cursor_too_long_to_pass_on_keeps_the_page_marked_cut() {
+        let page = json!({"items":[{"name":"kept","namespace":"orka-system"}],
+            "metadata":{"continue":"a".repeat(bridge_runtime_protocol::MAX_SESSION_CURSOR + 1)}});
+        let body = list_body(&page).unwrap();
+        assert_eq!(body["items"][0]["name"], "kept");
+        assert_eq!(body["metadata"], json!({"continue":null,"cut":true}));
+        // A cursor with characters Orka never sends still fails the page.
+        assert!(list_body(&json!({"items":[],"metadata":{"continue":"a b"}})).is_err());
+    }
 
     #[test]
     fn an_id_too_long_to_keep_is_listed_under_a_name_the_host_cannot_request() {
