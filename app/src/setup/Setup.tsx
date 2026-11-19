@@ -14,7 +14,7 @@ import { type CheckStepState, Meet, SetupProgress } from './Steps';
 import { cancelLocal, type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
 import Workspace from './Workspace';
-import Upgrade from './Upgrade';
+import Upgrade, { UpgradeObservation, type UpgradeObservationState } from './Upgrade';
 import { upgradeCall, type UpgradeStatus } from './upgrade-api';
 import './welcome.css';
 import type { RunSnapshot } from '../designer/run-api';
@@ -25,7 +25,7 @@ const pending = (state: LocalVmState) => ['preparing', 'installing', 'starting',
 const runtimeCopy = {
   notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
 };
-export type UpgradeNotice = 'recovery' | 'required' | 'error' | 'unknown';
+export type UpgradeNotice = 'recovery' | 'required' | 'error' | 'unknown' | 'checking' | 'busy';
 export type LocalClusterControl = { showPlaces: () => void };
 export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, active = true }: {
   ref?: Ref<LocalClusterControl>;
@@ -52,16 +52,23 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const [upgradeError, setUpgradeError] = useState<string>();
   const [upgradeCheck, setUpgradeCheck] = useState(0);
   const upgradeEpoch = useRef(0);
+  const manualEpoch = useRef(0);
+  const manualPending = useRef(false);
+  const manualFailed = useRef(false);
+  const upgradeIdentity = useRef<string | null>(undefined);
+  const [upgradeObservation, setUpgradeObservation] = useState<UpgradeObservationState>({ pending: false });
   const workspaceReplaced = useRef(false);
   const upgradeAction = useCallback((value: boolean) => {
     // A mutation invalidates both kinds of reads, including a lost mutation reply.
-    ++epoch.current; ++upgradeEpoch.current;
+    ++epoch.current; ++upgradeEpoch.current; ++manualEpoch.current;
+    manualPending.current = false; manualFailed.current = false; setUpgradeObservation({ pending: false });
     setUpgradeBusy(value); setUpgradeKnown(false);
     setCheck(check => check + 1);
   }, []);
-  const upgrading = upgradeBusy || !!upgrade?.busy;
+  const upgrading = upgradeBusy || !!upgrade?.busy && !!upgrade.canCancel && !upgradeObservation.pending;
+  const occupied = !!upgrade?.busy && !upgrading && !upgradeObservation.pending;
   const recoveryOnly = !!upgrade && ['sourceSelected', 'sourceRetained', 'incomplete', 'restoring', 'restored', 'conflict'].includes(upgrade.state);
-  const notice: UpgradeNotice | undefined = !upgradeKnown && (status?.workspaceReplaced || !!upgrade && upgrade.state !== 'none' || firstTestPending()) ? 'unknown' : recoveryOnly ? 'recovery' : upgrade?.state === 'eligible' ? 'required' : upgrade?.error ? 'error' : undefined;
+  const notice: UpgradeNotice | undefined = upgradeObservation.pending ? 'checking' : occupied ? 'busy' : !upgradeKnown && (status?.workspaceReplaced || !!upgrade && upgrade.state !== 'none' || firstTestPending()) ? 'unknown' : recoveryOnly ? 'recovery' : upgrade?.state === 'eligible' ? 'required' : upgrade?.error ? 'error' : undefined;
   const reportedUpgrade = useRef(false);
   const [setupError, setError] = useState<string>();
   const error = setupError ?? (status?.workspaceReplaced ? upgradeError : undefined);
@@ -69,9 +76,9 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const [sending, setSending] = useState(false);
   const [pendingAction, setPendingAction] = useState<'start' | 'cancel'>();
   useEffect(() => {
-    if (sending || upgrading || notice || reportedUpgrade.current) onWorkspaceAction?.(sending || upgrading, sending && pendingAction !== 'start', upgrading, notice);
+    if (sending || upgrading || notice || reportedUpgrade.current) onWorkspaceAction?.(sending || upgrading || occupied || upgradeObservation.pending, sending && pendingAction !== 'start', upgrading, notice);
     reportedUpgrade.current = sending || upgrading || !!notice;
-  }, [sending, pendingAction, upgrading, notice, onWorkspaceAction]);
+  }, [sending, pendingAction, upgrading, occupied, upgradeObservation.pending, notice, onWorkspaceAction]);
   const [workspace, setWorkspace] = useState(false);
   const initialStatus = useRef(true);
   const returningSession = useRef(firstTestAttempted());
@@ -189,14 +196,46 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
       setUpgradeKnown(update.ok);
       setUpgradeError(update.ok ? undefined : update.message);
       if (update.ok) {
-        setUpgrade(update.status);
+        observeUpgrade(update.status);
         if (update.status.state !== 'none') retireFirstTest();
-      } else setUpgrade(previous => previous && previous.state !== 'none'
-        ? { ...previous, state: 'conflict', canReplace: false, canRestore: false, busy: false, error: 'unknown' } : previous);
+      } else if (!manualPending.current && !manualFailed.current) setUpgrade(previous => previous && previous.state !== 'none'
+        ? { ...previous, state: 'conflict', canReplace: false, canRestore: false, canCancel: false, busy: false, error: 'unknown' } : previous);
       timer = setTimeout(() => setUpgradeCheck(value => value + 1), 1000);
     });
     return () => { ++upgradeEpoch.current; clearTimeout(timer); };
   }, [check, upgradeCheck]);
+  function observeUpgrade(value: UpgradeStatus) {
+    // Cached observations may discover another workspace, but never certify a manual recheck.
+    if (upgradeIdentity.current !== undefined && upgradeIdentity.current !== value.transaction) {
+      ++manualEpoch.current; manualPending.current = false; manualFailed.current = false;
+      setUpgradeObservation({ pending: false });
+    }
+    upgradeIdentity.current = value.transaction;
+    setUpgrade(value);
+  }
+  async function checkWorkspace() {
+    if (manualPending.current) return;
+    const request = ++manualEpoch.current;
+    manualPending.current = true;
+    setUpgradeObservation(previous => ({ ...previous, pending: true, checked: false }));
+    // Setup snapshots and memory observations remain independent of the owner query.
+    setCheck(value => value + 1);
+    const result = await upgradeCall('refresh');
+    if (!mounted.current || request !== manualEpoch.current) return;
+    manualPending.current = false;
+    if (result.ok) {
+      manualFailed.current = false;
+      ++upgradeEpoch.current;
+      observeUpgrade(result.status);
+      setUpgradeKnown(true); setUpgradeError(undefined);
+      setUpgradeObservation({ pending: false, checked: true });
+      if (result.status.state !== 'none') retireFirstTest();
+      setUpgradeCheck(value => value + 1);
+    } else {
+      manualFailed.current = true;
+      setUpgradeObservation({ pending: false, error: 'Could not check workspace files. They may still be in use or unavailable. Check again before continuing.' });
+    }
+  }
   const ordinaryRecovery = upgradeKnown
     ? !!upgrade && ['none', 'fresh', 'consumed'].includes(upgrade.state)
     : !status?.workspaceReplaced && !upgrade;
@@ -253,8 +292,8 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     else timer.current = setTimeout(() => setCheck(value => value + 1), 1000);
   }
 
-  const changing = sending || upgradeBusy || !!upgrade?.busy;
-  const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || !!error || !upgradeKnown} onBusy={upgradeAction} onChange={value => { setUpgrade(value); setCheck(check => check + 1); }} onCheck={() => setCheck(check => check + 1)} /> : undefined;
+  const changing = sending || upgradeBusy || !!upgrade?.busy || upgradeObservation.pending;
+  const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} observation={upgradeObservation} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || !!error || !upgradeKnown} onBusy={upgradeAction} onChange={value => { observeUpgrade(value); setCheck(check => check + 1); }} onCheck={() => { void checkWorkspace(); }} /> : undefined;
   const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); } }));
   const titleId = active ? 'page-title' : undefined;
@@ -272,8 +311,8 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const aiHeading = aiHeadings[modelState] ?? 'Connect the AI';
   const presentation = setupView(error ? undefined : status, { stopping: sending && pendingAction !== 'start', starting: sending && pendingAction === 'start', workspace, model: modelState, check: firstCheck, initialAutomatic });
   const upgradeAttention = !error && (upgrading || !!notice && (notice !== 'unknown' || status?.workspaceReplaced));
-  const upgradeLine = upgrading ? 'Updating workspace' : notice === 'recovery' ? 'Workspace recovery needs attention' : 'Workspace update needs attention';
-  const placesView = upgradeAttention ? { ...presentation, line: upgradeLine, detail: 'Your agent files are kept.', status: upgrading ? 'running' as const : 'needs-you' as const, done: false, action: 'Manage' } : presentation;
+  const upgradeLine = upgrading ? 'Updating workspace' : upgradeObservation.pending ? 'Checking workspace files' : occupied ? 'Workspace is busy' : notice === 'recovery' ? 'Workspace recovery needs attention' : 'Workspace update needs attention';
+  const placesView = upgradeAttention ? { ...presentation, line: upgradeLine, detail: 'Your agent files are kept.', status: upgrading || occupied || upgradeObservation.pending ? 'running' as const : 'needs-you' as const, done: false, action: 'Manage' } : presentation;
   const showPayoff = !workspace && !payoffDismissed && eligiblePayoff;
   const localStage = status?.localVm === 'ready' ? aiHeading : status?.localVm === 'failed'
     ? status.preflightFailure ? 'Check this computer' : workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready';
@@ -331,9 +370,11 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
       </div>
     </div>
     {entry && <ClusterCard active={active && view === 'cluster'} entry={entry} selection={currentPlace} onPlace={publishPlace} onContextName={setClusterName} onOpenAgent={onOpenAgent ?? onOpenExample} onDone={back} onRemoved={removed} />}
+    {!upgradePanel && <UpgradeObservation observation={upgradeObservation} />}
     {error && <div role="alert"><p>{error}</p>
-      <Button type="button" kind="secondary" className="action-spaced" disabled={busy}
-        onClick={() => { setBusy(true); setError(undefined); setCheck(value => value + 1); }}>Check again</Button>
+      <Button type="button" kind="secondary" className="action-spaced" disabled={busy || upgradeObservation.pending}
+        onClick={() => { setError(undefined); void checkWorkspace(); }}>Check again</Button>
     </div>}
+    {!error && !upgradePanel && upgradeObservation.error && <Button type="button" kind="secondary" disabled={upgradeObservation.pending} onClick={() => { void checkWorkspace(); }}>Check again</Button>}
   </div>;
 }

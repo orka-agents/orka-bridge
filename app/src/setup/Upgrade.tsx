@@ -10,11 +10,22 @@ const failures = {
   noSpace: 'There is not enough free space. Free some space, then try again. No retained workspace will be deleted.',
   inUse: 'The workspace files are still in use. Close any other Bridge window, then check again.',
   stopUnconfirmed: 'The workspace could not be stopped safely. Quit and reopen this version of Bridge before trying again.',
+  forcedStop: 'The workspace was forcibly stopped without a clean shutdown. Changes that had not reached disk may be lost. Quit and reopen Bridge before trying again.',
   integrity: 'The workspace files could not be verified. Your workspaces are kept. Check again or open the matching Bridge version.',
   unsupported: 'Open the matching Bridge version. This workspace cannot be replaced by this build.',
   unknown: 'The update could not be completed. Your workspaces are kept. Check again before continuing.',
 };
-export default function Upgrade({ status: s, disabled, canUseCredential = true, onChange, onBusy, onCheck }: {
+export type UpgradeObservationState = { pending: boolean; error?: string; checked?: boolean };
+export function UpgradeObservation({ observation }: { observation: UpgradeObservationState }) {
+  return <>
+    {observation.pending && <p role="status">Checking workspace files. Showing last observed workspace information.</p>}
+    {observation.error && <p role="alert">{observation.error}</p>}
+    {!observation.pending && observation.error && <p className="muted">Showing last observed workspace information. Workspace files have not been checked again.</p>}
+    {!observation.pending && observation.checked && <p role="status">Workspace files checked on request.</p>}
+  </>;
+}
+export default function Upgrade({ status: s, disabled, canUseCredential = true, observation, onChange, onBusy, onCheck }: {
+  observation?: UpgradeObservationState;
   status: UpgradeStatus; disabled?: boolean; canUseCredential?: boolean; onChange: (status: UpgradeStatus) => void; onBusy: (busy: boolean) => void; onCheck: () => void;
 }) {
   const [confirm, setConfirm] = useState<{ action: 'replace' | 'restore' | 'remove'; transaction: string | null; state: UpgradeStatus['state'] }>();
@@ -22,11 +33,13 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
   const [working, setWorking] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string>();
+  const [outcome, setOutcome] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
   const cancel = useRef<HTMLButtonElement>(null);
   const announcement = useRef<HTMLParagraphElement>(null);
   const mutation = useRef(false);
+  const operationEpoch = useRef(0);
   const confirmation = confirm?.transaction === s.transaction && confirm.state === s.state ? confirm : undefined;
   useEffect(() => { setConfirm(value => value?.transaction === s.transaction && value.state === s.state ? value : undefined); }, [s.transaction, s.state]);
   useEffect(() => {
@@ -34,7 +47,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     else if (restoreFocus.current) { restoreFocus.current = false; trigger.current?.focus(); }
   }, [confirmation]);
   const busy = s.busy || working;
-  const blocked = !!disabled || busy;
+  const blocked = !!disabled || busy || !!observation?.pending;
   const source = s.sourceReleases.length ? `Bridge ${s.sourceReleases.join(' or ')}` : 'the matching Bridge version';
   const date = s.createdAt === null ? '' : ` from ${new Date(s.createdAt * 1000).toLocaleDateString()}`;
   const ready = s.state === 'fresh' || s.state === 'consumed';
@@ -42,25 +55,35 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
   function ask(action: 'replace' | 'restore' | 'remove', button: HTMLButtonElement) { trigger.current = button; setConfirm({ action, transaction: s.transaction, state: s.state }); }
   function dismiss() { restoreFocus.current = true; setConfirm(undefined); }
   async function cancelUpdate() {
-    if (cancelling) return;
+    if (cancelling || !s.canCancel) return;
     setCancelling(true);
+    const request = operationEpoch.current;
     try {
       const result = await upgradeCall('cancel');
-      if (result.ok) onChange(result.status); else setError(result.message);
+      if (request !== operationEpoch.current) return;
+      if (result.ok) setOutcome(result.outcome === 'requested'
+        ? 'Cancellation requested. Waiting for the workspace operation to stop.'
+        : result.outcome === 'completed' ? 'Cancellation completed. Waiting for the latest workspace status.'
+        : 'This workspace operation can no longer be cancelled. Check the latest status.');
+      else setError(result.message);
     } finally { setCancelling(false); }
   }
-  async function act(action: UpgradeAction) {
-    if (mutation.current || disabled || (s.busy && action !== 'cancel') || (!canUseCredential && (action === 'transfer' || action === 'remove'))) return;
-    mutation.current = true; setWorking(true); setError(undefined);
+  async function act(action: Exclude<UpgradeAction, 'status' | 'refresh' | 'cancel'>) {
+    if (mutation.current || disabled || s.busy || (!canUseCredential && (action === 'transfer' || action === 'remove'))) return;
+    ++operationEpoch.current;
+    mutation.current = true; setWorking(true); setError(undefined); setOutcome(undefined);
     // Retire before invoking native mutation, not after a possibly lost reply.
     retireFirstTest(); onBusy(true); setConfirm(undefined);
     try {
       const result = await upgradeCall(action, ['retry', 'restore', 'transfer', 'remove'].includes(action) ? s.transaction ?? undefined : undefined);
-      if (result.ok) onChange(result.status); else setError(result.message);
-    } finally { mutation.current = false; setWorking(false); onBusy(false); announcement.current?.focus(); }
+      if (result.ok) {
+        if ('outcome' in result && result.outcome === 'cancelled') setOutcome('Update cancelled. Your retained workspace is kept. Check again before continuing.');
+        onChange(result.status);
+      } else setError(result.message);
+    } finally { ++operationEpoch.current; mutation.current = false; setWorking(false); onBusy(false); announcement.current?.focus(); }
   }
   if (s.state === 'none') return null;
-  const line = busy ? 'Updating the workspace. Your agent files are kept.'
+  const line = observation?.pending ? 'Last observed workspace information.' : busy ? working || s.canCancel ? 'Updating the workspace. Your agent files are kept.' : 'The workspace is busy. Your agent files are kept.'
     : s.state === 'restored' ? `Previous workspace restored. Quit and open ${source} to use it.`
     : s.state === 'restoring' ? 'Restore was interrupted. Restore the previous workspace to finish recovery.'
     : ready ? 'New workspace selected. Connect the AI explicitly before running your agents.'
@@ -68,7 +91,8 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     : retry ? 'Workspace setup was interrupted. Choose Try setup again to continue. Reopen this version of Bridge if recovery is interrupted again.'
     : 'This version of Bridge needs a new workspace.';
   return <div className="workspace-upgrade">
-    <p ref={announcement} tabIndex={-1} role="status">{line}</p>
+    <p ref={announcement} tabIndex={-1} role="status">{outcome ?? line}</p>
+    {observation && <UpgradeObservation observation={observation} />}
     {(error || s.error) && <p role="alert">{s.error ? failures[s.error] : error}</p>}
     {!ready && !busy && <p>Your agent files, settings, remembered clusters and saved result summaries are kept. You can still edit files and use a team cluster.</p>}
     {s.retainedAllocatedBytes !== null && <p className="muted">Retained workspace: {formatRequirementGB(s.retainedAllocatedBytes)} allocated. {s.additionalBytes !== null ? `Up to ${formatRequirementGB(s.additionalBytes)} additional space before checking cached files.` : 'Additional space could not be measured yet.'}</p>}
@@ -96,8 +120,8 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
       {s.canReplace && <Button type="button" kind="primary" disabled={blocked} onClick={event => ask('replace', event.currentTarget)}>{retry ? 'Try setup again' : s.repeated || s.state === 'restored' ? 'Set up another new workspace' : 'Set up new workspace'}</Button>}
       {s.canRestore && <Button type="button" kind="secondary" disabled={blocked} onClick={event => ask('restore', event.currentTarget)}>Restore previous workspace</Button>}
       {ready && s.transaction && ['eligible', 'attention', 'transferred'].includes(s.credential) && <Button type="button" kind="quiet" className="button-danger" disabled={blocked || !canUseCredential} title={!canUseCredential ? 'Start the workspace before changing its saved connection' : undefined} onClick={event => ask('remove', event.currentTarget)}>Remove saved connection</Button>}
-      {s.busy && <Button type="button" kind="secondary" disabled={cancelling} onClick={() => { void cancelUpdate(); }}>Cancel update</Button>}
-      {!busy && (s.state === 'conflict' || s.error || error) && <Button type="button" kind="secondary" disabled={disabled} onClick={() => { setError(undefined); onCheck(); }}>Check again</Button>}
+      {s.canCancel && <Button type="button" kind="secondary" disabled={cancelling} onClick={() => { void cancelUpdate(); }}>Cancel update</Button>}
+      {!busy && (s.state === 'conflict' || s.error || error || outcome || observation?.error) && <Button type="button" kind="secondary" disabled={disabled || observation?.pending} onClick={() => { setError(undefined); onCheck(); }}>Check again</Button>}
     </div></div>
     <Disclosure label="Update details" open={details} controls="workspace-upgrade-details" onOpenChange={setDetails}>
       {details && <div id="workspace-upgrade-details"><p>Previous: {source}. New: Bridge {s.targetRelease ?? 'unknown'}.</p>

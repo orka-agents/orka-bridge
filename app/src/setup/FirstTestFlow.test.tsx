@@ -8,7 +8,7 @@ import App from '../App';
 const sample = '9b2b93c4-375c-4815-9717-39852a96e411';
 const pair = { agent: '---\nname: web-reader\n---\nRead a page.', tests: 'A checksum test.', source: { agent: 'a'.repeat(64), tests: 'b'.repeat(64) } };
 const other = '12345678-1234-1234-1234-123456789abc';
-const consumedUpgrade = { state: 'consumed', transaction: '10000000-0000-4000-8000-000000000001', createdAt: 1700000000, sourceReleases: ['0.1.2'], targetRelease: '0.1.3', retainedAllocatedBytes: 1200000000, additionalBytes: null, credential: 'absent', busy: false, error: null, repeated: false, canReplace: false, canRestore: true };
+const consumedUpgrade = { state: 'consumed', transaction: '10000000-0000-4000-8000-000000000001', createdAt: 1700000000, sourceReleases: ['0.1.2'], targetRelease: '0.1.3', retainedAllocatedBytes: 1200000000, additionalBytes: null, credential: 'absent', canCancel: false, busy: false, error: null, repeated: false, canReplace: false, canRestore: true };
 const idle = { documentId: sample, busy: null, state: 'idle', canRun: true, modelConnected: true, report: null, acknowledged: [], pending: null, error: null };
 function native(holdSave = false, lostReplies = false) {
   vi.stubGlobal('isTauri', true);

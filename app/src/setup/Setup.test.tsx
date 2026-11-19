@@ -1,3 +1,4 @@
+import { noUpgrade } from './test-upgrade';
 import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
@@ -12,6 +13,7 @@ function native() {
   vi.stubGlobal('isTauri', true);
   let selected: 'localVm' | null = null;
   const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return status(selected);
     if (command === 'setup_requirements') return null;
     if (command === 'setup_select_local') { selected = 'localVm'; return status(selected); }
@@ -27,6 +29,7 @@ test('reopen observes a lost workspace immediately without replaying setup, Conn
   vi.stubGlobal('isTauri', true);
   let lost = false;
   const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: lost ? 'failed' : 'ready', model: lost ? 'locked' : 'available' };
     if (command === 'setup_requirements') return null;
     if (command === 'setup_connect_model') return { ready: true };
@@ -46,6 +49,7 @@ test('reopen observes a lost workspace immediately without replaying setup, Conn
 test('running native session unlocks only its explicit model command', async () => {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_connect_model') return { ready: true };
     throw new Error('Forbidden command');
@@ -63,6 +67,7 @@ test('failed Connect refreshes retained guest details without locking the runnin
   let failed = false;
   const detail = 'Guest Connect: gateway, timeout, 60000 ms. Stderr withheld.';
   const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available', localVmError: failed ? detail : null };
     if (command === 'engine_call') throw { kind: 'unavailable' };
     if (command === 'setup_connect_model') { failed = true; throw { kind: 'modelConnect', message: 'SECRET_MARKER' }; }
@@ -107,6 +112,7 @@ test.each([null, 'attempted'])('a lost selection reply preserves durable intent 
   let selected = false; let reads = 0; let loseReply!: () => void;
   let intentAtSelection: string | null = null;
   const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: selected ? 'localVm' : null, localVm: !selected ? 'idle' : ++reads === 1 ? 'starting' : 'ready', model: selected && reads > 1 ? 'available' : 'locked' };
     if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
     if (command === 'setup_requirements') return null;
@@ -150,7 +156,7 @@ test('unsupported native replies cannot claim availability or leak extra data', 
 });
 
 test('save failures do not mark the choice saved and never render rejected paths', async () => {
-  native(); mockIPC(command => command === 'setup_status' ? status() : command === 'setup_requirements' ? null
+  native(); mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? status() : command === 'setup_requirements' ? null
     : Promise.reject({ kind: 'storage', message: '/private/SECRET_MARKER' }));
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
@@ -161,7 +167,7 @@ test('save failures do not mark the choice saved and never render rejected paths
 
 test('a failed initial read can be checked again without changing the saved choice', async () => {
   native(); let reads = 0;
-  mockIPC(command => command === 'setup_status'
+  mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status'
     ? ++reads === 1 ? Promise.reject('SECRET_MARKER') : status('localVm') : Promise.reject({ kind: 'unavailable' }));
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   expect(await screen.findByRole('alert')).toBeTruthy();
@@ -175,6 +181,7 @@ test('Continue shows real startup states and a ready session can open the owned 
   native(); let selected: 'localVm' | null = null; let reads = 0;
   const ipc = vi.fn((command: string) => {
     if (command === 'setup_select_local') { selected = 'localVm'; return { ...status(selected), localVm: 'preparing' }; }
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { ...status(selected), localVm: selected === null ? 'idle' : ++reads === 1 ? 'starting' : 'ready' };
     if (command === 'setup_requirements') return null;
     if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: 'exact agent source', tests: 'exact test source' };
@@ -216,7 +223,7 @@ test.each([
 
 test('a delayed Continue reply stays pending across repeat activation and navigation', async () => {
   native(); let complete!: (value: unknown) => void; let selected: 'localVm' | null = null;
-  const ipc = vi.fn(command => command === 'setup_status' ? status(selected) : command === 'setup_select_local'
+  const ipc = vi.fn(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? status(selected) : command === 'setup_select_local'
     ? new Promise(resolve => { complete = resolve; }) : Promise.reject({ kind: 'unavailable' }));
   mockIPC(ipc);
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
@@ -236,6 +243,7 @@ test('a delayed Continue reply stays pending across repeat activation and naviga
 function nativeDirect() {
   vi.stubGlobal('isTauri', true);
   const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
     if (command === 'setup_requirements') return null;
     if (command === 'cluster_contexts') return [{ id: '00000000-0000-4000-8000-000000000001', name: 'team-dev', current: true }];
@@ -295,6 +303,7 @@ test('cluster configuration survives tab navigation without automatically using 
   const target = { id: '00000000-0000-4000-8000-000000000002', context_id: context.id, context_name: context.name,
     service_name: 'orka', service_namespace: 'control', watched_namespace: 'agents', image: 'ghcr.io/orka:0.9.4' };
   const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_requirements') return null;
     if (command === 'cluster_contexts') return [context];

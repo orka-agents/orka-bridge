@@ -28,7 +28,7 @@ func runNativeModelScopeTests(_ manifest: NativeModelCaptureManifest) throws {
         try rejects("invalid invocation \(bad)") { _ = try parseNativeModelArguments(bad) }
     }
     try manifest.validate()
-    try check(manifest.model.count == 208 && manifest.destinationsWorkspace.count == 95, "208/95 including Overview list, long-Chat and upgrade captures")
+    try check(manifest.model.count == 208 && manifest.destinationsWorkspace.count == 121, "208/121 including Overview list, long-Chat and upgrade captures")
     for name in ["local-catalog-no-destination-wide", "local-workspace-ready-wide", "local-workspace-stop-failed-details-minimum", "local-designer-waiting-chat-minimum", "local-workspace-image-update-minimum", "local-workspace-image-unsupported-minimum"] {
         try check(manifest.destinationsWorkspace.contains(name), "complete allocated journey includes \(name)")
     }
@@ -95,12 +95,12 @@ struct NativeModelCaptureManifest: Decodable {
         }
     }
     func validate() throws {
-        guard model.count == 208, destinationsWorkspace.count == 95,
+        guard model.count == 208, destinationsWorkspace.count == 121,
               Set(model).count == model.count,
               Set(destinationsWorkspace).count == destinationsWorkspace.count,
               Set(model).isDisjoint(with: Set(destinationsWorkspace)),
               !(model + destinationsWorkspace).contains("local-probe") else {
-            throw NativeModelHarnessError("Capture manifest must partition 303 unique named captures into 208 model and 95 destination/workspace names")
+            throw NativeModelHarnessError("Capture manifest must partition 329 unique named captures into 208 model and 121 destination/workspace names")
         }
     }
 }
@@ -1775,7 +1775,7 @@ func workspaceCapture(_ state: String, _ expected: [String]) throws {
         localSize(width, height); scroll(4000)
         _ = try capture("local-workspace-\(state)-\(size)", expected)
         require(enabledButton("Stop the workspace") == nil && enabledButton("Start") == nil && enabledButton("Cancel") == nil, "Returning workspace must not expose Start/Stop/Cancel")
-        if ["failed", "stopped-unexpectedly", "stop-failed"].contains(state) {
+        if ["failed", "stopped-unexpectedly", "stop-failed", "forced-stop"].contains(state) {
             require(!anyButton("Hide details"), "Diagnostics must start folded")
             click("Show details", [])
             _ = try capture("local-workspace-\(state)-details-\(size)", state == "stopped-unexpectedly" ? ["Synthetic workspace stopped unexpectedly.", "Hide details"] : ["Hide details"])
@@ -1812,13 +1812,84 @@ try workspaceCapture("stopped-unexpectedly", ["This computer", "Your workspace d
 try workspacePhase("workspace-scene-stop-failed")
 try workspaceCapture("stop-failed", ["This computer", "The workspace didn't stop.", "Quit Bridge"])
 require(enabledButton("Restart workspace") == nil, "Unconfirmed Stop must not authorize restart")
+try workspacePhase("workspace-scene-forced-stop")
+try workspaceCapture("forced-stop", ["This computer", "Forcibly stopped", "may be lost", "Quit Bridge"])
+require(enabledButton("Restart workspace") == nil, "Forced Stop must not authorize restart")
 try workspacePhase("workspace-scene-closed")
 try workspaceCapture("closed", ["This computer", "Stopped", "Quit Bridge"])
 try captureUpgradeMatrix(manage: true)
+// New owner-contract scenes extend the existing destination journey once, not a
+// setup×Manage combinatorial duplicate. Every action is synthetic fixture IPC.
+func integrationUpgradeShots(_ state: String, _ expected: String) throws {
+    for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("compact", CGFloat(540), CGFloat(900))] {
+        localSize(width, height); scroll(4000)
+        reveal("Update details")
+        guard let details = enabledButton("Update details") else { fatalError("Update details missing") }
+        require(AXUIElementSetAttributeValue(details, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus upgrade details")
+        for backwards in [false, true] {
+            for down in [true, false] {
+                let event = CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: down)
+                event?.flags = backwards && down ? .maskShift : []
+                event?.post(tap: .cghidEventTap)
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+        require(enabledButton("Update details").map { attribute($0, "AXFocused") as? Bool == true } == true, "Integration keyboard focus was lost")
+        scroll(4000); _ = try seek(expected, -100)
+        _ = try capture("local-upgrade-manage-\(state)-\(size)", [expected])
+    }
+}
+for state in ["refresh-pending", "refresh-busy", "refresh-io", "cancel-requested", "cancel-completed", "cancel-not-cancellable", "forward-cancelled", "busy-locked", "incomplete-forced"] {
+    localSize(1280, 800); scroll(4000)
+    try workspacePhase("upgrade-\(state)-manage")
+    // Each finite interactive phase remounts with retired first-test intent.
+    waitForButton("Manage"); click("Manage", [])
+    var expected = state == "incomplete-forced" ? "forcibly stopped" : state == "busy-locked" ? "The workspace is busy. Your agent files are kept." : state.hasPrefix("cancel-") ? "Cancel update" : state == "forward-cancelled" ? "Try setup again" : "Check again"
+    waitForNativeText([expected])
+    if state.hasPrefix("refresh-") {
+        require(!nativeTextExists("Workspace files checked on request."), "Cached observation must not claim owner freshness")
+        if state == "refresh-pending" { try integrationUpgradeShots("refresh-cached", "Check again") }
+        press("Check again")
+        expected = state == "refresh-pending" ? "Checking workspace" : "Workspace update information is unavailable"
+        waitForNativeText([expected])
+        if state != "refresh-pending" {
+            // Periodic memory observation must not turn a failed owner query into success.
+            Thread.sleep(forTimeInterval: 1.2)
+            require(nativeTextExists(expected), "Cached observation erased manual refresh error")
+        }
+    } else if state.hasPrefix("cancel-") {
+        press("Cancel update")
+        expected = state == "cancel-requested" ? "Cancellation requested. Waiting for the workspace operation to stop." : state == "cancel-completed" ? "Cancellation completed. Waiting for the latest workspace status." : "This workspace operation can no longer be cancelled. Check the latest status."
+        waitForNativeText([expected])
+        if state != "cancel-completed" {
+            require(enabledButton("Try setup again") == nil && enabledButton("Restore previous workspace") == nil, "Cancellation acknowledgement must not release the update fence")
+        }
+    } else if state == "forward-cancelled" {
+        press("Try setup again")
+        press("Keep old workspace and set up new")
+        expected = "Update cancelled"
+        waitForNativeText([expected])
+    } else if state == "busy-locked" {
+        require(!anyButton("Cancel update"), "Busy is not cancellation authority")
+    }
+    try integrationUpgradeShots(state, expected)
+}
 for (phase, summary) in [("image-update", "This version of Bridge needs a new workspace."), ("image-unsupported", "This workspace uses different cluster files.")] {
     try workspacePhase(phase)
     try workspaceCapture(phase, [summary, "Restart workspace"])
     require(enabledButton("Restart workspace") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
+}
+try workspacePhase("setup-forced-stop")
+if !nativeTextExists("Get your workspace ready") {
+    click("Clusters", [])
+    let action = ["Continue setup", "View details", "Set up"].first { enabledButton($0) != nil }
+    require(action != nil, "Missing first-run recovery action")
+    click(action!, [])
+}
+for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+    localSize(width, height); scroll(4000)
+    _ = try capture("local-workspace-setup-forced-stop-\(size)", ["may be lost", "Quit Bridge"])
+    require(enabledButton("Quit Bridge") != nil && !anyButton("Try again") && !anyButton("Restart workspace"), "First-run forced stop must offer Quit without retry")
 }
 try "Renderer-only synthetic state captures, not VM lifecycle proof. Native Ready close notice, menu-bar dot and real quit/reopen startup remain unverified.\n".write(toFile: "\(output)/workspace-capture-gaps.txt", atomically: true, encoding: .utf8)
 }

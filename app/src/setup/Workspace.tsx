@@ -40,6 +40,7 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   const closed = status.localVm === 'closed';
   const stopped = status.localVm === 'cancelled';
   const stopFailed = failed && status.workspaceFailure?.operation === 'stop';
+  const forcedStop = stopFailed && status.workspaceFailure?.cause === 'forcedStop';
   const recovery = status.preflightFailure ? preflightRecovery(status.preflightFailure) : workspaceRecovery(status.workspaceFailure);
   useEffect(() => {
     helpGeneration.current += 1;
@@ -56,7 +57,8 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   return <section className="card returning-workspace" aria-label="Workspace">
     <div className="steps-head"><div className="workspace-title"><h2>Workspace</h2><StatusPill state={error ? 'needs-you' : updating ? 'running' : updateBlocked ? 'needs-you' : view.status}>{error ? 'Status unavailable' : updating ? 'Updating' : updateBlocked ? 'Needs you' : view.word}</StatusPill></div>
     </div>
-    {(!upgrade || error || ordinaryRecovery && (failed || stopped)) && <p role="status">{error ? 'Workspace status is unavailable. Check again before starting it.' : updating ? 'Updating the workspace. Your agent files are kept.' : stopFailed ? "The workspace didn't stop." : failed ? recovery.summary : stopped ? 'The workspace stopped unexpectedly. Your agents and files are kept.' : view.detail}</p>}
+    {(!upgrade || error || stopFailed || ordinaryRecovery && (failed || stopped)) && <p role="status">{error ? 'Workspace status is unavailable. Check again before starting it.' : updating ? 'Updating the workspace. Your agent files are kept.' : stopFailed && !forcedStop ? "The workspace didn't stop." : failed ? recovery.summary : stopped ? 'The workspace stopped unexpectedly. Your agents and files are kept.' : view.detail}</p>}
+    {forcedStop && <><p>{recovery.preservation}</p><p>{recovery.action}</p></>}
     {view.word === 'Starting' && clock && <p className="muted">{clock} so far</p>}
     {upgrade}
     {(stopFailed || closed) && <Button type="button" kind="primary" disabled={quitting} onClick={() => { void quit(); }}>Quit Bridge</Button>}

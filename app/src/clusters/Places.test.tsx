@@ -1,3 +1,4 @@
+import { noUpgrade } from '../setup/test-upgrade';
 import { chooseContext, contextChoice, reloadConfig } from './test-context';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
@@ -21,6 +22,7 @@ function native() {
   const sim = { status: { selected: null as 'localVm' | null, localVm: 'idle', model: 'locked', modelSupported: true },
     snapshot: { places: [primary, secondary] as Place[], selectedKey: primary.key as string | null, persistenceState: 'complete' }, unavailable: false };
   const ipc = vi.fn((command: string): unknown => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return sim.status;
     if (command === 'setup_requirements') return null;
     if (command === 'cluster_places') { if (sim.unavailable) throw Error('unreadable'); return sim.snapshot; }
@@ -86,7 +88,7 @@ test('a build without local VM integration explains unavailability rather than a
 
 test('an unreadable workspace status stays unknown while retained places remain readable', async () => {
   const { ipc } = native();
-  mockIPC(command => command === 'setup_status' ? Promise.reject(Error('lost status reply')) : ipc(command));
+  mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? Promise.reject(Error('lost status reply')) : ipc(command));
   render(<Host />);
   await screen.findByRole('alert');
   const local = within(row('This computer'));

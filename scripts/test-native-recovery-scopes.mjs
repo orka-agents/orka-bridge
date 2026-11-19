@@ -377,8 +377,8 @@ const nativeUpgradeVisibility = model.slice(model.indexOf('func nativeChatTextIs
 assert.ok(nativeUpgradeVisibility.includes('text.contains(expected)') && nativeUpgradeVisibility.includes('"AXStaticText"'), 'upgrade fallback must use actual expected native text, not OCR spelling aliases');
 assert.ok(nativeUpgradeVisibility.includes('bounds.width > 1 && bounds.height > 1 && window()!.1.contains(bounds)') && nativeUpgradeVisibility.includes('bounds.maxY <= window()!.1.maxY - 32'), 'hidden, clipped, off-window and footer text cannot satisfy upgrade fallback');
 assert.equal(captureManifest.model.length, 208);
-assert.equal(captureManifest['destinations-workspace'].length, 95);
-assert.equal(new Set([...captureManifest.model, ...captureManifest['destinations-workspace']]).size, 303);
+assert.equal(captureManifest['destinations-workspace'].length, 121);
+assert.equal(new Set([...captureManifest.model, ...captureManifest['destinations-workspace']]).size, 329);
 const overviewCaptures = [
   ...['disconnected', 'connected'].flatMap(ai => ['wide', 'minimum'].flatMap(size => ['collapsed', 'expanded'].map(state => `local-overview-ai-${ai}-${state}-${size}`))),
   ...['wide', 'compact', 'minimum'].flatMap(size => ['collapsed', 'expanded-earlier-pass', 'expanded-earlier-failed', 'expanded-draft'].map(state => `local-controls-overview-${state}-${size}`)),
@@ -475,13 +475,17 @@ assert.ok(!source.includes('Emulation.setDeviceMetricsOverride'), 'a fake viewpo
 // Upgrade presentation extends existing scope manifests, not the native safety proof.
 const upgradeManifest = JSON.parse(await readFile(new URL('./native-model-captures.json', import.meta.url), 'utf8'));
 const upgradeNames = upgradeManifest['destinations-workspace'].filter(name => name.startsWith('local-upgrade-'));
-assert.equal(upgradeNames.length, 50, 'both sizes of setup/Manage states and confirmations must stay in the destination journey');
-assert.equal(new Set(upgradeNames).size, 50);
+const integrationStates = ['refresh-cached', 'refresh-pending', 'refresh-busy', 'refresh-io', 'cancel-requested', 'cancel-completed', 'cancel-not-cancellable', 'forward-cancelled', 'busy-locked', 'incomplete-forced'];
+const integrationNames = integrationStates.flatMap(state => ['wide', 'compact'].map(size => `local-upgrade-manage-${state}-${size}`));
+assert.equal(upgradeNames.length, 70, '50 preserved upgrade frames plus20 genuinely new owner-contract frames');
+assert.equal(new Set(upgradeNames).size, 70);
+assert.equal(upgradeNames.filter(name => !integrationNames.includes(name)).length, 50, 'both sizes of original setup/Manage states and confirmations remain');
+for (const name of integrationNames) assert.ok(upgradeNames.includes(name), `missing integration frame: ${name}`);
 assert.ok(!upgradeManifest.model.some(name => name.startsWith('local-upgrade-')), 'model journey must not duplicate upgrade captures');
 const upgradeCapture = source.slice(source.indexOf('  async function captureUpgrade('), source.indexOf('  const notes = [];'));
 const upgradePrelude = upgradeCapture.slice(upgradeCapture.indexOf("    const transaction"), upgradeCapture.indexOf("    for (const [localVm"));
 const upgradeVariants = Function(upgradePrelude + '\nreturn variants;')();
-assert.deepEqual(upgradeVariants.map(row => row[1]), [
+assert.deepEqual(upgradeVariants.slice(0, 20).map(row => row[1]), [
   'upgrade-eligible-absent', 'upgrade-eligible-credential', 'upgrade-incomplete',
   'upgrade-source-selected', 'upgrade-source-retained', 'upgrade-restoring', 'upgrade-restoring-confirm',
   'upgrade-fresh-absent', 'upgrade-fresh-eligible', 'upgrade-fresh-attention', 'upgrade-fresh-removal-confirm',
@@ -489,6 +493,28 @@ assert.deepEqual(upgradeVariants.map(row => row[1]), [
   'upgrade-restored-freshc-confirm', 'upgrade-conflict', 'upgrade-error-network', 'upgrade-error-nospace',
   'upgrade-error-stop', 'upgrade-busy-cancel',
 ], 'all 20 Windows variants retain their exact existing names');
+assert.deepEqual(upgradeVariants.slice(20).map(row => row[1]), ['upgrade-busy-locked', 'upgrade-error-forced', 'upgrade-refresh-pending', 'upgrade-refresh-busy', 'upgrade-refresh-io', 'upgrade-cancel-requested', 'upgrade-cancel-completed', 'upgrade-cancel-not-cancellable', 'upgrade-forward-cancelled']);
+assert.equal(upgradeVariants.length, 29);
+// Every pre-confirmation frame remains allocated, but a name ending -confirm
+// can only be written with that exact filename after its fieldset has opened.
+const observationName = upgradeCapture.match(/const observationName = ([^;]+);/)[1];
+const confirmationName = upgradeCapture.match(/const confirmationName = ([^;]+);/)[1];
+const frameNames = [];
+for (const [, name, , , mode] of upgradeVariants) {
+  frameNames.push(Function('name', 'mode', `return ${observationName}`)(name, mode));
+  if (mode) {
+    const confirmed = Function('name', `return ${confirmationName}`)(name);
+    assert.ok(confirmed.endsWith('-confirm'));
+    assert.ok(!confirmed.endsWith('-confirm-confirm'));
+    if (name.endsWith('-confirm')) assert.equal(confirmed, name);
+    frameNames.push(confirmed);
+  }
+}
+assert.equal(frameNames.length, 36, '27 baseline frame slots plus nine new scenarios; cached freshness adds one separately');
+assert.equal(new Set(frameNames).size, frameNames.length, 'Windows upgrade screenshot filenames must not collide');
+assert.ok(upgradeCapture.indexOf('const confirmationName') > upgradeCapture.indexOf('confirmCount !== 1'), 'exact confirmation filename must follow the actual open fieldset assertion');
+assert.ok(model.includes('Integration keyboard focus was lost'), 'new owner-contract frames retain hard keyboard focus checks');
+assert.ok(model.includes('Cached observation erased manual refresh error'), 'Mac must check sticky owner-query errors after memory polling');
 assert.ok(!upgradeCapture.includes("clickAction('Stop"), 'upgrade fixtures must not navigate through removed Stop');
 assert.ok(upgradeCapture.includes("clickAction('Manage')"), 'returning upgrade scenes must enter Manage directly');
 assert.ok(upgradeCapture.includes("localStorage.setItem('bridge.firstTest.v1', 'attempted')"), 'returning upgrade scenes must own retired first-test intent');
@@ -525,12 +551,20 @@ const upgradeAudit = upgradeCapture.slice(upgradeCapture.indexOf('      for (con
 assert.ok(upgradeAudit.includes('workspace_upgrade_'), 'upgrade call audit is missing');
 const auditUpgrade = Function('calls', 'name', 'transaction', upgradeAudit);
 for (const args of [null, {}]) assert.doesNotThrow(() => auditUpgrade([{ command: 'workspace_upgrade_status', args }], 'fixture', 'fixture-transaction'));
-for (const args of [{ path: 'unexpected' }, { transaction: 'fixture-transaction' }, [], 'unexpected']) {
+for (const args of [{ path: 'unexpected' }, { transaction: 'fixture-transaction' }, { refresh: true }, { refresh: false }, [], 'unexpected']) {
   assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_status', args }], 'fixture', 'fixture-transaction'));
 }
 for (const action of ['replace', 'retry', 'restore', 'cancel', 'transfer_credential', 'remove_credential']) {
   assert.throws(() => auditUpgrade([{ command: `workspace_upgrade_${action}`, args: { transaction: 'fixture-transaction' } }], 'fixture', 'fixture-transaction'), 'even a well-shaped caught mutation must fail the capture');
 }
+for (const name of ['upgrade-refresh-pending', 'upgrade-refresh-busy', 'upgrade-refresh-io']) {
+  assert.doesNotThrow(() => auditUpgrade([{ command: 'workspace_upgrade_status', args: { refresh: true } }], name, 'fixture-transaction'));
+  for (const args of [{ refresh: true, path: 'unexpected' }, { refresh: false }, { refresh: true, transaction: 'fixture-transaction' }]) {
+    assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_status', args }], name, 'fixture-transaction'));
+  }
+  assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_restore', args: { transaction: 'fixture-transaction' } }], name, 'fixture-transaction'));
+}
+assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_status', args: { refresh: true } }], 'upgrade-refresh-arbitrary', 'fixture-transaction'));
 // Old isolated-world React pollers may still retire their own first-test intent;
 // their synthetic preferences must not change a later scene's identity.
 const fixtureStorage = source.match(/const fixtureStorage = `([\s\S]*?)`;/)?.[1];
@@ -548,6 +582,8 @@ assert.deepEqual([...nativePreferences], [['native-sentinel', 'kept']], 'rendere
 // Execute the fixture's document-start handshake: old-page callbacks must not
 // overwrite the next renderer's intended setup/Manage presentation.
 const upgradeFixture = await readFile(new URL('../app/src-tauri/examples/model_walk.rs', import.meta.url), 'utf8');
+assert.ok(upgradeFixture.includes('assert!(expected_call, "Unexpected upgrade capture call:'), 'Mac must fail even caught passive mutations and nonempty status args');
+assert.ok(upgradeFixture.includes('args.len() == 1') && upgradeFixture.includes('Some(&json!(true))'), 'Mac manual refresh must use the exact finite refresh:true argument');
 assert.ok(upgradeFixture.includes('if key == "sourceRetained"') && upgradeFixture.includes('40000000-0000-4000-8000-000000000005'), 'visually identical retained scene needs a distinct synthetic transaction witness');
 assert.ok(model.includes('if state == "sourceRetained"') && model.includes('waitForNativeText(["4000…0005"])'), 'Mac must observe the requested scene in rendered details before naming its screenshot');
 const upgradeBootstrap = upgradeFixture.match(/const UPGRADE_INITIALIZE: &str = r#"([\s\S]*?)"#;/)?.[1];
@@ -565,4 +601,4 @@ for (const intent of ['pending', 'attempted']) {
   assert.equal(local.get('bridge.firstTest.v1'), 'attempted', 'bootstrap must not rearm intent after the handshake');
 }
 await import('./test-native-workspace-contracts.mjs');
-console.log('PASS real scope parsing; 47+25 unique action cases; upgrade scope/50-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
+console.log('PASS real scope parsing; 47+25 unique action cases; upgrade scope/50 baseline+20 integration-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');

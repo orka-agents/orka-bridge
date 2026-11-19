@@ -95,23 +95,84 @@ const captures = JSON.parse(await read('./native-model-captures.json'));
 // Upgrade frames share the destination journey but have their own exact matrix gate.
 const destinationCaptures = new Set(captures['destinations-workspace'].filter(name => !name.startsWith('local-upgrade-')));
 for (const size of ['wide', 'minimum']) {
-  for (const state of ['ready', 'starting-after-quit-synthetic', 'failed', 'stopped-unexpectedly', 'stop-failed', 'closed', 'image-update', 'image-unsupported']) {
+  for (const state of ['ready', 'starting-after-quit-synthetic', 'failed', 'stopped-unexpectedly', 'stop-failed', 'forced-stop', 'closed', 'image-update', 'image-unsupported']) {
     assert.ok(destinationCaptures.has(`local-workspace-${state}-${size}`), `allocated capture missing: ${state}/${size}`);
-    if (['failed', 'stopped-unexpectedly', 'stop-failed'].includes(state)) assert.ok(destinationCaptures.has(`local-workspace-${state}-details-${size}`), `expanded diagnostic capture missing: ${state}/${size}`);
+    if (['failed', 'stopped-unexpectedly', 'stop-failed', 'forced-stop'].includes(state)) assert.ok(destinationCaptures.has(`local-workspace-${state}-details-${size}`), `expanded diagnostic capture missing: ${state}/${size}`);
   }
   for (const view of ['tests', 'chat']) assert.ok(destinationCaptures.has(`local-designer-waiting-${view}-${size}`), `allocated Designer waiting capture missing: ${view}/${size}`);
 }
 assert.ok(destinationCaptures.has('local-workspace-inside'));
 assert.equal(captures.model.length, 208, '202 incoming model frames plus six existing Overview list/evidence captures must remain intact');
-assert.equal(destinationCaptures.size, 45, '18 cluster/catalog frames plus27 returning workspace/Designer frames');
+assert.equal(destinationCaptures.size, 51, '18 cluster/catalog frames plus33 workspace/setup/Designer frames');
+for (const size of ['minimum', 'wide']) assert.ok(destinationCaptures.has(`local-workspace-setup-forced-stop-${size}`), 'first-run forced-stop capture missing');
 assert.ok(captures.model.every(name => !destinationCaptures.has(name)), 'native journeys must be disjoint');
 const mac = await read('./native-model-macos.swift');
 assert.ok(!mac.includes('click("Stop the workspace"'), 'Mac must not navigate via removed workspace Stop');
 assert.ok(mac.includes('workspaceCapture("starting-after-quit-synthetic"'), 'Mac synthetic startup capture must be labeled');
+assert.ok(mac.includes('workspacePhase("setup-forced-stop")') && mac.includes('First-run forced stop must offer Quit without retry'), 'Mac first-run forced-stop controls must be checked');
 const fixtureSource = await read('../app/src-tauri/examples/model_walk.rs');
 for (const state of ['ready', 'starting', 'failed', 'stopped-unexpectedly', 'stop-failed', 'closed']) {
   assert.ok(fixtureSource.includes(`"workspace-scene-${state}"`), `Mac explicit scene missing: ${state}`);
 }
 assert.ok(fixtureSource.includes("localStorage.setItem('bridge.firstTest.v1', 'attempted'); location.reload();"), 'Mac returning reload must supply retired first-test intent');
 assert.ok(mac.includes('workspaceCapture("stop-failed"') && mac.includes('workspaceCapture("stopped-unexpectedly"'), 'Mac failure captures missing');
-console.log('PASS native workspace driver contracts: returning intent, explicit states, Quit IPC, presentation gates and idle Close');
+// Execute the actual isolated-world Upgrade IPC producers, not a copied DTO.
+const captureUpgrade = source.slice(source.indexOf('  async function captureUpgrade('), source.indexOf('  const notes = [];'));
+async function upgradeFixture(name) {
+  let injection;
+  const stop = new Error('upgrade injection captured');
+  const capture = vm.runInNewContext(`(${captureUpgrade.replace('of variants)', 'of variants.filter(v => v[1] === selectedFixture))')})`, {
+    runUi: true, selectedFixture: name, frameTree: { frame: { id: 'fixture' } },
+    call: async () => ({ executionContextId: 1 }),
+    evaluate: async script => { injection = script; throw stop; },
+  });
+  await assert.rejects(capture('light', 'wide'), error => error === stop, name);
+  const window = {};
+  vm.runInNewContext(injection, { window, localStorage: { setItem() {}, removeItem() {} },
+    document: { getElementById: () => ({ replaceWith() {} }), createElement: () => ({}) } });
+  return { window, invoke: window.__TAURI_INTERNALS__.invoke };
+}
+const dtoKeys = 'additionalBytes,busy,canCancel,canReplace,canRestore,createdAt,credential,error,repeated,retainedAllocatedBytes,sourceReleases,state,targetRelease,transaction';
+for (const name of ['upgrade-eligible-absent', 'upgrade-busy-cancel', 'upgrade-busy-locked', 'upgrade-error-forced']) {
+  const { invoke } = await upgradeFixture(name);
+  const status = await invoke('workspace_upgrade_status');
+  assert.equal(Object.keys(status).sort().join(','), dtoKeys, name);
+  assert.equal(status.canCancel, name === 'upgrade-busy-cancel', name);
+  if (name === 'upgrade-busy-locked') assert.equal(status.busy, true, 'busy is not cancellation authority');
+  if (name === 'upgrade-error-forced') assert.equal(status.error, 'forcedStop');
+}
+for (const [name, outcome] of [['upgrade-cancel-requested', 'requested'], ['upgrade-cancel-completed', 'completed'], ['upgrade-cancel-not-cancellable', 'notCancellable']]) {
+  const { invoke, window } = await upgradeFixture(name);
+  assert.equal(await invoke('workspace_upgrade_cancel'), outcome, 'bare cancellation outcome');
+  const status = await invoke('workspace_upgrade_status');
+  assert.equal(status.busy, outcome !== 'completed', 'acknowledgement is not completion');
+  assert.equal(status.canCancel, false, 'no repeat cancellation after acknowledgement');
+  assert.equal(window.__bridgeUpgradeCalls.some(call => call.args?.refresh), false, 'post-cancel observation is cached only');
+}
+for (const name of ['upgrade-refresh-busy', 'upgrade-refresh-io']) {
+  const { invoke } = await upgradeFixture(name);
+  const before = await invoke('workspace_upgrade_status');
+  await assert.rejects(invoke('workspace_upgrade_status', { refresh: true }), error => name.endsWith('busy') ? error === 'refreshBusy' : error === 'Synthetic owner I/O failure');
+  assert.deepEqual(await invoke('workspace_upgrade_status'), before, 'failed owner refresh must retain cached transaction/history');
+}
+{
+  const { invoke, window } = await upgradeFixture('upgrade-refresh-pending');
+  const before = await invoke('workspace_upgrade_status');
+  let settled = false;
+  const pending = invoke('workspace_upgrade_status', { refresh: true }).then(value => { settled = true; return value; });
+  await Promise.resolve();
+  assert.equal(settled, false, 'manual refresh must actually remain pending');
+  assert.deepEqual(await invoke('workspace_upgrade_status'), before, 'cached observation stays independent of slow owner refresh');
+  window.__bridgeFinishUpgradeRefresh();
+  assert.deepEqual(await pending, before);
+}
+{
+  const { invoke } = await upgradeFixture('upgrade-forward-cancelled');
+  const reply = await invoke('workspace_upgrade_retry', { transaction: '40000000-0000-4000-8000-000000000004' });
+  assert.equal(Object.keys(reply).sort().join(','), 'outcome,status');
+  assert.equal(reply.outcome, 'cancelled');
+  assert.equal(reply.status.state, 'incomplete');
+  assert.equal(reply.status.busy, false);
+  await assert.rejects(invoke('workspace_upgrade_restore', { transaction: reply.status.transaction }), /Unexpected native mutation/);
+}
+console.log('PASS native workspace driver contracts: returning intent, explicit states, Quit IPC, presentation gates, idle Close and exact Upgrade wire/refresh/cancel transitions');

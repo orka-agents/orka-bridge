@@ -1,15 +1,15 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, test, vi } from 'vitest';
 import Upgrade from './Upgrade';
 import type { UpgradeStatus } from './upgrade-api';
 
 const transaction = '10000000-0000-4000-8000-000000000001';
-const eligible: UpgradeStatus = { state: 'eligible', transaction: null, createdAt: null, sourceReleases: ['0.1.2'], targetRelease: '0.1.3', retainedAllocatedBytes: 1200000000, additionalBytes: 2400000000, credential: 'eligible', busy: false, error: null, repeated: false, canReplace: true, canRestore: false };
+const eligible: UpgradeStatus = { state: 'eligible', transaction: null, createdAt: null, sourceReleases: ['0.1.2'], targetRelease: '0.1.3', retainedAllocatedBytes: 1200000000, additionalBytes: 2400000000, credential: 'eligible', canCancel: false, busy: false, error: null, repeated: false, canReplace: true, canRestore: false };
 const fresh: UpgradeStatus = { ...eligible, state: 'consumed', transaction, createdAt: 1700000000, canReplace: false, canRestore: true };
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 function mount(status = eligible) {
-  vi.stubGlobal('isTauri', true); const ipc = vi.fn<(command: string) => unknown>(() => fresh); mockIPC(ipc);
+  vi.stubGlobal('isTauri', true); const ipc = vi.fn<(command: string) => unknown>(command => command === 'workspace_upgrade_replace' || command === 'workspace_upgrade_retry' ? { outcome: 'completed', status: fresh } : command === 'workspace_upgrade_cancel' ? 'requested' : fresh); mockIPC(ipc);
   const onChange = vi.fn(); const onBusy = vi.fn();
   const view = render(<Upgrade status={status} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   return { ...view, ipc, onChange, onBusy };
@@ -87,23 +87,80 @@ test('interrupted setup retries only its transaction and busy cancellation prese
   fireEvent.click(screen.getByRole('button', { name: 'Try setup again' }));
   fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
   await waitFor(() => expect(ipc).toHaveBeenCalledExactlyOnceWith('workspace_upgrade_retry', { transaction }));
-  rerender(<Upgrade status={{ ...fresh, state: 'incomplete', canReplace: false, busy: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
+  rerender(<Upgrade status={{ ...fresh, state: 'incomplete', canReplace: false, busy: true, canCancel: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: 'Cancel update' }));
   await waitFor(() => expect(ipc).toHaveBeenLastCalledWith('workspace_upgrade_cancel', {}));
 });
 test('Cancel remains usable while this renderer awaits replacement, without releasing its busy gate early', async () => {
   const { ipc, rerender, onChange, onBusy } = mount();
   let finish!: (value: unknown) => void;
-  ipc.mockImplementation(command => command === 'workspace_upgrade_replace' ? new Promise(resolve => { finish = resolve; }) : fresh);
+  ipc.mockImplementation(command => command === 'workspace_upgrade_replace' ? new Promise(resolve => { finish = resolve; }) : 'requested');
   fireEvent.click(screen.getByRole('button', { name: 'Set up new workspace' }));
   fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
-  rerender(<Upgrade status={{ ...eligible, busy: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
+  rerender(<Upgrade status={{ ...eligible, busy: true, canCancel: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   const cancel = screen.getByRole('button', { name: 'Cancel update' });
   expect(cancel.matches(':disabled')).toBe(false); fireEvent.click(cancel);
   await waitFor(() => expect(ipc).toHaveBeenLastCalledWith('workspace_upgrade_cancel', {}));
   expect(onBusy.mock.calls).toEqual([[true]]);
-  finish(fresh);
+  finish({ outcome: 'completed', status: fresh });
   await waitFor(() => expect(onBusy.mock.calls).toEqual([[true], [false]]));
+});
+
+test('busy does not imply replacement or cancellation without the native capability', () => {
+  mount({ ...fresh, busy: true, canCancel: false });
+  expect(screen.queryByRole('button', { name: 'Cancel update' })).toBeNull();
+  expect(screen.getByRole('status').textContent).toBe('The workspace is busy. Your agent files are kept.');
+  expect(screen.queryByText(/Updating the workspace/)).toBeNull();
+});
+test.each(['requested', 'completed', 'notCancellable'] as const)('cancel %s is acknowledged truthfully and never releases the outstanding forward fence', async outcome => {
+  const { ipc, rerender, onChange, onBusy } = mount();
+  let finish!: (value: unknown) => void;
+  ipc.mockImplementation(command => command === 'workspace_upgrade_replace'
+    ? new Promise(resolve => { finish = resolve; }) : command === 'workspace_upgrade_cancel' ? outcome : fresh);
+  fireEvent.click(screen.getByRole('button', { name: 'Set up new workspace' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
+  rerender(<Upgrade status={{ ...eligible, busy: true, canCancel: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel update' }));
+  await screen.findByText(outcome === 'requested' ? /Cancellation requested/ : outcome === 'completed' ? /Cancellation completed/ : /can no longer be cancelled/);
+  expect(screen.queryByText(/Wait for it to finish/)).toBeNull();
+  expect(onBusy.mock.calls).toEqual([[true]]);
+  expect(onChange).not.toHaveBeenCalled();
+  expect(screen.queryByText(/New workspace selected|Connected/)).toBeNull();
+  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('workspace_upgrade_refresh');
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_connect_model', 'agent_run', 'agent_chat_start'].includes(c))).toEqual([]);
+  await act(async () => { finish({ outcome: 'cancelled', status: { ...fresh, state: 'incomplete', canReplace: true } }); });
+  await waitFor(() => expect(onBusy.mock.calls).toEqual([[true], [false]]));
+});
+test.each(['replace', 'retry'] as const)('forward %s cancellation is not reported as completion or connection', async action => {
+  const { ipc, onChange } = mount(action === 'retry' ? { ...fresh, state: 'incomplete', canReplace: true } : eligible);
+  ipc.mockReturnValue({ outcome: 'cancelled', status: { ...fresh, state: 'incomplete', canReplace: true } });
+  fireEvent.click(screen.getByRole('button', { name: action === 'retry' ? 'Try setup again' : 'Set up new workspace' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
+  await screen.findByText(/Update cancelled/);
+  expect(onChange).toHaveBeenCalledWith({ ...fresh, state: 'incomplete', canReplace: true });
+  expect(screen.queryByText(/New workspace selected|Connected/)).toBeNull();
+});
+test('a late cancellation acknowledgement cannot replace the final forward outcome', async () => {
+  const { ipc, rerender, onChange, onBusy } = mount();
+  let finish!: (value: unknown) => void; let acknowledge!: (value: unknown) => void;
+  ipc.mockImplementation(command => command === 'workspace_upgrade_replace'
+    ? new Promise(resolve => { finish = resolve; }) : new Promise(resolve => { acknowledge = resolve; }));
+  fireEvent.click(screen.getByRole('button', { name: 'Set up new workspace' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
+  rerender(<Upgrade status={{ ...eligible, busy: true, canCancel: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel update' }));
+  await act(async () => { finish({ outcome: 'cancelled', status: { ...fresh, state: 'incomplete', canReplace: true } }); });
+  await screen.findByText(/Update cancelled/);
+  await act(async () => { acknowledge('requested'); });
+  expect(screen.queryByText(/Cancellation requested/)).toBeNull();
+  expect(screen.getByText(/Update cancelled/)).toBeTruthy();
+  expect(onBusy.mock.calls).toEqual([[true], [false]]);
+});
+test('forced stop distinguishes confirmed unclean termination from unconfirmed stop', () => {
+  mount({ ...eligible, error: 'forcedStop' });
+  expect(screen.getByRole('alert').textContent).toMatch(/forcibly stopped without a clean shutdown/);
+  expect(screen.getByRole('alert').textContent).toMatch(/may be lost/);
+  expect(screen.queryByText(/could not be stopped safely/)).toBeNull();
 });
 
 test('Check again clears only the local lost-command error', async () => {

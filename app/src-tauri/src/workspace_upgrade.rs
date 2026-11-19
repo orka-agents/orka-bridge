@@ -116,6 +116,20 @@ pub struct UpgradeStatusDto {
     pub repeated: bool,
     pub can_replace: bool,
     pub can_restore: bool,
+    pub can_cancel: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpgradeCancelOutcome {
+    Requested,
+    Completed,
+    NotCancellable,
+}
+#[derive(Debug, Serialize)]
+#[serde(tag = "outcome", rename_all = "camelCase")]
+pub enum UpgradeActionReply {
+    Completed { status: UpgradeStatusDto },
+    Cancelled { status: UpgradeStatusDto },
 }
 impl UpgradeStatusDto {
     pub(crate) fn none() -> Self {
@@ -133,6 +147,7 @@ impl UpgradeStatusDto {
             repeated: false,
             can_replace: false,
             can_restore: false,
+            can_cancel: false,
         }
     }
     pub(crate) fn conflict(error: Option<&'static str>) -> Self {
@@ -174,15 +189,14 @@ fn eligible_status(
     if !root.try_exists()? {
         return Ok(UpgradeStatusDto::none());
     }
-    let journal = match Journal::open(&root) {
-        Ok(journal) => journal,
-        Err(RuntimeError::Busy) => return Err(RuntimeError::Busy),
-        Err(_) => return Ok(UpgradeStatusDto::none()),
-    };
+    let journal = Journal::open(&root)?;
     let (_source_binding, source_releases, _target_binding, target_release) =
         match source.upgrade_eligibility(&journal) {
             Ok(eligibility) => eligibility,
-            Err(_) => return Ok(UpgradeStatusDto::none()),
+            Err(RuntimeError::Image(ImageError::WorkspaceVersionUnsupported)) => {
+                return Ok(UpgradeStatusDto::none());
+            }
+            Err(error) => return Err(error),
         };
     let retained_allocated_bytes = allocated(&root, Some(&journal), true)?;
     let metadata = SetupStore::new(Some(data.to_owned()))
@@ -841,6 +855,7 @@ impl WorkspaceUpgrade {
                     | UpgradeStatus::Consumed
                     | UpgradeStatus::Restoring
             ),
+            can_cancel: false,
         })
     }
     /// No transaction yet. Offer replace only when the native-selected target
@@ -1472,32 +1487,33 @@ pub(crate) fn validate_new_replacement(data: &Path, local: &Path) -> Result<(), 
         Err(RuntimeError::RetainedState)
     }
 }
-/// Read-only status for the renderer. Never creates the upgrade store as a
-/// side effect of polling: the overwhelmingly common "never replaced" case
-/// takes the same fast, non-mutating path as ordinary admission.
+/// Explicit owner query; preserves typed failures instead of substituting a snapshot.
+pub(crate) fn query_upgrade_status(
+    data: &Path,
+    local: &Path,
+    source: Option<&ImageSource>,
+) -> Result<UpgradeStatusDto, RuntimeError> {
+    if !local.join(STORE).try_exists()? {
+        eligible_status(data, local, source)
+    } else {
+        WorkspaceUpgrade::open(data, local)?.status_dto_fallible(source)
+    }
+}
+/// Owner-backed DTO adapter for native callers needing in-band Busy/error status.
+/// This can acquire filesystem ownership and reconcile metadata; periodic
+/// renderer polling uses LocalVm's cached projection instead.
 pub(crate) fn upgrade_status(
     data: &Path,
     local: &Path,
     source: Option<&ImageSource>,
 ) -> UpgradeStatusDto {
-    match local.join(STORE).try_exists() {
-        Ok(false) => match eligible_status(data, local, source) {
-            Ok(dto) => dto,
-            Err(RuntimeError::Busy) => UpgradeStatusDto {
-                busy: true,
-                ..UpgradeStatusDto::none()
-            },
-            Err(error) => UpgradeStatusDto::conflict(classify_error(&error)),
+    match query_upgrade_status(data, local, source) {
+        Ok(dto) => dto,
+        Err(RuntimeError::Busy) => UpgradeStatusDto {
+            busy: true,
+            ..UpgradeStatusDto::none()
         },
-        Ok(true) => match WorkspaceUpgrade::open(data, local) {
-            Ok(owner) => owner.status_dto(source),
-            Err(RuntimeError::Busy) => UpgradeStatusDto {
-                busy: true,
-                ..UpgradeStatusDto::none()
-            },
-            Err(error) => UpgradeStatusDto::conflict(classify_error(&error)),
-        },
-        Err(error) => UpgradeStatusDto::conflict(classify_error(&RuntimeError::Io(error))),
+        Err(error) => UpgradeStatusDto::conflict(classify_error(&error)),
     }
 }
 /// Status-aware gate, called on every ordinary VM launch attempt, not only at

@@ -216,9 +216,11 @@ export default function App() {
   const recovery = upgradeNotice === 'recovery' && !!setup;
   const required = upgradeNotice === 'required' && !!setup;
   const upgradeAttention = updating || !!upgradeNotice && !!setup && (upgradeNotice !== 'unknown' || !!setup.workspaceReplaced);
-  const upgradeLine = updating ? 'Updating workspace' : recovery ? 'Workspace recovery needs attention' : 'Workspace update needs attention';
-  const upgradeDetail = recovery && !updating ? 'Finish recovery before using the local workspace.' : 'Your agent files are kept.';
-  const view = upgradeAttention ? { ...ordinaryView, line: upgradeLine, tabLine: upgradeLine, footerLine: upgradeLine, detail: upgradeDetail, tone: updating ? 'busy' as const : 'needs-you' as const, status: updating ? 'running' as const : 'needs-you' as const, done: false } : ordinaryView;
+  const refreshing = upgradeNotice === 'checking';
+  const occupied = upgradeNotice === 'busy';
+  const upgradeLine = updating ? 'Updating workspace' : refreshing ? 'Checking workspace files' : occupied ? 'Workspace is busy' : recovery ? 'Workspace recovery needs attention' : 'Workspace update needs attention';
+  const upgradeDetail = refreshing || occupied ? 'Showing last observed workspace information.' : recovery && !updating ? 'Finish recovery before using the local workspace.' : 'Your agent files are kept.';
+  const view = upgradeAttention ? { ...ordinaryView, line: upgradeLine, tabLine: upgradeLine, footerLine: upgradeLine, detail: upgradeDetail, tone: updating || refreshing || occupied ? 'busy' as const : 'needs-you' as const, status: updating || refreshing || occupied ? 'running' as const : 'needs-you' as const, done: false } : ordinaryView;
   const { line: setupLine, detail } = view;
   const hostWorkspace = upgradeAttention ? { tone: view.tone, detail: `${upgradeLine}. ${upgradeDetail}` } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
     ? workspaceView(setup, { stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping }) : undefined;
