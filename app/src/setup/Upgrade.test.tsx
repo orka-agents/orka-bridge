@@ -1,5 +1,6 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { useLayoutEffect } from 'react';
 import { afterEach, expect, test, vi } from 'vitest';
 import Upgrade from './Upgrade';
 import type { UpgradeStatus } from './upgrade-api';
@@ -361,4 +362,18 @@ test('a changed transaction dismisses a stale confirmation rather than restoring
   rerender(<Upgrade status={{ ...fresh, transaction: '20000000-0000-4000-8000-000000000002' }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   expect(screen.queryByRole('button', { name: 'Restore this workspace' })).toBeNull();
   expect(ipc).not.toHaveBeenCalled();
+});
+// A sibling's layout effect runs in the same commit, before any passive effect: the
+// earliest moment a real click can reach a newly observed operation's Cancel button.
+function ClickOnCommit({ go }: { go: boolean }) {
+  useLayoutEffect(() => { if (go) screen.getByRole('button', { name: 'Cancel update' }).click(); }, [go]);
+  return null;
+}
+test('Cancel clicked in the commit that first shows an operation keeps its acknowledgement', async () => {
+  vi.stubGlobal('isTauri', true); const ipc = vi.fn<(command: string) => unknown>(command => command === 'workspace_upgrade_cancel' ? 'requested' : fresh); mockIPC(ipc);
+  const props = { onChange: vi.fn(), onBusy: vi.fn(), onCheck: () => {} };
+  const { rerender } = render(<><Upgrade status={eligible} {...props} /><ClickOnCommit go={false} /></>);
+  act(() => { rerender(<><Upgrade status={{ ...fresh, state: 'sourceSelected', busy: true, canCancel: true }} {...props} /><ClickOnCommit go /></>); });
+  await screen.findByText(/Cancellation requested/);
+  expect(ipc.mock.calls.filter(([command]) => command === 'workspace_upgrade_cancel')).toHaveLength(1);
 });
