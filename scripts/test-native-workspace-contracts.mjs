@@ -209,6 +209,46 @@ assert.ok(manualError, 'actual Setup manual owner-refresh error missing');
 const refreshedExpression = source.match(/const refreshedText = ([^;]+);/)?.[1];
 assert.ok(refreshedExpression, 'Windows manual-refresh capture expectation missing');
 const model = await read('./native-model-macos.swift');
+// Drive the actual early-message call's delta and seek loop bound from a bottom
+// viewport. A reversed wheel sign must fail rather than exhausting retries below.
+function earlySeek(driver) {
+  const helper = driver.match(/func seek\([\s\S]*?\n\}/)?.[0];
+  const call = driver.match(/seek\("Remember the checksum ALPHA\.", (-?\d+)([^\n]*)/);
+  assert.ok(helper && call, 'actual long-early seek and helper must exist');
+  const bound = Number(helper.match(/for (?:_|attempt) in 0\.\.<(\d+)/)?.[1]);
+  assert.equal(bound, 6, 'recovery must retain the existing six attempts');
+  assert.match(helper, /scroll\(pixels\)/, 'misses must use the caller delta');
+  let position = 1000;
+  const captures = [];
+  for (let attempt = 0; attempt < bound; attempt++) {
+    captures.push(position);
+    if (position === 0) return { captures, helper, call };
+    position = Math.max(0, Math.min(1000, position - Number(call[1])));
+  }
+  assert.fail('long-early seek cannot recover from the bottom');
+}
+const earlyRecovery = earlySeek(model);
+assert.deepEqual(earlyRecovery.captures, [1000, 0], 'large upward recovery must capture bottom then top');
+assert.throws(() => earlySeek(model.replace(/seek\("Remember the checksum ALPHA\.", \d+/, 'seek("Remember the checksum ALPHA.", -100')), /cannot recover/);
+assert.ok(earlyRecovery.call[2].includes(String.raw`diagnosticPrefix: "chat-long-early-\(size)-seek"`), 'only explicit early caller opts into per-size diagnostics');
+assert.match(earlyRecovery.helper, /diagnosticPrefix: String\? = nil/);
+assert.ok(earlyRecovery.helper.indexOf('if let prefix = diagnosticPrefix') > earlyRecovery.helper.indexOf('capture("local-probe", [])'));
+assert.ok(earlyRecovery.helper.indexOf('if let prefix = diagnosticPrefix') < earlyRecovery.helper.indexOf('if seen.contains'), 'preserve first and recovered captures before returning');
+for (const field of ['label', 'pixels', 'attempt', 'width', 'height']) {
+  assert.match(earlyRecovery.helper, new RegExp('"' + field + '":'), 'trace metadata: ' + field);
+}
+assert.match(earlyRecovery.helper, /for ext in \["png", "txt"\]/, 'preserve existing probe pixels and OCR');
+assert.ok(earlyRecovery.helper.includes(String.raw`copyItem(atPath: "\(output)/local-probe.\(ext)", toPath: "\(stem).\(ext)")`));
+const stemTemplate = earlyRecovery.helper.match(/let stem = "([^"]+)"/)?.[1];
+assert.ok(stemTemplate, 'diagnostic filename template missing');
+const diagnosticPaths = [];
+for (const size of ['wide', 'minimum']) for (let attempt = 0; attempt < 6; attempt++) {
+  const values = { output: 'captures', prefix: `chat-long-early-${size}-seek`, attempt };
+  diagnosticPaths.push(stemTemplate.replace(/\\\((\w+)\)/g, (_, key) => values[key]));
+}
+assert.equal(new Set(diagnosticPaths).size, 12, 'both viewport histories must retain every distinct attempt');
+assert.equal(diagnosticPaths[0], 'captures/chat-long-early-wide-seek-attempt-0');
+assert.equal((model.match(/diagnosticPrefix: "chat-long-early-/g) ?? []).length, 1, 'only early seek opts into diagnostics');
 const macRefresh = model.match(/expected = state == "refresh-pending" \? "([^"]+)" : "([^"]+)"/);
 assert.ok(macRefresh, 'Mac manual-refresh capture expectation missing');
 const mismatches = [];

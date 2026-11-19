@@ -738,9 +738,20 @@ func scroll(_ pixels: Int32) {
     event?.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: 0.3)
 }
-func seek(_ label: String, _ pixels: Int32) throws -> [VNRecognizedTextObservation] {
-    for _ in 0..<6 {
+func seek(_ label: String, _ pixels: Int32, diagnosticPrefix: String? = nil) throws -> [VNRecognizedTextObservation] {
+    for attempt in 0..<6 {
         let seen = try capture("local-probe", [])
+        // Preserve the first viewport and every recovery step, even when seek succeeds.
+        // Copies are diagnostics, not new named capture cases.
+        if let prefix = diagnosticPrefix {
+            let frame = window()!.1
+            let stem = "\(output)/\(prefix)-attempt-\(attempt)"
+            for ext in ["png", "txt"] {
+                try FileManager.default.copyItem(atPath: "\(output)/local-probe.\(ext)", toPath: "\(stem).\(ext)")
+            }
+            let trace: [String: Any] = ["label": label, "pixels": pixels, "attempt": attempt, "width": frame.width, "height": frame.height]
+            try JSONSerialization.data(withJSONObject: trace, options: [.sortedKeys]).write(to: URL(fileURLWithPath: "\(stem).json"))
+        }
         // The large progress label must be visible in the pixels: AX can also report
         // the hidden setup panel's copy at coordinates inside this same window.
         if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(label) }) || label != "Waiting for answers" && nativeChatTextIsVisible(label) {
@@ -1486,7 +1497,7 @@ localSize(540, 900)
 _ = try capture("chat-followup-compact", ["You asked me to remember ALPHA."])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("Remember the checksum ALPHA.", -100)
+    _ = try seek("Remember the checksum ALPHA.", 4000, diagnosticPrefix: "chat-long-early-\(size)-seek")
     require(nativeChatTextIsVisible("Remember the checksum ALPHA.") && !nativeChatTextIsVisible("You asked me to remember ALPHA."),
             "Long transcript capture must read earlier messages, not the end")
     requireChatComposerVisible()
