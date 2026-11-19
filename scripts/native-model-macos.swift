@@ -1386,8 +1386,11 @@ repeat {
     })
     saveLabel = saveLabels.first(where: visible.contains) ?? "no save label"
     if saveLabel == "Saved" || saveLabel == "Not saved" { break }
-    Thread.sleep(forTimeInterval: 0.1)
-} while Date() < saveDeadline
+    // Sleep no further than the deadline, so the last poll observes the footer at the deadline.
+    let remaining = saveDeadline.timeIntervalSinceNow
+    if remaining <= 0 { break }
+    Thread.sleep(forTimeInterval: min(0.1, remaining))
+} while true
 require(saveLabel == "Saved", "A completed edit/save must acknowledge Saved; showing \(saveLabel)")
 // Focusing Instructions scrolls below the compact test card; return to its start.
 scroll(4000)
