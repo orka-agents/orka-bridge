@@ -1368,9 +1368,18 @@ let saveDeadline = Date().addingTimeInterval(10)
 let saveLabels = ["Saved", "Not saved", "Saving…", "Unsaved changes"]
 var saveLabel = "no save label"
 repeat {
-    // Read the footer once per poll: separate searches can each miss a label that changes between them.
-    let frame = window()!.1
-    let visible = Set(nativeElements().compactMap { element -> String? in
+    // Read the status bar once per poll: separate searches can each miss a label that changes between them.
+    // Only the window's footer landmark counts; the file toolbar shows the same pending and error labels.
+    let current = window()
+    require(current != nil, "Fixture window disappeared while waiting for Saved")
+    let frame = current!.1
+    var footer = nativeElements().filter { attribute($0, "AXSubrole") as? String == "AXLandmarkContentInfo" }
+    var index = 0
+    while index < footer.count && footer.count < 400 {
+        for item in attribute(footer[index], "AXChildren") as? [AXUIElement] ?? [] where !footer.contains(where: { CFEqual($0, item) }) { footer.append(item) }
+        index += 1
+    }
+    let visible = Set(footer.compactMap { element -> String? in
         guard attribute(element, "AXRole") as? String == "AXStaticText", let value = attribute(element, "AXValue") as? String,
             saveLabels.contains(value), let bounds = nativeBounds(element), bounds.width > 1, bounds.height > 1, frame.contains(bounds) else { return nil }
         return value
