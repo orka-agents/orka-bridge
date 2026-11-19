@@ -261,6 +261,38 @@ test('fallback Check again uses owner refresh without serialising independent se
   expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && isRefresh(a))).toHaveLength(1);
 });
 
+test.each(['failed', 'succeeded'] as const)('identity-less cache before a %s owner reply preserves the pending check and recovery history', async outcome => {
+  let complete!: (value: UpgradeStatus) => void; let fail!: (error: Error) => void;
+  const owner = new Promise<UpgradeStatus>((resolve, reject) => { complete = resolve; fail = reject; });
+  let cached: UpgradeStatus = { ...current, error: 'inUse' };
+  const ipc = fixture(args => args.refresh ? owner : cached);
+  render(<App />); await openLocalSetup();
+  fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+  await screen.findByText('Checking workspace files. Showing last observed workspace information.');
+  // Native publishes its cache before the independent refresh IPC settles.
+  cached = { ...current, state: 'conflict', transaction: null, createdAt: null, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, canRestore: false, error: 'unknown' };
+  fireEvent(window, new Event('focus'));
+  await screen.findByText('The update could not be completed. Your workspaces are kept. Check again before continuing.');
+  expect(screen.getByText('Checking workspace files. Showing last observed workspace information.')).toBeTruthy();
+  expect(screen.getByText(/Retained workspace: 1.2 GB allocated/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Update details' }));
+  expect(screen.getByText(/Transaction:/).textContent).toContain('1000');
+  if (outcome === 'failed') {
+    await act(async () => { fail(Error('Native owner query failed')); });
+    await screen.findByText(/Could not check workspace files/);
+    expect(screen.queryByRole('button', { name: 'Restore previous workspace' })).toBeNull();
+    expect(screen.queryByText('Workspace files checked on request.')).toBeNull();
+    expect(screen.getByText(/Transaction:/).textContent).toContain('1000');
+  } else {
+    cached = { ...current, retainedAllocatedBytes: 1400000000 };
+    await act(async () => { complete(cached); });
+    await screen.findByText('Workspace files checked on request.');
+    await screen.findByText(/Retained workspace: 1.4 GB allocated/);
+    expect(screen.getByRole('button', { name: 'Restore previous workspace' }).matches(':disabled')).toBe(false);
+  }
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['workspace_upgrade_restore', 'workspace_upgrade_replace', 'setup_select_local', 'setup_connect_model', 'agent_run', 'agent_chat_send', 'agent_chat_reconnect'].includes(c))).toEqual([]);
+});
+
 test('identity loss retires an earlier successful check without carrying its freshness forward', async () => {
   let cached: UpgradeStatus = { ...current, error: 'inUse' };
   fixture(args => args.refresh ? { ...current, error: null } : cached);

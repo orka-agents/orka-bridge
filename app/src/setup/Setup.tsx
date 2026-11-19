@@ -214,11 +214,11 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   function observeUpgrade(value: UpgradeStatus) {
     if (value.transaction !== ordinaryStart.current || value.canCancel || value.state !== 'fresh') ordinaryStart.current = undefined;
     // Cached observations may discover another workspace, but never certify a manual recheck.
-    if ((value.transaction !== null || !manualFailed.current) && upgradeIdentity.current !== undefined && upgradeIdentity.current !== value.transaction) {
+    if ((value.transaction !== null || !manualFailed.current && !manualPending.current) && upgradeIdentity.current !== undefined && upgradeIdentity.current !== value.transaction) {
       ++manualEpoch.current; manualPending.current = false; manualFailed.current = false; manualIdentityless.current = false;
       setUpgradeObservation({ pending: false });
     }
-    if (manualFailed.current && upgradeIdentity.current && (value.transaction === null || manualIdentityless.current)) {
+    if ((manualFailed.current || manualPending.current) && upgradeIdentity.current && (value.transaction === null || manualIdentityless.current)) {
       // Identity loss is not another workspace or proof of repair. Keep history, not authority.
       manualIdentityless.current = true;
       setUpgrade(previous => previous && { ...previous, state: 'conflict', canReplace: false, canRestore: false, canCancel: false, busy: false, error: value.error ?? 'unknown' });
