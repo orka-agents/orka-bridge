@@ -2893,6 +2893,8 @@ async fn sessions_read_every_page_skip_gateway_and_name_running_agents() {
         json!({"items":[
             listed_session("running", "2026-01-04T00:00:00Z", "run-1"),
             gateway,
+            // A caller-chosen chat ID Bridge can't request is counted, not fatal.
+            listed_session("team:chat", "2026-01-05T00:00:00Z", ""),
         ],"metadata":{"continue":"p1"}}),
         json!({"items":[
             listed_session("old", "2026-01-01T00:00:00Z", ""),
@@ -2914,6 +2916,7 @@ async fn sessions_read_every_page_skip_gateway_and_name_running_agents() {
         .map(|e| e["name"].as_str().unwrap())
         .collect();
     assert_eq!(names, ["running", "unread-task", "old"]);
+    assert_eq!(place["unsupported"], 1);
     assert_eq!(place["entries"][0]["agent"], "reader");
     assert_eq!(place["entries"][0]["activeTask"], "run-1");
     // A running Task that can't be read leaves the Agent absent without failing the list.
@@ -3110,6 +3113,24 @@ async fn transcript_reads_only_the_named_session_on_a_connected_place() {
         json!({"role":"assistant","text":"Two files.","cut":false,"tools":["web_fetch"],"at":1767225602000u64})
     );
     assert!(!read.to_string().contains("example.com"));
+
+    // The transcript is JSONL inside the reply: an escaped bearer only appears once decoded, and
+    // the decoded messages are checked too.
+    for line in [
+        r#"{"role":"user","content":"token \u0073tatic-fixture"}"#,
+        r#"{"role":"assistant","toolCalls":[{"name":"\u0073tatic-fixture"}]}"#,
+    ] {
+        assert!(!line.contains("static-fixture"));
+        orka.items.lock().unwrap().insert(
+            ("session".into(), "escaped".into()),
+            Ok(json!({"name":"escaped","namespace":"agents","transcript":line})),
+        );
+        let read = reply(
+            bridge_engine::overview_sessions::read_transcript(&session, &key, "escaped").await,
+        );
+        assert_eq!(read["state"], "unavailable", "{line}");
+        assert!(!read.to_string().contains("static-fixture"));
+    }
 
     // A reply for another Session is refused.
     orka.items.lock().unwrap().insert(

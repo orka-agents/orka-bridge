@@ -44,6 +44,18 @@ pub struct SessionList {
     pub entries: Vec<Session>,
     /// False when more Sessions exist than one read takes, so older ones are missing.
     pub complete: bool,
+    /// Sessions left out because their ID can't be put in a request path (see `valid_session`).
+    pub unsupported: usize,
+}
+/// One row of Orka's Session list.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Listed {
+    Shown(Session),
+    /// A gateway (channel) Session, which Overview doesn't list.
+    Gateway,
+    /// A Session whose ID Bridge can't request. Orka keeps a caller's chat `sessionId` as is, so
+    /// an ID need not be object-like; such a Session is left out, not the whole list.
+    Unsupported,
 }
 fn text(value: &Value, max: usize) -> Option<String> {
     value
@@ -64,22 +76,27 @@ pub fn valid_session(name: &str) -> bool {
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
 }
-/// One listed Session, or None for a gateway Session. Identity and times are required.
-pub(crate) fn session(value: &Value, namespace: &str) -> Result<Option<Session>, ClusterError> {
+/// One listed Session. Identity and times are required.
+pub(crate) fn session(value: &Value, namespace: &str) -> Result<Listed, ClusterError> {
     let bad = ClusterError::Unavailable;
     // Skip gateway Sessions first: their channel-derived names need not be object-like.
     if value["sessionType"].as_str() == Some(GATEWAY) {
-        return Ok(None);
+        return Ok(Listed::Gateway);
     }
     if value["namespace"].as_str() != Some(namespace) {
         return Err(bad);
     }
-    let name = text(&value["name"], 253)
-        .filter(|n| valid_session(n))
+    let name = value["name"]
+        .as_str()
+        .filter(|n| !n.is_empty())
         .ok_or(bad)?;
+    if !valid_session(name) {
+        return Ok(Listed::Unsupported);
+    }
+    let name = name.to_owned();
     let session_type = text(&value["sessionType"], 32)
         .filter(|t| t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'));
-    Ok(Some(Session {
+    Ok(Listed::Shown(Session {
         message_count: value["messageCount"].as_u64().ok_or(bad)?,
         created_at: millis(&value["createdAt"]).ok_or(bad)?,
         updated_at: millis(&value["updatedAt"]).ok_or(bad)?,
@@ -90,11 +107,15 @@ pub(crate) fn session(value: &Value, namespace: &str) -> Result<Option<Session>,
     }))
 }
 /// Newest first by last update, then by name for a stable order.
-pub(crate) fn newest(mut entries: Vec<Session>, complete: bool) -> SessionList {
+pub(crate) fn newest(mut entries: Vec<Session>, complete: bool, unsupported: usize) -> SessionList {
     entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.name.cmp(&b.name)));
     let complete = complete && entries.len() <= SHOWN;
     entries.truncate(SHOWN);
-    SessionList { entries, complete }
+    SessionList {
+        entries,
+        complete,
+        unsupported,
+    }
 }
 /// What a read of a Session's active Task shows, when the reply is that Task in the watched
 /// namespace.
@@ -129,7 +150,7 @@ pub struct Message {
     /// Orka's role, such as `user`, `assistant`, `tool` or `system`.
     pub role: String,
     pub text: String,
-    /// The text was longer than Bridge shows and was cut.
+    /// The text was longer than Bridge shows and was cut, or the content wasn't text and is left out.
     pub cut: bool,
     /// Names of the tools an assistant message called.
     pub tools: Vec<String>,
@@ -188,7 +209,12 @@ pub(crate) fn transcript(
             complete = false;
             continue;
         };
-        let (text, cut) = bounded(message["content"].as_str().unwrap_or(""));
+        // Structured (non-text) content is left out and marked cut, as the guest does.
+        let (text, cut) = match &message["content"] {
+            Value::String(content) => bounded(content),
+            Value::Null => (String::new(), false),
+            _ => (String::new(), true),
+        };
         messages.push(Message {
             role,
             text,
@@ -216,6 +242,8 @@ pub struct PlaceSessions {
     pub entries: Vec<Session>,
     /// The place's connection revision; earlier Sessions are only shown again under the same one.
     pub connection: Option<u64>,
+    /// Sessions this read left out because Bridge can't request their IDs.
+    pub unsupported: usize,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -258,6 +286,7 @@ pub async fn read(session: &ClusterSession) -> Sessions {
             observed_at: None,
             entries: Vec::new(),
             connection: None,
+            unsupported: 0,
         };
         let (connection, read) = read_on(session, &place.key, list).await;
         view.connection = connection;
@@ -266,22 +295,28 @@ pub async fn read(session: &ClusterSession) -> Sessions {
                 view.state = if list.complete { "complete" } else { "partial" };
                 view.observed_at = Some(crate::overview::now());
                 view.entries = list.entries;
+                view.unsupported = list.unsupported;
             }
             Err(state) => view.state = state,
         }
         places.push(view);
     }
-    // Places are read one after another, so recheck each before answering: one reloaded,
-    // reconnected or refused while a later place was read must not report its old Sessions.
-    for view in &mut places {
+    // Places are read one after another, so recheck each before answering.
+    recheck(session, &mut places);
+    Sessions { places }
+}
+/// Run just before answering: a place reloaded, reconnected or refused since it was read must not
+/// report its old Sessions.
+pub(crate) fn recheck(session: &ClusterSession, places: &mut [PlaceSessions]) {
+    for view in places {
         if let Some(state) = superseded(session, &view.key, view.connection) {
             view.state = state;
             view.observed_at = None;
             view.entries.clear();
+            view.unsupported = 0;
             view.connection = session.activity_connection(&view.key).0;
         }
     }
-    Sessions { places }
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -301,9 +336,7 @@ pub async fn read_transcript(session: &ClusterSession, key: &str, name: &str) ->
     }
     let name = name.to_owned();
     match with_access(session, key, |access| async move {
-        let namespace = access.binding().watched_namespace.clone();
-        let value = access.item(OrkaItem::Session, &name).await?;
-        transcript(&value, &namespace, &name)
+        access.transcript(&name).await
     })
     .await
     {

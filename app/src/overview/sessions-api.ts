@@ -5,8 +5,9 @@ export type SessionEntry = {
   name: string; sessionType: string | null; messageCount: number; createdAt: number; updatedAt: number;
   activeTask: string | null; agent: string | null;
 };
-/** `connection` is the place's connection revision: cached Sessions belong to one connection only. */
-export type PlaceSessions = { key: string; state: PlaceState; observedAt: number | null; entries: SessionEntry[]; connection: number | null };
+/** `connection` is the place's connection revision: cached Sessions belong to one connection only. `unsupported` counts
+ * Sessions the read left out because Bridge can't request their IDs. */
+export type PlaceSessions = { key: string; state: PlaceState; observedAt: number | null; entries: SessionEntry[]; connection: number | null; unsupported: number };
 export type Sessions = { places: PlaceSessions[] };
 export type Message = { role: string; text: string; cut: boolean; tools: string[]; at: number | null };
 export type Transcript = { state: PlaceState; messages: Message[] };
@@ -26,11 +27,11 @@ export function isSessions(v: unknown): v is Sessions {
   if (!object(v) || !Array.isArray(v.places)) return false;
   const keys = new Set<string>();
   return v.places.every(p => {
-    if (!object(p) || !text(p.key, 4096) || keys.has(p.key) || !states.includes(p.state as PlaceState) || !nullableCount(p.observedAt) || !nullableCount(p.connection) || !Array.isArray(p.entries)) return false;
+    if (!object(p) || !text(p.key, 4096) || keys.has(p.key) || !states.includes(p.state as PlaceState) || !nullableCount(p.observedAt) || !nullableCount(p.connection) || !count(p.unsupported) || !Array.isArray(p.entries)) return false;
     keys.add(p.key);
     const read = p.state === 'complete' || p.state === 'partial';
     // Only a successful read carries entries and a time; failures carry neither.
-    if (read ? p.observedAt === null || p.entries.length > 50 : p.observedAt !== null || p.entries.length > 0) return false;
+    if (read ? p.observedAt === null || p.entries.length > 50 : p.observedAt !== null || p.entries.length > 0 || p.unsupported > 0) return false;
     const names = new Set<string>();
     return p.entries.every(e => { if (!isEntry(e) || names.has(e.name)) return false; names.add(e.name); return true; });
   });
@@ -56,5 +57,6 @@ export function merge(places: PlaceSessions[]): Row[] {
   return places.flatMap(p => p.entries.map(e => ({ ...e, placeKey: p.key, connection: p.connection, readAt: p.observedAt })))
     .sort((a, b) => b.updatedAt - a.updatedAt || a.placeKey.localeCompare(b.placeKey) || a.name.localeCompare(b.name));
 }
-const roles: Record<string, string> = { user: 'User', assistant: 'Agent', tool: 'Tool result', system: 'System' };
-export const roleLabel = (role: string) => roles[role] ?? role;
+const roles = new Map([['user', 'User'], ['assistant', 'Agent'], ['tool', 'Tool result'], ['system', 'System']]);
+/** Only the known roles are relabelled; any other role, such as `__proto__`, shows as it is. */
+export const roleLabel = (role: string) => roles.get(role) ?? role;

@@ -482,7 +482,7 @@ impl RemoteAccess {
     /// first; Bridge then orders them by last update, so a partial list leaves out Sessions
     /// created earlier even when they were updated recently.
     pub async fn sessions(&self) -> Result<crate::overview_sessions::SessionList, ClusterError> {
-        use crate::overview_sessions::{newest, session, MAX_SESSIONS};
+        use crate::overview_sessions::{newest, session, Listed, MAX_SESSIONS};
         if self.expired() {
             return Err(ClusterError::Denied);
         }
@@ -491,6 +491,7 @@ impl RemoteAccess {
             let mut after = None;
             let mut cursors = HashSet::new();
             let mut names = HashSet::new();
+            let mut unsupported = 0;
             // Empty or all-gateway pages with fresh cursors cannot extend the read past this
             // many pages.
             for _ in 0..MAX_SESSIONS.div_ceil(super::forward::SESSION_PAGE) {
@@ -500,8 +501,13 @@ impl RemoteAccess {
                     .map_err(cluster_error)?;
                 for item in items(&page).map_err(cluster_error)? {
                     // Orka hides gateway Sessions from this list; skip any an older Orka returns.
-                    let Some(entry) = session(item, &self.binding.watched_namespace)? else {
-                        continue;
+                    let entry = match session(item, &self.binding.watched_namespace)? {
+                        Listed::Shown(entry) => entry,
+                        Listed::Gateway => continue,
+                        Listed::Unsupported => {
+                            unsupported += 1;
+                            continue;
+                        }
                     };
                     if !names.insert(entry.name.clone()) {
                         return Err(ClusterError::Unavailable);
@@ -510,16 +516,16 @@ impl RemoteAccess {
                 }
                 after = continuation(&page).map_err(cluster_error)?;
                 if after.is_none() {
-                    return Ok(newest(entries, true));
+                    return Ok(newest(entries, true, unsupported));
                 }
                 if entries.len() >= MAX_SESSIONS {
-                    return Ok(newest(entries, false));
+                    return Ok(newest(entries, false, unsupported));
                 }
                 if !cursors.insert(after.clone()) {
                     return Err(ClusterError::Unavailable);
                 }
             }
-            Ok(newest(entries, false))
+            Ok(newest(entries, false, unsupported))
         })
         .await
         .unwrap_or(Err(ClusterError::Unavailable))
@@ -547,6 +553,23 @@ impl RemoteAccess {
             return Err(ClusterError::Unavailable);
         }
         Ok(value)
+    }
+    /// Overview Sessions: one Session's transcript. The transcript is JSONL inside the reply, so
+    /// an escaped bearer such as `\u0073…` passes `item`'s check and is only decoded here: the
+    /// decoded messages are checked again.
+    pub(crate) async fn transcript(
+        &self,
+        name: &str,
+    ) -> Result<crate::overview_sessions::ParsedTranscript, ClusterError> {
+        let value = self.item(OrkaItem::Session, name).await?;
+        let read =
+            crate::overview_sessions::transcript(&value, &self.binding.watched_namespace, name)?;
+        let decoded =
+            serde_json::to_value(&read.messages).map_err(|_| ClusterError::Unavailable)?;
+        if echoed(&decoded, &self.bearer) || echoed(&decoded, &self.creator_bearer) {
+            return Err(ClusterError::Unavailable);
+        }
+        Ok(read)
     }
     /// Overview Activity: completed and failed tool calls for one Task, oldest first.
     pub async fn tool_calls(
