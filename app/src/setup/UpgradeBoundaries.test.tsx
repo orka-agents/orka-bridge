@@ -280,6 +280,34 @@ test('manual failure retains the known transaction even if an independent cached
   expect(screen.getByText(/Could not check workspace files/)).toBeTruthy();
 });
 
+test('ordinary setup observation retry does not retire pending first-test intent or query its owned journal', async () => {
+  vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1'); localStorage.setItem('bridge.firstTest.v1', 'pending');
+  let unavailable = false;
+  const ipc = vi.fn((command: string, args: InvokeArgs = {}): unknown => {
+    if (command === 'workspace_upgrade_status') {
+      if (isRefresh(args)) throw Error('Busy: own ready journal');
+      return { ...eligible, state: 'none', sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, canReplace: false };
+    }
+    if (command === 'setup_status') {
+      if (unavailable) throw Error('Transient setup observation');
+      return { selected: 'localVm', localVm: 'ready', model: 'available' };
+    }
+    if (command === 'setup_requirements') return null;
+    throw Error('Unexpected ' + command);
+  });
+  mockIPC(ipc); render(<Setup onOpenExample={() => {}} />);
+  await screen.findByRole('region', { name: 'This computer' });
+  unavailable = true; fireEvent(window, new Event('focus'));
+  const retry = await screen.findByRole('button', { name: 'Check again' });
+  const reads = ipc.mock.calls.filter(([c]) => c === 'setup_status').length;
+  unavailable = false; fireEvent.click(retry);
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'setup_status').length).toBeGreaterThan(reads));
+  expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && isRefresh(a))).toEqual([]);
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('pending');
+  expect(screen.queryByText(/Could not check workspace files/)).toBeNull();
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run'].includes(c))).toEqual([]);
+});
+
 test('a busy noncancellable cached observation after reload is not a replacement or a manual check', async () => {
   fixture(() => ({ ...current, busy: true, canCancel: false }));
   render(<App />); await openLocalSetup();

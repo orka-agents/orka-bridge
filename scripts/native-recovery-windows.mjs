@@ -672,6 +672,11 @@ try {
       window.isTauri = true;
       window.__TAURI_INTERNALS__ = { invoke: async (command, args) => {
         if (command === 'setup_status') return status();
+        if (command === 'workspace_upgrade_status') return {
+          state: 'none', transaction: null, createdAt: null, sourceReleases: [], targetRelease: null,
+          retainedAllocatedBytes: null, additionalBytes: null, credential: 'absent', busy: false,
+          error: null, repeated: false, canReplace: false, canRestore: false, canCancel: false,
+        };
         if (command === 'quit_bridge') { window.__bridgeQuits++; return; }
         if (command === 'setup_select_local') { window.__bridgeLocalSelections++; selected = true; stopFailed = false; workspacePhase = workspace ? 'starting' : 'ready'; return status(); }
         if (command === 'setup_cancel_local') {
@@ -1824,7 +1829,7 @@ try {
           await writeFile(join(output, `${theme}-${size}-upgrade-refresh-cached.png`), Buffer.from(cached.data, 'base64'));
         }
         await clickAction('Check again');
-        const refreshedText = name === 'upgrade-refresh-pending' ? 'Checking workspace' : 'Workspace update information is unavailable';
+        const refreshedText = name === 'upgrade-refresh-pending' ? 'Checking workspace' : 'Could not check workspace files. They may still be in use or unavailable. Check again before continuing.';
         await until(() => evaluate(`document.querySelector('.workspace-upgrade').innerText.includes(${JSON.stringify(refreshedText)})`), name + ' manual refresh result');
         if (name !== 'upgrade-refresh-pending') {
           const before = await evaluate('window.__bridgeUpgradeCalls.filter(c => c.command === "workspace_upgrade_status" && !c.args?.refresh).length');
@@ -1835,10 +1840,14 @@ try {
       }
       if (name.startsWith('upgrade-cancel-')) {
         await clickAction('Cancel update');
+        // Terminal observation can retire the acknowledgement before a native
+        // screenshot. Its stable recovery controls are the completed postcondition.
         const outcomeText = name === 'upgrade-cancel-requested' ? 'Cancellation requested. Waiting for the workspace operation to stop.'
-          : name === 'upgrade-cancel-completed' ? 'Cancellation completed. Waiting for the latest workspace status.' : 'This workspace operation can no longer be cancelled. Check the latest status.';
+          : name === 'upgrade-cancel-completed' ? 'Workspace setup was interrupted. Choose Try setup again to continue. Reopen this version of Bridge if recovery is interrupted again.' : 'This workspace operation can no longer be cancelled. Check the latest status.';
         await until(() => evaluate(`document.querySelector('.workspace-upgrade').innerText.includes(${JSON.stringify(outcomeText)})`), name + ' cancellation outcome');
-        if (name !== 'upgrade-cancel-completed' && await evaluate(`[...document.querySelectorAll('.workspace-upgrade button')].some(b => ['Try setup again', 'Restore previous workspace'].includes(b.textContent) && !b.disabled)`)) throw Error(name + ': acknowledgement released operation fence');
+        if (name === 'upgrade-cancel-completed') {
+          if (!await evaluate(`![...document.querySelectorAll('.workspace-upgrade button')].some(b => b.textContent === 'Cancel update') && [...document.querySelectorAll('.workspace-upgrade button')].some(b => b.textContent === 'Try setup again' && !b.disabled)`)) throw Error(name + ': completed cancellation must expose terminal recovery');
+        } else if (await evaluate(`[...document.querySelectorAll('.workspace-upgrade button')].some(b => ['Try setup again', 'Restore previous workspace'].includes(b.textContent) && !b.disabled)`)) throw Error(name + ': acknowledgement released operation fence');
       }
       if (name === 'upgrade-forward-cancelled') {
         await clickAction('Try setup again');

@@ -585,7 +585,12 @@ const upgradeFixture = await readFile(new URL('../app/src-tauri/examples/model_w
 assert.ok(upgradeFixture.includes('assert!(expected_call, "Unexpected upgrade capture call:'), 'Mac must fail even caught passive mutations and nonempty status args');
 assert.ok(upgradeFixture.includes('args.len() == 1') && upgradeFixture.includes('Some(&json!(true))'), 'Mac manual refresh must use the exact finite refresh:true argument');
 assert.ok(upgradeFixture.includes('if key == "sourceRetained"') && upgradeFixture.includes('40000000-0000-4000-8000-000000000005'), 'visually identical retained scene needs a distinct synthetic transaction witness');
-assert.ok(model.includes('if state == "sourceRetained"') && model.includes('waitForNativeText(["4000…0005"])'), 'Mac must observe the requested scene in rendered details before naming its screenshot');
+assert.ok(model.includes('if state == "sourceRetained"') && model.includes('waitForNativeText(["4000…0005"], diagnosePhaseWitness: true)'), 'Mac must observe the requested scene in rendered details before naming its screenshot');
+const nativeTextWait = model.slice(model.indexOf('func waitForNativeText(_ any:'), model.indexOf('func reachable('));
+assert.ok(nativeTextWait.includes('for _ in 0..<40') && nativeTextWait.includes('Thread.sleep(forTimeInterval: 0.1)'), 'phase diagnostics must not extend the native text deadline');
+assert.ok(nativeTextWait.includes('if diagnosePhaseWitness') && nativeTextWait.includes('"AXParent"') && nativeTextWait.includes('"AXExpanded"'), 'failed witness needs indexed AX parent/expanded-state evidence');
+assert.ok(nativeTextWait.includes('String(contentsOf: setupProgress') && nativeTextWait.includes('"/usr/sbin/screencapture"'), 'failed witness needs the current selector and raw screenshot');
+assert.ok(!nativeTextWait.includes('try capture('), 'failure diagnostics must not consume a named capture or bypass coverage');
 const upgradeBootstrap = upgradeFixture.match(/const UPGRADE_INITIALIZE: &str = r#"([\s\S]*?)"#;/)?.[1];
 assert.ok(upgradeBootstrap, 'fixture intent must be restored at document start, not before old callbacks finish');
 for (const intent of ['pending', 'attempted']) {

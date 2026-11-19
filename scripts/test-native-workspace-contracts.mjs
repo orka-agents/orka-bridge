@@ -133,6 +133,13 @@ async function upgradeFixture(name) {
   return { window, invoke: window.__TAURI_INTERNALS__.invoke };
 }
 const dtoKeys = 'additionalBytes,busy,canCancel,canReplace,canRestore,createdAt,credential,error,repeated,retainedAllocatedBytes,sourceReleases,state,targetRelease,transaction';
+for (const name of ['first-test-running', 'first-test-passed', 'ai-connected', 'local-stopped']) {
+  const { invoke } = await fixture(name);
+  const status = await invoke('workspace_upgrade_status');
+  assert.equal(Object.keys(status).sort().join(','), dtoKeys, `${name}: ordinary fixtures need a real no-upgrade observation`);
+  assert.equal(status.state, 'none');
+  assert.equal(status.canCancel, false);
+}
 for (const name of ['upgrade-eligible-absent', 'upgrade-busy-cancel', 'upgrade-busy-locked', 'upgrade-error-forced']) {
   const { invoke } = await upgradeFixture(name);
   const status = await invoke('workspace_upgrade_status');
@@ -175,4 +182,21 @@ for (const name of ['upgrade-refresh-busy', 'upgrade-refresh-io']) {
   assert.equal(reply.status.busy, false);
   await assert.rejects(invoke('workspace_upgrade_restore', { transaction: reply.status.transaction }), /Unexpected native mutation/);
 }
+// Capture waits must use the manual-check error rendered by Setup, not the
+// API client's generic failure text: cached reads still succeed in these scenes.
+const setup = await read('../app/src/setup/Setup.tsx');
+const manualError = setup.match(/'([^'\n]*Could not check workspace files[^'\n]*)'/)?.[1];
+assert.ok(manualError, 'actual Setup manual owner-refresh error missing');
+const refreshedExpression = source.match(/const refreshedText = ([^;]+);/)?.[1];
+assert.ok(refreshedExpression, 'Windows manual-refresh capture expectation missing');
+const model = await read('./native-model-macos.swift');
+const macRefresh = model.match(/expected = state == "refresh-pending" \? "([^"]+)" : "([^"]+)"/);
+assert.ok(macRefresh, 'Mac manual-refresh capture expectation missing');
+const mismatches = [];
+for (const state of ['refresh-busy', 'refresh-io']) {
+  const windowsError = Function('name', `return ${refreshedExpression}`)(`upgrade-${state}`);
+  if (windowsError !== manualError) mismatches.push(`Windows ${state}: ${windowsError}`);
+  if (macRefresh[2] !== manualError) mismatches.push(`Mac ${state}: ${macRefresh[2]}`);
+}
+assert.deepEqual(mismatches, [], 'both native drivers must wait for the actual manual-check error');
 console.log('PASS native workspace driver contracts: returning intent, explicit states, Quit IPC, presentation gates, idle Close and exact Upgrade wire/refresh/cancel transitions');

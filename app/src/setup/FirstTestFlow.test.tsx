@@ -154,6 +154,35 @@ test('first setup stays for its first-pass story, opens only on request and neve
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId: sample, bundledExample: true, attemptId: expect.any(String) }]]);
 });
 
+test('ordinary setup retry preserves a never-replaced first pass without refreshing the owner or replaying tests', async () => {
+  const { ipc, finish } = native(); await completeSetup();
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1));
+  finish(); await screen.findByRole('heading', { name: 'Your first agent passed its test' });
+  const original = ipc.getMockImplementation()!; let failSetup = true; let falselyReplaced = false;
+  ipc.mockImplementation((command, args) => {
+    if (command === 'workspace_upgrade_status' && (args as Record<string, unknown> | undefined)?.refresh) {
+      falselyReplaced = true; throw Error('Busy: own ready journal');
+    }
+    if (command === 'setup_status') {
+      if (failSetup) throw Error('Transient setup observation');
+      return { selected: 'localVm', localVm: 'ready', model: 'available', ...(falselyReplaced ? { workspaceReplaced: true } : {}) };
+    }
+    return original(command, args);
+  });
+  fireEvent(window, new Event('focus'));
+  const retry = await screen.findByRole('button', { name: 'Check again' });
+  const reads = ipc.mock.calls.filter(([c]) => c === 'setup_status').length;
+  failSetup = false; fireEvent.click(retry);
+  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'setup_status').length).toBeGreaterThan(reads));
+  expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && (a as Record<string, unknown> | undefined)?.refresh)).toEqual([]);
+  expect(falselyReplaced).toBe(false);
+  await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('Workspace ready'));
+  expect(screen.getByRole('button', { name: 'See what it answered' })).toBeTruthy();
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
+  expect(ipc.mock.calls.filter(([c]) => c === 'setup_connect_model')).toHaveLength(1);
+  expect(screen.queryByText(/Could not check workspace files/)).toBeNull();
+});
+
 test('replacement never presents the previous workspace pass as a fresh first-pass success', async () => {
   const { ipc, finish } = native(); await completeSetup();
   await waitFor(() => expect(ipc.mock.calls.some(([command]) => command === 'agent_run')).toBe(true));

@@ -34,12 +34,22 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string>();
   const [outcome, setOutcome] = useState<string>();
+  const [cancelAcknowledgement, setCancelAcknowledgement] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
   const cancel = useRef<HTMLButtonElement>(null);
   const announcement = useRef<HTMLParagraphElement>(null);
   const mutation = useRef(false);
   const operationEpoch = useRef(0);
+  const observedTransaction = useRef(s.transaction);
+  useEffect(() => {
+    // A cached object for the same active operation is not new cancellation evidence.
+    if (observedTransaction.current !== s.transaction || !s.busy && !s.canCancel) {
+      ++operationEpoch.current;
+      setCancelAcknowledgement(undefined);
+    }
+    observedTransaction.current = s.transaction;
+  }, [s.transaction, s.busy, s.canCancel]);
   const confirmation = confirm?.transaction === s.transaction && confirm.state === s.state ? confirm : undefined;
   useEffect(() => { setConfirm(value => value?.transaction === s.transaction && value.state === s.state ? value : undefined); }, [s.transaction, s.state]);
   useEffect(() => {
@@ -61,7 +71,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     try {
       const result = await upgradeCall('cancel');
       if (request !== operationEpoch.current) return;
-      if (result.ok) setOutcome(result.outcome === 'requested'
+      if (result.ok) setCancelAcknowledgement(result.outcome === 'requested'
         ? 'Cancellation requested. Waiting for the workspace operation to stop.'
         : result.outcome === 'completed' ? 'Cancellation completed. Waiting for the latest workspace status.'
         : 'This workspace operation can no longer be cancelled. Check the latest status.');
@@ -71,7 +81,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
   async function act(action: Exclude<UpgradeAction, 'status' | 'refresh' | 'cancel'>) {
     if (mutation.current || disabled || s.busy || (!canUseCredential && (action === 'transfer' || action === 'remove'))) return;
     ++operationEpoch.current;
-    mutation.current = true; setWorking(true); setError(undefined); setOutcome(undefined);
+    mutation.current = true; setWorking(true); setError(undefined); setOutcome(undefined); setCancelAcknowledgement(undefined);
     // Retire before invoking native mutation, not after a possibly lost reply.
     retireFirstTest(); onBusy(true); setConfirm(undefined);
     try {
@@ -80,7 +90,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
         if ('outcome' in result && result.outcome === 'cancelled') setOutcome('Update cancelled. Your retained workspace is kept. Check again before continuing.');
         onChange(result.status);
       } else setError(result.message);
-    } finally { ++operationEpoch.current; mutation.current = false; setWorking(false); onBusy(false); announcement.current?.focus(); }
+    } finally { ++operationEpoch.current; setCancelAcknowledgement(undefined); mutation.current = false; setWorking(false); onBusy(false); announcement.current?.focus(); }
   }
   if (s.state === 'none') return null;
   const line = observation?.pending ? 'Last observed workspace information.' : busy ? working || s.canCancel ? 'Updating the workspace. Your agent files are kept.' : 'The workspace is busy. Your agent files are kept.'
@@ -91,7 +101,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     : retry ? 'Workspace setup was interrupted. Choose Try setup again to continue. Reopen this version of Bridge if recovery is interrupted again.'
     : 'This version of Bridge needs a new workspace.';
   return <div className="workspace-upgrade">
-    <p ref={announcement} tabIndex={-1} role="status">{outcome ?? line}</p>
+    <p ref={announcement} tabIndex={-1} role="status">{outcome ?? cancelAcknowledgement ?? line}</p>
     {observation && <UpgradeObservation observation={observation} />}
     {(error || s.error) && <p role="alert">{s.error ? failures[s.error] : error}</p>}
     {!ready && !busy && <p>Your agent files, settings, remembered clusters and saved result summaries are kept. You can still edit files and use a team cluster.</p>}

@@ -1086,10 +1086,36 @@ func nativeTextExists(_ expected: String) -> Bool {
         attribute(element, "AXRole") as? String == "AXStaticText" && (attribute(element, "AXValue") as? String)?.contains(expected) == true
     }
 }
-func waitForNativeText(_ any: [String]) {
+func waitForNativeText(_ any: [String], diagnosePhaseWitness: Bool = false) {
     for _ in 0..<40 {
         if any.contains(where: nativeTextExists) { return }
         Thread.sleep(forTimeInterval: 0.1)
+    }
+    if diagnosePhaseWitness {
+        // Preserve the failed state before exiting: DOM text fragmentation,
+        // a closed disclosure and a stale observation need different fixes.
+        let prefix = "\(output)/upgrade-phase-witness-failure"
+        let elements = nativeElements()
+        let rows: [[String: Any]] = elements.enumerated().map { index, element in
+            let parent = attribute(element, "AXParent")
+            return ["index": index, "parent": parent.flatMap { value in elements.firstIndex(where: { CFEqual($0, value) }) } ?? -1,
+                "role": attribute(element, "AXRole") as? String ?? "", "subrole": attribute(element, "AXSubrole") as? String ?? "",
+                "value": attribute(element, "AXValue").map { String(describing: $0) } ?? "",
+                "title": attribute(element, "AXTitle") as? String ?? "", "description": attribute(element, "AXDescription") as? String ?? "",
+                "expanded": attribute(element, "AXExpanded").map { String(describing: $0) } ?? "",
+                "bounds": nativeBounds(element).map { String(describing: $0) } ?? ""]
+        }
+        do {
+            let data = try JSONSerialization.data(withJSONObject: rows, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: URL(fileURLWithPath: prefix + ".json"))
+            try String(contentsOf: setupProgress, encoding: .utf8).write(toFile: prefix + "-selector.txt", atomically: true, encoding: .utf8)
+            if let current = window() {
+                let screenshot = Process()
+                screenshot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                screenshot.arguments = ["-x", "-o", "-l", String(current.0), prefix + ".png"]
+                try screenshot.run(); screenshot.waitUntilExit()
+            }
+        } catch { fputs("Cannot save phase-witness diagnostics: \(error)\n", stderr) }
     }
     require(false, "Native text did not appear: \(any)")
 }
@@ -1703,7 +1729,7 @@ func captureUpgradeMatrix(manage: Bool) throws {
             // Identical recovery prose cannot prove this scene reached React.
             // Observe its synthetic transaction in real rendered native details.
             press("Update details")
-            waitForNativeText(["4000…0005"])
+            waitForNativeText(["4000…0005"], diagnosePhaseWitness: true)
             click("Update details", [])
             var closed = false
             for _ in 0..<40 {
@@ -1850,7 +1876,7 @@ for state in ["refresh-pending", "refresh-busy", "refresh-io", "cancel-requested
         require(!nativeTextExists("Workspace files checked on request."), "Cached observation must not claim owner freshness")
         if state == "refresh-pending" { try integrationUpgradeShots("refresh-cached", "Check again") }
         press("Check again")
-        expected = state == "refresh-pending" ? "Checking workspace" : "Workspace update information is unavailable"
+        expected = state == "refresh-pending" ? "Checking workspace" : "Could not check workspace files. They may still be in use or unavailable. Check again before continuing."
         waitForNativeText([expected])
         if state != "refresh-pending" {
             // Periodic memory observation must not turn a failed owner query into success.
@@ -1859,9 +1885,13 @@ for state in ["refresh-pending", "refresh-busy", "refresh-io", "cancel-requested
         }
     } else if state.hasPrefix("cancel-") {
         press("Cancel update")
-        expected = state == "cancel-requested" ? "Cancellation requested. Waiting for the workspace operation to stop." : state == "cancel-completed" ? "Cancellation completed. Waiting for the latest workspace status." : "This workspace operation can no longer be cancelled. Check the latest status."
+        // A terminal cache observation may beat the bare completed reply. Capture
+        // its stable recovery state, not an acknowledgement that correctly expires.
+        expected = state == "cancel-requested" ? "Cancellation requested. Waiting for the workspace operation to stop." : state == "cancel-completed" ? "Workspace setup was interrupted. Choose Try setup again to continue. Reopen this version of Bridge if recovery is interrupted again." : "This workspace operation can no longer be cancelled. Check the latest status."
         waitForNativeText([expected])
-        if state != "cancel-completed" {
+        if state == "cancel-completed" {
+            require(!anyButton("Cancel update") && enabledButton("Try setup again") != nil, "Completed cancellation must expose terminal recovery, not a stale waiting acknowledgement")
+        } else {
             require(enabledButton("Try setup again") == nil && enabledButton("Restore previous workspace") == nil, "Cancellation acknowledgement must not release the update fence")
         }
     } else if state == "forward-cancelled" {

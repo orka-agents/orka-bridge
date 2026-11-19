@@ -238,7 +238,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   }
   const ordinaryRecovery = upgradeKnown
     ? !!upgrade && ['none', 'fresh', 'consumed'].includes(upgrade.state)
-    : !status?.workspaceReplaced && !upgrade;
+    : status?.selected === 'localVm' && !status.workspaceReplaced && !upgrade;
   // Model stays mounted from preparing through ready, so it owns its queued state; no Model means no model state.
   const modelMounted = (!status?.workspaceReplaced || upgradeKnown && !!upgrade) && (!upgrade || ['none', 'fresh', 'consumed'].includes(upgrade.state)) && !upgradeBusy && !upgrade?.busy && upgrade?.credential !== 'attention' && upgrade?.credential !== 'eligible' && status?.selected === 'localVm' && (status.localVm === 'ready' || (!status.workspaceReplaced && canQueueModel(status)));
   useEffect(() => { if (!modelMounted) observeModel('idle'); }, [modelMounted, observeModel]);
@@ -294,7 +294,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
 
   const changing = sending || upgradeBusy || !!upgrade?.busy || upgradeObservation.pending;
   const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} observation={upgradeObservation} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || !!error || !upgradeKnown} onBusy={upgradeAction} onChange={value => { observeUpgrade(value); setCheck(check => check + 1); }} onCheck={() => { void checkWorkspace(); }} /> : undefined;
-  const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked)} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
+  const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && (changing || !ordinaryRecovery || status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked))} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); } }));
   const titleId = active ? 'page-title' : undefined;
   if (!status && !error) return <><h1 id={titleId}>Clusters</h1><p role="status">Checking the workspace…</p></>;
@@ -359,6 +359,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
           </section>
         </>}
         <div className="setup-column setup-main">
+        {!workspace && !selected && upgradePanel}
         {workspace && status && <Workspace ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} onStart={() => { void chooseLocal(); }} active={active && view === 'local'} />}
         {!workspace && selected && status && <SetupProgress ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} />}
         </div>
@@ -373,7 +374,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     {!upgradePanel && <UpgradeObservation observation={upgradeObservation} />}
     {error && <div role="alert"><p>{error}</p>
       <Button type="button" kind="secondary" className="action-spaced" disabled={busy || upgradeObservation.pending}
-        onClick={() => { setError(undefined); void checkWorkspace(); }}>Check again</Button>
+        onClick={() => { if (setupError) setSetupCheck(value => value + 1); else void checkWorkspace(); }}>Check again</Button>
     </div>}
     {!error && !upgradePanel && upgradeObservation.error && <Button type="button" kind="secondary" disabled={upgradeObservation.pending} onClick={() => { void checkWorkspace(); }}>Check again</Button>}
   </div>;
