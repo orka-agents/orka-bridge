@@ -221,7 +221,8 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     </> : <>
       <div className="overview-list">{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="overview-note">No agents match these filters.</p>}</div>
       <RecentActivity active={active} places={places} onShowAgent={showAgent} onCheck={actions.onCheck} />
-      <SessionList active={active} places={places} onCheck={actions.onCheck} />
     </>}
+    {/* Conversations stay reachable without agents: this computer's workspace can keep them after its agents are gone. */}
+    <SessionList active={active} places={places} workspace={workspaceKey} onCheck={actions.onCheck} />
   </section>;
 }

@@ -359,6 +359,8 @@ pub async fn read_transcript(session: &ClusterSession, key: &str, name: &str) ->
 /// This computer's Sessions first, then each cluster's, read at the same time.
 pub async fn read_all(session: &ClusterSession, vm: &impl local::LocalSessions) -> Sessions {
     let (here, mut sessions) = tokio::join!(local::read(vm), read(session));
+    // The local read can outlast the cluster reads, so recheck the clusters once both finish.
+    recheck(session, &mut sessions.places);
     sessions.places.insert(0, here);
     sessions
 }

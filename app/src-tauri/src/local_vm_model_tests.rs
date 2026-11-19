@@ -41,6 +41,37 @@ async fn restart_cannot_reuse_the_previous_sessions_model_acknowledgment() {
 }
 
 #[tokio::test]
+async fn a_new_boot_forgets_the_last_sessions_boot_but_a_stop_keeps_it() {
+    struct Factory;
+    impl LocalFactory for Factory {
+        fn launch(
+            &self,
+            mut closed: watch::Receiver<bool>,
+            _: Arc<dyn Fn(LocalProgress) + Send + Sync>,
+        ) -> StartFuture<'_> {
+            Box::pin(async move {
+                if !*closed.borrow() {
+                    let _ = closed.changed().await;
+                }
+                Err(RuntimeError::Closed)
+            })
+        }
+    }
+    let vm = LocalVm::new(Arc::new(Factory));
+    vm.inner
+        .publish(LocalProgress::Status(LocalVmStatus::Ready));
+    let boot = Uuid::from_bytes([7; 16]);
+    *vm.sessions_boot.lock().unwrap() = Some(boot);
+    // Stopping keeps the boot, so Overview can keep what it last read there.
+    vm.inner
+        .publish(LocalProgress::Status(LocalVmStatus::Cancelled));
+    assert_eq!(vm.sessions_boot(), Some(boot));
+    vm.start();
+    assert_eq!(vm.sessions_boot(), None);
+    vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn catalog_does_not_probe_unsupported_or_disconnected_workspaces() {
     struct NoProbe;
     impl LocalSession for NoProbe {

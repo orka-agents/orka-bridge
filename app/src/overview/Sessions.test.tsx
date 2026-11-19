@@ -236,6 +236,17 @@ test('each places read starts one Sessions read, so a revisit waits for its own 
   await waitFor(() => expect(calls).toHaveLength(2));
 });
 
+test("a workspace starting or stopping reads this computer's conversations again without a new places read", async () => {
+  const calls = ipc({ places: [read('one', [entry('a')])] });
+  const view = render(<SessionList onCheck={noop} active places={places} workspace="stopped" />);
+  await waitFor(() => expect(calls).toHaveLength(1));
+  view.rerender(<SessionList onCheck={noop} active places={places} workspace="stopped" />);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  expect(calls).toHaveLength(1);
+  view.rerender(<SessionList onCheck={noop} active places={places} workspace="ready" />);
+  await waitFor(() => expect(calls).toHaveLength(2));
+});
+
 test('a failed or unreadable Sessions read offers Check conversations again, and a complete one does not', async () => {
   let sessions: unknown = 'not sessions';
   ipc(undefined);

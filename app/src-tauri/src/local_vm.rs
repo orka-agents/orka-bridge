@@ -1498,6 +1498,8 @@ impl LocalVm {
         *self.authoring.lock().unwrap() = Arc::new(AsyncMutex::new(()));
         state.phase = LocalVmStatus::Preparing;
         state.model_connected = false;
+        // A new boot is a new Sessions connection: a busy first read must not report the old one.
+        *self.sessions_boot.lock().unwrap() = None;
         state.run_cancel_supported = false;
         state.failure = None;
         state.preflight_failure = None;
