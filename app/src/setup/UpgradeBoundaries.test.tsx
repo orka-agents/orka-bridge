@@ -87,6 +87,71 @@ test('Manage resumes a cancelled fresh workspace without losing Restore', async 
   await waitFor(() => expect(ipc.mock.calls.map(([c]) => c)).toContain('setup_select_local'));
   expect(screen.getByRole('button', { name: 'Restore previous workspace' })).toBeTruthy();
 });
+test.each(['starting', 'ready'] as const)('accepted ordinary restart retires the same-transaction final cancellation (%s reply)', async replyPhase => {
+  const forward = deferred<unknown>();
+  let cached = eligible;
+  let phase = 'failed';
+  let rejectStart = true;
+  const observed = vi.fn();
+  const fresh: UpgradeStatus = { ...current, state: 'fresh' };
+  const ipc = fixture(() => cached, 'failed', false);
+  localStorage.setItem('bridge.firstTest.v1', 'pending');
+  const original = ipc.getMockImplementation()!;
+  const setup = () => ({ selected: 'localVm', localVm: phase, model: phase === 'ready' ? 'available' : 'locked', workspaceReplaced: true });
+  ipc.mockImplementation((command, args) => {
+    if (command === 'setup_status') return setup();
+    if (command === 'workspace_upgrade_replace') {
+      cached = { ...fresh, state: 'sourceSelected', busy: true, canCancel: true };
+      phase = 'starting';
+      return forward.promise;
+    }
+    if (command === 'workspace_upgrade_cancel') return 'requested';
+    if (command === 'setup_select_local') {
+      if (rejectStart) throw Error('Start was not accepted');
+      phase = replyPhase;
+      cached = replyPhase === 'ready' ? current : { ...fresh, busy: true, canCancel: false };
+      return setup();
+    }
+    return original(command, args);
+  });
+  render(<Setup onOpenExample={() => {}} onStatus={observed} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Set up new workspace' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
+  fireEvent(window, new Event('focus'));
+  fireEvent.click(await screen.findByRole('button', { name: 'Cancel update' }));
+  await screen.findByText(/Cancellation requested/);
+  phase = 'cancelled'; cached = fresh;
+  await act(async () => { forward.resolve({ outcome: 'cancelled', status: fresh }); });
+  await screen.findByText(/Update cancelled/);
+  const poll = async () => {
+    const reads = observed.mock.calls.length;
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(observed.mock.calls.length).toBeGreaterThan(reads));
+  };
+  await poll();
+  expect(screen.getByText(/Update cancelled/)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Start again' }));
+  await screen.findByText('The setup choice could not be read or saved.');
+  expect(screen.getByText(/Update cancelled/)).toBeTruthy();
+  await poll();
+  expect(screen.getByText(/Update cancelled/)).toBeTruthy();
+  rejectStart = false;
+  fireEvent.click(await screen.findByRole('button', { name: 'Start again' }));
+  await waitFor(() => expect(observed.mock.lastCall?.[0]?.localVm).toBe(replyPhase));
+  expect(screen.queryByText(/Update cancelled/)).toBeNull();
+  await screen.findByText(replyPhase === 'starting' ? 'The workspace is busy. Your agent files are kept.' : 'New workspace selected. Connect the AI explicitly before running your agents.');
+  phase = 'ready'; cached = current;
+  await poll();
+  expect(screen.queryByText(/Update cancelled/)).toBeNull();
+  expect(screen.getByText('New workspace selected. Connect the AI explicitly before running your agents.')).toBeTruthy();
+  await poll();
+  expect(screen.queryByText(/Update cancelled/)).toBeNull();
+  expect(ipc.mock.calls.filter(([c]) => c === 'workspace_upgrade_replace')).toEqual([['workspace_upgrade_replace', {}]]);
+  expect(ipc.mock.calls.filter(([c]) => c === 'workspace_upgrade_cancel')).toEqual([['workspace_upgrade_cancel', {}]]);
+  expect(ipc.mock.calls.filter(([c]) => c === 'setup_select_local')).toEqual([['setup_select_local', {}], ['setup_select_local', {}]]);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_cancel_local', 'setup_connect_model', 'agent_run', 'agent_chat_send', 'agent_chat_reconnect'].includes(c))).toEqual([]);
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
+});
 test('first setup retains fresh start-failure recovery', async () => {
   fixture(() => ({ ...current, state: 'fresh' }), 'failed', false); render(<App />); await openLocalSetup();
   expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();

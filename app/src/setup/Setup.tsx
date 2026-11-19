@@ -60,6 +60,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const [upgradeObservation, setUpgradeObservation] = useState<UpgradeObservationState>({ pending: false });
   const workspaceReplaced = useRef(false);
   const ordinaryStart = useRef<string | null>(undefined);
+  const ordinaryRestartEpoch = useRef(0);
   const upgradeAction = useCallback((value: boolean) => {
     // A mutation invalidates both kinds of reads, including a lost mutation reply.
     ++epoch.current; ++upgradeEpoch.current; ++manualEpoch.current;
@@ -300,7 +301,10 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     if (!mounted.current) return;
     onWorkspaceAction?.(false);
     setSending(false); setPendingAction(undefined);
-    if (result.ok) { focusChoice.current = true; setStatus(result.status); }
+    if (result.ok) {
+      if (action === 'start') ++ordinaryRestartEpoch.current;
+      focusChoice.current = true; setStatus(result.status);
+    }
     else { setError(result.message); }
     onStatus?.(result.ok ? result.status : undefined);
     const waiting = result.ok && pending(result.status.localVm);
@@ -311,7 +315,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   }
 
   const changing = sending || upgradeBusy || !!upgrade?.busy || upgradeObservation.pending;
-  const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} observation={upgradeObservation} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || (!!status && pending(status.localVm)) || !!error || !upgradeKnown} onBusy={upgradeAction} onChange={value => { observeUpgrade(value); setCheck(check => check + 1); }} onCheck={() => { void checkWorkspace(); }} /> : undefined;
+  const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} ordinaryRestartEpoch={ordinaryRestartEpoch.current} observation={upgradeObservation} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || (!!status && pending(status.localVm)) || !!error || !upgradeKnown} onBusy={upgradeAction} onChange={value => { observeUpgrade(value); setCheck(check => check + 1); }} onCheck={() => { void checkWorkspace(); }} /> : undefined;
   const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && (changing || !ordinaryRecovery || status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked))} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); } }));
   const titleId = active ? 'page-title' : undefined;

@@ -24,8 +24,8 @@ export function UpgradeObservation({ observation }: { observation: UpgradeObserv
     {!observation.pending && observation.checked && <p role="status">Workspace files checked on request.</p>}
   </>;
 }
-export default function Upgrade({ status: s, disabled, canUseCredential = true, observation, onChange, onBusy, onCheck }: {
-  observation?: UpgradeObservationState;
+export default function Upgrade({ status: s, disabled, canUseCredential = true, ordinaryRestartEpoch = 0, observation, onChange, onBusy, onCheck }: {
+  observation?: UpgradeObservationState; ordinaryRestartEpoch?: number;
   status: UpgradeStatus; disabled?: boolean; canUseCredential?: boolean; onChange: (status: UpgradeStatus) => void; onBusy: (busy: boolean) => void; onCheck: () => void;
 }) {
   const [confirm, setConfirm] = useState<{ action: 'replace' | 'restore' | 'remove'; transaction: string | null; state: UpgradeStatus['state'] }>();
@@ -33,7 +33,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
   const [working, setWorking] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string>();
-  const [outcome, setOutcome] = useState<{ transaction: string | null; message: string }>();
+  const [outcome, setOutcome] = useState<{ transaction: string | null; ordinaryRestartEpoch: number; message: string }>();
   const [cancelAcknowledgement, setCancelAcknowledgement] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
@@ -71,7 +71,8 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
   const blocked = !!disabled || busy || !!observation?.pending;
   const source = s.sourceReleases.length ? `Bridge ${s.sourceReleases.join(' or ')}` : 'the matching Bridge version';
   const date = s.createdAt === null ? '' : ` from ${new Date(s.createdAt * 1000).toLocaleDateString()}`;
-  const finalOutcome = outcome?.transaction === s.transaction ? outcome.message : undefined;
+  // Same-transaction polls preserve the result; only an accepted ordinary start supersedes it.
+  const finalOutcome = outcome?.transaction === s.transaction && outcome.ordinaryRestartEpoch === ordinaryRestartEpoch ? outcome.message : undefined;
   const retry = ['sourceSelected', 'sourceRetained', 'incomplete'].includes(s.state);
   function ask(action: 'replace' | 'restore' | 'remove', button: HTMLButtonElement) { trigger.current = button; setConfirm({ action, transaction: s.transaction, state: s.state }); }
   function dismiss() { restoreFocus.current = true; setConfirm(undefined); }
@@ -98,7 +99,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     try {
       const result = await upgradeCall(action, ['retry', 'restore', 'transfer', 'remove'].includes(action) ? s.transaction ?? undefined : undefined);
       if (result.ok) {
-        if ('outcome' in result && result.outcome === 'cancelled') setOutcome({ transaction: result.status.transaction, message: 'Update cancelled. Your retained workspace is kept. Check again before continuing.' });
+        if ('outcome' in result && result.outcome === 'cancelled') setOutcome({ transaction: result.status.transaction, ordinaryRestartEpoch, message: 'Update cancelled. Your retained workspace is kept. Check again before continuing.' });
         onChange(result.status);
       } else setError(result.message);
     } finally { ++operationEpoch.current; setCancelAcknowledgement(undefined); mutation.current = false; setWorking(false); onBusy(false); announcement.current?.focus(); }
