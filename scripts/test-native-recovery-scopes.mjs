@@ -592,8 +592,14 @@ for (const args of [null, {}]) assert.doesNotThrow(() => auditUpgrade([{ command
 for (const args of [{ path: 'unexpected' }, { transaction: 'fixture-transaction' }, { refresh: true }, { refresh: false }, [], 'unexpected']) {
   assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_status', args }], 'fixture', 'fixture-transaction'));
 }
-for (const action of ['replace', 'retry', 'restore', 'cancel', 'transfer_credential', 'remove_credential']) {
-  assert.throws(() => auditUpgrade([{ command: `workspace_upgrade_${action}`, args: { transaction: 'fixture-transaction' } }], 'fixture', 'fixture-transaction'), 'even a well-shaped caught mutation must fail the capture');
+// Seven real command names: six mutations plus the explicit-refresh status boundary.
+for (const action of ['status', 'replace', 'retry', 'restore', 'cancel', 'transfer', 'remove']) {
+  for (const args of [{ transaction: 'fixture-transaction' }, { refresh: true }, { outcome: 'completed', status: {} }]) {
+    assert.throws(() => auditUpgrade([{ command: `workspace_upgrade_${action}`, args }], 'fixture', 'fixture-transaction'), 'even a well-shaped caught mutation must fail the capture');
+  }
+  if (action !== 'status') for (const args of [null, {}]) {
+    assert.throws(() => auditUpgrade([{ command: `workspace_upgrade_${action}`, args }], 'fixture', 'fixture-transaction'));
+  }
 }
 for (const name of ['upgrade-refresh-pending', 'upgrade-refresh-busy', 'upgrade-refresh-io']) {
   assert.doesNotThrow(() => auditUpgrade([{ command: 'workspace_upgrade_status', args: { refresh: true } }], name, 'fixture-transaction'));
@@ -626,6 +632,7 @@ assert.ok(upgradeFixture.includes('if key == "sourceRetained"') && upgradeFixtur
 assert.ok(model.includes('if state == "sourceRetained"') && model.includes('waitForNativeText(["4000…0005"])'), 'Mac must observe the requested scene in rendered details before naming its screenshot');
 const nativeTextWait = model.slice(model.indexOf('func waitForNativeText(_ any:'), model.indexOf('func reachable('));
 assert.ok(nativeTextWait.includes('for _ in 0..<40') && nativeTextWait.includes('Thread.sleep(forTimeInterval: 0.1)'), 'the native text deadline must remain unchanged');
+assert.ok(model.includes('waitForNativeText(["1.3 GB"])'), 'Mac cached-response witness must match one rendered AX text value, not an interpolated paragraph');
 const upgradeBootstrap = upgradeFixture.match(/const UPGRADE_INITIALIZE: &str = r#"([\s\S]*?)"#;/)?.[1];
 assert.ok(upgradeBootstrap, 'fixture intent must be restored at document start, not before old callbacks finish');
 for (const intent of ['pending', 'attempted']) {

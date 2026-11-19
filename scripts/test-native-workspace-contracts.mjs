@@ -157,10 +157,15 @@ for (const [name, outcome] of [['upgrade-cancel-requested', 'requested'], ['upgr
   assert.equal(window.__bridgeUpgradeCalls.some(call => call.args?.refresh), false, 'post-cancel observation is cached only');
 }
 for (const name of ['upgrade-refresh-busy', 'upgrade-refresh-io']) {
-  const { invoke } = await upgradeFixture(name);
-  const before = await invoke('workspace_upgrade_status');
+  const { invoke, window } = await upgradeFixture(name);
+  const before = structuredClone(await invoke('workspace_upgrade_status'));
+  assert.equal(before.retainedAllocatedBytes, 1200000000);
   await assert.rejects(invoke('workspace_upgrade_status', { refresh: true }), error => name.endsWith('busy') ? error === 'refreshBusy' : error === 'Synthetic owner I/O failure');
-  assert.deepEqual(await invoke('workspace_upgrade_status'), before, 'failed owner refresh must retain cached transaction/history');
+  assert.deepEqual(structuredClone(window.__bridgeUpgradeStatus), before, 'rejection itself must not change the cached DTO');
+  const after = structuredClone(await invoke('workspace_upgrade_status'));
+  assert.deepEqual(after, { ...before, retainedAllocatedBytes: 1300000000 }, 'only the controlled rendered metadata acknowledgement changes; transaction/history and every other field stay exact');
+  assert.equal(Object.keys(after).sort().join(','), dtoKeys);
+  assert.deepEqual(structuredClone(await invoke('workspace_upgrade_status')), after, 'later cached reads retain the witness');
 }
 {
   const { invoke, window } = await upgradeFixture('upgrade-refresh-pending');
@@ -199,4 +204,83 @@ for (const state of ['refresh-busy', 'refresh-io']) {
   if (macRefresh[2] !== manualError) mismatches.push(`Mac ${state}: ${macRefresh[2]}`);
 }
 assert.deepEqual(mismatches, [], 'both native drivers must wait for the actual manual-check error');
+// Execute the actual busy capture gate against both cancellation capabilities.
+const busyCheck = captureUpgrade.slice(captureUpgrade.indexOf("      if (await evaluate('window.__bridgeUpgradeStatus.busy'))"), captureUpgrade.indexOf("      const calls = await evaluate('window.__bridgeUpgradeCalls')"));
+assert.ok(busyCheck, 'busy capture capability gate missing');
+async function checkBusy(canCancel, buttons) {
+  const window = { __bridgeUpgradeStatus: { busy: true, canCancel } };
+  const document = { querySelectorAll: () => buttons };
+  await vm.runInNewContext(`(async () => { ${busyCheck} })()`, {
+    name: canCancel ? 'upgrade-busy-cancel' : 'upgrade-busy-locked',
+    evaluate: async script => Function('window', 'document', `return ${script}`)(window, document),
+  });
+}
+await checkBusy(false, []);
+await checkBusy(true, [{ textContent: 'Cancel update', disabled: false }]);
+await assert.rejects(checkBusy(false, [{ textContent: 'Cancel update', disabled: false }]));
+await assert.rejects(checkBusy(false, [{ textContent: 'Cancel update', disabled: true }]));
+await assert.rejects(checkBusy(true, []));
+await assert.rejects(checkBusy(true, [{ textContent: 'Cancel update', disabled: true }]));
+await assert.rejects(checkBusy(true, [{ textContent: 'Cancel update', disabled: false }, { textContent: 'Restore previous workspace', disabled: false }]));
+// A request observed before React commits must not satisfy the rendered witness wait.
+const refreshCheck = captureUpgrade.slice(captureUpgrade.indexOf("      if (name.startsWith('upgrade-refresh-'))"), captureUpgrade.indexOf("      if (name.startsWith('upgrade-cancel-'))"));
+async function checkRenderedRefresh(keepError, falseFreshness) {
+  let text = 'Retained workspace: 1.2 GB allocated.';
+  let committed = false;
+  const run = vm.runInNewContext(`(async () => { ${refreshCheck} })()`, {
+    name: 'upgrade-refresh-busy', JSON,
+    Event: class {}, window: {},
+    clickAction: async () => { text += manualError; },
+    evaluate: async script => Function('document', 'window', 'Event', `return ${script}`)(
+      { querySelector: () => ({ innerText: text }) }, { dispatchEvent() {} }, class {}),
+    until: async (predicate, label) => {
+      if (label === 'rendered cached metadata after refresh failure') {
+        assert.equal(await predicate(), false, 'a request/error without the new DTO rendered cannot pass');
+        text = 'Retained workspace: 1.3 GB allocated.' + (keepError ? manualError : '') + (falseFreshness ? 'Workspace files checked on request.' : '');
+        committed = true;
+      }
+      assert.equal(await predicate(), true, label);
+    },
+  });
+  await run;
+  assert.equal(committed, true, 'consumer must wait for the rendered cached DTO, not request count');
+}
+await checkRenderedRefresh(true, false);
+await assert.rejects(checkRenderedRefresh(false, false), /erased manual refresh error/);
+await assert.rejects(checkRenderedRefresh(true, true), /claimed owner freshness/);
+const upgradeView = await read('../app/src/setup/Upgrade.tsx');
+const savedConnectionCopy = upgradeView.match(/<p>(A saved connection can be reused[^<]+)<\/p>/)?.[1];
+assert.ok(savedConnectionCopy, 'read actual saved-connection copy from the renderer');
+assert.ok(mac.includes(`waitForNativeText(["${savedConnectionCopy}"])`), 'eligible-credential must wait for actual saved-connection copy');
+assert.ok(mac.includes(`!nativeTextExists("${savedConnectionCopy}")`), 'eligible-absent must reject saved-connection copy');
+assert.ok(fixtureSource.includes('match upgrade_refresh_bytes(key, refresh, &mut ack.1)'), 'Mac IPC must use the executable producer');
+// Compile and execute the real dependency-free Mac fixture metadata producer.
+// This is not a native renderer/SDK run: it checks rejection/read ordering only.
+const witnessProducer = fixtureSource.match(/fn upgrade_refresh_bytes\([\s\S]*?\n\}/)?.[0];
+assert.ok(witnessProducer, 'Mac fixture needs an executable next-cache metadata producer');
+const { execFileSync } = await import('node:child_process');
+const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+const { tmpdir } = await import('node:os');
+const { join } = await import('node:path');
+const scratch = await mkdtemp(join(tmpdir(), 'bridge-witness-'));
+const executable = join(scratch, process.platform === 'win32' ? 'witness.exe' : 'witness');
+try {
+  const main = `${witnessProducer}\nfn main() {
+    for (key, error) in [("refresh-busy", "refreshBusy"), ("refresh-io", "Synthetic owner I/O failure")] {
+      let mut failed = false;
+      let before = upgrade_refresh_bytes(key, false, &mut failed).unwrap();
+      assert_eq!(before, 1200000000);
+      assert_eq!(upgrade_refresh_bytes(key, true, &mut failed), Err(error));
+      assert_eq!(before, 1200000000); // rejected request returned no replacement DTO
+      assert_eq!(upgrade_refresh_bytes(key, false, &mut failed), Ok(1300000000));
+      assert_eq!(upgrade_refresh_bytes(key, false, &mut failed), Ok(1300000000));
+    }
+    let mut failed = false;
+    assert_eq!(upgrade_refresh_bytes("refresh-pending", true, &mut failed), Ok(1200000000));
+    assert!(!failed);
+  }`;
+  await writeFile(`${scratch}/main.rs`, main);
+  execFileSync('rustc', ['--edition=2021', `${scratch}/main.rs`, '-o', executable]);
+  execFileSync(executable);
+} finally { await rm(scratch, { recursive: true, force: true }); }
 console.log('PASS native workspace driver contracts: returning intent, explicit states, Quit IPC, presentation gates, idle Close and exact Upgrade wire/refresh/cancel transitions');

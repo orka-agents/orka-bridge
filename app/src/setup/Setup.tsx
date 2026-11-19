@@ -71,6 +71,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const notice: UpgradeNotice | undefined = upgradeObservation.pending ? 'checking' : occupied ? 'busy' : !upgradeKnown && (status?.workspaceReplaced || !!upgrade && upgrade.state !== 'none' || firstTestPending()) ? 'unknown' : recoveryOnly ? 'recovery' : upgrade?.state === 'eligible' ? 'required' : upgrade?.error ? 'error' : undefined;
   const reportedUpgrade = useRef(false);
   const [setupError, setError] = useState<string>();
+  const retryUpgradeStatus = !setupError && status?.selected === null && !status.workspaceReplaced;
   const error = setupError ?? (status?.workspaceReplaced ? upgradeError : undefined);
   const [busy, setBusy] = useState(true);
   const [sending, setSending] = useState(false);
@@ -106,6 +107,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const shownPayoff = useRef(false);
   const [providerChange, setProviderChange] = useState(0);
   const view = panel ?? (status?.selected === 'localVm' && status.localVm !== 'ready' ? 'local' : 'places');
+  const displayError = error ?? (view === 'local' && retryUpgradeStatus ? upgradeError : undefined);
   useEffect(() => {
     if (!panel && status?.selected === 'localVm' && status.localVm !== 'ready') setPanel('local');
   }, [panel, status?.selected, status?.localVm]);
@@ -372,9 +374,9 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     </div>
     {entry && <ClusterCard active={active && view === 'cluster'} entry={entry} selection={currentPlace} onPlace={publishPlace} onContextName={setClusterName} onOpenAgent={onOpenAgent ?? onOpenExample} onDone={back} onRemoved={removed} />}
     {!upgradePanel && <UpgradeObservation observation={upgradeObservation} />}
-    {error && <div role="alert"><p>{error}</p>
+    {displayError && <div role="alert"><p>{displayError}</p>
       <Button type="button" kind="secondary" className="action-spaced" disabled={busy || upgradeObservation.pending}
-        onClick={() => { if (setupError) setSetupCheck(value => value + 1); else void checkWorkspace(); }}>Check again</Button>
+        onClick={() => { if (setupError) setSetupCheck(value => value + 1); else if (retryUpgradeStatus) setUpgradeCheck(value => value + 1); else void checkWorkspace(); }}>{retryUpgradeStatus ? 'Retry workspace status' : 'Check again'}</Button>
     </div>}
     {!error && !upgradePanel && upgradeObservation.error && <Button type="button" kind="secondary" disabled={upgradeObservation.pending} onClick={() => { void checkWorkspace(); }}>Check again</Button>}
   </div>;

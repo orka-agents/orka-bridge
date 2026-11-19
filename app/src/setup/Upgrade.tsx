@@ -33,7 +33,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
   const [working, setWorking] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [error, setError] = useState<string>();
-  const [outcome, setOutcome] = useState<string>();
+  const [outcome, setOutcome] = useState<{ transaction: string | null; message: string }>();
   const [cancelAcknowledgement, setCancelAcknowledgement] = useState<string>();
   const trigger = useRef<HTMLButtonElement>(null);
   const restoreFocus = useRef(false);
@@ -50,17 +50,28 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     }
     observedTransaction.current = s.transaction;
   }, [s.transaction, s.busy, s.canCancel]);
-  const confirmation = confirm?.transaction === s.transaction && confirm.state === s.state ? confirm : undefined;
-  useEffect(() => { setConfirm(value => value?.transaction === s.transaction && value.state === s.state ? value : undefined); }, [s.transaction, s.state]);
+  const ready = s.state === 'fresh' || s.state === 'consumed';
+  function actionAvailable(action: Exclude<UpgradeAction, 'status' | 'refresh' | 'cancel'>) {
+    if (action === 'replace' || action === 'retry') return s.canReplace;
+    if (action === 'restore') return s.canRestore;
+    return ready && !!s.transaction && canUseCredential && (action === 'transfer' ? s.credential === 'eligible' : ['eligible', 'attention', 'transferred'].includes(s.credential));
+  }
+  const confirmation = confirm?.transaction === s.transaction && confirm.state === s.state && actionAvailable(confirm.action) ? confirm : undefined;
+  useEffect(() => {
+    if (confirm && !confirmation) { restoreFocus.current = true; setConfirm(undefined); }
+  }, [confirm, confirmation]);
   useEffect(() => {
     if (confirmation) cancel.current?.focus();
-    else if (restoreFocus.current) { restoreFocus.current = false; trigger.current?.focus(); }
+    else if (restoreFocus.current) {
+      restoreFocus.current = false;
+      (trigger.current?.isConnected && !trigger.current.disabled ? trigger.current : announcement.current)?.focus();
+    }
   }, [confirmation]);
   const busy = s.busy || working;
   const blocked = !!disabled || busy || !!observation?.pending;
   const source = s.sourceReleases.length ? `Bridge ${s.sourceReleases.join(' or ')}` : 'the matching Bridge version';
   const date = s.createdAt === null ? '' : ` from ${new Date(s.createdAt * 1000).toLocaleDateString()}`;
-  const ready = s.state === 'fresh' || s.state === 'consumed';
+  const finalOutcome = outcome?.transaction === s.transaction ? outcome.message : undefined;
   const retry = ['sourceSelected', 'sourceRetained', 'incomplete'].includes(s.state);
   function ask(action: 'replace' | 'restore' | 'remove', button: HTMLButtonElement) { trigger.current = button; setConfirm({ action, transaction: s.transaction, state: s.state }); }
   function dismiss() { restoreFocus.current = true; setConfirm(undefined); }
@@ -79,7 +90,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     } finally { setCancelling(false); }
   }
   async function act(action: Exclude<UpgradeAction, 'status' | 'refresh' | 'cancel'>) {
-    if (mutation.current || disabled || s.busy || (!canUseCredential && (action === 'transfer' || action === 'remove'))) return;
+    if (mutation.current || disabled || s.busy || !actionAvailable(action)) return;
     ++operationEpoch.current;
     mutation.current = true; setWorking(true); setError(undefined); setOutcome(undefined); setCancelAcknowledgement(undefined);
     // Retire before invoking native mutation, not after a possibly lost reply.
@@ -87,7 +98,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     try {
       const result = await upgradeCall(action, ['retry', 'restore', 'transfer', 'remove'].includes(action) ? s.transaction ?? undefined : undefined);
       if (result.ok) {
-        if ('outcome' in result && result.outcome === 'cancelled') setOutcome('Update cancelled. Your retained workspace is kept. Check again before continuing.');
+        if ('outcome' in result && result.outcome === 'cancelled') setOutcome({ transaction: result.status.transaction, message: 'Update cancelled. Your retained workspace is kept. Check again before continuing.' });
         onChange(result.status);
       } else setError(result.message);
     } finally { ++operationEpoch.current; setCancelAcknowledgement(undefined); mutation.current = false; setWorking(false); onBusy(false); announcement.current?.focus(); }
@@ -101,13 +112,14 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     : retry ? 'Workspace setup was interrupted. Choose Try setup again to continue. Reopen this version of Bridge if recovery is interrupted again.'
     : 'This version of Bridge needs a new workspace.';
   return <div className="workspace-upgrade">
-    <p ref={announcement} tabIndex={-1} role="status">{outcome ?? cancelAcknowledgement ?? line}</p>
+    <p ref={announcement} tabIndex={-1} role="status">{finalOutcome ?? cancelAcknowledgement ?? line}</p>
     {observation && <UpgradeObservation observation={observation} />}
     {(error || s.error) && <p role="alert">{s.error ? failures[s.error] : error}</p>}
     {!ready && !busy && <p>Your agent files, settings, remembered clusters and saved result summaries are kept. You can still edit files and use a team cluster.</p>}
     {s.retainedAllocatedBytes !== null && <p className="muted">Retained workspace: {formatRequirementGB(s.retainedAllocatedBytes)} allocated. {s.additionalBytes !== null ? `Up to ${formatRequirementGB(s.additionalBytes)} additional space before checking cached files.` : 'Additional space could not be measured yet.'}</p>}
+    {s.credential === 'eligible' && (s.state === 'eligible' || ready) && <p>A saved connection can be reused without connecting automatically.</p>}
     {ready && <>
-      {s.credential === 'eligible' && <><p>A saved connection can be reused without connecting automatically.</p>{!confirmation && <Button type="button" kind="primary" disabled={blocked || !canUseCredential} title={!canUseCredential ? 'Start the workspace before changing its saved connection' : undefined} onClick={() => { void act('transfer'); }}>Use saved connection</Button>}</>}
+      {s.credential === 'eligible' && !confirmation && <Button type="button" kind="primary" disabled={blocked || !canUseCredential} title={!canUseCredential ? 'Start the workspace before changing its saved connection' : undefined} onClick={() => { void act('transfer'); }}>Use saved connection</Button>}
       {s.credential === 'attention' && <p>The saved connection needs attention. Remove it explicitly before entering another sign-in or key.</p>}
       {s.credential === 'transferred' && <p>Saved connection ready. Use Connect in the AI card; no test or chat will run automatically.</p>}
       {(s.credential === 'absent' || s.credential === 'removed') && <p>Enter a new sign-in or key in the AI card, then choose Connect.</p>}
@@ -131,7 +143,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
       {s.canRestore && <Button type="button" kind="secondary" disabled={blocked} onClick={event => ask('restore', event.currentTarget)}>Restore previous workspace</Button>}
       {ready && s.transaction && ['eligible', 'attention', 'transferred'].includes(s.credential) && <Button type="button" kind="quiet" className="button-danger" disabled={blocked || !canUseCredential} title={!canUseCredential ? 'Start the workspace before changing its saved connection' : undefined} onClick={event => ask('remove', event.currentTarget)}>Remove saved connection</Button>}
       {s.canCancel && <Button type="button" kind="secondary" disabled={cancelling} onClick={() => { void cancelUpdate(); }}>Cancel update</Button>}
-      {!busy && (s.state === 'conflict' || s.error || error || outcome || observation?.error) && <Button type="button" kind="secondary" disabled={disabled || observation?.pending} onClick={() => { setError(undefined); onCheck(); }}>Check again</Button>}
+      {!busy && (s.state === 'conflict' || s.error || error || finalOutcome || observation?.error) && <Button type="button" kind="secondary" disabled={disabled || observation?.pending} onClick={() => { setError(undefined); onCheck(); }}>Check again</Button>}
     </div></div>
     <Disclosure label="Update details" open={details} controls="workspace-upgrade-details" onOpenChange={setDetails}>
       {details && <div id="workspace-upgrade-details"><p>Previous: {source}. New: Bridge {s.targetRelease ?? 'unknown'}.</p>

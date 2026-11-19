@@ -1,6 +1,6 @@
 import { openLocalSetup } from './test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
@@ -385,6 +385,49 @@ test('Check again observes status before any report even while the guarded sampl
   expect(screen.queryByRole('button', { name: 'Run tests' })).toBeNull();
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length).toBeGreaterThan(before));
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(0);
+});
+
+test('replacement cancels Check again polling and held replies cannot restart it after false or missing snapshots', async () => {
+  const { ipc, loseFileReads } = native();
+  localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  const user = await completeSetup(); loseFileReads();
+  await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
+  await screen.findByText('Your agent folder could not be opened. Open it again from Designer.');
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  const original = ipc.getMockImplementation()!;
+  let hold = false; let replaced: boolean | undefined = false; let missing = false;
+  let finish!: (value: unknown) => void;
+  ipc.mockImplementation((command, args) => {
+    if (command === 'setup_status') {
+      if (missing) throw Error('Lost setup observation');
+      return { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: replaced };
+    }
+    if (command === 'agent_run_status') return hold ? new Promise(resolve => { finish = resolve; }) : idle;
+    return original(command, args);
+  });
+  const calls = () => ipc.mock.calls.filter(([c]) => c === 'agent_run_status').length;
+  try {
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Check again' })); });
+    const before = calls();
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(calls()).toBeGreaterThan(before);
+    hold = true;
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+    expect(finish).toBeTypeOf('function');
+    replaced = true;
+    await act(async () => { fireEvent(window, new Event('focus')); });
+    const stopped = calls();
+    await act(async () => { finish(idle); await vi.advanceTimersByTimeAsync(500); });
+    expect(calls()).toBe(stopped);
+    replaced = false;
+    await act(async () => { fireEvent(window, new Event('focus')); await vi.advanceTimersByTimeAsync(500); });
+    expect(calls()).toBe(stopped);
+    missing = true;
+    await act(async () => { fireEvent(window, new Event('focus')); await vi.advanceTimersByTimeAsync(500); });
+    expect(calls()).toBe(stopped);
+    expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(0);
+  } finally { vi.useRealTimers(); }
 });
 
 test('Run it again hands an unsaved sample to the existing disabled Designer Run', async () => {

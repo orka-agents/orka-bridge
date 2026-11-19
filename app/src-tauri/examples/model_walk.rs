@@ -213,6 +213,26 @@ fn fixture_recovery(stage: Option<&str>) -> serde_json::Value {
 // mutation. `key` is the BRIDGE_SETUP_PROGRESS content with its "upgrade-" prefix
 // (and, for the returning-workspace variant, its "-manage" suffix) stripped.
 #[cfg(all(target_os = "macos", feature = "custom-protocol"))]
+// Finite fixture-only metadata acknowledgement: rejection returns no new DTO;
+// only a subsequent cached read exposes changed bytes, never repaired I/O/history.
+fn upgrade_refresh_bytes(key: &str, refresh: bool, failed: &mut bool) -> Result<i64, &'static str> {
+    let rejection = matches!(key, "refresh-busy" | "refresh-io");
+    if refresh && rejection {
+        *failed = true;
+        return Err(if key == "refresh-busy" {
+            "refreshBusy"
+        } else {
+            "Synthetic owner I/O failure"
+        });
+    }
+    Ok(if !refresh && rejection && *failed {
+        1300000000
+    } else {
+        1200000000
+    })
+}
+
+#[cfg(all(target_os = "macos", feature = "custom-protocol"))]
 fn upgrade_status(key: &str) -> serde_json::Value {
     use serde_json::json;
     let transaction = "40000000-0000-4000-8000-000000000004";
@@ -989,9 +1009,12 @@ fn main() {
                     match command {
                         "workspace_upgrade_status" => {
                             let refresh = matches!(invoke.message.payload(), tauri::ipc::InvokeBody::Json(args) if args["refresh"] == true);
-                            if refresh && matches!(key, "refresh-busy" | "refresh-io") {
-                                invoke.resolver.reject(if key == "refresh-busy" { "refreshBusy" } else { "Synthetic owner I/O failure" });
-                                return true;
+                            match upgrade_refresh_bytes(key, refresh, &mut ack.1) {
+                                Ok(bytes) => status["retainedAllocatedBytes"] = json!(bytes),
+                                Err(error) => {
+                                    invoke.resolver.reject(error);
+                                    return true;
+                                }
                             }
                             if refresh && key == "refresh-pending" {
                                 let selector = setup_progress.clone();

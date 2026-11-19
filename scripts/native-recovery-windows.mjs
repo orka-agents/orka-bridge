@@ -1774,6 +1774,7 @@ try {
       await evaluate(`(() => {
         window.__bridgeUpgradeCalls = [];
         window.__bridgeUpgradeShown = true;
+        window.__bridgeUpgradeRefreshFailed = false;
         window.__bridgeUpgradeVm = ${JSON.stringify(localVm)};
         window.__bridgeUpgradeStatus = ${JSON.stringify(status)};
         localStorage.setItem('bridge.welcomeSeen.v1', '1');
@@ -1784,11 +1785,18 @@ try {
           window.__bridgeUpgradeCalls.push({ command, args: args ?? null });
           if (command === 'workspace_upgrade_status') {
             if (args?.refresh === true) {
-              if (${JSON.stringify(name)} === 'upgrade-refresh-busy') throw 'refreshBusy';
-              if (${JSON.stringify(name)} === 'upgrade-refresh-io') throw 'Synthetic owner I/O failure';
+              if (['upgrade-refresh-busy', 'upgrade-refresh-io'].includes(${JSON.stringify(name)})) {
+                window.__bridgeUpgradeRefreshFailed = true;
+                throw ${JSON.stringify(name)} === 'upgrade-refresh-busy' ? 'refreshBusy' : 'Synthetic owner I/O failure';
+              }
               if (${JSON.stringify(name)} === 'upgrade-refresh-pending') return new Promise(resolve => {
                 window.__bridgeFinishUpgradeRefresh = () => resolve(window.__bridgeUpgradeStatus);
               });
+            }
+            // Controlled metadata acknowledgement of the NEXT cached read, not I/O repair.
+            // Rejection itself leaves the original DTO and transaction/history untouched.
+            if (args?.refresh !== true && window.__bridgeUpgradeRefreshFailed) {
+              window.__bridgeUpgradeStatus = { ...window.__bridgeUpgradeStatus, retainedAllocatedBytes: 1300000000 };
             }
             return window.__bridgeUpgradeShown ? window.__bridgeUpgradeStatus : ${JSON.stringify({ ...base, state: 'none' })};
           }
@@ -1834,10 +1842,10 @@ try {
         const refreshedText = name === 'upgrade-refresh-pending' ? 'Checking workspace' : 'Could not check workspace files. They may still be in use or unavailable. Check again before continuing.';
         await until(() => evaluate(`document.querySelector('.workspace-upgrade').innerText.includes(${JSON.stringify(refreshedText)})`), name + ' manual refresh result');
         if (name !== 'upgrade-refresh-pending') {
-          const before = await evaluate('window.__bridgeUpgradeCalls.filter(c => c.command === "workspace_upgrade_status" && !c.args?.refresh).length');
           await evaluate('window.dispatchEvent(new Event("focus"))');
-          await until(() => evaluate(`window.__bridgeUpgradeCalls.filter(c => c.command === 'workspace_upgrade_status' && !c.args?.refresh).length > ${before}`), 'cached observation after refresh failure');
+          await until(() => evaluate(`document.querySelector('.workspace-upgrade').innerText.includes('Retained workspace: 1.3 GB allocated.')`), 'rendered cached metadata after refresh failure');
           if (!await evaluate(`document.querySelector('.workspace-upgrade').innerText.includes(${JSON.stringify(refreshedText)})`)) throw Error(name + ': cached poll erased manual refresh error');
+          if (await evaluate(`document.querySelector('.workspace-upgrade').innerText.includes('Workspace files checked on request.')`)) throw Error(name + ': cached observation claimed owner freshness');
         }
       }
       if (name.startsWith('upgrade-cancel-')) {
@@ -1892,6 +1900,9 @@ try {
         }
       }
       if (await evaluate('window.__bridgeUpgradeStatus.busy')) {
+        const cancellationAllowed = await evaluate('window.__bridgeUpgradeStatus.canCancel');
+        const cancellation = await evaluate(`[...document.querySelectorAll('.workspace-upgrade button')].filter(b => b.textContent === 'Cancel update').map(b => !b.disabled)`);
+        if (cancellationAllowed ? cancellation.length !== 1 || !cancellation[0] : cancellation.length !== 0) throw Error(`${name}: busy cancellation control must match canCancel exactly`);
         const live = await evaluate(`[...document.querySelectorAll('.workspace-upgrade button')].filter(b => b.textContent !== 'Cancel update' && !b.disabled).length`);
         if (live !== 0) throw Error(`${name}: busy must disable every ordinary mutation button except Cancel`);
       }

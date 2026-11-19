@@ -308,6 +308,25 @@ test('ordinary setup observation retry does not retire pending first-test intent
   expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run'].includes(c))).toEqual([]);
 });
 
+test.each(['none', 'eligible'] as const)('unselected upgrade observation failure offers cached retry and admits only known none (%s)', async state => {
+  const pending = deferred<unknown>(); let reads = 0;
+  const ipc = fixture(() => ++reads === 1 ? pending.promise : { ...eligible, state, canReplace: state === 'eligible' }, 'idle', false);
+  const original = ipc.getMockImplementation()!;
+  ipc.mockImplementation((command, args) => command === 'setup_status'
+    ? { selected: null, localVm: 'idle', model: 'locked' } : original(command, args));
+  render(<Setup onOpenExample={() => {}} />); await openLocalSetup();
+  expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(true);
+  await act(async () => { pending.resolve(null); });
+  await screen.findByText('Workspace update information is unavailable. Check again before changing your workspace.');
+  fireEvent.click(screen.getByRole('button', { name: 'Retry workspace status' }));
+  await waitFor(() => expect(reads).toBeGreaterThan(1));
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Continue' }).matches(':disabled')).toBe(state !== 'none'));
+  if (state === 'eligible') expect(screen.getByRole('button', { name: 'Set up new workspace' })).toBeTruthy();
+  expect(screen.queryByText('Workspace files checked on request.')).toBeNull();
+  expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && isRefresh(a))).toEqual([]);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run'].includes(c))).toEqual([]);
+});
+
 test('a busy noncancellable cached observation after reload is not a replacement or a manual check', async () => {
   fixture(() => ({ ...current, busy: true, canCancel: false }));
   render(<App />); await openLocalSetup();

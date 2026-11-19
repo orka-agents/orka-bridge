@@ -116,6 +116,7 @@ export default function App() {
   const [sampleResult, setSampleResult] = useState<{ snapshot?: RunSnapshot }>();
   const [firstPass, setFirstPass] = useState<RunSnapshot>();
   const replacementObserved = useRef(false);
+  const [sampleRetired, setSampleRetired] = useState(false);
   // null records an unsuccessful sample open; a retained run report cannot prove its files readable.
   const [sampleSource, setSampleSource] = useState<SourceId | null>();
   const [sampleStale, setSampleStale] = useState(false);
@@ -130,7 +131,7 @@ export default function App() {
   const sampleObserved = sampleResult !== undefined;
   const [sampleCheck, setSampleCheck] = useState(0);
   useEffect(() => {
-    if (!sampleObserved && sampleCheck === 0) return;
+    if (sampleRetired || !sampleObserved && sampleCheck === 0) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const observe = async () => {
@@ -141,7 +142,7 @@ export default function App() {
     };
     void observe();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [sampleObserved, sampleCheck, observeSampleRun]);
+  }, [sampleObserved, sampleCheck, observeSampleRun, sampleRetired]);
   const nativeConnection = useRef<boolean | undefined>(undefined);
   const observeRun = useCallback((snapshot: RunSnapshot | undefined, id: string) => {
     if (nativeConnection.current !== snapshot?.modelConnected) { nativeConnection.current = snapshot?.modelConnected; setCatalogEpoch(epoch => epoch + 1); }
@@ -164,6 +165,7 @@ export default function App() {
       setFirstPass(undefined);
       if (!replacementObserved.current) { setSampleResult(undefined); setSampleStale(false); }
       replacementObserved.current = true;
+      setSampleRetired(true);
     }
     if (status && replacementObserved.current) status = { ...status, workspaceReplaced: true };
     setSetup(status); setChecking(false);

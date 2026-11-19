@@ -14,6 +14,12 @@ function mount(status = eligible) {
   const view = render(<Upgrade status={status} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   return { ...view, ipc, onChange, onBusy };
 }
+test.each(['eligible', 'absent'] as const)('eligible workspace shows saved-connection copy only for an %s credential', credential => {
+  const { ipc } = mount({ ...eligible, credential });
+  expect(!!screen.queryByText('A saved connection can be reused without connecting automatically.')).toBe(credential === 'eligible');
+  expect(screen.queryByRole('button', { name: 'Use saved connection' })).toBeNull();
+  expect(ipc).not.toHaveBeenCalled();
+});
 test('transaction witness is one text run for the native accessibility phase acknowledgement', () => {
   const { container, ipc } = mount({ ...fresh, state: 'sourceRetained', transaction: '40000000-0000-4000-8000-000000000005', canReplace: true });
   fireEvent.click(screen.getByText('Update details'));
@@ -135,16 +141,18 @@ test.each(['requested', 'completed', 'notCancellable'] as const)('cancel %s is a
   expect(onBusy.mock.calls).toEqual([[true]]);
   expect(onChange).not.toHaveBeenCalled();
   expect(screen.queryByText(/New workspace selected|Connected/)).toBeNull();
-  expect(ipc.mock.calls.map(([c]) => c)).not.toContain('workspace_upgrade_refresh');
+  expect(ipc.mock.calls).not.toContainEqual(['workspace_upgrade_status', expect.objectContaining({ refresh: true })]);
   expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_connect_model', 'agent_run', 'agent_chat_start'].includes(c))).toEqual([]);
   await act(async () => { finish({ outcome: 'cancelled', status: { ...fresh, state: 'incomplete', canReplace: true } }); });
   await waitFor(() => expect(onBusy.mock.calls).toEqual([[true], [false]]));
 });
 test.each(['replace', 'retry'] as const)('forward %s cancellation is not reported as completion or connection', async action => {
-  const { ipc, onChange } = mount(action === 'retry' ? { ...fresh, state: 'incomplete', canReplace: true } : eligible);
+  const { ipc, onChange, onBusy, rerender } = mount(action === 'retry' ? { ...fresh, state: 'incomplete', canReplace: true } : eligible);
   ipc.mockReturnValue({ outcome: 'cancelled', status: { ...fresh, state: 'incomplete', canReplace: true } });
   fireEvent.click(screen.getByRole('button', { name: action === 'retry' ? 'Try setup again' : 'Set up new workspace' }));
   fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
+  await waitFor(() => expect(onChange).toHaveBeenCalled());
+  rerender(<Upgrade status={{ ...fresh, state: 'incomplete', canReplace: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   await screen.findByText(/Update cancelled/);
   expect(onChange).toHaveBeenCalledWith({ ...fresh, state: 'incomplete', canReplace: true });
   expect(screen.queryByText(/New workspace selected|Connected/)).toBeNull();
@@ -159,6 +167,7 @@ test('a late cancellation acknowledgement cannot replace the final forward outco
   rerender(<Upgrade status={{ ...eligible, busy: true, canCancel: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: 'Cancel update' }));
   await act(async () => { finish({ outcome: 'cancelled', status: { ...fresh, state: 'incomplete', canReplace: true } }); });
+  rerender(<Upgrade status={{ ...fresh, state: 'incomplete', canReplace: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   await screen.findByText(/Update cancelled/);
   await act(async () => { acknowledge('requested'); });
   expect(screen.queryByText(/Cancellation requested/)).toBeNull();
@@ -215,6 +224,7 @@ test('a terminal cache observation cannot release an outstanding local forward c
   expect(screen.getByRole('button', { name: 'Use saved connection' }).matches(':disabled')).toBe(true);
   expect(onBusy.mock.calls).toEqual([[true]]);
   await act(async () => { finish({ outcome: 'cancelled', status: { ...fresh, state: 'incomplete', canReplace: true } }); });
+  rerender(<Upgrade status={{ ...fresh, state: 'incomplete', canReplace: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   await screen.findByText(/Update cancelled/);
   expect(onBusy.mock.calls).toEqual([[true], [false]]);
 });
@@ -224,8 +234,10 @@ test('forward final cancellation survives terminal and same-transaction observat
   ipc.mockReturnValue({ outcome: 'cancelled', status: { ...fresh, state: 'incomplete', canReplace: true } });
   fireEvent.click(screen.getByRole('button', { name: 'Set up new workspace' }));
   fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
-  await screen.findByText(/Update cancelled/);
+  await waitFor(() => expect(onChange).toHaveBeenCalled());
   rerender(<Upgrade status={{ ...fresh, state: 'incomplete', canReplace: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
+  expect(screen.getByText(/Update cancelled/)).toBeTruthy();
+  rerender(<Upgrade status={fresh} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   expect(screen.getByText(/Update cancelled/)).toBeTruthy();
   expect(onBusy.mock.calls).toEqual([[true], [false]]);
 });
@@ -280,6 +292,63 @@ test.each(['network', 'noSpace', 'stopUnconfirmed', 'integrity'] as const)('fini
   const { ipc } = mount({ ...eligible, error });
   expect(screen.getByRole('alert').textContent).toBeTruthy();
   expect(ipc).not.toHaveBeenCalled();
+});
+test.each([
+  ['replace', eligible, { canReplace: false }, 'Set up new workspace', 'Keep old workspace and set up new'],
+  ['retry', { ...fresh, state: 'incomplete', canReplace: true }, { canReplace: false }, 'Try setup again', 'Keep old workspace and set up new'],
+  ['restore', fresh, { canRestore: false }, 'Restore previous workspace', 'Restore this workspace'],
+  ['remove absent', fresh, { credential: 'absent' }, 'Remove saved connection', 'Remove for all retained workspaces'],
+  ['remove removed', fresh, { credential: 'removed' }, 'Remove saved connection', 'Remove for all retained workspaces'],
+] as const)('%s confirmation expires when its native capability is withdrawn', (_action, status, withdrawal, label, submitLabel) => {
+  const { rerender, onChange, onBusy, ipc } = mount(status);
+  fireEvent.click(screen.getByRole('button', { name: label }));
+  const submit = screen.getByRole('button', { name: submitLabel });
+  rerender(<Upgrade status={{ ...status, ...withdrawal }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
+  expect(screen.queryByRole('group', { name: /workspace\?|connection\?/ })).toBeNull();
+  fireEvent.click(submit);
+  expect(ipc).not.toHaveBeenCalled(); expect(onBusy).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(screen.getByRole('status'));
+});
+test('removal confirmation expires when credential use is withdrawn and returns focus to status', () => {
+  const { rerender, onChange, onBusy, ipc } = mount(fresh);
+  fireEvent.click(screen.getByRole('button', { name: 'Remove saved connection' }));
+  const submit = screen.getByRole('button', { name: 'Remove for all retained workspaces' });
+  rerender(<Upgrade status={fresh} canUseCredential={false} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
+  expect(screen.queryByRole('group', { name: 'Remove saved connection?' })).toBeNull();
+  fireEvent.click(submit); expect(ipc).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(screen.getByRole('status'));
+});
+test.each([
+  [{ ...fresh, state: 'incomplete', canReplace: true }, 'Try setup again'],
+  [fresh, 'Restore previous workspace'],
+  [fresh, 'Remove saved connection'],
+] as const)('a same-transaction observation preserves a still-valid %s confirmation', (status, label) => {
+  const { rerender, onChange, onBusy, ipc } = mount(status);
+  fireEvent.click(screen.getByRole('button', { name: label }));
+  const confirm = screen.getByRole('group', { name: /workspace\?|connection\?/ });
+  const cancel = within(confirm).getByRole('button', { name: 'Not now' });
+  rerender(<Upgrade status={{ ...status, additionalBytes: 3000000000 }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
+  expect(screen.getByRole('group', { name: /workspace\?|connection\?/ })).toBe(confirm); expect(document.activeElement).toBe(cancel);
+  expect(ipc).not.toHaveBeenCalled();
+});
+test('forward cancellation belongs to its reply transaction, survives terminal polls, and does not mask another transaction', async () => {
+  const { rerender, onChange, onBusy, ipc } = mount();
+  const cancelled: UpgradeStatus = { ...fresh, state: 'incomplete', canReplace: true };
+  ipc.mockReturnValue({ outcome: 'cancelled', status: cancelled });
+  fireEvent.click(screen.getByRole('button', { name: 'Set up new workspace' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
+  await waitFor(() => expect(onChange).toHaveBeenCalledWith(cancelled));
+  // The reply may arrive before the parent adopts its transaction.
+  expect(screen.queryByText(/Update cancelled/)).toBeNull();
+  const show = (status: UpgradeStatus) => rerender(<Upgrade status={status} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
+  show(cancelled); expect(screen.getByText(/Update cancelled/)).toBeTruthy();
+  show({ ...cancelled }); expect(screen.getByText(/Update cancelled/)).toBeTruthy();
+  show({ ...fresh }); expect(screen.getByText(/Update cancelled/)).toBeTruthy();
+  show({ ...cancelled, transaction: '20000000-0000-4000-8000-000000000002' });
+  expect(screen.queryByText(/Update cancelled/)).toBeNull();
+  expect(screen.getByRole('status').textContent).toContain('Choose Try setup again');
+  expect(ipc).toHaveBeenCalledExactlyOnceWith('workspace_upgrade_replace', {});
+  expect(onBusy.mock.calls).toEqual([[true], [false]]);
 });
 test('a changed transaction dismisses a stale confirmation rather than restoring another pair', () => {
   const { rerender, onChange, onBusy, ipc } = mount(fresh);

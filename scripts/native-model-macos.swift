@@ -1699,6 +1699,9 @@ func captureUpgradeMatrix(manage: Bool) throws {
         if manage && index == 0 { waitForButton("Manage"); click("Manage", []) }
         waitForNativeText([expected])
         waitForNativeText([manage ? "Agents" : "Where agents run"])
+        if state == "eligible-credential" {
+            waitForNativeText(["A saved connection can be reused without connecting automatically."])
+        }
         if state == "sourceRetained" {
             // Identical recovery prose cannot prove this scene reached React.
             // Observe its synthetic transaction in real rendered native details.
@@ -1715,6 +1718,11 @@ func captureUpgradeMatrix(manage: Bool) throws {
         for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("compact", CGFloat(540), CGFloat(900))] {
             localSize(width, height); scroll(4000)
             _ = try seek(expected, -100)
+            if state == "eligible-absent" {
+                require(!nativeTextExists("A saved connection can be reused without connecting automatically."), "Absent credential must not show saved-connection copy")
+            } else if state == "eligible-credential" {
+                require(nativeTextExists("A saved connection can be reused without connecting automatically."), "Eligible credential must show saved-connection copy")
+            }
             _ = try capture("local-upgrade-\(manage ? "manage" : "setup")-\(state)-\(size)", [expected])
             if state == "busy" {
                 require(enabledButton("Cancel update") != nil, "An update must remain cancellable")
@@ -1847,15 +1855,18 @@ for state in ["refresh-pending", "refresh-busy", "refresh-io", "cancel-requested
     var expected = state == "incomplete-forced" ? "forcibly stopped" : state == "busy-locked" ? "The workspace is busy. Your agent files are kept." : state.hasPrefix("cancel-") ? "Cancel update" : state == "forward-cancelled" ? "Try setup again" : "Check again"
     waitForNativeText([expected])
     if state.hasPrefix("refresh-") {
+        waitForNativeText(["Retained workspace: 1.2 GB allocated."])
         require(!nativeTextExists("Workspace files checked on request."), "Cached observation must not claim owner freshness")
         if state == "refresh-pending" { try integrationUpgradeShots("refresh-cached", "Check again") }
         press("Check again")
         expected = state == "refresh-pending" ? "Checking workspace" : "Could not check workspace files. They may still be in use or unavailable. Check again before continuing."
         waitForNativeText([expected])
         if state != "refresh-pending" {
-            // Periodic memory observation must not turn a failed owner query into success.
-            Thread.sleep(forTimeInterval: 1.2)
+            // Observe React committing the next cached DTO, not elapsed time or a request.
+            // Bytes are fixture metadata only; transaction/history and failed I/O stay unchanged.
+            waitForNativeText(["1.3 GB"])
             require(nativeTextExists(expected), "Cached observation erased manual refresh error")
+            require(!nativeTextExists("Workspace files checked on request."), "Cached observation must not claim owner freshness")
         }
     } else if state.hasPrefix("cancel-") {
         press("Cancel update")
