@@ -60,6 +60,13 @@ impl Wire {
         if let Some(hook) = self.before_upgrade.lock().unwrap().take() {
             hook();
         }
+        // The fixture's 5 s read bound is for one HTTP request. On a loaded runner the
+        // client can pause longer than that between two requests on one forward, which a
+        // kubelet's idle timeout (minutes to hours) would not end; keep only a backstop
+        // against a stream left open by a test.
+        stream
+            .set_read_timeout(Some(Duration::from_secs(120)))
+            .unwrap();
         write!(stream, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Protocol: v4.channel.k8s.io\r\n\r\n").unwrap();
         let mut ws = WebSocket::from_raw_socket(stream, Role::Server, None);
         self.active.fetch_add(1, Ordering::SeqCst);
