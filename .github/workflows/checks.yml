@@ -286,6 +286,10 @@ jobs:
         run: |
           bash ../scripts/build-vm-helper-macos.sh
           cargo +1.98.1 build --manifest-path src-tauri/Cargo.toml --locked --features custom-protocol --example model_walk
+      - name: Test Mac dark-mode helper
+        if: runner.os == 'macOS' && matrix.suite == 'lifecycle-fixtures'
+        timeout-minutes: 2
+        run: bash ../scripts/test-macos-dark-mode.sh
       - name: Mac integrated debug lifecycle walk (no VM)
         if: runner.os == 'macOS' && matrix.suite == 'lifecycle-fixtures'
         timeout-minutes: 6
@@ -297,12 +301,12 @@ jobs:
           BRIDGE_DEV_IMAGE_DIR="$(mktemp -d "$RUNNER_TEMP/lifecycle-empty.XXXXXX")"
           # Isolate native and WebKit preferences from the later release first-run walk.
           test ! -e "$HOME/Library/Application Support/ai.orka.bridge.lifecycle"
-          prior_dark="$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')"
+          prior_dark="$(bash ../scripts/macos-dark-mode.sh get)"
           prior_style="$(defaults read -g AppleInterfaceStyle 2>/dev/null || true)"
           prior_auto="$(defaults read -g AppleInterfaceStyleSwitchesAutomatically 2>/dev/null || true)"
           restore_lifecycle_theme() {
             local status=0
-            osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $prior_dark" || status=$?
+            bash ../scripts/macos-dark-mode.sh set "$prior_dark" || status=$?
             if [[ -n "$prior_style" ]]; then defaults write -g AppleInterfaceStyle -string "$prior_style" || status=$?
             else defaults delete -g AppleInterfaceStyle 2>/dev/null || true; fi
             if [[ -n "$prior_auto" ]]; then defaults write -g AppleInterfaceStyleSwitchesAutomatically -bool "$prior_auto" || status=$?
@@ -314,13 +318,13 @@ jobs:
           git rev-parse HEAD > native-lifecycle/head.txt
           theme="${{ matrix.theme }}"
           if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
-          osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
-          test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
+          bash ../scripts/macos-dark-mode.sh set "$dark"
+          test "$(bash ../scripts/macos-dark-mode.sh get)" = "$dark"
           swift ../scripts/native-lifecycle-macos.swift "native-lifecycle/$theme" "$bundle" "$theme"
       - name: Mac destination and workspace fixtures (no VM or credentials)
         if: runner.os == 'macOS' && matrix.suite == 'lifecycle-fixtures'
         run: |
-          prior_dark="$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')"
+          prior_dark="$(bash ../scripts/macos-dark-mode.sh get)"
           prior_style="$(defaults read -g AppleInterfaceStyle 2>/dev/null || true)"
           prior_auto="$(defaults read -g AppleInterfaceStyleSwitchesAutomatically 2>/dev/null || true)"
           prior="$(defaults read -g AppleKeyboardUIMode 2>/dev/null || true)"
@@ -328,7 +332,7 @@ jobs:
             local status=0
             if [[ -n "$prior" ]]; then defaults write -g AppleKeyboardUIMode -int "$prior" || status=$?
             else defaults delete -g AppleKeyboardUIMode 2>/dev/null || true; fi
-            osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $prior_dark" || status=$?
+            bash ../scripts/macos-dark-mode.sh set "$prior_dark" || status=$?
             if [[ -n "$prior_style" ]]; then defaults write -g AppleInterfaceStyle -string "$prior_style" || status=$?
             else defaults delete -g AppleInterfaceStyle 2>/dev/null || true; fi
             if [[ -n "$prior_auto" ]]; then defaults write -g AppleInterfaceStyleSwitchesAutomatically -bool "$prior_auto" || status=$?
@@ -342,13 +346,13 @@ jobs:
           mkdir -p "$scope_output"
           git rev-parse HEAD > "$scope_output/head.txt"
           if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
-          osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
-          test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
+          bash ../scripts/macos-dark-mode.sh set "$dark"
+          test "$(bash ../scripts/macos-dark-mode.sh get)" = "$dark"
           swift ../scripts/native-model-macos.swift "$scope_output" "$PWD/src-tauri/target/debug/examples/model_walk" "$theme" destinations-workspace
       - name: Mac native model renderer fixtures (no VM or credentials)
         if: runner.os == 'macOS' && matrix.suite == 'model-fixtures'
         run: |
-          prior_dark="$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')"
+          prior_dark="$(bash ../scripts/macos-dark-mode.sh get)"
           prior_style="$(defaults read -g AppleInterfaceStyle 2>/dev/null || true)"
           prior_auto="$(defaults read -g AppleInterfaceStyleSwitchesAutomatically 2>/dev/null || true)"
           prior="$(defaults read -g AppleKeyboardUIMode 2>/dev/null || true)"
@@ -356,7 +360,7 @@ jobs:
             local status=0
             if [[ -n "$prior" ]]; then defaults write -g AppleKeyboardUIMode -int "$prior" || status=$?
             else defaults delete -g AppleKeyboardUIMode 2>/dev/null || true; fi
-            osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $prior_dark" || status=$?
+            bash ../scripts/macos-dark-mode.sh set "$prior_dark" || status=$?
             if [[ -n "$prior_style" ]]; then defaults write -g AppleInterfaceStyle -string "$prior_style" || status=$?
             else defaults delete -g AppleInterfaceStyle 2>/dev/null || true; fi
             if [[ -n "$prior_auto" ]]; then defaults write -g AppleInterfaceStyleSwitchesAutomatically -bool "$prior_auto" || status=$?
@@ -369,8 +373,8 @@ jobs:
           git rev-parse HEAD > native-model/head.txt
           theme="${{ matrix.theme }}"
           if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
-          osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
-          test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
+          bash ../scripts/macos-dark-mode.sh set "$dark"
+          test "$(bash ../scripts/macos-dark-mode.sh get)" = "$dark"
           swift ../scripts/native-model-macos.swift "native-model/$theme" "$PWD/src-tauri/target/debug/examples/model_walk" "$theme" model
       - name: Mac app bundle and native walk
         if: runner.os == 'macOS' && matrix.suite == 'bundle'
@@ -388,7 +392,7 @@ jobs:
           cmp "$bundle/Contents/MacOS/orka-bridge" smoke-app/Bridge.app/Contents/MacOS/orka-bridge
           for notice in public/licenses/*.txt; do cmp "$notice" "smoke-app/Bridge.app/Contents/Resources/licenses/${notice##*/}"; done
           # The matrix covers both themes and keyboard navigation; restore preferences.
-          prior_dark="$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')"
+          prior_dark="$(bash ../scripts/macos-dark-mode.sh get)"
           prior_style="$(defaults read -g AppleInterfaceStyle 2>/dev/null || true)"
           prior_auto="$(defaults read -g AppleInterfaceStyleSwitchesAutomatically 2>/dev/null || true)"
           prior="$(defaults read -g AppleKeyboardUIMode 2>/dev/null || true)"
@@ -397,7 +401,7 @@ jobs:
             if [[ -n "$prior" ]]; then defaults write -g AppleKeyboardUIMode -int "$prior" || status=$?
             else defaults delete -g AppleKeyboardUIMode 2>/dev/null || true
             fi
-            osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $prior_dark" || status=$?
+            bash ../scripts/macos-dark-mode.sh set "$prior_dark" || status=$?
             if [[ -n "$prior_style" ]]; then defaults write -g AppleInterfaceStyle -string "$prior_style" || status=$?
             else defaults delete -g AppleInterfaceStyle 2>/dev/null || true
             fi
@@ -408,15 +412,15 @@ jobs:
           }
           python3 ../scripts/cluster-card-fixture.py "$RUNNER_TEMP/cluster-card-kubeconfig.json" &
           fixture_pid=$!
-          trap 'kill "$fixture_pid"; restore_preferences' EXIT
+          trap 'kill "$fixture_pid" 2>/dev/null || true; restore_preferences' EXIT
           for _ in {1..50}; do test -s "$RUNNER_TEMP/cluster-card-kubeconfig.json" && break; sleep 0.1; done
           test -s "$RUNNER_TEMP/cluster-card-kubeconfig.json"
           export BRIDGE_WALK_KUBECONFIG="$RUNNER_TEMP/cluster-card-kubeconfig.json"
           defaults write -g AppleKeyboardUIMode -int 3
           theme="${{ matrix.theme }}"
           if [[ "$theme" = dark ]]; then dark=true; else dark=false; fi
-          osascript -e "tell application \"System Events\" to tell appearance preferences to set dark mode to $dark"
-          test "$(osascript -e 'tell application "System Events" to tell appearance preferences to get dark mode')" = "$dark"
+          bash ../scripts/macos-dark-mode.sh set "$dark"
+          test "$(bash ../scripts/macos-dark-mode.sh get)" = "$dark"
           swift ../scripts/native-smoke.swift "native-walk/$theme" "$PWD/smoke-app/Bridge.app" "$theme"
       - name: Preserve native bundle cache
         if: (matrix.suite == 'bundle' || matrix.suite == 'lifecycle-fixtures' || matrix.suite == 'model-fixtures') && steps.rust-cache.outputs.cache-hit != 'true'
