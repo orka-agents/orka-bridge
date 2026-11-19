@@ -161,6 +161,18 @@ pub async fn read(vm: &impl LocalSessions) -> PlaceSessions {
     }
     view
 }
+/// Drop a result read on a boot that has since been replaced. A stop keeps the boot, so it keeps
+/// the rows; a new boot forgets it, so rows from the old one are never shown as current.
+pub fn recheck(vm: &impl LocalSessions, view: &mut PlaceSessions) {
+    let now = vm.last_boot().map(connection);
+    if view.connection.is_some() && view.connection != now {
+        view.state = "disconnected";
+        view.observed_at = None;
+        view.entries.clear();
+        view.unsupported = 0;
+        view.connection = now;
+    }
+}
 /// One Session's latest messages on this computer.
 pub async fn read_transcript(vm: &impl LocalSessions, name: &str) -> Transcript {
     let mut view = Transcript {

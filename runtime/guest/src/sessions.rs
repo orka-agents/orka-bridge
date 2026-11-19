@@ -11,6 +11,9 @@ const SESSION_REPLY: usize = MAX_FILE - 4096;
 const SHORT_TEXT: usize = 512;
 /// Tool calls named per message.
 const TOOL_CALLS: usize = 64;
+/// Stands in for a Session ID too long to keep. It fails `valid_session_name`, so the host
+/// counts the Session as one it can't open rather than failing the whole list.
+const LONG_NAME: &str = "-too-long";
 const LIST_KEYS: [&str; 7] = [
     "name",
     "namespace",
@@ -45,6 +48,13 @@ pub(super) fn list_body(page: &Value) -> io::Result<Value> {
             if let Some(value) = item.get(key).filter(|v| scalar(v)) {
                 kept.insert(key.into(), value.clone());
             }
+        }
+        if item
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|n| n.len() > SHORT_TEXT)
+        {
+            kept.insert("name".into(), json!(LONG_NAME));
         }
         out.push(Value::Object(kept));
     }
@@ -211,8 +221,20 @@ impl Orka {
 
 #[cfg(test)]
 mod tests {
-    use super::message;
+    use super::{list_body, message, LONG_NAME, SHORT_TEXT};
+    use bridge_runtime_protocol::valid_session_name;
     use serde_json::{json, Value};
+
+    #[test]
+    fn an_id_too_long_to_keep_is_listed_under_a_name_the_host_cannot_request() {
+        let long = "a".repeat(SHORT_TEXT + 1);
+        let page = json!({"items":[{"name":long,"namespace":"orka-system"},
+            {"name":"kept","namespace":"orka-system"}]});
+        let body = list_body(&page).unwrap();
+        assert_eq!(body["items"][0]["name"], LONG_NAME);
+        assert_eq!(body["items"][1]["name"], "kept");
+        assert!(!valid_session_name(LONG_NAME));
+    }
 
     #[test]
     fn content_bridge_does_not_show_marks_the_message_cut() {

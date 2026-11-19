@@ -230,3 +230,38 @@ async fn an_invalid_name_is_never_sent_to_the_vm() {
     assert_eq!(read_transcript(&vm, "../x").await.state, "unavailable");
     assert!(vm.actions().is_empty());
 }
+
+#[tokio::test]
+async fn a_restart_after_the_local_read_drops_its_rows_but_a_stop_keeps_them() {
+    let vm = Fake::new(vec![ok(page(
+        vec![listed("a", "2026-01-02T00:00:00Z")],
+        None,
+    ))]);
+    let mut view = read(&vm).await;
+    // Stopped: the boot is kept, so the rows stand.
+    recheck(&vm, &mut view);
+    assert_eq!((view.state, view.entries.len()), ("complete", 1));
+    // A restart forgets the boot before the other reads finish.
+    *vm.last.lock().unwrap() = None;
+    recheck(&vm, &mut view);
+    assert_eq!(view.state, "disconnected");
+    assert!(view.entries.is_empty() && view.connection.is_none() && view.observed_at.is_none());
+    // A read that found no boot is left as it is.
+    recheck(&vm, &mut view);
+    assert_eq!(view.state, "disconnected");
+}
+
+#[tokio::test]
+async fn a_long_id_from_the_guest_is_counted_and_the_rest_listed() {
+    let vm = Fake::new(vec![ok(page(
+        vec![
+            listed("-too-long", "2026-01-02T00:00:00Z"),
+            listed("a", "2026-01-03T00:00:00Z"),
+        ],
+        None,
+    ))]);
+    let view = read(&vm).await;
+    assert_eq!(view.state, "complete");
+    assert_eq!(view.unsupported, 1);
+    assert_eq!(view.entries.len(), 1);
+}
