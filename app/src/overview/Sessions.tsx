@@ -100,6 +100,8 @@ export function SessionList({ active, places, workspace, onCheck }: { active: bo
   const read = (sessions?.places ?? []).filter(p => labels.has(p.key));
   const connected = read.filter(p => p.state !== 'disconnected' || p.entries.length);
   const rows = merge(connected).slice(0, 50);
+  // Only reads that listed everything can say there are none; a failed or refused read leaves its note instead.
+  const settled = connected.every(p => p.state === 'complete' && p.unsupported === 0);
   const note = (p: PlaceSessions) => {
     const name = labels.get(p.key);
     if (p.state === 'outdated') return `Listing conversations on this computer needs a newer version of Bridge.`;
@@ -125,7 +127,7 @@ export function SessionList({ active, places, workspace, onCheck }: { active: bo
     {retry && <div className="overview-note"><Button kind="quiet" onClick={onCheck}>Check conversations again</Button></div>}
     {!sessions ? places && !failed && <p className="overview-note" role="status">Reading conversations…</p>
       : !connected.length ? <p className="overview-note">Conversations appear here once the workspace is ready on this computer or a cluster is connected.</p>
-      : !rows.length ? <p className="overview-note">No conversations yet.</p>
+      : !rows.length ? settled && <p className="overview-note">No conversations yet.</p>
       : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.connection ?? ''}/${row.name}`} row={row} place={labels.get(row.placeKey)!} />)}</ol>}
   </section>;
 }
