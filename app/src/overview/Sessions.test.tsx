@@ -216,6 +216,24 @@ test('a failed or unreadable Sessions read offers Check conversations again, and
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Check conversations again' })).toBeNull());
 });
 
+test.each([
+  ['refused', { state: 'denied', observedAt: null }, /Can't list conversations on team-one/],
+  ['failed', { state: 'unavailable', observedAt: null }, /Couldn't read conversations on team-one just now/],
+  ['revoked', { state: 'revoked', observedAt: null }, /Connect to team-one again/],
+  ['unsupported only', { unsupported: 2 }, /2 conversations on team-one have IDs Bridge can't open yet/],
+])('a %s read with no rows keeps its note and never says there are no conversations', async (_, over, note) => {
+  ipc({ places: [read('one', [], over), read('two', [])] });
+  render(<SessionList onCheck={noop} active places={places} />);
+  expect(await screen.findByText(note)).toBeTruthy();
+  expect(screen.queryByText(/No conversations yet/)).toBeNull();
+});
+
+test('complete reads that list nothing say there are no conversations', async () => {
+  ipc({ places: [read('one', []), read('two', [])] });
+  render(<SessionList onCheck={noop} active places={places} />);
+  expect(await screen.findByText(/No conversations yet/)).toBeTruthy();
+});
+
 test('only known roles are relabelled; an inherited property name shows as it is', async () => {
   expect(roleLabel('assistant')).toBe('Agent');
   for (const role of ['__proto__', 'constructor', 'toString']) expect(roleLabel(role)).toBe(role);

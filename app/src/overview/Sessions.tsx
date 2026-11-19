@@ -95,6 +95,8 @@ export function SessionList({ active, places, onCheck }: { active: boolean; plac
   const read = (sessions?.places ?? []).filter(p => labels.has(p.key));
   const connected = read.filter(p => p.state !== 'disconnected' || p.entries.length);
   const rows = merge(connected).slice(0, 50);
+  // Only reads that listed everything can say there are none; a failed or refused read leaves its note instead.
+  const settled = connected.every(p => p.state === 'complete' && p.unsupported === 0);
   const note = (p: PlaceSessions) => {
     const name = labels.get(p.key);
     if (p.state === 'denied') return `Can't list conversations on ${name}: this account isn't allowed to read Sessions.`;
@@ -119,7 +121,7 @@ export function SessionList({ active, places, onCheck }: { active: boolean; plac
     {retry && <div className="overview-note"><Button kind="quiet" onClick={onCheck}>Check conversations again</Button></div>}
     {!sessions ? places && !failed && <p className="overview-note" role="status">Reading conversations…</p>
       : !connected.length ? <p className="overview-note">Connect a cluster to see its conversations here.</p>
-      : !rows.length ? <p className="overview-note">No conversations yet on connected clusters.</p>
+      : !rows.length ? settled && <p className="overview-note">No conversations yet on connected clusters.</p>
       : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.connection ?? ''}/${row.name}`} row={row} place={labels.get(row.placeKey)!} />)}</ol>}
   </section>;
 }
