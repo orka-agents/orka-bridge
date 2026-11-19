@@ -397,6 +397,91 @@ test.each(['none', 'eligible'] as const)('unselected upgrade observation failure
   expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run'].includes(c))).toEqual([]);
 });
 
+test.each([['eligible', 'ready'], ['eligible', 'starting'], ['none', 'failed']] as const)('selected unreplaced %s/%s retains an enabled cached retry after a later read failure', async (state, phase) => {
+  let unavailable = false;
+  const known: UpgradeStatus = state === 'eligible' ? eligible : { ...eligible, state: 'none', sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, canReplace: false };
+  const ipc = fixture(() => { if (unavailable) throw Error('Lost cached observation'); return known; }, phase, false);
+  const original = ipc.getMockImplementation()!;
+  ipc.mockImplementation((command, args) => command === 'setup_status'
+    ? { selected: 'localVm', localVm: phase, model: phase === 'ready' ? 'available' : 'locked' } : original(command, args));
+  render(<Setup onOpenExample={() => {}} />); await openLocalSetup();
+  await screen.findByRole('button', { name: state === 'eligible' ? 'Set up new workspace' : 'Try again' });
+  unavailable = true; fireEvent(window, new Event('focus'));
+  const retry = await screen.findByRole('button', { name: 'Retry workspace status' });
+  expect(retry.matches(':disabled')).toBe(false);
+  expect(screen.getByText('Workspace update information is unavailable. Check again before changing your workspace.')).toBeTruthy();
+  if (state === 'eligible') {
+    expect(screen.getByText(/Retained workspace: 1.2 GB allocated/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Update details' }));
+    expect(screen.getByText('Previous: Bridge 0.1.2. New: Bridge 0.1.3.')).toBeTruthy();
+  }
+  unavailable = false; fireEvent.click(retry);
+  const action = await screen.findByRole('button', { name: state === 'eligible' ? 'Set up new workspace' : 'Try again' });
+  expect(action.matches(':disabled')).toBe(false);
+  expect(screen.queryByRole('button', { name: 'Retry workspace status' })).toBeNull();
+  expect(screen.queryByText('Workspace files checked on request.')).toBeNull();
+  if (state === 'eligible') {
+    fireEvent.click(action);
+    expect(screen.getByRole('group', { name: 'Set up new workspace?' })).toBeTruthy();
+  }
+  expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && isRefresh(a))).toEqual([]);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run'].includes(c))).toEqual([]);
+});
+
+test.each(['failed', 'cancelled'])('explicit ordinary retry of %s fresh startup keeps ordinary Cancel without upgrade authority', async phase => {
+  let starting = false; let cancelled = false;
+  const ipc = fixture(() => ({ ...current, state: 'fresh', busy: starting && !cancelled, canCancel: false }), phase, false);
+  const original = ipc.getMockImplementation()!;
+  ipc.mockImplementation((command, args) => {
+    if (command === 'setup_select_local') { starting = true; return { selected: 'localVm', localVm: 'starting', model: 'locked', workspaceReplaced: true }; }
+    if (command === 'setup_cancel_local') { cancelled = true; return { selected: 'localVm', localVm: 'cancelled', model: 'locked', workspaceReplaced: true }; }
+    if (command === 'setup_status' && starting) return { selected: 'localVm', localVm: cancelled ? 'cancelled' : 'starting', model: 'locked', workspaceReplaced: true };
+    return original(command, args);
+  });
+  localStorage.setItem('bridge.firstTest.v1', 'pending');
+  render(<Setup onOpenExample={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: phase === 'failed' ? 'Try again' : 'Start again' }));
+  await screen.findByText('The workspace is busy. Your agent files are kept.');
+  const cancel = screen.getByRole('button', { name: /^Cancel$/ });
+  expect(cancel.matches(':disabled')).toBe(false);
+  expect(screen.queryByRole('button', { name: 'Cancel update' })).toBeNull();
+  fireEvent.click(cancel);
+  await screen.findByRole('button', { name: 'Start again' });
+  expect(ipc.mock.calls.filter(([c]) => c === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
+  expect(ipc.mock.calls.filter(([c]) => c === 'setup_cancel_local')).toEqual([['setup_cancel_local', {}]]);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['workspace_upgrade_cancel', 'setup_connect_model', 'agent_run', 'agent_chat'].includes(c))).toEqual([]);
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
+});
+
+test.each([false, true])('observed fresh version startup cannot ordinary-Cancel without a local start (canCancel=%s)', async canCancel => {
+  const ipc = fixture(() => ({ ...current, state: 'fresh', busy: true, canCancel }), 'starting', false);
+  render(<Setup onOpenExample={() => {}} />);
+  const cancel = await screen.findByRole('button', { name: /^Cancel$/ });
+  expect(cancel.matches(':disabled')).toBe(true);
+  fireEvent.click(cancel);
+  expect(ipc.mock.calls.filter(([c]) => c === 'setup_cancel_local' || c === 'workspace_upgrade_cancel')).toEqual([]);
+});
+
+test('UI-owned version mutation keeps ordinary Cancel fenced even with a Fresh noncancellable observation', async () => {
+  const forward = deferred<unknown>(); let mutating = false;
+  const ipc = fixture(() => mutating ? { ...current, state: 'fresh', busy: true, canCancel: false } : eligible, 'starting', false);
+  const original = ipc.getMockImplementation()!;
+  ipc.mockImplementation((command, args) => {
+    if (command === 'workspace_upgrade_replace') { mutating = true; return forward.promise; }
+    return original(command, args);
+  });
+  render(<Setup onOpenExample={() => {}} />);
+  fireEvent.click(await screen.findByRole('button', { name: 'Set up new workspace' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Keep old workspace and set up new' }));
+  await screen.findByRole('button', { name: 'Restore previous workspace' });
+  expect(screen.getByText('Updating the workspace. Your agent files are kept.')).toBeTruthy();
+  const cancel = screen.getByRole('button', { name: /^Cancel$/ });
+  expect(cancel.matches(':disabled')).toBe(true);
+  fireEvent.click(cancel);
+  expect(ipc.mock.calls.filter(([c]) => c === 'setup_cancel_local' || c === 'workspace_upgrade_cancel')).toEqual([]);
+  await act(async () => { forward.resolve(null); });
+});
+
 test('a busy noncancellable cached observation after reload is not a replacement or a manual check', async () => {
   fixture(() => ({ ...current, busy: true, canCancel: false }));
   render(<App />); await openLocalSetup();

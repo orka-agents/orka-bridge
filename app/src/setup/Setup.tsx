@@ -59,10 +59,12 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const upgradeIdentity = useRef<string | null>(undefined);
   const [upgradeObservation, setUpgradeObservation] = useState<UpgradeObservationState>({ pending: false });
   const workspaceReplaced = useRef(false);
+  const ordinaryStart = useRef<string | null>(undefined);
   const upgradeAction = useCallback((value: boolean) => {
     // A mutation invalidates both kinds of reads, including a lost mutation reply.
     ++epoch.current; ++upgradeEpoch.current; ++manualEpoch.current;
     manualPending.current = false; manualFailed.current = false; manualIdentityless.current = false; setUpgradeObservation({ pending: false });
+    ordinaryStart.current = undefined;
     setUpgradeBusy(value); setUpgradeKnown(false);
     setCheck(check => check + 1);
   }, []);
@@ -72,7 +74,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const notice: UpgradeNotice | undefined = upgradeObservation.pending ? 'checking' : occupied ? 'busy' : !upgradeKnown && (status?.workspaceReplaced || !!upgrade && upgrade.state !== 'none' || firstTestPending()) ? 'unknown' : recoveryOnly ? 'recovery' : upgrade?.state === 'eligible' ? 'required' : upgrade?.error ? 'error' : undefined;
   const reportedUpgrade = useRef(false);
   const [setupError, setError] = useState<string>();
-  const retryUpgradeStatus = !setupError && status?.selected === null && !status.workspaceReplaced;
+  const retryUpgradeStatus = !setupError && !!status && !status.workspaceReplaced && (status.selected === null || !!upgrade);
   const error = setupError ?? (status?.workspaceReplaced ? upgradeError : undefined);
   const [busy, setBusy] = useState(true);
   const [sending, setSending] = useState(false);
@@ -185,6 +187,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
         setError(result.message);
       }
       const waiting = result.ok && pending(result.status.localVm);
+      if (!waiting) ordinaryStart.current = undefined;
       setBusy(waiting);
       timer.current = setTimeout(() => setSetupCheck(value => value + 1), waiting ? 250 : 1000);
       onStatus?.(result.ok ? result.status : undefined);
@@ -208,6 +211,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     return () => { ++upgradeEpoch.current; clearTimeout(timer); };
   }, [check, upgradeCheck]);
   function observeUpgrade(value: UpgradeStatus) {
+    if (value.transaction !== ordinaryStart.current || value.canCancel || value.state !== 'fresh') ordinaryStart.current = undefined;
     // Cached observations may discover another workspace, but never certify a manual recheck.
     if ((value.transaction !== null || !manualFailed.current) && upgradeIdentity.current !== undefined && upgradeIdentity.current !== value.transaction) {
       ++manualEpoch.current; manualPending.current = false; manualFailed.current = false; manualIdentityless.current = false;
@@ -274,8 +278,12 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     setSnapshot(value => value && { ...value, places: value.places.filter(p => p.key !== key), selectedKey: value.selectedKey === key ? null : value.selectedKey });
     if (navigate) back();
   }
+  // Only an explicit ordinary start of this Fresh transaction owns ordinary Cancel.
+  // Observed Version startup/closing, and UI-owned upgrade mutations, stay fenced.
+  const ordinaryStarting = ordinaryStart.current !== undefined && upgradeKnown && upgrade?.state === 'fresh'
+    && upgrade.transaction === ordinaryStart.current && !upgrade.canCancel && !!status && ['preparing', 'installing', 'starting'].includes(status.localVm);
   async function chooseLocal(action: 'start' | 'cancel' = 'start') {
-    if (mutation.current || upgradeBusy || upgrade?.busy || !status || (action !== 'cancel' && busy)) return;
+    if (mutation.current || upgradeBusy || upgrade?.busy && !(action === 'cancel' && ordinaryStarting) || !status || (action !== 'cancel' && busy)) return;
     if (action === 'start' && !ordinaryRecovery) return;
     if (action === 'start' && status.selected === 'localVm' && !['cancelled', 'closed', 'failed'].includes(status.localVm)) return;
     // Observation must not invalidate an explicit selection awaiting its reply.
@@ -296,6 +304,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     else { setError(result.message); }
     onStatus?.(result.ok ? result.status : undefined);
     const waiting = result.ok && pending(result.status.localVm);
+    ordinaryStart.current = action === 'start' && waiting && upgrade?.state === 'fresh' ? upgrade.transaction : undefined;
     setBusy(waiting);
     if (result.ok) setCheck(value => value + 1);
     else timer.current = setTimeout(() => setCheck(value => value + 1), 1000);
@@ -370,7 +379,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
         <div className="setup-column setup-main">
         {!workspace && !selected && upgradePanel}
         {workspace && status && <Workspace ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} onStart={() => { void chooseLocal(); }} active={active && view === 'local'} />}
-        {!workspace && selected && status && <SetupProgress ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} />}
+        {!workspace && selected && status && <SetupProgress ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending || upgradeBusy || !!upgrade?.busy && !ordinaryStarting || upgradeObservation.pending || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} />}
         </div>
         <div className="setup-column setup-side">
         {workspace && status?.localVm !== 'ready' && <section className="card"><h2>AI</h2><p className="muted">Waiting for the workspace to start.</p></section>}
@@ -382,7 +391,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     {entry && <ClusterCard active={active && view === 'cluster'} entry={entry} selection={currentPlace} onPlace={publishPlace} onContextName={setClusterName} onOpenAgent={onOpenAgent ?? onOpenExample} onDone={back} onRemoved={removed} />}
     {!upgradePanel && <UpgradeObservation observation={upgradeObservation} />}
     {displayError && <div role="alert"><p>{displayError}</p>
-      <Button type="button" kind="secondary" className="action-spaced" disabled={busy || upgradeObservation.pending}
+      <Button type="button" kind="secondary" className="action-spaced" disabled={(retryUpgradeStatus ? sending : busy) || upgradeBusy || upgradeObservation.pending}
         onClick={() => { if (setupError) setSetupCheck(value => value + 1); else if (retryUpgradeStatus) setUpgradeCheck(value => value + 1); else void checkWorkspace(); }}>{retryUpgradeStatus ? 'Retry workspace status' : 'Check again'}</Button>
     </div>}
     {!error && !upgradePanel && upgradeObservation.error && <Button type="button" kind="secondary" disabled={upgradeObservation.pending} onClick={() => { void checkWorkspace(); }}>Check again</Button>}
