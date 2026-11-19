@@ -290,6 +290,7 @@ function Tray-Menu {
     # The latest hit test survives a moved icon or an opened overflow, so every timeout can report it.
     $last = 'no hit test was made'
     $uiaError = ''
+    $openOverflow = { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
     for ($i = 0; ; $i++) {
         $point = $null
         $lost = $false
@@ -303,21 +304,37 @@ function Tray-Menu {
             $lost = $true
             $uiaError = "; the last UIA read failed: $($_.Exception.Message)"
         }
+        $noChevron = $false
         if (!$point -and !$overflow -and !$lost) {
-            $chevron = Find-Control $area 'Show hidden icons' $button
-            if (!$chevron) { $chevron = Find-Control $area 'Notification Chevron' $button }
-            if (!$chevron) { $chevron = $area.FindFirst($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'NotificationChevron')) }
-            if (!$chevron) {
-                $p = [NativeWalk]::TrayPoint($notify, @('Show hidden icons', 'Notification Chevron'), (Join-Path $script:themeOutput 'tray-chevron-msaa.txt'))
-                if ($p) { $chevron = [Drawing.Point]::new($p[0], $p[1]) }
+            # A press whose UIA call failed may still have opened the overflow; never press twice.
+            $overflow = & $openOverflow
+            $chevron = $null
+            if (!$overflow) {
+                try {
+                    $chevron = Find-Control $area 'Show hidden icons' $button
+                    if (!$chevron) { $chevron = Find-Control $area 'Notification Chevron' $button }
+                    if (!$chevron) { $chevron = $area.FindFirst($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'NotificationChevron')) }
+                    if (!$chevron) {
+                        $p = [NativeWalk]::TrayPoint($notify, @('Show hidden icons', 'Notification Chevron'), (Join-Path $script:themeOutput 'tray-chevron-msaa.txt'))
+                        if ($p) { $chevron = [Drawing.Point]::new($p[0], $p[1]) }
+                    }
+                    if ($chevron) { Press $chevron }
+                } catch [System.Windows.Automation.ElementNotAvailableException], [System.Windows.Automation.NoClickablePointException] {
+                    $chevron = $null
+                    $uiaError = "; the last UIA read failed: $($_.Exception.Message)"
+                }
             }
-            if (!$chevron) { throw "Native notification chevron missing in UIA and MSAA; $last" }
-            Press $chevron
-            try { $overflow = Wait-For 'Native notification overflow not visible' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } } }
-            catch { if ($_.Exception.Message -ceq 'Native notification overflow not visible') { throw "Native notification overflow not visible; $last" }; throw }
-            $i = 0
-            $settled = $null
-            continue
+            if ($chevron) {
+                try { $overflow = Wait-For 'Native notification overflow not visible' $openOverflow }
+                catch { if ($_.Exception.Message -ceq 'Native notification overflow not visible') { throw "Native notification overflow not visible; $last" }; throw }
+            }
+            if ($overflow) {
+                $i = 0
+                $settled = $null
+                continue
+            }
+            # A relayout can briefly show neither the icon nor the chevron: poll again.
+            $noChevron = $true
         }
         if ($point) {
             $target = [Drawing.Point]::new([int]$point.X, [int]$point.Y)
@@ -330,6 +347,7 @@ function Tray-Menu {
             else { $settled = $target }
         } else { $settled = $null }
         if ($i -ge 100) {
+            if ($noChevron) { throw "Native Bridge notification icon and chevron missing in UIA and MSAA; $last$uiaError" }
             if (!$point) { throw "Native Bridge notification icon missing$(if ($overflow) { ' from the visible area and overflow' }); $last$uiaError" }
             throw "Bridge notification icon not settled under the cursor; $last$uiaError"
         }
