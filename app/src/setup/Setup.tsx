@@ -311,7 +311,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   }
 
   const changing = sending || upgradeBusy || !!upgrade?.busy || upgradeObservation.pending;
-  const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} observation={upgradeObservation} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || !!error || !upgradeKnown} onBusy={upgradeAction} onChange={value => { observeUpgrade(value); setCheck(check => check + 1); }} onCheck={() => { void checkWorkspace(); }} /> : undefined;
+  const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} observation={upgradeObservation} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || (!!status && pending(status.localVm)) || !!error || !upgradeKnown} onBusy={upgradeAction} onChange={value => { observeUpgrade(value); setCheck(check => check + 1); }} onCheck={() => { void checkWorkspace(); }} /> : undefined;
   const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && (changing || !ordinaryRecovery || status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked))} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); } }));
   const titleId = active ? 'page-title' : undefined;

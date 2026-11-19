@@ -426,12 +426,12 @@ test.each(['none', 'eligible'] as const)('unselected upgrade observation failure
 });
 
 test.each([['eligible', 'ready'], ['eligible', 'starting'], ['none', 'failed']] as const)('selected unreplaced %s/%s retains an enabled cached retry after a later read failure', async (state, phase) => {
-  let unavailable = false;
+  let unavailable = false; let observedPhase: string = phase;
   const known: UpgradeStatus = state === 'eligible' ? eligible : { ...eligible, state: 'none', sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, canReplace: false };
   const ipc = fixture(() => { if (unavailable) throw Error('Lost cached observation'); return known; }, phase, false);
   const original = ipc.getMockImplementation()!;
   ipc.mockImplementation((command, args) => command === 'setup_status'
-    ? { selected: 'localVm', localVm: phase, model: phase === 'ready' ? 'available' : 'locked' } : original(command, args));
+    ? { selected: 'localVm', localVm: observedPhase, model: observedPhase === 'ready' ? 'available' : 'locked' } : original(command, args));
   render(<Setup onOpenExample={() => {}} />); await openLocalSetup();
   await screen.findByRole('button', { name: state === 'eligible' ? 'Set up new workspace' : 'Try again' });
   unavailable = true; fireEvent(window, new Event('focus'));
@@ -444,9 +444,15 @@ test.each([['eligible', 'ready'], ['eligible', 'starting'], ['none', 'failed']] 
     expect(screen.getByText('Previous: Bridge 0.1.2. New: Bridge 0.1.3.')).toBeTruthy();
   }
   unavailable = false; fireEvent.click(retry);
-  const action = await screen.findByRole('button', { name: state === 'eligible' ? 'Set up new workspace' : 'Try again' });
-  expect(action.matches(':disabled')).toBe(false);
+  let action = await screen.findByRole('button', { name: state === 'eligible' ? 'Set up new workspace' : 'Try again' });
+  expect(action.matches(':disabled')).toBe(phase === 'starting');
   expect(screen.queryByRole('button', { name: 'Retry workspace status' })).toBeNull();
+  if (phase === 'starting') {
+    // A cached read can recover during startup, but it does not finish that lifecycle.
+    observedPhase = 'failed'; fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Set up new workspace' }).matches(':disabled')).toBe(false));
+    action = screen.getByRole('button', { name: 'Set up new workspace' });
+  }
   expect(screen.queryByText('Workspace files checked on request.')).toBeNull();
   if (state === 'eligible') {
     fireEvent.click(action);
@@ -502,9 +508,10 @@ test.each([false, true])('observed fresh version startup cannot ordinary-Cancel 
 
 test('UI-owned version mutation keeps ordinary Cancel fenced even with a Fresh noncancellable observation', async () => {
   const forward = deferred<unknown>(); let mutating = false;
-  const ipc = fixture(() => mutating ? { ...current, state: 'fresh', busy: true, canCancel: false } : eligible, 'starting', false);
+  const ipc = fixture(() => mutating ? { ...current, state: 'fresh', busy: true, canCancel: false } : eligible, 'failed', false);
   const original = ipc.getMockImplementation()!;
   ipc.mockImplementation((command, args) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: mutating ? 'starting' : 'failed', model: 'locked', workspaceReplaced: true };
     if (command === 'workspace_upgrade_replace') { mutating = true; return forward.promise; }
     return original(command, args);
   });
@@ -518,6 +525,26 @@ test('UI-owned version mutation keeps ordinary Cancel fenced even with a Fresh n
   fireEvent.click(cancel);
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_cancel_local' || c === 'workspace_upgrade_cancel')).toEqual([]);
   await act(async () => { forward.resolve(null); });
+});
+
+test.each([['fresh', 'preparing'], ['fresh', 'installing'], ['fresh', 'starting'], ['consumed', 'preparing'], ['consumed', 'installing'], ['consumed', 'starting']] as const)('independent %s/%s startup observation fences Restore and Remove despite an idle cached projection', async (state, phase) => {
+  const ipc = fixture(() => ({ ...current, state, credential: 'transferred', busy: false }), phase);
+  render(<Setup onOpenExample={() => {}} />);
+  const restore = await screen.findByRole('button', { name: 'Restore previous workspace' });
+  const remove = screen.getByRole('button', { name: 'Remove saved connection' });
+  expect(restore.matches(':disabled')).toBe(true);
+  expect(remove.matches(':disabled')).toBe(true);
+  fireEvent.click(restore); fireEvent.click(remove);
+  expect(screen.queryByRole('group', { name: 'Restore previous workspace?' })).toBeNull();
+  expect(screen.queryByRole('group', { name: 'Remove saved connection?' })).toBeNull();
+  expect(ipc.mock.calls.filter(([c]) => c === 'workspace_upgrade_restore' || c === 'workspace_upgrade_remove')).toEqual([]);
+});
+
+test('native upgrade Cancel remains available during an independent startup observation', async () => {
+  fixture(() => ({ ...current, state: 'fresh', busy: true, canCancel: true }), 'starting', false);
+  render(<Setup onOpenExample={() => {}} />);
+  const cancel = await screen.findByRole('button', { name: 'Cancel update' });
+  expect(cancel.matches(':disabled')).toBe(false);
 });
 
 test('a busy noncancellable cached observation after reload is not a replacement or a manual check', async () => {
