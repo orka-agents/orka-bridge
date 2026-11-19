@@ -164,7 +164,8 @@ export default function App() {
       setFirstPass(undefined);
       if (!replacementObserved.current) { setSampleResult(undefined); setSampleStale(false); }
       replacementObserved.current = true;
-    } else if (status) replacementObserved.current = false;
+    }
+    if (status && replacementObserved.current) status = { ...status, workspaceReplaced: true };
     setSetup(status); setChecking(false);
     const context = `${status?.selected}/${status?.localVm}/${status?.model}`;
     if (context !== catalogContext.current) { catalogContext.current = context; setCatalogEpoch(epoch => epoch + 1); }
@@ -192,7 +193,8 @@ export default function App() {
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} passed` : undefined;
   const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
   const firstTest = useFirstTest({
-    ready: !setup?.workspaceReplaced && setup?.selected === 'localVm' && setup.localVm === 'ready' && model === 'connected' && !workspaceBusy && !remote,
+    retired: !!setup?.workspaceReplaced,
+    ready: !upgradeNotice && !setup?.workspaceReplaced && setup?.selected === 'localVm' && setup.localVm === 'ready' && model === 'connected' && !workspaceBusy && !remote,
     canOpen: page === 'Clusters' && localSetupView && setup?.localVm === 'ready' && !workspaceBusy && !remote,
     sampleDirty,
     onOpen: () => openDesigner(SAMPLE_DOCUMENT_ID),
@@ -213,7 +215,7 @@ export default function App() {
   const updating = workspaceUpdating && !!setup;
   const recovery = upgradeNotice === 'recovery' && !!setup;
   const required = upgradeNotice === 'required' && !!setup;
-  const upgradeAttention = updating || !!upgradeNotice && !!setup;
+  const upgradeAttention = updating || !!upgradeNotice && !!setup && (upgradeNotice !== 'unknown' || !!setup.workspaceReplaced);
   const upgradeLine = updating ? 'Updating workspace' : recovery ? 'Workspace recovery needs attention' : 'Workspace update needs attention';
   const upgradeDetail = recovery && !updating ? 'Finish recovery before using the local workspace.' : 'Your agent files are kept.';
   const view = upgradeAttention ? { ...ordinaryView, line: upgradeLine, tabLine: upgradeLine, footerLine: upgradeLine, detail: upgradeDetail, tone: updating ? 'busy' as const : 'needs-you' as const, status: updating ? 'running' as const : 'needs-you' as const, done: false } : ordinaryView;
@@ -221,7 +223,7 @@ export default function App() {
   const hostWorkspace = upgradeAttention ? { tone: view.tone, detail: `${upgradeLine}. ${upgradeDetail}` } : setup?.selected === 'localVm' && setup.localVm !== 'notIntegrated'
     ? workspaceView(setup, { stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping }) : undefined;
   const hostTone = hostWorkspace?.tone ?? view.tone;
-  const workspaceReady = setup?.localVm === 'ready' && !recovery && !required;
+  const workspaceReady = setup?.localVm === 'ready' && !recovery && !required && !(setup.workspaceReplaced && upgradeNotice === 'unknown');
   useEffect(() => {
     setOverviewAiConnected(false);
     if (page !== 'Overview' || !workspaceReady || workspaceBusy || setup?.model !== 'available') return;
@@ -238,7 +240,7 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [page, workspaceReady, workspaceBusy, setup?.model, model]);
   const workspaceTransition = !!setup && ['preparing', 'installing', 'starting', 'closing', 'failed'].includes(setup.localVm);
-  const overviewWorkspaceNote = !setup ? setupLine : updating ? 'Updating workspace' : workspaceStopping ? 'Stopping the workspace'
+  const overviewWorkspaceNote = !setup ? setupLine : upgradeAttention ? upgradeLine : workspaceStopping ? 'Stopping the workspace'
     : workspaceBusy && (!workspaceTransition || setup?.localVm === 'failed') ? 'Getting your workspace ready…'
       : workspaceTransition ? setupLine : undefined;
   const placeName = remote ? place.target?.context_name ?? 'Choose a cluster'

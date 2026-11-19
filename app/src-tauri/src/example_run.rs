@@ -434,13 +434,18 @@ impl ExampleRun {
         if !self.2 {
             return self.status_document(&vm, id);
         }
-        let Some(admission) = vm.try_authoring() else {
-            return self.status_document(&vm, id);
-        };
         let (sender, stop) = watch::channel(false);
-        {
+        let admission = {
             let mut state = self.0.lock().unwrap();
-            if state.active.is_some() {
+            // Acquire admission under the retirement lock, never carry an old
+            // workspace's lease into a newly unretired live snapshot.
+            let admission = vm.try_authoring();
+            if state.active.is_some()
+                || vm.status() != LocalVmStatus::Ready
+                || admission
+                    .as_ref()
+                    .is_none_or(|lease| !vm.authoring_current(lease))
+            {
                 drop(state);
                 return self.status_document(&vm, id);
             }
@@ -472,7 +477,8 @@ impl ExampleRun {
             // Only this admission may answer for the request; denials keep the old one.
             snapshot.attempt_id = attempt_id;
             // Keep this document's receipts through preflight failures.
-        }
+            admission.unwrap()
+        };
         let owner = self.clone();
         let target = vm.clone();
         self.1.spawn(async move {

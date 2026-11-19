@@ -140,6 +140,49 @@ async fn status_is_read_only_and_workers_outlive_callers() {
 }
 
 #[tokio::test]
+async fn retirement_does_not_admit_chat_before_replacement_startup() {
+    let f = Fixture::new().await;
+    let chat = owner();
+    let id = f.folder.document_id();
+    f.vm.cancel().await.unwrap();
+    chat.retire_for_workspace_replacement();
+    assert_eq!(
+        chat.send(f.vm.clone(), f.folder.clone(), "Too early".into())
+            .unwrap_err(),
+        ChatError::Busy
+    );
+    let fresh = chat.status(id);
+    assert!(fresh.versions.is_empty() && fresh.error.is_none() && !fresh.busy);
+    assert!(f.guest.lock().unwrap().requests.is_empty());
+}
+
+#[tokio::test]
+async fn old_lease_cannot_authorize_or_release_replacement_chat() {
+    let f = Fixture::new().await;
+    let chat = owner();
+    let id = f.folder.document_id();
+    let old = f.vm.try_authoring().unwrap();
+    f.vm.cancel().await.unwrap();
+    chat.retire_for_workspace_replacement();
+    f.vm.start();
+    for _ in 0..500 {
+        if f.vm.status() == bridge_engine::local_vm::LocalVmStatus::Ready {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    assert!(!f.vm.authoring_current(&old));
+    chat.send(f.vm.clone(), f.folder.clone(), "New boot".into())
+        .unwrap();
+    drop(old);
+    assert!(f.vm.try_authoring().is_none());
+    let fresh = ready(&chat, id).await;
+    assert!(fresh.error.is_none());
+    assert_eq!(fresh.versions[0].turns[0].message, "New boot");
+    f.vm.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn active_workspace_retirement_drops_worker_without_guest_cleanup() {
     let f = Fixture::new().await;
     {

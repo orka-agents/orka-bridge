@@ -20,6 +20,7 @@ function native(holdSave = false, lostReplies = false) {
     const args = payload as Record<string, unknown> | undefined;
     if (command === 'setup_status') return status();
     if (command === 'setup_requirements') return null;
+    if (command === 'workspace_upgrade_status') return { ...consumedUpgrade, state: 'none', transaction: null, createdAt: null, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, canRestore: false };
     if (command === 'setup_select_local') { selected = true; stopped = false; workspaceFailed = false; if (lostReplies) throw Error('Lost selection reply'); return status(); }
     if (command === 'setup_cancel_local') { stopped = true; running = false; return status(); }
     if (command === 'setup_change_local') { selected = false; return status(); }
@@ -91,6 +92,34 @@ test.each(['sourceSelected', 'restoring'] as const)('recovery %s blocks local De
   expect(screen.getByRole('button', { name: 'Send message' }).matches(':disabled')).toBe(true);
   expect(ipc.mock.calls.filter(([command]) => ['agent_run', 'agent_chat_send', 'setup_connect_model'].includes(command))).toEqual([]);
 });
+test.each(['hung', 'failed'] as const)('unreadable upgrade blocks capable local Run and Chat but leaves file editing available (%s)', async observation => {
+  const { ipc } = native(); const original = ipc.getMockImplementation()!;
+  ipc.mockImplementation((command, args) => {
+    if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true };
+    if (command === 'workspace_upgrade_status') {
+      if (observation === 'failed') throw Error('Lost upgrade status');
+      return new Promise(() => {});
+    }
+    if (command === 'agent_chat_status') return { documentId: sample, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+    if (command === 'agent_run_status') return { ...idle, model: 'capable-run-snapshot' };
+    return original(command, args);
+  });
+  localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  const user = userEvent.setup(); render(<App />);
+  await screen.findByRole('region', { name: 'This computer' });
+  await user.click(screen.getByRole('button', { name: 'Designer' }));
+  const run = await screen.findByRole('button', { name: 'Run tests' });
+  await within(document.querySelector('.example-run')!).findByText('capable-run-snapshot');
+  expect(run.matches(':disabled')).toBe(true);
+  expect(screen.getByRole('textbox', { name: 'Instructions' }).matches(':disabled')).toBe(false);
+  await user.click(screen.getByRole('button', { name: 'Chat' }));
+  const message = await screen.findByRole('textbox', { name: 'Message' });
+  fireEvent.change(message, { target: { value: 'Do not send while upgrade status is unknown' } });
+  fireEvent.keyDown(message, { key: 'Enter' });
+  expect(screen.getByRole('button', { name: 'Send message' }).matches(':disabled')).toBe(true);
+  expect(ipc.mock.calls.filter(([command]) => ['agent_run', 'agent_chat_send', 'setup_connect_model'].includes(command))).toEqual([]);
+});
+
 test.each(['eligible', 'fresh'] as const)('update attention distinguishes required replacement from a usable %s workspace error', async state => {
   const { ipc } = native(); const original = ipc.getMockImplementation()!;
   ipc.mockImplementation((command, args) => command === 'setup_status'

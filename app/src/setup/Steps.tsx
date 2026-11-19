@@ -16,7 +16,7 @@ import { testDefinitions } from '../designer/test-definitions';
 export type CheckStepState = 'running' | 'passed' | 'failed' | 'unknown' | 'stale';
 
 type Props = {
-  upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean;
+  upgrade?: ReactNode; updating?: boolean; updateBlocked?: boolean; ordinaryRecovery?: boolean;
   modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement>;
   status: SetupStatus; busy: boolean; stopping: boolean; error?: string; modelState?: ModelState; firstCheck?: CheckStepState;
   modelUnavailable?: boolean;
@@ -60,7 +60,7 @@ export function SetupProgress(props: Props) {
   const needsModel = props.modelState === 'connected' && props.modelUnavailable && props.firstCheck === 'unknown';
   const progress = status.workspaceProgress;
   const copying = !stopping && status.localVm === 'installing' && progress?.phase === 'materializing';
-  const stateLine = error ? 'Workspace status is unavailable.' : stopping ? 'Stopping the workspace…' : ready ? 'Your workspace is ready on this computer.'
+  const stateLine = error ? 'Workspace status is unavailable.' : props.updating ? 'Updating the workspace. Your agent files are kept.' : props.updateBlocked ? 'Workspace recovery needs attention.' : stopping ? 'Stopping the workspace…' : ready ? 'Your workspace is ready on this computer.'
     : paused ? 'Setup is paused. Choose Start again to resume.' : status.localVm === 'starting' ? 'Starting the workspace…'
     : status.localVm === 'closing' ? 'Stopping the workspace…'
     : status.localVm === 'notIntegrated' ? 'Workspace setup is not included in this build. Nothing will be downloaded or started.'
@@ -96,7 +96,7 @@ export function SetupProgress(props: Props) {
     {!failed && <div className="workspace-step-actions">
       {['preparing', 'installing', 'starting'].includes(status.localVm) && <><Button type="button" kind="secondary" disabled={busy || !!error} onClick={onCancel}>Cancel</Button><span className="muted">Cancel pauses setup. Your downloaded files are kept.</span></>}
       {status.localVm === 'notIntegrated' && onCluster && <Button type="button" kind="secondary" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</Button>}
-      {paused && <Button type="button" kind="primary" disabled={busy || !!error} onClick={onRestart}>Start again</Button>}
+      {paused && (props.ordinaryRecovery ?? !props.upgrade) && <Button type="button" kind="primary" disabled={busy || !!error} onClick={onRestart}>Start again</Button>}
       {ready && <>{props.modelState === 'connected' && !needsModel && <>
         {props.firstCheck === 'stale' ? <Button type="button" kind="primary" disabled={busy || !!error} onClick={onOpenExample}>Run it again</Button>
           : (props.firstCheck === 'unknown' || ((props.firstCheck === 'passed' || props.firstCheck === 'failed') && !props.firstTestResult)) ? <Button type="button" kind="primary" disabled={busy || !!error || !props.onCheckFirstTest} onClick={props.onCheckFirstTest}>Check again</Button>
@@ -107,7 +107,7 @@ export function SetupProgress(props: Props) {
   </section>;
 }
 
-export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster' | 'upgrade' | 'updating' | 'updateBlocked'> & { workspaceDetails?: ReactNode; modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement> }) {
+export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | 'error' | 'modelState' | 'firstCheck' | 'initialAutomatic' | 'onRestart' | 'onCluster' | 'upgrade' | 'updating' | 'updateBlocked' | 'ordinaryRecovery'> & { workspaceDetails?: ReactNode; modelRecoveryRef?: Ref<HTMLDivElement>; modelChoiceRef?: Ref<HTMLDivElement> }) {
   const { status, busy, error, onRestart, onCluster } = props;
   const { view, failed, rows } = stepRows(props);
   return <ol className="steps-four" aria-label="Setup steps">
@@ -116,7 +116,7 @@ export function SetupSteps(props: Pick<Props, 'status' | 'busy' | 'stopping' | '
         <StatusIcon state={state} /><b>{name}</b><span className="step-result">{result}</span>
         {index === 1 && props.workspaceDetails && <div className="step-more">{props.workspaceDetails}</div>}
         {index === 2 && <><div ref={props.modelChoiceRef} className="step-more model-choice-slot" /><div ref={props.modelRecoveryRef} className="step-more model-recovery-slot" /></>}
-        {failed && !props.upgrade && index === 1 && <div className="step-more">
+        {failed && (props.ordinaryRecovery ?? !props.upgrade) && index === 1 && <div className="step-more">
           <Recovery key={status.localVmError} detail={status.localVmError} preflightFailure={status.preflightFailure} failure={status.workspaceFailure} disabled={busy || !!error} onRetry={onRestart} onCluster={onCluster} /></div>}
       </li>; })}
     </ol>;

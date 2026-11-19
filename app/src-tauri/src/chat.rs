@@ -2,7 +2,7 @@
 use crate::{
     agent_folder::{AgentFolder, DocumentId},
     engine::run::{ParsedAgent, ResourceId},
-    local_vm::LocalVm,
+    local_vm::{LocalVm, LocalVmStatus},
     runtime::types::RuntimeError,
 };
 use bridge_runtime_protocol::{
@@ -189,9 +189,14 @@ impl ChatOwner {
         if message.trim().is_empty() || message.len() > MAX_ORKA_BODY {
             return Err(ChatError::InvalidMessage);
         }
-        let lease = vm.try_authoring().ok_or(ChatError::Busy)?;
         let id = folder.document_id();
         let mut entries = self.0.lock().unwrap();
+        // Retirement shares this lock: capture the lease and launch epoch together,
+        // and admit nothing in the gap before the replacement VM is ready.
+        let lease = vm.try_authoring().ok_or(ChatError::Busy)?;
+        if vm.status() != LocalVmStatus::Ready || !vm.authoring_current(&lease) {
+            return Err(ChatError::Busy);
+        }
         let e = entries.entry(id).or_insert_with(|| Entry::new(id));
         if e.view.busy || e.lease.is_some() {
             return Err(ChatError::Busy);
@@ -1003,9 +1008,13 @@ mod tests {
         let vm = LocalVm::unavailable();
         let folder = Arc::new(AgentFolder::new(None));
         let id = folder.document_id();
-        owner
-            .send(vm.clone(), folder, "old message".into())
-            .unwrap();
+        // Exercise detached finalization without requiring a running VM.
+        {
+            let mut entries = owner.0.lock().unwrap();
+            let entry = entries.entry(id).or_insert_with(|| Entry::new(id));
+            entry.lease = Some(Arc::new(vm.try_authoring().unwrap()));
+            owner.launch(vm.clone(), id, entry, Some((folder, "old message".into())));
+        }
         owner.retire_for_workspace_replacement();
         owner.new_conversation(id).unwrap();
         // Drive the real detached task through its failed old-client completion.

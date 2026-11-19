@@ -520,6 +520,17 @@ for (const theme of ['light', 'dark']) for (const size of ['wide', 'compact']) {
   }
 }
 assert.equal((source.match(/await captureUpgrade\(theme, '(?:wide|compact)'\)/g) ?? []).length, 2);
+// The capture is passive even if React catches a rejected mutation reply.
+const upgradeAudit = upgradeCapture.slice(upgradeCapture.indexOf('      for (const { command, args }'), upgradeCapture.indexOf('      await checkLayout('));
+assert.ok(upgradeAudit.includes('workspace_upgrade_'), 'upgrade call audit is missing');
+const auditUpgrade = Function('calls', 'name', 'transaction', upgradeAudit);
+for (const args of [null, {}]) assert.doesNotThrow(() => auditUpgrade([{ command: 'workspace_upgrade_status', args }], 'fixture', 'fixture-transaction'));
+for (const args of [{ path: 'unexpected' }, { transaction: 'fixture-transaction' }, [], 'unexpected']) {
+  assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_status', args }], 'fixture', 'fixture-transaction'));
+}
+for (const action of ['replace', 'retry', 'restore', 'cancel', 'transfer_credential', 'remove_credential']) {
+  assert.throws(() => auditUpgrade([{ command: `workspace_upgrade_${action}`, args: { transaction: 'fixture-transaction' } }], 'fixture', 'fixture-transaction'), 'even a well-shaped caught mutation must fail the capture');
+}
 // Old isolated-world React pollers may still retire their own first-test intent;
 // their synthetic preferences must not change a later scene's identity.
 const fixtureStorage = source.match(/const fixtureStorage = `([\s\S]*?)`;/)?.[1];
@@ -537,6 +548,8 @@ assert.deepEqual([...nativePreferences], [['native-sentinel', 'kept']], 'rendere
 // Execute the fixture's document-start handshake: old-page callbacks must not
 // overwrite the next renderer's intended setup/Manage presentation.
 const upgradeFixture = await readFile(new URL('../app/src-tauri/examples/model_walk.rs', import.meta.url), 'utf8');
+assert.ok(upgradeFixture.includes('if key == "sourceRetained"') && upgradeFixture.includes('40000000-0000-4000-8000-000000000005'), 'visually identical retained scene needs a distinct synthetic transaction witness');
+assert.ok(model.includes('if state == "sourceRetained"') && model.includes('waitForNativeText(["4000…0005"])'), 'Mac must observe the requested scene in rendered details before naming its screenshot');
 const upgradeBootstrap = upgradeFixture.match(/const UPGRADE_INITIALIZE: &str = r#"([\s\S]*?)"#;/)?.[1];
 assert.ok(upgradeBootstrap, 'fixture intent must be restored at document start, not before old callbacks finish');
 for (const intent of ['pending', 'attempted']) {

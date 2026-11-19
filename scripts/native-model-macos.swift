@@ -1699,6 +1699,19 @@ func captureUpgradeMatrix(manage: Bool) throws {
         if manage && index == 0 { waitForButton("Manage"); click("Manage", []) }
         waitForNativeText([expected])
         waitForNativeText([manage ? "Agents" : "Where agents run"])
+        if state == "sourceRetained" {
+            // Identical recovery prose cannot prove this scene reached React.
+            // Observe its synthetic transaction in real rendered native details.
+            press("Update details")
+            waitForNativeText(["4000…0005"])
+            click("Update details", [])
+            var closed = false
+            for _ in 0..<40 {
+                if !nativeTextExists("4000…0005") { closed = true; break }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            require(closed, "Upgrade phase witness details must close before capture")
+        }
         for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("compact", CGFloat(540), CGFloat(900))] {
             localSize(width, height); scroll(4000)
             _ = try seek(expected, -100)

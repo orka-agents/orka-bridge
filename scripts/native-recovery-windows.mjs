@@ -1823,8 +1823,9 @@ try {
       }
       const calls = await evaluate('window.__bridgeUpgradeCalls');
       for (const { command, args } of calls.filter(call => call.command.startsWith('workspace_upgrade_'))) {
-        const finite = args === null || (typeof args === 'object' && Object.keys(args).length <= 1 && (!('transaction' in args) || args.transaction === transaction));
-        if (!finite) throw Error(`${name}: ${command} received unbounded or unexpected args: ${JSON.stringify(args)}`);
+        if (command !== 'workspace_upgrade_status') throw Error(`${name}: passive capture attempted mutation ${command}`);
+        const empty = args === null || (typeof args === 'object' && !Array.isArray(args) && Object.keys(args).length === 0);
+        if (!empty) throw Error(`${name}: ${command} received unexpected args: ${JSON.stringify(args)}`);
       }
       await checkLayout(theme, size, name);
       console.log(`Captured renderer-synthetic workspace-upgrade fixture, not native IPC safety proof: ${theme}/${size}/${name}`);

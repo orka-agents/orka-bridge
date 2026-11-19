@@ -262,6 +262,12 @@ fn upgrade_status(key: &str) -> serde_json::Value {
             status["error"] = json!("noSpace");
         }
         "sourceSelected" | "sourceRetained" | "restoring" => {
+            // These are independent canned observations, not a transaction replay.
+            // A distinct visible-details witness prevents identical recovery prose
+            // from acknowledging the preceding sourceSelected scene.
+            if key == "sourceRetained" {
+                status["transaction"] = json!("40000000-0000-4000-8000-000000000005");
+            }
             status["state"] = json!(key);
             status["canReplace"] = json!(key != "restoring");
             status["canRestore"] = json!(true);

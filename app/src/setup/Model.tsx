@@ -11,8 +11,8 @@ export type ModelState = 'idle' | 'queued' | 'connecting' | 'removing' | 'resett
 // `enabled` is native permission to touch credentials. `queueable` only permits remembering the
 // creator's choice while the workspace is still arriving. `away` means another place was chosen.
 // Each increase of changeRequest explicitly asks to change the AI provider.
-export default function Model({ title = 'Connect the AI', enabled, queueable = false, paused = false, away = false, primary = true, changeRequest = 0, recoveryTarget, choiceTarget, inline = false, onPlaceCard = false, onState, onSettled, onConnectRequest }: {
-  title?: string; choiceTarget?: HTMLElement | null; inline?: boolean;
+export default function Model({ title = 'Connect the AI', enabled, queueable = false, paused = false, away = false, primary = true, changeRequest = 0, sharedConnection = false, recoveryTarget, choiceTarget, inline = false, onPlaceCard = false, onState, onSettled, onConnectRequest }: {
+  sharedConnection?: boolean; title?: string; choiceTarget?: HTMLElement | null; inline?: boolean;
   enabled: boolean; queueable?: boolean; paused?: boolean; away?: boolean; primary?: boolean; changeRequest?: number; recoveryTarget?: HTMLElement | null; onPlaceCard?: boolean; onState?: (state: ModelState) => void; onSettled?: () => void; onConnectRequest?: () => void;
 }) {
   // In-memory consent only. It never carries a credential and is consumed once.
@@ -138,6 +138,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   });
   async function perform(action: 'connect' | 'remove' | 'reset') {
     if (!enabled || paused || active.current || (action === 'connect' && ready)) return;
+    if (action === 'remove' && sharedConnection) return;
     if (action === 'reset' && !recovery) return;
     const key = action === 'connect' && choice === 'key' ? keyField.current?.value ?? '' : '';
     if (action === 'connect' && choice === 'key' && (key || !hasSignIn) && !validKey(vendor, key)) {
@@ -198,7 +199,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   function chooseKind(kind: 'copilot' | 'key') { clearKey(); setQueued(false); setChoice(kind); setError(undefined); }
   const keyMode = choice === 'key';
   const keyProblem = keyMode && error && !removalFailed;
-  const removalAction = hasSignIn && !busy && <Button ref={removal} type="button" kind={removalFailed ? 'primary' : 'quiet'} className={removalFailed ? undefined : 'button-danger'} disabled={!enabled || paused || !!busy}
+  const removalAction = sharedConnection ? <p>To change provider, use Remove saved connection in the Workspace card. Its confirmation explains removal for all retained workspaces.</p> : hasSignIn && !busy && <Button ref={removal} type="button" kind={removalFailed ? 'primary' : 'quiet'} className={removalFailed ? undefined : 'button-danger'} disabled={!enabled || paused || !!busy}
             onClick={() => {
               refocus.current = document.activeElement === removal.current ? 'remove' : undefined;
               if (removalFailed) void perform('remove'); else setConfirmRemoval(true);
@@ -284,7 +285,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
             <legend>Change the AI</legend><p>Remove the saved {keyMode ? 'key' : 'sign-in'} before choosing another provider.</p>
             <div className="workspace-step-actions">{removalAction}<Button type="button" kind="quiet" onClick={closeChange}>Done</Button></div>
           </fieldset>}
-          {confirmRemoval ? <div role="group" aria-label={`Remove ${keyMode ? 'key' : 'sign-in'} confirmation`}>
+          {confirmRemoval && !sharedConnection ? <div role="group" aria-label={`Remove ${keyMode ? 'key' : 'sign-in'} confirmation`}>
             <p>{keyMode ? 'Disconnect the AI and remove Bridge’s saved key? This does not revoke the key with the company.' : 'Disconnect the AI and remove Bridge’s saved sign-in? GitHub CLI stays signed in.'}</p>
             <div className="workspace-step-actions">
               <Button ref={cancelRemoval} type="button" kind="primary" onClick={() => {

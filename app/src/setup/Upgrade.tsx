@@ -97,7 +97,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
       {s.canRestore && <Button type="button" kind="secondary" disabled={blocked} onClick={event => ask('restore', event.currentTarget)}>Restore previous workspace</Button>}
       {ready && s.transaction && ['eligible', 'attention', 'transferred'].includes(s.credential) && <Button type="button" kind="quiet" className="button-danger" disabled={blocked || !canUseCredential} title={!canUseCredential ? 'Start the workspace before changing its saved connection' : undefined} onClick={event => ask('remove', event.currentTarget)}>Remove saved connection</Button>}
       {s.busy && <Button type="button" kind="secondary" disabled={cancelling} onClick={() => { void cancelUpdate(); }}>Cancel update</Button>}
-      {!busy && (s.state === 'conflict' || s.error || error) && <Button type="button" kind="secondary" disabled={disabled} onClick={onCheck}>Check again</Button>}
+      {!busy && (s.state === 'conflict' || s.error || error) && <Button type="button" kind="secondary" disabled={disabled} onClick={() => { setError(undefined); onCheck(); }}>Check again</Button>}
     </div></div>
     <Disclosure label="Update details" open={details} controls="workspace-upgrade-details" onOpenChange={setDetails}>
       {details && <div id="workspace-upgrade-details"><p>Previous: {source}. New: Bridge {s.targetRelease ?? 'unknown'}.</p>

@@ -16,7 +16,8 @@ function mount(status = eligible) {
 }
 test('new workspace is explicit, measured, and Not now cannot switch or reuse a credential', () => {
   const { ipc } = mount();
-  expect(screen.getByText(/1.2 GB/)).toBeTruthy(); expect(screen.getByText(/2.4 GB/)).toBeTruthy();
+  const size = (gb: number) => `${new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(gb)} GB`;
+  expect(screen.getByText(text => text.includes(size(1.2)) && text.includes(size(2.4)))).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Set up new workspace' }));
   const confirm = screen.getByRole('group', { name: 'Set up new workspace?' });
   expect(within(confirm).getByText(/Do not open the older version until Restore has completed/)).toBeTruthy();
@@ -103,6 +104,20 @@ test('Cancel remains usable while this renderer awaits replacement, without rele
   expect(onBusy.mock.calls).toEqual([[true]]);
   finish(fresh);
   await waitFor(() => expect(onBusy.mock.calls).toEqual([[true], [false]]));
+});
+
+test('Check again clears only the local lost-command error', async () => {
+  const { ipc, rerender, onChange, onBusy } = mount(fresh);
+  ipc.mockRejectedValue('lost reply');
+  fireEvent.click(screen.getByRole('button', { name: 'Use saved connection' }));
+  await screen.findByRole('alert');
+  const onCheck = vi.fn();
+  rerender(<Upgrade status={{ ...fresh, state: 'sourceSelected', error: 'network' }} onChange={onChange} onBusy={onBusy} onCheck={onCheck} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Check again' }));
+  expect(onCheck).toHaveBeenCalledOnce();
+  expect(screen.getByRole('alert').textContent).toContain('could not be downloaded');
+  rerender(<Upgrade status={{ ...fresh, state: 'sourceSelected' }} onChange={onChange} onBusy={onBusy} onCheck={onCheck} />);
+  expect(screen.queryByRole('alert')).toBeNull();
 });
 
 test('quarantined native stop guidance supersedes an earlier generic command failure', async () => {

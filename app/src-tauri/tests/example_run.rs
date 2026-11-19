@@ -179,7 +179,7 @@ async fn first_test_requires_the_expected_template_and_current_connection() {
         ),
         ("gpt-4.1", "gpt-4.1", "gpt-5.6-terra", Some("model")),
     ] {
-        let (vm, posts, _) = fixture_with_model(false, false, false, None, connected).await;
+        let (vm, posts, _) = fixture_with_model(false, false, false, None, connected, false).await;
         let home = tempfile::tempdir().unwrap();
         let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
         let pair = folder.prepare_example_model(saved).unwrap();
@@ -917,6 +917,7 @@ async fn fixture_with_cleanup(
         closed_after_work,
         cleanup_reply,
         "gpt-5.6-terra",
+        false,
     )
     .await
 }
@@ -926,6 +927,7 @@ async fn fixture_with_model(
     closed_after_work: bool,
     cleanup_reply: Option<bool>,
     model: &'static str,
+    cancel_supported: bool,
 ) -> (Arc<LocalVm>, Arc<Mutex<Vec<Value>>>, Arc<AtomicBool>) {
     let id = Uuid::new_v4();
     let posts = Arc::new(Mutex::new(Vec::new()));
@@ -957,7 +959,7 @@ async fn fixture_with_model(
         stopped.clone(),
         id,
         closed_after_work,
-        false,
+        cancel_supported,
         None,
     ))))));
     vm.start();
@@ -1026,11 +1028,13 @@ fn blocking_ipc_caller_does_not_need_an_entered_tokio_runtime() {
     let home = tempfile::tempdir().unwrap();
     let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
     let run = ExampleRun::new(runtime.handle().clone(), true, folder);
-    let vm = LocalVm::unavailable();
+    let (vm, _, _) = runtime.block_on(fixture(false, false));
+    // start is intentionally outside block_on: IPC callers need no entered runtime.
     assert_eq!(run.start(vm.clone()).state, RunState::Running);
     let result = runtime.block_on(finished(&run, &vm));
-    assert_eq!(result.state, RunState::Unknown);
-    assert_eq!(result.error, Some("session"));
+    assert_eq!(result.state, RunState::Complete);
+    assert!(result.error.is_none());
+    runtime.block_on(vm.shutdown()).unwrap();
 }
 #[tokio::test]
 async fn unsupported_image_never_probes_or_retires_the_shared_client() {
@@ -1315,8 +1319,24 @@ async fn admitted_run_freezes_source_before_busy_vm_refusal() {
 }
 
 #[tokio::test]
-async fn active_workspace_retirement_suppresses_late_results_without_losing_history() {
+async fn retirement_does_not_admit_run_before_replacement_startup() {
     let (vm, posts, _) = fixture(false, false).await;
+    let home = tempfile::tempdir().unwrap();
+    let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
+    let run = ExampleRun::new(tokio::runtime::Handle::current(), true, folder);
+    vm.cancel().await.unwrap();
+    run.retire_for_workspace_replacement();
+    let rejected = run.start(vm.clone());
+    assert_eq!(rejected.state, RunState::Idle);
+    assert!(!run.is_active());
+    assert!(rejected.report.is_none() && rejected.error.is_none());
+    assert!(run.overview_observation().is_none());
+    assert!(posts.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn active_workspace_retirement_suppresses_late_results_without_losing_history() {
+    let (vm, posts, _) = fixture_with_model(false, false, false, None, "gpt-5.6-terra", true).await;
     let home = tempfile::tempdir().unwrap();
     let folder = Arc::new(AgentFolder::new(Some(home.path().into())));
     let id = folder.open().unwrap().document_id;
@@ -1327,6 +1347,7 @@ async fn active_workspace_retirement_suppresses_late_results_without_losing_hist
         Some(home.path().join("local-data")),
     );
     assert_eq!(run.start(vm.clone()).state, RunState::Running);
+    assert!(run.status(&vm).can_cancel);
     // Current-thread execution holds the admitted task before its first poll.
     run.retire_for_workspace_replacement();
     let retired = run.status(&vm);
