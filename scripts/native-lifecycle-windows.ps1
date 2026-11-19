@@ -341,7 +341,7 @@ function Tray-Menu {
         while (($h = [NativeWalk]::FindWindowEx([IntPtr]::Zero, $h, '#32768', $null)) -ne [IntPtr]::Zero) {
             [uint32]$owner = 0
             [NativeWalk]::GetWindowThreadProcessId($h, [ref]$owner) | Out-Null
-            if ($owner -in $explorer -and [NativeWalk]::IsWindowVisible($h)) { throw 'Open Bridge menu item missing: Explorer opened its own menu, so the right-click reached the taskbar, not the icon' }
+            if ($owner -in $explorer -and [NativeWalk]::IsWindowVisible($h)) { throw 'Open Bridge menu item missing: an Explorer menu opened instead of Bridge''s, so the right-click likely missed the icon' }
         }
         throw
     }
