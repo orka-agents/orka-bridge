@@ -1877,6 +1877,16 @@ for state in ["refresh-pending", "refresh-busy", "refresh-io", "cancel-requested
         if state == "cancel-completed" {
             require(!anyButton("Cancel update") && enabledButton("Try setup again") != nil, "Completed cancellation must expose terminal recovery, not a stale waiting acknowledgement")
         } else {
+            // ACK text can precede the cached capability render. Keep the existing
+            // four-second polling budget and observe AX, not a future DTO.
+            for _ in 0..<40 {
+                if !anyButton("Cancel update") { break }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            require(!anyButton("Cancel update"), "Acknowledged cancellation must withdraw the rendered capability")
+            if state == "cancel-requested" {
+                require(anyButton("Restore previous workspace") && enabledButton("Restore previous workspace") == nil, "Busy cancellation must retain disabled restore")
+            }
             require(enabledButton("Try setup again") == nil && enabledButton("Restore previous workspace") == nil, "Cancellation acknowledgement must not release the update fence")
         }
     } else if state == "forward-cancelled" {

@@ -4,6 +4,17 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import App from '../App';
+import type { ComponentProps } from 'react';
+import type Setup from './Setup';
+
+const setupProbe = vi.hoisted(() => ({ onStatus: undefined as ComponentProps<typeof Setup>['onStatus'] }));
+vi.mock('./Setup', async importOriginal => {
+  const { default: RealSetup } = await importOriginal<typeof import('./Setup')>();
+  return { default: function ObservedSetup(props: ComponentProps<typeof RealSetup>) {
+    setupProbe.onStatus = props.onStatus;
+    return <RealSetup {...props} />;
+  } };
+});
 
 const sample = '9b2b93c4-375c-4815-9717-39852a96e411';
 const pair = { agent: '---\nname: web-reader\n---\nRead a page.', tests: 'A checksum test.', source: { agent: 'a'.repeat(64), tests: 'b'.repeat(64) } };
@@ -181,6 +192,30 @@ test('ordinary setup retry preserves a never-replaced first pass without refresh
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_connect_model')).toHaveLength(1);
   expect(screen.queryByText(/Could not check workspace files/)).toBeNull();
+});
+
+test.each([false, true])('a late non-pass first-test reply cannot open Designer after replacement observation (replaced: %s)', async replaced => {
+  const { ipc } = native();
+  const original = ipc.getMockImplementation()!;
+  let finish!: (value: unknown) => void;
+  ipc.mockImplementation((command, args) => command === 'agent_run'
+    ? new Promise(resolve => { finish = resolve; }) : original(command, args));
+  await completeSetup();
+  await waitFor(() => expect(finish).toBeTypeOf('function'));
+  expect(screen.getByRole('button', { name: 'Clusters' }).getAttribute('aria-current')).toBe('page');
+  await act(async () => {
+    // Unwrap the native reply, then observe replacement before the first-test
+    // continuation runs and before React flushes replacement's passive effects.
+    finish({ ...idle, state: 'unknown' });
+    await Promise.resolve();
+    await Promise.resolve();
+    if (replaced) setupProbe.onStatus?.({ selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true });
+    await Promise.resolve();
+  });
+  expect(screen.getByRole('button', { name: replaced ? 'Clusters' : 'Designer' }).getAttribute('aria-current')).toBe('page');
+  expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);
+  expect(ipc.mock.calls.filter(([c]) => c === 'setup_connect_model')).toHaveLength(1);
+  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
 });
 
 test('replacement never presents the previous workspace pass as a fresh first-pass success', async () => {
@@ -395,11 +430,13 @@ test('replacement cancels Check again polling and held replies cannot restart it
   await screen.findByText('Your agent folder could not be opened. Open it again from Designer.');
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   const original = ipc.getMockImplementation()!;
-  let hold = false; let replaced: boolean | undefined = false; let missing = false;
+  let hold = false; let replaced = false; let missing = false;
+  let falseSnapshot = false;
+  let resolveSetup!: (value: unknown) => void; let rejectSetup!: (reason: unknown) => void;
   let finish!: (value: unknown) => void;
   ipc.mockImplementation((command, args) => {
     if (command === 'setup_status') {
-      if (missing) throw Error('Lost setup observation');
+      if (falseSnapshot || missing) return new Promise((resolve, reject) => { resolveSetup = resolve; rejectSetup = reject; });
       return { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: replaced };
     }
     if (command === 'agent_run_status') return hold ? new Promise(resolve => { finish = resolve; }) : idle;
@@ -420,11 +457,21 @@ test('replacement cancels Check again polling and held replies cannot restart it
     const stopped = calls();
     await act(async () => { finish(idle); await vi.advanceTimersByTimeAsync(500); });
     expect(calls()).toBe(stopped);
-    replaced = false;
-    await act(async () => { fireEvent(window, new Event('focus')); await vi.advanceTimersByTimeAsync(500); });
+    replaced = false; falseSnapshot = true;
+    resolveSetup = undefined!;
+    await act(async () => { fireEvent(window, new Event('focus')); });
+    expect(resolveSetup).toBeTypeOf('function');
+    await act(async () => { resolveSetup({ selected: 'localVm', localVm: 'closed', model: 'locked', workspaceReplaced: false }); });
+    expect(screen.getByRole('contentinfo').textContent).toContain('Workspace stopped');
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(calls()).toBe(stopped);
-    missing = true;
-    await act(async () => { fireEvent(window, new Event('focus')); await vi.advanceTimersByTimeAsync(500); });
+    falseSnapshot = false; missing = true;
+    resolveSetup = undefined!; rejectSetup = undefined!;
+    await act(async () => { fireEvent(window, new Event('focus')); });
+    expect(rejectSetup).toBeTypeOf('function');
+    await act(async () => { rejectSetup(Error('Lost setup observation')); });
+    expect(screen.getByRole('contentinfo').textContent).toContain('Workspace unavailable');
+    await act(async () => { await vi.advanceTimersByTimeAsync(500); });
     expect(calls()).toBe(stopped);
     expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(0);
   } finally { vi.useRealTimers(); }

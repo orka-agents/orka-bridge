@@ -321,6 +321,7 @@ fn upgrade_status(key: &str) -> serde_json::Value {
             status["state"] = json!("sourceSelected");
             status["busy"] = json!(true);
             status["canCancel"] = json!(key != "busy-locked");
+            status["canRestore"] = json!(key == "cancel-requested");
         }
         "refresh-pending" | "refresh-busy" | "refresh-io" | "forward-cancelled" => {
             status["state"] = json!("incomplete");

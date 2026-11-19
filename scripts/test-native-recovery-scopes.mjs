@@ -583,7 +583,26 @@ assert.deepEqual(scopeSlots.get('workspace-upgrade'), scopeSlots.get('all'));
 const splitSlots = ['core', 'chat-agent-clusters', 'workspace-upgrade'].flatMap(scope => scopeSlots.get(scope));
 assert.deepEqual(splitSlots, scopeSlots.get('all'), 'split scopes preserve every upgrade frame exactly once');
 assert.equal(new Set(splitSlots).size, 148, 'no theme/size/frame overwrites across split scopes');
-assert.equal((source.match(/await captureUpgrade\(theme, '(?:wide|compact)'\)/g) ?? []).length, 2);
+// Execute the driver's actual resize/theme loops: a separately invented size list
+// cannot detect compact captures accidentally overwriting wide artifacts.
+async function upgradeRoutes(driver) {
+  const wide = driver.slice(driver.indexOf('  const notes = [];'), driver.indexOf('  // Request CSS viewport dimensions'));
+  const compact = driver.slice(driver.indexOf("  await resizeTo({ width: 540, height: 640 }, 'Compact');"), driver.indexOf('  // Preserve the explicitly named Overview minimum'));
+  assert.ok(wide.includes('captureUpgrade') && compact.includes('captureUpgrade'));
+  const routes = []; let viewport;
+  await vm.runInNewContext(`(async () => { ${wide}\n${compact} })()`, {
+    setupFixtures: [], actionFixtures: [], overviewVariants: [],
+    resizeTo: async target => { viewport = target; }, call: async () => {},
+    captureUpgrade: async (theme, size) => routes.push([theme, size, viewport.width, viewport.height]),
+  });
+  assert.deepEqual(routes, [
+    ['light', 'wide', 1280, 800], ['dark', 'wide', 1280, 800],
+    ['light', 'compact', 540, 640], ['dark', 'compact', 540, 640],
+  ]);
+}
+await upgradeRoutes(source);
+await assert.rejects(upgradeRoutes(source.replace("await captureUpgrade(theme, 'compact')", "await captureUpgrade(theme, 'wide')")), /deep-equal/);
+await assert.rejects(upgradeRoutes(source.replace("await captureUpgrade(theme, 'wide')", "await captureUpgrade(theme, 'compact')")), /deep-equal/);
 // The capture is passive even if React catches a rejected mutation reply.
 const upgradeAudit = upgradeCapture.slice(upgradeCapture.indexOf('      for (const { command, args }'), upgradeCapture.indexOf('      await checkLayout('));
 assert.ok(upgradeAudit.includes('workspace_upgrade_'), 'upgrade call audit is missing');
@@ -602,7 +621,13 @@ for (const action of ['status', 'replace', 'retry', 'restore', 'cancel', 'transf
   }
 }
 for (const name of ['upgrade-refresh-pending', 'upgrade-refresh-busy', 'upgrade-refresh-io']) {
-  assert.doesNotThrow(() => auditUpgrade([{ command: 'workspace_upgrade_status', args: { refresh: true } }], name, 'fixture-transaction'));
+  assert.throws(() => auditUpgrade([], name, 'fixture-transaction'), /exactly one owner refresh/);
+  assert.throws(() => auditUpgrade(Array(2).fill({ command: 'workspace_upgrade_status', args: { refresh: true } }), name, 'fixture-transaction'), /exactly one owner refresh/);
+  assert.doesNotThrow(() => auditUpgrade([
+    { command: 'workspace_upgrade_status', args: null },
+    { command: 'workspace_upgrade_status', args: { refresh: true } },
+    { command: 'workspace_upgrade_status', args: {} },
+  ], name, 'fixture-transaction'), 'cached reads remain allowed around the one explicit owner check');
   for (const args of [{ refresh: true, path: 'unexpected' }, { refresh: false }, { refresh: true, transaction: 'fixture-transaction' }]) {
     assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_status', args }], name, 'fixture-transaction'));
   }

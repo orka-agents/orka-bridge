@@ -111,6 +111,20 @@ assert.ok(!mac.includes('click("Stop the workspace"'), 'Mac must not navigate vi
 assert.ok(mac.includes('workspaceCapture("starting-after-quit-synthetic"'), 'Mac synthetic startup capture must be labeled');
 assert.ok(mac.includes('workspacePhase("setup-forced-stop")') && mac.includes('First-run forced stop must offer Quit without retry'), 'Mac first-run forced-stop controls must be checked');
 const fixtureSource = await read('../app/src-tauri/examples/model_walk.rs');
+// Exercise the actual fixture capability expression and AX acceptance predicate.
+// These portable checks do not claim to run Swift/AX or the full Rust fixture.
+const busyArm = fixtureSource.slice(fixtureSource.indexOf('        "busy"\n'), fixtureSource.indexOf('        "refresh-pending" |'));
+const restoreCapability = busyArm.match(/status\["canRestore"\] = json!\(([^;]+)\);/)?.[1];
+assert.ok(restoreCapability, 'busy cancellation needs an offered restore capability to fence');
+for (const key of ['cancel-requested', 'cancel-not-cancellable', 'cancel-completed', 'busy', 'busy-locked']) {
+  assert.equal(Function('key', `return ${restoreCapability}`)(key), key === 'cancel-requested');
+}
+const restoreFence = mac.match(/require\(([^\n]+), "Busy cancellation must retain disabled restore"\)/)?.[1];
+assert.ok(restoreFence, 'Mac must require Restore present AND disabled after ACK');
+const checkRestore = (present, enabled) => Function('anyButton', 'enabledButton', `return ${restoreFence.replaceAll('nil', 'null')}`)(() => present, () => enabled ? {} : null);
+assert.equal(checkRestore(true, false), true);
+assert.equal(checkRestore(false, false), false, 'absence is not a disabled recovery capability');
+assert.equal(checkRestore(true, true), false, 'busy must fence the offered recovery capability');
 for (const state of ['ready', 'starting', 'failed', 'stopped-unexpectedly', 'stop-failed', 'closed']) {
   assert.ok(fixtureSource.includes(`"workspace-scene-${state}"`), `Mac explicit scene missing: ${state}`);
 }
@@ -224,15 +238,15 @@ await assert.rejects(checkBusy(true, [{ textContent: 'Cancel update', disabled: 
 await assert.rejects(checkBusy(true, [{ textContent: 'Cancel update', disabled: false }, { textContent: 'Restore previous workspace', disabled: false }]));
 // A request observed before React commits must not satisfy the rendered witness wait.
 const refreshCheck = captureUpgrade.slice(captureUpgrade.indexOf("      if (name.startsWith('upgrade-refresh-'))"), captureUpgrade.indexOf("      if (name.startsWith('upgrade-cancel-'))"));
-async function checkRenderedRefresh(keepError, falseFreshness) {
+async function checkRenderedRefresh(keepError, falseFreshness, automaticRefresh = false) {
+  const window = { __bridgeUpgradeCalls: automaticRefresh ? [{ command: 'workspace_upgrade_status', args: { refresh: true } }] : [], dispatchEvent() {} };
   let text = 'Retained workspace: 1.2 GB allocated.';
   let committed = false;
   const run = vm.runInNewContext(`(async () => { ${refreshCheck} })()`, {
     name: 'upgrade-refresh-busy', JSON,
     Event: class {}, window: {},
-    clickAction: async () => { text += manualError; },
     evaluate: async script => Function('document', 'window', 'Event', `return ${script}`)(
-      { querySelector: () => ({ innerText: text }) }, { dispatchEvent() {} }, class {}),
+      { querySelector: () => ({ innerText: text }), querySelectorAll: () => [{ textContent: 'Check again', disabled: false, getClientRects: () => [1], click: () => { window.__bridgeUpgradeCalls.push({ command: 'workspace_upgrade_status', args: { refresh: true } }); text += manualError; } }] }, window, class {}),
     until: async (predicate, label) => {
       if (label === 'rendered cached metadata after refresh failure') {
         assert.equal(await predicate(), false, 'a request/error without the new DTO rendered cannot pass');
@@ -245,6 +259,7 @@ async function checkRenderedRefresh(keepError, falseFreshness) {
   await run;
   assert.equal(committed, true, 'consumer must wait for the rendered cached DTO, not request count');
 }
+await assert.rejects(checkRenderedRefresh(true, false, true), /owner refresh before Check again/);
 await checkRenderedRefresh(true, false);
 await assert.rejects(checkRenderedRefresh(false, false), /erased manual refresh error/);
 await assert.rejects(checkRenderedRefresh(true, true), /claimed owner freshness/);

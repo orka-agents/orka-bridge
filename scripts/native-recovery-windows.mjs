@@ -1838,7 +1838,14 @@ try {
           const cached = await call('Page.captureScreenshot', { format: 'png' });
           await writeFile(join(output, `${theme}-${size}-upgrade-refresh-cached.png`), Buffer.from(cached.data, 'base64'));
         }
-        await clickAction('Check again');
+        // Audit and click in one WebView task: no automatic owner request may
+        // hide in the cached screenshot or the action-availability wait.
+        await evaluate(`(() => {
+          if (window.__bridgeUpgradeCalls.some(call => call.command === 'workspace_upgrade_status' && call.args?.refresh === true)) throw Error('owner refresh before Check again');
+          const explicitCheckAgain = [...document.querySelectorAll('.workspace-upgrade button')].find(button => button.textContent === 'Check again' && !button.disabled && button.getClientRects().length);
+          if (!explicitCheckAgain) throw Error('Explicit Check again control unavailable');
+          explicitCheckAgain.click();
+        })()`);
         const refreshedText = name === 'upgrade-refresh-pending' ? 'Checking workspace' : 'Could not check workspace files. They may still be in use or unavailable. Check again before continuing.';
         await until(() => evaluate(`document.querySelector('.workspace-upgrade').innerText.includes(${JSON.stringify(refreshedText)})`), name + ' manual refresh result');
         if (name !== 'upgrade-refresh-pending') {
@@ -1921,6 +1928,7 @@ try {
           // Explicit finite transaction, never a renderer path or arbitrary slot.
         } else throw Error(`${name}: passive capture attempted mutation ${command}`);
       }
+      if (name.startsWith('upgrade-refresh-') && calls.filter(call => call.command === 'workspace_upgrade_status' && call.args?.refresh === true).length !== 1) throw Error(name + ': expected exactly one owner refresh after Check again');
       if (calls.some(call => ['setup_connect_model', 'agent_run', 'agent_chat_send', 'agent_chat_reconnect', 'setup_select_local'].includes(call.command))) throw Error(name + ': upgrade must never auto-Connect, Test, Chat or start a workspace');
       if (name.startsWith('upgrade-cancel-') && calls.some(call => call.command === 'workspace_upgrade_status' && call.args?.refresh)) throw Error(name + ': cancel observation invoked owner refresh');
       await checkLayout(theme, size, name);

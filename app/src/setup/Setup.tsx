@@ -187,7 +187,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
         setError(result.message);
       }
       const waiting = result.ok && pending(result.status.localVm);
-      if (!waiting) ordinaryStart.current = undefined;
+      if (result.ok && !waiting) ordinaryStart.current = undefined;
       setBusy(waiting);
       timer.current = setTimeout(() => setSetupCheck(value => value + 1), waiting ? 250 : 1000);
       onStatus?.(result.ok ? result.status : undefined);

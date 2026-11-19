@@ -199,7 +199,7 @@ export default function App() {
     ready: !upgradeNotice && !setup?.workspaceReplaced && setup?.selected === 'localVm' && setup.localVm === 'ready' && model === 'connected' && !workspaceBusy && !remote,
     canOpen: page === 'Clusters' && localSetupView && setup?.localVm === 'ready' && !workspaceBusy && !remote,
     sampleDirty,
-    onOpen: () => openDesigner(SAMPLE_DOCUMENT_ID),
+    onOpen: () => { if (!replacementObserved.current) openDesigner(SAMPLE_DOCUMENT_ID); },
     onPrepared: () => setSampleRevision(value => value + 1),
     onSource: setSampleSource,
     onSnapshot: observeSampleRun,

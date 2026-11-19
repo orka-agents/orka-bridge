@@ -152,7 +152,7 @@ test.each([false, true])('manual Check again queries the owner, retains Restore 
   let fixed = false; let unavailable = true;
   const ipc = fixture(args => {
     if (args.refresh) { if (unavailable) throw Error('Busy or IO'); fixed = true; }
-    return { ...current, error: fixed ? null : 'inUse' };
+    return { ...current, retainedAllocatedBytes: fixed ? 1300000000 : 1200000000, error: fixed ? null : 'inUse' };
   }, 'ready', returning);
   render(<App />); await openLocalSetup();
   fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
@@ -164,7 +164,7 @@ test.each([false, true])('manual Check again queries the owner, retains Restore 
   // Cache can now report repaired state; it is not proof that the owner's read succeeded.
   fixed = true;
   fireEvent(window, new Event('focus'));
-  await waitFor(() => expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && !isRefresh(a)).length).toBeGreaterThan(1));
+  await screen.findByText(/Retained workspace: 1.3 GB allocated/);
   expect(screen.getByText(/Could not check workspace files/)).toBeTruthy();
   expect(screen.queryByText('Workspace files checked on request.')).toBeNull();
   unavailable = false;
@@ -172,7 +172,7 @@ test.each([false, true])('manual Check again queries the owner, retains Restore 
   await screen.findByText('Workspace files checked on request.');
   expect(screen.queryByText(/Could not check workspace files/)).toBeNull();
   expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && isRefresh(a))).toHaveLength(2);
-  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run', 'agent_chat_start'].includes(c))).toEqual([]);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run', 'agent_chat_start', 'agent_chat_send', 'agent_chat_reconnect'].includes(c))).toEqual([]);
 });
 
 test('fallback Check again uses owner refresh without serialising independent setup observations', async () => {
@@ -234,19 +234,37 @@ test('an operation invalidates a prior manual owner error without admitting firs
   fireEvent.click(screen.getByRole('button', { name: 'Restore previous workspace' }));
   fireEvent.click(screen.getByRole('button', { name: 'Restore this workspace' }));
   await waitFor(() => expect(screen.queryByText(/Could not check workspace files/)).toBeNull());
-  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_connect_model', 'agent_run', 'agent_chat_start'].includes(c))).toEqual([]);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_connect_model', 'agent_run', 'agent_chat_start', 'agent_chat_send', 'agent_chat_reconnect'].includes(c))).toEqual([]);
+});
+
+test('same known transaction retains explicit Retry after Busy without laundering the failed owner check', async () => {
+  let allocated = 1200000000;
+  const ipc = fixture(args => {
+    if (args.refresh) throw Error('Busy');
+    return { ...current, state: 'sourceSelected', canReplace: true, error: 'inUse', retainedAllocatedBytes: allocated };
+  });
+  render(<App />); await openLocalSetup();
+  fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
+  await screen.findByText(/Could not check workspace files/);
+  allocated = 1300000000; fireEvent(window, new Event('focus'));
+  await screen.findByText(/Retained workspace: 1.3 GB allocated/);
+  expect(screen.getByRole('button', { name: 'Try setup again' }).matches(':disabled')).toBe(false);
+  expect(screen.getByText(/Could not check workspace files/)).toBeTruthy();
+  expect(screen.queryByText('Workspace files checked on request.')).toBeNull();
+  expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && isRefresh(a))).toHaveLength(1);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['workspace_upgrade_retry', 'setup_select_local', 'setup_connect_model', 'agent_run', 'agent_chat_send', 'agent_chat_reconnect'].includes(c))).toEqual([]);
 });
 
 test('manual owner refresh busy observations say Checking, not Updating, and never acquire Cancel capability', async () => {
   const owner = deferred<unknown>(); let refreshing = false;
   const ipc = fixture(args => {
     if (args.refresh) { refreshing = true; return owner.promise; }
-    return { ...current, error: 'inUse', busy: refreshing, canCancel: false };
+    return { ...current, retainedAllocatedBytes: refreshing ? 1300000000 : 1200000000, error: 'inUse', busy: refreshing, canCancel: false };
   });
   render(<App />); await openLocalSetup();
   fireEvent.click(await screen.findByRole('button', { name: 'Check again' }));
   fireEvent(window, new Event('focus'));
-  await waitFor(() => expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && !isRefresh(a)).length).toBeGreaterThan(1));
+  await screen.findByText(/Retained workspace: 1.3 GB allocated/);
   expect(screen.getByText('Checking workspace files. Showing last observed workspace information.')).toBeTruthy();
   expect(screen.queryByText(/Updating the workspace/)).toBeNull();
   expect(screen.getByRole('contentinfo').textContent).not.toContain('Updating workspace');
@@ -255,6 +273,8 @@ test('manual owner refresh busy observations say Checking, not Updating, and nev
   await act(async () => { refreshing = false; owner.resolve(null); });
   await screen.findByText(/Could not check workspace files/);
   expect(screen.getByRole('button', { name: 'Restore previous workspace' })).toBeTruthy();
+  expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && isRefresh(a))).toHaveLength(1);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run', 'agent_chat_send', 'agent_chat_reconnect'].includes(c))).toEqual([]);
 });
 
 test('a pending cache response from before a successful manual check cannot overwrite its repaired status', async () => {
@@ -329,7 +349,7 @@ test.each(['conflict', 'none'] as const)('identityless %s after manual failure r
   await screen.findByText('Workspace files checked on request.');
   expect(screen.queryByText(/Could not check workspace files/)).toBeNull();
   expect(screen.getByRole('button', { name: 'Restore previous workspace' }).matches(':disabled')).toBe(false);
-  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['workspace_upgrade_restore', 'workspace_upgrade_replace', 'setup_select_local', 'setup_connect_model', 'agent_run', 'agent_chat_start'].includes(c))).toEqual([]);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['workspace_upgrade_restore', 'workspace_upgrade_replace', 'setup_select_local', 'setup_connect_model', 'agent_run', 'agent_chat_start', 'agent_chat_send', 'agent_chat_reconnect'].includes(c))).toEqual([]);
 });
 
 test('a positively different known transaction retires an identityless manual failure fence', async () => {
@@ -365,17 +385,25 @@ test('ordinary setup observation retry does not retire pending first-test intent
     if (command === 'setup_requirements') return null;
     throw Error('Unexpected ' + command);
   });
-  mockIPC(ipc); render(<Setup onOpenExample={() => {}} />);
-  await screen.findByRole('region', { name: 'This computer' });
-  unavailable = true; fireEvent(window, new Event('focus'));
-  const retry = await screen.findByRole('button', { name: 'Check again' });
-  const reads = ipc.mock.calls.filter(([c]) => c === 'setup_status').length;
-  unavailable = false; fireEvent.click(retry);
-  await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'setup_status').length).toBeGreaterThan(reads));
-  expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && isRefresh(a))).toEqual([]);
-  expect(localStorage.getItem('bridge.firstTest.v1')).toBe('pending');
-  expect(screen.queryByText(/Could not check workspace files/)).toBeNull();
-  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run'].includes(c))).toEqual([]);
+  mockIPC(ipc); vi.useFakeTimers();
+  try {
+    await act(async () => { render(<Setup onOpenExample={() => {}} />); });
+    expect(screen.getByRole('region', { name: 'This computer' })).toBeTruthy();
+    unavailable = true;
+    await act(async () => { fireEvent(window, new Event('focus')); });
+    const retry = screen.getByRole('button', { name: 'Check again' });
+    expect(screen.getByText('The setup choice could not be read or saved.')).toBeTruthy();
+    const reads = ipc.mock.calls.filter(([c]) => c === 'setup_status').length;
+    unavailable = false;
+    // Do not advance the polling clock: only the explicit click can read Setup again.
+    await act(async () => { fireEvent.click(retry); });
+    expect(ipc.mock.calls.filter(([c]) => c === 'setup_status')).toHaveLength(reads + 1);
+    expect(screen.queryByText('The setup choice could not be read or saved.')).toBeNull();
+    expect(ipc.mock.calls.filter(([c, a]) => c === 'workspace_upgrade_status' && isRefresh(a))).toEqual([]);
+    expect(localStorage.getItem('bridge.firstTest.v1')).toBe('pending');
+    expect(screen.queryByText(/Could not check workspace files/)).toBeNull();
+    expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run', 'agent_chat_send', 'agent_chat_reconnect'].includes(c))).toEqual([]);
+  } finally { cleanup(); vi.useRealTimers(); }
 });
 
 test.each(['none', 'eligible'] as const)('unselected upgrade observation failure offers cached retry and admits only known none (%s)', async state => {
@@ -428,20 +456,30 @@ test.each([['eligible', 'ready'], ['eligible', 'starting'], ['none', 'failed']] 
   expect(ipc.mock.calls.map(([c]) => c).filter(c => ['setup_select_local', 'setup_connect_model', 'agent_run'].includes(c))).toEqual([]);
 });
 
-test.each(['failed', 'cancelled'])('explicit ordinary retry of %s fresh startup keeps ordinary Cancel without upgrade authority', async phase => {
-  let starting = false; let cancelled = false;
+test.each(['failed', 'cancelled'])('explicit ordinary retry of %s fresh startup keeps ordinary Cancel across an unreadable observation without upgrade authority', async phase => {
+  let starting = false; let cancelled = false; let unreadable = false;
+  const observed = vi.fn();
   const ipc = fixture(() => ({ ...current, state: 'fresh', busy: starting && !cancelled, canCancel: false }), phase, false);
   const original = ipc.getMockImplementation()!;
   ipc.mockImplementation((command, args) => {
     if (command === 'setup_select_local') { starting = true; return { selected: 'localVm', localVm: 'starting', model: 'locked', workspaceReplaced: true }; }
     if (command === 'setup_cancel_local') { cancelled = true; return { selected: 'localVm', localVm: 'cancelled', model: 'locked', workspaceReplaced: true }; }
-    if (command === 'setup_status' && starting) return { selected: 'localVm', localVm: cancelled ? 'cancelled' : 'starting', model: 'locked', workspaceReplaced: true };
+    if (command === 'setup_status' && starting) {
+      if (unreadable) throw Error('Transient startup observation');
+      return { selected: 'localVm', localVm: cancelled ? 'cancelled' : 'starting', model: 'locked', workspaceReplaced: true };
+    }
     return original(command, args);
   });
   localStorage.setItem('bridge.firstTest.v1', 'pending');
-  render(<Setup onOpenExample={() => {}} />);
+  render(<Setup onOpenExample={() => {}} onStatus={observed} />);
   fireEvent.click(await screen.findByRole('button', { name: phase === 'failed' ? 'Try again' : 'Start again' }));
   await screen.findByText('The workspace is busy. Your agent files are kept.');
+  unreadable = true; fireEvent(window, new Event('focus'));
+  await screen.findByText('The setup choice could not be read or saved.');
+  await waitFor(() => expect(observed.mock.lastCall?.[0]).toBeUndefined());
+  unreadable = false; fireEvent(window, new Event('focus'));
+  await waitFor(() => expect(observed.mock.lastCall?.[0]?.localVm).toBe('starting'));
+  await waitFor(() => expect(screen.queryByText('The setup choice could not be read or saved.')).toBeNull());
   const cancel = screen.getByRole('button', { name: /^Cancel$/ });
   expect(cancel.matches(':disabled')).toBe(false);
   expect(screen.queryByRole('button', { name: 'Cancel update' })).toBeNull();
@@ -449,7 +487,7 @@ test.each(['failed', 'cancelled'])('explicit ordinary retry of %s fresh startup 
   await screen.findByRole('button', { name: 'Start again' });
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_select_local')).toEqual([['setup_select_local', {}]]);
   expect(ipc.mock.calls.filter(([c]) => c === 'setup_cancel_local')).toEqual([['setup_cancel_local', {}]]);
-  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['workspace_upgrade_cancel', 'setup_connect_model', 'agent_run', 'agent_chat'].includes(c))).toEqual([]);
+  expect(ipc.mock.calls.map(([c]) => c).filter(c => ['workspace_upgrade_cancel', 'setup_connect_model', 'agent_run', 'agent_chat_send', 'agent_chat_reconnect'].includes(c))).toEqual([]);
   expect(localStorage.getItem('bridge.firstTest.v1')).toBe('attempted');
 });
 

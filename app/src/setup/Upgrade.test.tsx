@@ -167,9 +167,14 @@ test('a late cancellation acknowledgement cannot replace the final forward outco
   rerender(<Upgrade status={{ ...eligible, busy: true, canCancel: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   fireEvent.click(screen.getByRole('button', { name: 'Cancel update' }));
   await act(async () => { finish({ outcome: 'cancelled', status: { ...fresh, state: 'incomplete', canReplace: true } }); });
+  expect(onBusy.mock.calls).toEqual([[true], [false]]);
+  expect(onChange).toHaveBeenCalledWith({ ...fresh, state: 'incomplete', canReplace: true });
+  expect(screen.queryByText(/Update cancelled/)).toBeNull();
+  await act(async () => { acknowledge('requested'); });
+  // The parent still has the old transaction: finalOutcome cannot mask a stale ACK.
+  expect(screen.queryByText(/Cancellation requested/)).toBeNull();
   rerender(<Upgrade status={{ ...fresh, state: 'incomplete', canReplace: true }} onChange={onChange} onBusy={onBusy} onCheck={() => {}} />);
   await screen.findByText(/Update cancelled/);
-  await act(async () => { acknowledge('requested'); });
   expect(screen.queryByText(/Cancellation requested/)).toBeNull();
   expect(screen.getByText(/Update cancelled/)).toBeTruthy();
   expect(onBusy.mock.calls).toEqual([[true], [false]]);
