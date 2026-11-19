@@ -93,10 +93,11 @@ export function SessionList({ active, places, onCheck }: { active: boolean; plac
   useEffect(() => () => { request.current++; queued.current = false; readFor.current = undefined; }, []);
   const labels = placeLabels(places?.places ?? []);
   const read = (sessions?.places ?? []).filter(p => labels.has(p.key));
-  const connected = read.filter(p => p.state !== 'disconnected' || p.entries.length);
+  // A place counts once it has been connected: a failed read keeps its connection and isn't asked to connect.
+  const connected = read.filter(p => p.state !== 'disconnected' || p.entries.length || p.connection !== null);
   const rows = merge(connected).slice(0, 50);
   // Only reads that listed everything can say there are none; a failed or refused read leaves its note instead.
-  const settled = connected.every(p => p.state === 'complete' && p.unsupported === 0);
+  const settled = !failed && connected.every(p => p.state === 'complete' && p.unsupported === 0);
   const note = (p: PlaceSessions) => {
     const name = labels.get(p.key);
     if (p.state === 'denied') return `Can't list conversations on ${name}: this account isn't allowed to read Sessions.`;

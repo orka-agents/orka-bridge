@@ -102,7 +102,7 @@ test('a revoked place asks to connect again, and its conversations read the same
 });
 
 test('without a connected cluster the section asks for one', async () => {
-  ipc({ places: [read('one', [], { state: 'disconnected', observedAt: null })] });
+  ipc({ places: [read('one', [], { state: 'disconnected', observedAt: null, connection: null })] });
   render(<SessionList onCheck={noop} active places={places} />);
   await waitFor(() => expect(screen.getByText('Connect a cluster to see its conversations here.')).toBeTruthy());
 });
@@ -114,7 +114,7 @@ test('the connect prompt waits for a read; until then the section says it is rea
   render(<SessionList onCheck={noop} active places={places} />);
   expect(await screen.findByText('Reading conversations…')).toBeTruthy();
   expect(screen.queryByText('Connect a cluster to see its conversations here.')).toBeNull();
-  answer({ places: [read('one', [], { state: 'disconnected', observedAt: null })] });
+  answer({ places: [read('one', [], { state: 'disconnected', observedAt: null, connection: null })] });
   expect(await screen.findByText('Connect a cluster to see its conversations here.')).toBeTruthy();
   expect(screen.queryByText('Reading conversations…')).toBeNull();
 });
@@ -225,6 +225,26 @@ test.each([
   ipc({ places: [read('one', [], over), read('two', [])] });
   render(<SessionList onCheck={noop} active places={places} />);
   expect(await screen.findByText(note)).toBeTruthy();
+  expect(screen.queryByText(/No conversations yet/)).toBeNull();
+});
+
+test('a connected place whose last read failed is not asked to connect and is not called empty', async () => {
+  ipc({ places: [read('one', [], { state: 'disconnected', observedAt: null, connection: 3 })] });
+  render(<SessionList onCheck={noop} active places={places} />);
+  expect(await screen.findByRole('button', { name: 'Check conversations again' })).toBeTruthy();
+  expect(screen.queryByText('Connect a cluster to see its conversations here.')).toBeNull();
+  expect(screen.queryByText(/No conversations yet/)).toBeNull();
+});
+
+test('a failed reread keeps what Bridge last saw but no longer says there are no conversations', async () => {
+  let sessions: unknown = { places: [read('one', [])] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_sessions' ? sessions : null);
+  const view = render(<SessionList onCheck={noop} active places={places} />);
+  expect(await screen.findByText(/No conversations yet/)).toBeTruthy();
+  sessions = 'not sessions';
+  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  expect(await screen.findByText(/Couldn't read conversations just now. Showing what Bridge last saw./)).toBeTruthy();
   expect(screen.queryByText(/No conversations yet/)).toBeNull();
 });
 
