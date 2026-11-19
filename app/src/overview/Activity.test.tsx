@@ -179,6 +179,19 @@ test('a failed or unreadable activity read offers Check runs again, and a comple
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Check runs again' })).toBeNull());
 });
 
+test('a connected place whose last read failed offers Check runs again, and one never connected does not', async () => {
+  let activity: unknown = { places: [read('one', [entry('run')]), read('two', [], { state: 'disconnected', observedAt: null })] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_activity' ? activity : null);
+  const check = vi.fn();
+  const view = render(<RecentActivity onShowAgent={noShow} onCheck={check} active places={places} />);
+  await userEvent.click(await screen.findByRole('button', { name: 'Check runs again' }));
+  expect(check).toHaveBeenCalledTimes(1);
+  activity = { places: [read('one', [entry('run')]), read('two', [], { state: 'disconnected', observedAt: null, connection: null })] };
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={check} active places={{ ...places }} />);
+  await waitFor(() => expect(screen.queryByRole('button', { name: 'Check runs again' })).toBeNull());
+});
+
 test('leaving the tab drops a queued read', async () => {
   let release: () => void = () => undefined;
   const calls: string[] = [];

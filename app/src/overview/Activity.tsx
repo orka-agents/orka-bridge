@@ -107,7 +107,8 @@ export function RecentActivity({ active, places, onShowAgent, onCheck }: { activ
     if (p.state === 'disconnected' && p.entries.length) return `${name} isn't connected now. Showing what Bridge last saw.`;
   };
   const notes = read.map(p => [p.key, note(p)] as const).filter((n): n is readonly [string, string] => !!n[1]);
-  const retry = failed || read.some(p => p.state === 'unavailable' || p.state === 'denied');
+  // A disconnected place with a connection is a connected cluster whose last read failed, so it can be retried.
+  const retry = failed || read.some(p => p.state === 'unavailable' || p.state === 'denied' || p.state === 'disconnected' && p.connection !== null);
   return <section className="overview-activity" aria-label="Recent activity">
     <header className="overview-activity-head">
       <h2>Recent activity</h2>
