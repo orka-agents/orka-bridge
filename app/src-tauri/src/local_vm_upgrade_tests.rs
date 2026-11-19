@@ -910,7 +910,7 @@ fn facade_consumption_before_startup_failure_is_visible_on_first_failed_poll() {
             .await
             .unwrap();
         assert_eq!(completed(reply).state, "fresh");
-        tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        tokio::time::timeout(WORKER_WAIT, async {
             while vm.status() != LocalVmStatus::Failed {
                 tokio::task::yield_now().await;
             }
@@ -960,7 +960,7 @@ fn facade_cancel_during_boot_consumption_and_late_ok_never_publish_fresh() {
                 .await
                 .unwrap();
             assert_eq!(completed(reply).state, "fresh");
-            tokio::time::timeout(std::time::Duration::from_secs(3), entered_rx)
+            tokio::time::timeout(WORKER_WAIT, entered_rx)
                 .await
                 .expect(
                     "launch must reach after_boot handoff after worker.start() and boot_request()",
@@ -976,7 +976,7 @@ fn facade_cancel_during_boot_consumption_and_late_ok_never_publish_fresh() {
             );
             assert_eq!(vm.status(), LocalVmStatus::Closing);
             release.send(()).unwrap();
-            tokio::time::timeout(std::time::Duration::from_secs(3), cancel)
+            tokio::time::timeout(WORKER_WAIT, cancel)
                 .await
                 .unwrap()
                 .unwrap();
@@ -1018,7 +1018,7 @@ fn facade_late_ok_after_dropped_cancel_quarantines_only_unconfirmed_stop() {
                 .unwrap();
             let transaction = completed(reply).transaction.unwrap();
             store.select_local().unwrap();
-            tokio::time::timeout(std::time::Duration::from_secs(3), entered_rx)
+            tokio::time::timeout(WORKER_WAIT, entered_rx)
                 .await
                 .expect("late startup must reach the after_boot handoff")
                 .unwrap();
@@ -1039,7 +1039,7 @@ fn facade_late_ok_after_dropped_cancel_quarantines_only_unconfirmed_stop() {
             } else {
                 LocalVmStatus::Cancelled
             };
-            let stopped = tokio::time::timeout(std::time::Duration::from_secs(3), vm.cancel())
+            let stopped = tokio::time::timeout(WORKER_WAIT, vm.cancel())
                 .await
                 .expect("owned stop must publish its result after the Cancel waiter drops");
             if stop_failure {
@@ -1141,7 +1141,7 @@ fn facade_retained_journal_only_proves_fresh_for_typed_preconsumption_refusal() 
                 .await
                 .unwrap();
             assert_eq!(completed(reply).state, "fresh");
-            tokio::time::timeout(std::time::Duration::from_secs(3), entered_rx)
+            tokio::time::timeout(WORKER_WAIT, entered_rx)
                 .await
                 .expect("launch entry must reach the preconsumption-refusal gate")
                 .unwrap();
@@ -1155,7 +1155,7 @@ fn facade_retained_journal_only_proves_fresh_for_typed_preconsumption_refusal() 
                 .is_err());
             }
             release.send(()).unwrap();
-            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::time::timeout(WORKER_WAIT, async {
                 while vm.status() != LocalVmStatus::Failed {
                     tokio::task::yield_now().await;
                 }
@@ -1221,7 +1221,7 @@ fn facade_ready_then_stop_keeps_consumed_but_lost_creator_is_unknown() {
                 .await
                 .unwrap();
             assert_eq!(completed(reply).state, "fresh");
-            tokio::time::timeout(std::time::Duration::from_secs(3), entered_rx)
+            tokio::time::timeout(WORKER_WAIT, entered_rx)
                 .await
                 .expect("launch entry must reach the retained-creator gate before Ready")
                 .unwrap();
@@ -1235,7 +1235,7 @@ fn facade_ready_then_stop_keeps_consumed_but_lost_creator_is_unknown() {
             } else {
                 LocalVmStatus::Ready
             };
-            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            tokio::time::timeout(WORKER_WAIT, async {
                 while vm.status() != expected {
                     tokio::task::yield_now().await;
                 }
