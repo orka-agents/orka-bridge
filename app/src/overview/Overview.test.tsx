@@ -288,7 +288,8 @@ test('hidden post-Run completion does not read live; returning does', async () =
 });
 
 test('brief non-Run Busy retries once, while a read failure never retries as Busy', async () => {
-  let calls = 0; mockIPC(command => command === 'overview_files' ? files() : command === 'overview_places' ? none : (++calls === 1 ? { ...unavailable, state: 'busy', reason: null } : live()));
+  // Count only agent reads; the cluster sections read on their own.
+  let calls = 0; mockIPC(command => command === 'overview_files' ? files() : command === 'overview_places' ? none : command === 'overview_activity' || command === 'overview_sessions' ? { places: [] } : (++calls === 1 ? { ...unavailable, state: 'busy', reason: null } : live()));
   render(<Overview {...props} />); await waitFor(() => expect(calls).toBe(2));
 });
 

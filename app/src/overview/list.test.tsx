@@ -16,12 +16,26 @@ function place(key = 'team', verdict = 'failed', documentId: string | null = id)
     agents: [{ name: 'remote-reader', namespace: 'agents', uid: `${key}-uid`, agentType: 'runtime', model: null, tools: null,
       record: { id, documentId, source, targetDisplay: key, targetUids: { serviceNamespace: 'control', serviceUid: 'svc', deploymentNamespace: 'control', deploymentUid: 'dep', watchedNamespace: 'agents' }, provider: 'team-model', plannedAgentName: 'remote-reader', agentUid: `${key}-uid`, verdict, time: 2, detailState: documentId ? 'saved' : 'removed', report: verdict === 'running' ? null : { verdict, passed: 1, total: 2 } } }] };
 }
-function ipc(saved = [file()], places = [place()]) {
-  mockIPC(command => command === 'overview_files' ? { state: 'complete', files: saved, historyState: 'complete', runAgents: [], runActive: false }
+function ipc(saved = [file()], places = [place()], activity?: unknown) {
+  mockIPC(command => command === 'overview_activity' && activity ? activity : command === 'overview_files' ? { state: 'complete', files: saved, historyState: 'complete', runAgents: [], runActive: false }
     : command === 'overview_places' ? { places, historyState: 'complete', unobserved: [] }
       : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null });
 }
 const row = () => screen.findByRole('article', { name: 'reader' });
+
+test('Show agent in Recent activity clears the filters, expands the agent row and focuses its card', async () => {
+  const run = { task: 'run-1', uid: 'run-uid', agent: 'remote-reader', agentUid: 'team-uid', phase: 'failed', createdAt: 9000, startedAt: null, completedAt: null, message: null, test: false };
+  ipc(undefined, undefined, { places: [{ key: 'team', state: 'complete', observedAt: 9500, connection: 1, entries: [run] }] });
+  render(<Overview {...props} />);
+  expect(within(await row()).getByRole('button', { name: 'Show places for reader' }).getAttribute('aria-expanded')).toBe('false');
+  const show = await screen.findByRole('button', { name: 'Show remote-reader on team' });
+  await userEvent.type(screen.getByRole('textbox', { name: 'Filter by name' }), 'nothing');
+  await waitFor(() => expect(screen.queryByRole('article', { name: 'reader' })).toBeNull());
+  await userEvent.click(show);
+  await waitFor(() => expect(document.activeElement?.getAttribute('data-card-key')).toBe('team/team-uid'));
+  expect((screen.getByRole('textbox', { name: 'Filter by name' }) as HTMLInputElement).value).toBe('');
+  expect(within(await row()).getByRole('button', { name: 'Show places for reader' }).getAttribute('aria-expanded')).toBe('true');
+});
 beforeEach(() => vi.stubGlobal('isTauri', true));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 

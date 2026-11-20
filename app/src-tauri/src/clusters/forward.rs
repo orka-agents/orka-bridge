@@ -23,6 +23,45 @@ use tokio::{
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const CAP: usize = 1024 * 1024;
+/// One named object may be larger: Orka returns a Session's whole transcript in one reply.
+const ITEM_CAP: usize = 8 * 1024 * 1024;
+/// Activity pages stay small enough that full Task objects fit the response cap.
+pub(super) const TASK_PAGE: usize = 20;
+/// Sessions pages are as small, so a page of full Sessions fits the response cap.
+pub(super) const SESSION_PAGE: usize = 20;
+pub(super) const EVENT_PAGE: usize = 200;
+/// Query parameters a GET adds beyond namespace and cursor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Query {
+    Plain,
+    Inventory,
+    /// One small page of the Task list.
+    TaskPage,
+    /// One page of an event stream, filtered to these event types.
+    Events(&'static [&'static str]),
+    /// One small page of the Session list.
+    SessionPage,
+    /// One named object: only the namespace, never a page size or cursor.
+    Item,
+}
+impl Query {
+    fn of(resource: OrkaResource) -> Self {
+        match resource {
+            OrkaResource::AgentInventory => Self::Inventory,
+            OrkaResource::Tasks => Self::TaskPage,
+            OrkaResource::Sessions => Self::SessionPage,
+            _ => Self::Plain,
+        }
+    }
+    /// The largest response body this request accepts.
+    fn cap(self) -> usize {
+        if self == Self::Item {
+            ITEM_CAP
+        } else {
+            CAP
+        }
+    }
+}
 
 /// GET-only access checks use the same stream protocol as runs, never a host listener.
 pub struct PodOrkaRead;
@@ -52,11 +91,88 @@ impl OrkaRead for PodOrkaRead {
                     after,
                     None,
                     deadline,
-                    resource == OrkaResource::AgentInventory,
+                    Query::of(resource),
                 )
                 .await;
             connection.close().await;
             result.map_err(|e| orka_error(resource.check(), e))
+        })
+    }
+    fn events<'a>(
+        &'a self,
+        creator: &'a Client,
+        binding: &'a TargetBinding,
+        bearer: &'a str,
+        namespace: &'a str,
+        stream: EventStream<'a>,
+        after: u64,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>> {
+        Box::pin(async move {
+            let deadline = Instant::now() + REQUEST_TIMEOUT;
+            Check::OrkaConnection.begin();
+            let connection = Connection::open(creator, binding, deadline)
+                .await
+                .map_err(|e| orka_error(Check::OrkaConnection, e))?;
+            Check::Agents.begin();
+            let after = after.to_string();
+            let result = connection
+                .request(
+                    &stream.path(),
+                    namespace,
+                    bearer,
+                    &[bearer],
+                    Some(&after),
+                    None,
+                    deadline,
+                    Query::Events(stream.types()),
+                )
+                .await;
+            connection.close().await;
+            result.map_err(|e| orka_error(Check::Agents, e))
+        })
+    }
+    fn item<'a>(
+        &'a self,
+        creator: &'a Client,
+        binding: &'a TargetBinding,
+        bearer: &'a str,
+        item: OrkaItem,
+        namespace: &'a str,
+        name: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>> {
+        Box::pin(async move {
+            // Callers validate the name; recheck so nothing else reaches the request path.
+            let valid = match item {
+                OrkaItem::Session => crate::overview_sessions::valid_session(name),
+                OrkaItem::Task => crate::overview_activity::valid_task(name),
+            };
+            if !valid {
+                return Err(AccessOutcome::Unavailable);
+            }
+            let deadline = Instant::now() + REQUEST_TIMEOUT;
+            Check::OrkaConnection.begin();
+            let connection = Connection::open(creator, binding, deadline)
+                .await
+                .map_err(|e| orka_error(Check::OrkaConnection, e))?;
+            Check::Agents.begin();
+            let kind = match item {
+                OrkaItem::Session => "sessions",
+                OrkaItem::Task => "tasks",
+            };
+            let result = connection
+                .request(
+                    &format!("{kind}/{name}"),
+                    namespace,
+                    bearer,
+                    &[bearer],
+                    None,
+                    None,
+                    deadline,
+                    Query::Item,
+                )
+                .await;
+            connection.close().await;
+            result.map_err(|e| orka_error(Check::Agents, e))
         })
     }
 }
@@ -66,6 +182,8 @@ fn path(resource: OrkaResource) -> &'static str {
         OrkaResource::Agents | OrkaResource::AgentInventory => "agents",
         OrkaResource::Providers => "providers",
         OrkaResource::Tools => "tools",
+        OrkaResource::Tasks => "tasks",
+        OrkaResource::Sessions => "sessions",
     }
 }
 /// Send's rechecks reuse the attempt's opened stream (same binding); its owner closes it.
@@ -90,7 +208,7 @@ impl OrkaRead for OrkaStreamTransport {
                     after,
                     None,
                     deadline,
-                    resource == OrkaResource::AgentInventory,
+                    Query::of(resource),
                 )
                 .await
                 .map_err(|e| orka_error(resource.check(), e))
@@ -228,7 +346,7 @@ impl RunTransport for OrkaStreamTransport {
                     None,
                     Some(&serde_json::json!({"uid":uid})),
                     deadline,
-                    false,
+                    Query::Plain,
                 )
                 .await
         })
@@ -292,7 +410,7 @@ impl RunTransport for OrkaStreamTransport {
                     after.as_deref(),
                     body,
                     deadline,
-                    false,
+                    Query::Plain,
                 )
                 .await
         })
@@ -405,7 +523,7 @@ impl Connection {
         after: Option<&str>,
         body: Option<&Value>,
         deadline: Instant,
-        inventory: bool,
+        query: Query,
     ) -> Result<Value, ErrorKind> {
         let deadline = deadline.min(Instant::now() + REQUEST_TIMEOUT);
         let mut fully_read = false;
@@ -413,26 +531,7 @@ impl Connection {
             if self.closed.load(Ordering::SeqCst) {
                 return Err(ErrorKind::Transport);
             }
-            // URL is used only for encoding the origin-form path/query; it is never dialled.
-            let mut url = reqwest::Url::parse("http://orka.invalid/").unwrap();
-            url.set_path(&format!("/api/v1/{path}"));
-            url.query_pairs_mut().append_pair("namespace", namespace);
-            if path == "agents" && body.is_none() {
-                url.query_pairs_mut()
-                    .append_pair("limit", if inventory { "10" } else { "1" });
-            }
-            if let Some(after) = after {
-                let key = if path.ends_with("/events") {
-                    "after"
-                } else {
-                    "continue"
-                };
-                url.query_pairs_mut().append_pair(key, after);
-                if path != "agents" {
-                    url.query_pairs_mut().append_pair("limit", "1000");
-                }
-            }
-            let uri = format!("{}?{}", url.path(), url.query().unwrap());
+            let uri = origin_form(path, namespace, after, body.is_some(), query);
             let mut authorization = HeaderValue::from_str(&format!("Bearer {bearer}"))
                 .map_err(|_| ErrorKind::Configuration)?;
             authorization.set_sensitive(true);
@@ -476,7 +575,7 @@ impl Connection {
                 .get(header::CONTENT_LENGTH)
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok())
-                .is_some_and(|n| n > CAP as u64)
+                .is_some_and(|n| n > query.cap() as u64)
             {
                 return Err(ErrorKind::Response);
             }
@@ -485,7 +584,7 @@ impl Connection {
             while let Some(frame) = incoming.frame().await {
                 let frame = frame.map_err(|_| ErrorKind::Transport)?;
                 if let Ok(data) = frame.into_data() {
-                    if data.len() > CAP - bytes.len() {
+                    if data.len() > query.cap() - bytes.len() {
                         return Err(ErrorKind::Response);
                     }
                     bytes.extend_from_slice(&data);
@@ -553,8 +652,128 @@ fn kube_error(error: kube::Error) -> ErrorKind {
     }
 }
 
+/// The origin-form path and query for one request. Never dialled; only encodes.
+fn origin_form(
+    path: &str,
+    namespace: &str,
+    after: Option<&str>,
+    has_body: bool,
+    query: Query,
+) -> String {
+    let mut url = reqwest::Url::parse("http://orka.invalid/").unwrap();
+    url.set_path(&format!("/api/v1/{path}"));
+    url.query_pairs_mut().append_pair("namespace", namespace);
+    if path == "agents" && !has_body {
+        url.query_pairs_mut()
+            .append_pair("limit", if query == Query::Inventory { "10" } else { "1" });
+    }
+    match query {
+        _ if has_body => {}
+        Query::TaskPage => {
+            url.query_pairs_mut()
+                .append_pair("limit", &TASK_PAGE.to_string());
+        }
+        Query::Events(types) => {
+            url.query_pairs_mut()
+                .append_pair("limit", &EVENT_PAGE.to_string());
+            for kind in types {
+                url.query_pairs_mut().append_pair("type", kind);
+            }
+        }
+        Query::SessionPage => {
+            url.query_pairs_mut()
+                .append_pair("limit", &SESSION_PAGE.to_string());
+        }
+        Query::Plain | Query::Inventory | Query::Item => {}
+    }
+    if let Some(after) = after {
+        let key = if path.ends_with("/events") {
+            "after"
+        } else {
+            "continue"
+        };
+        url.query_pairs_mut().append_pair(key, after);
+        if path != "agents" && matches!(query, Query::Plain | Query::Inventory) {
+            url.query_pairs_mut().append_pair("limit", "1000");
+        }
+    }
+    format!("{}?{}", url.path(), url.query().unwrap())
+}
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_single_object_reads_accept_the_larger_response_cap() {
+        use super::{Query, CAP, ITEM_CAP};
+        assert_eq!(Query::Item.cap(), ITEM_CAP);
+        for query in [
+            Query::Plain,
+            Query::Inventory,
+            Query::TaskPage,
+            Query::SessionPage,
+            Query::Events(&["ToolCallCompleted"]),
+        ] {
+            assert_eq!(query.cap(), CAP);
+        }
+    }
+    #[test]
+    fn activity_queries_are_bounded_and_existing_queries_are_unchanged() {
+        use super::{origin_form, Query};
+        let cases = [
+            (
+                ("tasks", None, false, Query::TaskPage),
+                "/api/v1/tasks?namespace=agents&limit=20",
+            ),
+            (
+                ("sessions", Some("c"), false, Query::SessionPage),
+                "/api/v1/sessions?namespace=agents&limit=20&continue=c",
+            ),
+            (
+                ("sessions/bridge-chat-1", None, false, Query::Item),
+                "/api/v1/sessions/bridge-chat-1?namespace=agents",
+            ),
+            (
+                ("tasks/run-1", None, false, Query::Item),
+                "/api/v1/tasks/run-1?namespace=agents",
+            ),
+            (
+                ("tasks", Some("next & cursor"), false, Query::TaskPage),
+                "/api/v1/tasks?namespace=agents&limit=20&continue=next+%26+cursor",
+            ),
+            (
+                (
+                    "tasks/run-1/events",
+                    Some("0"),
+                    false,
+                    Query::Events(&["ToolCallCompleted", "ToolCallFailed"]),
+                ),
+                "/api/v1/tasks/run-1/events?namespace=agents&limit=200&type=ToolCallCompleted&type=ToolCallFailed&after=0",
+            ),
+            // Run, Send and inventory requests keep their earlier form.
+            (
+                ("agents", None, false, Query::Plain),
+                "/api/v1/agents?namespace=agents&limit=1",
+            ),
+            (
+                ("agents", Some("c"), false, Query::Inventory),
+                "/api/v1/agents?namespace=agents&limit=10&continue=c",
+            ),
+            (
+                ("tasks/run-1/events", Some("7"), false, Query::Plain),
+                "/api/v1/tasks/run-1/events?namespace=agents&after=7&limit=1000",
+            ),
+            (
+                ("tasks", None, true, Query::Plain),
+                "/api/v1/tasks?namespace=agents",
+            ),
+            (
+                ("providers", Some("c"), false, Query::Plain),
+                "/api/v1/providers?namespace=agents&continue=c&limit=1000",
+            ),
+        ];
+        for ((path, after, body, query), expected) in cases {
+            assert_eq!(origin_form(path, "agents", after, body, query), expected);
+        }
+    }
     use super::*;
     use std::sync::Arc;
     #[tokio::test]
@@ -599,7 +818,7 @@ mod tests {
             None,
             None,
             Instant::now() + Duration::from_secs(2),
-            false,
+            Query::Plain,
         ));
         std::future::poll_fn(|cx| {
             assert!(next.as_mut().poll(cx).is_pending());

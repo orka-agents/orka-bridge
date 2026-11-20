@@ -12,8 +12,12 @@ pub mod example_run;
 pub mod local_results;
 pub mod local_vm;
 pub mod overview;
+#[path = "overview/activity.rs"]
+pub mod overview_activity;
 #[path = "overview/places.rs"]
 pub mod overview_places;
+#[path = "overview/sessions.rs"]
+pub mod overview_sessions;
 pub mod pair_source;
 pub mod runtime;
 pub mod send;

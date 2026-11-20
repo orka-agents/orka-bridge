@@ -410,9 +410,10 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
             "Disconnected Overview must explain the local AI gate")
     _ = try capture("local-overview-ai-disconnected-collapsed-\(size)", ["Your agents"])
     setOverviewExpanded("web-reader", true)
-    require(anyButton("Run tests web-reader") && enabledButton("Run tests web-reader") == nil && enabledButton("Open web-reader") != nil,
-            "Without connected AI, Overview must disable local Run but preserve Open")
-    _ = try capture("local-overview-ai-disconnected-expanded-\(size)", ["Your agents", "web-reader", "This computer", "Run tests"])
+    require(visibleButton("Run tests web-reader") && enabledButton("Run tests web-reader") == nil && enabledButton("Open web-reader") != nil,
+            "Without connected AI, Overview must show local Run disabled but preserve Open")
+    // Vision misreads the dimmed disabled label depending on the rest of the frame; its placement is checked above.
+    _ = try capture("local-overview-ai-disconnected-expanded-\(size)", ["Your agents", "web-reader", "This computer"])
     setOverviewExpanded("web-reader", false)
 }
 localSize(1280, 800); scroll(4000)
@@ -1061,6 +1062,13 @@ func waitForButton(_ label: String) {
     require(false, "Native Chat action did not become available: \(label)")
 }
 // Presence checks for state assertions; unlike enabledButton these include disabled controls.
+func visibleButton(_ label: String) -> Bool {
+    nativeElements().contains { element in
+        ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? "")
+            && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
+            && nativeBounds(element).map { $0.width > 1 && $0.height > 1 && window()!.1.contains($0) } == true
+    }
+}
 func anyButton(_ label: String) -> Bool {
     nativeElements().contains { element in
         ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? "")
