@@ -33,6 +33,20 @@ public static class NativeWalk {
     return classes.ToArray();
   }
   [DllImport("oleacc.dll")] private static extern int AccessibleObjectFromWindow(IntPtr h, uint id, ref Guid iid, [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible);
+  [StructLayout(LayoutKind.Sequential)] private struct Point { public int X, Y; }
+  [DllImport("oleacc.dll")] private static extern int AccessibleObjectFromPoint(Point pt, [MarshalAs(UnmanagedType.Interface)] out Accessibility.IAccessible accessible, out object child);
+  // Explorer's own hit test at a screen point: the name of the control a click there reaches.
+  // https://learn.microsoft.com/windows/win32/api/oleacc/nf-oleacc-accessibleobjectfrompoint
+  // A failed hit test sets failure, so it is not mistaken for a control with no name.
+  public static string NameAt(int x, int y, out string failure) {
+    Accessibility.IAccessible acc = null; object child; failure = null;
+    try {
+      int hr = AccessibleObjectFromPoint(new Point { X = x, Y = y }, out acc, out child);
+      if (hr != 0 || acc == null) { failure = "AccessibleObjectFromPoint returned 0x" + hr.ToString("X8"); return null; }
+      return acc.get_accName(child);
+    } catch (COMException e) { failure = "hit test threw 0x" + e.HResult.ToString("X8"); return null; }
+    finally { if (acc != null) Marshal.ReleaseComObject(acc); }
+  }
   [DllImport("oleacc.dll")] private static extern int AccessibleChildren(Accessibility.IAccessible accessible, int start, int count, [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex=2)] object[] children, out int obtained);
   // Legacy Explorer toolbars may have no UIA children. Use MSAA, never toolbar process memory.
   // https://learn.microsoft.com/windows/win32/winauto/toolbar-control
@@ -267,26 +281,100 @@ function Tray-Menu {
     $notify = [NativeWalk]::FindWindowEx($taskbar, [IntPtr]::Zero, 'TrayNotifyWnd', $null)
     if ($notify -eq [IntPtr]::Zero) { throw 'Native notification area missing (interactive CI desktop required)' }
     $area = [System.Windows.Automation.AutomationElement]::FromHandle($notify)
-    $point = Find-TrayPoint $area 'visible'
-    if (!$point) {
-        $chevron = Find-Control $area 'Show hidden icons' $button
-        if (!$chevron) { $chevron = Find-Control $area 'Notification Chevron' $button }
-        if (!$chevron) { $chevron = $area.FindFirst($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'NotificationChevron')) }
-        if (!$chevron) {
-            $p = [NativeWalk]::TrayPoint($notify, @('Show hidden icons', 'Notification Chevron'), (Join-Path $script:themeOutput 'tray-chevron-msaa.txt'))
-            if ($p) { $chevron = [Drawing.Point]::new($p[0], $p[1]) }
+    # A first launch's icon sits in Explorer's temporary promoted area, which Explorer
+    # can lay out again or collapse into the overflow; a right-click at a stale point
+    # opens the taskbar's own menu. Locate the icon afresh on each poll and click once,
+    # after Explorer's hit test names Bridge at the same point on two polls in a row.
+    $overflow = $null
+    $settled = $null
+    # The latest hit test survives a moved icon or an opened overflow, so every timeout can report it.
+    $last = 'no hit test was made'
+    $uiaError = ''
+    $openOverflow = { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
+    for ($i = 0; ; $i++) {
+        $point = $null
+        $lost = $false
+        try {
+            # Explorer can move a promoted icon back, so search the visible area on every poll.
+            $point = Find-TrayPoint $area 'visible'
+            if (!$point -and $overflow) { $point = Find-TrayPoint $overflow 'overflow' }
+        } catch [System.Windows.Automation.ElementNotAvailableException], [System.Windows.Automation.NoClickablePointException] {
+            # An icon removed or moved mid-read is an unsettled poll, not a failure; keep the
+            # error so a timeout can show it if the reads never recover.
+            $lost = $true
+            $uiaError = "; the last UIA read failed: $($_.Exception.Message)"
         }
-        if (!$chevron) { throw 'Native notification chevron missing in UIA and MSAA' }
-        Press $chevron
-        $overflow = Wait-For 'Native notification overflow not visible' { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
-        $point = Wait-For 'Native Bridge notification icon missing' { Find-TrayPoint $overflow 'overflow' }
+        $noChevron = $false
+        if (!$point -and !$overflow -and !$lost) {
+            # A press whose UIA call failed may still have opened the overflow; never press twice.
+            $overflow = & $openOverflow
+            $chevron = $null
+            $pressFailed = $false
+            if (!$overflow) {
+                try {
+                    $chevron = Find-Control $area 'Show hidden icons' $button
+                    if (!$chevron) { $chevron = Find-Control $area 'Notification Chevron' $button }
+                    if (!$chevron) { $chevron = $area.FindFirst($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'NotificationChevron')) }
+                    if (!$chevron) {
+                        $p = [NativeWalk]::TrayPoint($notify, @('Show hidden icons', 'Notification Chevron'), (Join-Path $script:themeOutput 'tray-chevron-msaa.txt'))
+                        if ($p) { $chevron = [Drawing.Point]::new($p[0], $p[1]) }
+                    }
+                    if ($chevron) { $pressFailed = $true; Press $chevron; $pressFailed = $false }
+                } catch [System.Windows.Automation.ElementNotAvailableException], [System.Windows.Automation.NoClickablePointException] {
+                    # A press that threw may still have opened the overflow, so keep its chevron and wait.
+                    if (!$pressFailed) { $chevron = $null }
+                    $uiaError = "; the last UIA read failed: $($_.Exception.Message)"
+                }
+            }
+            if ($chevron) {
+                try { $overflow = Wait-For 'Native notification overflow not visible' $openOverflow }
+                catch {
+                    if ($_.Exception.Message -cne 'Native notification overflow not visible') { throw }
+                    # Only a press that threw may have done nothing; poll and press again.
+                    if (!$pressFailed) { throw "Native notification overflow not visible; $last" }
+                }
+            }
+            if ($overflow) {
+                $i = 0
+                $settled = $null
+                continue
+            }
+            # A relayout can briefly show neither the icon nor the chevron: poll again.
+            $noChevron = $true
+        }
+        if ($point) {
+            $target = [Drawing.Point]::new([int]$point.X, [int]$point.Y)
+            [NativeWalk]::SetCursorPos($target.X, $target.Y) | Out-Null
+            $failure = $null
+            $hit = [NativeWalk]::NameAt($target.X, $target.Y, [ref]$failure)
+            $last = "Explorer's last hit test at $($target.X),$($target.Y) $(if ($failure) { "failed: $failure" } elseif ([string]::IsNullOrEmpty($hit)) { 'named nothing' } else { "named '$hit'" })"
+            if ($hit -notlike '*Bridge*') { $settled = $null }
+            elseif ($settled -eq $target) { break }
+            else { $settled = $target }
+        } else { $settled = $null }
+        if ($i -ge 100) {
+            if ($noChevron) { throw "Native Bridge notification icon and chevron missing in UIA and MSAA; $last$uiaError" }
+            if (!$point) { throw "Native Bridge notification icon missing$(if ($overflow) { ' from the visible area and overflow' }); $last$uiaError" }
+            throw "Bridge notification icon not settled under the cursor; $last$uiaError"
+        }
+        Start-Sleep -Milliseconds 100
     }
     # Right-click the actual Explorer notification icon; do not invoke a product test command.
-    [NativeWalk]::SetCursorPos([int]$point.X, [int]$point.Y) | Out-Null
     [NativeWalk]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)
     [NativeWalk]::mouse_event(16, 0, 0, 0, [UIntPtr]::Zero)
     # Both providers require enabled, on-screen native items; MSAA yields real click points.
-    $open = Wait-For 'Open Bridge menu item missing' { Find-PopupControl 'Open Bridge' }
+    try { $open = Wait-For 'Open Bridge menu item missing' { Find-PopupControl 'Open Bridge' } }
+    catch {
+        if ($_.Exception.Message -cne 'Open Bridge menu item missing') { throw }
+        $explorer = @(Get-Process explorer -ErrorAction SilentlyContinue | ForEach-Object Id)
+        $h = [IntPtr]::Zero
+        while (($h = [NativeWalk]::FindWindowEx([IntPtr]::Zero, $h, '#32768', $null)) -ne [IntPtr]::Zero) {
+            [uint32]$owner = 0
+            [NativeWalk]::GetWindowThreadProcessId($h, [ref]$owner) | Out-Null
+            if ($owner -in $explorer -and [NativeWalk]::IsWindowVisible($h)) { throw 'Open Bridge menu item missing: an Explorer menu opened instead of Bridge''s, so the right-click likely missed the icon' }
+        }
+        throw
+    }
     $stop = Wait-For 'Quit Bridge menu item missing' { Find-PopupControl 'Quit Bridge' }
     return @($open, $stop)
 }
