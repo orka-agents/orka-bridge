@@ -1606,9 +1606,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             let anchors = visibleTextBounds(required[0])
             if !anchors.isEmpty && required.allSatisfy({ nativeTextIsVisible($0) }) {
                 // The required state already fits. Reframing can scroll its recovery note away.
+                // Observe right after the frame, but fail only once capture() has recorded its OCR.
+                var stillVisible = true
                 let seen = try capture(name, "Overview", afterFrame: {
-                    require(required.allSatisfy({ nativeTextIsVisible($0) }), "Overview state moved during capture: \(required)")
+                    stillVisible = required.allSatisfy({ nativeTextIsVisible($0) })
                 })
+                require(stillVisible, "Overview state moved during capture: \(required)")
                 print("PASS \(name): visible native state \(required)")
                 return seen
             }
