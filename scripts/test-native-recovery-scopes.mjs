@@ -373,6 +373,10 @@ const normalizedCount = text => text.replace(new RegExp(countSpacing, 'g'), ' of
 for (const text of ['1of 1 tests passed', '1 of1 tests passed', '1 of  1 tests passed']) assert.equal(normalizedCount(text), '1 of 1 tests passed');
 assert.notEqual(normalizedCount('1of 1 tests failed'), '1 of 1 tests passed');
 assert.notEqual(normalizedCount('2of 3 tests passed'), '1 of 1 tests passed');
+// capture() records a frame's OCR after afterFrame runs; a check inside it would report the previous frame.
+const afterFrames = [...smoke.matchAll(/afterFrame: \{([\s\S]*?)\n\s*\}\)/g)].map(match => match[1]);
+assert.ok(afterFrames.length > 0, 'the Overview capture must still observe its state right after the frame');
+for (const body of afterFrames) assert.ok(!/\b(require|fail)\(/.test(body), 'afterFrame must record its observation and check it after capture returns');
 const matrix = smoke.slice(smoke.indexOf('    // Connected cluster capture matrix.'), smoke.indexOf('    // Done leaves the confirmed destination'));
 assert.ok(matrix.includes('CGFloat(540), CGFloat(640)'), 'Mac connected scenes need true minimum content size');
 assert.ok(matrix.includes('CGFloat(1280), CGFloat(800)'), 'Mac connected scenes need matching wide content size');
