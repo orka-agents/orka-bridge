@@ -309,6 +309,7 @@ function Tray-Menu {
             # A press whose UIA call failed may still have opened the overflow; never press twice.
             $overflow = & $openOverflow
             $chevron = $null
+            $pressFailed = $false
             if (!$overflow) {
                 try {
                     $chevron = Find-Control $area 'Show hidden icons' $button
@@ -318,15 +319,20 @@ function Tray-Menu {
                         $p = [NativeWalk]::TrayPoint($notify, @('Show hidden icons', 'Notification Chevron'), (Join-Path $script:themeOutput 'tray-chevron-msaa.txt'))
                         if ($p) { $chevron = [Drawing.Point]::new($p[0], $p[1]) }
                     }
-                    if ($chevron) { Press $chevron }
+                    if ($chevron) { $pressFailed = $true; Press $chevron; $pressFailed = $false }
                 } catch [System.Windows.Automation.ElementNotAvailableException], [System.Windows.Automation.NoClickablePointException] {
-                    $chevron = $null
+                    # A press that threw may still have opened the overflow, so keep its chevron and wait.
+                    if (!$pressFailed) { $chevron = $null }
                     $uiaError = "; the last UIA read failed: $($_.Exception.Message)"
                 }
             }
             if ($chevron) {
                 try { $overflow = Wait-For 'Native notification overflow not visible' $openOverflow }
-                catch { if ($_.Exception.Message -ceq 'Native notification overflow not visible') { throw "Native notification overflow not visible; $last" }; throw }
+                catch {
+                    if ($_.Exception.Message -cne 'Native notification overflow not visible') { throw }
+                    # Only a press that threw may have done nothing; poll and press again.
+                    if (!$pressFailed) { throw "Native notification overflow not visible; $last" }
+                }
             }
             if ($overflow) {
                 $i = 0
