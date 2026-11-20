@@ -89,7 +89,7 @@ test.each(['revealed', 'expanded', 'collapsed'])('completion revalidates the req
   view.rerender(<Overview {...props} onNewAgent={() => undefined} focus={focus} placesRevision={1} />);
   await screen.findByRole('img', { name: 'team: Failed' });
   expect(filter.value).toBe(disclosure === 'revealed' ? '' : 'same');
-  expect(screen.getByRole('button', { name: disclosure === 'revealed' ? 'All' : 'team', pressed: true })).toBeTruthy();
+  expect(within(screen.getByRole('group', { name: 'Place' })).getByRole('button', { name: disclosure === 'revealed' ? 'All' : 'team', pressed: true })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Show places for same-name' }).getAttribute('aria-expanded')).toBe(String(disclosure !== 'collapsed'));
   if (before) {
     expect(screen.getByRole('article', { name: 'team, Failed' })).toBe(before);

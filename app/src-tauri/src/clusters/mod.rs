@@ -198,13 +198,16 @@ pub enum OrkaResource {
     AgentInventory,
     Providers,
     Tools,
+    /// Overview Activity: one bounded page of the Task list, in Orka's name order.
+    Tasks,
 }
 impl OrkaResource {
     pub(crate) fn check(self) -> Check {
         match self {
             Self::WhoAmI => Check::OrkaIdentity,
-            // Tools are read only by Send, whose callers keep the broad category.
-            Self::Agents | Self::AgentInventory | Self::Tools => Check::Agents,
+            // Tools are read only by Send, whose callers keep the broad category. Activity
+            // reports only whether a place could be read, so Tasks share the same label.
+            Self::Agents | Self::AgentInventory | Self::Tools | Self::Tasks => Check::Agents,
             Self::Providers => Check::Providers,
         }
     }
@@ -220,4 +223,57 @@ pub trait OrkaRead: Send + Sync {
         namespace: &'a str,
         after: Option<&'a str>,
     ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>>;
+    /// One page of an execution event stream after sequence `after`. Readers without an
+    /// event route report it unavailable.
+    fn events<'a>(
+        &'a self,
+        _creator: &'a kube::Client,
+        _binding: &'a TargetBinding,
+        _bearer: &'a str,
+        _namespace: &'a str,
+        _stream: EventStream<'a>,
+        _after: u64,
+    ) -> Pin<Box<dyn Future<Output = Result<Value, AccessOutcome>> + Send + 'a>> {
+        Box::pin(async { Err(AccessOutcome::Unavailable) })
+    }
+}
+/// An Orka execution event stream that `OrkaRead::events` pages through. It is built only
+/// from a valid Kubernetes object name, and its kind fixes the request path and event filter.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EventStream<'a> {
+    kind: EventKind,
+    name: &'a str,
+}
+/// Which execution stream, and which of its events, `EventStream` reads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EventKind {
+    /// A Task's completed and failed tool calls.
+    TaskToolCalls,
+}
+impl<'a> EventStream<'a> {
+    /// A Task's tool-call events, or `None` when `task` is not a Kubernetes object name.
+    pub fn task_tool_calls(task: &'a str) -> Option<Self> {
+        crate::overview_activity::valid_task(task).then_some(Self {
+            kind: EventKind::TaskToolCalls,
+            name: task,
+        })
+    }
+    pub fn kind(self) -> EventKind {
+        self.kind
+    }
+    /// The Task the stream belongs to.
+    pub fn name(self) -> &'a str {
+        self.name
+    }
+    /// The event types the read asks Orka for.
+    pub fn types(self) -> &'static [&'static str] {
+        match self.kind {
+            EventKind::TaskToolCalls => &["ToolCallCompleted", "ToolCallFailed"],
+        }
+    }
+    pub(crate) fn path(self) -> String {
+        match self.kind {
+            EventKind::TaskToolCalls => format!("tasks/{}/events", self.name),
+        }
+    }
 }
