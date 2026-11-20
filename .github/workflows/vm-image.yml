@@ -1,0 +1,79 @@
+name: VM image
+
+on:
+  pull_request:
+    paths:
+      - 'vm/**'
+      - '.github/workflows/vm-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: vm-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Lint the scripts
+        run: shellcheck -x vm/linux/*.sh vm/linux/bridge-vm vm/linux/guest/provision.sh vm/linux/guest/bridge-vm-ready
+
+  linux:
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Enable KVM
+        run: |
+          echo "OUT=$RUNNER_TEMP/vm-out" >>"$GITHUB_ENV"
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' |
+            sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Install QEMU
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends qemu-system-x86 qemu-utils cloud-image-utils
+      - name: Test the installer
+        run: vm/linux/test.sh
+      - name: Build the image
+        env:
+          WORK_DIR: ${{ runner.temp }}/vm-work
+          BUILD_CPUS: '4'
+          BUILD_MEMORY: '8192'
+        run: vm/linux/build.sh "$OUT"
+      - name: Install from a local server and wait for Orka
+        run: |
+          python3 -m http.server 8765 --bind 127.0.0.1 --directory "$OUT" &
+          for _ in $(seq 30); do curl -fsS -o /dev/null http://127.0.0.1:8765/install.sh && break; sleep 1; done
+          BRIDGE_VM_URL=http://127.0.0.1:8765 BRIDGE_VM_CPUS=4 BRIDGE_VM_MEMORY=8192 \
+            bash "$OUT/install.sh"
+          export KUBECONFIG="$HOME/.local/share/orka-bridge/vm/kubeconfig"
+          kubectl -n orka-system get deployments,pods
+          "$HOME/.local/bin/bridge-vm" stop
+          "$HOME/.local/bin/bridge-vm" start
+          "$HOME/.local/bin/bridge-vm" stop
+      - name: Console log
+        if: failure()
+        run: |
+          tail -n 200 "$HOME/.local/share/orka-bridge/vm/instance/console.log" || true
+          tail -n 200 "$RUNNER_TEMP/vm-work/provision.log" || true
+      - name: Image size
+        run: ls -l "$OUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: vm-linux-amd64
+          path: ${{ runner.temp }}/vm-out/
+          retention-days: 3
+          if-no-files-found: error
+          compression-level: 0

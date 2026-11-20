@@ -1,0 +1,89 @@
+#!/bin/bash
+# Starts the prepared kind cluster at boot and reports progress to the host as JSON lines
+# on a virtio-serial port. The last line is "ready" (with the kubeconfig) or "failed".
+# The waits below add up to less than the unit's TimeoutStartSec and the host's timeout.
+set -uo pipefail
+
+export KUBECONFIG=/etc/bridge-vm/kubeconfig
+NODE=kaimahi-p1-control-plane
+PORT=/dev/virtio-ports/ai.orka.bridge.status
+# shellcheck source=/dev/null
+. /etc/bridge-vm/image.env
+
+emit() {
+  printf '%s\n' "$1"
+  if [ -c "$PORT" ]; then printf '%s\n' "$1" >"$PORT" || true; fi
+}
+
+state() { emit "{\"state\":\"$1\",\"uptime\":$(cut -d' ' -f1 /proc/uptime)}"; }
+
+fail() {
+  emit "{\"state\":\"failed\",\"reason\":\"$1\",\"uptime\":$(cut -d' ' -f1 /proc/uptime)}"
+  exit 1
+}
+
+wait_for() { # seconds command...
+  local deadline=$((SECONDS + $1))
+  shift
+  until "$@" >/dev/null 2>&1; do
+    if [ "$SECONDS" -ge "$deadline" ]; then return 1; fi
+    sleep 1
+  done
+}
+
+k() { kubectl --request-timeout=10s "$@"; }
+
+service_reachable() { # Service addresses work once kube-proxy has programmed the node.
+  docker exec "$NODE" timeout 2 bash -c "exec 3<>/dev/tcp/$1/443"
+}
+
+pods() { # selector: "name|deletionTimestamp|Ready" per pod; fails if kubectl does
+  k -n orka-system get pods -l "$1" -o jsonpath='{range .items[*]}{.metadata.name}|{.metadata.deletionTimestamp}|{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'
+}
+
+all_ready() { # selector: at least one live pod, and every live pod Ready
+  local list
+  list=$(pods "$1") || return 1
+  printf '%s\n' "$list" | awk -F'|' '$1 != "" && $2 == "" { live++; if ($3 != "True") bad++ } END { exit !(live > 0 && bad == 0) }'
+}
+
+replace_not_ready() { # selector: delete live pods that are not Ready, so they skip crash back-off
+  local list victims
+  list=$(pods "$1") || return 0
+  victims=$(printf '%s\n' "$list" | awk -F'|' '$1 != "" && $2 == "" && $3 != "True" { print $1 }')
+  if [ -n "$victims" ]; then
+    # shellcheck disable=SC2086 # one pod name per word
+    k -n orka-system delete pod $victims --wait=false >/dev/null
+  fi
+}
+
+state booted
+wait_for 120 timeout 10 docker info || fail "the container runtime did not start"
+docker start "$NODE" >/dev/null || fail "the kind node did not start"
+state cluster-starting
+wait_for 240 k get --raw /readyz || fail "the Kubernetes API did not become ready"
+state kubernetes-ready
+
+# Pods restart with the node, some before kube-proxy has programmed Service addresses,
+# and the controller exits at startup unless the Workspace/Publisher answers. A pod that
+# failed on either would wait out its crash back-off. Once Services work, replace the
+# chart's publisher and proxies that are not ready, wait for them, then do the same for
+# the controller. Task and worker pods are left alone.
+wait_for 60 k -n default get service kubernetes || fail "cannot read the kubernetes Service"
+api=$(k -n default get service kubernetes -o jsonpath='{.spec.clusterIP}')
+[ -n "$api" ] || fail "cannot read the kubernetes Service"
+wait_for 240 service_reachable "$api" || fail "Kubernetes Services are not reachable"
+state network-ready
+others='app.kubernetes.io/instance=orka,app.kubernetes.io/component in (workspace-publisher,scm-egress-proxy,provider-auth-proxy)'
+controller='app.kubernetes.io/instance=orka,app.kubernetes.io/component=controller'
+replace_not_ready "$others"
+wait_for 240 all_ready "$others" || fail "Orka's Workspace/Publisher and proxies did not become ready"
+replace_not_ready "$controller"
+
+# The API answers through a Service, which only routes to a ready controller.
+wait_for 480 curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:8080/readyz ||
+  fail "the Orka API is not healthy"
+wait_for 60 all_ready "$controller" || fail "the Orka controller is not ready"
+
+kubeconfig=$(base64 -w0 "$KUBECONFIG")
+emit "{\"state\":\"ready\",\"orka\":\"$ORKA_VERSION\",\"kmx\":\"$KMX_VERSION\",\"uptime\":$(cut -d' ' -f1 /proc/uptime),\"kubeconfig\":\"$kubeconfig\"}"
