@@ -432,6 +432,207 @@ impl RemoteAccess {
         .await
         .unwrap_or(Err(ClusterError::Unavailable))
     }
+    fn expired(&self) -> bool {
+        self.expiry
+            .as_ref()
+            .is_some_and(|t| t.0 <= k8s_openapi::jiff::Timestamp::now())
+    }
+    /// Overview Activity: a bounded GET-only Task list, newest first. Orka lists Tasks by
+    /// name, so up to `MAX_TASKS` are read and sorted here.
+    pub async fn tasks(&self) -> Result<crate::overview_activity::Tasks, ClusterError> {
+        use crate::overview_activity::{newest, task, MAX_TASKS};
+        if self.expired() {
+            return Err(ClusterError::Denied);
+        }
+        tokio::time::timeout(OPERATION_LIMIT, async {
+            let mut entries = Vec::new();
+            let mut after = None;
+            let mut cursors = HashSet::new();
+            let mut uids = HashSet::new();
+            // Empty pages with fresh cursors cannot extend the read past this many pages.
+            for _ in 0..MAX_TASKS.div_ceil(super::forward::TASK_PAGE) {
+                let page = self
+                    .read(OrkaResource::Tasks, after.as_deref())
+                    .await
+                    .map_err(cluster_error)?;
+                for item in items(&page).map_err(cluster_error)? {
+                    let entry = task(item, &self.binding.watched_namespace)?;
+                    if !uids.insert(entry.uid.clone()) {
+                        return Err(ClusterError::Unavailable);
+                    }
+                    entries.push(entry);
+                }
+                after = continuation(&page).map_err(cluster_error)?;
+                if after.is_none() {
+                    return Ok(newest(entries, true));
+                }
+                if entries.len() >= MAX_TASKS {
+                    return Ok(newest(entries, false));
+                }
+                if !cursors.insert(after.clone()) {
+                    return Err(ClusterError::Unavailable);
+                }
+            }
+            Ok(newest(entries, false))
+        })
+        .await
+        .unwrap_or(Err(ClusterError::Unavailable))
+    }
+    /// Overview Sessions: a bounded GET-only Session list. Orka pages Sessions newest created
+    /// first; Bridge then orders them by last update, so a partial list leaves out Sessions
+    /// created earlier even when they were updated recently.
+    pub async fn sessions(&self) -> Result<crate::overview_sessions::SessionList, ClusterError> {
+        use crate::overview_sessions::{newest, session, Listed, MAX_SESSIONS};
+        if self.expired() {
+            return Err(ClusterError::Denied);
+        }
+        tokio::time::timeout(OPERATION_LIMIT, async {
+            let mut entries = Vec::new();
+            let mut after = None;
+            let mut cursors = HashSet::new();
+            let mut names = HashSet::new();
+            let mut unsupported = 0;
+            // Empty or all-gateway pages with fresh cursors cannot extend the read past this
+            // many pages.
+            for _ in 0..MAX_SESSIONS.div_ceil(super::forward::SESSION_PAGE) {
+                let page = self
+                    .read(OrkaResource::Sessions, after.as_deref())
+                    .await
+                    .map_err(cluster_error)?;
+                for item in items(&page).map_err(cluster_error)? {
+                    // Orka hides gateway Sessions from this list; skip any an older Orka returns.
+                    let entry = match session(item, &self.binding.watched_namespace)? {
+                        Listed::Shown(entry) => entry,
+                        Listed::Gateway => continue,
+                        Listed::Unsupported => {
+                            unsupported += 1;
+                            continue;
+                        }
+                    };
+                    if !names.insert(entry.name.clone()) {
+                        return Err(ClusterError::Unavailable);
+                    }
+                    entries.push(entry);
+                }
+                after = continuation(&page).map_err(cluster_error)?;
+                if after.is_none() {
+                    return Ok(newest(entries, true, unsupported));
+                }
+                if entries.len() >= MAX_SESSIONS {
+                    return Ok(newest(entries, false, unsupported));
+                }
+                if !cursors.insert(after.clone()) {
+                    return Err(ClusterError::Unavailable);
+                }
+            }
+            Ok(newest(entries, false, unsupported))
+        })
+        .await
+        .unwrap_or(Err(ClusterError::Unavailable))
+    }
+    /// Overview Sessions: one named Session or Task, read only, in the watched namespace.
+    pub(crate) async fn item(&self, item: OrkaItem, name: &str) -> Result<Value, ClusterError> {
+        if self.expired() {
+            return Err(ClusterError::Denied);
+        }
+        let value = tokio::time::timeout(
+            REQUEST_TIMEOUT,
+            self.orka.item(
+                &self.creator,
+                &self.binding,
+                &self.bearer,
+                item,
+                &self.binding.watched_namespace,
+                name,
+            ),
+        )
+        .await
+        .map_err(|_| ClusterError::Unavailable)?
+        .map_err(cluster_error)?;
+        if echoed(&value, &self.bearer) || echoed(&value, &self.creator_bearer) {
+            return Err(ClusterError::Unavailable);
+        }
+        Ok(value)
+    }
+    /// Overview Sessions: one Session's transcript. The transcript is JSONL inside the reply, so
+    /// an escaped bearer such as `\u0073…` passes `item`'s check and is only decoded here: the
+    /// decoded messages are checked again.
+    pub(crate) async fn transcript(
+        &self,
+        name: &str,
+    ) -> Result<crate::overview_sessions::ParsedTranscript, ClusterError> {
+        let value = self.item(OrkaItem::Session, name).await?;
+        let read =
+            crate::overview_sessions::transcript(&value, &self.binding.watched_namespace, name)?;
+        let decoded =
+            serde_json::to_value(&read.messages).map_err(|_| ClusterError::Unavailable)?;
+        if echoed(&decoded, &self.bearer) || echoed(&decoded, &self.creator_bearer) {
+            return Err(ClusterError::Unavailable);
+        }
+        Ok(read)
+    }
+    /// Overview Activity: completed and failed tool calls for one Task, oldest first.
+    pub async fn tool_calls(
+        &self,
+        name: &str,
+    ) -> Result<crate::overview_activity::ToolCalls, ClusterError> {
+        use crate::overview_activity::{tool_page, ToolCalls, MAX_TOOL_CALLS};
+        let stream = EventStream::task_tool_calls(name).ok_or(ClusterError::Unavailable)?;
+        if self.expired() {
+            return Err(ClusterError::Denied);
+        }
+        let namespace = &self.binding.watched_namespace;
+        tokio::time::timeout(OPERATION_LIMIT, async {
+            let mut calls = Vec::new();
+            let mut complete = true;
+            let mut after = 0;
+            let mut pages = 0;
+            loop {
+                pages += 1;
+                let page = tokio::time::timeout(
+                    REQUEST_TIMEOUT,
+                    self.orka.events(
+                        &self.creator,
+                        &self.binding,
+                        &self.bearer,
+                        namespace,
+                        stream,
+                        after,
+                    ),
+                )
+                .await
+                .map_err(|_| ClusterError::Unavailable)?
+                .map_err(cluster_error)?;
+                if serde_json::to_vec(&page).map_or(true, |v| v.len() > 1024 * 1024)
+                    || echoed(&page, &self.bearer)
+                    || echoed(&page, &self.creator_bearer)
+                {
+                    return Err(ClusterError::Unavailable);
+                }
+                let read = tool_page(&page, namespace, name, after, super::forward::EVENT_PAGE)?;
+                complete &= !read.dropped;
+                calls.extend(read.calls);
+                if calls.len() >= MAX_TOOL_CALLS {
+                    complete &= calls.len() == MAX_TOOL_CALLS && read.next.is_none();
+                    calls.truncate(MAX_TOOL_CALLS);
+                    return Ok(ToolCalls { calls, complete });
+                }
+                match read.next {
+                    // Sequence numbers only increase, but bound the reads all the same.
+                    Some(_) if pages >= 16 => {
+                        return Ok(ToolCalls {
+                            calls,
+                            complete: false,
+                        })
+                    }
+                    Some(next) => after = next,
+                    None => return Ok(ToolCalls { calls, complete }),
+                }
+            }
+        })
+        .await
+        .unwrap_or(Err(ClusterError::Unavailable))
+    }
     pub fn binding(&self) -> &TargetBinding {
         &self.binding
     }

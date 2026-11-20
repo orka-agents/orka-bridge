@@ -147,6 +147,12 @@ impl Orka {
         vendor: Option<ModelVendor>,
         deadline: Instant,
     ) -> WorkspaceCatalog {
+        if self.identity != super::IDENTITY {
+            return WorkspaceCatalog {
+                models: CatalogSection::Unavailable {},
+                tools: CatalogSection::Unavailable {},
+            };
+        }
         let models = (|| {
             if !(ModelSelection {
                 vendor: None,

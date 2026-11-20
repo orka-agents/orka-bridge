@@ -4,6 +4,8 @@ import { type LiveAgents, type Observation, type Places, type RunAgent, readAgen
 import { agentRows, buildCards, clusterGroups, type CompleteAgents, type Inputs, isEmpty, summaryLabel } from './model';
 import { PlaceNotes } from './places';
 import { AgentListRow } from './card';
+import { RecentActivity } from './Activity';
+import { SessionList } from './Sessions';
 import { type AgentFocus, sendAgentCheck } from '../clusters/send-api';
 import './overview.css';
 
@@ -39,6 +41,14 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const [placeFilter, setPlaceFilter] = useState('all');
   const [nameFilter, setNameFilter] = useState('');
   const [reveal, setReveal] = useState<string>();
+  // Show agent from Recent activity: clear the filters and expand the agent's row, then focus its card once rendered.
+  const [shown, setShown] = useState<{ key: string }>();
+  useEffect(() => {
+    if (!shown) return;
+    const card = [...document.querySelectorAll<HTMLElement>('[data-card-key]')].find(node => node.dataset.cardKey === shown.key);
+    if (card) { card.focus(); card.scrollIntoView?.({ block: 'center' }); }
+  }, [shown]);
+  const showAgent = (key: string) => { setPlaceFilter('all'); setNameFilter(''); setReveal(key); setShown({ key }); };
   const [places, setPlaces] = useState<Places>();
   const [placeError, setPlaceError] = useState(false);
   useEffect(() => {
@@ -208,6 +218,11 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     {empty ? <>
       <div className="card overview-empty"><h2>No agents yet</h2><p>Make an agent, or start from web-reader, the example that answers from a web page. Agents you test or send show up here, with their results in each place.</p>
         <div className="overview-card-actions">{onNewAgent && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}<Button onClick={onOpenExample}>Open web-reader</Button></div></div>
-    </> : <div className="overview-list">{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="overview-note">No agents match these filters.</p>}</div>}
+    </> : <>
+      <div className="overview-list">{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="overview-note">No agents match these filters.</p>}</div>
+      <RecentActivity active={active} places={places} onShowAgent={showAgent} onCheck={actions.onCheck} />
+    </>}
+    {/* Conversations stay reachable without agents: this computer's workspace can keep them after its agents are gone. */}
+    <SessionList active={active} places={places} workspace={workspaceKey} onCheck={actions.onCheck} />
   </section>;
 }

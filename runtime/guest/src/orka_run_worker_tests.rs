@@ -42,7 +42,8 @@ fn worker_read_counts_only_unfinished_pods_and_dispatches_as_run_without_a_beare
         {"status":{"phase":"Pending"}}, {"status":{"phase":"Unknown"}},
         {"status":{"phase":"FuturePhase"}}, {}])));
     let action = EngineActionWire::RunWorker {name:TASK.into(), uid:"ack-uid".into()};
-    let mut runner = GuestRunner {kmx:Kmx, orka, chat:Orka::new_chat(installation()), catalog_provider:None};
+    let mut runner = GuestRunner {kmx:Kmx, orka, chat:Orka::new_chat(installation()),
+        sessions:Orka::new_sessions(installation()), catalog_provider:None};
     let result = runner.execute(&action).unwrap();
     assert_eq!(result.exit, 0);
     assert_eq!(serde_json::from_slice::<Value>(&result.stdout).unwrap(), json!({"finished":true,"pods":5}));

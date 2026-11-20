@@ -277,7 +277,10 @@ fn projection(action: &EngineActionWire, bytes: &[u8]) -> io::Result<Vec<u8>> {
             Ok(format!("kmx {token}\n").into_bytes())
         }
         // Exact status plus bounded JSON; the runner already refused bearer echoes.
-        EngineActionWire::Orka { .. } | EngineActionWire::OrkaChat { .. } => {
+        EngineActionWire::Orka { .. }
+        | EngineActionWire::OrkaChat { .. }
+        | EngineActionWire::SessionList { .. }
+        | EngineActionWire::SessionRead { .. } => {
             let reply: OrkaReply = serde_json::from_slice(bytes).map_err(|_| invalid())?;
             let bytes = serde_json::to_vec(&reply).map_err(|_| invalid())?;
             if bytes.len() > MAX_FILE {
@@ -340,6 +343,7 @@ pub struct GuestRunner {
     pub kmx: Kmx,
     pub orka: crate::orka::Orka,
     pub chat: crate::orka::Orka,
+    pub sessions: crate::orka::Orka,
     pub catalog_provider: Option<(String, Option<ModelVendor>)>,
 }
 impl GuestRunner {
@@ -348,6 +352,7 @@ impl GuestRunner {
             kmx: Kmx,
             orka: crate::orka::Orka::new(installation),
             chat: crate::orka::Orka::new_chat(installation),
+            sessions: crate::orka::Orka::new_sessions(installation),
             catalog_provider: None,
         }
     }
@@ -359,6 +364,8 @@ impl Runner for GuestRunner {
             EngineActionWire::OrkaChat { request } => self.chat.execute_chat(request),
             EngineActionWire::RunWorker { name, uid } => self.orka.run_worker(name, uid),
             EngineActionWire::CleanupRunAgent { uid } => self.orka.cleanup_run_agent(uid),
+            EngineActionWire::SessionList { after } => self.sessions.session_list(after.as_deref()),
+            EngineActionWire::SessionRead { name } => self.sessions.session_read(name),
             EngineActionWire::WorkspaceCatalog {} => {
                 let (provider, vendor) = self.catalog_provider.take().ok_or_else(invalid)?;
                 Ok(EngineResult {
@@ -393,7 +400,9 @@ pub fn argv(action: &EngineActionWire) -> io::Result<Vec<String>> {
         | EngineActionWire::OrkaChat { .. }
         | EngineActionWire::RunWorker { .. }
         | EngineActionWire::CleanupRunAgent { .. }
-        | EngineActionWire::WorkspaceCatalog {} => return Err(invalid()),
+        | EngineActionWire::WorkspaceCatalog {}
+        | EngineActionWire::SessionList { .. }
+        | EngineActionWire::SessionRead { .. } => return Err(invalid()),
     })
 }
 impl Kmx {

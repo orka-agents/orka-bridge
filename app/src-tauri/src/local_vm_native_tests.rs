@@ -1429,6 +1429,7 @@ mod retry_custody_tests {
                                 stage: Stage::Early,
                                 guest_nonce: Uuid::new_v4(),
                                 run_cleanup: false,
+                                sessions: false,
                                 accepted_boot_nonce: None,
                             },
                             0,

@@ -259,6 +259,7 @@ fn early_send_failure_after_boot_request_is_not_restored_to_new() {
         stage: Stage::Early,
         guest_nonce: Uuid::new_v4(),
         run_cleanup: false,
+        sessions: false,
         accepted_boot_nonce: None,
     };
     let request = worker.boot_request(&hello, 1).unwrap();

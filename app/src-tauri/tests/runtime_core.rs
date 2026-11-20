@@ -90,6 +90,7 @@ fn buffered_handoff(cleanup: bool) {
                 stage,
                 guest_nonce: guest,
                 run_cleanup: cleanup && stage == Stage::Serve,
+                sessions: false,
                 accepted_boot_nonce: if stage == Stage::Serve {
                     Some(nonce)
                 } else {
@@ -136,6 +137,11 @@ fn buffered_handoff(cleanup: bool) {
     );
     let error = client.cleanup_run_agent("old-uid").unwrap_err();
     assert_eq!(error.kind() == std::io::ErrorKind::Unsupported, !cleanup);
+    // A hello without Sessions is never sent one: an older guest exits on an unknown action.
+    let error = client
+        .sessions_request(EngineActionWire::SessionList { after: None })
+        .unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
     let frames: Vec<Frame> = writes
         .lock()
         .unwrap()
@@ -616,6 +622,7 @@ fn hello(stage: Stage, nonce: Uuid, guest: u128) -> StageHello {
         stage,
         guest_nonce: Uuid::from_u128(guest),
         run_cleanup: false,
+        sessions: false,
         accepted_boot_nonce: if stage == Stage::Serve {
             Some(nonce)
         } else {

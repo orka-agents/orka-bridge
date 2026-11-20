@@ -252,6 +252,14 @@ test('stopped workspace keeps saved rows and only Open at the parent; true empty
   expect(await screen.findByRole('heading', { name: 'No agents yet' })).toBeTruthy(); expect(screen.getAllByRole('button', { name: 'New agent' })).toHaveLength(1);
 });
 
+test("with no agents, this computer's conversations still list under the onboarding card", async () => {
+  const sessions = { places: [{ key: 'local', state: 'complete', observedAt: 5000, entries: [{ name: 'bridge-chat-kept', sessionType: 'chat', messageCount: 2, createdAt: 1000, updatedAt: 2000, activeTask: null, agent: null }], connection: 7, unsupported: 0 }] };
+  mockIPC(command => command === 'overview_files' ? files([]) : command === 'overview_places' ? none : command === 'overview_sessions' ? sessions : live());
+  render(<Overview {...props} />);
+  expect(await screen.findByRole('heading', { name: 'No agents yet' })).toBeTruthy();
+  expect((await screen.findByRole('listitem')).getAttribute('aria-label')).toBe('bridge-chat-kept on this computer, 2 messages');
+});
+
 test('image-limited listing keeps saved results and fitting local action', async () => {
   ipc(files(), { ...unavailable, reason: 'image' }); render(<Overview {...props} />); const agent = await expanded();
   expect(screen.queryByText(/can't list its agents/)).toBeNull(); expect(within(agent).getByRole('article', { name: 'This computer, Passed' })).toBeTruthy();
@@ -288,7 +296,8 @@ test('hidden post-Run completion does not read live; returning does', async () =
 });
 
 test('brief non-Run Busy retries once, while a read failure never retries as Busy', async () => {
-  let calls = 0; mockIPC(command => command === 'overview_files' ? files() : command === 'overview_places' ? none : (++calls === 1 ? { ...unavailable, state: 'busy', reason: null } : live()));
+  // Count only agent reads; the cluster sections read on their own.
+  let calls = 0; mockIPC(command => command === 'overview_files' ? files() : command === 'overview_places' ? none : command === 'overview_activity' || command === 'overview_sessions' ? { places: [] } : (++calls === 1 ? { ...unavailable, state: 'busy', reason: null } : live()));
   render(<Overview {...props} />); await waitFor(() => expect(calls).toBe(2));
 });
 
