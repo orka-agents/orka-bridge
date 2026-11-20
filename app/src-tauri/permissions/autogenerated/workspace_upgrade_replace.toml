@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-upgrade-replace"
+description = "Enables the workspace_upgrade_replace command without any pre-configured scope."
+commands.allow = ["workspace_upgrade_replace"]
+
+[[permission]]
+identifier = "deny-workspace-upgrade-replace"
+description = "Denies the workspace_upgrade_replace command without any pre-configured scope."
+commands.deny = ["workspace_upgrade_replace"]

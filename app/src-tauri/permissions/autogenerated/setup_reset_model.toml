@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-setup-reset-model"
+description = "Enables the setup_reset_model command without any pre-configured scope."
+commands.allow = ["setup_reset_model"]
+
+[[permission]]
+identifier = "deny-setup-reset-model"
+description = "Denies the setup_reset_model command without any pre-configured scope."
+commands.deny = ["setup_reset_model"]

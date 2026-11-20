@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-send-agent-check"
+description = "Enables the send_agent_check command without any pre-configured scope."
+commands.allow = ["send_agent_check"]
+
+[[permission]]
+identifier = "deny-send-agent-check"
+description = "Denies the send_agent_check command without any pre-configured scope."
+commands.deny = ["send_agent_check"]

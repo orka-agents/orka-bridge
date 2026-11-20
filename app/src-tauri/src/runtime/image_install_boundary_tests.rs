@@ -208,7 +208,7 @@ fn a_cancelled_reuse_hash_does_not_truncate_a_complete_private_copy() {
         &context,
         &stage,
         "os.disk",
-        scene.image.open_disk().unwrap(),
+        SourceReader::new(scene.image.open_disk().unwrap()),
         (data.len() as u64, &hash(data)),
         &mut 0,
         data.len() as u64,

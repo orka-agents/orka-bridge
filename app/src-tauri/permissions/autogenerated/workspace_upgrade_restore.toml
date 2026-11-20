@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-upgrade-restore"
+description = "Enables the workspace_upgrade_restore command without any pre-configured scope."
+commands.allow = ["workspace_upgrade_restore"]
+
+[[permission]]
+identifier = "deny-workspace-upgrade-restore"
+description = "Denies the workspace_upgrade_restore command without any pre-configured scope."
+commands.deny = ["workspace_upgrade_restore"]

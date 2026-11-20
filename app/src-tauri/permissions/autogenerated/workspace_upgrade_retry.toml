@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-workspace-upgrade-retry"
+description = "Enables the workspace_upgrade_retry command without any pre-configured scope."
+commands.allow = ["workspace_upgrade_retry"]
+
+[[permission]]
+identifier = "deny-workspace-upgrade-retry"
+description = "Denies the workspace_upgrade_retry command without any pre-configured scope."
+commands.deny = ["workspace_upgrade_retry"]

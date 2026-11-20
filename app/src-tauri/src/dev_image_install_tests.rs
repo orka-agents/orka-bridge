@@ -81,6 +81,71 @@ async fn engineering_sources_commit_matching_private_sets_for_both_backends() {
 }
 
 #[tokio::test]
+async fn two_engineering_installs_read_the_same_source_independently() {
+    use std::sync::{atomic::{AtomicBool, Ordering}, Barrier};
+
+    for platform in PLATFORMS {
+        let mut f = boot_fixture(platform);
+        // Distinct chunks make skipped or repeated source offsets observable.
+        f.data[3] = (0..(4 * 65536 + 17)).map(|i| (i / 65536 + i % 251) as u8).collect();
+        let mut receipt: serde_json::Value = serde_json::from_slice(&f.data[0]).unwrap();
+        receipt["diskSha256"] = format!("{:x}", Sha256::digest(&f.data[3])).into();
+        f.data[0] = serde_json::to_vec(&receipt).unwrap();
+        for i in [0, 3] {
+            fs::write(f.path(i), &f.data[i]).unwrap();
+            f.pins.files[i].bytes = f.data[i].len() as u64;
+            f.pins.files[i].sha256 = Sha256::digest(&f.data[i]).into();
+        }
+        let source = verify(&f.root(), &f.pins).unwrap();
+        let (_sender, closed) = watch::channel(false);
+        let (a, b) = tokio::join!(
+            prepare_development_image(&source, closed.clone()),
+            prepare_development_image(&source, closed.clone()),
+        );
+        let (a, b) = (a.unwrap(), b.unwrap());
+        let barrier = Arc::new(Barrier::new(2));
+        let install = |name: &'static str, prepared: crate::runtime::image_install::PreparedImage| {
+            let f = &f;
+            let closed = closed.clone();
+            let barrier = barrier.clone();
+            async move {
+                let path = f.temp.path().join(name);
+                fs::create_dir(&path).unwrap();
+                let root = Dir::open_ambient_dir(&path, ambient_authority()).unwrap();
+                let owner = Arc::new(std::fs::File::options().create_new(true).read(true).write(true).open(path.join("owner.lock")).unwrap());
+                owner.try_lock().unwrap();
+                let target_platform = match platform {
+                    DevImagePlatform::MacOsArm64 => ImageTarget::MacosArm64,
+                    DevImagePlatform::WindowsAmd64 => ImageTarget::WindowsAmd64,
+                };
+                let mut target = InstallationImageTarget::from_owned_installation(
+                    &root, &owner, bridge_runtime_protocol::Uuid::new_v4(), target_platform, platform.state_compatibility_id(), true,
+                );
+                let first_chunk = AtomicBool::new(true);
+                target.point = Some(Arc::new(move |point| {
+                    if point == "copy-chunk" && first_chunk.swap(false, Ordering::SeqCst) {
+                        // Both copies have started reading the same disk before either continues.
+                        barrier.wait();
+                    }
+                    Ok(())
+                }));
+                let installed = prepared.materialize(&target, closed, |_| {}).await.unwrap();
+                installed.revalidate(&target).unwrap();
+                for (relative, role) in [(installed.disk_path(), 3), (installed.kernel_path(), 1), (installed.initrd_path(), 2)] {
+                    let copy = fs::read(path.join(relative)).unwrap();
+                    assert_eq!(copy, f.data[role]);
+                    assert_eq!(Sha256::digest(&copy), Sha256::digest(&f.data[role]));
+                }
+            }
+        };
+        tokio::join!(install("installation-a", a), install("installation-b", b));
+        for role in 0..4 {
+            assert_eq!(fs::read(f.path(role)).unwrap(), f.data[role]);
+        }
+    }
+}
+
+#[tokio::test]
 async fn changed_engineering_receipt_or_payload_cannot_select_an_image() {
     use crate::runtime::image_types::ImageError;
     for role in 0..4 {

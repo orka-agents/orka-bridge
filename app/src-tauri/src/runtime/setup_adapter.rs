@@ -6,7 +6,7 @@ pub async fn prepare_development_image(
     closed: tokio::sync::watch::Receiver<bool>,
 ) -> Result<super::image_install::PreparedImage, super::image_types::ImageError> {
     cancelled(&closed)?;
-    let image = image.try_clone().map_err(|_| ImageError::Integrity)?;
+    let image = image.try_clone().map_err(super::image_cache::storage)?;
     blocking(move || {
         cancelled(&closed)?;
         let prepared = PreparedImage::from_development(image)?;

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-creation-root"
+description = "Enables the agent_creation_root command without any pre-configured scope."
+commands.allow = ["agent_creation_root"]
+
+[[permission]]
+identifier = "deny-agent-creation-root"
+description = "Denies the agent_creation_root command without any pre-configured scope."
+commands.deny = ["agent_creation_root"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-setup-cancel-local"
+description = "Enables the setup_cancel_local command without any pre-configured scope."
+commands.allow = ["setup_cancel_local"]
+
+[[permission]]
+identifier = "deny-setup-cancel-local"
+description = "Denies the setup_cancel_local command without any pre-configured scope."
+commands.deny = ["setup_cancel_local"]

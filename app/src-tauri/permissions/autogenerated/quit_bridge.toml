@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-quit-bridge"
+description = "Enables the quit_bridge command without any pre-configured scope."
+commands.allow = ["quit_bridge"]
+
+[[permission]]
+identifier = "deny-quit-bridge"
+description = "Denies the quit_bridge command without any pre-configured scope."
+commands.deny = ["quit_bridge"]

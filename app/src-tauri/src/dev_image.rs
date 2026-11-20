@@ -52,7 +52,7 @@ pub struct VerifiedDevImage {
     files: [File; 4],
 }
 impl VerifiedDevImage {
-    pub(crate) fn try_clone(&self) -> Result<Self, DevImageError> {
+    pub(crate) fn try_clone(&self) -> io::Result<Self> {
         let copy = || {
             Ok::<_, io::Error>(Self {
                 platform: self.platform,
@@ -65,7 +65,7 @@ impl VerifiedDevImage {
                 ],
             })
         };
-        copy().map_err(|_| DevImageError)
+        copy()
     }
     pub(crate) fn declared(&self, slot: usize) -> (u64, String) {
         let pin = &self.pins[slot];

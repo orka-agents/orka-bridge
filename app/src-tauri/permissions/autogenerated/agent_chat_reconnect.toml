@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-chat-reconnect"
+description = "Enables the agent_chat_reconnect command without any pre-configured scope."
+commands.allow = ["agent_chat_reconnect"]
+
+[[permission]]
+identifier = "deny-agent-chat-reconnect"
+description = "Denies the agent_chat_reconnect command without any pre-configured scope."
+commands.deny = ["agent_chat_reconnect"]

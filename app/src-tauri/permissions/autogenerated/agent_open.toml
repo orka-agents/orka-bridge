@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-open"
+description = "Enables the agent_open command without any pre-configured scope."
+commands.allow = ["agent_open"]
+
+[[permission]]
+identifier = "deny-agent-open"
+description = "Denies the agent_open command without any pre-configured scope."
+commands.deny = ["agent_open"]

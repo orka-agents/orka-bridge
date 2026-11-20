@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-send-history-check"
+description = "Enables the send_history_check command without any pre-configured scope."
+commands.allow = ["send_history_check"]
+
+[[permission]]
+identifier = "deny-send-history-check"
+description = "Denies the send_history_check command without any pre-configured scope."
+commands.deny = ["send_history_check"]

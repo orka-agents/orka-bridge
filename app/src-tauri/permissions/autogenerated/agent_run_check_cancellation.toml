@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-run-check-cancellation"
+description = "Enables the agent_run_check_cancellation command without any pre-configured scope."
+commands.allow = ["agent_run_check_cancellation"]
+
+[[permission]]
+identifier = "deny-agent-run-check-cancellation"
+description = "Denies the agent_run_check_cancellation command without any pre-configured scope."
+commands.deny = ["agent_run_check_cancellation"]

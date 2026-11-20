@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-agent-run-cancel"
+description = "Enables the agent_run_cancel command without any pre-configured scope."
+commands.allow = ["agent_run_cancel"]
+
+[[permission]]
+identifier = "deny-agent-run-cancel"
+description = "Denies the agent_run_cancel command without any pre-configured scope."
+commands.deny = ["agent_run_cancel"]

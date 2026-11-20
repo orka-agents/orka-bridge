@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cluster-use"
+description = "Enables the cluster_use command without any pre-configured scope."
+commands.allow = ["cluster_use"]
+
+[[permission]]
+identifier = "deny-cluster-use"
+description = "Denies the cluster_use command without any pre-configured scope."
+commands.deny = ["cluster_use"]

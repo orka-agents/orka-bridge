@@ -34,7 +34,7 @@ pub struct InstallationImageTarget<'owner> {
     compatibility: &'owner str,
     creation_allowed: bool,
     #[cfg(test)]
-    point: Option<Point>,
+    pub(crate) point: Option<Point>,
     #[cfg(test)]
     available: Option<u64>,
 }
@@ -598,6 +598,34 @@ fn installed(binding: Binding) -> InstalledImageSet {
     };
     InstalledImageSet { binding, identity }
 }
+// Duplicated handles share an OS cursor. All source reads use an explicit offset,
+// including on Windows where seek_read also updates that shared OS cursor.
+struct SourceReader {
+    file: File,
+    position: u64,
+}
+impl SourceReader {
+    fn new(file: File) -> Self {
+        Self { file, position: 0 }
+    }
+}
+impl Read for SourceReader {
+    fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+        #[cfg(unix)]
+        let n = {
+            use std::os::unix::fs::FileExt;
+            self.file.read_at(buffer, self.position)?
+        };
+        #[cfg(windows)]
+        let n = {
+            use std::os::windows::fs::FileExt;
+            self.file.seek_read(buffer, self.position)?
+        };
+        self.position += n as u64;
+        Ok(n)
+    }
+}
+
 /// Authenticated factory read files, prepared before installation ownership.
 pub struct PreparedImage {
     identity: ImageIdentity,
@@ -613,10 +641,8 @@ impl PreparedImage {
         image: crate::dev_image::VerifiedDevImage,
     ) -> Result<Self, ImageError> {
         use crate::dev_image::DevImagePlatform;
-        use std::io::Seek;
         let (receipt_bytes, receipt_sha) = image.declared(0);
-        let mut file = image.manifest().try_clone().map_err(storage)?.into_std();
-        file.rewind().map_err(storage)?;
+        let file = SourceReader::new(image.manifest().try_clone().map_err(storage)?.into_std());
         let mut bytes = Vec::new();
         file.take((receipt_bytes + 1).min(MAX_BINDING + 1))
             .read_to_end(&mut bytes)
@@ -740,11 +766,10 @@ impl PreparedImage {
     ) -> Result<InstalledImageSet, ImageError> {
         materialize_with(move || Ok(self), target, closed, progress).await
     }
-    fn open(&self, index: usize) -> Result<File, ImageError> {
-        use std::io::Seek;
-        let mut file = self.files[index].try_clone().map_err(storage)?;
-        file.rewind().map_err(storage)?;
-        Ok(file)
+    fn open(&self, index: usize) -> Result<SourceReader, ImageError> {
+        Ok(SourceReader::new(
+            self.files[index].try_clone().map_err(storage)?,
+        ))
     }
 }
 
@@ -855,7 +880,7 @@ pub(crate) fn allocation(file: &File) -> Result<u64, ImageError> {
 fn resume_prefix(
     context: &Context,
     output: &mut File,
-    source: &mut File,
+    source: &mut SourceReader,
     bytes: u64,
 ) -> Result<(u64, Sha256), ImageError> {
     let len = output.metadata().map_err(storage)?.len();
@@ -882,14 +907,14 @@ fn resume_prefix(
     context.stop()?;
     output.set_len(0).map_err(storage)?;
     output.rewind().map_err(storage)?;
-    source.rewind().map_err(storage)?;
+    source.position = 0;
     Ok((0, Sha256::new()))
 }
 fn copy(
     context: &Context,
     stage: &Dir,
     name: &str,
-    mut source: File,
+    mut source: SourceReader,
     expected: (u64, &str),
     done: &mut u64,
     total: u64,
