@@ -16,8 +16,16 @@ func restoreDisplay() {
 }
 var restoreTemporaryTests: (() throws -> Void)?
 var restoreTemporaryAgent: (() throws -> Void)?
+// What OCR read from the latest capture, kept with the reason if a check fails.
+var evidence: (file: String, name: String, text: String)?
 func fail(_ message: String) -> Never {
-    fputs("\(message)\n", stderr)
+    var report = "\(message)\n"
+    if let evidence {
+        // Later actions may have changed the window since this capture.
+        report += "OCR of the latest capture before this failure, \(evidence.name).png:\n\(evidence.text)\n"
+        try? report.write(toFile: evidence.file, atomically: true, encoding: .utf8)
+    }
+    fputs(report, stderr)
     do { try restoreTemporaryTests?() }
     catch { fputs("Cannot restore original test file: \(error)\n", stderr) }
     do { try restoreTemporaryAgent?() }
@@ -358,6 +366,18 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     try command.run(); command.waitUntilExit()
     require(command.terminationStatus == 0, "Cannot capture Bridge")
     try afterFrame?()
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
+    let observations = request.results ?? []
+    let recognized = observations.map { observation in
+        "\(observation.boundingBox): \(observation.topCandidates(1).first?.string ?? "")"
+    }.joined(separator: "\n")
+    // Record what OCR read before any check, so a failure shows whether the page had rendered.
+    let record = "\(output)/\(name).ocr.txt"
+    try recognized.write(toFile: record, atomically: true, encoding: .utf8)
+    // Kept until the next capture, so later checks also report this frame's text.
+    evidence = (record, name, recognized)
     if name.hasPrefix("new-agent-") && name != "new-agent-probe" || name.hasPrefix("cluster-") && name != "cluster-probe" || name.hasPrefix("places-") {
         let designer = name.hasPrefix("new-agent-")
         let referenceFile = designer ? "designer-reference-\(theme)" : "cluster-reference-light"
@@ -402,14 +422,6 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
     let actual = rgba.prefix(3).map { CGFloat($0) }
     require(zip(actual, expected).allSatisfy { abs($0 - $1) < 8 },
             "Native screenshot does not show the expected \(theme) Estuary chrome: \(actual)")
-    let request = VNRecognizeTextRequest()
-    request.recognitionLevel = .accurate
-    try VNImageRequestHandler(url: URL(fileURLWithPath: file)).perform([request])
-    let observations = request.results ?? []
-    let recognized = observations.map { observation in
-        "\(observation.boundingBox): \(observation.topCandidates(1).first?.string ?? "")"
-    }.joined(separator: "\n")
-    try recognized.write(toFile: "\(output)/\(name).ocr.txt", atomically: true, encoding: .utf8)
     if name == "new-agent-probe" || name == "send-probe" || name == "cluster-probe" || name == "overview-probe" || name.hasPrefix("overview-probe-") || name.hasPrefix("overview-fixture-") { return observations }
     if name.hasPrefix("new-agent-") && name.hasSuffix("-end") {
         require(visibleButtons("Create").count == 1 && visibleButtons("Cancel").count == 1, "Creation actions overlap the fixed chrome")
@@ -1169,7 +1181,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             }
             scrollMain(-200)
         }
-        fatalError("Reload kubeconfig control not found")
+        fail("Reload kubeconfig control not found")
     }
     do {
         defer { try? originalConfig.write(to: configURL, options: .atomic) }
@@ -1279,6 +1291,9 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
                         try Data(contentsOf: URL(fileURLWithPath: "\(output)/send-probe.\(ext)"))
                             .write(to: URL(fileURLWithPath: "\(output)/\(name).\(ext)"), options: .atomic)
                     }
+                    // Report later failures against the copy that names this frame.
+                    evidence?.file = "\(output)/\(name).ocr.txt"
+                    evidence?.name = name
                 }
                 print("PASS \(name): frozen native Send frame shows \(expected)")
                 return seen
@@ -1591,9 +1606,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             let anchors = visibleTextBounds(required[0])
             if !anchors.isEmpty && required.allSatisfy({ nativeTextIsVisible($0) }) {
                 // The required state already fits. Reframing can scroll its recovery note away.
+                // Observe right after the frame, but fail only once capture() has recorded its OCR.
+                var stillVisible = true
                 let seen = try capture(name, "Overview", afterFrame: {
-                    require(required.allSatisfy({ nativeTextIsVisible($0) }), "Overview state moved during capture: \(required)")
+                    stillVisible = required.allSatisfy({ nativeTextIsVisible($0) })
                 })
+                require(stillVisible, "Overview state moved during capture: \(required)")
                 print("PASS \(name): visible native state \(required)")
                 return seen
             }
