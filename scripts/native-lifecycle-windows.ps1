@@ -290,6 +290,7 @@ function Tray-Menu {
     # The latest hit test survives a moved icon or an opened overflow, so every timeout can report it.
     $last = 'no hit test was made'
     $uiaError = ''
+    $pressRetryAt = 0
     $openOverflow = { $h = [NativeWalk]::FindWindow('NotifyIconOverflowWindow', $null); if ($h -ne [IntPtr]::Zero -and [NativeWalk]::IsWindowVisible($h)) { [System.Windows.Automation.AutomationElement]::FromHandle($h) } }
     for ($i = 0; ; $i++) {
         $point = $null
@@ -306,11 +307,14 @@ function Tray-Menu {
         }
         $noChevron = $false
         if (!$point -and !$overflow -and !$lost) {
-            # A press whose UIA call failed may still have opened the overflow; never press twice.
+            # A press that threw may still have opened the overflow; check before any press.
             $overflow = & $openOverflow
             $chevron = $null
             $pressFailed = $false
-            if (!$overflow) {
+            # After a press that threw, later polls keep checking for 2 s before pressing again,
+            # all within this loop's budget rather than a fresh overflow wait per attempt.
+            $looked = !$overflow -and $i -ge $pressRetryAt
+            if ($looked) {
                 try {
                     $chevron = Find-Control $area 'Show hidden icons' $button
                     if (!$chevron) { $chevron = Find-Control $area 'Notification Chevron' $button }
@@ -321,18 +325,14 @@ function Tray-Menu {
                     }
                     if ($chevron) { $pressFailed = $true; Press $chevron; $pressFailed = $false }
                 } catch [System.Windows.Automation.ElementNotAvailableException], [System.Windows.Automation.NoClickablePointException] {
-                    # A press that threw may still have opened the overflow, so keep its chevron and wait.
-                    if (!$pressFailed) { $chevron = $null }
+                    if ($pressFailed) { $pressRetryAt = $i + 20 }
+                    $chevron = $null
                     $uiaError = "; the last UIA read failed: $($_.Exception.Message)"
                 }
             }
             if ($chevron) {
                 try { $overflow = Wait-For 'Native notification overflow not visible' $openOverflow }
-                catch {
-                    if ($_.Exception.Message -cne 'Native notification overflow not visible') { throw }
-                    # Only a press that threw may have done nothing; poll and press again.
-                    if (!$pressFailed) { throw "Native notification overflow not visible; $last" }
-                }
+                catch { if ($_.Exception.Message -ceq 'Native notification overflow not visible') { throw "Native notification overflow not visible; $last" }; throw }
             }
             if ($overflow) {
                 $i = 0
@@ -340,7 +340,7 @@ function Tray-Menu {
                 continue
             }
             # A relayout can briefly show neither the icon nor the chevron: poll again.
-            $noChevron = $true
+            $noChevron = $looked -and !$pressFailed
         }
         if ($point) {
             $target = [Drawing.Point]::new([int]$point.X, [int]$point.Y)
