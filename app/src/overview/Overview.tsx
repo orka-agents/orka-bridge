@@ -50,19 +50,22 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const showAgent = (key: string) => { setPlaceFilter('all'); setNameFilter(''); setReveal(key); setShown({ key }); };
   const [places, setPlaces] = useState<Places>();
   const [placeError, setPlaceError] = useState(false);
+  // Counts visits and checks, not Send polls, so Recent activity scans Tasks once per pass.
+  const [activityRevision, setActivityRevision] = useState(0);
   useEffect(() => {
     if (!active || focusPending || focus?.target) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    async function list() {
+    async function list(first: boolean) {
       const value = await readPlaces();
       if (cancelled) return;
       setPlaceError(!value);
       setPlaces(previous => value ?? (previous && { ...previous, places: previous.places.map(p => ({ ...p, stale: true })) }));
+      if (first) setActivityRevision(v => v + 1);
       // Poll known unfinished work; completion also invalidates a read that missed the initial checkpoint.
-      if (hasRunningSend(value)) timer = setTimeout(() => { void list(); }, 500);
+      if (hasRunningSend(value)) timer = setTimeout(() => { void list(false); }, 500);
     }
-    void list();
+    void list(true);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [active, refresh, focusPending, focus?.target, placesRevision]);
   // See in Overview: refresh only the recorded destination, then focus the exact card (place key + UID, never a name).
@@ -219,7 +222,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
         <div className="overview-card-actions">{onNewAgent && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}<Button onClick={onOpenExample}>Open web-reader</Button></div></div>
     </> : <>
       <div className="overview-list">{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="overview-note">No agents match these filters.</p>}</div>
-      <RecentActivity active={active} places={places} onShowAgent={showAgent} onCheck={actions.onCheck} />
+      <RecentActivity active={active} places={places} revision={activityRevision} onShowAgent={showAgent} onCheck={actions.onCheck} />
     </>}
   </section>;
 }

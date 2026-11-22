@@ -23,6 +23,21 @@ function ipc(saved = [file()], places = [place()], activity?: unknown) {
 }
 const row = () => screen.findByRole('article', { name: 'reader' });
 
+test('Send polling rereads places without rescanning Recent activity', async () => {
+  const calls: string[] = [];
+  const running = place('team', 'running');
+  mockIPC(command => {
+    calls.push(command);
+    return command === 'overview_activity' ? { places: [{ key: 'team', state: 'complete', observedAt: 9500, connection: 1, entries: [] }] }
+      : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+        : command === 'overview_places' ? { places: [running], historyState: 'complete', unobserved: [] }
+          : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null };
+  });
+  render(<Overview {...props} />);
+  await waitFor(() => expect(calls.filter(c => c === 'overview_places').length).toBeGreaterThanOrEqual(3), { timeout: 3000 });
+  expect(calls.filter(c => c === 'overview_activity')).toHaveLength(1);
+});
+
 test('Show agent in Recent activity clears the filters, expands the agent row and focuses its card', async () => {
   const run = { task: 'run-1', uid: 'run-uid', agent: 'remote-reader', agentUid: 'team-uid', phase: 'failed', createdAt: 9000, startedAt: null, completedAt: null, message: null, test: false };
   ipc(undefined, undefined, { places: [{ key: 'team', state: 'complete', observedAt: 9500, connection: 1, entries: [run] }] });

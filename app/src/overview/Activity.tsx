@@ -50,9 +50,10 @@ function Entry({ row, place, agentShown, onShowAgent }: { row: Row; place: strin
 }
 
 /** Recent runs across connected clusters, read only. The local VM cannot list Tasks yet. */
-/** `onShowAgent` receives the agent's card key (`place/uid`) and moves focus to that card. `onCheck` rereads
- * Overview's places, which reads activity again. */
-export function RecentActivity({ active, places, onShowAgent, onCheck }: { active: boolean; places?: Places; onShowAgent: (key: string) => void; onCheck: () => void }) {
+/** `revision` changes once per Overview visit or check, after its first places read lands; each new revision reads
+ * activity once, so Send polling of places does not rescan Tasks. `onShowAgent` receives the agent's card key
+ * (`place/uid`) and moves focus to that card. `onCheck` rereads Overview's places, which starts a new revision. */
+export function RecentActivity({ active, places, revision, onShowAgent, onCheck }: { active: boolean; places?: Places; revision: number; onShowAgent: (key: string) => void; onCheck: () => void }) {
   const [activity, setActivity] = useState<Activity>();
   const [failed, setFailed] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
@@ -85,19 +86,23 @@ export function RecentActivity({ active, places, onShowAgent, onCheck }: { activ
       if (queued.current) { queued.current = false; next(); }
     });
   }, []);
-  // Read once per places read: a revisit with cached places waits for the visit's own places read.
-  const readFor = useRef<Places>(undefined);
+  // Read once per revision: a revisit with cached places waits for the visit's own places read.
+  const readFor = useRef<number>(undefined);
   useEffect(() => {
-    if (active && places && places !== readFor.current) { readFor.current = places; start(); }
+    if (active && places && revision !== readFor.current) { readFor.current = revision; start(); }
     // Overview stays mounted while hidden: drop a queued read, and the next visit reads afresh.
     if (!active) queued.current = false;
-  }, [active, places, start]);
+  }, [active, places, revision, start]);
   useEffect(() => () => { request.current++; queued.current = false; readFor.current = undefined; }, []);
   const labels = placeLabels(places?.places ?? []);
   const known = new Set(places?.places.flatMap(p => p.agents.map(a => `${p.key}/${a.uid}`)) ?? []);
   const read = (activity?.places ?? []).filter(p => labels.has(p.key));
   const connected = read.filter(p => p.state !== 'disconnected' || p.entries.length);
   const rows = merge(connected, filter).slice(0, 50);
+  // "No runs" needs a read that succeeded or runs Bridge already holds; the connect prompt needs no connection at all.
+  // Otherwise the place notes say what failed and the section offers Check runs again.
+  const answered = read.some(p => p.entries.length > 0 || p.state === 'complete' || p.state === 'partial');
+  const linked = read.some(p => p.connection !== null);
   const note = (p: PlaceActivity) => {
     const name = labels.get(p.key);
     if (p.state === 'denied') return `Can't list runs on ${name}: this account isn't allowed to read Tasks.`;
@@ -122,8 +127,8 @@ export function RecentActivity({ active, places, onShowAgent, onCheck }: { activ
     {notes.map(([key, text]) => <p key={key} className="overview-note" role="status">{text}</p>)}
     {retry && <div className="overview-note"><Button kind="quiet" onClick={onCheck}>Check runs again</Button></div>}
     {!activity ? places && !failed && <p className="overview-note" role="status">Reading recent runs…</p>
-      : !connected.length ? <p className="overview-note">Connect a cluster to see its runs here.</p>
-      : !rows.length ? <p className="overview-note">{emptyFilter[filter]}</p>
-      : <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.connection}/${row.uid}`} row={row} place={labels.get(row.placeKey)!} agentShown={known.has(`${row.placeKey}/${row.agentUid}`)} onShowAgent={onShowAgent} />)}</ol>}
+      : rows.length ? <ol className="overview-activity-list">{rows.map(row => <Entry key={`${row.placeKey}/${row.connection}/${row.uid}`} row={row} place={labels.get(row.placeKey)!} agentShown={known.has(`${row.placeKey}/${row.agentUid}`)} onShowAgent={onShowAgent} />)}</ol>
+      : answered ? <p className="overview-note">{emptyFilter[filter]}</p>
+      : !linked && <p className="overview-note">Connect a cluster to see its runs here.</p>}
   </section>;
 }
