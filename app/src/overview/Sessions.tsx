@@ -51,8 +51,9 @@ function Entry({ row, place }: { row: Row; place: string }) {
 }
 
 /** Sessions on connected clusters, read only. Channel (gateway) Sessions and the local VM aren't listed.
- * `onCheck` rereads Overview's places, which reads conversations again. */
-export function SessionList({ active, places, onCheck }: { active: boolean; places?: Places; onCheck: () => void }) {
+ * `revision` changes once per Overview visit or check, after its first places read lands; each new revision reads
+ * conversations once. `onCheck` rereads Overview's places, which starts a new revision. */
+export function SessionList({ active, places, revision, onCheck }: { active: boolean; places?: Places; revision: number; onCheck: () => void }) {
   const [sessions, setSessions] = useState<Sessions>();
   const [failed, setFailed] = useState(false);
   const request = useRef(0);
@@ -83,13 +84,14 @@ export function SessionList({ active, places, onCheck }: { active: boolean; plac
       if (queued.current) { queued.current = false; next(); }
     });
   }, []);
-  // Read once per places read: a revisit with cached places waits for the visit's own places read.
-  const readFor = useRef<Places>(undefined);
+  // Read once per revision: a revisit with cached places waits for the visit's own places read, and Send polling of
+  // places doesn't reread.
+  const readFor = useRef<number>(undefined);
   useEffect(() => {
-    if (active && places && places !== readFor.current) { readFor.current = places; start(); }
-    // A hidden tab drops a queued read; the next places read starts a fresh one.
+    if (active && places && revision !== readFor.current) { readFor.current = revision; start(); }
+    // A hidden tab drops a queued read; the next revision starts a fresh one.
     if (!active) queued.current = false;
-  }, [active, places, start]);
+  }, [active, places, revision, start]);
   useEffect(() => () => { request.current++; queued.current = false; readFor.current = undefined; }, []);
   const labels = placeLabels(places?.places ?? []);
   const read = (sessions?.places ?? []).filter(p => labels.has(p.key));

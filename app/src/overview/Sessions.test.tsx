@@ -21,6 +21,8 @@ function ipc(sessions: unknown, transcript: (args: Record<string, unknown>) => u
   return calls;
 }
 const noop = () => {};
+let rev = 0;
+const next = () => ++rev;
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 
 test('sessions from every connected place merge most recently updated first', () => {
@@ -54,7 +56,7 @@ test('each conversation names its place and counts, and a running Task names its
     read('one', [entry('bridge-chat-1', { updatedAt: 3000, activeTask: 'run-1', agent: 'reader', messageCount: 1 })]),
     read('two', [entry('older', { updatedAt: 2500 }), entry('unread', { updatedAt: 2000, activeTask: 'run-2' })]),
   ] });
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   const [running, older, unread] = await screen.findAllByRole('listitem');
   expect(running.getAttribute('aria-label')).toBe('bridge-chat-1 on team-one, 1 message');
   expect(within(running).getByText(/Running/)).toBeTruthy();
@@ -73,7 +75,7 @@ test('opening a conversation reads only that Session and shows its messages', as
     { role: 'user', text: 'What changed?', cut: false, tools: [], at: 1000 },
     { role: 'assistant', text: 'Two files.', cut: true, tools: ['web_fetch'], at: null },
   ] }));
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   await screen.findByRole('listitem');
   expect(calls.some(c => c[0] === 'overview_transcript')).toBe(false);
   await userEvent.click(screen.getByRole('button', { name: /Conversation/ }));
@@ -86,7 +88,7 @@ test('opening a conversation reads only that Session and shows its messages', as
 
 test('a refused or unreadable place says so and keeps the other places listed', async () => {
   ipc({ places: [read('one', [], { state: 'denied', observedAt: null }), read('two', [entry('kept')], { state: 'partial' })] }, () => ({ state: 'denied', messages: [] }));
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findByText(/Can't list conversations on team-one/)).toBeTruthy();
   expect(screen.getByText(/team-two has more conversations/)).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: /Conversation/ }));
@@ -95,7 +97,7 @@ test('a refused or unreadable place says so and keeps the other places listed', 
 
 test('a revoked place asks to connect again, and its conversations read the same way', async () => {
   ipc({ places: [read('one', [], { state: 'revoked', observedAt: null }), read('two', [entry('kept')])] }, () => ({ state: 'revoked', messages: [] }));
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findByText('Connect to team-one again to see its conversations.')).toBeTruthy();
   await userEvent.click(screen.getByRole('button', { name: /Conversation/ }));
   expect(await screen.findByText('Connect to this cluster again to read the conversation.')).toBeTruthy();
@@ -103,7 +105,7 @@ test('a revoked place asks to connect again, and its conversations read the same
 
 test('without a connected cluster the section asks for one', async () => {
   ipc({ places: [read('one', [], { state: 'disconnected', observedAt: null, connection: null })] });
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   await waitFor(() => expect(screen.getByText('Connect a cluster to see its conversations here.')).toBeTruthy());
 });
 
@@ -111,7 +113,7 @@ test('the connect prompt waits for a read; until then the section says it is rea
   let answer: (v: unknown) => void = () => {};
   ipc(undefined);
   mockIPC(command => command === 'overview_sessions' ? new Promise(resolve => { answer = resolve; }) : null);
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findByText('Reading conversations…')).toBeTruthy();
   expect(screen.queryByText('Connect a cluster to see its conversations here.')).toBeNull();
   answer({ places: [read('one', [], { state: 'disconnected', observedAt: null, connection: null })] });
@@ -123,10 +125,10 @@ test('a new connection drops the old connection\'s conversations even when its f
   let sessions: unknown = { places: [read('one', [entry('old')])] };
   ipc(undefined);
   mockIPC(command => command === 'overview_sessions' ? sessions : null);
-  const view = render(<SessionList onCheck={noop} active places={places} />);
+  const view = render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findAllByRole('listitem')).toHaveLength(1);
   sessions = { places: [read('one', [], { state: 'unavailable', observedAt: null, connection: 2 })] };
-  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={noop} active places={places} revision={next()} />);
   expect(await screen.findByText("Couldn't read conversations on team-one just now.")).toBeTruthy();
   expect(screen.queryAllByRole('listitem')).toHaveLength(0);
 });
@@ -135,17 +137,17 @@ test('an unreadable place on the same connection keeps what Bridge last saw', as
   let sessions: unknown = { places: [read('one', [entry('kept')])] };
   ipc(undefined);
   mockIPC(command => command === 'overview_sessions' ? sessions : null);
-  const view = render(<SessionList onCheck={noop} active places={places} />);
+  const view = render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findAllByRole('listitem')).toHaveLength(1);
   sessions = { places: [read('one', [], { state: 'unavailable', observedAt: null })] };
-  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={noop} active places={places} revision={next()} />);
   expect(await screen.findByText(/Showing what Bridge last saw/)).toBeTruthy();
   expect(screen.getAllByRole('listitem')).toHaveLength(1);
 });
 
 test('under StrictMode the first read still lands', async () => {
   ipc({ places: [read('one', [entry('a')])] });
-  render(<StrictMode><SessionList onCheck={noop} active places={places} /></StrictMode>);
+  render(<StrictMode><SessionList revision={rev} onCheck={noop} active places={places} /></StrictMode>);
   expect(await screen.findAllByRole('listitem')).toHaveLength(1);
 });
 
@@ -154,17 +156,17 @@ test('an open conversation is read again on refresh, and a new connection closes
   let messages = [{ role: 'user', text: 'First', cut: false, tools: [], at: 1000 }];
   const calls = ipc(undefined);
   mockIPC((command, args) => { calls.push([command, args]); return command === 'overview_sessions' ? sessions : { state: 'complete', messages }; });
-  const view = render(<SessionList onCheck={noop} active places={places} />);
+  const view = render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   await screen.findByRole('listitem');
   await userEvent.click(screen.getByRole('button', { name: /Conversation/ }));
   expect(await screen.findByText('First')).toBeTruthy();
   messages = [...messages, { role: 'assistant', text: 'Second', cut: false, tools: [], at: 2000 }];
   sessions = { places: [read('one', [entry('bridge-chat-1', { updatedAt: 3000 })], { observedAt: 6000 })] };
-  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={noop} active places={places} revision={next()} />);
   expect(await screen.findByText('Second')).toBeTruthy();
   expect(calls.filter(c => c[0] === 'overview_transcript')).toHaveLength(2);
   sessions = { places: [read('one', [entry('bridge-chat-1', { updatedAt: 3000 })], { observedAt: 7000, connection: 2 })] };
-  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={noop} active places={places} revision={next()} />);
   await waitFor(() => expect(screen.queryByText('Second')).toBeNull());
   expect(screen.getByRole('button', { name: /Conversation/ }).getAttribute('aria-expanded')).toBe('false');
 });
@@ -174,28 +176,28 @@ test('a refusal stands through unreadable answers on the same connection until a
   ipc(undefined);
   mockIPC(command => command === 'overview_sessions' ? sessions : null);
   const denied = "Can't list conversations on team-one: this account isn't allowed to read Sessions.";
-  const view = render(<SessionList onCheck={noop} active places={places} />);
+  const view = render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findByText(denied)).toBeTruthy();
   sessions = { places: [read('one', [], { state: 'unavailable', observedAt: null })] };
-  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={noop} active places={places} revision={next()} />);
   await new Promise(resolve => setTimeout(resolve, 20));
   expect(screen.getByText(denied)).toBeTruthy();
   expect(screen.queryByText("Couldn't read conversations on team-one just now.")).toBeNull();
   sessions = { places: [read('one', [entry('allowed')])] };
-  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={noop} active places={places} revision={next()} />);
   expect(await screen.findAllByRole('listitem')).toHaveLength(1);
   expect(screen.queryByText(denied)).toBeNull();
 });
 
 test('each places read starts one Sessions read, so a revisit waits for its own places read', async () => {
   const calls = ipc({ places: [read('one', [entry('a')])] });
-  const view = render(<SessionList onCheck={noop} active places={places} />);
+  const view = render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   await waitFor(() => expect(calls).toHaveLength(1));
-  view.rerender(<SessionList onCheck={noop} active={false} places={places} />);
-  view.rerender(<SessionList onCheck={noop} active places={places} />);
+  view.rerender(<SessionList revision={rev} onCheck={noop} active={false} places={places} />);
+  view.rerender(<SessionList revision={rev} onCheck={noop} active places={places} />);
   await new Promise(resolve => setTimeout(resolve, 20));
   expect(calls).toHaveLength(1);
-  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={noop} active places={places} revision={next()} />);
   await waitFor(() => expect(calls).toHaveLength(2));
 });
 
@@ -204,15 +206,15 @@ test('a failed or unreadable Sessions read offers Check conversations again, and
   ipc(undefined);
   mockIPC(command => command === 'overview_sessions' ? sessions : null);
   const check = vi.fn();
-  const view = render(<SessionList onCheck={check} active places={places} />);
+  const view = render(<SessionList revision={rev} onCheck={check} active places={places} />);
   await userEvent.click(await screen.findByRole('button', { name: 'Check conversations again' }));
   expect(check).toHaveBeenCalledTimes(1);
   sessions = { places: [read('one', [entry('a')]), read('two', [], { state: 'denied', observedAt: null })] };
-  view.rerender(<SessionList onCheck={check} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={check} active places={places} revision={next()} />);
   expect(await screen.findByText(/Can't list conversations on team-two/)).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Check conversations again' })).toBeTruthy();
   sessions = { places: [read('one', [entry('a')]), read('two', [])] };
-  view.rerender(<SessionList onCheck={check} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={check} active places={places} revision={next()} />);
   await waitFor(() => expect(screen.queryByRole('button', { name: 'Check conversations again' })).toBeNull());
 });
 
@@ -223,14 +225,14 @@ test.each([
   ['unsupported only', { unsupported: 2 }, /2 conversations on team-one have IDs Bridge can't open yet/],
 ])('a %s read with no rows keeps its note and never says there are no conversations', async (_, over, note) => {
   ipc({ places: [read('one', [], over), read('two', [])] });
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findByText(note)).toBeTruthy();
   expect(screen.queryByText(/No conversations yet/)).toBeNull();
 });
 
 test('a connected place whose last read failed is not asked to connect and is not called empty', async () => {
   ipc({ places: [read('one', [], { state: 'disconnected', observedAt: null, connection: 3 })] });
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findByRole('button', { name: 'Check conversations again' })).toBeTruthy();
   expect(screen.queryByText('Connect a cluster to see its conversations here.')).toBeNull();
   expect(screen.queryByText(/No conversations yet/)).toBeNull();
@@ -240,17 +242,17 @@ test('a failed reread keeps what Bridge last saw but no longer says there are no
   let sessions: unknown = { places: [read('one', [])] };
   ipc(undefined);
   mockIPC(command => command === 'overview_sessions' ? sessions : null);
-  const view = render(<SessionList onCheck={noop} active places={places} />);
+  const view = render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findByText(/No conversations yet/)).toBeTruthy();
   sessions = 'not sessions';
-  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={noop} active places={places} revision={next()} />);
   expect(await screen.findByText(/Couldn't read conversations just now. Showing what Bridge last saw./)).toBeTruthy();
   expect(screen.queryByText(/No conversations yet/)).toBeNull();
 });
 
 test('complete reads that list nothing say there are no conversations', async () => {
   ipc({ places: [read('one', []), read('two', [])] });
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findByText(/No conversations yet/)).toBeTruthy();
 });
 
@@ -258,7 +260,7 @@ test('only known roles are relabelled; an inherited property name shows as it is
   expect(roleLabel('assistant')).toBe('Agent');
   for (const role of ['__proto__', 'constructor', 'toString']) expect(roleLabel(role)).toBe(role);
   ipc({ places: [read('one', [entry('a')])] }, () => ({ state: 'complete', messages: [{ role: '__proto__', text: 'odd', cut: false, tools: [], at: null }] }));
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   await userEvent.click(await screen.findByRole('button', { name: /Conversation/ }));
   expect(await screen.findByText('odd')).toBeTruthy();
   expect(screen.getByText('__proto__')).toBeTruthy();
@@ -267,7 +269,7 @@ test('only known roles are relabelled; an inherited property name shows as it is
 test('a partial read with no readable messages says so, and content left out is marked', async () => {
   let transcript: unknown = { state: 'partial', messages: [] };
   ipc({ places: [read('one', [entry('a'), entry('b', { updatedAt: 1500 })])] }, () => transcript);
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   const [a, b] = await screen.findAllByRole('listitem');
   await userEvent.click(within(a).getByRole('button', { name: /Conversation/ }));
   expect(await within(a).findByText("Bridge couldn't read this conversation's messages.")).toBeTruthy();
@@ -282,17 +284,17 @@ test('a connected place whose last read failed offers Check conversations again;
   let sessions: unknown = { places: [read('one', [], { state: 'disconnected', observedAt: null, connection: null })] };
   ipc(undefined);
   mockIPC(command => command === 'overview_sessions' ? sessions : null);
-  const view = render(<SessionList onCheck={noop} active places={places} />);
+  const view = render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findByText('Connect a cluster to see its conversations here.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Check conversations again' })).toBeNull();
   sessions = { places: [read('one', [], { state: 'disconnected', observedAt: null, connection: 3 })] };
-  view.rerender(<SessionList onCheck={noop} active places={{ ...places }} />);
+  view.rerender(<SessionList onCheck={noop} active places={places} revision={next()} />);
   expect(await screen.findByRole('button', { name: 'Check conversations again' })).toBeTruthy();
 });
 
 test('conversations whose IDs Bridge cannot open are counted for their place', async () => {
   ipc({ places: [read('one', [entry('a')], { unsupported: 1 }), read('two', [entry('b')], { unsupported: 3 })] });
-  render(<SessionList onCheck={noop} active places={places} />);
+  render(<SessionList revision={rev} onCheck={noop} active places={places} />);
   expect(await screen.findByText("1 conversation on team-one has an ID Bridge can't open yet, so it isn't listed.")).toBeTruthy();
   expect(screen.getByText("3 conversations on team-two have IDs Bridge can't open yet, so they aren't listed.")).toBeTruthy();
 });
