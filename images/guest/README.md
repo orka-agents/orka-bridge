@@ -336,8 +336,10 @@ case stages no application archives, so its lock uses the legacy
 `bridge-guest-inputs/v1` nine-role closure with no model images, a null kmx
 profile and `localhost/bridge-ci-unused/*` component rows that name no files;
 anything that reads one fails on the missing file. These are test inputs, not a
-release candidate. To reproduce the job on a Linux AMD64 host with KVM and
-Docker, run the workflow's commands in order with `WORK` set to a new directory.
+release candidate. To reproduce the job on a Linux AMD64 host with KVM, Docker,
+readelf and Rust 1.98.1 with the `x86_64-unknown-linux-musl` target, run the
+workflow's commands in order from a clean, committed checkout, with `WORK` set to
+a new directory outside it: `runtime/artifact.py` refuses a modified checkout.
 Skip the runner preparation step: it changes the host's udev rules and, when free
 space is low, deletes preinstalled toolchains.
 
