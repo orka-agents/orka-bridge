@@ -134,6 +134,16 @@ class FetchTests(unittest.TestCase):
             self.fetch(Server(self.payloads))
         self.assertEqual([], list(outside.iterdir()))
 
+    def test_cached_root_symlink_is_refused(self):
+        outside = self.out.parent / "outside"
+        (outside / "tools").mkdir(parents=True)
+        (outside / "tools/kind").write_bytes(b"unchanged")
+        self.out.symlink_to(outside)
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            self.fetch(Server(self.payloads))
+        self.assertEqual(b"unchanged", (outside / "tools/kind").read_bytes())
+        self.assertEqual(["tools"], [p.name for p in outside.iterdir()])
+
     def test_cached_partial_symlink_is_not_followed(self):
         outside = self.out.parent / "outside"
         outside.write_bytes(b"unchanged")

@@ -85,6 +85,8 @@ def download(row, target, opener):
 
 def fetch(sources, out, *, opener=urllib.request.urlopen, attempts=3, pause=time.sleep):
     """Networked step: keep verified files, replace anything else from its pinned URL."""
+    # The output root is restored from a cache; resolve() below would hide a symlink there.
+    require(not out.is_symlink(), "CI source symlink is not allowed")
     out.mkdir(parents=True, exist_ok=True)
     root = out.resolve()
     for row in sources["files"]:
