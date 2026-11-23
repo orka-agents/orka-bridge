@@ -1,3 +1,4 @@
+import { noUpgrade } from './setup/test-upgrade';
 import { openLocalSetup } from './setup/test-navigation';
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -14,6 +15,7 @@ test.each(['Agent', 'File'] as const)('a pending %s draft survives setup readine
   let finish!: (value: unknown) => void; let pending = '';
   vi.stubGlobal('isTauri', true);
   mockIPC((command, args) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm, model: localVm === 'ready' ? 'available' : 'locked' };
     if (command === 'setup_example') return { agent: pair.agent, tests: pair.tests };
     if (command === 'agent_open') { opens++; return pair; }
@@ -45,6 +47,7 @@ test.each([true, false])('reopening Designer uses native model connection eviden
   vi.stubGlobal('isTauri', true); const catalogs = vi.fn();
   const id = '9b2b93c4-375c-4815-9717-39852a96e411';
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\nmodel: file-model\nkmx:\n  runtime: orka\n  schemaVersion: 1\n  tools: []\n---\nRead.', tests: 'Checks' };
     if (command === 'agent_run_status') return { documentId: id, busy: null, state: 'idle', canRun: modelConnected, modelConnected, report: null, acknowledged: [], pending: null, error: null };
@@ -62,6 +65,7 @@ test.each([true, false])('reopening Designer uses native model connection eviden
 test.each(['preparing', 'installing', 'starting', 'closing', 'failed'])('Overview reflects setup %s rather than a stopped cluster', async localVm => {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm, model: 'locked' };
     if (command === 'overview_files') return { state: 'complete', files: [], runActive: false, historyState: 'complete', runAgents: [] };
     if (command === 'overview_places') return { places: [], historyState: 'complete', unobserved: [] };
@@ -72,7 +76,7 @@ test.each(['preparing', 'installing', 'starting', 'closing', 'failed'])('Overvie
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   const page = await screen.findByRole('main', { name: 'Your agents' });
   const expected = localVm === 'starting' ? 'Starting the workspace' : localVm === 'closing' ? 'Stopping the workspace' : localVm === 'failed' ? 'Setup failed' : 'Getting the workspace ready';
-  const overview = within(page).getByRole('region', { name: 'Agents by cluster' });
+  const overview = within(page).getByRole('region', { name: 'Your agents' });
   expect(await within(overview).findByText(expected)).toBeTruthy();
   expect(within(overview).queryByText(/The workspace is stopped/)).toBeNull();
 });
@@ -80,6 +84,7 @@ test.each(['preparing', 'installing', 'starting', 'closing', 'failed'])('Overvie
 test.each(['closed', 'failed'])('Overview shows a pending start before the first reply from %s', async localVm => {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm, model: 'locked' };
     if (command === 'setup_select_local') return new Promise(() => {});
     if (command === 'overview_files') return { state: 'complete', files: [], runActive: false, historyState: 'complete', runAgents: [] };
@@ -91,7 +96,7 @@ test.each(['closed', 'failed'])('Overview shows a pending start before the first
   await openLocalSetup(user);
   await user.click(await screen.findByRole('button', { name: localVm === 'failed' ? 'Try again' : 'Start again' }));
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  const overview = screen.getByRole('region', { name: 'Agents by cluster' });
+  const overview = screen.getByRole('region', { name: 'Your agents' });
   expect(await within(overview).findByText('Getting your workspace ready…')).toBeTruthy();
   expect(within(overview).queryByText(/stopped|Setup failed/i)).toBeNull();
 });
@@ -144,6 +149,7 @@ test('Overview reads saved documents without opening, setup or VM commands; Open
   const id = '12345678-1234-1234-1234-123456789abc'; const calls: string[] = [];
   mockIPC((command, args) => {
     calls.push(command);
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
     if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'second', state: 'readable', source: null, summary: null, reason: 'Declarations unavailable' }] };
     if (command === 'overview_agents') return { state: 'unavailable', installation: null, agents: [], observation: null, observedAt: null, runActive: false, reason: 'stopped' };
@@ -166,7 +172,8 @@ test('Overview reads saved documents without opening, setup or VM commands; Open
   expect(calls.filter(c => c === 'agent_open')).toHaveLength(1);
 });
 
-test.each(['Chat', 'Run tests'] as const)('Overview %s routes to the saved document on This computer', async action => {
+test('Overview fitting Chat routes to the saved document on This computer', async () => {
+  const action = 'Chat';
   vi.stubGlobal('isTauri', true);
   const id = '12345678-1234-4234-8234-123456789abc';
   const installation = '22345678-1234-4234-8234-123456789abc';
@@ -174,6 +181,7 @@ test.each(['Chat', 'Run tests'] as const)('Overview %s routes to the saved docum
   const calls: { command: string; args: unknown }[] = [];
   mockIPC((command, args) => {
     calls.push({ command, args });
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'overview_files') return { state: 'complete', runActive: false, historyState: 'complete', runAgents: [], files: [{ documentId: id, name: 'reader', source, state: 'readable', summary: { name: 'reader', description: 'Reads a page', model: 'model', tools: [] }, reason: null, localResult: { installation, documentId: id, source, namespace: 'orka-system', agentName: 'generated-reader', agentUid: 'run-id', observedAt: 123, state: 'complete', report: { verdict: 'passed', passed: 1, total: 1 } } }] };
     if (command === 'setup_connect_model') return { ready: true };
@@ -189,7 +197,9 @@ test.each(['Chat', 'Run tests'] as const)('Overview %s routes to the saved docum
   await openLocalSetup(user);
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await user.click(await screen.findByRole('button', { name: `${action} reader` }));
+  const row = await screen.findByRole('article', { name: 'reader' });
+  await user.click(within(row).getByRole('button', { name: 'Show places for reader' }));
+  await user.click(within(row).getByRole('button', { name: `${action} reader` }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
   if (action === 'Chat') await waitFor(() => expect(screen.getByRole('button', { name: 'Chat', pressed: true })).toBeTruthy());
   else await waitFor(() => expect(calls.filter(call => call.command === 'agent_run')).toEqual([{ command: 'agent_run', args: { documentId: id } }]));
@@ -201,6 +211,7 @@ test('saved sample Open edits the actual file during setup without admitting Run
   const id = '9b2b93c4-375c-4815-9717-39852a96e411';
   mockIPC(command => {
     calls.push(command);
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'starting', model: 'locked' };
     if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'web-reader', state: 'readable', source: null, summary: null, reason: null }] };
     if (command === 'setup_example') return { agent: '---\nname: bundled-example\n---\nBundled content', tests: 'Checks' };
@@ -220,6 +231,7 @@ test('switching the owned example to a registered document opens each identity o
   vi.stubGlobal('isTauri', true); const opened: string[] = [];
   const id = '12345678-1234-1234-1234-123456789abc';
   mockIPC((command, args) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'starting', model: 'locked' };
     if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'other', state: 'readable', source: null, summary: null, reason: null }] };
     if (command === 'setup_example') return { agent: '---\nname: bundled-example\n---\nBundled content', tests: 'Checks' };
@@ -241,6 +253,7 @@ test('first opening the sample refreshes the hidden saved count without live dis
   const pair = { documentId: id, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks' };
   let created = false; const live: string[] = [];
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
     if (command === 'overview_files') return { state: 'complete', runActive: false, historyState: 'complete', runAgents: [], files: created ? [{ documentId: id, name: 'reader', state: 'readable', source: { agent: 'a'.repeat(64), tests: 'b'.repeat(64) }, summary: { name: 'reader', description: null, model: 'fixture-model', tools: [] }, reason: null, localResult: null }] : [] };
     if (command === 'overview_agents' || command === 'overview_places') live.push(command);
@@ -280,7 +293,7 @@ test.each([
   ['closed', 'localVm', 'Workspace stopped', 'Workspace stopped'],
   ['notIntegrated', null, 'Workspace unavailable', 'Workspace unavailable'],
 ])('chrome reflects %s without invented readiness', async (localVm, selected, detail, tabLine) => {
-  mockIPC(command => command === 'setup_status' ? { selected, localVm, model: 'locked' } : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
+  mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? { selected, localVm, model: 'locked' } : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   vi.stubGlobal('isTauri', true);
   render(<App />);
   const footer = screen.getByRole('contentinfo');
@@ -303,7 +316,7 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
 
 test('setup refreshes while another page is open', async () => {
   let localVm = 'ready';
-  mockIPC(command => command === 'setup_status' ? { selected: 'localVm', localVm, model: localVm === 'ready' ? 'available' : 'locked' } : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
+  mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? { selected: 'localVm', localVm, model: localVm === 'ready' ? 'available' : 'locked' } : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   vi.stubGlobal('isTauri', true);
   const user = userEvent.setup(); render(<App />);
   await within(screen.getByRole('contentinfo')).findByText('Connect the AI, step 3 of 4');
@@ -324,6 +337,7 @@ test('model acknowledgment and observed check counts survive navigation', async 
   ] }, acknowledged: [], pending: null, error: null };
   let modelConnected = false;
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_connect_model') { modelConnected = true; return { ready: true }; }
     if (command === 'agent_open') return pair;
@@ -354,6 +368,7 @@ test.each(['cancelling', 'cancelled', 'beforeStart', 'unconfirmed'] as const)('a
   const snapshot = { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: cancellation === 'cancelling' ? 'running' : 'complete', canRun: cancellation !== 'cancelling', cancellation,
     report: { verdict: cancellation === 'unconfirmed' ? 'unknown' : 'cancelled', cases: empty ? [] : [{ id: 'one', question: 'Question', phase: 'Cancelled', answer: null, completedTools: [], assertions: [], verdict: 'cancelled' }] }, acknowledged: [], pending: null, error: null };
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
     if (command === 'agent_open') return { documentId: snapshot.documentId, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
     if (command === 'agent_run_status') return snapshot;
@@ -373,6 +388,7 @@ test('unconfirmed run cancellation offers native Quit Bridge without another wor
   vi.stubGlobal('isTauri', true);
   const documentId = '9b2b93c4-375c-4815-9717-39852a96e411';
   const ipc = vi.fn(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
     if (command === 'quit_bridge') return Promise.reject(Error('Quit unavailable'));
     if (command === 'agent_open') return { documentId, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
@@ -394,6 +410,7 @@ test('a running check finishes in the footer after leaving Designer', async () =
   let complete = false;
   const report = { verdict: 'passed', cases: [{ id: 'a', question: 'What did the page say?', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', expected: 'checksum', verdict: 'passed' }], verdict: 'passed' }] };
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
     if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
     if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: complete ? 'complete' : 'running', canRun: complete, report: complete ? report : null, acknowledged: [], pending: null, error: null };
@@ -412,6 +429,7 @@ test('a running check finishes in the footer after leaving Designer', async () =
 test('the idle refresh does not erase a delayed selection failure', async () => {
   let rejectSelection!: (error: unknown) => void;
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
     if (command === 'setup_select_local') return new Promise((_, reject) => { rejectSelection = reject; });
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
@@ -427,6 +445,7 @@ test('the idle refresh does not erase a delayed selection failure', async () => 
 
 test('an unavailable example is not reported as still opening', async () => {
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
     if (command === 'agent_open') return Promise.reject(new Error('file unavailable'));
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
@@ -440,6 +459,7 @@ test('an unavailable example is not reported as still opening', async () => {
 
 test.each(['unknown', 'unavailable'])('background check status preserves %s outcomes', async state => {
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'agent_open') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: reader\n---\nRead.', tests: 'Check' };
     if (command === 'agent_run_status') return state === 'unavailable' ? Promise.reject(new Error('IPC failed'))
@@ -470,6 +490,7 @@ test('a retained native report for older source is stale in the shared chrome', 
 test('Open example retries a failed read without discarding successful runs', async () => {
   let fail = true;
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'agent_open') return fail ? Promise.reject(new Error('read failed')) : { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', name: 'web-reader', agent: '---\nname: recovered-reader\n---\nRead.', tests: 'Check' };
     if (command === 'agent_run_status') return { documentId: '9b2b93c4-375c-4815-9717-39852a96e411', busy: null, state: 'idle', canRun: false, report: null, acknowledged: [], pending: null, error: null };
@@ -486,7 +507,7 @@ test('Open example retries a failed read without discarding successful runs', as
 
 test('a transient setup read failure recovers while off Clusters', async () => {
   let fail = true;
-  mockIPC(command => command === 'setup_status' ? fail ? Promise.reject(new Error('read failed'))
+  mockIPC(command => command === 'workspace_upgrade_status' ? noUpgrade : command === 'setup_status' ? fail ? Promise.reject(new Error('read failed'))
     : { selected: 'localVm', localVm: 'starting', model: 'locked' }
     : { kind: 'version', version: 'v0.4.2', hasDiagnostics: false });
   vi.stubGlobal('isTauri', true);
@@ -500,6 +521,7 @@ test('a transient setup read failure does not invalidate an admitted model conne
   let fail = false;
   let finishConnect!: (value: unknown) => void;
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return fail ? Promise.reject(new Error('read failed')) : { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_connect_model') return new Promise(resolve => { finishConnect = resolve; });
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
@@ -528,6 +550,7 @@ test.each(['saved file', 'cluster Agent'])('%s Open keeps the selected cluster a
   const calls: string[] = []; const catalogs: unknown[] = []; let uses = 0;
   mockIPC((command, args) => {
     calls.push(command);
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_connect_model') return { ready: true };
     if (command === 'cluster_catalog') catalogs.push(args);
@@ -555,8 +578,8 @@ test.each(['saved file', 'cluster Agent'])('%s Open keeps the selected cluster a
   await user.click(await screen.findByRole('button', { name: 'Use this cluster' }));
   await screen.findByRole('button', { name: 'Open your agent' });
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  const originRegion = await screen.findByRole('region', { name: origin === 'saved file' ? 'This computer' : 'team-dev' });
-  await user.click(await within(originRegion).findByRole('button', { name: origin === 'saved file' ? 'Open reader' : 'Open reader on team-dev' }));
+  const originRow = await screen.findByRole('article', { name: 'reader' });
+  await user.click(within(originRow).getByRole('button', { name: 'Open reader' }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
   // Opening a file or its agent from Overview keeps the selected Send destination; local tests are independent of it.
   expect(document.querySelector('.host-chip')?.textContent).toContain('team-dev');
@@ -571,6 +594,7 @@ test('setup Open example restores the sample after Overview opened another docum
   vi.stubGlobal('isTauri', true);
   const sample = '9b2b93c4-375c-4815-9717-39852a96e411'; const other = '12345678-1234-1234-1234-123456789abc';
   mockIPC((command, args) => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
     if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: other, name: 'other', state: 'readable', source: null, summary: null, reason: null }] };
     if (command === 'agent_open') { const id = (args as { documentId: string }).documentId; const name = id === sample ? 'sample' : 'other'; return { documentId: id, name, agent: `---\nname: ${name}\n---\nRead.`, tests: 'Checks' }; }
@@ -590,6 +614,7 @@ test('Overview Open retries a transient failure for the same document', async ()
   vi.stubGlobal('isTauri', true); let opens = 0;
   const id = '9b2b93c4-375c-4815-9717-39852a96e411';
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
     if (command === 'overview_files') return { state: 'complete', runActive: false, files: [{ documentId: id, name: 'reader', source: null, state: 'readable', summary: null, reason: null }] };
     if (command === 'agent_open') { if (++opens === 1) throw Error('Temporary read failure'); return { documentId: id, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks' }; }
@@ -609,6 +634,7 @@ test('opening the already-local file does not acquire another VM catalog session
   vi.stubGlobal('isTauri', true); let catalogs = 0;
   const id = '9b2b93c4-375c-4815-9717-39852a96e411';
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available' };
     if (command === 'setup_connect_model') return { ready: true };
     if (command === 'workspace_catalog') { catalogs++; return null; }
@@ -634,6 +660,7 @@ test('Overview waits for native busy release even when the report is already com
   const id = '9b2b93c4-375c-4815-9717-39852a96e411';
   let busy = true; let lists = 0;
   mockIPC(command => {
+    if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'locked' };
     if (command === 'agent_open') return { documentId: id, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks' };
     if (command === 'agent_run_status') return { documentId: id, busy: busy ? { documentId: id, name: 'reader' } : null, state: 'complete', canRun: false, report: { verdict: 'passed', cases: [{ id: 'a', question: 'What did the page say?', phase: 'Succeeded', answer: 'ok', completedTools: [], assertions: [{ id: 'a1', kind: 'contains', expected: 'ok', verdict: 'passed' }], verdict: 'passed' }] }, acknowledged: [], pending: null, error: null };
@@ -646,10 +673,11 @@ test('Overview waits for native busy release even when the report is already com
   await within(screen.getByRole('contentinfo')).findByText('1 of 1 passed');
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await screen.findByText('Updating when the test finishes.');
-  await user.click(screen.getByRole('button', { name: 'Refresh' }));
   expect(lists).toBe(0);
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
   busy = false;
-  await within(screen.getByRole('region', { name: 'This computer' })).findByText('The workspace is stopped. Start it to test or chat.', {}, { timeout: 2000 });
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await screen.findByText('The workspace is stopped. Start it to test or chat.', {}, { timeout: 2000 });
   expect(lists).toBe(1);
 });
 
@@ -663,7 +691,7 @@ test('Clusters reads setup without engine diagnostics or legacy IPC', async () =
   const user = userEvent.setup(); render(<App />);
   expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
   expect(screen.queryByText('Engine diagnostics')).toBeNull();
-  expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status', 'cluster_places', 'overview_files'].includes(command))).toBe(true);
+  expect(ipc.mock.calls.every(([command]) => ['setup_requirements', 'setup_status', 'workspace_upgrade_status', 'cluster_places', 'overview_files'].includes(command))).toBe(true);
   expect(ipc.mock.calls.filter(([command]) => command === 'setup_requirements')).toEqual([['setup_requirements', {}]]);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   expect(screen.queryByRole('heading', { name: 'Engine available' })).toBeNull();

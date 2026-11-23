@@ -28,7 +28,7 @@ func runNativeModelScopeTests(_ manifest: NativeModelCaptureManifest) throws {
         try rejects("invalid invocation \(bad)") { _ = try parseNativeModelArguments(bad) }
     }
     try manifest.validate()
-    try check(manifest.model.count == 202 && manifest.destinationsWorkspace.count == 45, "202/45 including four long-Chat captures")
+    try check(manifest.model.count == 208 && manifest.destinationsWorkspace.count == 121, "208/121 including Overview list, long-Chat and upgrade captures")
     for name in ["local-catalog-no-destination-wide", "local-workspace-ready-wide", "local-workspace-stop-failed-details-minimum", "local-designer-waiting-chat-minimum", "local-workspace-image-update-minimum", "local-workspace-image-unsupported-minimum"] {
         try check(manifest.destinationsWorkspace.contains(name), "complete allocated journey includes \(name)")
     }
@@ -95,12 +95,12 @@ struct NativeModelCaptureManifest: Decodable {
         }
     }
     func validate() throws {
-        guard model.count == 202, destinationsWorkspace.count == 45,
+        guard model.count == 208, destinationsWorkspace.count == 121,
               Set(model).count == model.count,
               Set(destinationsWorkspace).count == destinationsWorkspace.count,
               Set(model).isDisjoint(with: Set(destinationsWorkspace)),
               !(model + destinationsWorkspace).contains("local-probe") else {
-            throw NativeModelHarnessError("Capture manifest must partition 247 unique named captures into 202 model and 45 destination/workspace names")
+            throw NativeModelHarnessError("Capture manifest must partition 329 unique named captures into 208 model and 121 destination/workspace names")
         }
     }
 }
@@ -248,10 +248,13 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         // Recovery copy has apostrophes and "AI" that Vision misreads; require visible native text instead.
         let lenient = ["local-key-", "local-reset-", "local-remove-"].contains { name.hasPrefix($0) }
         let nativeText = !found && name.hasPrefix("local-") && (nativeResultTextIsVisible(value) || lenient && nativeChatTextIsVisible(value))
+        // Upgrade expectations are paragraph substrings, as in the OCR check.
+        // Match unchanged text in a fully visible native node, never an OCR spelling alias.
+        let upgradeText = !found && name.hasPrefix("local-upgrade-") && nativeChatTextIsVisible(value, aboveFooter: true)
         let chatText = !found && (name.hasPrefix("chat-") || name.hasPrefix("cluster-") || name.hasPrefix("local-shell-chat-")) && nativeChatTextIsVisible(value)
         let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
         let overviewControl = !found && name.hasPrefix("local-") && name.contains("overview") && nativeWorkspaceButtonIsVisible(value)
-        require(found || nativeText || chatText || workspaceControl || overviewControl, "Missing \(value) in \(name): \(text)")
+        require(found || nativeText || upgradeText || chatText || workspaceControl || overviewControl, "Missing \(value) in \(name): \(text)")
     }
     guard let bitmap = NSBitmapImageRep(data: try Data(contentsOf: URL(fileURLWithPath: file))),
           let colour = bitmap.colorAt(x: bitmap.pixelsWide - 20, y: bitmap.pixelsHigh - 20)?.usingColorSpace(.deviceRGB)
@@ -307,6 +310,26 @@ func enabledButton(_ label: String) -> AXUIElement? {
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
     }
     return buttons.count == 1 ? buttons[0] : nil
+}
+func setOverviewExpanded(_ title: String, _ expanded: Bool) {
+    let label = "Show places for \(title)"
+    let buttons = nativeElements().filter { element in
+        attribute(element, "AXRole") as? String == "AXButton"
+            && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == label }
+    }
+    require(buttons.count == 1, "Cannot identify Overview disclosure \(label)")
+    if attribute(buttons[0], "AXExpanded") as? Bool == expanded { return }
+    let top = enabledButton("Overview").flatMap(nativeBounds)?.maxY ?? window()!.1.minY
+    for _ in 0..<12 {
+        if let bounds = enabledButton(label).flatMap(nativeBounds) {
+            if bounds.minY >= top + 8 && bounds.maxY <= window()!.1.maxY - 32 {
+                click(label, []); return
+            }
+            scroll(bounds.minY < top + 8 ? 150 : -150)
+        } else { scroll(-150) }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(false, "Cannot bring Overview disclosure into view: \(label)")
 }
 func click(_ label: String, _ rows: [VNRecognizedTextObservation]) {
     guard let button = enabledButton(label) else { require(false, "Native button is disabled or missing: \(label)"); return }
@@ -377,15 +400,22 @@ require(rows.contains { $0.boundingBox.minX < 0.3 && $0.boundingBox.maxY > 0.85 
 click("Overview", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    for (mode, toggle) in [("by-cluster", "By cluster"), ("by-agent", "By agent")] {
-        click(toggle, []); scroll(4000)
-        require(anyButton("Run tests web-reader") && enabledButton("Run tests web-reader") == nil && enabledButton("Open web-reader") != nil,
-                "Without connected AI, Overview must disable local Run but preserve Open")
-        _ = try capture("local-overview-ai-disconnected-\(mode)-\(size)", ["Your agents", "Connect the AI in Clusters"])
-    }
+    let longContext = "context-" + String(repeating: "unbrokensegment", count: 7)
+    guard let contextBounds = enabledButton(longContext).flatMap(nativeBounds) else { fatalError("Missing long Overview context filter") }
+    require(contextBounds.minX >= window()!.1.minX && contextBounds.maxX <= window()!.1.maxX,
+            "Long Overview context filter must fit the native window")
+    require(!anyButton("By cluster") && !anyButton("By agent") && !anyButton("Refresh"),
+            "Overview list must not retain grouping or top-level Refresh controls")
+    require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer."),
+            "Disconnected Overview must explain the local AI gate")
+    _ = try capture("local-overview-ai-disconnected-collapsed-\(size)", ["Your agents"])
+    setOverviewExpanded("web-reader", true)
+    require(anyButton("Run tests web-reader") && enabledButton("Run tests web-reader") == nil && enabledButton("Open web-reader") != nil,
+            "Without connected AI, Overview must disable local Run but preserve Open")
+    _ = try capture("local-overview-ai-disconnected-expanded-\(size)", ["Your agents", "web-reader", "This computer", "Run tests"])
+    setOverviewExpanded("web-reader", false)
 }
 localSize(1280, 800); scroll(4000)
-click("By cluster", [])
 click("Clusters", []); waitForButton("Connect the AI")
 localSize(540, 640)
 scroll(4000)
@@ -509,15 +539,14 @@ rows = try capture("reconnected", ["Connected", "Change"])
 click("Overview", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    for (mode, toggle) in [("by-cluster", "By cluster"), ("by-agent", "By agent")] {
-        click(toggle, []); scroll(4000)
-        require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to chat or run tests on this computer."),
-                "Connected AI must enable local Overview actions without the connection reason")
-        _ = try capture("local-overview-ai-connected-\(mode)-\(size)", ["Your agents", "Run tests"])
-    }
+    _ = try capture("local-overview-ai-connected-collapsed-\(size)", ["Your agents", "web-reader"])
+    setOverviewExpanded("web-reader", true)
+    require(enabledButton("Run tests web-reader") != nil && !nativeTextExists("Connect the AI in Clusters to chat or run tests on this computer."),
+            "Connected AI must enable the failed agent's local Run action without the connection reason")
+    _ = try capture("local-overview-ai-connected-expanded-\(size)", ["Your agents", "This computer", "Run tests"])
+    setOverviewExpanded("web-reader", false)
 }
 localSize(1280, 800); scroll(4000)
-click("By cluster", [])
 click("Clusters", [])
 // Returning workspace observations follow the original baseline coverage below.
 // Reuse the setup-progress selector and the existing Places entry to remount real
@@ -709,9 +738,20 @@ func scroll(_ pixels: Int32) {
     event?.post(tap: .cghidEventTap)
     Thread.sleep(forTimeInterval: 0.3)
 }
-func seek(_ label: String, _ pixels: Int32) throws -> [VNRecognizedTextObservation] {
-    for _ in 0..<6 {
+func seek(_ label: String, _ pixels: Int32, diagnosticPrefix: String? = nil) throws -> [VNRecognizedTextObservation] {
+    for attempt in 0..<6 {
         let seen = try capture("local-probe", [])
+        // Preserve the first viewport and every recovery step, even when seek succeeds.
+        // Copies are diagnostics, not new named capture cases.
+        if let prefix = diagnosticPrefix {
+            let frame = window()!.1
+            let stem = "\(output)/\(prefix)-attempt-\(attempt)"
+            for ext in ["png", "txt"] {
+                try FileManager.default.copyItem(atPath: "\(output)/local-probe.\(ext)", toPath: "\(stem).\(ext)")
+            }
+            let trace: [String: Any] = ["label": label, "pixels": pixels, "attempt": attempt, "width": frame.width, "height": frame.height]
+            try JSONSerialization.data(withJSONObject: trace, options: [.sortedKeys]).write(to: URL(fileURLWithPath: "\(stem).json"))
+        }
         // The large progress label must be visible in the pixels: AX can also report
         // the hidden setup panel's copy at coordinates inside this same window.
         if seen.contains(where: { ($0.topCandidates(1).first?.string ?? "").contains(label) }) || label != "Waiting for answers" && nativeChatTextIsVisible(label) {
@@ -1457,7 +1497,7 @@ localSize(540, 900)
 _ = try capture("chat-followup-compact", ["You asked me to remember ALPHA."])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
-    _ = try seek("Remember the checksum ALPHA.", -100)
+    _ = try seek("Remember the checksum ALPHA.", 4000, diagnosticPrefix: "chat-long-early-\(size)-seek")
     require(nativeChatTextIsVisible("Remember the checksum ALPHA.") && !nativeChatTextIsVisible("You asked me to remember ALPHA."),
             "Long transcript capture must read earlier messages, not the end")
     requireChatComposerVisible()
@@ -1491,41 +1531,28 @@ waitForButton("New conversation")
 _ = try capture("chat-stop-ready-compact", ["Execution termination is unconfirmed."])
 localSize(1280, 800)
 _ = try capture("chat-stop-ready-wide", ["Execution termination is unconfirmed."])
-// Capture card actions before the final test deliberately holds the fixture busy.
+// Capture list actions before the final test deliberately holds the fixture busy.
 click("Overview", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 640, "minimum")] {
-    localSize(CGFloat(width), CGFloat(height))
-    scroll(4000)
-    if size == "minimum" {
-        _ = try seek("2 of 2 passed, before your edit", -300)
-        let expected = ["Not run since your edit", "2 of 2 passed, before your edit", "Draft"]
-        let proof = try capture("local-controls-overview-\(size)", expected)
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    _ = try capture("local-controls-overview-collapsed-\(size)", ["Your agents", "web-reader"])
+    for (agent, scene, expected) in [
+        ("release-notes", "earlier-pass", ["Not run since your edit", "2 of 2 passed, before your edit", "Run tests"]),
+        ("pr-summary", "earlier-failed", ["Failed", "1 of 2 passed, before your edit", "Run tests"]),
+        ("draft-helper", "draft", ["Draft", "Add instructions and a test to get started."])
+    ] {
+        scroll(4000)
+        setOverviewExpanded(agent, true)
+        if size == "minimum" { scroll(-150) }
+        _ = try seek(scene == "draft" ? expected[0] : expected[1], -150)
+        let proof = try capture("local-controls-overview-expanded-\(scene)-\(size)", expected)
         let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(expected.allSatisfy { pixels.contains($0) }, "Cluster result and draft must be visible in OCR")
-    } else {
-        _ = try capture("local-controls-overview-\(size)", ["Your agents", "Refresh", "web-reader", "Failed", "Run tests"])
+        require(expected.allSatisfy { pixels.contains($0) }, "Expanded Overview result must be visible in OCR")
+        scroll(4000)
+        setOverviewExpanded(agent, false)
     }
 }
-scroll(4000)
-click("By agent", [])
-for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 640, "minimum")] {
-    localSize(CGFloat(width), CGFloat(height))
-    scroll(4000)
-    if size == "minimum" {
-        // The draft anchor is unique; the failed count alone also occurs on the local file.
-        _ = try seek("Add instructions and a test to get started.", -300)
-        // Leave room for the draft's status below its group heading.
-        scroll(-150)
-        let expected = ["team-dev", "Failed", "1 of 2 passed, before your edit", "Draft"]
-        let proof = try capture("local-overview-by-agent-\(size)", expected)
-        let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-        require(expected.allSatisfy { pixels.contains($0) }, "Cluster failure and draft must be visible in OCR")
-    } else {
-        _ = try capture("local-overview-by-agent-\(size)", ["Your agents", "web-reader", "This computer"])
-    }
-}
-scroll(4000)
-click("By cluster", [])
+localSize(1280, 800); scroll(4000)
 click("Designer", [])
 scroll(4000)
 click("Agent", [])
@@ -1654,6 +1681,109 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
 }
 try FileManager.default.removeItem(at: setupProgress)
 
+func captureUpgradeMatrix(manage: Bool) throws {
+    let rows: [(String, String, String?)] = manage ? [
+        ("sourceSelected", "Workspace setup was interrupted", nil),
+        ("sourceRetained", "Workspace setup was interrupted", nil),
+        ("restoring", "Restore was interrupted", "Restore previous workspace"),
+        ("fresh-absent", "Enter a new sign-in or key", nil),
+        ("fresh-eligible", "A saved connection can be reused", nil),
+        ("fresh-attention", "The saved connection needs attention", "Remove saved connection"),
+        ("fresh-transferred", "Saved connection ready", nil),
+        ("fresh-removed", "Enter a new sign-in or key", nil),
+        ("consumed", "Connect the AI explicitly", "Restore previous workspace"),
+        ("restored", "Previous workspace restored", "Set up another new workspace"),
+        ("conflict", "Workspace recovery needs attention", nil),
+        ("eligible-offline", "Check your internet connection", nil),
+        ("eligible-nospace", "not enough free space", nil),
+        ("incomplete-stop", "could not be stopped safely", nil),
+        ("busy", "Updating the workspace", nil),
+    ] : [
+        ("eligible-absent", "This version of Bridge needs a new workspace", "Set up new workspace"),
+        ("eligible-credential", "This version of Bridge needs a new workspace", "Set up new workspace"),
+        ("incomplete", "Workspace setup was interrupted", "Try setup again"),
+    ];
+    for (index, row) in rows.enumerated() {
+        let (state, expected, confirmation) = row
+        let phase = "upgrade-\(state)\(manage ? "-manage" : "")"
+        try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
+        if manage && index == 0 { waitForButton("Manage"); click("Manage", []) }
+        waitForNativeText([expected])
+        waitForNativeText([manage ? "Agents" : "Where agents run"])
+        if state == "eligible-credential" {
+            waitForNativeText(["A saved connection can be reused without connecting automatically."])
+        }
+        if state == "sourceRetained" {
+            // Identical recovery prose cannot prove this scene reached React.
+            // Observe its synthetic transaction in real rendered native details.
+            press("Update details")
+            waitForNativeText(["4000…0005"])
+            click("Update details", [])
+            var closed = false
+            for _ in 0..<40 {
+                if !nativeTextExists("4000…0005") { closed = true; break }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            require(closed, "Upgrade phase witness details must close before capture")
+        }
+        for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("compact", CGFloat(540), CGFloat(900))] {
+            localSize(width, height); scroll(4000)
+            _ = try seek(expected, -100)
+            if state == "eligible-absent" {
+                require(!nativeTextExists("A saved connection can be reused without connecting automatically."), "Absent credential must not show saved-connection copy")
+            } else if state == "eligible-credential" {
+                require(nativeTextExists("A saved connection can be reused without connecting automatically."), "Eligible credential must show saved-connection copy")
+            }
+            _ = try capture("local-upgrade-\(manage ? "manage" : "setup")-\(state)-\(size)", [expected])
+            if state == "busy" {
+                require(enabledButton("Cancel update") != nil, "An update must remain cancellable")
+                require(enabledButton("Restore previous workspace") == nil, "Busy must not authorize restore")
+            }
+            if let action = confirmation {
+                press(action)
+                require(enabledButton("Not now") != nil, "Confirmation must offer Not now")
+                reveal("Not now")
+                guard let notNow = enabledButton("Not now") else { fatalError("Not now missing") }
+                print("Upgrade focus before AX:", attribute(notNow, "AXFocused") as? Bool ?? false, String(describing: nativeBounds(notNow)), reachable(nativeBounds(notNow)))
+                require(AXUIElementSetAttributeValue(notNow, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus safe confirmation action")
+                print("Upgrade focus after AX:", attribute(notNow, "AXFocused") as? Bool ?? false)
+                // Specify modifiers on every event and release Shift, so one scene cannot modify the next Tab.
+                for backwards in [false, true] {
+                    for down in [true, false] {
+                        let event = CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: down)
+                        event?.flags = backwards && down ? .maskShift : []
+                        event?.post(tap: .cghidEventTap)
+                    }
+                }
+                Thread.sleep(forTimeInterval: 0.2)
+                // AX nodes can be refreshed by polling; observe the current node without extending the key deadline.
+                let currentFocus = enabledButton("Not now").map { attribute($0, "AXFocused") as? Bool == true } == true
+                if !currentFocus {
+                    _ = try capture("local-probe", [])
+                    let focused = nativeElements().filter { attribute($0, "AXFocused") as? Bool == true }
+                    print("Upgrade confirmation focus:", focused.map { attribute($0, "AXTitle") as? String ?? attribute($0, "AXRole") as? String ?? "unavailable" })
+                }
+                require(currentFocus, "Confirmation keyboard focus was lost")
+                let warning = action == "Restore previous workspace" ? "cannot be reopened" : action == "Remove saved connection" ? "every retained workspace" : state == "restored" ? "will not be reopened" : "Do not open the older version"
+                scroll(4000); _ = try seek(warning, -100)
+                _ = try capture("local-upgrade-\(manage ? "manage" : "setup")-\(state)-confirm-\(size)", [warning])
+                press("Not now")
+                require(enabledButton(action) != nil, "Not now must leave the original action available")
+            }
+        }
+    }
+    localSize(1280, 800); scroll(4000)
+}
+// Capture setup upgrade states before the returning-scene reload retires first-test intent.
+localSize(1280, 800); scroll(4000)
+click("Clusters", [])
+click("Clusters", [])
+waitForButton("Connect the AI"); click("Connect the AI", [])
+press("Connect the AI")
+_ = try seek("Connected", -100)
+try captureUpgradeMatrix(manage: false)
+try FileManager.default.removeItem(at: setupProgress)
+
 // Explicit scenes use only the existing synthetic fixture's IPC owner.
 func workspacePhase(_ phase: String) throws {
     try phase.write(to: setupProgress, atomically: true, encoding: .utf8)
@@ -1664,7 +1794,7 @@ func workspaceCapture(_ state: String, _ expected: [String]) throws {
         localSize(width, height); scroll(4000)
         _ = try capture("local-workspace-\(state)-\(size)", expected)
         require(enabledButton("Stop the workspace") == nil && enabledButton("Start") == nil && enabledButton("Cancel") == nil, "Returning workspace must not expose Start/Stop/Cancel")
-        if ["failed", "stopped-unexpectedly", "stop-failed"].contains(state) {
+        if ["failed", "stopped-unexpectedly", "stop-failed", "forced-stop"].contains(state) {
             require(!anyButton("Hide details"), "Diagnostics must start folded")
             click("Show details", [])
             _ = try capture("local-workspace-\(state)-details-\(size)", state == "stopped-unexpectedly" ? ["Synthetic workspace stopped unexpectedly.", "Hide details"] : ["Hide details"])
@@ -1701,12 +1831,101 @@ try workspaceCapture("stopped-unexpectedly", ["This computer", "Your workspace d
 try workspacePhase("workspace-scene-stop-failed")
 try workspaceCapture("stop-failed", ["This computer", "The workspace didn't stop.", "Quit Bridge"])
 require(enabledButton("Restart workspace") == nil, "Unconfirmed Stop must not authorize restart")
+try workspacePhase("workspace-scene-forced-stop")
+try workspaceCapture("forced-stop", ["This computer", "Forcibly stopped", "may be lost", "Quit Bridge"])
+require(enabledButton("Restart workspace") == nil, "Forced Stop must not authorize restart")
 try workspacePhase("workspace-scene-closed")
 try workspaceCapture("closed", ["This computer", "Stopped", "Quit Bridge"])
+try captureUpgradeMatrix(manage: true)
+// New owner-contract scenes extend the existing destination journey once, not a
+// setup×Manage combinatorial duplicate. Every action is synthetic fixture IPC.
+func integrationUpgradeShots(_ state: String, _ expected: String) throws {
+    for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("compact", CGFloat(540), CGFloat(900))] {
+        localSize(width, height); scroll(4000)
+        reveal("Update details")
+        guard let details = enabledButton("Update details") else { fatalError("Update details missing") }
+        require(AXUIElementSetAttributeValue(details, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus upgrade details")
+        for backwards in [false, true] {
+            for down in [true, false] {
+                let event = CGEvent(keyboardEventSource: nil, virtualKey: 48, keyDown: down)
+                event?.flags = backwards && down ? .maskShift : []
+                event?.post(tap: .cghidEventTap)
+            }
+        }
+        Thread.sleep(forTimeInterval: 0.2)
+        require(enabledButton("Update details").map { attribute($0, "AXFocused") as? Bool == true } == true, "Integration keyboard focus was lost")
+        scroll(4000); _ = try seek(expected, -100)
+        _ = try capture("local-upgrade-manage-\(state)-\(size)", [expected])
+    }
+}
+for state in ["refresh-pending", "refresh-busy", "refresh-io", "cancel-requested", "cancel-completed", "cancel-not-cancellable", "forward-cancelled", "busy-locked", "incomplete-forced"] {
+    localSize(1280, 800); scroll(4000)
+    try workspacePhase("upgrade-\(state)-manage")
+    // Each finite interactive phase remounts with retired first-test intent.
+    waitForButton("Manage"); click("Manage", [])
+    var expected = state == "incomplete-forced" ? "forcibly stopped" : state == "busy-locked" ? "The workspace is busy. Your agent files are kept." : state.hasPrefix("cancel-") ? "Cancel update" : state == "forward-cancelled" ? "Try setup again" : "Check again"
+    if state.hasPrefix("cancel-") || state == "forward-cancelled" || state.hasPrefix("refresh-") { waitForButton(expected) } else { waitForNativeText([expected]) }
+    if state.hasPrefix("refresh-") {
+        waitForNativeText(["1.2 GB"])
+        require(!nativeTextExists("Workspace files checked on request."), "Cached observation must not claim owner freshness")
+        if state == "refresh-pending" { try integrationUpgradeShots("refresh-cached", "Check again") }
+        press("Check again")
+        expected = state == "refresh-pending" ? "Checking workspace" : "Could not check workspace files. They may still be in use or unavailable. Check again before continuing."
+        waitForNativeText([expected])
+        if state != "refresh-pending" {
+            // Observe React committing the next cached DTO, not elapsed time or a request.
+            // Bytes are fixture metadata only; transaction/history and failed I/O stay unchanged.
+            waitForNativeText(["1.3 GB"])
+            require(nativeTextExists(expected), "Cached observation erased manual refresh error")
+            require(!nativeTextExists("Workspace files checked on request."), "Cached observation must not claim owner freshness")
+        }
+    } else if state.hasPrefix("cancel-") {
+        press("Cancel update")
+        // A terminal cache observation may beat the bare completed reply. Capture
+        // its stable recovery state, not an acknowledgement that correctly expires.
+        expected = state == "cancel-requested" ? "Cancellation requested. Waiting for the workspace operation to stop." : state == "cancel-completed" ? "Workspace setup was interrupted. Choose Try setup again to continue. Reopen this version of Bridge if recovery is interrupted again." : "This workspace operation can no longer be cancelled. Check the latest status."
+        waitForNativeText([expected])
+        if state == "cancel-completed" {
+            require(!anyButton("Cancel update") && enabledButton("Try setup again") != nil, "Completed cancellation must expose terminal recovery, not a stale waiting acknowledgement")
+        } else {
+            // ACK text can precede the cached capability render. Keep the existing
+            // four-second polling budget and observe AX, not a future DTO.
+            for _ in 0..<40 {
+                if !anyButton("Cancel update") { break }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            require(!anyButton("Cancel update"), "Acknowledged cancellation must withdraw the rendered capability")
+            if state == "cancel-requested" {
+                require(anyButton("Restore previous workspace") && enabledButton("Restore previous workspace") == nil, "Busy cancellation must retain disabled restore")
+            }
+            require(enabledButton("Try setup again") == nil && enabledButton("Restore previous workspace") == nil, "Cancellation acknowledgement must not release the update fence")
+        }
+    } else if state == "forward-cancelled" {
+        press("Try setup again")
+        press("Keep old workspace and set up new")
+        expected = "Update cancelled"
+        waitForNativeText([expected])
+    } else if state == "busy-locked" {
+        require(!anyButton("Cancel update"), "Busy is not cancellation authority")
+    }
+    try integrationUpgradeShots(state, expected)
+}
 for (phase, summary) in [("image-update", "This version of Bridge needs a new workspace."), ("image-unsupported", "This workspace uses different cluster files.")] {
     try workspacePhase(phase)
     try workspaceCapture(phase, [summary, "Restart workspace"])
     require(enabledButton("Restart workspace") == nil && !anyButton("Set up new workspace"), "Image refusal must not retry or replace the workspace")
+}
+try workspacePhase("setup-forced-stop")
+if !nativeTextExists("Get your workspace ready") {
+    click("Clusters", [])
+    let action = ["Continue setup", "View details", "Set up"].first { enabledButton($0) != nil }
+    require(action != nil, "Missing first-run recovery action")
+    click(action!, [])
+}
+for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
+    localSize(width, height); scroll(4000)
+    _ = try capture("local-workspace-setup-forced-stop-\(size)", ["may be lost", "Quit Bridge"])
+    require(enabledButton("Quit Bridge") != nil && !anyButton("Try again") && !anyButton("Restart workspace"), "First-run forced stop must offer Quit without retry")
 }
 try "Renderer-only synthetic state captures, not VM lifecycle proof. Native Ready close notice, menu-bar dot and real quit/reopen startup remain unverified.\n".write(toFile: "\(output)/workspace-capture-gaps.txt", atomically: true, encoding: .utf8)
 }

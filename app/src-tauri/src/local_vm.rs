@@ -1,4 +1,5 @@
 //! App-level custody of one delivered native session; not a second VM lifecycle.
+use crate::workspace_upgrade::{UpgradeActionReply, UpgradeCancelOutcome, UpgradeStatusDto};
 use crate::{
     engine::{types::*, EngineTransport, TransportFuture},
     runtime::{
@@ -55,7 +56,7 @@ pub async fn cancel_local(
     store: Arc<crate::setup::SetupStore>,
     vm: &Arc<LocalVm>,
 ) -> Result<crate::setup::SetupSnapshot, crate::setup::SetupError> {
-    vm.cancel_workspace_upgrade()
+    vm.cancel_setup()
         .await
         .map_err(|_| crate::setup::SetupError::model("modelSession"))?;
     setup_status(store, vm).await
@@ -140,6 +141,10 @@ pub enum LocalProgress {
 pub type StartFuture<'a> =
     Pin<Box<dyn Future<Output = Result<Box<dyn LocalSession>, RuntimeError>> + Send + 'a>>;
 pub trait LocalFactory: Send + Sync {
+    /// Observe only retained in-memory journal custody; never reopen native state.
+    fn creation_consumed(&self) -> Option<bool> {
+        None
+    }
     fn launch(
         &self,
         closed: watch::Receiver<bool>,
@@ -184,6 +189,47 @@ pub trait LocalSession: Send {
     fn execute(&mut self, request: EngineRequest) -> TransportFuture<'_>;
     fn stop(&mut self) -> Result<(), RuntimeError>;
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UpgradeCancellationSource {
+    None,
+    User,
+    Terminal,
+}
+enum ForwardError {
+    Cancellation(RuntimeError, Box<UpgradeStatusDto>),
+    Failure(RuntimeError),
+}
+impl From<RuntimeError> for ForwardError {
+    fn from(error: RuntimeError) -> Self {
+        Self::Failure(error)
+    }
+}
+impl ForwardError {
+    fn from_forward(
+        error: RuntimeError,
+        owner: &crate::workspace_upgrade::WorkspaceUpgrade,
+        source: Option<&native::image::ImageSource>,
+    ) -> Self {
+        match error {
+            RuntimeError::Closed
+            | RuntimeError::Image(crate::runtime::image_types::ImageError::Cancelled) => {
+                // Local Journals have dropped; retain the worker's transaction lock.
+                Self::Cancellation(error, Box::new(owner.status_dto(source)))
+            }
+            _ => Self::Failure(error),
+        }
+    }
+}
+struct UpgradeCancellation {
+    signal: watch::Sender<bool>,
+    source: UpgradeCancellationSource,
+    startup: bool,
+}
+#[derive(Clone, Copy)]
+struct StopOutcome {
+    custody_safe: bool,
+    upgrade_startup_failed: bool,
+}
 struct State {
     phase: LocalVmStatus,
     model_connected: bool,
@@ -197,10 +243,14 @@ struct State {
     close_started: bool,
     stopped: Option<bool>,
     startup: Option<tokio::task::JoinHandle<bool>>,
+    /// A marked launch refusal is a failure even when no VM needs stopping.
+    upgrade_startup_failed: bool,
     terminal: bool,
     cancelled: watch::Sender<bool>,
-    completion: watch::Sender<Option<bool>>,
+    completion: watch::Sender<Option<StopOutcome>>,
     progress: Option<ProgressClock>,
+    /// One authority interval from forward admission through its marked startup.
+    upgrade_cancel: Option<UpgradeCancellation>,
 }
 struct ProgressClock {
     started: std::time::Instant,
@@ -392,6 +442,9 @@ impl Inner {
         match progress {
             LocalProgress::Status(phase) => {
                 state.phase = phase;
+                if phase == LocalVmStatus::Ready {
+                    state.upgrade_cancel = None;
+                }
                 match phase {
                     LocalVmStatus::Installing => state.operation = WorkspaceOperation::Prepare,
                     LocalVmStatus::Starting => state.operation = WorkspaceOperation::Start,
@@ -452,7 +505,21 @@ impl Inner {
         operation: WorkspaceOperation,
         stop_unconfirmed: bool,
     ) {
-        let mut state = self.state.lock().unwrap();
+        Self::record_failure(
+            &mut self.state.lock().unwrap(),
+            reason,
+            error,
+            operation,
+            stop_unconfirmed,
+        );
+    }
+    fn record_failure(
+        state: &mut State,
+        reason: String,
+        error: &RuntimeError,
+        operation: WorkspaceOperation,
+        stop_unconfirmed: bool,
+    ) {
         state.failure = Some(reason);
         state.preflight_failure = match error {
             RuntimeError::Preflight(failure) => Some(*failure),
@@ -464,6 +531,9 @@ impl Inner {
             state.phase = LocalVmStatus::Failed;
         }
         state.closing |= stop_unconfirmed;
+        if state.upgrade_cancel.as_ref().is_some_and(|c| c.startup) {
+            state.upgrade_cancel = None;
+        }
     }
     fn ready(&self) -> bool {
         let state = self.state.lock().unwrap();
@@ -473,6 +543,7 @@ impl Inner {
 pub struct LocalVm {
     inner: Arc<Inner>,
     factory: Option<Arc<dyn LocalFactory>>,
+    close_origin: Arc<Mutex<Option<std::time::Instant>>>,
     /// Only a fresh recovery-blocked owner proves factory custody was never acquired.
     recovery_without_factory: bool,
     recovery_blocked: std::sync::atomic::AtomicBool,
@@ -490,9 +561,6 @@ pub struct LocalVm {
     /// Compared and advanced only under upgrade_cache; its mutex supplies ordering.
     upgrade_cache_revision: std::sync::atomic::AtomicU64,
     workspace_replaced_observer: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
-    /// Present only while a replace/retry/restore/transfer/remove is in
-    /// flight; cooperative, matching the existing `closed` receiver contract.
-    upgrade_cancel: Mutex<Option<watch::Sender<bool>>>,
 }
 /// Keep native launch admission and setup choice serialized through the switch.
 pub(crate) struct UpgradeQuiescence<'a> {
@@ -509,8 +577,25 @@ impl Drop for UpgradeQuiescence<'_> {
         }
     }
 }
+struct UpgradeRefresh(Arc<LocalVm>);
+impl Drop for UpgradeRefresh {
+    fn drop(&mut self) {
+        self.0.clear_upgrade_busy();
+    }
+}
 impl LocalVm {
     fn make(factory: Option<Arc<dyn LocalFactory>>, recovery_without_factory: bool) -> Arc<Self> {
+        Self::make_with_close_origin(
+            factory,
+            recovery_without_factory,
+            Arc::new(Mutex::new(None)),
+        )
+    }
+    fn make_with_close_origin(
+        factory: Option<Arc<dyn LocalFactory>>,
+        recovery_without_factory: bool,
+        close_origin: Arc<Mutex<Option<std::time::Instant>>>,
+    ) -> Arc<Self> {
         let (cancelled, _) = watch::channel(false);
         let (completion, _) = watch::channel(None);
         Arc::new(Self {
@@ -531,14 +616,17 @@ impl LocalVm {
                     close_started: false,
                     stopped: None,
                     startup: None,
+                    upgrade_startup_failed: false,
                     terminal: false,
                     cancelled,
                     completion,
                     progress: None,
+                    upgrade_cancel: None,
                 }),
                 session: Arc::new(AsyncMutex::new(None)),
             }),
             factory,
+            close_origin,
             recovery_without_factory,
             recovery_blocked: std::sync::atomic::AtomicBool::new(false),
             choice: Arc::new(AsyncMutex::new(())),
@@ -548,7 +636,6 @@ impl LocalVm {
             upgrade_cache: Mutex::new(None),
             upgrade_cache_revision: std::sync::atomic::AtomicU64::new(0),
             workspace_replaced_observer: Mutex::new(None),
-            upgrade_cancel: Mutex::new(None),
         })
     }
     pub fn new(factory: Arc<dyn LocalFactory>) -> Arc<Self> {
@@ -629,12 +716,110 @@ impl LocalVm {
         Ok(guard)
     }
     fn upgrade_cancellation(&self) -> watch::Receiver<bool> {
-        // Close drops state before taking cancel; registration must observe a
-        // close that arrived before the owner task could install its watch.
-        let mut cancel = self.upgrade_cancel.lock().unwrap();
-        let (sender, receiver) = watch::channel(self.inner.state.lock().unwrap().terminal);
-        *cancel = Some(sender);
+        let mut state = self.inner.state.lock().unwrap();
+        let (signal, receiver) = watch::channel(state.terminal);
+        state.upgrade_cancel = Some(UpgradeCancellation {
+            signal,
+            source: if state.terminal {
+                UpgradeCancellationSource::Terminal
+            } else {
+                UpgradeCancellationSource::None
+            },
+            startup: false,
+        });
         receiver
+    }
+    fn with_upgrade_capability(state: &State, mut dto: UpgradeStatusDto) -> UpgradeStatusDto {
+        if state.workspace_failure.as_ref().is_some_and(|failure| {
+            failure.cause == crate::runtime::types::WorkspaceCause::ForcedStop
+        }) {
+            return UpgradeStatusDto::conflict(Some("forcedStop"));
+        }
+        if state.stopped == Some(false)
+            || state.workspace_failure.as_ref().is_some_and(|failure| {
+                failure.cause == crate::runtime::types::WorkspaceCause::StopUnconfirmed
+            })
+        {
+            return UpgradeStatusDto::conflict(Some("stopUnconfirmed"));
+        }
+        dto.can_cancel = !state.terminal
+            && state.stopped != Some(false)
+            && state
+                .upgrade_cancel
+                .as_ref()
+                .is_some_and(|c| !c.startup || !state.closing);
+        dto
+    }
+    /// Ordinary setup keeps its generic startup/Ready stop contract. Upgrade
+    /// cancellation itself never acquires authority over an unrelated session.
+    async fn cancel_setup(&self) -> Result<(), RuntimeError> {
+        match self.cancel_workspace_upgrade().await? {
+            UpgradeCancelOutcome::NotCancellable => {
+                let _choice = self.reserve_upgrade_choice()?;
+                self.cancel().await
+            }
+            UpgradeCancelOutcome::Requested | UpgradeCancelOutcome::Completed => Ok(()),
+        }
+    }
+    fn finish_forward(
+        self: &Arc<Self>,
+        data: &std::path::Path,
+        local: &std::path::Path,
+        result: Result<UpgradeStatusDto, ForwardError>,
+    ) -> Result<UpgradeActionReply, RuntimeError> {
+        // Only cancellation-class errors may be normalized. A bool watch is
+        // cooperative transport, not evidence that the user requested Cancel.
+        let cancellation_error = matches!(&result, Err(ForwardError::Cancellation(..)));
+        let user_cancelled = self
+            .inner
+            .state
+            .lock()
+            .unwrap()
+            .upgrade_cancel
+            .as_ref()
+            .is_some_and(|c| c.source == UpgradeCancellationSource::User);
+        let result = match result {
+            Err(ForwardError::Cancellation(_, status)) if user_cancelled => Ok(*status),
+            Err(ForwardError::Cancellation(error, _) | ForwardError::Failure(error)) => Err(error),
+            Ok(status) => Ok(status),
+        };
+        let mut dto = match self.finish_upgrade_status(data, local, result) {
+            Ok(dto) => dto,
+            Err(error) => {
+                self.inner.state.lock().unwrap().upgrade_cancel = None;
+                return Err(error);
+            }
+        };
+        if !cancellation_error {
+            // Observers run unlocked, while Cancel still owns the same watch.
+            self.retire_workspace_state();
+        }
+        self.clear_upgrade_busy();
+        let mut state = self.inner.state.lock().unwrap();
+        if state.terminal {
+            state.upgrade_cancel = None;
+            return Err(RuntimeError::Closed);
+        }
+        let cancelled = state
+            .upgrade_cancel
+            .as_ref()
+            .is_some_and(|c| c.source == UpgradeCancellationSource::User);
+        state.phase = LocalVmStatus::Cancelled;
+        state.progress = None;
+        if !cancellation_error {
+            self.recovery_blocked
+                .store(false, std::sync::atomic::Ordering::Release);
+        }
+        if cancelled {
+            state.upgrade_cancel = None;
+            return Ok(UpgradeActionReply::Cancelled { status: dto });
+        }
+        if let Some(cancel) = state.upgrade_cancel.as_mut() {
+            cancel.startup = true;
+        }
+        self.start_locked(&mut state);
+        dto.can_cancel = state.upgrade_cancel.is_some();
+        Ok(UpgradeActionReply::Completed { status: dto })
     }
     /// Admission and preflight share one reservation, including before spawn.
     fn reserve_upgrade_choice(&self) -> Result<tokio::sync::OwnedMutexGuard<()>, RuntimeError> {
@@ -769,15 +954,39 @@ impl LocalVm {
     }
     /// Observe the durable transaction before ordinary startup takes its journal.
     pub fn seed_upgrade_status(&self, data: &std::path::Path, local: &std::path::Path) {
-        let dto = crate::workspace_upgrade::upgrade_status(
+        let dto = crate::workspace_upgrade::query_upgrade_status(
             data,
             local,
             native::upgrade_source().as_ref(),
+        )
+        .unwrap_or_else(|error| {
+            UpgradeStatusDto::conflict(crate::workspace_upgrade::classify_error(&error))
+        });
+        self.set_workspace_replaced(
+            dto.transaction.is_some() || dto.state == "conflict" || dto.busy,
         );
-        self.set_workspace_replaced(dto.transaction.is_some());
         self.cache_upgrade_status(dto);
     }
     fn quarantine_upgrade(&self) {
+        // A confirmed hard stop still blocks the upgrade, but must not be
+        // rewritten as an unobserved native writer by this custody guard.
+        let forced = {
+            let mut state = self.inner.state.lock().unwrap();
+            let forced = state.workspace_failure.as_ref().is_some_and(|failure| {
+                failure.cause == crate::runtime::types::WorkspaceCause::ForcedStop
+            });
+            if !forced {
+                // Preserve-or-record is atomic with owned stop completion.
+                Inner::record_failure(
+                    &mut state,
+                    "Workspace shutdown or custody release could not be confirmed.".into(),
+                    &RuntimeError::StopUnconfirmed("Workspace recovery is required.".into()),
+                    WorkspaceOperation::Stop,
+                    false,
+                );
+            }
+            forced
+        };
         let mut dto = self
             .upgrade_cache
             .lock()
@@ -785,17 +994,15 @@ impl LocalVm {
             .clone()
             .unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
         dto.state = "conflict";
-        dto.error = Some("stopUnconfirmed");
+        dto.error = Some(if forced {
+            "forcedStop"
+        } else {
+            "stopUnconfirmed"
+        });
         dto.busy = false;
         dto.can_replace = false;
         dto.can_restore = false;
         self.cache_upgrade_status(dto);
-        self.inner.fail(
-            "Workspace shutdown or custody release could not be confirmed.".into(),
-            &RuntimeError::StopUnconfirmed("Workspace recovery is required.".into()),
-            WorkspaceOperation::Stop,
-            false,
-        );
         // Keep upgrading=true: only process restart may release this quarantine.
     }
     fn cache_upgrade_status(&self, dto: crate::workspace_upgrade::UpgradeStatusDto) {
@@ -806,6 +1013,12 @@ impl LocalVm {
     }
     fn clear_upgrade_busy(&self) {
         let mut cache = self.upgrade_cache.lock().unwrap();
+        if cache
+            .as_ref()
+            .is_some_and(|dto| matches!(dto.error, Some("stopUnconfirmed" | "forcedStop")))
+        {
+            return;
+        }
         self.upgrading
             .store(false, std::sync::atomic::Ordering::Release);
         if let Some(dto) = cache.as_mut() {
@@ -813,33 +1026,6 @@ impl LocalVm {
         }
         self.upgrade_cache_revision
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }
-    /// The comparison and publication share the writer's lock. A lifecycle
-    /// change or another completed read wins over any earlier observation.
-    fn publish_upgrade_status(
-        &self,
-        observed_revision: u64,
-        dto: crate::workspace_upgrade::UpgradeStatusDto,
-    ) -> crate::workspace_upgrade::UpgradeStatusDto {
-        let mut cache = self.upgrade_cache.lock().unwrap();
-        if self
-            .upgrade_cache_revision
-            .load(std::sync::atomic::Ordering::Relaxed)
-            != observed_revision
-        {
-            let mut current = cache.clone().unwrap_or_else(|| {
-                let mut dto = crate::workspace_upgrade::UpgradeStatusDto::none();
-                dto.state = "conflict";
-                dto
-            });
-            current.busy = current.error != Some("stopUnconfirmed")
-                && self.upgrading.load(std::sync::atomic::Ordering::Acquire);
-            return current;
-        }
-        *cache = Some(dto.clone());
-        self.upgrade_cache_revision
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        dto
     }
     fn finish_upgrade_status(
         &self,
@@ -883,65 +1069,119 @@ impl LocalVm {
     /// to exclude Journal::open; it is not evidence of an upgrade in progress.
     pub async fn upgrade_status(
         &self,
+        _data: std::path::PathBuf,
+        _local: std::path::PathBuf,
+    ) -> crate::workspace_upgrade::UpgradeStatusDto {
+        // One read-only observation, using the same cache -> State order as publication.
+        let cache = self.upgrade_cache.lock().unwrap();
+        let state = self.inner.state.lock().unwrap();
+        let mut dto = cache
+            .clone()
+            .unwrap_or_else(|| UpgradeStatusDto::conflict(Some("unknown")));
+        let upgrading = self.upgrading.load(std::sync::atomic::Ordering::Acquire);
+        dto.busy = !matches!(dto.error, Some("stopUnconfirmed" | "forcedStop"))
+            && (upgrading
+                || (dto.state == "fresh"
+                    && matches!(
+                        state.phase,
+                        LocalVmStatus::Preparing
+                            | LocalVmStatus::Installing
+                            | LocalVmStatus::Starting
+                    )));
+        if !upgrading && state.phase == LocalVmStatus::Ready && dto.state == "fresh" {
+            // Native Ready/startup completion owns durable cache publication.
+            dto.state = "consumed";
+        }
+        Self::with_upgrade_capability(&state, dto)
+    }
+    /// Unlike polling, explicit refresh attempts real native ownership, without stopping the VM.
+    pub async fn refresh_upgrade_status(
+        self: &Arc<Self>,
         data: std::path::PathBuf,
         local: std::path::PathBuf,
-    ) -> crate::workspace_upgrade::UpgradeStatusDto {
-        // Snapshot revision and cache together before observing phase or awaiting
-        // disk work. No cache guard is retained while acquiring VM state.
-        let (revision, cached) = {
-            let cache = self.upgrade_cache.lock().unwrap();
-            (
-                self.upgrade_cache_revision
-                    .load(std::sync::atomic::Ordering::Relaxed),
-                cache.clone(),
+    ) -> Result<UpgradeStatusDto, RuntimeError> {
+        self.refresh_upgrade_status_with(move || {
+            crate::workspace_upgrade::query_upgrade_status(
+                &data,
+                &local,
+                native::upgrade_source().as_ref(),
             )
-        };
-        if self.upgrading.load(std::sync::atomic::Ordering::Acquire) {
-            let mut dto = cached.unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
-            dto.busy = dto.error != Some("stopUnconfirmed");
-            return dto;
-        }
-        let phase = self.status();
-        if matches!(
-            phase,
-            LocalVmStatus::Preparing
-                | LocalVmStatus::Installing
-                | LocalVmStatus::Starting
-                | LocalVmStatus::Ready
-        ) {
-            let mut dto = cached.unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
-            dto.busy = dto.state == "fresh" && phase != LocalVmStatus::Ready;
-            if phase == LocalVmStatus::Ready && dto.state == "fresh" {
-                dto.state = "consumed";
-                return self.publish_upgrade_status(revision, dto);
-            }
-            return dto;
-        }
-        let source = native::upgrade_source();
-        let dto = match tokio::task::spawn_blocking(move || {
-            crate::workspace_upgrade::upgrade_status(&data, &local, source.as_ref())
         })
         .await
+    }
+    async fn refresh_upgrade_status_with(
+        self: &Arc<Self>,
+        query: impl FnOnce() -> Result<UpgradeStatusDto, RuntimeError> + Send + 'static,
+    ) -> Result<UpgradeStatusDto, RuntimeError> {
+        let choice = self.reserve_upgrade_choice()?;
         {
-            Ok(mut dto) => {
-                // A failed native launch can still retain our journal.
-                if dto.busy {
-                    dto = cached.clone().unwrap_or(dto);
-                }
-                dto.busy = false;
-                if let Some(error) = cached.as_ref().and_then(|c| c.error) {
-                    dto.error = Some(error);
-                }
-                dto
+            let state = self.inner.state.lock().unwrap();
+            if state.terminal {
+                return Err(RuntimeError::Closed);
             }
-            Err(_) => {
-                let mut dto =
-                    cached.unwrap_or_else(crate::workspace_upgrade::UpgradeStatusDto::none);
-                dto.busy = false;
-                dto
+            if state.closing
+                || self.upgrading.load(std::sync::atomic::Ordering::Acquire)
+                || matches!(
+                    state.phase,
+                    LocalVmStatus::Preparing
+                        | LocalVmStatus::Installing
+                        | LocalVmStatus::Starting
+                        | LocalVmStatus::Closing
+                )
+            {
+                return Err(RuntimeError::Busy);
+            }
+            self.upgrading
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        let busy = UpgradeRefresh(self.clone());
+        let revision = {
+            let _cache = self.upgrade_cache.lock().unwrap();
+            self.upgrade_cache_revision
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1
+        };
+        let vm = self.clone();
+        tokio::task::spawn_blocking(move || {
+            let (_choice, _busy) = (choice, busy);
+            vm.complete_upgrade_refresh(revision, query())
+        })
+        .await
+        .map_err(|_| RuntimeError::Unavailable)?
+    }
+    fn complete_upgrade_refresh(
+        &self,
+        revision: u64,
+        result: Result<UpgradeStatusDto, RuntimeError>,
+    ) -> Result<UpgradeStatusDto, RuntimeError> {
+        // Only nested order is cache -> State. Keep both fences held through commit.
+        let mut cache = self.upgrade_cache.lock().unwrap();
+        let state = self.inner.state.lock().unwrap();
+        if state.terminal {
+            return Err(RuntimeError::Closed);
+        }
+        if self
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed)
+            != revision
+        {
+            return Err(RuntimeError::Busy);
+        }
+        let dto = match &result {
+            Ok(dto) => dto.clone(),
+            Err(RuntimeError::Busy) => {
+                self.set_workspace_replaced(true);
+                return Err(RuntimeError::Busy);
+            }
+            Err(error) => {
+                UpgradeStatusDto::conflict(crate::workspace_upgrade::classify_error(error))
             }
         };
-        self.publish_upgrade_status(revision, dto)
+        self.set_workspace_replaced(dto.transaction.is_some() || dto.state == "conflict");
+        *cache = Some(dto);
+        self.upgrade_cache_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        result
     }
     /// The owned task holds quiescence through the blocking worker AND handoff.
     /// Dropping an IPC waiter cannot detach filesystem work from lifecycle custody.
@@ -950,7 +1190,7 @@ impl LocalVm {
         data: std::path::PathBuf,
         local: std::path::PathBuf,
         target: UpgradeTarget,
-    ) -> Result<crate::workspace_upgrade::UpgradeStatusDto, RuntimeError> {
+    ) -> Result<UpgradeActionReply, RuntimeError> {
         let choice = self.reserve_upgrade_choice()?;
         self.upgrade_idle()?;
         if self.status() == LocalVmStatus::Ready {
@@ -965,7 +1205,7 @@ impl LocalVm {
             let quiesced = match vm.quiesce_with_choice(choice).await {
                 Ok(quiesced) => quiesced,
                 Err(error) => {
-                    *vm.upgrade_cancel.lock().unwrap() = None;
+                    vm.inner.state.lock().unwrap().upgrade_cancel = None;
                     return Err(error);
                 }
             };
@@ -982,7 +1222,11 @@ impl LocalVm {
                 owner.set_progress(Arc::new(move |event| {
                     inner.publish(LocalProgress::Image(event))
                 }));
-                owner.replace(&target.source, target.machine_id, &worker_rx, &runtime)?;
+                owner
+                    .replace(&target.source, target.machine_id, &worker_rx, &runtime)
+                    .map_err(|error| {
+                        ForwardError::from_forward(error, &owner, Some(&target.source))
+                    })?;
                 // Status must inspect the original creator Journal before handoff.
                 let dto = owner.status_dto(Some(&target.source));
                 let journal = owner
@@ -992,27 +1236,10 @@ impl LocalVm {
                 Ok(dto)
             })
             .await
-            .unwrap_or(Err(RuntimeError::Unavailable));
-            let cancelled = {
-                let mut cancel = vm.upgrade_cancel.lock().unwrap();
-                let cancelled = *rx.borrow();
-                *cancel = None;
-                cancelled
-            };
-            let dto = vm.finish_upgrade_status(&data, &local, result)?;
-            vm.retire_workspace_state();
-            vm.recovery_blocked
-                .store(false, std::sync::atomic::Ordering::Release);
-            vm.inner
-                .publish(LocalProgress::Status(LocalVmStatus::Cancelled));
-            // Keep choice through synchronous start admission: fallback Cancel
-            // must not acknowledge success before a late startup is scheduled.
-            vm.clear_upgrade_busy();
-            if !cancelled {
-                vm.start();
-            }
+            .unwrap_or(Err(ForwardError::Failure(RuntimeError::Unavailable)));
+            let reply = vm.finish_forward(&data, &local, result);
             drop(quiesced);
-            Ok(dto)
+            reply
         })
         .await
         .map_err(|_| RuntimeError::Unavailable)?
@@ -1024,7 +1251,7 @@ impl LocalVm {
         local: std::path::PathBuf,
         target: UpgradeTarget,
         transaction: bridge_runtime_protocol::Uuid,
-    ) -> Result<crate::workspace_upgrade::UpgradeStatusDto, RuntimeError> {
+    ) -> Result<UpgradeActionReply, RuntimeError> {
         let choice = self.reserve_upgrade_choice()?;
         if !matches!(
             self.validate_upgrade_transaction(&data, &local, transaction)?,
@@ -1041,7 +1268,7 @@ impl LocalVm {
             let quiesced = match vm.quiesce_with_choice(choice).await {
                 Ok(quiesced) => quiesced,
                 Err(error) => {
-                    *vm.upgrade_cancel.lock().unwrap() = None;
+                    vm.inner.state.lock().unwrap().upgrade_cancel = None;
                     return Err(error);
                 }
             };
@@ -1057,13 +1284,17 @@ impl LocalVm {
                 owner.set_progress(Arc::new(move |event| {
                     inner.publish(LocalProgress::Image(event))
                 }));
-                owner.retry(
-                    transaction,
-                    &target.source,
-                    target.machine_id,
-                    &worker_rx,
-                    &runtime,
-                )?;
+                owner
+                    .retry(
+                        transaction,
+                        &target.source,
+                        target.machine_id,
+                        &worker_rx,
+                        &runtime,
+                    )
+                    .map_err(|error| {
+                        ForwardError::from_forward(error, &owner, Some(&target.source))
+                    })?;
                 let dto = owner.status_dto(Some(&target.source));
                 let journal = owner
                     .take_destination()
@@ -1072,51 +1303,58 @@ impl LocalVm {
                 Ok(dto)
             })
             .await
-            .unwrap_or(Err(RuntimeError::Unavailable));
-            let cancelled = {
-                let mut cancel = vm.upgrade_cancel.lock().unwrap();
-                let cancelled = *rx.borrow();
-                *cancel = None;
-                cancelled
-            };
-            let dto = vm.finish_upgrade_status(&data, &local, result)?;
-            vm.retire_workspace_state();
-            vm.recovery_blocked
-                .store(false, std::sync::atomic::Ordering::Release);
-            vm.inner
-                .publish(LocalProgress::Status(LocalVmStatus::Cancelled));
-            vm.clear_upgrade_busy();
-            if !cancelled {
-                vm.start();
-            }
+            .unwrap_or(Err(ForwardError::Failure(RuntimeError::Unavailable)));
+            let reply = vm.finish_forward(&data, &local, result);
             drop(quiesced);
-            Ok(dto)
+            reply
         })
         .await
         .map_err(|_| RuntimeError::Unavailable)?
     }
-    /// Cooperative cancellation at the existing acquisition/publication checkpoints.
-    pub async fn cancel_workspace_upgrade(&self) -> Result<(), RuntimeError> {
-        let cancelling_transaction = {
-            let cancel = self.upgrade_cancel.lock().unwrap();
-            if let Some(tx) = cancel.as_ref() {
-                let _ = tx.send(true);
-                true
-            } else {
-                false
+    /// Select authority and mark startup Closing atomically with Ready publication.
+    pub async fn cancel_workspace_upgrade(&self) -> Result<UpgradeCancelOutcome, RuntimeError> {
+        let completion = {
+            let mut state = self.inner.state.lock().unwrap();
+            if state.terminal
+                || state.stopped == Some(false)
+                || (state.closing && state.upgrade_cancel.as_ref().is_some_and(|c| c.startup))
+            {
+                return Ok(UpgradeCancelOutcome::NotCancellable);
             }
+            let Some(cancel) = state.upgrade_cancel.as_mut() else {
+                return Ok(UpgradeCancelOutcome::NotCancellable);
+            };
+            cancel.source = UpgradeCancellationSource::User;
+            cancel.signal.send_replace(true);
+            if !cancel.startup {
+                return Ok(UpgradeCancelOutcome::Requested);
+            }
+            self.begin_stop(&mut state, false)
         };
-        // Stop startup cooperatively without dropping the factory's original
-        // new-only journal: Cancel is not quiesce/release_stopped.
-        if !cancelling_transaction {
-            // No watch may mean admission or handoff, not ordinary startup.
-            let _choice = self.reserve_upgrade_choice()?;
-            self.cancel().await?;
+        let outcome = Self::join_stop(completion).await?;
+        let state = self.inner.state.lock().unwrap();
+        if state.terminal {
+            return Err(RuntimeError::Closed);
         }
-        Ok(())
+        if outcome.upgrade_startup_failed {
+            return Err(RuntimeError::Unavailable);
+        }
+        Ok(UpgradeCancelOutcome::Completed)
     }
     /// Atomic Run/Chat admission, separate from each bounded VM request.
     pub fn try_authoring(&self) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        let state = self.inner.state.lock().unwrap();
+        if state.stopped == Some(false)
+            || state.workspace_failure.as_ref().is_some_and(|failure| {
+                matches!(
+                    failure.cause,
+                    crate::runtime::types::WorkspaceCause::ForcedStop
+                        | crate::runtime::types::WorkspaceCause::StopUnconfirmed
+                )
+            })
+        {
+            return None;
+        }
         self.authoring.lock().unwrap().clone().try_lock_owned().ok()
     }
     /// Reject a captured operation whose admission belongs to an earlier boot.
@@ -1157,6 +1395,7 @@ impl LocalVm {
     }
     fn snapshot(&self, mut snapshot: crate::setup::SetupSnapshot) -> crate::setup::SetupSnapshot {
         let state = self.inner.state.lock().unwrap();
+        snapshot.workspace_replaced = self.workspace_replaced();
         snapshot.workspace_progress = state.progress.as_ref().map(ProgressClock::snapshot);
         snapshot.preflight_failure = if state.phase == LocalVmStatus::Failed {
             state.preflight_failure
@@ -1180,8 +1419,63 @@ impl LocalVm {
                 },
             )
     }
+    fn publish_startup_consumption(
+        &self,
+        consumed: Option<bool>,
+        quarantine: Option<&'static str>,
+    ) {
+        let mut cache = self.upgrade_cache.lock().unwrap();
+        if quarantine.is_some() {
+            self.upgrading
+                .store(true, std::sync::atomic::Ordering::Release);
+            cache.get_or_insert_with(UpgradeStatusDto::none);
+        }
+        let Some(dto) = cache.as_mut().filter(|dto| {
+            (quarantine.is_some() || dto.state == "fresh")
+                && dto.error != Some("forcedStop")
+                && (dto.error != Some("stopUnconfirmed") || quarantine == Some("forcedStop"))
+        }) else {
+            return;
+        };
+        if consumed == Some(false) && quarantine.is_none() {
+            return;
+        }
+        dto.busy = false;
+        if consumed == Some(true) && quarantine.is_none() {
+            dto.state = "consumed";
+        } else {
+            dto.state = "conflict";
+            dto.error = quarantine.or(Some("unknown"));
+            dto.can_replace = false;
+            dto.can_restore = false;
+            dto.can_cancel = false;
+        }
+        self.upgrade_cache_revision
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    fn publish_ready(&self) {
+        // Defensive Ready publication shares refresh's cache -> State lock order.
+        let mut cache = self.upgrade_cache.lock().unwrap();
+        let mut state = self.inner.state.lock().unwrap();
+        if state.closing {
+            return;
+        }
+        state.phase = LocalVmStatus::Ready;
+        state.upgrade_cancel = None;
+        state.progress = None;
+        // Mutate only current Fresh; never replace newer recovery/quarantine data.
+        if let Some(dto) = cache.as_mut().filter(|dto| dto.state == "fresh") {
+            dto.state = "consumed";
+            dto.busy = false;
+            self.upgrade_cache_revision
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
     pub fn start(self: &Arc<Self>) {
         let mut state = self.inner.state.lock().unwrap();
+        self.start_locked(&mut state);
+    }
+    fn start_locked(self: &Arc<Self>, state: &mut State) {
         if state.terminal
             || self
                 .recovery_blocked
@@ -1206,14 +1500,18 @@ impl LocalVm {
         state.failure = None;
         state.preflight_failure = None;
         state.workspace_failure = None;
+        state.upgrade_startup_failed = false;
         state.operation = WorkspaceOperation::Verify;
         state.close_started = false;
         state.stopped = None;
         state.progress = None;
+        *self.close_origin.lock().unwrap() = None;
         state.cancelled = watch::channel(false).0;
         state.completion = watch::channel(None).0;
         let cancelled = state.cancelled.subscribe();
+        let upgrade_startup = state.upgrade_cancel.as_ref().is_some_and(|c| c.startup);
         let inner = self.inner.clone();
+        let vm = self.clone();
         // Stored before releasing the admission lock. Dropping an IPC waiter does
         // not drop this task or any installation/handshake job it awaits.
         state.startup = Some(tokio::spawn(async move {
@@ -1230,33 +1528,60 @@ impl LocalVm {
                 );
             // Native preflight/version policy refuses before creating a session.
             // Its retained journal still needs explicit release for replacement.
-            let successful = result.is_ok()
+            let custody_safe = result.is_ok()
                 || cancelled_error
                 || matches!(&result, Err(RuntimeError::Preflight(_)
                     | RuntimeError::Image(crate::runtime::image_types::ImageError::WorkspaceUpdateRequired
                         | crate::runtime::image_types::ImageError::WorkspaceVersionUnsupported)));
+            // Launch has joined native cleanup. Sample custody before taking facade locks.
+            let consumed = if result.is_ok() {
+                Some(true)
+            } else {
+                // A failed journal write may rename before its in-memory phase changes.
+                factory
+                    .creation_consumed()
+                    .filter(|consumed| *consumed || custody_safe)
+            };
+            let quarantine = result.as_ref().err().and_then(|error| {
+                match WorkspaceFailure::from_error(error, WorkspaceOperation::Start).cause {
+                    crate::runtime::types::WorkspaceCause::ForcedStop => Some("forcedStop"),
+                    crate::runtime::types::WorkspaceCause::StopUnconfirmed => {
+                        Some("stopUnconfirmed")
+                    }
+                    _ => None,
+                }
+            });
+            vm.publish_startup_consumption(consumed, quarantine);
             let mut session = inner.session.lock().await;
             match result {
                 Ok(live) => {
                     inner.state.lock().unwrap().run_cancel_supported = live.run_cancel_supported();
                     *session = Some(live);
-                    inner.publish(LocalProgress::Status(LocalVmStatus::Ready));
+                    vm.publish_ready();
                 }
                 Err(
                     RuntimeError::Closed
                     | RuntimeError::Image(crate::runtime::image_types::ImageError::Cancelled),
                 ) if cancelled_error => {}
                 Err(error) => {
-                    let operation = inner.state.lock().unwrap().operation;
+                    let operation = {
+                        let mut state = inner.state.lock().unwrap();
+                        state.upgrade_startup_failed = upgrade_startup;
+                        state.operation
+                    };
                     inner.fail(
                         format!("Starting the local VM failed: {}", failure_reason(&error)),
                         &error,
                         operation,
-                        matches!(error, RuntimeError::StopUnconfirmed(_)),
+                        matches!(
+                            WorkspaceFailure::from_error(&error, operation).cause,
+                            crate::runtime::types::WorkspaceCause::StopUnconfirmed
+                                | crate::runtime::types::WorkspaceCause::ForcedStop
+                        ),
                     )
                 }
             }
-            successful
+            custody_safe
         }));
     }
     /// Native callers keep typed results local; renderer commands wrap fixed work only.
@@ -1479,6 +1804,15 @@ impl LocalVm {
             })
         })?
     }
+    fn publish_close(&self, state: &mut State) {
+        // Metadata precedes publication; idle native sessions must not grant a
+        // fresh interval after other shutdown work or delayed observation.
+        self.close_origin
+            .lock()
+            .unwrap()
+            .get_or_insert_with(std::time::Instant::now);
+        state.cancelled.send_replace(true);
+    }
     pub fn request_close(&self) {
         let mut state = self.inner.state.lock().unwrap();
         state.terminal = true;
@@ -1489,11 +1823,10 @@ impl LocalVm {
         }
         state.closing = true;
         state.progress = None;
-        state.cancelled.send_replace(true);
-        // Cancellation publishes progress under state; do not invert that order.
-        drop(state);
-        if let Some(cancel) = self.upgrade_cancel.lock().unwrap().as_ref() {
-            cancel.send_replace(true);
+        self.publish_close(&mut state);
+        if let Some(cancel) = state.upgrade_cancel.as_mut() {
+            cancel.source = UpgradeCancellationSource::Terminal;
+            cancel.signal.send_replace(true);
         }
     }
     pub async fn cancel(&self) -> Result<(), RuntimeError> {
@@ -1506,68 +1839,86 @@ impl LocalVm {
         self.stop(true).await
     }
     async fn stop(&self, terminal: bool) -> Result<(), RuntimeError> {
-        let mut completion = {
+        let completion = {
             let mut state = self.inner.state.lock().unwrap();
-            state.terminal |= terminal;
-            if !state.close_started {
-                state.closing = true;
-                state.phase = LocalVmStatus::Closing;
-                state.progress = None;
-                state.cancelled.send_replace(true);
-                state.close_started = true;
-                let startup = state.startup.take();
-                let inner = self.inner.clone();
-                // Custody survives dropped cancel, change and shutdown IPC waiters.
-                tokio::spawn(async move {
-                    let started = match startup {
-                        Some(task) => matches!(task.await, Ok(true)),
-                        None => true,
-                    };
-                    let mut session = inner.session.clone().lock_owned().await;
-                    let stop_inner = inner.clone();
-                    let stopped = tokio::task::spawn_blocking(move || {
-                        match session.as_mut().map_or(Ok(()), |s| s.stop()) {
-                            Ok(()) => {
-                                session.take();
-                                true
-                            }
-                            Err(error) => {
-                                // Never replace a late session whose native stop failed.
-                                stop_inner.fail(
-                                    format!(
-                                        "Stopping the local VM failed: {}",
-                                        failure_reason(&error)
-                                    ),
-                                    &error,
-                                    WorkspaceOperation::Stop,
-                                    true,
-                                );
-                                false
-                            }
-                        }
-                    })
-                    .await
-                    .unwrap_or(false)
-                        && started;
-                    let mut state = inner.state.lock().unwrap();
-                    state.phase = if !stopped {
-                        LocalVmStatus::Failed
-                    } else if state.terminal {
-                        LocalVmStatus::Closed
-                    } else {
-                        LocalVmStatus::Cancelled
-                    };
-                    state.stopped = Some(stopped);
-                    state.closing = state.terminal || !stopped;
-                    state.completion.send_replace(Some(stopped));
-                });
-            }
-            state.completion.subscribe()
+            self.begin_stop(&mut state, terminal)
         };
+        Self::join_stop(completion).await.map(|_| ())
+    }
+    fn begin_stop(
+        &self,
+        state: &mut State,
+        terminal: bool,
+    ) -> watch::Receiver<Option<StopOutcome>> {
+        state.terminal |= terminal;
+        if !state.close_started {
+            state.closing = true;
+            state.phase = LocalVmStatus::Closing;
+            state.progress = None;
+            self.publish_close(state);
+            state.close_started = true;
+            let startup = state.startup.take();
+            let inner = self.inner.clone();
+            // Custody survives dropped cancel, change and shutdown IPC waiters.
+            tokio::spawn(async move {
+                let started = match startup {
+                    Some(task) => matches!(task.await, Ok(true)),
+                    None => true,
+                };
+                let mut session = inner.session.clone().lock_owned().await;
+                let stop_inner = inner.clone();
+                let stopped = tokio::task::spawn_blocking(move || {
+                    match session.as_mut().map_or(Ok(()), |s| s.stop()) {
+                        Ok(()) => {
+                            session.take();
+                            true
+                        }
+                        Err(error) => {
+                            // Never replace a late session whose native stop failed.
+                            stop_inner.fail(
+                                format!("Stopping the local VM failed: {}", failure_reason(&error)),
+                                &error,
+                                WorkspaceOperation::Stop,
+                                true,
+                            );
+                            false
+                        }
+                    }
+                })
+                .await
+                .unwrap_or(false)
+                    && started;
+                let mut state = inner.state.lock().unwrap();
+                state.phase = if !stopped {
+                    LocalVmStatus::Failed
+                } else if state.terminal {
+                    LocalVmStatus::Closed
+                } else if state.upgrade_startup_failed {
+                    LocalVmStatus::Failed
+                } else {
+                    LocalVmStatus::Cancelled
+                };
+                state.stopped = Some(stopped);
+                if state.upgrade_cancel.as_ref().is_some_and(|c| c.startup) {
+                    state.upgrade_cancel = None;
+                }
+                state.closing = state.terminal || !stopped;
+                let outcome = StopOutcome {
+                    custody_safe: stopped,
+                    upgrade_startup_failed: state.upgrade_startup_failed,
+                };
+                state.completion.send_replace(Some(outcome));
+            });
+        }
+        state.completion.subscribe()
+    }
+    async fn join_stop(
+        mut completion: watch::Receiver<Option<StopOutcome>>,
+    ) -> Result<StopOutcome, RuntimeError> {
         loop {
-            if let Some(ok) = *completion.borrow_and_update() {
-                return if ok {
-                    Ok(())
+            if let Some(outcome) = *completion.borrow_and_update() {
+                return if outcome.custody_safe {
+                    Ok(outcome)
                 } else {
                     Err(RuntimeError::Unavailable)
                 };
@@ -1581,7 +1932,7 @@ impl LocalVm {
 }
 #[cfg(test)]
 #[test]
-fn facade_cancel_without_watch_refuses_reserved_choice_without_stopping_vm() {
+fn facade_cancel_without_authority_is_not_cancellable_even_with_reserved_choice() {
     let vm = LocalVm::unavailable();
     let choice = vm.reserve_upgrade_choice().unwrap();
     let status = vm.status();
@@ -1591,7 +1942,7 @@ fn facade_cancel_without_watch_refuses_reserved_choice_without_stopping_vm() {
         .unwrap()
         .block_on(vm.cancel_workspace_upgrade());
     drop(choice);
-    assert!(matches!(result, Err(RuntimeError::Busy)));
+    assert!(matches!(result, Ok(UpgradeCancelOutcome::NotCancellable)));
     assert_eq!(vm.status(), status);
 }
 
@@ -1621,54 +1972,248 @@ fn facade_upgrade_admission_does_not_trust_incomplete_or_absent_cache() {
 }
 
 #[cfg(test)]
-#[test]
-fn facade_stale_status_publication_keeps_winning_fresh_projection() {
-    let vm = LocalVm::unavailable();
-    let observed = vm
-        .upgrade_cache_revision
-        .load(std::sync::atomic::Ordering::Relaxed);
-    let mut fresh = crate::workspace_upgrade::UpgradeStatusDto::none();
-    fresh.state = "fresh";
-    vm.cache_upgrade_status(fresh);
-    let mut old = crate::workspace_upgrade::UpgradeStatusDto::none();
-    old.state = "incomplete";
-    let returned = vm.publish_upgrade_status(observed, old);
-    assert_eq!(returned.state, "fresh");
-    assert_eq!(
-        vm.upgrade_cache.lock().unwrap().as_ref().unwrap().state,
-        "fresh"
-    );
+#[tokio::test]
+async fn facade_failed_poll_keeps_startup_publication_and_rejects_old_owner_completion() {
+    for consumed in [Some(true), None] {
+        let vm = LocalVm::unavailable();
+        let mut fresh = UpgradeStatusDto::none();
+        fresh.state = "fresh";
+        fresh.transaction = Some(bridge_runtime_protocol::Uuid::new_v4());
+        fresh.created_at = Some(123);
+        fresh.can_restore = true;
+        vm.cache_upgrade_status(fresh);
+        vm.inner.state.lock().unwrap().phase = LocalVmStatus::Starting;
+        let revision = vm
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let read = vm.upgrade_status("unused".into(), "unused".into());
+        vm.publish_startup_consumption(consumed, None);
+        vm.inner.fail(
+            "fixture".into(),
+            &RuntimeError::Unavailable,
+            WorkspaceOperation::Start,
+            false,
+        );
+        assert_eq!(vm.status(), LocalVmStatus::Failed);
+        let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+        let published = vm
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert_ne!(published, revision);
+        let dto = read.await;
+        assert_eq!(
+            dto.state,
+            if consumed == Some(true) {
+                "consumed"
+            } else {
+                "conflict"
+            }
+        );
+        assert!(!dto.busy && !dto.can_cancel && !dto.can_replace);
+        assert_eq!(dto.can_restore, consumed == Some(true));
+        assert_eq!(serde_json::to_value(Some(dto)).unwrap(), before);
+        assert!(matches!(
+            vm.complete_upgrade_refresh(revision, Ok(UpgradeStatusDto::none())),
+            Err(RuntimeError::Busy)
+        ));
+        assert_eq!(
+            serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+            before
+        );
+        assert_eq!(
+            vm.upgrade_cache_revision
+                .load(std::sync::atomic::Ordering::Relaxed),
+            published
+        );
+    }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn facade_poll_projects_all_cached_phases_without_writing_cache_or_history() {
+    for phase in [
+        LocalVmStatus::NotIntegrated,
+        LocalVmStatus::Idle,
+        LocalVmStatus::Preparing,
+        LocalVmStatus::Installing,
+        LocalVmStatus::Starting,
+        LocalVmStatus::Ready,
+        LocalVmStatus::Closing,
+        LocalVmStatus::Closed,
+        LocalVmStatus::Cancelled,
+        LocalVmStatus::Failed,
+    ] {
+        for initial in [None, Some("fresh"), Some("consumed"), Some("conflict")] {
+            for upgrading in [false, true] {
+                let vm = LocalVm::unavailable();
+                if let Some(initial) = initial {
+                    let mut dto = if initial == "conflict" {
+                        UpgradeStatusDto::conflict(Some("integrity"))
+                    } else {
+                        UpgradeStatusDto::none()
+                    };
+                    dto.state = initial;
+                    dto.transaction = Some(bridge_runtime_protocol::Uuid::new_v4());
+                    dto.created_at = Some(123);
+                    dto.can_restore = initial != "conflict";
+                    vm.cache_upgrade_status(dto);
+                }
+                let _rx = vm.upgrade_cancellation();
+                {
+                    let mut state = vm.inner.state.lock().unwrap();
+                    state.phase = phase;
+                    state.closing = phase == LocalVmStatus::Closing;
+                    state.terminal = phase == LocalVmStatus::Closed;
+                    state.upgrade_cancel.as_mut().unwrap().startup = true;
+                }
+                vm.upgrading
+                    .store(upgrading, std::sync::atomic::Ordering::Release);
+                let before = serde_json::to_vec(&*vm.upgrade_cache.lock().unwrap()).unwrap();
+                let revision = vm
+                    .upgrade_cache_revision
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                for _ in 0..2 {
+                    let dto = vm.upgrade_status("unused".into(), "unused".into()).await;
+                    let ready =
+                        !upgrading && phase == LocalVmStatus::Ready && initial == Some("fresh");
+                    assert_eq!(
+                        dto.state,
+                        if ready {
+                            "consumed"
+                        } else {
+                            initial.unwrap_or("conflict")
+                        }
+                    );
+                    assert_eq!(
+                        dto.error,
+                        if initial.is_none() {
+                            Some("unknown")
+                        } else if initial == Some("conflict") {
+                            Some("integrity")
+                        } else {
+                            None
+                        }
+                    );
+                    assert_eq!(
+                        dto.busy,
+                        upgrading
+                            || (initial == Some("fresh")
+                                && matches!(
+                                    phase,
+                                    LocalVmStatus::Preparing
+                                        | LocalVmStatus::Installing
+                                        | LocalVmStatus::Starting
+                                ))
+                    );
+                    assert_eq!(
+                        dto.can_restore,
+                        matches!(initial, Some("fresh" | "consumed"))
+                    );
+                    assert!(!dto.can_replace);
+                    assert_eq!(
+                        dto.can_cancel,
+                        !matches!(phase, LocalVmStatus::Closing | LocalVmStatus::Closed)
+                    );
+                    assert_eq!(
+                        serde_json::to_vec(&*vm.upgrade_cache.lock().unwrap()).unwrap(),
+                        before
+                    );
+                    assert_eq!(
+                        vm.upgrade_cache_revision
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                        revision
+                    );
+                    assert!(!vm.workspace_replaced());
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 #[test]
-fn facade_older_concurrent_status_reader_cannot_overwrite_first_publication() {
-    let vm = LocalVm::unavailable();
-    let observed = vm
-        .upgrade_cache_revision
-        .load(std::sync::atomic::Ordering::Relaxed);
-    let mut fresh = crate::workspace_upgrade::UpgradeStatusDto::none();
-    fresh.state = "fresh";
-    assert_eq!(vm.publish_upgrade_status(observed, fresh).state, "fresh");
-    let mut old = crate::workspace_upgrade::UpgradeStatusDto::none();
-    old.state = "incomplete";
-    assert_eq!(vm.publish_upgrade_status(observed, old).state, "fresh");
-}
-
-#[cfg(test)]
-#[test]
-fn facade_status_disk_read_cannot_publish_across_a_cache_mutation() {
+fn facade_poll_is_immediate_in_every_phase_with_native_owners_and_pool_occupied() {
+    fn inventory(
+        root: &std::path::Path,
+        held_locks: Option<(&std::path::Path, &std::path::Path)>,
+    ) -> Vec<(std::path::PathBuf, bool, Option<Vec<u8>>)> {
+        fn walk(
+            root: &std::path::Path,
+            path: &std::path::Path,
+            held_locks: Option<(&std::path::Path, &std::path::Path)>,
+            out: &mut Vec<(std::path::PathBuf, bool, Option<Vec<u8>>)>,
+        ) {
+            for entry in std::fs::read_dir(path).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                let directory = entry.file_type().unwrap().is_dir();
+                out.push((
+                    path.strip_prefix(root).unwrap().to_owned(),
+                    directory,
+                    if cfg!(windows)
+                        && held_locks
+                            .is_some_and(|(journal, store)| path == journal || path == store)
+                    {
+                        // Journal denies sharing; the store's byte-range lock denies reads.
+                        let (journal, _) = held_locks.unwrap();
+                        assert!(!directory);
+                        assert_eq!(
+                            std::fs::read(&path).unwrap_err().raw_os_error(),
+                            Some(if path == journal { 32 } else { 33 })
+                        );
+                        None
+                    } else if directory {
+                        None
+                    } else {
+                        Some(std::fs::read(&path).unwrap())
+                    },
+                ));
+                if directory {
+                    walk(root, &path, held_locks, out);
+                }
+            }
+        }
+        let mut entries = Vec::new();
+        walk(root, root, held_locks, &mut entries);
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        entries
+    }
     let vm = LocalVm::unavailable();
     let data = tempfile::tempdir().unwrap();
     let local = tempfile::tempdir().unwrap();
+    // Release BOTH owners before capturing the full unlocked byte baseline.
+    drop(crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path()).unwrap());
+    let journal_root = local.path().join("local-vm-v1");
+    drop(
+        crate::runtime::journal::Journal::create(
+            &journal_root,
+            crate::runtime::types::BackendKind::Qemu,
+            vec![1],
+        )
+        .unwrap(),
+    );
+    let witness = local.path().join("inventory-witness.lock");
+    std::fs::write(&witness, b"before").unwrap();
+    let before_data = inventory(data.path(), None);
+    let full_before_local = inventory(local.path(), None);
+    // Regular reopened ownership, not the original creator's live creation authority.
+    let owner =
+        crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path()).unwrap();
+    let journal = crate::runtime::journal::Journal::open(&journal_root).unwrap();
+    let journal_lock = journal_root.join("owner.lock");
+    let store_lock = local.path().join("workspace-upgrades-v1/owner.lock");
+    let held_locks = Some((journal_lock.as_path(), store_lock.as_path()));
+    let before_local = inventory(local.path(), held_locks);
+    std::fs::write(&witness, b"changed").unwrap();
+    assert_ne!(inventory(local.path(), held_locks), before_local);
+    std::fs::write(&witness, b"before").unwrap();
+    assert_eq!(inventory(local.path(), held_locks), before_local);
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .max_blocking_threads(1)
         .build()
         .unwrap()
         .block_on(async {
-            // Occupy the blocking pool so the real status future must suspend
-            // after its snapshot. Channels, not timing, order the mutation.
             let (entered, entered_rx) = tokio::sync::oneshot::channel();
             let (release, release_rx) = std::sync::mpsc::channel();
             let blocker = tokio::task::spawn_blocking(move || {
@@ -1676,28 +2221,42 @@ fn facade_status_disk_read_cannot_publish_across_a_cache_mutation() {
                 release_rx.recv().unwrap();
             });
             entered_rx.await.unwrap();
-            let mut read = Box::pin(vm.upgrade_status(data.path().into(), local.path().into()));
-            let pending = std::future::poll_fn(|cx| {
-                std::task::Poll::Ready(read.as_mut().poll(cx).is_pending())
-            })
-            .await;
-            let mut fresh = crate::workspace_upgrade::UpgradeStatusDto::none();
-            fresh.state = "fresh";
-            vm.cache_upgrade_status(fresh);
+            let mut observed = Vec::new();
+            for phase in [
+                LocalVmStatus::NotIntegrated,
+                LocalVmStatus::Idle,
+                LocalVmStatus::Preparing,
+                LocalVmStatus::Installing,
+                LocalVmStatus::Starting,
+                LocalVmStatus::Ready,
+                LocalVmStatus::Closing,
+                LocalVmStatus::Closed,
+                LocalVmStatus::Cancelled,
+                LocalVmStatus::Failed,
+            ] {
+                vm.inner.state.lock().unwrap().phase = phase;
+                let mut read = Box::pin(vm.upgrade_status(data.path().into(), local.path().into()));
+                observed.push((
+                    phase,
+                    std::future::poll_fn(|cx| std::task::Poll::Ready(read.as_mut().poll(cx))).await,
+                ));
+            }
             release.send(()).unwrap();
             blocker.await.unwrap();
-            // Release/join before asserting, including if a regression made
-            // the first poll Ready. Never poll that completed future again.
-            assert!(
-                pending,
-                "status read must suspend behind the blocking worker"
-            );
-            assert_eq!(read.await.state, "fresh");
-            assert_eq!(
-                vm.upgrade_cache.lock().unwrap().as_ref().unwrap().state,
-                "fresh"
-            );
+            assert_eq!(inventory(data.path(), None), before_data);
+            assert_eq!(inventory(local.path(), held_locks), before_local);
+            for (phase, result) in observed {
+                let std::task::Poll::Ready(dto) = result else {
+                    panic!("poll must not dispatch disk work: {phase:?}");
+                };
+                assert_eq!(dto.state, "conflict", "{phase:?}");
+                assert_eq!(dto.error, Some("unknown"), "{phase:?}");
+                assert!(!dto.can_replace && !dto.can_restore && !dto.can_cancel);
+            }
 
+            let mut fresh = UpgradeStatusDto::none();
+            fresh.state = "fresh";
+            vm.cache_upgrade_status(fresh);
             for phase in [
                 LocalVmStatus::Preparing,
                 LocalVmStatus::Installing,
@@ -1707,10 +2266,9 @@ fn facade_status_disk_read_cannot_publish_across_a_cache_mutation() {
                 let dto = vm
                     .upgrade_status(data.path().into(), local.path().into())
                     .await;
-                assert_eq!(dto.state, "fresh", "{phase:?}");
-                assert!(dto.busy, "{phase:?}");
+                assert_eq!(dto.state, "fresh");
+                assert!(dto.busy);
             }
-            // The synchronous Ready projection must use the same publisher.
             vm.inner.state.lock().unwrap().phase = LocalVmStatus::Ready;
             let revision = vm
                 .upgrade_cache_revision
@@ -1721,16 +2279,624 @@ fn facade_status_disk_read_cannot_publish_across_a_cache_mutation() {
                     .state,
                 "consumed"
             );
-            assert_ne!(
+            assert_eq!(
                 vm.upgrade_cache_revision
                     .load(std::sync::atomic::Ordering::Relaxed),
-                revision
+                revision,
+                "polling Ready must not publish to the cache"
             );
             assert_eq!(
                 vm.upgrade_cache.lock().unwrap().as_ref().unwrap().state,
-                "consumed"
+                "fresh"
             );
         });
+    assert_eq!(inventory(local.path(), held_locks), before_local);
+    drop(journal);
+    drop(owner);
+    assert_eq!(inventory(local.path(), None), full_before_local);
+    assert_eq!(inventory(data.path(), None), before_data);
+}
+
+#[cfg(test)]
+#[test]
+fn facade_ready_publication_preserves_closing_and_newer_cache_fences() {
+    for closing in [false, true] {
+        let vm = LocalVm::unavailable();
+        let mut fresh = UpgradeStatusDto::none();
+        fresh.state = "fresh";
+        vm.cache_upgrade_status(fresh.clone());
+        let revision = vm
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        vm.inner.state.lock().unwrap().closing = closing;
+        vm.publish_ready();
+        assert_eq!(
+            vm.upgrade_cache.lock().unwrap().as_ref().unwrap().state,
+            if closing { "fresh" } else { "consumed" }
+        );
+        if !closing {
+            assert!(matches!(
+                vm.complete_upgrade_refresh(revision, Ok(fresh)),
+                Err(RuntimeError::Busy)
+            ));
+        } else {
+            assert_ne!(vm.status(), LocalVmStatus::Ready);
+        }
+    }
+    let vm = LocalVm::unavailable();
+    vm.quarantine_upgrade();
+    let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+    vm.publish_ready();
+    vm.publish_startup_consumption(Some(true), None);
+    assert_eq!(
+        serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+        before
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn facade_startup_consumption_preserves_metadata_and_fences_old_readers_and_quarantine() {
+    for (consumed, unconfirmed, expected) in [
+        (Some(true), false, "consumed"),
+        (None, false, "conflict"),
+        (Some(true), true, "conflict"),
+        (Some(false), true, "conflict"),
+    ] {
+        let vm = LocalVm::unavailable();
+        let mut fresh = UpgradeStatusDto::none();
+        fresh.state = "fresh";
+        fresh.transaction = Some(bridge_runtime_protocol::Uuid::new_v4());
+        fresh.can_replace = true;
+        fresh.can_restore = true;
+        vm.cache_upgrade_status(fresh.clone());
+        let revision = vm
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        vm.publish_startup_consumption(consumed, unconfirmed.then_some("stopUnconfirmed"));
+        let current = vm.upgrade_cache.lock().unwrap().clone().unwrap();
+        assert_eq!(current.state, expected);
+        assert_eq!(current.transaction, fresh.transaction);
+        assert!(matches!(
+            vm.complete_upgrade_refresh(revision, Ok(fresh)),
+            Err(RuntimeError::Busy)
+        ));
+        if unconfirmed {
+            vm.clear_upgrade_busy();
+            assert!(vm.upgrading.load(std::sync::atomic::Ordering::Acquire));
+            assert_eq!(
+                vm.upgrade_cache.lock().unwrap().as_ref().unwrap().error,
+                Some("stopUnconfirmed")
+            );
+        }
+        if expected == "conflict" {
+            assert!(!current.can_replace && !current.can_restore);
+        }
+        let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+        vm.publish_startup_consumption(Some(true), None);
+        assert_eq!(
+            serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+            before
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn facade_unconfirmed_startup_quarantines_consumed_and_missing_cache() {
+    for initial in [Some("consumed"), None, Some("conflict")] {
+        let vm = LocalVm::unavailable();
+        let transaction = bridge_runtime_protocol::Uuid::new_v4();
+        if let Some(state) = initial {
+            let mut dto = UpgradeStatusDto::none();
+            dto.state = state;
+            dto.transaction = Some(transaction);
+            dto.can_replace = true;
+            dto.can_restore = true;
+            vm.cache_upgrade_status(dto);
+        }
+        vm.publish_startup_consumption(None, Some("stopUnconfirmed"));
+        let current = vm
+            .upgrade_cache
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("quarantine must be published");
+        assert_eq!(current.state, "conflict");
+        assert_eq!(current.error, Some("stopUnconfirmed"));
+        assert!(
+            !current.busy && !current.can_replace && !current.can_restore && !current.can_cancel
+        );
+        assert_eq!(current.transaction, initial.map(|_| transaction));
+        assert!(vm.upgrading.load(std::sync::atomic::Ordering::Acquire));
+        vm.clear_upgrade_busy();
+        assert!(vm.upgrading.load(std::sync::atomic::Ordering::Acquire));
+        let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+        vm.publish_startup_consumption(Some(true), Some("stopUnconfirmed"));
+        assert_eq!(
+            serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+            before
+        );
+        assert_eq!(
+            serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+            serde_json::to_value(Some(current)).unwrap()
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn bootstrap_shell_seeds_before_exposure_and_resume() {
+    // main.rs is compiled by native CI; this portable contract catches ordering regressions.
+    let main = include_str!("main.rs");
+    let setup = main.split(".setup(move |app| {").nth(1).unwrap();
+    let recovery = setup.find("workspace_upgrade::recover_startup").unwrap();
+    let configured = setup.find("let vm = local_vm::configured(").unwrap();
+    let latch = setup
+        .find("vm.set_workspace_replaced(recovery.as_ref().copied().unwrap_or(true))")
+        .unwrap();
+    let paths = setup.find("if let (Ok(data), Ok(local))").unwrap();
+    let seed = setup.find("vm.seed_upgrade_status(&data, &local)").unwrap();
+    let exposed = setup.find("app.manage(").unwrap();
+    let resume = setup.find("local_vm::resume_selected(").unwrap();
+    assert!(
+        recovery < configured
+            && configured < latch
+            && latch < paths
+            && paths < seed
+            && seed < exposed
+            && exposed < resume
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn facade_explicit_refresh_fences_both_result_and_cache_after_owner_query() {
+    for close in [false, true] {
+        let vm = LocalVm::unavailable();
+        let data = tempfile::tempdir().unwrap();
+        let local = tempfile::tempdir().unwrap();
+        let revision = vm
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let (queried, queried_rx) = std::sync::mpsc::channel();
+        let (publish, publish_rx) = std::sync::mpsc::channel();
+        let worker_vm = vm.clone();
+        let data_path = data.path().to_owned();
+        let local_path = local.path().to_owned();
+        let worker = std::thread::spawn(move || {
+            let result =
+                crate::workspace_upgrade::query_upgrade_status(&data_path, &local_path, None);
+            queried.send(()).unwrap();
+            publish_rx.recv().unwrap();
+            worker_vm.complete_upgrade_refresh(revision, result)
+        });
+        queried_rx.recv().unwrap();
+        let mut winner = UpgradeStatusDto::conflict(Some("integrity"));
+        winner.transaction = Some(bridge_runtime_protocol::Uuid::new_v4());
+        if close {
+            vm.inner.state.lock().unwrap().terminal = true;
+        } else {
+            vm.cache_upgrade_status(winner.clone());
+        }
+        let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+        publish.send(()).unwrap();
+        let result = worker.join().unwrap();
+        assert!(if close {
+            matches!(result, Err(RuntimeError::Closed))
+        } else {
+            matches!(result, Err(RuntimeError::Busy))
+        });
+        assert_eq!(
+            serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+            before
+        );
+    }
+}
+
+#[cfg(test)]
+mod refresh_admission_tests {
+    use super::*;
+    #[derive(Default)]
+    struct Factory {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+    impl LocalFactory for Factory {
+        fn launch(
+            &self,
+            _: watch::Receiver<bool>,
+            _: Arc<dyn Fn(LocalProgress) + Send + Sync>,
+        ) -> StartFuture<'_> {
+            Box::pin(async {
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.entered.notify_one();
+                self.release.notified().await;
+                Err(RuntimeError::Image(
+                    crate::runtime::image_types::ImageError::WorkspaceVersionUnsupported,
+                ))
+            })
+        }
+    }
+    #[test]
+    fn actual_start_precedes_refresh_and_denies_query_without_clearing_startup() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let factory = Arc::new(Factory::default());
+                let vm = LocalVm::new(factory.clone());
+                vm.start();
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    factory.entered.notified(),
+                )
+                .await
+                .expect("startup before refresh must reach factory launch");
+                let phase = vm.status();
+                let result = vm
+                    .refresh_upgrade_status("unavailable".into(), "unavailable".into())
+                    .await;
+                assert!(matches!(result, Err(RuntimeError::Busy)));
+                assert_eq!(vm.status(), phase);
+                assert!(vm.upgrade_cache.lock().unwrap().is_none());
+                factory.release.notify_one();
+                vm.shutdown().await.unwrap();
+                assert_eq!(factory.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            });
+    }
+    #[test]
+    fn dropped_running_refresh_retains_real_owner_choice_and_start_gate_until_publication() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let factory = Arc::new(Factory::default());
+                let vm = LocalVm::new(factory.clone());
+                let data = tempfile::tempdir().unwrap();
+                let local = tempfile::tempdir().unwrap();
+                let (entered, entered_rx) = tokio::sync::oneshot::channel();
+                let (release, release_rx) = std::sync::mpsc::channel();
+                struct Release(std::sync::mpsc::Sender<()>);
+                impl Drop for Release {
+                    fn drop(&mut self) {
+                        let _ = self.0.send(());
+                    }
+                }
+                let release = Release(release);
+                let worker_data = data.path().to_owned();
+                let worker_local = local.path().to_owned();
+                let mut work = Box::pin(vm.refresh_upgrade_status_with(move || {
+                    let owner = crate::workspace_upgrade::WorkspaceUpgrade::open(
+                        &worker_data,
+                        &worker_local,
+                    )?;
+                    entered.send(()).unwrap();
+                    release_rx.recv().unwrap();
+                    Ok(owner.status_dto(None))
+                }));
+                assert!(
+                    std::future::poll_fn(|cx| std::task::Poll::Ready(
+                        work.as_mut().poll(cx).is_pending()
+                    ))
+                    .await
+                );
+                entered_rx.await.unwrap();
+                drop(work);
+                assert!(matches!(
+                    crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path()),
+                    Err(RuntimeError::Busy)
+                ));
+                assert!(vm.choice.clone().try_lock_owned().is_err());
+                assert!(vm.upgrading.load(std::sync::atomic::Ordering::Acquire));
+                vm.start();
+                assert_eq!(
+                    vm.status(),
+                    LocalVmStatus::Idle,
+                    "refresh must gate actual Start"
+                );
+                assert!(matches!(
+                    vm.reserve_upgrade_choice(),
+                    Err(RuntimeError::Busy)
+                ));
+                assert!(matches!(
+                    vm.restore_workspace(
+                        data.path().into(),
+                        local.path().into(),
+                        bridge_runtime_protocol::Uuid::new_v4()
+                    )
+                    .await,
+                    Err(RuntimeError::Busy)
+                ));
+                assert!(
+                    !vm.upgrade_status(data.path().into(), local.path().into())
+                        .await
+                        .can_cancel
+                );
+                drop(release);
+                let finished = vm.choice.clone().lock_owned().await;
+                assert_eq!(
+                    vm.upgrade_cache.lock().unwrap().as_ref().unwrap().state,
+                    "none"
+                );
+                assert!(!vm.upgrading.load(std::sync::atomic::Ordering::Acquire));
+                drop(finished);
+                vm.start();
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(3),
+                    factory.entered.notified(),
+                )
+                .await
+                .expect("startup after refresh publication must reach factory launch");
+                assert_eq!(factory.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+                factory.release.notify_one();
+                vm.shutdown().await.unwrap();
+            });
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn facade_dropped_refresh_retains_choice_and_start_gate_through_worker_publication() {
+    let vm = LocalVm::unavailable();
+    let data = tempfile::tempdir().unwrap();
+    let local = tempfile::tempdir().unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap()
+        .block_on(async {
+            let (entered, entered_rx) = tokio::sync::oneshot::channel();
+            let (release, release_rx) = std::sync::mpsc::channel();
+            let blocker = tokio::task::spawn_blocking(move || {
+                entered.send(()).unwrap();
+                release_rx.recv().unwrap();
+            });
+            entered_rx.await.unwrap();
+            let mut refresh =
+                Box::pin(vm.refresh_upgrade_status(data.path().into(), local.path().into()));
+            let pending = std::future::poll_fn(|cx| {
+                std::task::Poll::Ready(refresh.as_mut().poll(cx).is_pending())
+            })
+            .await;
+            drop(refresh);
+            let held = vm.choice.clone().try_lock_owned().is_err();
+            let busy = vm.upgrading.load(std::sync::atomic::Ordering::Acquire);
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            let _finished = vm.choice.clone().lock_owned().await;
+            assert!(
+                pending && held && busy,
+                "caller drop must not release worker admission"
+            );
+            assert!(!vm.upgrading.load(std::sync::atomic::Ordering::Acquire));
+            assert_eq!(
+                vm.upgrade_cache.lock().unwrap().as_ref().unwrap().state,
+                "none"
+            );
+        });
+}
+
+#[cfg(test)]
+#[test]
+fn facade_explicit_refresh_uses_phase_not_retained_startup_handle_and_preserves_errors() {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            for phase in [
+                LocalVmStatus::Ready,
+                LocalVmStatus::Idle,
+                LocalVmStatus::Failed,
+                LocalVmStatus::Cancelled,
+            ] {
+                let vm = LocalVm::unavailable();
+                let data = tempfile::tempdir().unwrap();
+                let local = tempfile::tempdir().unwrap();
+                let owner =
+                    crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path())
+                        .unwrap();
+                {
+                    let mut state = vm.inner.state.lock().unwrap();
+                    state.phase = phase;
+                    state.startup = Some(tokio::spawn(async { true }));
+                }
+                assert!(!vm.workspace_replaced());
+                assert!(matches!(
+                    vm.refresh_upgrade_status(data.path().into(), local.path().into())
+                        .await,
+                    Err(RuntimeError::Busy)
+                ));
+                assert!(vm.workspace_replaced(), "Busy must latch uncertain history");
+                assert!(
+                    vm.upgrade_cache.lock().unwrap().is_none(),
+                    "Busy must not invent a cached observation when none was known"
+                );
+                assert_eq!(
+                    vm.status(),
+                    phase,
+                    "a read error is not a failed VM operation"
+                );
+                drop(owner);
+                assert_eq!(
+                    vm.refresh_upgrade_status(data.path().into(), local.path().into())
+                        .await
+                        .unwrap()
+                        .state,
+                    "none"
+                );
+                assert!(
+                    vm.workspace_replaced(),
+                    "later success must not clear uncertain history"
+                );
+                // A directory cannot be opened as a read/write owner file on either OS.
+                let invalid_local = tempfile::tempdir().unwrap();
+                std::fs::create_dir_all(
+                    invalid_local
+                        .path()
+                        .join("workspace-upgrades-v1/owner.lock"),
+                )
+                .unwrap();
+                assert!(matches!(
+                    vm.refresh_upgrade_status(data.path().into(), invalid_local.path().into())
+                        .await,
+                    Err(RuntimeError::Io(_))
+                ));
+                assert_eq!(vm.status(), phase);
+                assert_eq!(
+                    vm.upgrade_cache.lock().unwrap().as_ref().unwrap().error,
+                    Some("unknown")
+                );
+            }
+            for phase in [
+                LocalVmStatus::Preparing,
+                LocalVmStatus::Installing,
+                LocalVmStatus::Starting,
+                LocalVmStatus::Closing,
+            ] {
+                let vm = LocalVm::unavailable();
+                vm.inner.state.lock().unwrap().phase = phase;
+                assert!(matches!(
+                    vm.refresh_upgrade_status("missing".into(), "missing".into())
+                        .await,
+                    Err(RuntimeError::Busy)
+                ));
+                assert!(vm.upgrade_cache.lock().unwrap().is_none());
+            }
+            let vm = LocalVm::unavailable();
+            vm.inner.state.lock().unwrap().terminal = true;
+            assert!(matches!(
+                vm.refresh_upgrade_status("missing".into(), "missing".into())
+                    .await,
+                Err(RuntimeError::Closed)
+            ));
+            assert!(vm.upgrade_cache.lock().unwrap().is_none());
+        });
+}
+
+#[cfg(test)]
+#[test]
+fn facade_busy_refresh_preserves_known_cache_and_latches_uncertainty() {
+    for known in ["eligible", "consumed"] {
+        let vm = LocalVm::unavailable();
+        let mut dto = UpgradeStatusDto::none();
+        dto.state = known;
+        dto.created_at = Some(123);
+        dto.target_release = Some("test-release".into());
+        if known == "consumed" {
+            dto.transaction = Some(bridge_runtime_protocol::Uuid::new_v4());
+            dto.can_restore = true;
+        }
+        vm.cache_upgrade_status(dto);
+        let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+        let revision = vm
+            .upgrade_cache_revision
+            .load(std::sync::atomic::Ordering::Relaxed);
+        assert!(!vm.workspace_replaced());
+        assert!(matches!(
+            vm.complete_upgrade_refresh(revision, Err(RuntimeError::Busy)),
+            Err(RuntimeError::Busy)
+        ));
+        assert!(
+            vm.workspace_replaced(),
+            "Busy must latch history without replacing the known DTO"
+        );
+        assert_eq!(
+            serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+            before
+        );
+        vm.complete_upgrade_refresh(revision, Ok(UpgradeStatusDto::none()))
+            .unwrap();
+        vm.set_workspace_replaced(false);
+        assert!(
+            vm.workspace_replaced(),
+            "successful refresh and false setter must not clear history"
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn facade_unconfirmed_stop_denies_authoring_and_retains_internal_cache() {
+    let vm = LocalVm::unavailable();
+    let mut consumed = UpgradeStatusDto::none();
+    consumed.state = "consumed";
+    consumed.transaction = Some(bridge_runtime_protocol::Uuid::new_v4());
+    consumed.created_at = Some(123);
+    consumed.can_restore = true;
+    vm.cache_upgrade_status(consumed);
+    let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+    assert!(vm.try_authoring().is_some());
+    vm.inner.state.lock().unwrap().stopped = Some(false);
+    assert!(
+        vm.try_authoring().is_none(),
+        "unconfirmed stop must refuse new authoring leases"
+    );
+    let dto = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(vm.upgrade_status("unused".into(), "unused".into()));
+    assert_eq!(dto.error, Some("stopUnconfirmed"));
+    assert!(dto.transaction.is_none() && !dto.can_restore && !dto.can_replace && !dto.can_cancel);
+    assert_eq!(
+        serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+        before
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn facade_refresh_cleanup_cannot_clear_quarantine() {
+    let vm = LocalVm::unavailable();
+    vm.upgrading
+        .store(true, std::sync::atomic::Ordering::Release);
+    let revision = vm
+        .upgrade_cache_revision
+        .load(std::sync::atomic::Ordering::Relaxed);
+    let guard = UpgradeRefresh(vm.clone());
+    vm.quarantine_upgrade();
+    let before = serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap();
+    assert!(matches!(
+        vm.complete_upgrade_refresh(revision, Ok(UpgradeStatusDto::none())),
+        Err(RuntimeError::Busy)
+    ));
+    drop(guard);
+    assert!(vm.upgrading.load(std::sync::atomic::Ordering::Acquire));
+    assert_eq!(
+        serde_json::to_value(vm.upgrade_cache.lock().unwrap().clone()).unwrap(),
+        before
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn facade_bootstrap_uncertainty_is_latched_and_never_grants_actions() {
+    let vm = LocalVm::unavailable();
+    let data = tempfile::tempdir().unwrap();
+    let local = tempfile::tempdir().unwrap();
+    let owner =
+        crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path()).unwrap();
+    vm.seed_upgrade_status(data.path(), local.path());
+    assert!(
+        vm.workspace_replaced(),
+        "uncertain history must suppress replay"
+    );
+    let dto = vm.upgrade_cache.lock().unwrap().clone().unwrap();
+    assert_eq!(dto.state, "conflict");
+    assert_eq!(dto.error, Some("inUse"));
+    assert!(!dto.can_replace && !dto.can_restore);
+    drop(owner);
+    vm.seed_upgrade_status(data.path(), local.path());
+    assert!(
+        vm.workspace_replaced(),
+        "a later success must not erase uncertainty"
+    );
 }
 
 #[cfg(test)]
@@ -1746,8 +2912,11 @@ fn facade_quiescence_invalidates_readers_even_without_a_cached_status() {
                 .upgrade_cache_revision
                 .load(std::sync::atomic::Ordering::Relaxed);
             let guard = vm.quiesce_for_upgrade().await.unwrap();
-            let stale = vm
-                .publish_upgrade_status(before, crate::workspace_upgrade::UpgradeStatusDto::none());
+            assert!(matches!(
+                vm.complete_upgrade_refresh(before, Ok(UpgradeStatusDto::none())),
+                Err(RuntimeError::Busy)
+            ));
+            let stale = vm.upgrade_status("unused".into(), "unused".into()).await;
             assert_eq!(stale.state, "conflict");
             assert!(stale.busy);
             assert!(vm.upgrade_cache.lock().unwrap().is_none());
@@ -1755,8 +2924,11 @@ fn facade_quiescence_invalidates_readers_even_without_a_cached_status() {
                 .upgrade_cache_revision
                 .load(std::sync::atomic::Ordering::Relaxed);
             drop(guard);
-            let stale = vm
-                .publish_upgrade_status(during, crate::workspace_upgrade::UpgradeStatusDto::none());
+            assert!(matches!(
+                vm.complete_upgrade_refresh(during, Ok(UpgradeStatusDto::none())),
+                Err(RuntimeError::Busy)
+            ));
+            let stale = vm.upgrade_status("unused".into(), "unused".into()).await;
             assert_eq!(stale.state, "conflict");
             assert!(!stale.busy);
             assert!(vm.upgrade_cache.lock().unwrap().is_none());
@@ -1766,8 +2938,11 @@ fn facade_quiescence_invalidates_readers_even_without_a_cached_status() {
             let mut fresh = crate::workspace_upgrade::UpgradeStatusDto::none();
             fresh.state = "fresh";
             vm.cache_upgrade_status(fresh);
-            let stale = vm
-                .publish_upgrade_status(before, crate::workspace_upgrade::UpgradeStatusDto::none());
+            assert!(matches!(
+                vm.complete_upgrade_refresh(before, Ok(UpgradeStatusDto::none())),
+                Err(RuntimeError::Busy)
+            ));
+            let stale = vm.upgrade_status("unused".into(), "unused".into()).await;
             assert_eq!(stale.state, "fresh");
             assert!(stale.busy);
             drop(guard);
@@ -1776,8 +2951,13 @@ fn facade_quiescence_invalidates_readers_even_without_a_cached_status() {
             // Missing factory custody quarantines instead of staying busy forever.
             let quarantined = LocalVm::unavailable();
             assert!(quarantined.quiesce_for_upgrade().await.is_err());
+            assert!(matches!(
+                quarantined.complete_upgrade_refresh(0, Ok(UpgradeStatusDto::none())),
+                Err(RuntimeError::Busy)
+            ));
             let stale = quarantined
-                .publish_upgrade_status(0, crate::workspace_upgrade::UpgradeStatusDto::none());
+                .upgrade_status("unused".into(), "unused".into())
+                .await;
             assert_eq!(stale.error, Some("stopUnconfirmed"));
             assert!(!stale.busy);
         });
@@ -1785,10 +2965,304 @@ fn facade_quiescence_invalidates_readers_even_without_a_cached_status() {
 
 #[cfg(test)]
 #[test]
+fn facade_forward_cancellation_errors_require_user_provenance() {
+    for image_error in [false, true] {
+        for source in [
+            UpgradeCancellationSource::None,
+            UpgradeCancellationSource::User,
+            UpgradeCancellationSource::Terminal,
+        ] {
+            let vm = LocalVm::unavailable();
+            let rx = vm.upgrade_cancellation();
+            match source {
+                UpgradeCancellationSource::None => {}
+                UpgradeCancellationSource::User => {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap()
+                        .block_on(async {
+                            assert_eq!(
+                                vm.cancel_workspace_upgrade().await.unwrap(),
+                                UpgradeCancelOutcome::Requested
+                            );
+                        });
+                }
+                UpgradeCancellationSource::Terminal => vm.request_close(),
+            }
+            assert_eq!(*rx.borrow(), source != UpgradeCancellationSource::None);
+            let data = tempfile::tempdir().unwrap();
+            let local = tempfile::tempdir().unwrap();
+            let error = if image_error {
+                RuntimeError::Image(crate::runtime::image_types::ImageError::Cancelled)
+            } else {
+                RuntimeError::Closed
+            };
+            let result = vm.finish_forward(
+                data.path(),
+                local.path(),
+                Err(ForwardError::Cancellation(
+                    error,
+                    Box::new(UpgradeStatusDto::none()),
+                )),
+            );
+            if source == UpgradeCancellationSource::User {
+                assert!(
+                    matches!(result, Ok(UpgradeActionReply::Cancelled { status }) if !status.can_cancel && status.error.is_none())
+                );
+            } else {
+                assert!(result.is_err());
+            }
+            assert!(vm.inner.state.lock().unwrap().upgrade_cancel.is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn facade_upgrade_cancel_does_not_acknowledge_failed_startup_or_join() {
+    for panics in [false, true] {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let vm = LocalVm::unavailable();
+                let _rx = vm.upgrade_cancellation();
+                {
+                    let mut state = vm.inner.state.lock().unwrap();
+                    state.phase = LocalVmStatus::Preparing;
+                    state.upgrade_cancel.as_mut().unwrap().startup = true;
+                    state.startup = Some(tokio::spawn(async move {
+                        assert!(!panics, "startup task failed to join");
+                        false
+                    }));
+                }
+                assert!(vm.cancel_workspace_upgrade().await.is_err());
+                assert_eq!(vm.status(), LocalVmStatus::Failed);
+                assert!(
+                    !vm.upgrade_status("unused".into(), "unused".into())
+                        .await
+                        .can_cancel
+                );
+            });
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn facade_cancel_pending_launch_preserves_safe_refusal() {
+    struct RefusalFactory {
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        version: bool,
+    }
+    impl LocalFactory for RefusalFactory {
+        fn launch(
+            &self,
+            closed: watch::Receiver<bool>,
+            _: Arc<dyn Fn(LocalProgress) + Send + Sync>,
+        ) -> StartFuture<'_> {
+            Box::pin(async move {
+                // The native early cancellation check has already succeeded.
+                assert!(!*closed.borrow());
+                self.entered.notify_one();
+                self.release.notified().await;
+                Err(if self.version {
+                    RuntimeError::Image(
+                        crate::runtime::image_types::ImageError::WorkspaceVersionUnsupported,
+                    )
+                } else {
+                    RuntimeError::Preflight(crate::setup::preflight::Failure::HypervisorUnavailable)
+                })
+            })
+        }
+    }
+    for version in [false, true] {
+        for terminal in [false, true] {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async {
+                    let factory = Arc::new(RefusalFactory {
+                        entered: tokio::sync::Notify::new(),
+                        release: tokio::sync::Notify::new(),
+                        version,
+                    });
+                    let vm = LocalVm::new(factory.clone());
+                    let _rx = vm.upgrade_cancellation();
+                    vm.inner
+                        .state
+                        .lock()
+                        .unwrap()
+                        .upgrade_cancel
+                        .as_mut()
+                        .unwrap()
+                        .startup = true;
+                    vm.start();
+                    factory.entered.notified().await;
+                    let mut cancel = Box::pin(vm.cancel_workspace_upgrade());
+                    let pending = std::future::poll_fn(|cx| {
+                        std::task::Poll::Ready(cancel.as_mut().poll(cx).is_pending())
+                    })
+                    .await;
+                    if terminal {
+                        vm.request_close();
+                    }
+                    factory.release.notify_one();
+                    let result = if pending {
+                        cancel.await
+                    } else {
+                        panic!("Cancel must join pending launch")
+                    };
+                    // Failure must not mean a live VM or quarantined custody.
+                    let safe = vm.inner.state.lock().unwrap().stopped;
+                    let phase = vm.status();
+                    let setup_dir = tempfile::tempdir().unwrap();
+                    let snapshot = vm.snapshot(
+                        crate::setup::SetupStore::new(Some(setup_dir.path().into()))
+                            .status()
+                            .unwrap(),
+                    );
+                    vm.shutdown().await.unwrap();
+                    assert!(result.is_err(), "launch refusal must not report Completed");
+                    assert_eq!(safe, Some(true));
+                    if terminal {
+                        assert_eq!(phase, LocalVmStatus::Closed);
+                    } else {
+                        assert_eq!(phase, LocalVmStatus::Failed);
+                        assert!(snapshot.workspace_failure.is_some());
+                        if !version {
+                            assert_eq!(
+                                snapshot.preflight_failure,
+                                Some(crate::setup::preflight::Failure::HypervisorUnavailable)
+                            );
+                        }
+                    }
+                });
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn facade_cancelled_forward_keeps_worker_status_under_poll_lock() {
+    let data = tempfile::tempdir().unwrap();
+    let local = tempfile::tempdir().unwrap();
+    let vm = LocalVm::unavailable();
+    let _rx = vm.upgrade_cancellation();
+    let owner =
+        crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path()).unwrap();
+    let result = Err(ForwardError::from_forward(
+        RuntimeError::Closed,
+        &owner,
+        None,
+    ));
+    vm.inner
+        .state
+        .lock()
+        .unwrap()
+        .upgrade_cancel
+        .as_mut()
+        .unwrap()
+        .source = UpgradeCancellationSource::User;
+    drop(owner);
+    // The operation has ended, but a native poll now owns the transaction lock.
+    // No amount of facade cache retention repairs the returned busy placeholder.
+    let poll_owner =
+        crate::workspace_upgrade::WorkspaceUpgrade::open(data.path(), local.path()).unwrap();
+    assert!(crate::workspace_upgrade::upgrade_status(data.path(), local.path(), None).busy);
+    let reply = vm
+        .finish_forward(data.path(), local.path(), result)
+        .unwrap();
+    drop(poll_owner);
+    let UpgradeActionReply::Cancelled { status } = reply else {
+        panic!("expected cancellation")
+    };
+    assert!(
+        !status.busy,
+        "reply must carry the worker's native status, not reread under contention"
+    );
+    assert_eq!(status.state, "none");
+}
+
+#[cfg(test)]
+mod cancellation_progress_test {
+    use super::*;
+    use crate::runtime as fixture_runtime;
+    mod fixture {
+        include!("../tests/support/runtime_image_fixture.rs");
+    }
+    #[test]
+    fn facade_cancelled_forward_clears_copying_clock() {
+        let vm = LocalVm::unavailable();
+        let _rx = vm.upgrade_cancellation();
+        let cache = tempfile::tempdir().unwrap();
+        let local = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        let verified = fixture::verified(
+            cache.path(),
+            crate::runtime::image_types::ImageTarget::WindowsAmd64,
+        );
+        let compatibility = verified.image().identity().state_compatibility_id.clone();
+        let journal = crate::runtime::journal::Journal::create(
+            &local.path().join("copy"),
+            crate::runtime::types::BackendKind::Qemu,
+            vec![1],
+        )
+        .unwrap();
+        let (cancel, closed) = watch::channel(false);
+        let copied = std::sync::atomic::AtomicBool::new(false);
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let result = crate::runtime::image_install::PreparedImage::from_verified(verified).unwrap().materialize(
+                &journal.image_target(&compatibility).unwrap(), closed, |event| {
+                    vm.inner.publish(LocalProgress::Image(event));
+                    if matches!(event, crate::runtime::image_types::ImageProgress::Materializing { bytes, .. } if bytes > 0) {
+                        copied.store(true, std::sync::atomic::Ordering::SeqCst);
+                        cancel.send_replace(true);
+                    }
+                }).await;
+            assert!(matches!(result, Err(crate::runtime::image_types::ImageError::Cancelled)));
+        });
+        assert!(copied.load(std::sync::atomic::Ordering::SeqCst));
+        let store = crate::setup::SetupStore::new(Some(data.path().into()));
+        assert!(vm
+            .snapshot(store.status().unwrap())
+            .workspace_progress
+            .is_some());
+        vm.inner
+            .state
+            .lock()
+            .unwrap()
+            .upgrade_cancel
+            .as_mut()
+            .unwrap()
+            .source = UpgradeCancellationSource::User;
+        vm.finish_forward(data.path(), local.path(), Ok(UpgradeStatusDto::none()))
+            .unwrap();
+        assert_eq!(vm.status(), LocalVmStatus::Cancelled);
+        assert!(vm
+            .snapshot(store.status().unwrap())
+            .workspace_progress
+            .is_none());
+        assert!(
+            vm.inner.state.lock().unwrap().progress.is_none(),
+            "no clock remains to accrue elapsed time"
+        );
+    }
+}
+
+#[cfg(test)]
+#[test]
 fn facade_request_close_cancels_upgrade_before_async_shutdown() {
     let vm = LocalVm::unavailable();
     let (cancel, receiver) = watch::channel(false);
-    *vm.upgrade_cancel.lock().unwrap() = Some(cancel);
+    vm.inner.state.lock().unwrap().upgrade_cancel = Some(UpgradeCancellation {
+        signal: cancel,
+        source: UpgradeCancellationSource::None,
+        startup: false,
+    });
     vm.request_close();
     assert!(
         *receiver.borrow(),
