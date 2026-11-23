@@ -321,7 +321,10 @@ artifact. Downloads are cached under the hash of `ci/sources.json` and checked
 again after restore. A newly built builder image is cached under the hash of
 `ci/Dockerfile` only after a passing run; a restored one is trusted as this
 repository's cache content, not checked against a pin, and is rebuilt if it fails
-to load.
+to load. A restored entry is never overwritten. A download that fails its check
+is fetched again and reported as `replaced`, and a builder that fails to load is
+rebuilt with a warning naming its cache key, on every run until that cache entry
+is deleted.
 
 Locking, assembly and the boot run in the `ci/Dockerfile` builder with
 `docker run --network none`, adding `--device /dev/kvm` for assembly and the

@@ -84,10 +84,11 @@ jobs:
         env:
           BUILDER_KEY: ${{ steps.builder.outputs.cache-primary-key }}
         run: |
-          # A restored builder is trusted as this repository's cache content; one
-          # that fails to load is rebuilt. Building without BuildKit's cache avoids
-          # reusing layers that a failed load left incomplete. A new build is saved
-          # only after the boot passes.
+          # A restored builder is trusted as this repository's cache content. One
+          # that fails to load is rebuilt for this run only: the save step below
+          # runs only on a cache miss, so the warning names the entry to delete.
+          # Building without BuildKit's cache avoids reusing layers that a failed
+          # load left incomplete.
           if [ -f "$WORK/builder.tar" ] && docker load --input "$WORK/builder.tar"; then
             rm "$WORK/builder.tar"
           else
