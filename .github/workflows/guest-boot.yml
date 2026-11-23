@@ -49,8 +49,13 @@ jobs:
           test -r /dev/kvm
           test -w /dev/kvm
           df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
-          df -h /
+          # The base case uses about 5 GB. Deleting preinstalled toolchains takes
+          # minutes, so do it only when the runner image leaves less than 15 GB.
+          avail=$(df --output=avail -BG / | tail -n 1 | tr -dc '0-9')
+          if [ "$avail" -lt 15 ]; then
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+            df -h /
+          fi
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: '1.98.1'

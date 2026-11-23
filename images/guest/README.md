@@ -338,7 +338,8 @@ profile and `localhost/bridge-ci-unused/*` component rows that name no files;
 anything that reads one fails on the missing file. These are test inputs, not a
 release candidate. To reproduce the job on a Linux AMD64 host with KVM and
 Docker, run the workflow's commands in order with `WORK` set to a new directory.
-Skip the runner preparation step: it deletes preinstalled toolchains.
+Skip the runner preparation step: it changes the host's udev rules and, when free
+space is low, deletes preinstalled toolchains.
 
 ## Native offline infrastructure
 
