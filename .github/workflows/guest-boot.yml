@@ -51,7 +51,10 @@ jobs:
           df -h /
           # The base case uses about 5 GB. Deleting preinstalled toolchains takes
           # minutes, so do it only when the runner image leaves less than 15 GB.
-          avail=$(df --output=avail -BG / | tail -n 1 | tr -dc '0-9')
+          avail=$(df --output=avail -BG / | tail -n 1 | tr -d ' G')
+          case "$avail" in
+            ''|*[!0-9]*) echo "::error::Could not read the free space on /: '$avail'"; exit 1 ;;
+          esac
           if [ "$avail" -lt 15 ]; then
             sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
             df -h /
@@ -105,7 +108,8 @@ jobs:
             docker save --output "$WORK/builder.tar" bridge-guest-builder:ci
           fi
           # Retain the builder's identity and package set with the receipts.
-          docker image inspect --format '{{.Id}}' bridge-guest-builder:ci | tee "$WORK/builder-image.txt"
+          docker image inspect --format '{{.Id}}' bridge-guest-builder:ci > "$WORK/builder-image.txt"
+          cat "$WORK/builder-image.txt"
           docker run --rm --network none bridge-guest-builder:ci dpkg-query -W > "$WORK/builder-packages.txt"
       - name: Lock inputs without networking
         run: |
