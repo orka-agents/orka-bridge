@@ -231,6 +231,21 @@ fn upgrade_refresh_bytes(key: &str, refresh: bool, failed: &mut bool) -> Result<
         1200000000
     })
 }
+#[cfg(all(target_os = "macos", feature = "custom-protocol"))]
+// Whether a new upgrade scene may reload the renderer: never while a held refresh is
+// unanswered (Some(None)), nor within 500 ms of its reply (Some(Some(resolved))).
+fn upgrade_reload_allowed(
+    held: Option<Option<std::time::Instant>>,
+    now: std::time::Instant,
+) -> bool {
+    match held {
+        Some(None) => false,
+        Some(Some(resolved)) => {
+            now.duration_since(resolved) >= std::time::Duration::from_millis(500)
+        }
+        None => true,
+    }
+}
 
 #[cfg(all(target_os = "macos", feature = "custom-protocol"))]
 fn upgrade_status(key: &str) -> serde_json::Value {
@@ -419,6 +434,12 @@ fn main() {
     let first_test_pending = std::sync::atomic::AtomicBool::new(false);
     let upgrade_scene = std::sync::atomic::AtomicU8::new(0);
     let upgrade_ack = std::sync::Mutex::new((String::new(), false));
+    // A reload cancels an in-flight IPC fetch and Tauri resends it by postMessage, so a
+    // held refresh still unanswered at the next scene's reload would run as that scene's
+    // refresh. Some(None) is a held refresh; Some(Some(t)) is one resolved at t. The next
+    // scene reloads only once the held reply has resolved and had 500 ms to reach the page.
+    let upgrade_held: std::sync::Arc<std::sync::Mutex<Option<Option<std::time::Instant>>>> =
+        Default::default();
     let cluster_selected = std::sync::atomic::AtomicBool::new(false);
     let target = json!({"id":"42345678-1234-4234-8234-123456789abc",
         "context_id":"52345678-1234-4234-8234-123456789abc", "context_name":"team-dev",
@@ -698,7 +719,8 @@ fn main() {
                                 Some("incomplete-forced") => 11,
                                 _ => if manage { 2 } else { 1 },
                             };
-                            if upgrade_scene.swap(group, std::sync::atomic::Ordering::SeqCst) != group {
+                            let reload_allowed = upgrade_reload_allowed(*upgrade_held.lock().unwrap(), std::time::Instant::now());
+                            if reload_allowed && upgrade_scene.swap(group, std::sync::atomic::Ordering::SeqCst) != group {
                                 workspace.lock().unwrap().returning = manage;
                                 first_test_pending.store(true, std::sync::atomic::Ordering::SeqCst);
                                 running.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1021,11 +1043,14 @@ fn main() {
                                 let selector = setup_progress.clone();
                                 let resolver = invoke.resolver;
                                 let selected_phase = phase.to_owned();
+                                *upgrade_held.lock().unwrap() = Some(None);
+                                let held = upgrade_held.clone();
                                 tauri::async_runtime::spawn(async move {
                                     while selector.as_ref().and_then(|path| std::fs::read_to_string(path).ok()).as_deref() == Some(selected_phase.as_str()) {
                                         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                                     }
                                     resolver.resolve(status);
+                                    *held.lock().unwrap() = Some(Some(std::time::Instant::now()));
                                 });
                                 return true;
                             }
