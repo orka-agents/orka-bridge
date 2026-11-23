@@ -52,8 +52,9 @@ function Entry({ row, place }: { row: Row; place: string }) {
 }
 
 /** Sessions in this computer's workspace and on connected clusters, read only. Channel (gateway) Sessions aren't listed.
- * `onCheck` rereads Overview's places, which reads conversations again. */
-export function SessionList({ active, places, workspace, onCheck }: { active: boolean; places?: Places; workspace?: string; onCheck: () => void }) {
+ * `revision` changes once per Overview visit or check, after its first places read lands; each new revision reads
+ * conversations once. `onCheck` rereads Overview's places, which starts a new revision. */
+export function SessionList({ active, places, revision, workspace, onCheck }: { active: boolean; places?: Places; revision: number; workspace?: string; onCheck: () => void }) {
   const [sessions, setSessions] = useState<Sessions>();
   const [failed, setFailed] = useState(false);
   const request = useRef(0);
@@ -84,17 +85,17 @@ export function SessionList({ active, places, workspace, onCheck }: { active: bo
       if (queued.current) { queued.current = false; next(); }
     });
   }, []);
-  // Read once per places read: a revisit with cached places waits for the visit's own places read.
-  // A workspace starting or stopping changes `workspace` without a places read; it reads again too.
-  const readFor = useRef<Places>(undefined);
+  // Read once per revision: a revisit with cached places waits for the visit's own places read, and Send polling of
+  // places doesn't reread. A workspace starting or stopping changes `workspace` without a new revision; it reads again too.
+  const readFor = useRef<number>(undefined);
   const readWorkspace = useRef(workspace);
   useEffect(() => {
-    if (active && places && (places !== readFor.current || workspace !== readWorkspace.current)) {
-      readFor.current = places; readWorkspace.current = workspace; start();
+    if (active && places && (revision !== readFor.current || workspace !== readWorkspace.current)) {
+      readFor.current = revision; readWorkspace.current = workspace; start();
     }
-    // A hidden tab drops a queued read; the next places read starts a fresh one.
+    // A hidden tab drops a queued read; the next revision starts a fresh one.
     if (!active) queued.current = false;
-  }, [active, places, workspace, start]);
+  }, [active, places, revision, workspace, start]);
   useEffect(() => () => { request.current++; queued.current = false; readFor.current = undefined; }, []);
   const labels = placeLabels(places?.places ?? []).set(LOCAL, 'this computer');
   const read = (sessions?.places ?? []).filter(p => labels.has(p.key));
