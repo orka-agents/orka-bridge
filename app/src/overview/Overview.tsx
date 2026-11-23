@@ -107,6 +107,8 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       const seen = value?.places.find(p => p.key === target?.key);
       // Other places were not queried by this refresh, so keep their cached freshness.
       setPlaces(previous => value ?? (target && previous && { ...previous, places: previous.places.map(p => p.key === target.key ? { ...p, stale: true } : p) }) ?? previous);
+      // A navigation is a new Overview pass for Recent activity; the scoped polls that follow are not.
+      if (navigate && target) setActivityRevision(v => v + 1);
       // Scoped reads include other places' cached records; only this destination or Send can keep them polling.
       if (target && (seen?.agents.some(a => a.record?.verdict === 'running') || value?.unobserved.some(a => a.id === sendId && a.verdict === 'running'))) timer = setTimeout(() => { void list(); }, 500);
       // Presence supersedes the initial check; polling still preserves disclosure and focus choices.

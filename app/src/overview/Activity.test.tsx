@@ -216,6 +216,26 @@ test('without a successful read the section says neither "no runs" nor "connect 
   expect(await screen.findByText('No runs yet on connected clusters.')).toBeTruthy();
 });
 
+test('a failed reread of an empty list claims neither "no runs" nor "connect a cluster"', async () => {
+  let activity: unknown = { places: [read('one', [])] };
+  ipc(undefined);
+  mockIPC(command => command === 'overview_activity' ? activity : null);
+  const view = render(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={places} revision={next()} />);
+  expect(await screen.findByText('No runs yet on connected clusters.')).toBeTruthy();
+  activity = 'not activity';
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={places} revision={next()} />);
+  expect(await screen.findByText("Couldn't read recent activity just now. Showing what Bridge last saw.")).toBeTruthy();
+  expect(screen.queryByText('No runs yet on connected clusters.')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'In progress' }));
+  expect(screen.queryByText('Nothing is running or waiting.')).toBeNull();
+  activity = { places: [read('one', [], { state: 'disconnected', observedAt: null, connection: null })] };
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={places} revision={next()} />);
+  expect(await screen.findByText('Connect a cluster to see its runs here.')).toBeTruthy();
+  activity = 'not activity';
+  view.rerender(<RecentActivity onShowAgent={noShow} onCheck={noShow} active places={places} revision={next()} />);
+  await waitFor(() => expect(screen.queryByText('Connect a cluster to see its runs here.')).toBeNull());
+});
+
 test('leaving the tab drops a queued read', async () => {
   let release: () => void = () => undefined;
   const calls: string[] = [];

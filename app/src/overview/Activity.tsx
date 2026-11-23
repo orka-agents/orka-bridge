@@ -99,10 +99,10 @@ export function RecentActivity({ active, places, revision, onShowAgent, onCheck 
   const read = (activity?.places ?? []).filter(p => labels.has(p.key));
   const connected = read.filter(p => p.state !== 'disconnected' || p.entries.length);
   const rows = merge(connected, filter).slice(0, 50);
-  // "No runs" needs a read that succeeded or runs Bridge already holds; the connect prompt needs no connection at all.
-  // Otherwise the place notes say what failed and the section offers Check runs again.
-  const answered = read.some(p => p.entries.length > 0 || p.state === 'complete' || p.state === 'partial');
-  const linked = read.some(p => p.connection !== null);
+  // "No runs" needs the latest read to have succeeded with runs held or a place read; the connect prompt needs that read
+  // to show no connection at all. Otherwise the notes say what failed and the section offers Check runs again.
+  const answered = !failed && read.some(p => p.entries.length > 0 || p.state === 'complete' || p.state === 'partial');
+  const linked = failed || read.some(p => p.connection !== null);
   const note = (p: PlaceActivity) => {
     const name = labels.get(p.key);
     if (p.state === 'denied') return `Can't list runs on ${name}: this account isn't allowed to read Tasks.`;
