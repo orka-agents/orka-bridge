@@ -555,21 +555,22 @@ impl RemoteAccess {
         Ok(value)
     }
     /// Overview Sessions: one Session's transcript. The transcript is JSONL inside the reply, so
-    /// an escaped bearer such as `\u0073…` passes `item`'s check and is only decoded here: the
-    /// decoded messages are checked again.
+    /// an escaped bearer such as `\u0073…` passes `item`'s check and is only decoded here. Every
+    /// line is checked whole, before any message is cut: a bearer across the text limit would
+    /// otherwise survive as a prefix no check matches.
     pub(crate) async fn transcript(
         &self,
         name: &str,
     ) -> Result<crate::overview_sessions::ParsedTranscript, ClusterError> {
         let value = self.item(OrkaItem::Session, name).await?;
-        let read =
-            crate::overview_sessions::transcript(&value, &self.binding.watched_namespace, name)?;
-        let decoded =
-            serde_json::to_value(&read.messages).map_err(|_| ClusterError::Unavailable)?;
-        if echoed(&decoded, &self.bearer) || echoed(&decoded, &self.creator_bearer) {
+        let lines = value["transcript"].as_str().unwrap_or_default().lines();
+        if lines
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .any(|line| echoed(&line, &self.bearer) || echoed(&line, &self.creator_bearer))
+        {
             return Err(ClusterError::Unavailable);
         }
-        Ok(read)
+        crate::overview_sessions::transcript(&value, &self.binding.watched_namespace, name)
     }
     /// Overview Activity: completed and failed tool calls for one Task, oldest first.
     pub async fn tool_calls(

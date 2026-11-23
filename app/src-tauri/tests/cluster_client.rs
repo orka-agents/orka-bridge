@@ -3116,9 +3116,15 @@ async fn transcript_reads_only_the_named_session_on_a_connected_place() {
 
     // The transcript is JSONL inside the reply: an escaped bearer only appears once decoded, and
     // the decoded messages are checked too.
+    // A bearer across the text limit is checked whole, before the message is cut to a prefix.
+    let across = format!(
+        r#"{{"role":"user","content":"{}\u0073tatic-fixture"}}"#,
+        "a".repeat(bridge_engine::overview_sessions::MESSAGE_TEXT - 13)
+    );
     for line in [
         r#"{"role":"user","content":"token \u0073tatic-fixture"}"#,
         r#"{"role":"assistant","toolCalls":[{"name":"\u0073tatic-fixture"}]}"#,
+        across.as_str(),
     ] {
         assert!(!line.contains("static-fixture"));
         orka.items.lock().unwrap().insert(
@@ -3129,7 +3135,7 @@ async fn transcript_reads_only_the_named_session_on_a_connected_place() {
             bridge_engine::overview_sessions::read_transcript(&session, &key, "escaped").await,
         );
         assert_eq!(read["state"], "unavailable", "{line}");
-        assert!(!read.to_string().contains("static-fixture"));
+        assert!(!read.to_string().contains("static-fixtur"));
     }
 
     // A reply for another Session is refused.
