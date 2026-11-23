@@ -26,11 +26,54 @@ pub enum DevImageDiskFormat {
     Qcow2,
 }
 
+impl DevImagePlatform {
+    pub const fn state_compatibility_id(self) -> &'static str {
+        match self {
+            Self::MacOsArm64 => "engineering-43e73491",
+            Self::WindowsAmd64 => "engineering-43e73491",
+        }
+    }
+    pub const fn source_commit(self) -> &'static str {
+        match self {
+            Self::MacOsArm64 => "43e7349115b4c7e9b1865a4d5f0989a02726724c",
+            Self::WindowsAmd64 => "43e7349115b4c7e9b1865a4d5f0989a02726724c",
+        }
+    }
+}
+pub const STATE_COMPATIBILITY_ID: &str = if cfg!(windows) {
+    DevImagePlatform::WindowsAmd64.state_compatibility_id()
+} else {
+    DevImagePlatform::MacOsArm64.state_compatibility_id()
+};
+
 pub struct VerifiedDevImage {
     platform: DevImagePlatform,
+    pins: [FilePin; 4],
     files: [File; 4],
 }
 impl VerifiedDevImage {
+    pub(crate) fn try_clone(&self) -> Result<Self, DevImageError> {
+        let copy = || {
+            Ok::<_, io::Error>(Self {
+                platform: self.platform,
+                pins: self.pins,
+                files: [
+                    self.files[0].try_clone()?,
+                    self.files[1].try_clone()?,
+                    self.files[2].try_clone()?,
+                    self.files[3].try_clone()?,
+                ],
+            })
+        };
+        copy().map_err(|_| DevImageError)
+    }
+    pub(crate) fn declared(&self, slot: usize) -> (u64, String) {
+        let pin = &self.pins[slot];
+        (
+            pin.bytes,
+            pin.sha256.iter().map(|b| format!("{b:02x}")).collect(),
+        )
+    }
     pub fn platform(&self) -> DevImagePlatform {
         self.platform
     }
@@ -66,6 +109,7 @@ impl fmt::Debug for DevImageError {
 }
 impl std::error::Error for DevImageError {}
 
+#[derive(Clone, Copy)]
 struct FilePin {
     name: &'static str,
     bytes: u64,
@@ -85,7 +129,7 @@ const MAC_PINS: Pins = Pins {
         FilePin {
             name: "boot-assets.json",
             bytes: 12546,
-            sha256: digest(b"77518696b514004b78fd3390dd6103565b54c2f5b0bb01fad6d035e19ef97a22"),
+            sha256: digest(b"2aec683295a0358a9a5b41b45e45db4ef2776ed9526d75bc7bc0d9d1b7c00c13"),
         },
         FilePin {
             name: "os.kernel",
@@ -94,13 +138,13 @@ const MAC_PINS: Pins = Pins {
         },
         FilePin {
             name: "os.initrd",
-            bytes: 35046676,
-            sha256: digest(b"0b5b9f353e5acfa91a6e0ed2f0f28ee6d22ce48664d2a7b7b98d45f0439aa369"),
+            bytes: 35865741,
+            sha256: digest(b"375394b72b6aeea1e6cc70e00cfba99d6269d0936ece451657449da1899dad93"),
         },
         FilePin {
             name: "os.raw",
             bytes: 17179869184,
-            sha256: digest(b"b99c4e062151f1a8ad3fe68fdcc6d81ca4c550bbc5e3d4e64dfc7c405c81a075"),
+            sha256: digest(b"3d4379c1002febfb31b081b92805ffd542eca3ae5e9b65f007e20f1d8656b160"),
         },
     ],
 };
@@ -111,7 +155,7 @@ const WINDOWS_PINS: Pins = Pins {
         FilePin {
             name: "boot-assets.json",
             bytes: 12504,
-            sha256: digest(b"4c8007757f1814eab249c84fbdbc51cbd8736aa16938b006a063079adf2c583b"),
+            sha256: digest(b"9d25627b1b5e6bd7952f18f18e8850f531794c8474e7f76aff29affd9a0d8e20"),
         },
         FilePin {
             name: "os.kernel",
@@ -120,13 +164,13 @@ const WINDOWS_PINS: Pins = Pins {
         },
         FilePin {
             name: "os.initrd",
-            bytes: 16215285,
-            sha256: digest(b"dc96ba25f698e17d041d87046ddd33cde9a0c5757f4bf6c6356e44776fd8f2d2"),
+            bytes: 17000871,
+            sha256: digest(b"2a05265fb7e7407e389fc7518ded27f876545cd50d2e14d994b2c9e9cf3fd414"),
         },
         FilePin {
             name: "os.qcow2",
-            bytes: 1732706304,
-            sha256: digest(b"56f75f268bc1739ae80edd12a5a5e5c11241286d71608b145a0087e1c8a2eed0"),
+            bytes: 3765960704,
+            sha256: digest(b"226cfa6e3f7ffc3cde467a3c8e9498aeb1db2aeac68e60c3f27e8f086528850c"),
         },
     ],
 };
@@ -161,6 +205,28 @@ pub fn from_environment() -> Result<Option<VerifiedDevImage>, DevImageError> {
         |path| Dir::open_ambient_dir(path, cap_std::ambient_authority()),
     )
 }
+pub fn from_environment_cancellable(
+    closed: &tokio::sync::watch::Receiver<bool>,
+) -> Result<Option<VerifiedDevImage>, DevImageError> {
+    let Some(source) = std::env::var_os("BRIDGE_DEV_IMAGE_DIR") else {
+        return Ok(None);
+    };
+    if source.is_empty() {
+        return Err(DevImageError);
+    }
+    let pins = native_pins().ok_or(DevImageError)?;
+    let check = || {
+        if *closed.borrow() {
+            Err(io::ErrorKind::Interrupted.into())
+        } else {
+            Ok(())
+        }
+    };
+    check().map_err(|_| DevImageError)?;
+    let root = Dir::open_ambient_dir(Path::new(&source), cap_std::ambient_authority())
+        .map_err(|_| DevImageError)?;
+    verify_checked(&root, pins, &check).map(Some)
+}
 fn native_pins() -> Option<&'static Pins> {
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
@@ -178,6 +244,15 @@ fn native_pins() -> Option<&'static Pins> {
         None
     }
 }
+/// Total pinned bytes for this target's engineering image; no I/O or acquisition.
+pub(crate) fn pinned_image_bytes() -> Option<u64> {
+    image_bytes_for(native_pins()?)
+}
+fn image_bytes_for(pins: &Pins) -> Option<u64> {
+    pins.files
+        .iter()
+        .try_fold(0u64, |sum, pin| sum.checked_add(pin.bytes))
+}
 fn from_config(
     source: Option<OsString>,
     pins: Option<&Pins>,
@@ -194,20 +269,37 @@ fn from_config(
     verify(&root, pins).map(Some)
 }
 fn verify(root: &Dir, pins: &Pins) -> Result<VerifiedDevImage, DevImageError> {
+    verify_checked(root, pins, &|| Ok(()))
+}
+fn verify_checked(
+    root: &Dir,
+    pins: &Pins,
+    check: &impl Fn() -> io::Result<()>,
+) -> Result<VerifiedDevImage, DevImageError> {
     let result = (|| {
         Ok::<_, io::Error>(VerifiedDevImage {
             platform: pins.platform,
+            pins: pins.files,
             files: [
-                verified_file(root, &pins.files[0])?,
-                verified_file(root, &pins.files[1])?,
-                verified_file(root, &pins.files[2])?,
-                verified_file(root, &pins.files[3])?,
+                verified_file_checked(root, &pins.files[0], check)?,
+                verified_file_checked(root, &pins.files[1], check)?,
+                verified_file_checked(root, &pins.files[2], check)?,
+                verified_file_checked(root, &pins.files[3], check)?,
             ],
         })
     })();
     result.map_err(|_| DevImageError)
 }
+#[cfg(test)]
 fn verified_file(root: &Dir, pin: &FilePin) -> io::Result<File> {
+    verified_file_checked(root, pin, &|| Ok(()))
+}
+fn verified_file_checked(
+    root: &Dir,
+    pin: &FilePin,
+    check: &impl Fn() -> io::Result<()>,
+) -> io::Result<File> {
+    check()?;
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
     #[cfg(unix)]
@@ -229,6 +321,7 @@ fn verified_file(root: &Dir, pin: &FilePin) -> io::Result<File> {
     // One extra byte detects growth while bounding reads even with a writer.
     let mut limited = file.by_ref().take(pin.bytes + 1);
     loop {
+        check()?;
         let n = limited.read(&mut buffer)?;
         if n == 0 {
             break;
@@ -236,6 +329,7 @@ fn verified_file(root: &Dir, pin: &FilePin) -> io::Result<File> {
         bytes += n as u64;
         hash.update(&buffer[..n]);
     }
+    check()?;
     let actual: [u8; 32] = hash.finalize().into();
     if bytes != pin.bytes || actual != pin.sha256 {
         return Err(io::Error::from(io::ErrorKind::InvalidData));
@@ -246,6 +340,10 @@ fn verified_file(root: &Dir, pin: &FilePin) -> io::Result<File> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(debug_assertions)]
+    mod installation {
+        include!("dev_image_install_tests.rs");
+    }
     use super::*;
     use cap_std::{ambient_authority, fs::Dir};
     use sha2::{Digest, Sha256};
@@ -337,6 +435,63 @@ mod tests {
             file.read_to_end(&mut actual).unwrap();
             assert_eq!(&actual, expected);
         }
+    }
+
+    #[test]
+    fn verification_checks_cancellation_between_hash_reads() {
+        let mut fixture = Fixture::new(DevImagePlatform::WindowsAmd64);
+        fixture.data[3] = vec![42; 3 * 1024 * 1024];
+        fs::write(fixture.path(3), &fixture.data[3]).unwrap();
+        fixture.pins.files[3].bytes = fixture.data[3].len() as u64;
+        fixture.pins.files[3].sha256 = Sha256::digest(&fixture.data[3]).into();
+        let reads = std::cell::Cell::new(0);
+        let result = verified_file_checked(&fixture.root(), &fixture.pins.files[3], &|| {
+            reads.set(reads.get() + 1);
+            if reads.get() >= 3 {
+                Err(io::ErrorKind::Interrupted.into())
+            } else {
+                Ok(())
+            }
+        });
+        assert!(matches!(result, Err(error) if error.kind() == io::ErrorKind::Interrupted));
+        assert_eq!(reads.get(), 3);
+    }
+    #[test]
+    fn delivered_amd_model_image_and_arm_identity_stay_separate() {
+        assert_eq!(
+            WINDOWS_PINS.files[0].sha256,
+            digest(b"9d25627b1b5e6bd7952f18f18e8850f531794c8474e7f76aff29affd9a0d8e20")
+        );
+        assert_eq!(WINDOWS_PINS.files[2].bytes, 17000871);
+        assert_eq!(
+            WINDOWS_PINS.files[2].sha256,
+            digest(b"2a05265fb7e7407e389fc7518ded27f876545cd50d2e14d994b2c9e9cf3fd414")
+        );
+        assert_eq!(WINDOWS_PINS.files[3].bytes, 3765960704);
+        assert_eq!(
+            WINDOWS_PINS.files[3].sha256,
+            digest(b"226cfa6e3f7ffc3cde467a3c8e9498aeb1db2aeac68e60c3f27e8f086528850c")
+        );
+        assert_eq!(
+            DevImagePlatform::WindowsAmd64.source_commit(),
+            "43e7349115b4c7e9b1865a4d5f0989a02726724c"
+        );
+        assert_eq!(
+            DevImagePlatform::WindowsAmd64.state_compatibility_id(),
+            "engineering-43e73491"
+        );
+        assert_eq!(
+            DevImagePlatform::MacOsArm64.source_commit(),
+            "43e7349115b4c7e9b1865a4d5f0989a02726724c"
+        );
+        assert_eq!(
+            DevImagePlatform::MacOsArm64.state_compatibility_id(),
+            "engineering-43e73491"
+        );
+        assert_eq!(
+            MAC_PINS.files[0].sha256,
+            digest(b"2aec683295a0358a9a5b41b45e45db4ef2776ed9526d75bc7bc0d9d1b7c00c13")
+        );
     }
 
     // Reject-all stubs, incorrect handle rewinding, or identity selection break this.
@@ -570,6 +725,16 @@ mod tests {
         assert_eq!(
             native_pins().unwrap().platform,
             DevImagePlatform::WindowsAmd64
+        );
+    }
+
+    #[test]
+    fn pinned_image_bytes_sum_each_platform_pins() {
+        assert_eq!(image_bytes_for(&MAC_PINS), Some(17_259_906_383));
+        assert_eq!(image_bytes_for(&WINDOWS_PINS), Some(3_797_144_127));
+        assert_eq!(
+            pinned_image_bytes(),
+            native_pins().and_then(image_bytes_for)
         );
     }
 

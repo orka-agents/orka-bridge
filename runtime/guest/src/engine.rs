@@ -31,6 +31,9 @@ impl<R: Runner> Operations<R> {
     pub fn runner(&self) -> &R {
         &self.runner
     }
+    pub fn runner_mut(&mut self) -> &mut R {
+        &mut self.runner
+    }
     fn path(&self, id: Uuid) -> io::Result<PathBuf> {
         if id.is_nil() {
             return Err(invalid());
@@ -273,6 +276,30 @@ fn projection(action: &EngineActionWire, bytes: &[u8]) -> io::Result<Vec<u8>> {
             }
             Ok(format!("kmx {token}\n").into_bytes())
         }
+        // Exact status plus bounded JSON; the runner already refused bearer echoes.
+        EngineActionWire::Orka { .. } | EngineActionWire::OrkaChat { .. } => {
+            let reply: OrkaReply = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+            let bytes = serde_json::to_vec(&reply).map_err(|_| invalid())?;
+            if bytes.len() > MAX_FILE {
+                return Err(invalid());
+            }
+            Ok(bytes)
+        }
+        EngineActionWire::CleanupRunAgent { .. } => {
+            let reply: CleanupRunReply = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+            serde_json::to_vec(&reply).map_err(|_| invalid())
+        }
+        EngineActionWire::RunWorker { .. } => {
+            let reply: RunWorkerReply = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+            serde_json::to_vec(&reply).map_err(|_| invalid())
+        }
+        EngineActionWire::WorkspaceCatalog {} => {
+            let catalog: WorkspaceCatalog = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+            if !catalog.valid() {
+                return Err(invalid());
+            }
+            serde_json::to_vec(&catalog).map_err(|_| invalid())
+        }
         EngineActionWire::ListAgents { .. } => {
             let v: Value = serde_json::from_slice(bytes).map_err(|_| invalid())?;
             if !((v["kind"] == "List" && v["apiVersion"] == "v1")
@@ -308,6 +335,42 @@ fn projection(action: &EngineActionWire, bytes: &[u8]) -> io::Result<Vec<u8>> {
     }
 }
 pub struct Kmx;
+/// One per serving lease: Orka keeps its verified identity, bearer and forward across calls.
+pub struct GuestRunner {
+    pub kmx: Kmx,
+    pub orka: crate::orka::Orka,
+    pub chat: crate::orka::Orka,
+    pub catalog_provider: Option<(String, Option<ModelVendor>)>,
+}
+impl GuestRunner {
+    pub fn new(installation: Uuid) -> Self {
+        Self {
+            kmx: Kmx,
+            orka: crate::orka::Orka::new(installation),
+            chat: crate::orka::Orka::new_chat(installation),
+            catalog_provider: None,
+        }
+    }
+}
+impl Runner for GuestRunner {
+    fn execute(&mut self, action: &EngineActionWire) -> io::Result<EngineResult> {
+        match action {
+            EngineActionWire::Orka { request } => self.orka.execute(request),
+            EngineActionWire::OrkaChat { request } => self.chat.execute_chat(request),
+            EngineActionWire::RunWorker { name, uid } => self.orka.run_worker(name, uid),
+            EngineActionWire::CleanupRunAgent { uid } => self.orka.cleanup_run_agent(uid),
+            EngineActionWire::WorkspaceCatalog {} => {
+                let (provider, vendor) = self.catalog_provider.take().ok_or_else(invalid)?;
+                Ok(EngineResult {
+                    exit: 0,
+                    stdout: serde_json::to_vec(&self.orka.catalog(&provider, vendor))?,
+                    has_diagnostics: false,
+                })
+            }
+            _ => self.kmx.execute(action),
+        }
+    }
+}
 pub fn argv(action: &EngineActionWire) -> io::Result<Vec<String>> {
     validate_action(action).map_err(|_| invalid())?;
     Ok(match action {
@@ -326,16 +389,18 @@ pub fn argv(action: &EngineActionWire) -> io::Result<Vec<String>> {
         .into_iter()
         .map(str::to_owned)
         .collect(),
+        EngineActionWire::Orka { .. }
+        | EngineActionWire::OrkaChat { .. }
+        | EngineActionWire::RunWorker { .. }
+        | EngineActionWire::CleanupRunAgent { .. }
+        | EngineActionWire::WorkspaceCatalog {} => return Err(invalid()),
     })
 }
-impl Runner for Kmx {
-    fn execute(&mut self, action: &EngineActionWire) -> io::Result<EngineResult> {
-        use std::{
-            os::unix::process::CommandExt,
-            process::{Command, Stdio},
-            time::Duration,
-        };
-        let child = Command::new("/usr/local/bin/kmx")
+impl Kmx {
+    fn command(action: &EngineActionWire) -> io::Result<std::process::Command> {
+        use std::{os::unix::process::CommandExt, process::Stdio};
+        let mut command = std::process::Command::new("/usr/local/bin/kmx");
+        command
             .args(argv(action)?)
             .env_clear()
             .env("PATH", "/usr/local/bin:/usr/bin:/bin")
@@ -346,55 +411,94 @@ impl Runner for Kmx {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .process_group(0)
-            .spawn()?;
-        collect(child, Duration::from_secs(60))
+            .process_group(0);
+        if matches!(action, EngineActionWire::ListAgents { .. }) {
+            command
+                .env("KUBECONFIG", "/var/lib/bridge/kubeconfig")
+                .env("KMX_HOME", "/var/lib/bridge/kmx");
+        }
+        Ok(command)
+    }
+}
+impl Runner for Kmx {
+    fn execute(&mut self, action: &EngineActionWire) -> io::Result<EngineResult> {
+        let child = Self::command(action)?.spawn()?;
+        collect(child, std::time::Duration::from_secs(60))
+    }
+}
+pub(crate) struct Collected {
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub elapsed_ms: u64,
+    pub exit_code: Option<i32>,
+    pub error: Option<io::Error>,
+}
+// Preserve the ordinary engine contract; only model diagnostics consume partial bytes.
+pub(crate) fn collect(
+    child: std::process::Child,
+    timeout: std::time::Duration,
+) -> io::Result<EngineResult> {
+    let out = collect_diagnostic(child, timeout);
+    if let Some(error) = out.error {
+        return Err(if error.kind() == io::ErrorKind::FileTooLarge {
+            invalid()
+        } else {
+            error
+        });
+    }
+    Ok(EngineResult {
+        exit: out.exit_code.unwrap_or(-1),
+        stdout: out.stdout,
+        has_diagnostics: !out.stderr.is_empty(),
+    })
+}
+// Nonblocking reads retain partial output without waiting for pipe EOF on timeout.
+fn drain(pipe: &mut impl io::Read, bytes: &mut Vec<u8>) -> io::Result<bool> {
+    let mut buffer = [0; 8192];
+    loop {
+        let remaining = (MAX_FILE + 1).saturating_sub(bytes.len()).min(buffer.len());
+        if remaining == 0 {
+            return Err(io::ErrorKind::FileTooLarge.into());
+        }
+        match pipe.read(&mut buffer[..remaining]) {
+            Ok(0) => return Ok(true),
+            Ok(n) => bytes.extend_from_slice(&buffer[..n]),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(false),
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
     }
 }
 // Caller supplies a newly-owned, unreaped child in its own process group.
-fn collect(
+pub(crate) fn collect_diagnostic(
     mut child: std::process::Child,
     timeout: std::time::Duration,
-) -> io::Result<EngineResult> {
-    use std::{io::Read, thread, time::Instant};
-    let (tx, rx) = std::sync::mpsc::channel();
-    for (tag, mut pipe) in [
-        (
-            false,
-            Box::new(child.stdout.take().unwrap()) as Box<dyn Read + Send>,
-        ),
-        (
-            true,
-            Box::new(child.stderr.take().unwrap()) as Box<dyn Read + Send>,
-        ),
-    ] {
-        let tx = tx.clone();
-        thread::spawn(move || {
-            let mut b = Vec::new();
-            let r = pipe
-                .by_ref()
-                .take((MAX_FILE + 1) as u64)
-                .read_to_end(&mut b);
-            let _ = tx.send((tag, r.map(|_| b)));
-        });
-    }
-    drop(tx);
-    let deadline = Instant::now() + timeout;
-    let mut out = None;
-    let mut diagnostics = None;
-    let result = (|| {
-        loop {
-            while let Ok((stderr, bytes)) = rx.try_recv() {
-                let b = bytes?;
-                if b.len() > MAX_FILE {
-                    return Err(invalid());
-                }
-                if stderr {
-                    diagnostics = Some(!b.is_empty())
-                } else {
-                    out = Some(b)
-                }
+) -> Collected {
+    use std::{os::fd::AsRawFd, thread, time::Instant};
+    let start = Instant::now();
+    let mut out = Collected {
+        stdout: Vec::new(),
+        stderr: Vec::new(),
+        elapsed_ms: 0,
+        exit_code: None,
+        error: None,
+    };
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let mut nonblocking = false;
+    out.error = (|| {
+        for fd in [stdout.as_raw_fd(), stderr.as_raw_fd()] {
+            // SAFETY: both descriptors are live owned pipes; flags do not change ownership.
+            let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+            if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
+            {
+                return Err(io::Error::last_os_error());
             }
+        }
+        nonblocking = true;
+        loop {
+            let stdout_done = drain(&mut stdout, &mut out.stdout)?;
+            let stderr_done = drain(&mut stderr, &mut out.stderr)?;
             let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
             // SAFETY: child is ours and never reaped until group cleanup; status is writable.
             if unsafe {
@@ -408,32 +512,37 @@ fn collect(
             {
                 return Err(io::Error::last_os_error());
             }
-            if unsafe { status.si_pid() } != 0 {
-                if let Some(has_diagnostics) = diagnostics {
-                    if let Some(stdout) = out.take() {
-                        return Ok(EngineResult {
-                            exit: 0,
-                            stdout,
-                            has_diagnostics,
-                        });
-                    }
-                }
+            if unsafe { status.si_pid() } != 0 && stdout_done && stderr_done {
+                return Ok(());
             }
-            if Instant::now() >= deadline {
-                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            if start.elapsed() >= timeout {
+                return Err(io::ErrorKind::TimedOut.into());
             }
             thread::sleep(std::time::Duration::from_millis(5));
         }
-    })();
+    })()
+    .err();
     // The owned group is still unreaped: its ID cannot be recycled before this kill.
     unsafe {
         libc::kill(-(child.id() as i32), libc::SIGKILL);
     }
-    let status = child.wait()?;
-    result.map(|mut r| {
-        r.exit = status.code().unwrap_or(-1);
-        r
-    })
+    match child.wait() {
+        Ok(status) => out.exit_code = status.code(),
+        Err(e) => out.error = Some(e),
+    }
+    if nonblocking {
+        // Drain bytes already in the pipes after kill/reap; never wait for escaped writers.
+        for result in [
+            drain(&mut stdout, &mut out.stdout),
+            drain(&mut stderr, &mut out.stderr),
+        ] {
+            if out.error.is_none() {
+                out.error = result.err();
+            }
+        }
+    }
+    out.elapsed_ms = start.elapsed().as_millis().min(u64::MAX as u128) as u64;
+    out
 }
 
 #[cfg(test)]
@@ -455,6 +564,75 @@ mod driver_tests {
             .process_group(0)
             .spawn()
             .unwrap()
+    }
+    #[test]
+    fn list_agents_uses_bootstrap_state_and_version_keeps_its_environment() {
+        let list = EngineActionWire::ListAgents {
+            context: "kind-bridge-fixture".into(),
+            namespace: "orka-system".into(),
+        };
+        for (action, kubeconfig, kmx_home) in [
+            (
+                list,
+                "/var/lib/bridge/kubeconfig",
+                Some("/var/lib/bridge/kmx"),
+            ),
+            (EngineActionWire::Version {}, "/root/.kube/config", None),
+        ] {
+            let command = Kmx::command(&action).unwrap();
+            assert_eq!(command.get_program(), "/usr/local/bin/kmx");
+            assert_eq!(command.get_current_dir(), Some(std::path::Path::new("/")));
+            let mut expected = std::collections::BTreeMap::from([
+                ("HOME", "/root"),
+                ("KUBECONFIG", kubeconfig),
+                ("LC_ALL", "C"),
+                ("PATH", "/usr/local/bin:/usr/bin:/bin"),
+            ]);
+            if let Some(home) = kmx_home {
+                expected.insert("KMX_HOME", home);
+            }
+            let actual: std::collections::BTreeMap<_, _> = command
+                .get_envs()
+                .map(|(key, value)| (key.to_str().unwrap(), value.unwrap().to_str().unwrap()))
+                .collect();
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[test]
+    fn worker_result_projection_refuses_pod_details_or_invalid_counts() {
+        let action: EngineActionWire =
+            serde_json::from_value(serde_json::json!({"type":"runWorker",
+            "name":"bridge-task-0123456789abcdef0123456789abcdef","uid":"ack-uid"}))
+            .unwrap();
+        assert_eq!(
+            projection(&action, br#"{"finished":true,"pods":0}"#).unwrap(),
+            br#"{"finished":true,"pods":0}"#
+        );
+        for raw in [
+            br#"{"finished":true,"pods":0,"items":[{"spec":{"secret":"private"}}]}"#.as_slice(),
+            br#"{"finished":true,"pods":-1}"#,
+            br#"{"pods":0}"#,
+        ] {
+            assert!(projection(&action, raw).is_err());
+        }
+    }
+    #[test]
+    fn cleanup_projection_retains_only_typed_removed_boolean() {
+        let action: EngineActionWire = serde_json::from_value(
+            serde_json::json!({"type":"cleanupRunAgent","uid":"recorded-uid"}),
+        )
+        .unwrap();
+        for raw in [br#"{"removed":true}"#.as_slice(), br#"{"removed":false}"#] {
+            assert_eq!(projection(&action, raw).unwrap(), raw);
+        }
+        for raw in [
+            br#"{}"#.as_slice(),
+            br#"{"removed":1}"#,
+            br#"{"removed":true,"items":[]}"#,
+        ] {
+            assert!(projection(&action, raw).is_err());
+        }
     }
     #[test]
     fn drains_both_pipes_and_preserves_nonzero_exit() {

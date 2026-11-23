@@ -73,7 +73,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["inputSchemaVersion", "inputIdentity", "canonicalLockSha256", "versionPolicySha256", "orka", "kmxProfileSha256", "kind", "kubernetes", "vekil", "tools"],
       "properties": {
-        "inputSchemaVersion": {"const": "bridge-guest-inputs/v1"},
+        "inputSchemaVersion": {"enum": ["bridge-guest-inputs/v1", "bridge-guest-inputs/v2"]},
         "inputIdentity": {"$ref": "#/$defs/hex"},
         "canonicalLockSha256": {"$ref": "#/$defs/hex"},
         "versionPolicySha256": {"$ref": "#/$defs/hex"},

@@ -9,6 +9,23 @@ import sys
 GuestLock = dict[str, object]
 VERSIONS = json.loads(Path(__file__).with_name("versions.json").read_text())
 ROLES = {"kind-node", "controller", "ai-worker", "general-worker", "publisher", "session-loader", "vekil", "telegram", "teams"}
+MODEL_ROLES = ("vekil", "model-launcher")
+# The selected kmx copilot-v1 profile consumes these platform manifests with Never.
+# Its launcher is independent of the session-loader image in the core manifest.
+MODEL_IMAGES = {
+    "503b3ffcbdcc0a966e3b6de6235a8a98077b989e": {
+        "vekil": {
+            "repository": "ghcr.io/sozercan/vekil",
+            "amd64": "sha256:b885b08ca26abb6362fee830cc683c255ec740da28ffcb48b711232ffebf2040",
+            "arm64": "sha256:9c1788a001e9abac79286d5cb5ccf43cbce67fe9391f68fefc835cfce0947948",
+        },
+        "model-launcher": {
+            "repository": "docker.io/library/busybox",
+            "amd64": "sha256:5624bb6777cf469b1fb50ae3f981b15d2715ee2fffaf20b9998cfb7843726835",
+            "arm64": "sha256:a4b7bbbb14a7e50bec3f6cbc4e2560c9b6792a7ae7062637bdfc25793817d4ff",
+        },
+    },
+}
 HEX = r"[0-9a-f]{64}"
 DIGEST = r"sha256:" + HEX
 NAME = r"[a-z0-9][a-z0-9+.-]{0,95}"
@@ -110,6 +127,24 @@ def input_identity(lock: dict) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def model_images(lock):
+    """Image-owned closure, separate from kmx's unchanged core install manifest."""
+    if lock["schemaVersion"] == "bridge-guest-inputs/v1":
+        return []
+    require(lock["schemaVersion"] == "bridge-guest-inputs/v2", "unsupported input schema")
+    components = {c["name"]: c for c in lock["components"]}
+    require(set(MODEL_ROLES) <= components.keys(), "model image closure is incomplete")
+    if lock["orka"]["mode"] == "source":
+        selected = MODEL_IMAGES.get(VERSIONS["sourceOfflineProfile"]["kmxSourceCommit"])
+        if selected is None:
+            raise ValueError("model image profile is unavailable")
+        for name in MODEL_ROLES:
+            pin, actual = selected[name], components[name]
+            require(actual["repository"] == pin["repository"]
+                    and actual["manifestDigest"] == pin.get(lock["architecture"]), "model image profile pins differ")
+    return [components[name] for name in MODEL_ROLES]
+
+
 def validate_source_offline(lock, manifest=None):
     """The selected source bundle must match reviewed pins, not its own assertions."""
     if lock['orka']['mode'] != 'source':
@@ -125,9 +160,10 @@ def validate_source_offline(lock, manifest=None):
                 and manifest['kmx']['revision'] == selected['kmxSourceCommit'], 'source offline profile or kmx revision differs')
 
 
-def validate_lock(lock: dict, *, production: bool) -> None:
+def validate_lock(lock: dict, *, production: bool, source_previews=None) -> None:
     shape(lock, ("schemaVersion", "architecture", "sourceCommit", "orka", "components", "packages", "tools", "nodeLocalRef", "kmxProfileSha256"))
-    require(lock["schemaVersion"] == "bridge-guest-inputs/v1", "unsupported input schema")
+    require(lock["schemaVersion"] in ("bridge-guest-inputs/v1", "bridge-guest-inputs/v2"), "unsupported input schema")
+    roles = ROLES if lock["schemaVersion"] == "bridge-guest-inputs/v1" else ROLES | {"model-launcher"}
     require(lock["architecture"] in ("amd64", "arm64"), "unsupported architecture")
     require(matches(lock["sourceCommit"], r"[0-9a-f]{40}"), "invalid source commit")
     orka = lock["orka"]
@@ -137,7 +173,7 @@ def validate_lock(lock: dict, *, production: bool) -> None:
     profile = lock["kmxProfileSha256"]
     require(profile is None or matches(profile, HEX), "invalid kmx profile checksum")
     if orka["mode"] == "source":
-        require(not production, "production requires an Orka release including #833")
+        require(not production or source_previews is not None, "production requires an Orka release including #833")
         require(lock["sourceCommit"] == orka["identity"] == VERSIONS["orkaSource"], "source identity mismatch")
     else:
         require(orka["mode"] == "release" and isinstance(orka["identity"], str), "unsupported Orka mode")
@@ -150,7 +186,7 @@ def validate_lock(lock: dict, *, production: bool) -> None:
     names = set()
     for item in components:
         shape(item, ("name", "repository", "manifestDigest", "configDigest", "archive", "archiveSha256"), ("indexDigest", "indexPath"))
-        require(item["name"] in ROLES and item["name"] not in names, "invalid or duplicate component")
+        require(item["name"] in roles and item["name"] not in names, "invalid or duplicate component")
         names.add(item["name"])
         require(matches(item["repository"], REPOSITORY), "repository must be explicit and untagged")
         for field in ("manifestDigest", "configDigest"):
@@ -161,7 +197,8 @@ def validate_lock(lock: dict, *, production: bool) -> None:
         if "indexDigest" in item:
             require(matches(item["indexDigest"], DIGEST), "invalid index digest")
             relative_path(item["indexPath"])
-    require(names == ROLES, "required component closure is incomplete")
+    require(names == roles, "required component closure is incomplete")
+    model_images(lock)
     node = next(c for c in components if c["name"] == "kind-node")
     expected = "kindest/node:bridge-" + node["manifestDigest"][7:23] + "-" + lock["architecture"]
     require(lock["nodeLocalRef"] == expected, "node local tag must be derived from its platform digest")
@@ -172,6 +209,11 @@ def validate_lock(lock: dict, *, production: bool) -> None:
     bases = [p for p in lock["packages"] if p["name"] == "debian-base"]
     require(len(bases) == 1 and bases[0]["version"] == VERSIONS["debianBase"], "Debian base version mismatch")
     if orka["mode"] == "source" and "kmx-offline-manifest" in tools:
+        validate_source_offline(lock)
+    if orka["mode"] == "source" and production:
+        require((source_previews or {}).get(orka["identity"], {}).get(lock["architecture"]) == input_identity(lock),
+                "source preview input identity not approved")
+        # Preview publication is narrower than source development, not release admission.
         validate_source_offline(lock)
     if orka["mode"] == "release":
         require(approved.get(lock["architecture"]) == input_identity(lock), "release profile input identity mismatch")

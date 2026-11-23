@@ -1,0 +1,237 @@
+//! Native-only Apple backend; not registered in Setup or Run.
+use super::{
+    apple::{AppleHelperOwner, HelperError, SHUTDOWN_FALLBACK},
+    apple_channel::GuestSlot,
+    apple_input::{configuration_file, helper_path},
+    image_types::{ImageTarget, LaunchMode},
+    types::*,
+};
+use bridge_runtime_protocol::{Uuid, STATE_BYTES};
+use std::{
+    fs::{self, File, OpenOptions},
+    os::unix::fs::OpenOptionsExt,
+    path::PathBuf,
+    process::Command,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
+pub struct AppleBackend {
+    resource_root: PathBuf,
+    owner: Option<Arc<Mutex<AppleHelperOwner>>>,
+    ownership: Option<Arc<File>>,
+    create_efi: bool,
+    current: Option<AppleBackendHandle>,
+    poisoned: bool,
+}
+pub(crate) struct AppleBackendHandle {
+    id: Uuid,
+    pub(crate) guest: GuestSlot,
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(crate) owner: Arc<Mutex<AppleHelperOwner>>,
+}
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+impl AppleBackendHandle {
+    pub(crate) fn prepare_shutdown(&self, end: Instant) -> Result<(), RuntimeError> {
+        self.guest.prepare_shutdown(end);
+        self.owner
+            .lock()
+            .unwrap()
+            .prepare_shutdown(end)
+            .map_err(helper_error)
+    }
+}
+impl AppleBackend {
+    pub fn new(resource_root: PathBuf) -> Self {
+        Self {
+            resource_root,
+            owner: None,
+            ownership: None,
+            create_efi: false,
+            current: None,
+            poisoned: false,
+        }
+    }
+    fn validate(&self, spec: &LaunchSpec) -> Result<(), RuntimeError> {
+        if self.poisoned {
+            return Err(RuntimeError::RetainedState);
+        }
+        if (!cfg!(all(target_os = "macos", target_arch = "aarch64")) && !cfg!(test))
+            || spec.backend != BackendKind::Apple
+            || spec.image.target() != ImageTarget::MacosArm64
+            || spec.image.launch_mode() != LaunchMode::Uefi
+            || spec.image.os_format() != "raw"
+        {
+            return Err(RuntimeError::Unavailable);
+        }
+        if spec.state_bytes != STATE_BYTES
+            || spec.state_path != spec.root.join("state.disk")
+            || self
+                .ownership
+                .as_ref()
+                .is_some_and(|owner| !Arc::ptr_eq(owner, &spec.ownership))
+        {
+            return Err(RuntimeError::RetainedState);
+        }
+        Ok(())
+    }
+    fn selected(&self, handle: &BackendHandle) -> Result<&AppleBackendHandle, RuntimeError> {
+        let handle = handle
+            .get::<AppleBackendHandle>()
+            .ok_or(RuntimeError::Unavailable)?;
+        if self
+            .current
+            .as_ref()
+            .is_none_or(|current| current.id != handle.id)
+        {
+            return Err(RuntimeError::Unavailable);
+        }
+        Ok(self.current.as_ref().unwrap())
+    }
+}
+fn helper_error(error: HelperError) -> RuntimeError {
+    match error {
+        HelperError::Busy => RuntimeError::Busy,
+        HelperError::ExitUnobserved => {
+            RuntimeError::StopUnconfirmed("Apple helper exit unobserved".into())
+        }
+        HelperError::Io(kind) => RuntimeError::Io(kind.into()),
+        _ => RuntimeError::RetainedState,
+    }
+}
+impl VmBackend for AppleBackend {
+    fn create_state(&mut self, spec: &LaunchSpec) -> Result<(), RuntimeError> {
+        self.validate(spec)?;
+        if self.ownership.is_some() || fs::symlink_metadata(spec.root.join("efi.vars")).is_ok() {
+            return Err(RuntimeError::RetainedState);
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&spec.state_path)?;
+        if !file.metadata()?.is_file() {
+            return Err(RuntimeError::RetainedState);
+        }
+        file.set_len(STATE_BYTES)?;
+        file.sync_all()?;
+        self.ownership = Some(spec.ownership.clone());
+        self.create_efi = true;
+        Ok(())
+    }
+    fn start(&mut self, spec: &LaunchSpec) -> Result<BackendHandle, RuntimeError> {
+        self.validate(spec)?;
+        if self.current.is_some() {
+            return Err(RuntimeError::Busy);
+        }
+        if self.owner.is_none() {
+            self.ownership = Some(spec.ownership.clone());
+            self.owner = Some(Arc::new(Mutex::new(AppleHelperOwner::new(
+                spec.ownership.clone(),
+            ))));
+        }
+        // The one live preparation permission is consumed before ANY launch attempt.
+        let create_efi = std::mem::take(&mut self.create_efi);
+        let efi = spec.root.join("efi.vars");
+        if create_efi {
+            if fs::symlink_metadata(&efi).is_ok() {
+                return Err(RuntimeError::RetainedState);
+            }
+        } else {
+            let metadata = fs::symlink_metadata(&efi)?;
+            if !metadata.is_file() || metadata.len() == 0 {
+                return Err(RuntimeError::RetainedState);
+            }
+        }
+        let file = configuration_file(spec, create_efi)?;
+        let socket = self
+            .owner
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .start(Command::new(helper_path(&self.resource_root)?), file)
+            .map_err(helper_error)?;
+        let guest = GuestSlot::new(socket);
+        let id = Uuid::new_v4();
+        self.current = Some(AppleBackendHandle {
+            id,
+            guest: guest.clone(),
+            owner: self.owner.as_ref().unwrap().clone(),
+        });
+        Ok(BackendHandle::new(AppleBackendHandle {
+            id,
+            guest,
+            owner: self.owner.as_ref().unwrap().clone(),
+        }))
+    }
+    fn stop(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
+        let guest = self.selected(handle)?.guest.clone();
+        guest.seal();
+        let end = guest
+            .shutdown_deadline()
+            .map(|grace| grace + SHUTDOWN_FALLBACK);
+        let stopped = {
+            let mut owner = self.owner.as_ref().unwrap().lock().unwrap();
+            if let Some(end) = end {
+                owner.bound_stop(end);
+            }
+            owner.stop().map_err(helper_error)
+        };
+        let revoke_end = Instant::now() + Duration::from_secs(10);
+        let revoked = guest
+            .revoke(end.map_or(revoke_end, |end| end.min(revoke_end)))
+            .map_err(RuntimeError::Io);
+        if stopped.is_err() || revoked.is_err() {
+            self.poisoned = true;
+        }
+        stopped?;
+        revoked?;
+        self.current = None;
+        Ok(())
+    }
+    fn pause(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
+        self.selected(handle)?;
+        if self.poisoned {
+            return Err(RuntimeError::RetainedState);
+        }
+        let result = self
+            .owner
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .pause()
+            .map_err(helper_error);
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = self.stop(handle); // Revoke even when poisoned cleanup cannot confirm exit.
+                Err(error)
+            }
+        }
+    }
+    fn resume(&mut self, handle: &BackendHandle) -> Result<(), RuntimeError> {
+        self.selected(handle)?;
+        if self.poisoned {
+            return Err(RuntimeError::RetainedState);
+        }
+        let result = self
+            .owner
+            .as_ref()
+            .unwrap()
+            .lock()
+            .unwrap()
+            .resume()
+            .map_err(helper_error);
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                let _ = self.stop(handle);
+                Err(error)
+            }
+        }
+    }
+}
+#[cfg(test)]
+#[path = "apple_backend_tests.rs"]
+pub(crate) mod tests;

@@ -1,5 +1,6 @@
 #[cfg(debug_assertions)]
 pub mod process;
+pub mod run;
 pub mod types;
 pub mod vm;
 
@@ -19,6 +20,10 @@ pub struct EngineState {
     closed: watch::Sender<bool>,
 }
 impl EngineState {
+    pub fn with_transport(transport: Arc<dyn EngineTransport>) -> Self {
+        let (closed, _) = watch::channel(false);
+        Self { transport, closed }
+    }
     pub fn configured() -> Self {
         let (closed, _receiver) = watch::channel(false);
         #[cfg(debug_assertions)]
@@ -37,6 +42,9 @@ impl EngineState {
         self.closed.send_replace(true);
     }
     pub async fn call(&self, request: EngineRequest) -> Result<EngineReply, EngineError> {
+        if *self.closed.borrow() {
+            return Err(EngineError::new(ErrorKind::Execution));
+        }
         let action = request.action.clone();
         let output = self.transport.execute(request).await?;
         decode(&action, output)

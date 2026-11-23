@@ -6,10 +6,13 @@ pub(crate) async fn run<T>(operation: impl FnOnce() -> T) -> T {
     let _guard = GATE.lock().await;
     operation()
 }
+// Native backend operations run on an owned blocking worker, never an executor.
+pub(crate) fn blocking_guard() -> tokio::sync::MutexGuard<'static, ()> {
+    GATE.blocking_lock()
+}
 #[cfg(unix)]
 pub(crate) fn run_blocking<T>(operation: impl FnOnce() -> T) -> T {
-    // Native backend operations run on the owned blocking worker, not an executor.
-    let _guard = GATE.blocking_lock();
+    let _guard = blocking_guard();
     operation()
 }
 #[cfg(all(test, unix))]
