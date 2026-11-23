@@ -49,7 +49,8 @@ class SourcesTests(unittest.TestCase):
         rows = {(r["use"], r["name"]): r for r in sources["files"]}
         self.assertEqual(VERSIONS["debianBase"], rows["package", "debian-base"]["version"])
         self.assertEqual(VERSIONS["kind"], rows["tool", "kind"]["version"])
-        self.assertIn(VERSIONS["sourceOfflineProfile"]["kmxSourceCommit"], rows["chart-fixture", "kmx-offline-7916-install"]["url"])
+        (fixture,) = [r for r in sources["files"] if r["use"] == "chart-fixture"]
+        self.assertIn("/" + VERSIONS["sourceOfflineProfile"]["kmxSourceCommit"] + "/", fixture["url"])
 
     def test_sources_refuse_unpinned_or_escaping_rows(self):
         sources, _ = synthetic_sources()

@@ -94,12 +94,12 @@
     },
     {
       "use": "chart-fixture",
-      "name": "kmx-offline-7916-install",
-      "version": "fc811336bfdf4d972525eb78f1cba8a7b7e45b19",
-      "path": "kmx/offline-7916-install.json",
-      "url": "https://raw.githubusercontent.com/kaimahi-agents/kaimahi/fc811336bfdf4d972525eb78f1cba8a7b7e45b19/internal/kmx/app/testdata/offline-7916-install.json",
-      "bytes": 371957,
-      "sha256": "a2c42303f21adbd5d1f40f596700f2805aa84698004e19383bbcde42993539eb"
+      "name": "kmx-offline-3cb1-install",
+      "version": "503b3ffcbdcc0a966e3b6de6235a8a98077b989e",
+      "path": "kmx/offline-3cb1-install.json",
+      "url": "https://raw.githubusercontent.com/kaimahi-agents/kaimahi/503b3ffcbdcc0a966e3b6de6235a8a98077b989e/internal/kmx/app/testdata/offline-3cb1-install.json",
+      "bytes": 388566,
+      "sha256": "441d2b19a8bbec58c080b92adfa9eaa3daad64655c71acb978e83a83e689dc81"
     }
   ]
 }
