@@ -60,6 +60,13 @@ impl Wire {
         if let Some(hook) = self.before_upgrade.lock().unwrap().take() {
             hook();
         }
+        // The fixture's 5 s read bound is for one HTTP request. On a loaded runner the
+        // client can pause longer than that between two requests on one forward, which a
+        // kubelet's idle timeout (minutes to hours) would not end; keep only a backstop
+        // against a stream left open by a test.
+        stream
+            .set_read_timeout(Some(Duration::from_secs(120)))
+            .unwrap();
         write!(stream, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Accept: {accept}\r\nSec-WebSocket-Protocol: v4.channel.k8s.io\r\n\r\n").unwrap();
         let mut ws = WebSocket::from_raw_socket(stream, Role::Server, None);
         self.active.fetch_add(1, Ordering::SeqCst);
@@ -823,6 +830,42 @@ async fn binding_changed_zero_product_post() {
     );
     assert_eq!(api.wire.posts(), 0);
     runner.close().await;
+}
+#[test]
+fn forward_stays_open_while_the_client_is_idle() {
+    use std::io::Read;
+    let wire = Wire::default();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (server, _) = listener.accept().unwrap();
+    // ApiFixture bounds reading each HTTP request; shrink that bound so idling past it is quick.
+    server
+        .set_read_timeout(Some(Duration::from_millis(50)))
+        .unwrap();
+    let upgrade = "GET /api/v1/namespaces/control/pods/ready/portforward?ports=8080 HTTP/1.1\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+    std::thread::scope(|scope| {
+        scope.spawn(|| wire.serve(server, upgrade));
+        let mut head = Vec::new();
+        let mut byte = [0];
+        while !head.ends_with(b"\r\n\r\n") {
+            client.read_exact(&mut byte).unwrap();
+            head.push(byte[0]);
+        }
+        assert!(head.starts_with(b"HTTP/1.1 101"));
+        let mut ws = WebSocket::from_raw_socket(client, Role::Client, None);
+        for _ in 0..2 {
+            ws.read().unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(300));
+        let mut request = vec![0];
+        request.extend_from_slice(b"GET /api/v1/agents?namespace=agents HTTP/1.1\r\nAuthorization: Bearer creator-fixture\r\n\r\n");
+        ws.send(Message::Binary(request.into())).unwrap();
+        let Message::Binary(reply) = ws.read().expect("the idle forward was dropped") else {
+            panic!("expected a binary reply frame");
+        };
+        assert!(reply[1..].starts_with(b"HTTP/1.1 "));
+        drop(ws);
+    });
 }
 #[tokio::test]
 async fn broken_forward_unknown_no_replay() {
