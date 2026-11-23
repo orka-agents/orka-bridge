@@ -329,12 +329,13 @@ boot. The builder installs from the current trixie mirror on a digest-pinned bas
 and is rebuilt when its cache entry expires, so it is not a durable input; each
 run uploads its image ID and package list with the receipts, and
 `ci_inputs.py lock` records its tool hashes and exact versions. The base
-case stages no application archives, so its lock has a null kmx profile and
-`localhost/bridge-ci-unused/*` component rows that name no files; anything that
-reads one fails on the missing file. These are test inputs, not a release
-candidate. To reproduce the job on a Linux AMD64 host with KVM and Docker, run
-the workflow's commands in order with `WORK` set to a new directory. Skip the
-runner preparation step: it deletes preinstalled toolchains.
+case stages no application archives, so its lock uses the legacy
+`bridge-guest-inputs/v1` nine-role closure with no model images, a null kmx
+profile and `localhost/bridge-ci-unused/*` component rows that name no files;
+anything that reads one fails on the missing file. These are test inputs, not a
+release candidate. To reproduce the job on a Linux AMD64 host with KVM and
+Docker, run the workflow's commands in order with `WORK` set to a new directory.
+Skip the runner preparation step: it deletes preinstalled toolchains.
 
 ## Native offline infrastructure
 
