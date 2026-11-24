@@ -184,20 +184,26 @@ assert.doesNotThrow(() => checkWelcome(welcomeState));
 assert.throws(() => checkWelcome({ ...welcomeState, primary: false }));
 // Exercise the real layout gate with measurements, without pretending to render a native window.
 const layoutGate = source.slice(source.indexOf('  async function checkLayout('), source.indexOf('  // Setup-progress states:'));
-assert.ok(layoutGate.includes('wide tabs must stay 180px'));
+assert.ok(layoutGate.includes('sidebar tabs must stack in one column left of the page'));
+assert.ok(layoutGate.includes('status card must sit in the sidebar below the tabs'));
+const tab = i => ({ x: 8, y: 40 + 48 * i, width: 216, right: 224, bottom: 80 + 48 * i });
 const wide = { width: 1280, scrollWidth: 1000, clientWidth: 1000, scrollHeight: 700, clientHeight: 700, forms: [], rows: [], checks: [],
-  tabs: [0, 1, 2].map(i => ({ width: 180, grow: '0', right: 180 * (i + 1) })),
-  host: { x: 556 }, hostLabel: { width: 100 }, subtitles: 3, quiet: [{ start: '0px', end: '0px' }],
+  tabs: [0, 1, 2].map(tab), page: { x: 232 },
+  host: { x: 20, y: 740, right: 220 }, hostLabel: { width: 100 }, subtitles: 4, quiet: [{ start: '0px', end: '0px' }],
   scrollbar: { width: 'thin', color: 'rgb(90, 90, 90) rgb(240, 240, 240)' }, fallback: {} };
 async function gate(layout) {
   return Function('evaluate', 'writeFile', 'join', 'output', `${layoutGate}; return checkLayout('light', 'setup-fit', 'probe');`)(
     async () => layout, async () => {}, () => '', '');
 }
 await gate(wide);
-await gate({ ...wide, width: 540, subtitles: 0 });
+await gate({ ...wide, width: 540, subtitles: 0, tabs: [0, 1, 2].map(i => ({ ...tab(i), width: 40, right: 48 })), page: { x: 56 }, host: { x: 20, y: 860, right: 44 } });
 for (const mutation of [
-  { tabs: wide.tabs.map(tab => ({ ...tab, width: 181.5 })) },
-  { tabs: wide.tabs.map(tab => ({ ...tab, grow: '1' })) }, { host: { x: 555 } },
+  { tabs: wide.tabs.slice(1) },
+  { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, x: 30 } : item) },
+  { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, width: 200 } : item) },
+  { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, y: 100 } : item) },
+  { page: { x: 200 } },
+  { host: { x: 20, y: 100, right: 220 } }, { host: { x: 240, y: 740, right: 400 } },
   { width: 540 }, { width: 540, subtitles: 0, hostLabel: { width: 161 } },
   { quiet: [{ start: '4px', end: '0px' }] }, { scrollbar: { width: 'auto', color: 'auto' } },
   { scrollHeight: 703 },

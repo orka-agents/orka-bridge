@@ -18,8 +18,9 @@ import { workspaceRecovery } from './setup/recovery-info';
 import Setup, { type LocalClusterControl, type UpgradeNotice } from './setup/Setup';
 import type { ExamplePair, SetupStatus } from './setup/state';
 
-const pages = ['Overview', 'Designer', 'Clusters'] as const;
-type Page = (typeof pages)[number];
+type Page = 'Overview' | 'Designer' | 'Clusters';
+// Build holds the agents and their editor; Run holds the places they run.
+const navGroups: { label: string; pages: Page[] }[] = [{ label: 'Build', pages: ['Overview', 'Designer'] }, { label: 'Run', pages: ['Clusters'] }];
 
 function PageIcon({ page }: { page: Page }) {
   return (
@@ -326,10 +327,14 @@ export default function App() {
   };
   return (
     <div className="app-shell">
-      <header className="tab-bar" data-tauri-drag-region={customTitleBar() ? 'deep' : undefined}>
-        <span className="brand"><img src={mark} width="32" height="32" alt="Orka" /><b>Bridge</b></span>
-        <nav className="page-nav" aria-label="Main">
-          {pages.map(name => (
+      <header className="title-bar" data-tauri-drag-region={customTitleBar() ? 'deep' : undefined}>
+        <span className="brand"><img src={mark} width="22" height="22" alt="Orka" /><b>Bridge</b></span>
+        <WindowControls />
+      </header>
+      <nav className="page-nav" aria-label="Main">
+        {navGroups.map(group => <div key={group.label} className="nav-group" role="group" aria-labelledby={`nav-group-${group.label}`}>
+          <p className="nav-group-label" id={`nav-group-${group.label}`}>{group.label}</p>
+          {group.pages.map(name => (
             <button key={name} className="page-tab" type="button"
               aria-label={name} aria-describedby={`tab-status-${name}`}
               aria-current={page === name ? 'page' : undefined}
@@ -343,12 +348,8 @@ export default function App() {
               <span className="tab-copy"><b>{name}</b><small id={`tab-status-${name}`} title={tabStatus[name]}>{name === 'Designer' && agentName ? <><span className="tab-agent-name">{agentName}, </span><span className="tab-agent-status">{agentStateWord ? <>{agentStatus.slice(0, agentStateWord.index)}<span className={`tab-status-word status-${tabTone}`}>{agentStateWord[0]}</span>{agentStatus.slice((agentStateWord.index ?? 0) + agentStateWord[0].length)}</> : agentStatus}</span></> : tabStatus[name]}</small></span>
             </button>
           ))}
-        </nav>
-        <div className="chrome-tools">
-          <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span>{remote && place.target && <span className="chip">In use</span>}<span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
-        </div>
-        <WindowControls />
-      </header>
+        </div>)}
+      </nav>
       <main ref={content} className="page-content" aria-labelledby="page-title">
         {page === 'Designer' && !exampleOpen && <div className="page-heading">
           <h1 id="page-title">{page}</h1>
@@ -373,7 +374,9 @@ export default function App() {
         {page === 'Designer' && !exampleOpen && <p role="status">Opening your agent…</p>}
       </main>
       <footer className="status-bar">
-        {footer.map((part, index) => <span key={index}>{index > 0 && <span aria-hidden="true"> · </span>}<span aria-live={index > 0 ? 'polite' : undefined}>{part}</span></span>)}
+        <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span>{remote && place.target && <span className="chip">In use</span>}<span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
+        <span className="status-lines">{footer.map((part, index) => <span key={index}>{index > 0 && <span aria-hidden="true"> · </span>}<span aria-live={index > 0 ? 'polite' : undefined}>{part}</span></span>)}
+</span>
         {checks && <span className="checks-status">{checks}</span>}
         <span className="sr-only" role="status" aria-atomic="true">{[
           page !== 'Clusters' || !localSetupView ? `Workspace: ${setupDetail === setupLine ? setupLine : `${setupLine} · ${setupDetail}`}` : undefined,

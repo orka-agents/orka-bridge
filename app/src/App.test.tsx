@@ -110,6 +110,19 @@ test('navigation_order', () => {
   expect(screen.getByText('Bridge')).toBeTruthy();
 });
 
+test('sidebar groups agents under Build and places under Run, with the status card below', () => {
+  render(<App />);
+  const nav = screen.getByRole('navigation', { name: 'Main' });
+  const groups = within(nav).getAllByRole('group');
+  expect(groups.map(group => group.getAttribute('aria-labelledby') && document.getElementById(group.getAttribute('aria-labelledby')!)?.textContent))
+    .toEqual(['Build', 'Run']);
+  expect(within(groups[0]).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual(['Overview', 'Designer']);
+  expect(within(groups[1]).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual(['Clusters']);
+  // The place and its state live in the status card, not in the title bar.
+  expect(within(screen.getByRole('banner')).queryByText('Status unavailable')).toBeNull();
+  expect(screen.getByRole('contentinfo').querySelector('.host-chip')).not.toBeNull();
+});
+
 test('selected_heading', async () => {
   const user = userEvent.setup();
   render(<App />);
@@ -309,7 +322,7 @@ test('unbuilt controls are disabled with discoverable reasons', async () => {
   expect(screen.getByRole('button', { name: 'New agent' }).hasAttribute('disabled')).toBe(false);
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).title).toMatch(/agent folder|Reopen your agent/);
   // Browser preview cannot read native selection, so the host is neither "This computer" nor "No cluster selected".
-  expect(within(screen.getByRole('banner')).getByText('Status unavailable')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Status unavailable')).toBeTruthy();
   // The Overview page also has a "This computer" heading, so assert on the host chip.
   expect(document.querySelector('.host-chip')?.textContent).not.toContain('This computer');
 });

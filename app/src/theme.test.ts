@@ -34,12 +34,15 @@ describe('Estuary theme contract', () => {
       }
     }
   });
-  it('declares themed thin scrollbars and non-growing wide tabs', () => {
+  it('declares themed thin scrollbars and a sidebar of full-width page buttons', () => {
     const shell = readFileSync('src/shell.css', 'utf8');
     const controls = readFileSync('src/components/controls.css', 'utf8');
     expect(shell).toMatch(/scrollbar-width:\s*thin/);
     expect(shell).toMatch(/scrollbar-color:\s*var\(--color-text-tertiary\)\s+var\(--color-page\)/);
-    expect(shell).toMatch(/\.page-tab\s*\{[^}]*flex:\s*0 1 180px/);
+    expect(shell).toMatch(/\.app-shell\s*\{[^}]*grid-template-areas:\s*"title title"\s*"nav main"\s*"status main"/);
+    expect(shell).toMatch(/\.page-tab\s*\{[^}]*width:\s*100%/);
+    // Narrow windows keep an icon rail rather than hiding navigation.
+    expect(shell).toMatch(/@media \(max-width: 820px\)\s*\{[^}]*--sidebar-width:\s*56px/);
     expect(controls).toMatch(/\.button-quiet\s*\{[^}]*padding-inline:\s*0/);
   });
   it('uses the system dark preference and bundled reading and code families', () => {

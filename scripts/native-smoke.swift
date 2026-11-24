@@ -214,15 +214,18 @@ func nativeButtons(_ label: String, root: AXUIElement? = nil) -> [AXUIElement] {
             }
     }
 }
-// Page content only; the fixed header and footer can overlay scrolled controls. The compact tab
-// bar is shorter than the wide one, so take its bottom from the actual native tab, not a fixed 110px.
+// Page content only: the sidebar holds the page buttons and the status card, so the page starts to
+// the right of the actual native Clusters button (the compact rail is narrower than the wide sidebar)
+// and below the title bar, which sits above the first page button.
 func bodyBounds() -> CGRect {
     let rect = window()!.1
-    guard let tabsBottom = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).map({ $0.maxY }).max() else {
-        fail("Cannot locate the native tab bar for the page viewport")
+    guard let nav = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).first,
+          let first = nativeButtons("Overview").compactMap({ nativeBounds($0) }).map({ $0.minY }).min() else {
+        fail("Cannot locate the native sidebar for the page viewport")
     }
-    let top = tabsBottom + 8
-    return CGRect(x: rect.minX, y: top, width: rect.width, height: max(0, rect.maxY - 32 - top))
+    let left = nav.maxX + 8
+    let top = max(rect.minY, first - 40)
+    return CGRect(x: left, y: top, width: max(0, rect.maxX - left), height: max(0, rect.maxY - 8 - top))
 }
 func visibleButtons(_ label: String) -> [CGRect] {
     nativeButtons(label).filter { attribute($0, "AXEnabled") as? Bool == true }
@@ -322,7 +325,7 @@ func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> 
     let rect = window()!.1
     let bounds = CGRect(origin: origin, size: extent)
     require(extent.width > 0 && extent.height > 0 && rect.contains(bounds)
-        && bounds.maxY <= rect.minY + 110, "Native tab is not visible in the header: \(page), \(bounds)")
+        && bounds.maxX <= rect.minX + 260, "Native page button is not visible in the sidebar: \(page), \(bounds)")
     let point = CGPoint(x: bounds.midX, y: bounds.midY)
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
     Thread.sleep(forTimeInterval: 0.5)
