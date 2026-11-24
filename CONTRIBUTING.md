@@ -26,6 +26,10 @@ a VM; running an agent needs the local development image described below.
 Dependency lifecycle scripts are disabled in `app/.npmrc`. Do not enable them
 globally to install dependencies.
 
+## Preview the UI in a browser
+
+For quick UI work without a VM, start the dev server from `app/` with `npm run dev` and open `http://127.0.0.1:1420/?scenario=fresh`. In development builds only, a `scenario` query loads a scripted stand-in for the native commands (`app/src/preview/backend.ts`), so screens can be walked and captured in any browser. Scenarios are `fresh`, `ready`, `connected`, `restart`, `ghMissing`, `ghSignedOut`, `runFails` and `vmFailed`. Add `speed=20` to shorten waits and `clean` to hide the scenario toolbar. The preview is not native verification: it never runs a VM, an agent or a model.
+
 ## Run with a local VM
 
 Local VM development needs a debug build on Windows x64 or Apple silicon Mac.
