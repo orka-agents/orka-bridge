@@ -8,6 +8,7 @@ import { agentInfo, SAMPLE_DOCUMENT_ID, type SaveState, type SourceId, sameSourc
 import { selectedDocument } from './designer/documents-api';
 import Example, { type DocumentAction } from './designer/Example';
 import { type RunSnapshot, runCall } from './designer/run-api';
+import WindowControls, { customTitleBar } from './chrome/WindowControls';
 import Overview from './overview/Overview';
 import { firstTestPending, retireFirstTest, useFirstTest } from './setup/first-test';
 import type { ModelState } from './setup/Model';
@@ -325,7 +326,7 @@ export default function App() {
   };
   return (
     <div className="app-shell">
-      <header className="tab-bar">
+      <header className="tab-bar" data-tauri-drag-region={customTitleBar() ? 'deep' : undefined}>
         <span className="brand"><img src={mark} width="32" height="32" alt="Orka" /><b>Bridge</b></span>
         <nav className="page-nav" aria-label="Main">
           {pages.map(name => (
@@ -346,6 +347,7 @@ export default function App() {
         <div className="chrome-tools">
           <span className="host-chip" title={remote ? placeName : hostDetail}><span className={`live-dot ${remote ? place.target ? 'ready' : 'wait' : hostTone}`} aria-hidden="true" /><span className="host-label">{placeName}</span>{remote && place.target && <span className="chip">In use</span>}<span className="sr-only">: {remote ? place.target ? 'Access confirmed' : 'Not connected' : hostDetail}</span></span>
         </div>
+        <WindowControls />
       </header>
       <main ref={content} className="page-content" aria-labelledby="page-title">
         {page === 'Designer' && !exampleOpen && <div className="page-heading">

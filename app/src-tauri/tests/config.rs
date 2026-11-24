@@ -20,7 +20,7 @@ fn native_window_uses_local_assets_and_fits_a_laptop() {
             "identifier": "engine",
             "description": "Typed engine and setup access from the main window only.",
             "windows": ["main"],
-            "permissions": ["engine", "setup"],
+            "permissions": ["engine", "setup", "core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize", "core:window:allow-minimize", "core:window:allow-toggle-maximize", "core:window:allow-is-maximized", "core:window:allow-close"],
             "local": true
         }])
     );
@@ -160,4 +160,74 @@ fn agent_commands_are_granted_only_to_local_main_window() {
             .resolve_access(command, "main", "main", &Origin::Local)
             .is_none());
     }
+}
+
+#[test]
+fn title_bar_window_controls_are_the_only_window_grants() {
+    use tauri::ipc::Origin;
+    let mut context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+    let authority = context.runtime_authority_mut();
+    for command in [
+        "plugin:window|start_dragging",
+        "plugin:window|internal_toggle_maximize",
+        "plugin:window|minimize",
+        "plugin:window|toggle_maximize",
+        "plugin:window|is_maximized",
+        "plugin:window|close",
+    ] {
+        assert!(authority
+            .resolve_access(command, "main", "main", &Origin::Local)
+            .is_some());
+        assert!(authority
+            .resolve_access(command, "other", "other", &Origin::Local)
+            .is_none());
+        assert!(authority
+            .resolve_access(
+                command,
+                "main",
+                "main",
+                &Origin::Remote {
+                    url: "https://example.com".parse().unwrap()
+                }
+            )
+            .is_none());
+    }
+    // The page can move and size its own window, never reshape or destroy it.
+    for command in [
+        "plugin:window|set_decorations",
+        "plugin:window|set_size",
+        "plugin:window|set_position",
+        "plugin:window|set_title",
+        "plugin:window|destroy",
+        "plugin:window|hide",
+        "plugin:window|create",
+    ] {
+        assert!(authority
+            .resolve_access(command, "main", "main", &Origin::Local)
+            .is_none());
+    }
+}
+
+#[test]
+fn windows_window_draws_its_own_title_bar_and_otherwise_matches_the_shared_window() {
+    // Tauri merges tauri.windows.conf.json over tauri.conf.json when building for Windows.
+    // Arrays are replaced whole, so the Windows window must repeat every shared setting.
+    let base: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+    let windows: serde_json::Value =
+        serde_json::from_str(include_str!("../tauri.windows.conf.json")).unwrap();
+    assert_eq!(
+        windows.as_object().unwrap().keys().collect::<Vec<_>>(),
+        vec!["app"]
+    );
+    assert_eq!(
+        windows["app"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        vec!["windows"]
+    );
+    let mut expected = base["app"]["windows"].clone();
+    expected[0]["decorations"] = serde_json::Value::Bool(false);
+    assert_eq!(windows["app"]["windows"], expected);
 }
