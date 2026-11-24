@@ -9,6 +9,9 @@ import { selectedDocument } from './designer/documents-api';
 import Example, { type DocumentAction } from './designer/Example';
 import { type RunSnapshot, runCall } from './designer/run-api';
 import WindowControls, { customTitleBar } from './chrome/WindowControls';
+import { finishGuidedFirstRun, guidedFirstRun, guidedStep } from './firstrun/guided';
+import GuidedSteps from './firstrun/GuidedSteps';
+import './firstrun/firstrun.css';
 import Overview from './overview/Overview';
 import { firstTestPending, retireFirstTest, useFirstTest } from './setup/first-test';
 import type { ModelState } from './setup/Model';
@@ -16,6 +19,7 @@ import { preflightRecovery } from './setup/preflight-state';
 import { setupView, workspaceView } from './setup/progress';
 import { workspaceRecovery } from './setup/recovery-info';
 import Setup, { type LocalClusterControl, type UpgradeNotice } from './setup/Setup';
+import { hasSeenWelcome } from './setup/Welcome';
 import type { ExamplePair, SetupStatus } from './setup/state';
 
 type Page = 'Overview' | 'Designer' | 'Clusters';
@@ -46,11 +50,16 @@ function ComingButton({ label, reason }: { label: string; reason: string }) {
 
 export default function App() {
   const [page, setPageState] = useState<Page>('Clusters');
+  const [guided, setGuided] = useState(guidedFirstRun);
+  const leaveGuided = useCallback(() => { finishGuidedFirstRun(); setGuided(false); }, []);
   const overviewOpenRequest = useRef(0);
   const [overviewNotice, setOverviewNotice] = useState<string>();
   const setPage = useCallback((next: Page) => { overviewOpenRequest.current++; setOverviewNotice(undefined); setPageState(next); }, []);
   const [place, setPlace] = useState<SelectedPlace>({ kind: 'thisComputer' });
   const remote = place.kind === 'cluster';
+  // The guided first run ends once the person moves on: another page, or a cluster instead of this computer.
+  // That includes Setup opening Designer when the automatic first test doesn't pass, so the person sees why.
+  useEffect(() => { if (guided && (page !== 'Clusters' || remote)) leaveGuided(); }, [guided, page, remote, leaveGuided]);
   const content = useRef<HTMLElement>(null);
   useEffect(() => { if (content.current) content.current.scrollTop = 0; }, [page]);
   const [exampleOpen, setExampleOpen] = useState(false);
@@ -161,6 +170,8 @@ export default function App() {
     setSaveNotice(previous => ({ id, edited: value !== 'saved' || previous.id === id && previous.edited }));
     if (id === SAMPLE_DOCUMENT_ID) setSampleDirty(value !== 'saved');
   }, []);
+  // A workspace chosen without Welcome ever being dismissed means browser storage was cleared, not a first launch.
+  useEffect(() => { if (guided && setup?.selected === 'localVm' && !hasSeenWelcome()) leaveGuided(); }, [guided, setup?.selected, leaveGuided]);
   const observeSetup = useCallback((status: SetupStatus | undefined) => {
     if (status?.workspaceReplaced) {
       retireFirstTest();
@@ -326,9 +337,11 @@ export default function App() {
     if (sampleSource === null) openDesigner(SAMPLE_DOCUMENT_ID);
   };
   return (
-    <div className="app-shell">
+    <div className={guided ? 'app-shell guided' : 'app-shell'}>
       <header className="title-bar" data-tauri-drag-region={customTitleBar() ? 'deep' : undefined}>
         <span className="brand"><img src={mark} width="22" height="22" alt="Orka" /><b>Bridge</b></span>
+        {guided && <GuidedSteps current={guidedStep(view.step, view.done)} />}
+        {guided && !welcome && <Button type="button" kind="quiet" className="guided-exit" onClick={leaveGuided}>Show all of Bridge</Button>}
         <WindowControls />
       </header>
       <nav className="page-nav" aria-label="Main">

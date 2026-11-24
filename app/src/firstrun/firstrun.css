@@ -1,0 +1,12 @@
+/* Guided first run: the step header sits in the title bar and the page is one centred column. Navigation and the status card stay. */
+.app-shell.guided .page-content > * { max-width: 760px; margin-inline: auto; }
+.guided-steps { display: flex; align-items: center; gap: var(--space-2); margin: 0 auto; padding: 0; list-style: none; color: var(--color-text-secondary); font: var(--type-small); }
+.guided-steps li { display: flex; align-items: center; gap: var(--space-2); white-space: nowrap; }
+.guided-steps li + li::before { content: ''; width: 20px; height: 1px; background: var(--color-border-strong); }
+.guided-steps li.current { color: var(--color-text); font-weight: 600; }
+.guided-step-dot { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1px var(--color-border-strong); font-size: 0.6875rem; }
+.guided-steps li.current .guided-step-dot { background: var(--color-text); color: var(--color-page); box-shadow: none; }
+.guided-steps li.done .guided-step-dot { background: var(--color-status-succeeded); color: var(--color-page); box-shadow: none; }
+.guided-step-dot svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.guided-exit { margin-inline: var(--space-3); }
+@media (max-width: 600px) { .guided-steps li:not(.current) { font-size: 0; gap: 0; } }

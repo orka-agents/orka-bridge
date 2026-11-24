@@ -4,7 +4,8 @@ import { type RunSnapshot, runCall } from '../designer/run-api';
 import type { CheckStepState } from './Steps';
 import { loadExample } from './state';
 
-const preference = 'bridge.firstTest.v1';
+export const firstTestPreference = 'bridge.firstTest.v1';
+const preference = firstTestPreference;
 export function armFirstTest() {
   try { if (localStorage.getItem(preference) === null) localStorage.setItem(preference, 'pending'); } catch { /* No durable claim means no automatic side effect. */ }
 }
