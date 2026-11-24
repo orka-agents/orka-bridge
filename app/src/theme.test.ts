@@ -41,8 +41,11 @@ describe('Estuary theme contract', () => {
     expect(shell).toMatch(/scrollbar-color:\s*var\(--color-text-tertiary\)\s+var\(--color-page\)/);
     expect(shell).toMatch(/\.app-shell\s*\{[^}]*grid-template-areas:\s*"title title"\s*"nav main"\s*"status main"/);
     expect(shell).toMatch(/\.page-tab\s*\{[^}]*width:\s*100%/);
-    // Narrow windows keep an icon rail rather than hiding navigation.
-    expect(shell).toMatch(/@media \(max-width: 820px\)\s*\{[^}]*--sidebar-width:\s*56px/);
+    // Narrow windows keep a rail with page names, and the status card becomes a bar below the page, as main's footer was.
+    const compact = shell.slice(shell.indexOf('@media (max-width: 820px)'));
+    expect(compact).toMatch(/\.app-shell\s*\{[^}]*--sidebar-width:\s*76px;[^}]*grid-template-areas:\s*"title title"\s*"nav main"\s*"status status"/);
+    expect(compact).toMatch(/\.brand b, \.nav-group-label, \.tab-copy small\s*\{\s*display:\s*none/);
+    expect(compact).not.toMatch(/\.tab-copy\s*\{[^}]*display:\s*none|\.tab-copy b[^{]*\{[^}]*display:\s*none|clip-path|\.status-lines[^{]*\{[^}]*(display:\s*none|position:\s*absolute)|\.host-label[^{]*\{[^}]*(display:\s*none|position:\s*absolute)/);
     expect(controls).toMatch(/\.button-quiet\s*\{[^}]*padding-inline:\s*0/);
   });
   it('uses the system dark preference and bundled reading and code families', () => {

@@ -189,14 +189,16 @@ assert.ok(layoutGate.includes('status card must sit in the sidebar below the tab
 const tab = i => ({ x: 8, y: 40 + 48 * i, width: 216, right: 224, bottom: 80 + 48 * i });
 const wide = { width: 1280, scrollWidth: 1000, clientWidth: 1000, scrollHeight: 700, clientHeight: 700, forms: [], rows: [], checks: [],
   tabs: [0, 1, 2, 3].map(tab), page: { x: 232 },
-  host: { x: 20, y: 740, right: 220 }, hostLabel: { width: 100 }, subtitles: 4, quiet: [{ start: '0px', end: '0px' }],
+  host: { x: 20, y: 740, right: 220 }, hostLabel: { width: 100 }, statusLine: { width: 180 }, statusText: 'Workspace ready', names: 4, subtitles: 4, quiet: [{ start: '0px', end: '0px' }],
   scrollbar: { width: 'thin', color: 'rgb(90, 90, 90) rgb(240, 240, 240)' }, fallback: {} };
 async function gate(layout) {
   return Function('evaluate', 'writeFile', 'join', 'output', `${layoutGate}; return checkLayout('light', 'setup-fit', 'probe');`)(
     async () => layout, async () => {}, () => '', '');
 }
 await gate(wide);
-await gate({ ...wide, width: 540, subtitles: 0, tabs: [0, 1, 2, 3].map(i => ({ ...tab(i), width: 40, right: 48 })), page: { x: 56 }, host: { x: 20, y: 860, right: 44 } });
+const compact = { ...wide, width: 540, subtitles: 0, tabs: [0, 1, 2, 3].map(i => ({ ...tab(i), width: 68, right: 72 })), page: { x: 76, bottom: 600 }, host: { x: 20, y: 608, right: 200 } };
+await gate(compact);
+for (const mutation of [{ host: { x: 20, y: 590, right: 200 } }, { names: 0 }, { statusLine: { width: 1 } }, { hostLabel: { width: 1 } }]) await assert.rejects(() => gate({ ...compact, ...mutation }));
 for (const mutation of [
   { tabs: wide.tabs.slice(1) },
   { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, x: 30 } : item) },

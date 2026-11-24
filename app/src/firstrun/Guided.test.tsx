@@ -85,11 +85,11 @@ test('a chosen workspace without a dismissed Welcome means cleared storage, so g
   expect(localStorage.getItem('bridge.firstRun.v1')).toBe('done');
 });
 
-test('the status card stays during guidance and at narrow widths keeps its text for assistive technology', () => {
+test('the status card stays during guidance and at narrow widths keeps its text visible', () => {
   const guided = readFileSync('src/firstrun/firstrun.css', 'utf8');
   const shellCss = readFileSync('src/shell.css', 'utf8');
   expect(guided).not.toMatch(/status-bar[^}]*display:\s*none/);
   const compact = shellCss.slice(shellCss.indexOf('@media (max-width: 820px)'));
   expect(compact).not.toMatch(/\.status-lines[^{]*\{[^}]*display:\s*none/);
-  expect(compact).toMatch(/\.status-lines, \.checks-status, \.host-label, \.host-chip \.chip \{[^}]*clip-path: inset\(50%\)/);
+  expect(compact).not.toMatch(/clip-path/);
 });

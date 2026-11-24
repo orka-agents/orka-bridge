@@ -214,9 +214,10 @@ func nativeButtons(_ label: String, root: AXUIElement? = nil) -> [AXUIElement] {
             }
     }
 }
-// Page content only: the sidebar holds the page buttons and the status card, so the page starts to
-// the right of the actual native Clusters button (the compact rail is narrower than the wide sidebar)
-// and below the title bar, which ends just above the sidebar's first button (Home).
+// Page content only: the sidebar holds the page buttons, so the page starts to the right of the actual
+// native Clusters button (the compact rail is narrower than the wide sidebar) and below the title bar,
+// which ends just above the sidebar's first button (Home). The status card sits in the sidebar when
+// wide; in a compact window it is a bar across the bottom, and the page ends above it.
 func bodyBounds() -> CGRect {
     let rect = window()!.1
     guard let nav = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).first,
@@ -225,7 +226,12 @@ func bodyBounds() -> CGRect {
     }
     let left = nav.maxX + 8
     let top = max(rect.minY, home - 4)
-    return CGRect(x: left, y: top, width: max(0, rect.maxX - left), height: max(0, rect.maxY - 8 - top))
+    let statusBar = nativeElements()
+        .filter { attribute($0, "AXSubrole") as? String == "AXLandmarkContentInfo" }
+        .compactMap { nativeBounds($0) }
+        .first { $0.maxX > left && $0.minY > top }
+    let bottom = statusBar.map { $0.minY - 8 } ?? rect.maxY - 8
+    return CGRect(x: left, y: top, width: max(0, rect.maxX - left), height: max(0, bottom - top))
 }
 func visibleButtons(_ label: String) -> [CGRect] {
     nativeButtons(label).filter { attribute($0, "AXEnabled") as? Bool == true }

@@ -1,7 +1,7 @@
 import { firstTestPreference } from '../setup/first-test';
 import { welcomePreference } from '../setup/Welcome';
 
-// The guided first run hides the sidebar until a new person leaves setup. Someone who
+// The guided first run adds a steps header until a new person leaves setup. Someone who
 // already dismissed Welcome before this existed never enters it.
 export const guidedPreference = 'bridge.firstRun.v1';
 export function guidedFirstRun() {
