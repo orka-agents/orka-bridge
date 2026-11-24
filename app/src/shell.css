@@ -19,6 +19,7 @@
 .tile-overview { color: var(--color-violet); background: var(--color-violet-tint); }
 .tile-designer { color: var(--color-status-running); background: var(--color-tint-running); }
 .tile-clusters { color: var(--color-action); background: var(--color-action-tint); }
+.tile-home { color: var(--color-text); background: color-mix(in srgb, var(--color-text) 8%, transparent); }
 .tab-copy { display: block; min-width: 0; flex: 1; }
 .tab-copy b { display: block; font-size: var(--size-body); line-height: 18px; font-weight: 500; }
 .page-tab[aria-current="page"] b { font-weight: 600; }

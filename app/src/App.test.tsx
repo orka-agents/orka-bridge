@@ -105,7 +105,7 @@ test('navigation_order', () => {
   render(<App />);
   const nav = screen.getByRole('navigation', { name: 'Main' });
   expect(within(nav).getAllByRole('button').map(button => button.getAttribute('aria-label')))
-    .toEqual(['Overview', 'Designer', 'Clusters']);
+    .toEqual(['Home', 'Overview', 'Designer', 'Clusters']);
   expect(screen.getByRole('img', { name: 'Orka' })).toBeTruthy();
   expect(screen.getByText('Bridge')).toBeTruthy();
 });
@@ -139,6 +139,8 @@ test('selected_heading', async () => {
 test('keyboard_activation', async () => {
   const user = userEvent.setup();
   render(<App />);
+  await user.tab();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Home' }));
   await user.tab();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Overview' }));
   await user.tab();

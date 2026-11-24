@@ -311,6 +311,8 @@ func enabledButton(_ label: String) -> AXUIElement? {
     }
     return buttons.count == 1 ? buttons[0] : nil
 }
+// The page starts under the title bar, which ends just above the sidebar's first button (Home).
+func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 4 } ?? window()!.1.minY }
 func setOverviewExpanded(_ title: String, _ expanded: Bool) {
     let label = "Show places for \(title)"
     let buttons = nativeElements().filter { element in
@@ -319,7 +321,7 @@ func setOverviewExpanded(_ title: String, _ expanded: Bool) {
     }
     require(buttons.count == 1, "Cannot identify Overview disclosure \(label)")
     if attribute(buttons[0], "AXExpanded") as? Bool == expanded { return }
-    let top = enabledButton("Overview").flatMap(nativeBounds)?.maxY ?? window()!.1.minY
+    let top = pageTop()
     for _ in 0..<12 {
         if let bounds = enabledButton(label).flatMap(nativeBounds) {
             if bounds.minY >= top + 8 && bounds.maxY <= window()!.1.maxY - 32 {
@@ -396,7 +398,7 @@ require(enabledButton("Connect the AI") != nil && enabledButton("Manage") == nil
 click("Connect the AI", rows)
 rows = try capture("before-connect", ["Connect the AI"])
 // The tab subtitle is visible in the capture but isn't a separate AXStaticText value.
-require(rows.contains { $0.boundingBox.minX < 0.3 && $0.boundingBox.maxY > 0.85 && $0.topCandidates(1).first?.string == "4 saved agents" }, "Hidden Overview must report the saved-file count in the header")
+require(rows.contains { $0.boundingBox.minX < 0.3 && $0.topCandidates(1).first?.string == "4 saved agents" }, "Hidden Overview must report the saved-file count in the sidebar")
 click("Overview", [])
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
@@ -1079,18 +1081,18 @@ func anchorChatHeading(_ expected: String) {
     // A real scroll away from the end disables follow before measuring the heading.
     scroll(4000)
     let headings = nativeHeadings(expected)
-    guard headings.count == 1, let bounds = nativeBounds(headings[0]),
-        let header = enabledButton("Designer").flatMap(nativeBounds) else {
+    guard headings.count == 1, let bounds = nativeBounds(headings[0]) else {
         require(false, "Cannot anchor native Chat heading: \(expected)"); return
     }
-    // Clear fixed navigation and the 48px composer-follow threshold before freezing the frame.
-    let delta = header.maxY + 64 - bounds.minY
+    // Clear the title bar and the 48px composer-follow threshold before freezing the frame.
+    let top = pageTop()
+    let delta = top + 64 - bounds.minY
     if abs(delta) > 2 { scroll(Int32(delta.rounded())) }
     guard let aligned = nativeHeadings(expected).first.flatMap(nativeBounds) else {
         require(false, "Lost native Chat heading after scrolling: \(expected)"); return
     }
-    require(window()!.1.contains(aligned) && aligned.minY >= header.maxY + 8,
-        "Native Chat heading is clipped after scrolling: \(expected), bounds=\(aligned), header=\(header)")
+    require(window()!.1.contains(aligned) && aligned.minY >= top + 8,
+        "Native Chat heading is clipped after scrolling: \(expected), bounds=\(aligned), pageTop=\(top)")
 }
 func nativeTextExists(_ expected: String) -> Bool {
     nativeElements().contains { element in

@@ -188,7 +188,7 @@ assert.ok(layoutGate.includes('sidebar tabs must stack in one column left of the
 assert.ok(layoutGate.includes('status card must sit in the sidebar below the tabs'));
 const tab = i => ({ x: 8, y: 40 + 48 * i, width: 216, right: 224, bottom: 80 + 48 * i });
 const wide = { width: 1280, scrollWidth: 1000, clientWidth: 1000, scrollHeight: 700, clientHeight: 700, forms: [], rows: [], checks: [],
-  tabs: [0, 1, 2].map(tab), page: { x: 232 },
+  tabs: [0, 1, 2, 3].map(tab), page: { x: 232 },
   host: { x: 20, y: 740, right: 220 }, hostLabel: { width: 100 }, subtitles: 4, quiet: [{ start: '0px', end: '0px' }],
   scrollbar: { width: 'thin', color: 'rgb(90, 90, 90) rgb(240, 240, 240)' }, fallback: {} };
 async function gate(layout) {
@@ -196,7 +196,7 @@ async function gate(layout) {
     async () => layout, async () => {}, () => '', '');
 }
 await gate(wide);
-await gate({ ...wide, width: 540, subtitles: 0, tabs: [0, 1, 2].map(i => ({ ...tab(i), width: 40, right: 48 })), page: { x: 56 }, host: { x: 20, y: 860, right: 44 } });
+await gate({ ...wide, width: 540, subtitles: 0, tabs: [0, 1, 2, 3].map(i => ({ ...tab(i), width: 40, right: 48 })), page: { x: 56 }, host: { x: 20, y: 860, right: 44 } });
 for (const mutation of [
   { tabs: wide.tabs.slice(1) },
   { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, x: 30 } : item) },
@@ -431,7 +431,7 @@ assert.ok(overviewDriver.includes('oldCards:') && overviewDriver.includes('oldGr
 assert.ok(overviewDriver.includes("shoot('-collapsed')") && overviewDriver.includes("shoot('-expanded')"), 'Overview must capture collapsed and expanded native states');
 assert.ok(model.includes('local-overview-ai-disconnected-collapsed-') && model.includes('local-overview-ai-connected-expanded-'), 'native model fixtures must cover disconnected and connected list states');
 assert.ok(!model.includes('by-cluster') && !model.includes('by-agent'), 'native model fixtures must not retain grouping controls');
-assert.ok(model.includes('Cannot bring Overview disclosure into view') && model.includes('let top = enabledButton("Overview").flatMap(nativeBounds)?.maxY'), 'native Overview disclosures must be brought clear of fixed navigation before pointer activation');
+assert.ok(model.includes('Cannot bring Overview disclosure into view') && model.includes('let top = pageTop()') && model.includes('func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 4 }'), 'native Overview disclosures must be brought clear of fixed navigation before pointer activation');
 assert.ok(model.includes('capture("local-overview-ai-disconnected-collapsed-\\(size)", ["Your agents"])') && model.includes('require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer.")'), 'disconnected Overview must verify the exact native reason without fragile OCR of AI/Al');
 assert.ok(smoke.includes('Show places for web-reader') && smoke.includes('overview-fixture-multiple-places-expanded'), 'native smoke must expand the agent list before proving per-place evidence');
 assert.ok(!smoke.includes('heading: "fixture-secondary"'), 'place names are marks or evidence labels, never list headings');
@@ -447,7 +447,7 @@ for (const name of ['chat-long-early-wide', 'chat-long-early-minimum', 'chat-lon
 }
 assert.ok(model.includes('nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2")'), 'numbered Chat versions must be verified as native headings, not body static text');
 assert.ok(model.includes('anchorChatHeading("Conversation 2")'), 'Chat capture must align its native heading clear of fixed navigation');
-assert.ok(model.includes('let delta = header.maxY + 64 - bounds.minY'), 'Chat heading navigation must use actual header/heading geometry');
+assert.ok(model.includes('let delta = top + 64 - bounds.minY') && model.includes('let top = pageTop()'), 'Chat heading navigation must use actual title-bar/heading geometry');
 assert.ok(smoke.indexOf('try capture("send-history-answer", "Designer")') > smoke.indexOf('let savedWide = try capturePreflight'), 'offline answer proof must follow its wide resize and provenance anchor');
 assert.ok(model.includes('attribute(element, "AXRole") as? String == "AXHeading"'), 'Chat heading discovery must use its actual native role');
 assert.ok(smoke.includes('("minimum", CGFloat(540), CGFloat(640))'));

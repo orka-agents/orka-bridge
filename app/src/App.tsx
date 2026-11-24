@@ -12,6 +12,7 @@ import WindowControls, { customTitleBar } from './chrome/WindowControls';
 import { finishGuidedFirstRun, guidedFirstRun, guidedStep } from './firstrun/guided';
 import GuidedSteps from './firstrun/GuidedSteps';
 import './firstrun/firstrun.css';
+import Home from './home/Home';
 import Overview from './overview/Overview';
 import { firstTestPending, retireFirstTest, useFirstTest } from './setup/first-test';
 import type { ModelState } from './setup/Model';
@@ -22,13 +23,14 @@ import Setup, { type LocalClusterControl, type UpgradeNotice } from './setup/Set
 import { hasSeenWelcome } from './setup/Welcome';
 import type { ExamplePair, SetupStatus } from './setup/state';
 
-type Page = 'Overview' | 'Designer' | 'Clusters';
-// Build holds the agents and their editor; Run holds the places they run.
-const navGroups: { label: string; pages: Page[] }[] = [{ label: 'Build', pages: ['Overview', 'Designer'] }, { label: 'Run', pages: ['Clusters'] }];
+type Page = 'Home' | 'Overview' | 'Designer' | 'Clusters';
+// Home stands alone; Build holds the agents and their editor; Run holds the places they run.
+const navGroups: { label?: string; pages: Page[] }[] = [{ pages: ['Home'] }, { label: 'Build', pages: ['Overview', 'Designer'] }, { label: 'Run', pages: ['Clusters'] }];
 
 function PageIcon({ page }: { page: Page }) {
   return (
     <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
+      {page === 'Home' && <><path d="m3.5 10.5 8.5-7 8.5 7" /><path d="M5.5 9v11h13V9" /><path d="M10 20v-5h4v5" /></>}
       {page === 'Overview' && <>
         <rect x="3" y="4" width="18" height="4.5" rx="1.5" />
         <rect x="3" y="10" width="18" height="4.5" rx="1.5" />
@@ -241,16 +243,23 @@ export default function App() {
     ? workspaceView(setup, { stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping }) : undefined;
   const hostTone = hostWorkspace?.tone ?? view.tone;
   const workspaceReady = setup?.localVm === 'ready' && !recovery && !required && !(setup.workspaceReplaced && upgradeNotice === 'unknown');
+  // undefined until the first read, so Home doesn't flash an AI warning before it knows.
+  const [aiObserved, setAiObserved] = useState<boolean>();
+  const [designerChat, setDesignerChat] = useState<{ documentId: string; reason?: string }>();
+  const observeChatBlocked = useCallback((id: string, reason: string | undefined) => setDesignerChat({ documentId: id, reason }), []);
   useEffect(() => {
-    setOverviewAiConnected(false);
-    if (page !== 'Overview' || !workspaceReady || workspaceBusy || setup?.model !== 'available') return;
+    setOverviewAiConnected(false); setAiObserved(undefined);
+    if (page !== 'Overview' && page !== 'Home' || !workspaceReady || workspaceBusy || setup?.model !== 'available') return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     // Native connection state is workspace-wide; no Designer or saved-file selection is needed.
     const observe = async () => {
       const result = await runCall('agent_run_status');
       if (cancelled) return;
-      setOverviewAiConnected(result.ok && (result.snapshot.modelConnected ?? model === 'connected'));
+      const connected = result.ok && (result.snapshot.modelConnected ?? model === 'connected');
+      setOverviewAiConnected(connected);
+      // An unreadable poll proves nothing about the AI, so only a read snapshot can block Home.
+      if (result.ok) setAiObserved(connected);
       timer = setTimeout(() => { void observe(); }, 500);
     };
     void observe();
@@ -276,6 +285,7 @@ export default function App() {
     : cases ? 'tests passing' : 'ready to edit';
   const agentStateWord = agentStatus.match(/\b(passing|failing|running|cancelled|cancelling|unknown|unavailable|unconfirmed|not confirmed|ready)\b/);
   const tabStatus: Record<Page, string> = {
+    Home: 'Ask your agents',
     Overview: welcome ? '' : overviewCounts,
     Designer: agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? exampleReadOnly ? 'Ready after setup' : 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
@@ -345,8 +355,8 @@ export default function App() {
         <WindowControls />
       </header>
       <nav className="page-nav" aria-label="Main">
-        {navGroups.map(group => <div key={group.label} className="nav-group" role="group" aria-labelledby={`nav-group-${group.label}`}>
-          <p className="nav-group-label" id={`nav-group-${group.label}`}>{group.label}</p>
+        {navGroups.map(group => <div key={group.pages[0]} className="nav-group" role={group.label ? 'group' : undefined} aria-labelledby={group.label ? `nav-group-${group.label}` : undefined}>
+          {group.label && <p className="nav-group-label" id={`nav-group-${group.label}`}>{group.label}</p>}
           {group.pages.map(name => (
             <button key={name} className="page-tab" type="button"
               aria-label={name} aria-describedby={`tab-status-${name}`}
@@ -375,8 +385,13 @@ export default function App() {
           <Setup ref={localCluster} place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
+        {page === 'Home' && <Home active revision={agentsRevision} onOpenAgent={id => openDesigner(id)} onChooseWorkspace={() => setPage('Clusters')}
+          blocked={remote ? 'Chat runs on the workspace. Choose This computer in Clusters.' : !workspaceReady || workspaceBusy ? 'Waiting for the workspace to start.'
+            : setup?.model !== 'available' || aiObserved === false ? 'Connect the AI in Clusters before chatting.' : undefined}
+          // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
+          blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}
         {page === 'Designer' && overviewNotice && <p className="muted" role="status">{overviewNotice}</p>}
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} /></div>}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} /></div>}
         <Overview onNewAgent={() => openDesigner(undefined, true)} localAiConnected={overviewAiConnected} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} activeDocumentId={firstTest === 'running' ? SAMPLE_DOCUMENT_ID : run?.busy?.documentId} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} workspaceNote={overviewWorkspaceNote} filesRevision={agentsRevision} placesRevision={placesRevision} onCounts={setOverviewCounts}
           onOpenDocument={(id, key) => { void openOverviewDocument(id, 'open', key); }}
           onChatDocument={id => openOverviewDocument(id, 'chat')}

@@ -101,7 +101,7 @@ test('failed personality conversion cannot let Chat silently use the earlier sav
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).hasAttribute('disabled')).toBe(true);
   const other = 'a7f34ba2-b9bd-4b55-b69d-f0a84a1bf528'; view.rerender(<Example documentId={other} />);
   await user.click(screen.getByRole('button', { name: 'Chat' }));
-  expect(screen.getByRole('textbox', { name: 'Message' }).id).toBe(`message-${id}`);
+  expect(screen.getByRole('textbox', { name: 'Message' }).id.startsWith(`message-${id}-`)).toBe(true);
   // Returning to the original document and editing File clears the unresolved
   // personality draft through the existing source-change cleanup.
   view.rerender(<Example documentId={id} />);
@@ -125,7 +125,7 @@ test('while a pending save holds a document switch Chat remains bound to the dis
   fireEvent.change(await screen.findByRole('textbox', { name: 'Instructions' }), { target: { value: 'Pending switch' } });
   await chat(); compose(); await screen.findByText('Saving…');
   const other = 'a7f34ba2-b9bd-4b55-b69d-f0a84a1bf528'; view.rerender(<Example documentId={other} />);
-  expect(screen.getByRole('textbox', { name: 'Message' }).id).toBe(`message-${id}`);
+  expect(screen.getByRole('textbox', { name: 'Message' }).id.startsWith(`message-${id}-`)).toBe(true);
   expect(screen.getByRole('button', { name: 'Send message' }).hasAttribute('disabled')).toBe(true); expect(sent).toEqual([]);
   await act(async () => finish({ ...pair, agent: content }));
 });

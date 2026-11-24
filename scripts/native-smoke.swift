@@ -216,15 +216,15 @@ func nativeButtons(_ label: String, root: AXUIElement? = nil) -> [AXUIElement] {
 }
 // Page content only: the sidebar holds the page buttons and the status card, so the page starts to
 // the right of the actual native Clusters button (the compact rail is narrower than the wide sidebar)
-// and below the title bar, which sits above the first page button.
+// and below the title bar, which ends just above the sidebar's first button (Home).
 func bodyBounds() -> CGRect {
     let rect = window()!.1
     guard let nav = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).first,
-          let first = nativeButtons("Overview").compactMap({ nativeBounds($0) }).map({ $0.minY }).min() else {
+          let home = nativeButtons("Home").compactMap({ nativeBounds($0) }).map({ $0.minY }).min() else {
         fail("Cannot locate the native sidebar for the page viewport")
     }
     let left = nav.maxX + 8
-    let top = max(rect.minY, first - 40)
+    let top = max(rect.minY, home - 4)
     return CGRect(x: left, y: top, width: max(0, rect.maxX - left), height: max(0, rect.maxY - 8 - top))
 }
 func visibleButtons(_ label: String) -> [CGRect] {

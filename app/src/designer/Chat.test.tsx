@@ -621,3 +621,12 @@ test('a blocked parent keeps an uncertain Send status instead of replacing it', 
   expect(screen.getByRole('status').textContent).toBe('Checking whether your message was accepted. Do not resend it.');
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy(); expect(newConversation().getAttribute('title')).toBe(blockedReason);
 });
+
+test('two Chats for the same agent keep their own field and hint ids', async () => {
+  render(<><Chat documentId={id} /><Chat documentId={id} /></>); await act(async () => {});
+  const fields = screen.getAllByRole('textbox', { name: 'Message' });
+  expect(fields).toHaveLength(2);
+  expect(new Set(fields.map(field => field.id)).size).toBe(2);
+  expect(new Set(fields.map(field => field.getAttribute('aria-describedby'))).size).toBe(2);
+  for (const field of fields) expect(document.getElementById(field.getAttribute('aria-describedby')!)?.textContent).toBeTruthy();
+});

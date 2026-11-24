@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button } from '../components/Button';
 import { StatusIcon } from '../components/DesignSystem';
 import { Disclosure } from '../components/Disclosure';
@@ -15,6 +15,8 @@ const states: Record<ChatSnapshot['state'], string> = {
 };
 export default function Chat({ documentId, blocked, active = true }: { documentId: string; blocked?: string; active?: boolean }) {
   const [snapshot, setSnapshot] = useState<ChatSnapshot>();
+  // Home and Designer can show the same agent's Chat at once, so element ids are per instance.
+  const instance = useId(); const fieldId = `message-${documentId}-${instance}`; const hintId = `chat-hint-${documentId}-${instance}`;
   const [draft, setDraft] = useState(''); const draftRef = useRef('');
   const [error, setError] = useState<{ message: string; uncertainSend?: boolean }>(); const [readError, setReadError] = useState<string>();
   const [command, setCommand] = useState<ChatCommand>();
@@ -198,8 +200,8 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
     <form className="chat-composer" onSubmit={event => { event.preventDefault(); void act('agent_chat_send'); }}>
       <p className={`chat-status${status === states.ready ? ' sr-only' : ''}`} role="status" aria-live="polite" aria-atomic="true">{status === states.ready && !latestTurn ? undefined : status}</p>
       {(error || readError || snapshotError) && <p role="alert">{error?.message ?? readError ?? snapshotError}</p>}
-      <label className="sr-only" htmlFor={`message-${documentId}`}>Message</label>
-      <div className="chat-compose-row"><textarea className="field" ref={composer} id={`message-${documentId}`} rows={1} placeholder="Message your agent" value={draft} aria-describedby={`chat-hint-${documentId}`}
+      <label className="sr-only" htmlFor={fieldId}>Message</label>
+      <div className="chat-compose-row"><textarea className="field" ref={composer} id={fieldId} rows={1} placeholder="Message your agent" value={draft} aria-describedby={hintId}
         onChange={event => { draftRef.current = event.target.value; setDraft(event.target.value); }}
         onCompositionStart={() => { composing.current = true; }} onCompositionEnd={() => { composing.current = false; }}
         onKeyDown={event => {
@@ -209,7 +211,7 @@ export default function Chat({ documentId, blocked, active = true }: { documentI
         }} />
         <Button type="submit" kind="primary" aria-label="Send message" disabled={!!reason || !draft.trim()} title={reason ?? (!draft.trim() ? 'Write a message first.' : undefined)}>Send</Button>
       </div>
-      <p className="muted" id={`chat-hint-${documentId}`}>{reason ?? 'Enter sends · Shift+Enter for a new line'}</p>
+      <p className="muted" id={hintId}>{reason ?? 'Enter sends · Shift+Enter for a new line'}</p>
       <div className="chat-actions">
         {canStop && <Button type="button" kind="secondary" disabled={!!command || snapshot.state === 'requestingStop'} onClick={() => { void act('agent_chat_stop'); }}>Stop</Button>}
         {snapshot && snapshot.state !== 'contextUnavailable' && !snapshot.busy && (!snapshot.canSend || pending.current?.uncertain) && <Button type="button" kind="secondary" disabled={!!command} onClick={() => { void act('agent_chat_reconnect'); }}>Reconnect</Button>}

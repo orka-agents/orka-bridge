@@ -22,11 +22,13 @@ import type { SendStart } from '../clusters/use-send-settlement';
 
 export type DocumentAction = { id: number; documentId: string; action: 'open' | 'chat' | 'run' | 'send' };
 
-export default function Example({ sampleRevision = 0, actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, workspaceReady = true, remote = false, catalogPaused = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview, startSend }: {
+export default function Example({ sampleRevision = 0, actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, workspaceReady = true, remote = false, catalogPaused = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview, startSend, onChatBlocked }: {
   actionRequest?: DocumentAction; onActionHandled?: (id: number) => void;
   sampleRevision?: number; agentsRevision?: number; onRegistered?: () => void; documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; workspaceReady?: boolean; remote?: boolean; catalogPaused?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: AgentPair | undefined, documentId: string) => void; onRun?: (snapshot: RunSnapshot | undefined, documentId: string) => void;
   onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void; onSeeInOverview?: (sendId: string) => void; startSend?: SendStart;
+  // Reports why the open agent can't chat, so another view of the same conversation can apply the same gate.
+  onChatBlocked?: (documentId: string, reason: string | undefined) => void;
 }) {
   const [boundDocument, setBoundDocument] = useState(documentId);
   const [requestedDocument, setRequestedDocument] = useState(documentId);
@@ -238,6 +240,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     : reloading ? 'Wait for your saved files to reload.'
     : pendingSoul ? 'Wait for your personality edit to save. Check Agent view if it needs attention.'
     : saveState !== 'saved' ? saveState === 'error' ? 'Your changes could not be saved. Try saving again in Agent view.' : 'Wait for your changes to save.' : undefined;
+  useEffect(() => { onChatBlocked?.(boundDocument, chatBlocked); }, [onChatBlocked, boundDocument, chatBlocked]);
   const testSource = pair && <Disclosure className="check-source" label={<>Test file: {pair.name ?? 'web-reader'}.agent.test.md</>}><pre className="example-source" tabIndex={0} aria-label="Test file, read-only">{pair.tests}</pre></Disclosure>;
   return <>
     {creating && <NewAgent active={active} onRegistered={() => { if (onRegistered) onRegistered(); else if (mounted.current) setListAttempt(value => value + 1); }} model={currentCatalog?.reply?.defaultModel ?? undefined} onCreated={async id => {

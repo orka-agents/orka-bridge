@@ -29,7 +29,7 @@ test('a first launch is guided: the title bar shows the setup steps while naviga
   expect(steps[0].getAttribute('aria-current')).toBe('step');
   expect(localStorage.getItem('bridge.firstRun.v1')).toBe('active');
   expect(screen.getByRole('contentinfo').querySelector('[role="status"]')).not.toBeNull();
-  expect(within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual(['Overview', 'Designer', 'Clusters']);
+  expect(within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual(['Home', 'Overview', 'Designer', 'Clusters']);
 });
 
 test('someone who already dismissed Welcome keeps the sidebar', () => {

@@ -214,7 +214,7 @@ try {
     if ((layout.designer?.send || name.startsWith('chat-') || name.startsWith('upgrade-')) && layout.documentScrollHeight > layout.height + 2) fail('document overflows outside the page scroll');
     if (layout.scrollWidth > layout.clientWidth + 2) fail('page overflows horizontally');
     if (size === 'setup-fit' && layout.scrollHeight > layout.clientHeight + 2) fail('page overflows vertically');
-    if (layout.tabs.length !== 3 || layout.tabs.some(tab => Math.abs(tab.x - layout.tabs[0].x) > 1 || Math.abs(tab.width - layout.tabs[0].width) > 1 || tab.right > layout.page.x) || layout.tabs.some((tab, index) => index > 0 && tab.y < layout.tabs[index - 1].bottom)) fail('sidebar tabs must stack in one column left of the page');
+    if (layout.tabs.length !== 4 || layout.tabs.some(tab => Math.abs(tab.x - layout.tabs[0].x) > 1 || Math.abs(tab.width - layout.tabs[0].width) > 1 || tab.right > layout.page.x) || layout.tabs.some((tab, index) => index > 0 && tab.y < layout.tabs[index - 1].bottom)) fail('sidebar tabs must stack in one column left of the page');
     if (layout.host.right > layout.page.x || layout.host.y < layout.tabs.at(-1).bottom) fail('status card must sit in the sidebar below the tabs');
     if (layout.width <= 820 && (layout.subtitles || layout.hostLabel.width > 160)) fail('compact subtitles/host label exceed their bounds');
     if (layout.quiet.some(item => item.start !== '0px' || item.end !== '0px')) fail('quiet control has inline padding');
