@@ -8,6 +8,7 @@ import { agentInfo, SAMPLE_DOCUMENT_ID, type SaveState, type SourceId, sameSourc
 import { selectedDocument } from './designer/documents-api';
 import Example, { type DocumentAction } from './designer/Example';
 import { type RunSnapshot, runCall } from './designer/run-api';
+import FileMenu from './chrome/FileMenu';
 import WindowControls, { customTitleBar } from './chrome/WindowControls';
 import { finishGuidedFirstRun, guidedFirstRun, guidedStep } from './firstrun/guided';
 import GuidedSteps from './firstrun/GuidedSteps';
@@ -350,6 +351,7 @@ export default function App() {
     <div className={guided ? 'app-shell guided' : 'app-shell'}>
       <header className="title-bar" data-tauri-drag-region={customTitleBar() ? 'deep' : undefined}>
         <span className="brand"><img src={mark} width="22" height="22" alt="Orka" /><b>Bridge</b></span>
+        <FileMenu />
         {guided && <GuidedSteps current={guidedStep(view.step, view.done)} />}
         {guided && !welcome && <Button type="button" kind="quiet" className="guided-exit" onClick={leaveGuided}>Show all of Bridge</Button>}
         <WindowControls />

@@ -137,7 +137,7 @@ pub fn install(
                     stop(app);
                 }
             });
-            // The page draws the title bar, so the main window hides the menu bar.
+            // The page draws the title bar and its own File menu, so the main window hides the menu bar.
             // The menu stays installed, and its Quit still routes through stop().
             if let Some(window) = app.get_webview_window("main") {
                 window.hide_menu()?;
