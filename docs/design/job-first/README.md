@@ -4,7 +4,9 @@ These are design mockups for starting Bridge from a job instead of from an agent
 look from #284: ink and paper, Geist and Geist Mono, a 6px radius, and colour only for state. Blue means running, green
 passed, red failed and amber needs you.
 
-They aren't built yet. Names, repos, numbers, times and token counts on the screens are placeholders. The orca drawings
+They aren't built yet. Names, repos, numbers, times and token counts on the screens are placeholders. The words are
+draft too: today's setup and GitHub sign-in work as [the preview guide](../../preview.md) describes, not as the Start
+and Getting ready screens say. The orca drawings
 are generated concept art that shows the direction; they'll be redrawn as original artwork based on the Bridge mark
 before anything ships.
 
