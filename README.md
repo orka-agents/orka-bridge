@@ -29,7 +29,7 @@ Sending an agent to your team's cluster isn't part of the preview yet.
 ## Where Bridge is going
 
 Open Bridge and it starts a local Orka environment for you, or connects to a cluster you already have. An example agent is ready to use, with a prompt, the
-`web_search` tool enabled, and a test that requires a search to pass.
+`web_fetch` tool enabled, and a test that passes only if it fetched the page.
 
 Click Run to execute the test on your Orka, local or connected. You'll see whether it passed, along with the tool calls. Change the
 prompt, add your own tests, and run them again.
@@ -49,8 +49,7 @@ Bridge has three tabs: Overview, Designer, and Clusters.
 On first launch, Clusters asks one question: start a local VM, or connect an existing cluster that has Orka on it.
 For the local VM, Bridge downloads and starts a VM image with Orka already installed, connects a model, and runs a
 test task to verify everything works. Run in the Designer then targets whichever you chose: the local VM, or the
-cluster you connected. The existing-cluster choice is planned to land first; the local VM choice follows once the
-VM image is built.
+cluster you connected.
 
 Setup happens on a single screen with progress indicators. If something goes wrong, Bridge shows what's missing.
 
