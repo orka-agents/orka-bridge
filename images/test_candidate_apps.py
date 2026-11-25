@@ -173,6 +173,7 @@ class Apps(unittest.TestCase):
         self.assertEqual(self.publish(), 71)
         self.assertEqual(self.release["target_commitish"], "b" * 40)
         self.assertTrue(self.release["draft"] and self.release["prerelease"])
+        self.assertEqual(self.release["body"], c.APP_RELEASE_PAGE.read_text(encoding="utf-8"))
         self.assertEqual(set(self.uploads), PUBLIC_FILES)
         self.assertEqual(set(self.downloads), {1, 2, 3})
         for name in PUBLIC_FILES:
