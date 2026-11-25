@@ -296,7 +296,7 @@ async fn a_terminal_task_with_an_unfinished_worker_times_out_but_keeps_its_answe
     script.status.store(409, Ordering::SeqCst);
     *script.cancel_phase.lock().unwrap() = Some("Succeeded".into());
     run.cancel(vm.clone(), DocumentId::SAMPLE);
-    traced(&script, |trace| {
+    let probed = traced(&script, |trace| {
         trace
             .iter()
             .filter(|(p, _)| p.starts_with("worker/"))
@@ -304,6 +304,7 @@ async fn a_terminal_task_with_an_unfinished_worker_times_out_but_keeps_its_answe
             >= 2
     })
     .await;
+    assert!(probed, "no second worker probe");
     assert!(
         script
             .trace
@@ -426,10 +427,11 @@ async fn a_cancelled_task_waits_for_worker_proof_without_reposting_cancel() {
     run.start(vm.clone());
     observing(&script).await;
     run.cancel(vm.clone(), DocumentId::SAMPLE);
-    traced(&script, |trace| {
+    let probed = traced(&script, |trace| {
         trace.iter().any(|(p, _)| p.starts_with("worker/"))
     })
     .await;
+    assert!(probed, "no worker probe");
     let waiting = run.status(&vm);
     assert_eq!(waiting.state, RunState::Running);
     assert_eq!(waiting.stage, Some("cancel"));
