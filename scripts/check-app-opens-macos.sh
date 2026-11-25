@@ -18,12 +18,11 @@ echo "$output"
 # An ad hoc seal without notarization is "rejected" (exit 3): macOS shows
 # "could not verify" and Privacy & Security offers Open Anyway. Any other
 # failure, such as "code has no resources but signature indicates they must
-# be present" (exit 1), is the damaged case.
+# be present" (exit 1), is the damaged case. "accepted" would mean Gatekeeper
+# is off on this machine, so the check proves nothing and fails too.
 if [[ $status -eq 3 && "$output" == "$work/Bridge.app: rejected" ]]; then
     echo 'Bridge.app is sealed; a browser download opens through Open Anyway'
-elif [[ $status -eq 0 ]]; then
-    echo 'Bridge.app is accepted by Gatekeeper'
 else
-    echo "Gatekeeper would report Bridge.app as damaged (spctl exit $status)" >&2
+    echo "Expected an unverified, not damaged, Bridge.app; spctl exit $status" >&2
     exit 1
 fi

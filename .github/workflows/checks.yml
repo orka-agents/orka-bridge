@@ -157,7 +157,7 @@ jobs:
           test ! -e src-tauri/gen/apple-helper/BridgeVM
           rustup target add x86_64-apple-darwin --toolchain 1.98.1
           cargo +1.98.1 check --manifest-path src-tauri/Cargo.toml --locked --target x86_64-apple-darwin --features custom-protocol
-      - name: Apple helper build and tests
+      - name: Apple helper and app open tests
         if: runner.os == 'macOS' && matrix.suite == 'debug-checks'
         run: |
           bash ../scripts/build-vm-helper-macos.sh
