@@ -10,6 +10,7 @@
 .title-bar-centre { display: flex; justify-content: center; min-width: 0; }
 .title-bar-end { justify-content: flex-end; align-self: stretch; padding-right: var(--space-3); }
 .title-bar-end:has(.window-controls) { padding-right: 0; }
+.title-bar-end .window-controls { margin-left: var(--space-2); }
 .chrome-control { position: relative; display: inline-flex; }
 .title-bar .button-icon { color: var(--color-text); }
 .title-bar .button-icon .icon { width: 16px; height: 16px; }
