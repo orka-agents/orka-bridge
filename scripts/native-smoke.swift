@@ -461,7 +461,9 @@ func normalizedSendText(_ text: String) -> String {
 }
 func sendFrameVisible(_ observations: [VNRecognizedTextObservation]) -> Bool {
     let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
-    let markers = ["Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
+    // The Send card's own rerun action is a marker too: at 540x640 the result head can sit above a frame anchored on
+    // the card's actions, and "Run cluster tests again" appears nowhere but the Send card (clusters/Send.tsx againLabel).
+    let markers = ["Run cluster tests again", "Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
         "Earlier result", "Send needs attention", "Running tests",
         "Cancelling tests", "Cancellation requested.", "Cannot cancel with this cluster identity", "This Orka cannot cancel tests.", "Cancellation not confirmed.", "Tests cancelled on the cluster.", "Tests finished before cancellation."]
     return markers.contains { text.localizedCaseInsensitiveContains($0) }
