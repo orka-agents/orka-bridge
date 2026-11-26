@@ -167,3 +167,16 @@ test('in the app, the footer keeps its words and a not-connected cluster opens i
   await act(async () => { await Promise.resolve(); });
   expect(calls.map(call => call.command)).not.toContain('cluster_select');
 });
+
+test('a click anywhere on the status card opens the menu, and one inside the menu is left alone', async () => {
+  ipc([], null);
+  render(<footer className="status-bar"><OrkaSwitcher place={{ kind: 'thisComputer' }} computerLine="Workspace ready" computerTone="ready" onPlace={vi.fn()} onClusters={vi.fn()} onManage={vi.fn()}>
+    <span className="host-label">This computer</span>
+  </OrkaSwitcher><span className="status-lines">Workspace ready</span></footer>);
+  await userEvent.click(document.querySelector('.status-lines')!);
+  const menu = await screen.findByRole('menu', { name: 'Orka in use' });
+  await userEvent.click(within(menu).getByText('On this computer'));
+  expect(screen.getByRole('menu', { name: 'Orka in use' })).toBeTruthy();
+  await userEvent.click(document.querySelector('.status-lines')!);
+  await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+});

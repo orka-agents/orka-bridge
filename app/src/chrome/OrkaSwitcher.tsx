@@ -45,6 +45,18 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
   const current = (row: Row) => row.kind === 'computer' ? place.kind === 'thisComputer' : row.kind === 'cluster' && row.place.key === currentKey;
 
   const items = () => [...(menu.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
+  // The whole status card opens the menu, not only the name row: a click on its status lines presses the button.
+  useEffect(() => {
+    const card = button.current?.closest('.status-bar');
+    if (!card) return;
+    const press = (event: Event) => {
+      const target = event.target as Node;
+      if (button.current?.contains(target) || menu.current?.contains(target)) return;
+      button.current?.click();
+    };
+    card.addEventListener('click', press);
+    return () => card.removeEventListener('click', press);
+  }, []);
   useEffect(() => {
     if (!open) return;
     const list = items();
@@ -57,7 +69,7 @@ export default function OrkaSwitcher({ children, title, place, computerLine, com
   }, [open, filtering]);
   useEffect(() => {
     if (!open) return;
-    const outside = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) close(false); };
+    const outside = (event: PointerEvent) => { const target = event.target as Node; if (!root.current?.contains(target) && !button.current?.closest('.status-bar')?.contains(target)) close(false); };
     document.addEventListener('pointerdown', outside);
     return () => document.removeEventListener('pointerdown', outside);
   }, [open]);

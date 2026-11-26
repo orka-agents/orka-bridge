@@ -44,3 +44,15 @@
 .switcher-dot.needs-you { background: var(--color-status-pending); }
 .switcher-dot.bad { background: var(--color-status-failed); }
 .switcher-dot.stale { background: var(--color-text-secondary); }
+
+/* The status card is one target for the switcher. */
+.status-bar:has(> .host-chip) { cursor: pointer; }
+.status-bar:has(> .host-chip):hover { background: var(--color-hover); }
+
+/* In the full sidebar the chevron sits at the card's vertical centre and the menu rises from the card itself. */
+@media (min-width: 821px) {
+  .app-shell:not([data-sidebar="collapsed"]) :is(.orka-switcher, .host-chip) { position: static; }
+  .app-shell:not([data-sidebar="collapsed"]) .host-chip { padding-right: var(--space-6); }
+  .app-shell:not([data-sidebar="collapsed"]) .switcher-chevron { position: absolute; right: var(--space-3); top: 50%; margin: 0; translate: 0 -50%; }
+  .app-shell:not([data-sidebar="collapsed"]) .switcher-popover { left: 0; bottom: calc(100% + 8px); }
+}
