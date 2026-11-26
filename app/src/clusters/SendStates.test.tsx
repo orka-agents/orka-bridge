@@ -32,17 +32,18 @@ test('a ready destination reads Ready to send with its checks collapsed behind o
   expect(screen.getByText('Ready to send')).toBeTruthy();
   const checks = toggle.closest('details')!;
   expect(checks.open).toBe(false);
-  expect(within(checks).getByText('Show checks')).toBeTruthy();
+  expect(checks.querySelector('.disclosure-hint')).toBeNull();
   expect(within(card()).queryByRole('region', { name: 'What happened' })).toBeNull();
   expect(screen.queryByText('Passed')).toBeNull();
   expect(screen.getByText(/Repeated Sends/).textContent).toContain('fails. Sending');
 });
-test('blocked and unknown checks stay inline with their reason and mark the pill Needs attention', async () => {
+test('blocked and unknown checks stay inline under Before Send with their reason and mark the pill Needs you', async () => {
   native(null, { ...allowed, canSend: false, action: 'blocked', rows: [{ label: 'page-reader', status: 'blocked', message: 'Create page-reader on team-dev.' }] });
   render(<Send place={place} source={source} stale={false} />);
   const reason = await screen.findByText('Create page-reader on team-dev.');
   expect(reason.closest('details')).toBeNull();
-  expect(screen.getByText('Needs attention')).toBeTruthy();
+  expect(within(screen.getByRole('region', { name: 'Before Send' })).getByRole('heading', { name: 'Before Send' })).toBeTruthy();
+  expect(screen.getByText('Needs you', { selector: '.pill' })).toBeTruthy();
 });
 test('advisory unverified rows in a sendable preflight stay with the collapsed checks, as the native check reports them', async () => {
   native(null, { ...allowed, rows: [{ label: 'Agent access', status: 'allowed', message: 'You can create agents.' }, { label: 'Model inference', status: 'unverified', message: 'Inference is checked when tests run.' }] });
@@ -61,18 +62,18 @@ test('the first and a later Send have fixed action wording; Run cluster tests ag
     run.unmount();
   }
 });
-test('a failed result keeps its verdict and the checks between the summary and answer', async () => {
+test('a failed result keeps its verdict after the summary, and its checks fold into Details', async () => {
   native(view('complete', { verdict: 'failed', cases: [row('failed')] }, { agentAction: 'update' }), { ...allowed, action: 'unchanged' });
   render(<Send place={place} source={source} stale={false} onSeeInOverview={() => undefined} />);
   expect(await screen.findByRole('heading', { name: '0 of 1 tests passed', level: 4 })).toBeTruthy();
-  expect(screen.getByText('Failed', { selector: '.pill' })).toBeTruthy();
-  const order = ['What you send', 'What happened'].map(name => within(card()).getByRole('region', { name }));
-  expect(order[0].compareDocumentPosition(order[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.getByText('Failed', { selector: '.long-card-head .pill' })).toBeTruthy();
+  const [what, result] = ['.send-what', '.send-result'].map(selector => card().querySelector(selector)!);
+  expect(what.compareDocumentPosition(result) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // The failed case starts closed: the headline already states the result.
+  expect(result.querySelector<HTMLDetailsElement>('.test-result')?.open).toBe(false);
   const checks = (await screen.findByText(/Ready to send: \d+ checks? passed/)).closest('details')!;
-  expect(order[0].compareDocumentPosition(checks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(checks.compareDocumentPosition(order[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  const details = [...card().querySelectorAll('.card-details')].at(-1)!;
-  expect(checks.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(checks.closest('.card-details')).toBe(card().querySelector('.long-card > .card-details'));
+  expect(result.compareDocumentPosition(checks) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 test('running keeps the destination fixed with Cancel tests, partial answers and no second Send', async () => {
   native(view('running', { verdict: 'unknown', cases: [row('passed')] }));
@@ -100,7 +101,7 @@ test('an earlier result from another destination never labels a first Send there
   const calls = vi.fn((command: string) => command === 'send_status' ? { documentId: id, view: finished('passed'), busy: null } : command === 'send_history' ? [] : command === 'send_preflight' ? { ...allowed, targetId: other.id } : null);
   mockIPC(calls);
   render(<Send place={{ ...place, target: other }} source={source} stale={false} onSeeInOverview={() => undefined} />);
-  await screen.findByText('Earlier result', { selector: '.pill' });
+  await screen.findByText('Earlier result', { selector: '.long-card-head .pill' });
   const send = await screen.findByRole('button', { name: 'Send and run tests' });
   await waitFor(() => expect((send as HTMLButtonElement).disabled).toBe(false));
   expect(screen.queryByRole('button', { name: 'Run cluster tests again' })).toBeNull();
@@ -122,10 +123,10 @@ test('earlier or unconfirmed files never show a green Passed pill', async () => 
   await waitFor(() => expect(screen.getByText('Revision not confirmed', { selector: '.pill' })).toBeTruthy());
   expect(screen.queryByText('Passed', { selector: '.pill' })).toBeNull();
 });
-test.each([['updateConflict', 'Needs attention'], ['updateUnconfirmed', 'Result unknown']])('an %s update uses its known or uncertain pill state', async (error, word) => {
+test.each([['updateConflict', 'Needs you'], ['updateUnconfirmed', 'Result unknown']])('an %s update uses its known or uncertain pill state', async (error, word) => {
   native(view('unknown', null, { agentAction: 'update', stage: error, error }), { ...allowed, action: 'update' });
   render(<Send place={place} source={source} stale={false} onSeeInOverview={() => undefined} />);
-  expect(await screen.findByText(word, { selector: '.pill' })).toBeTruthy();
+  expect(await screen.findByText(word, { selector: '.long-card-head .pill' })).toBeTruthy();
 });
 test('Send stays on screen without a selected cluster and offers the way to choose one', async () => {
   native(); render(<Send place={{ kind: 'thisComputer' }} source={source} stale={false} onChooseCluster={() => undefined} />);

@@ -1,11 +1,13 @@
-.designer-test-list .test-result > summary > .disclosure-label { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
-.designer-test-list .test-result > summary > .disclosure-label > .test-name { grid-column: 1; display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
-.designer-test-list .test-result > summary > .disclosure-label > .pill { grid-column: 2; font: var(--type-small); }
-.test-name > span { font-family: var(--font-ui); font-size: var(--size-body); font-weight: 500; }
-.test-name > code { color: var(--color-text-secondary); font-size: .92em; }
-.test-story { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
+/* One line per test: the id in mono, then its title in secondary text. */
+.test-name > code { font-family: var(--font-mono); font-weight: 600; font-variant-ligatures: none; color: var(--color-text); }
+.test-name > span { color: var(--color-text-secondary); }
+.test-name > code + span::before { content: " "; }
+.test-story { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); }
 .test-story > li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-2); align-items: start; }
-.story-number { font: var(--type-small); font-weight: 600; border-radius: 50%; background: var(--color-tint-stale); text-align: center; }
+/* Plain mono step numbers; the verdict line is bold, in red when the test failed. */
+.story-number { font: 600 12px/18px var(--font-mono); color: var(--color-text-secondary); }
+.story-verdict { font-weight: 700; }
+.story-verdict.status-failed { color: var(--color-status-failed); }
 /* Each step is a section label (Asked, Used a tool, Answered) over body-size content. */
 .test-story h5 { margin: 0; font: var(--type-label); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--color-text-secondary); }
 .test-story p { margin: 0; overflow-wrap: anywhere; max-width: 70ch; }
@@ -15,8 +17,4 @@
 .story-tools code { color: var(--color-text-secondary); }
 .test-preview { padding: var(--space-4) var(--space-2); }
 .test-preview .reading { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 70ch; }
-.designer-test-list .test-answer { padding-left: 0; }
-@media (max-width: 649px) {
-  .designer-test-list .test-result > summary > .disclosure-label { grid-template-columns: minmax(0, 1fr); }
-  .designer-test-list .test-result > summary > .disclosure-label > .pill { grid-column: 1; justify-self: start; }
-}
+.designer-test-list .test-answer { padding: var(--space-2) 0 0 21px; }

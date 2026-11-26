@@ -128,10 +128,6 @@ describe('Orka ink and paper theme contract', () => {
     expect(compact).not.toMatch(/\.sidebar-toggle-control\s*\{[^}]*display:\s*none/);
     expect(rail).not.toMatch(/\.brand b/);
     expect(compact).toMatch(/\.app-shell\[data-sidebar="overlay"\]:not\(\.guided\)::before\s*\{[^}]*width: 232px/);
-    // The guided first run keeps its labelled rail and the status card as a bar below the page, with its text visible.
-    const guided = compact.split('\n').filter(line => line.includes('.app-shell.guided')).join('\n');
-    expect(guided).toMatch(/\.app-shell\.guided\s*\{[^}]*--sidebar-width:\s*76px;[^}]*grid-template-areas:\s*"title title"\s*"nav main"\s*"status status"/);
-    expect(guided).not.toMatch(/clip-path|\.tab-copy b[^{]*\{[^}]*display:\s*none|\.status-lines[^{]*\{[^}]*(display:\s*none|position:\s*absolute)/);
   });
   it('uses the system dark preference and bundled reading and code families', () => {
     expect(css).toContain('@media (prefers-color-scheme: dark)');

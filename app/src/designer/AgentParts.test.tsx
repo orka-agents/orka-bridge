@@ -98,7 +98,8 @@ test('picker rows lead with one name, retain distinct built-in ids and availabil
   ] } }} />);
   await user.click(screen.getByRole('button', { name: 'Add a tool' }));
   const builtin = screen.getByRole('button', { name: /Read a file.*file_read/ });
-  expect(builtin.querySelector('.tool-option-heading')?.textContent).toBe('Read a fileBuilt-in');
+  // The built-in's id follows its name on the same line, as the picker board shows.
+  expect(builtin.querySelector('.tool-option-heading')?.textContent).toBe('Read a file file_readBuilt-in');
   expect(builtin.querySelector('code')?.textContent).toBe('file_read');
   const custom = screen.getByRole('button', { name: /team_lookup/ });
   expect(custom.textContent?.match(/team_lookup/g)).toHaveLength(1);

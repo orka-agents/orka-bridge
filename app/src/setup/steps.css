@@ -6,6 +6,12 @@
 .setup-column > .card > h2 { margin: 0 0 var(--space-2); font: var(--type-card); }
 .setup .card p { max-width: 70ch; margin: var(--space-2) 0 0; }
 .setup.workspace-setup-failed { grid-template-columns: minmax(0, 1fr); max-width: 700px; }
+/* This computer, returning: the workspace column leads; an update or failure widens it further. */
+@media (min-width: 821px) {
+  .setup.workspace-setup-grid.returning-grid { grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 18px; max-width: 900px; }
+  .setup.workspace-setup-grid.returning-grid-wide { grid-template-columns: minmax(0, 1.3fr) minmax(0, .7fr); max-width: 1000px; }
+}
+.returning-grid .setup-column > .card { padding: 18px 20px; }
 .workspace-setup-failed .setup-side:has(.setup-model-slot:empty) { display: none; }
 .workspace-heading[hidden] { display: none; }
 
@@ -40,6 +46,7 @@
 .workspace-progress-details dl > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--color-border); }
 .workspace-progress-details dt { color: var(--color-text-secondary); }
 .workspace-progress-details dd { margin: 0; color: var(--color-text); }
+.returning-workspace .workspace-progress-details > p { margin: 0; }
 .workspace-progress-details pre { margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-small); background: var(--color-chrome); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--type-caption); font-family: var(--font-mono); }
 .workspace-step-actions { display: flex; align-items: center; gap: var(--space-2) var(--space-3); flex-wrap: wrap; margin-top: var(--space-4); }
 .workspace-step-actions:empty { display: none; }
@@ -92,7 +99,7 @@
 .workspace-change legend + * { clear: both; }
 .workspace-change > p { margin: 0; }
 /* A confirmation is the strong box: it holds the next action until it is answered. */
-.setup-model [role="group"], .model-recovery [role="group"], .workspace-stop-confirm, .setup .workspace-stop-confirm { flex-basis: 100%; min-width: 0; margin: 0; padding: var(--space-3); border: var(--border-control) solid var(--color-text); border-radius: var(--radius-card); background: var(--color-card); }
+.setup-model [role="group"], .model-recovery [role="group"], .workspace-stop-confirm, .setup .workspace-stop-confirm { flex-basis: 100%; min-width: 0; margin: 0; padding: var(--space-3); border: var(--border-editing) solid var(--color-text); border-radius: var(--radius-card); background: var(--color-card); }
 .setup-model [role="group"] > p:first-child, .model-recovery [role="group"] > h3 { margin-top: 0; }
 .model-recovery [role="group"] > h3, .workspace-stop-confirm > legend { font: var(--type-body); font-weight: 600; }
 .setup-model [role="group"] .workspace-step-actions, .model-recovery [role="group"] .workspace-step-actions, .workspace-stop-confirm .workspace-step-actions { margin-top: var(--space-3); }
@@ -130,7 +137,7 @@
 .setup .returning-workspace > .workspace-alert > p { margin: 0; }
 .returning-workspace > .workspace-step-actions { margin-top: 0; }
 .workspace-facts { margin: 0; display: grid; }
-.workspace-facts > div { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: var(--space-3); padding: var(--space-2-5) 0; border-top: 1px solid var(--color-border-strong); }
+.workspace-facts > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: var(--space-3); padding: var(--space-2-5) 0; border-top: 1px solid var(--color-border-strong); }
 .workspace-facts dt { color: var(--color-text-secondary); }
 .workspace-facts dd { margin: 0; overflow-wrap: anywhere; }
 .workspace-facts code { font: 500 var(--size-body)/18px var(--font-mono); font-size: .92em; font-variant-ligatures: none; padding: 1px var(--space-1-5); border-radius: var(--radius-small); background: var(--color-chrome); }
@@ -147,6 +154,8 @@
 .workspace-upgrade .workspace-step-actions { margin-top: 0; }
 .workspace-upgrade > div:has(> .workspace-step-actions:empty) { display: none; }
 .workspace-stop-confirm { display: grid; gap: var(--space-2); }
+.workspace-upgrade .button[hidden] { display: none; }
+:is(.setup-model, .workspace-upgrade) .button-secondary.button-danger:not(:disabled) { border-color: var(--color-status-failed); }
 .workspace-stop-confirm > legend { float: left; width: 100%; padding: 0; margin: 0; }
 .workspace-stop-confirm > legend + * { clear: both; }
 .workspace-stop-confirm p { margin: 0; }

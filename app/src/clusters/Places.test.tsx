@@ -161,6 +161,9 @@ test('Manage Change context focuses its selector after a delayed kubeconfig read
   const remove = screen.getByRole('button', { name: 'Remove' });
   remove.focus(); await user.keyboard('{Enter}');
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep cluster' }));
+  // Keeping is the safe, primary choice and comes first; removal is the outlined danger action after it.
+  const confirmActions = [...screen.getByRole('group', { name: 'Remove cluster confirmation' }).querySelectorAll('button')];
+  expect(confirmActions.map(button => [button.textContent, button.className])).toEqual([['Keep cluster', 'button button-primary'], ['Remove cluster', 'button button-secondary button-danger']]);
   await user.keyboard('{Enter}');
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Remove' }));
   await act(async () => contexts.resolve([context]));

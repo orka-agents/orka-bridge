@@ -142,6 +142,17 @@ function Press($Element) {
     [NativeWalk]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
     [NativeWalk]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
 }
+# The guided first run's title-bar row: the full-width row that holds the Setup progress list.
+function Get-GuidedTitleRow {
+    $node = Find-Control $script:window 'Setup progress' ([System.Windows.Automation.ControlType]::List)
+    $width = $script:window.Current.BoundingRectangle.Width
+    $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
+    for ($i = 0; $node -and $i -lt 8; $i++) {
+        $bounds = $node.Current.BoundingRectangle
+        if (!$bounds.IsEmpty -and $bounds.Width -ge $width * 0.9 -and $bounds.Height -lt 100) { return $bounds }
+        $node = $walker.GetParent($node)
+    }
+}
 function Capture([string]$Name, [bool]$Menu = $false) {
     $r = if ($Menu) { [System.Windows.Forms.SystemInformation]::VirtualScreen } else { $script:window.Current.BoundingRectangle }
     $bitmap = [Drawing.Bitmap]::new([int]$r.Width, [int]$r.Height)
@@ -156,8 +167,15 @@ function Capture([string]$Name, [bool]$Menu = $false) {
             # It is near the top, clear of the taskbar where the maximized frame extends below the display.
             $nav = Find-Control $script:window 'Clusters' $button
             $homeButton = Find-Control $script:window 'Home' $button
-            if (!$nav -or !$homeButton) { throw 'Cannot locate the native sidebar beside the page' }
-            $colour = $bitmap.GetPixel([int]($nav.Current.BoundingRectangle.Right + 16 - $r.X), [int]($homeButton.Current.BoundingRectangle.Top + 8 - $r.Y))
+            if ($nav -and $homeButton) {
+                $colour = $bitmap.GetPixel([int]($nav.Current.BoundingRectangle.Right + 16 - $r.X), [int]($homeButton.Current.BoundingRectangle.Top + 8 - $r.Y))
+            } else {
+                # The guided first run has no sidebar: the page is the whole window under the title-bar row that
+                # holds the Setup progress list, and its top-left corner is solid paper within 32px (art.css).
+                $row = Get-GuidedTitleRow
+                if (!$row) { throw 'Cannot locate the native sidebar or the guided title bar beside the page' }
+                $colour = $bitmap.GetPixel([int]($row.Left + 8 - $r.X), [int]($row.Bottom + 12 - $r.Y))
+            }
             $expected = if ($script:theme -eq 'dark') { @(9, 9, 10) } else { @(255, 255, 255) }
             $actual = @($colour.R, $colour.G, $colour.B)
             for ($channel = 0; $channel -lt 3; $channel++) {
@@ -260,7 +278,11 @@ function Find-ReadyClusters {
         Write-StartupEvent 'uia-attached'
         [NativeWalk]::SetForegroundWindow($script:hwnd) | Out-Null
     }
-    Find-Control $script:window 'Clusters' $button
+    # Nothing is set up, so Bridge opens on Welcome in the guided first run, which has no sidebar:
+    # its Get started is then the ready control, and pressing it leads to the same Places.
+    $control = Find-Control $script:window 'Clusters' $button
+    if (!$control) { $control = Find-Control $script:window 'Get started' $button }
+    $control
 }
 function Find-TrayPoint($Root, [string]$Label) {
     $all = @($Root.FindAll($children, [System.Windows.Automation.Condition]::TrueCondition))
@@ -424,6 +446,9 @@ try {
         # Observe the real runner; never inject Ready or select a local workspace.
         Capture 'computer-requirements'
         if (Test-Path $selected) { throw 'Preflight selected a workspace' }
+        # The guided first run keeps the sidebar away until Show all of Bridge, in its title bar after Welcome.
+        $exit = Find-Control $script:window 'Show all of Bridge' $button
+        if ($exit) { Press $exit }
         Press (Wait-For 'Designer button missing' { Find-Control $script:window 'Designer' $button })
         # Observe the actual editable owned example before toggling File, not a
         # welcome-button proxy or a read-only preview that will be remounted.

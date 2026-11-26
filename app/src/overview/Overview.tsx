@@ -192,7 +192,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const actions = { localAiReason: needsAi ? aiReasonId : undefined, onOpen: onOpenDocument, onChat: onChatDocument, onRun: onRunDocument, onCheck: () => { setDismissedFocus(navigationFocus?.id); setRefresh(v => v + 1); }, onClusters: onChooseWorkspace };
   return <section className="overview" aria-label="Your agents" hidden={!active}>
     <div className="page-heading"><h1 id={active ? 'page-title' : undefined}>Your agents</h1><div className="overview-actions">
-      {onNewAgent && !empty && <Button kind="primary" onClick={onNewAgent}>New agent</Button>}
+      {onNewAgent && !empty && <Button kind="primary" size="large" onClick={onNewAgent}>New agent</Button>}
       </div></div>
     {!empty && <div className="overview-filters">
       {options.length > 4 ? <select className="field" aria-label="Place" value={selectedPlace} onChange={event => { setReveal(undefined); setPlaceFilter(event.target.value); }}><option value="all">All places</option>{options.map(p => <option key={p.key} value={p.key}>{p.label}</option>)}</select>
@@ -204,10 +204,10 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     {focusNote && <div className="overview-note alert" role="status"><p>{focusNote}</p><Button size="small" onClick={() => { if (focus && !focus.target && onRetryFocus) onRetryFocus(focus.sendId); else setFocusRetry(v => v + 1); }}>Refresh</Button></div>}
     {placeError && <div className="overview-note alert" role="status"><p>Couldn't read clusters just now.{places && ' Showing what Bridge last saw.'}</p><Button size="small" onClick={actions.onCheck}>Check again</Button></div>}
     {places?.historyState === 'unavailable' && <div role="alert" className="overview-note alert"><p>Saved Send results are unavailable, so cluster agents show no test result.</p><Button size="small" onClick={actions.onCheck}>Check again</Button></div>}
-    <PlaceNotes groups={clusters} actions={actions} />
+    <PlaceNotes groups={empty ? clusters.map(group => ({ ...group, notes: group.notes.filter(note => !note.empty) })) : clusters} actions={actions} />
     {empty ? <>
       <div className="card overview-empty"><h2>No agents yet</h2><p>Make an agent, or start from web-reader, the example that answers from a web page. Agents you test or send show up here, with their results in each place.</p>
         <div className="overview-card-actions">{onNewAgent && <Button kind="primary" size="large" onClick={onNewAgent}>New agent</Button>}<Button size="large" onClick={onOpenExample}>Open web-reader</Button></div></div>
-    </> : <div className={rows.length ? 'overview-list card' : 'overview-list'}>{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="empty-state">No agents match these filters.</p>}</div>}
+    </> : <div className={rows.length ? 'overview-list overview-table' : 'overview-list'}>{rows.map(row => <AgentListRow key={row.key} row={row} actions={actions} reveal={reveal} onToggle={() => setReveal(undefined)} />)}{!rows.length && built.cards.length > 0 && <p className="empty-state">No agents match these filters.</p>}</div>}
   </section>;
 }

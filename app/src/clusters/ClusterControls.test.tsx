@@ -129,7 +129,9 @@ test('pending discovery uses Running and a failed check leaves one primary retry
   await user.click(screen.getByRole('button', { name: 'Details' }));
   expect(screen.getByText('Check: credentials')).toBeTruthy();
   expect(screen.getByText('Result: unknown')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Reload kubeconfig' }).classList.contains('button-secondary')).toBe(true);
+  // In Details, copying for help leads and Reload kubeconfig is the quiet follow-up.
+  expect(screen.getByRole('button', { name: 'Copy details for help' }).classList.contains('button-secondary')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Reload kubeconfig' }).classList.contains('button-quiet')).toBe(true);
   ipc.mockImplementation(() => []);
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   await screen.findByText('No cluster with Orka was found using this context.');

@@ -72,7 +72,15 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
     : setupPending ? 'Tools will be available when the workspace is ready.' : catalogLoading ? 'Loading tools…' : catalogReason ?? (tools === undefined ? `Couldn't read tools from ${catalogDestination}. Check Clusters or edit File view.` : undefined);
   useEffect(() => {
     if (toolReason) { setPicker(false); setQuery(''); return; }
-    if (picker) { popover.current?.showPopover?.(); popover.current?.querySelector('input')?.focus(); }
+    if (!picker) return;
+    popover.current?.querySelector('input')?.focus();
+    // The picker sits in the page under the tools; a press outside it still closes it, as a popover would.
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && !popover.current?.contains(target) && !add.current?.contains(target)) { setPicker(false); setQuery(''); }
+    };
+    document.addEventListener('pointerdown', outside);
+    return () => document.removeEventListener('pointerdown', outside);
   }, [picker, toolReason]);
   const modelReason = readOnly ? 'You can change the model after setup.' : !form.modelEditable ? 'Edit the model in File view for this file’s format.'
     : setupPending ? 'Models will be available when the workspace is ready.' : catalogLoading ? 'Loading models…' : catalogReason ?? (models === undefined ? `Couldn't read models from ${catalogDestination}. Check Clusters or edit File view.` : undefined);
@@ -118,19 +126,17 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
       </div>
       {!remote && form.tools.some(tool => tool.name && unsupportedLocalTool(tool.name)) && <div className="alert alert-needs-you"><p role="alert" className="alert-title">{unsupportedToolWarning}</p></div>}
       {toolReason && !catalogLoading && <p className="muted">{toolReason}</p>}
-      {picker && !toolReason && <div role="dialog" aria-label="Choose a tool" ref={popover} popover="auto" id={`${id}-picker`} className="tool-picker" onToggle={event => { if (event.newState === 'closed') { setPicker(false); setQuery(''); } }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
-        <Button kind="icon" className="picker-close" aria-label="Close picker" title="Close picker" onClick={close}><CloseIcon /></Button>
-        <label htmlFor={`${id}-search`}>Find a tool</label>
-        <input className="field" id={`${id}-search`} type="search" autoFocus value={query} onChange={event => setQuery(event.target.value)} />
-        <p className="muted">Choose a tool to add to your agent.</p>
+      {picker && !toolReason && <div role="dialog" aria-label="Choose a tool" ref={popover} id={`${id}-picker`} className="tool-picker" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
+        <div className="tool-picker-head"><span className="tool-picker-title">Choose a tool</span><Button kind="icon" className="picker-close" aria-label="Close picker" title="Close picker" onClick={close}><CloseIcon /></Button></div>
+        <label className="sr-only" htmlFor={`${id}-search`}>Find a tool</label>
+        <input className="field" id={`${id}-search`} type="search" placeholder="Find a tool" autoFocus value={query} onChange={event => setQuery(event.target.value)} />
         <ul aria-label="Cluster tools">{choices?.map((tool, index) => {
           const blocked = !remote && unsupportedLocalTool(tool.name);
           const label = tool.kind === 'builtin' ? labelFor(tool.name) : tool.name;
           const reasonId = `${id}-tool-reason-${index}`;
           return <li key={`${tool.kind}:${tool.name}`}><div role={blocked ? 'group' : undefined} tabIndex={blocked ? 0 : undefined} aria-label={blocked ? label : undefined} aria-describedby={blocked ? reasonId : undefined}>
             <button type="button" disabled={blocked} onClick={() => { change(addTool(source, tool.name, tool.kind)); close(); }}>
-              <span className="tool-option-heading"><span>{label}</span><span className="muted">{tool.kind === 'builtin' ? 'Built-in' : 'Cluster tool'}</span></span>
-              {tool.kind === 'builtin' && labelFor(tool.name) !== tool.name && <code>{tool.name}</code>}
+              <span className="tool-option-heading"><span><span className="tool-option-name">{label}</span>{tool.kind === 'builtin' && labelFor(tool.name) !== tool.name && <> <code>{tool.name}</code></>}</span><span className="muted">{tool.kind === 'builtin' ? 'Built-in' : 'Cluster tool'}</span></span>
               <span className="tool-description">{toolDescription(tool)}</span>
               {tool.available === false && <span className="muted">Observed unavailable</span>}
             </button>
@@ -155,8 +161,11 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
     <Disclosure className="agent-settings" label="More settings">
       <div className="agent-part">
         <label htmlFor={`${id}-description`}>Description</label>
-        <textarea id={`${id}-description`} placeholder="A short summary to help you recognise this agent." className="field description-editor" readOnly={readOnly || !form.descriptionEditable} value={form.description ?? ''}
+        {/* One line, as descriptions usually are; a description that already spans lines keeps a text area so no line is lost. */}
+        {form.description?.includes('\n') ? <textarea id={`${id}-description`} placeholder="A short summary to help you recognise this agent." className="field description-editor" readOnly={readOnly || !form.descriptionEditable} value={form.description}
           onChange={event => change(changeDescription(source, event.target.value))} />
+          : <input id={`${id}-description`} placeholder="A short summary to help you recognise this agent." className="field description-line" readOnly={readOnly || !form.descriptionEditable} value={form.description ?? ''}
+            onChange={event => change(changeDescription(source, event.target.value))} />}
         {!form.descriptionEditable && <p className="muted">Edit the description in File view for this file’s format.</p>}
       </div>
       <div className="agent-part">

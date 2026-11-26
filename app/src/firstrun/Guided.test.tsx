@@ -20,16 +20,23 @@ function nativeSetup(status: Record<string, unknown>) {
 }
 const shell = () => document.querySelector('.app-shell')!;
 
-test('a first launch is guided: the title bar shows the setup steps while navigation and the status card stay', async () => {
+test('a first launch is guided: the title bar shows the setup steps and the status card keeps announcing', async () => {
   nativeSetup({ selected: null, localVm: 'idle', model: 'locked' });
+  const user = userEvent.setup();
   render(<App />);
   expect(shell().classList.contains('guided')).toBe(true);
   const steps = within(screen.getByRole('list', { name: 'Setup progress' })).getAllByRole('listitem');
   expect(steps.map(step => step.textContent)).toEqual(['1Set up', '2Connect AI', '3Try it']);
   expect(steps[0].getAttribute('aria-current')).toBe('step');
   expect(localStorage.getItem('bridge.firstRun.v1')).toBe('active');
+  // The status card is off screen during guidance (firstrun.css), but its live region stays in the page.
   expect(screen.getByRole('contentinfo').querySelector('[role="status"]')).not.toBeNull();
-  expect(within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual(['Home', 'Overview', 'Designer', 'Clusters']);
+  // Welcome is the only guided screen without a way out; every later one offers Show all of Bridge to the keyboard.
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
+  const exit = await screen.findByRole('button', { name: 'Show all of Bridge' });
+  expect(exit.closest('.title-bar')).not.toBeNull();
+  expect(exit.matches(':disabled')).toBe(false);
+  expect(exit.tabIndex).toBe(0);
 });
 
 test('someone who already dismissed Welcome keeps the sidebar', () => {
@@ -85,15 +92,20 @@ test('a chosen workspace without a dismissed Welcome means cleared storage, so g
   expect(localStorage.getItem('bridge.firstRun.v1')).toBe('done');
 });
 
-test('the status card stays during guidance and at narrow widths keeps its text visible', () => {
+test('guidance hides the sidebar but keeps the status live region; elsewhere the status card stays visible', () => {
   const guided = readFileSync('src/firstrun/firstrun.css', 'utf8');
-  const shellCss = readFileSync('src/shell.css', 'utf8');
-  expect(guided).not.toMatch(/status-bar[^}]*display:\s*none/);
-  // Outside guidance, narrow windows fold to an icon rail; the guided run's own narrow rules keep the text on screen.
-  const compact = shellCss.slice(shellCss.indexOf('@media (max-width: 820px)')).split('\n').filter(line => line.includes('.app-shell.guided')).join('\n');
-  expect(compact).toMatch(/\.app-shell\.guided \.status-bar\s*\{/);
-  expect(compact).not.toMatch(/\.status-lines[^{]*\{[^}]*display:\s*none/);
-  expect(compact).not.toMatch(/clip-path/);
+  const rule = (selector: string) => guided.match(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+  // The guided page spans the window: one column, no sidebar.
+  expect(rule('.app-shell.guided')).toMatch(/grid-template-areas:\s*"title"\s*"main"/);
+  expect(rule('.app-shell.guided > .page-nav')).toMatch(/display:\s*none/);
+  // The status card is visually hidden, never removed, so assistive technology still hears its status.
+  const status = rule('.app-shell.guided > .status-bar');
+  expect(status).toMatch(/clip-path:\s*inset\(50%\)/);
+  expect(status).not.toMatch(/display:\s*none|visibility:\s*hidden/);
+  expect(guided).toMatch(/\.app-shell\.guided > \.status-bar > :not\(\.status-lines, \[role="status"\]\)\s*\{\s*display:\s*none;\s*\}/);
+  expect(guided).not.toMatch(/\.status-lines[^,{]*\{[^}]*display:\s*none/);
+  // Outside guidance nothing hides the status card or the sidebar.
+  expect(guided.replace(/\.app-shell\.guided[^{]*\{[^}]*\}/g, '')).not.toMatch(/status-bar|page-nav/);
 });
 
 test('a computer with nothing set up is guided again alongside Welcome, and leaving is kept for the run', async () => {

@@ -264,8 +264,11 @@ let root = try launch()
 let pid = app!.processIdentifier
 let originalID = windowInfo()!.0
 var main = find(root, "main-window") { attribute($0, "AXRole") as? String == "AXWindow" }
-press(find(main, "Clusters") { pressable($0, "Clusters") })
-// The dark walk reuses the light walk's profile, so the welcome may already be dismissed.
+// Nothing is set up, so Bridge opens on Welcome in the guided first run, which has no sidebar. Open Clusters
+// from the sidebar only when there is one and no Welcome.
+currentStage = "launch-page"; print("STAGE: \(currentStage)")
+wait("Neither Welcome nor the sidebar appeared") { nodes(main).contains { pressable($0, "Get started") || pressable($0, "Clusters") } }
+if !nodes(main).contains(where: { pressable($0, "Get started") }) { press(find(main, "Clusters") { pressable($0, "Clusters") }) }
 wait("Welcome or Places did not appear") { nodes(main).contains { pressable($0, "Get started") || pressableAction($0, "Set up") } }
 if let start = nodes(main).first(where: { pressable($0, "Get started") }) { press(start) }
 // Places owns the local entry: this computer's Set up action beside an empty cluster list.
@@ -292,6 +295,8 @@ wait("Local size facts did not settle") {
 // Capture the runner observations as drawn, without selecting local or asserting Ready.
 try command("/usr/sbin/screencapture", ["-x", "-o", "-l", String(windowInfo()!.0), "\(output)/computer-requirements.png"])
 check(!FileManager.default.fileExists(atPath: selected), "Preflight selected a workspace")
+// The guided first run keeps the sidebar away until Show all of Bridge, in its title bar after Welcome.
+if let exit = nodes(main).first(where: { pressable($0, "Show all of Bridge") }) { press(exit) }
 press(find(main, "Designer") { pressable($0, "Designer") })
 // A writable Agent-view textarea proves the owned example loaded, not a
 // temporary read-only preview that will remount and reset its view toggle.

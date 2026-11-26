@@ -37,8 +37,9 @@ test('Try a task keeps the instructions beside it and replaces the tests column 
   expect(screen.getByRole('region', { name: 'Try a task' })).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'Tests on this computer' })).toBeNull();
   expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toContain('Read a page.');
-  expect(screen.getByRole('button', { name: 'Send to a cluster' })).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Send and cluster tests' })).toBeNull();
   await user.click(screen.getByRole('button', { name: 'Agent' }));
+  expect(screen.getByRole('region', { name: 'Send and cluster tests' })).toBeTruthy();
   expect(screen.getByRole('region', { name: 'Tests on this computer' })).toBeTruthy();
   expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).value).toContain('Read a page.');
   await user.click(screen.getByRole('button', { name: 'Try a task' }));
@@ -113,7 +114,9 @@ test('failed personality conversion cannot let Try a task silently use the earli
   const editor = screen.getByRole('textbox', { name: 'Agent file' });
   fireEvent.change(editor, { target: { value: source + '\nCorrected in File.' } }); fireEvent.blur(editor);
   await waitFor(() => expect(screen.getByRole('button', { name: 'Run tests' }).hasAttribute('disabled')).toBe(false));
-  expect(screen.getByRole('button', { name: 'Send to a cluster' }).hasAttribute('disabled')).toBe(false);
+  // Unblocked, the Send card offers its next step instead of the disabled Send.
+  expect(screen.queryByRole('button', { name: 'Send to a cluster' })).toBeNull();
+  expect(screen.getByRole('button', { name: 'Choose a cluster' })).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Try a task' }));
   expect(screen.getByRole('button', { name: 'Run task' }).hasAttribute('disabled')).toBe(false);
 });

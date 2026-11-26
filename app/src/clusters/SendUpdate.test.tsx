@@ -54,7 +54,9 @@ test('an older Orka blocks normal update but permits only an explicit separate-a
   expect((separate as HTMLButtonElement).disabled).toBe(false);
   const details = separate.closest('details')!;
   expect(details.open).toBe(false);
-  expect(screen.getByRole('button', { name: 'Check again' }).className).toContain('primary');
+  // A blocking check keeps the disabled Send primary, with Check again beside it.
+  expect(screen.getByRole('button', { name: 'Check again' }).className).toContain('secondary');
+  expect(screen.getByRole('button', { name: 'Update agent and run tests' }).className).toContain('primary');
   await userEvent.click(screen.getByText('Resources and file hashes'));
   expect(details.open).toBe(true);
   expect(screen.getByText('Sends as a new agent; the old one keeps running.')).toBeTruthy();

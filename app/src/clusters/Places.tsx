@@ -27,7 +27,7 @@ export default function Places({ snapshot, unavailable, status, view, place, onL
       const selected = place.kind === 'cluster' && !!place.target && snapshot.selectedKey === item.key;
       const observed = item.observedAt !== null;
       const checkedAt = item.checkedAt ?? item.observedAt;
-      const checked = checkedAt != null ? <>Checked <RelativeTime value={checkedAt} /></> : 'Not checked yet';
+      const checked = checkedAt != null ? <>Checked <RelativeTime value={checkedAt} inline /></> : 'Not checked yet';
       return <section className="card place-row" aria-label={item.context} key={item.key}>
         <span className="icon-tile icon-tile-row" aria-hidden="true"><svg className="icon" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 13l9 5 9-5M3 18l9 5 9-5" /></svg></span>
         <div className="place-summary"><h2><code>{item.context}</code></h2><p className="place-meta"><span>Orka in {item.service.replace(/\s*\/\s*/g, '/')}</span><span className="muted">{checked}</span>{selected && <span className="chip">In use</span>}{observed && !item.stale && <span className="muted">{item.agents.length} {item.agents.length === 1 ? 'agent' : 'agents'}</span>}</p></div>

@@ -112,6 +112,7 @@ for (const [name, header] of [
   ['send-passed', [{ label: 'See in Overview', primary: true }, { label: 'Run cluster tests again', primary: false }]],
 ]) {
   const probe = { ...sendProbe, header, title: name === 'send-passed' ? sendProbe.title : '', id: name === 'send-passed' ? sendProbe.id : '',
+    heading: ['send-ready', 'send-blocked'].includes(name) ? 'Send your agent' : sendProbe.heading,
     checks: ['send-blocked', 'send-sending'].includes(name) ? '1 check passed Show checks' : sendProbe.checks,
     inlineChecks: name === 'send-blocked' ? ['blocked'] : [], changeDisabled: name === 'send-sending' };
   checkSend(name, probe, false);
@@ -184,9 +185,10 @@ assert.throws(() => checkQueued({ ...queuedState, cancel: true }, 'setup-transfe
 const welcomeGuard = source.split('\n').find(line => line.includes('if (!welcome.primary'));
 assert.ok(welcomeGuard);
 const checkWelcome = Function('welcome', welcomeGuard);
-const welcomeState = { primary: true, expert: true, text: "Send it to your team's cluster (preview)." };
+const welcomeState = { primary: true, expert: false, text: "Send it to your team's cluster (preview)." };
 assert.doesNotThrow(() => checkWelcome(welcomeState));
 assert.throws(() => checkWelcome({ ...welcomeState, primary: false }));
+assert.throws(() => checkWelcome({ ...welcomeState, expert: true }), 'the cluster route lives on the screen after Welcome');
 // Exercise the real layout gate with measurements, without pretending to render a native window.
 const layoutGate = source.slice(source.indexOf('  async function checkLayout('), source.indexOf('  // Setup-progress states:'));
 assert.ok(layoutGate.includes('sidebar tabs must stack in one column left of the page'));
@@ -213,10 +215,6 @@ for (const mutation of [
   { names: 4 }, { railNames: 3 }, { described: 3 }, { labels: labels.slice(1) },
   { hostLabel: { width: 100 } }, { hostLabel: null }, { statusLine: { width: 180 } }, { statusLine: null }, { brand: false },
 ]) await assert.rejects(() => gate({ ...compact, ...mutation }));
-// The guided first run keeps its labelled rail and the status card as a bar below the page.
-const guided = { ...wide, guided: true, width: 540, subtitles: 0, tabs: [0, 1, 2, 3].map(i => ({ ...tab(i), width: 68, right: 72 })), page: { x: 76, bottom: 600 }, host: { x: 20, y: 608, right: 200 } };
-await gate(guided);
-for (const mutation of [{ host: { x: 20, y: 590, right: 200 } }, { names: 0 }, { statusLine: { width: 1 } }, { hostLabel: { width: 1 } }, { subtitles: 4 }, { hostLabel: { width: 161 } }]) await assert.rejects(() => gate({ ...guided, ...mutation }));
 for (const mutation of [
   { tabs: wide.tabs.slice(1) },
   { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, x: 30 } : item) },
@@ -229,6 +227,16 @@ for (const mutation of [
   { theme: { page: 'rgb(242, 241, 237)', ink: 'rgb(27, 32, 38)' } },
   { scrollHeight: 703 },
 ]) await assert.rejects(() => gate({ ...wide, ...mutation }));
+// The guided first run spans the window with no sidebar or status card on screen, keeps the status live region and
+// offers Show all of Bridge; any other screen is still held to the sidebar layout above.
+const guided = { ...wide, guided: true, tabs: [], names: 0, subtitles: 0, hostShown: 0, host: { x: 0, y: 0, right: 0, width: 0 }, hostLabel: { width: 0 }, page: { x: 0, right: 1280 }, statusRegion: true, exit: 1 };
+await gate(guided);
+await gate({ ...guided, width: 540, page: { x: 0, right: 540 } });
+for (const mutation of [
+  { tabs: wide.tabs }, { names: 4 }, { hostShown: 1 }, { page: { x: 232, right: 1280 } }, { page: { x: 0, right: 1000 } },
+  { statusRegion: false }, { exit: 0 },
+]) await assert.rejects(() => gate({ ...guided, ...mutation }));
+await assert.rejects(() => gate({ ...guided, guided: false }));
 // The compact Change image must be framed before requesting its screenshot.
 const changeCapture = source.match(/if \(name\.startsWith\('ai-removal-'\)\) \{([\s\S]*?)\n      await clickAction\('Remove saved sign-in'\);/)?.[1];
 assert.ok(changeCapture);
@@ -702,6 +710,29 @@ for (const name of ['upgrade-refresh-pending', 'upgrade-refresh-busy', 'upgrade-
 assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_status', args: { refresh: true } }], 'upgrade-refresh-arbitrary', 'fixture-transaction'));
 // Old isolated-world React pollers may still retire their own first-test intent;
 // their synthetic preferences must not change a later scene's identity.
+// Guided first-run screens have no sidebar: the smoke walk anchors the page under the guided title-bar row, finds
+// Get started as the native button (its arrow is CSS content) and leaves guidance only through Show all of Bridge.
+assert.ok(smoke.includes('guard let row = guidedTitleRow() else { fail("Cannot locate the native sidebar or the guided title bar for the page viewport") }')
+  && smoke.includes('return CGRect(x: rect.minX, y: row.maxY, width: rect.width, height: max(0, rect.maxY - row.maxY))')
+  && smoke.includes('== "Setup progress" }') && smoke.includes('bounds.width >= rect.width * 0.9, bounds.height < 100'), 'guided pages must be anchored under the actual guided title-bar row');
+assert.ok(smoke.includes('nativeButtons("Show all of Bridge")') && smoke.includes('"Show all of Bridge did not end the guided first run and bring back the sidebar"')
+  && (smoke.match(/leaveGuidedFirstRun\(\)\n\s*clickTab\(/g) ?? []).length >= 2, 'the walk must leave the guided first run before using the sidebar');
+assert.ok(!/topCandidates\(1\)\.first\?\.string == "Get started"/.test(smoke) && !smoke.includes('clickText("Get started"'), 'Get started carries a CSS arrow, so it is found as a native button, not an exact OCR line');
+// The walk reads visible text in its authored case: capitals drawn by CSS map back to the app's words, nothing else.
+{
+  const authored = source.match(/const authoredInnerText = `([\s\S]*?)`;/)?.[1];
+  assert.ok(authored && source.includes('for (const setup of [fixtureStorage, authoredInnerText])'), 'Windows walk must install authored-case innerText in every fixture world');
+  class HTMLElement { constructor(text, children = [], transform = 'none') { this.rendered = text; this.children = children; this.textContent = text; this.transform = transform; }
+    querySelectorAll() { return this.children.flatMap(child => [child, ...child.querySelectorAll()]); } }
+  Object.defineProperty(HTMLElement.prototype, 'innerText', { configurable: true, get() { return this.rendered; }, set() {} });
+  const world = { HTMLElement, getComputedStyle: node => ({ textTransform: node.transform }) };
+  vm.runInNewContext(authored, world);
+  const pill = new HTMLElement('Not started', [], 'uppercase');
+  const card = new HTMLElement('Tests on this computer\nNOT STARTED\nWaiting', [pill]);
+  assert.equal(card.innerText, 'Tests on this computer\nNot started\nWaiting');
+  const plain = new HTMLElement('READY TO SEND', [new HTMLElement('Ready to send')]);
+  assert.equal(plain.innerText, 'READY TO SEND', 'text the app wrote in capitals, or that CSS does not capitalise, is unchanged');
+}
 const fixtureStorage = source.match(/const fixtureStorage = `([\s\S]*?)`;/)?.[1];
 assert.ok(fixtureStorage, 'each renderer fixture world needs isolated presentation preferences');
 const nativePreferences = new Map([['native-sentinel', 'kept']]);

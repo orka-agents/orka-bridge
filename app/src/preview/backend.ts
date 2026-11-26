@@ -6,10 +6,11 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import agentSource from '../../src-tauri/example-agent/web-reader.agent.md?raw';
 import testSource from '../../src-tauri/example-agent/web-reader.agent.test.md?raw';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
+import { orkaPermissions } from '../clusters/api';
 import { sidebarPreference } from '../chrome/sidebar';
 import { themePreference } from '../chrome/theme';
 import {
-  clusterCatalog, type Credential, createdSeed, deniedAccess, failingClusterPlace, failingClusterProvider, failingClusterTarget, type FailureScenario,
+  clusterCatalog, type Credential, contextTargets, createdSeed, deniedAccess, kubeContexts, failingClusterPlace, failingClusterProvider, failingClusterTarget, type FailureScenario,
   installationMismatch, keyInvalid, keyRejected, modelGuest, sendRows, unreachableCluster, upgradeStatus, workspaceFailures,
 } from './fixtures';
 
@@ -37,7 +38,13 @@ export const scenarios = {
   sendBlocked: 'Send blocked by destination checks',
   sendRunning: 'Send running on the cluster',
   sendFailed: 'Send finished with a failing test',
+  sendPassed: 'Send finished with every test passing',
+  sendLocalFailed: 'Local test failed, cluster ready to send',
   testIncomplete: 'First test is incomplete',
+  runStale: 'Local result from before your last edit',
+  overviewEmpty: 'No saved agents yet',
+  clusterContexts: 'Add a cluster with kubectl contexts',
+  wsStarting: 'First setup, the workspace starting',
 } as const;
 export type Scenario = keyof typeof scenarios;
 type Gh = 'missing' | 'signedOut' | 'signedIn';
@@ -59,7 +66,8 @@ let gh: Gh = (['missing', 'signedOut', 'signedIn'] as const).find(value => value
 const now = () => Date.now() * speed;
 const fresh = scenario === 'fresh' || scenario === 'vmFailed' || scenario === 'ghMissing' || scenario === 'ghSignedOut' || scenario === 'memoryLow';
 let selected: 'localVm' | null = fresh ? null : 'localVm';
-let startedAt: number | null = scenario === 'restart' ? now() : null;
+// wsStarting opens a first setup 12 seconds into starting, after the files were checked and installed.
+let startedAt: number | null = scenario === 'restart' ? now() : scenario === 'wsStarting' ? now() - (timing.verify + timing.copy + 12) * 1000 : null;
 let reopened = scenario === 'restart';
 let stopped: 'cancelled' | 'closed' | null = null;
 let modelConnected = scenario === 'connected' || scenario === 'runFails' || scenario === 'clusterReady';
@@ -115,19 +123,26 @@ function status() {
   };
 }
 
-let run: { documentId: string; startedAt: number; attemptId: string | null; count: number } | null = null;
+// A run captures the files it started from, as native does, so an edit afterwards makes its result an earlier one.
+type Run = { documentId: string; startedAt: number; attemptId: string | null; count: number; source: { agent: string; tests: string } | null; cancelledAt: number | null };
+let run: Run | null = null;
 let runCount = 0;
+const runModel = 'gpt-5.6-terra';
 function runSnapshot(documentId: string) {
   const doc = docs.get(documentId);
   const canRun = ready() && modelConnected;
   const base = { documentId, busy: null, modelConnected, source: doc ? source(doc) : null, pending: null, error: null };
   if (!run || run.documentId !== documentId) return { ...base, attemptId: null, state: 'idle', stage: null, canRun, report: null, acknowledged: [] };
-  const elapsed = (now() - run.startedAt) / 1000;
+  const elapsed = ((run.cancelledAt ?? now()) - run.startedAt) / 1000;
   const acknowledged = [{ kind: 'Agent', name: doc?.name ?? 'agent', uid: uuid(`agent${run.count}`) }, { kind: 'Task', name: `${doc?.name ?? 'agent'}-test-${run.count}`, uid: uuid(`task${run.count}`) }];
-  if (elapsed < runSeconds) return { ...base, attemptId: run.attemptId, busy: { documentId, name: doc?.name ?? 'agent' }, state: 'running', stage: 'observe', canRun: false, report: null, acknowledged };
-  const pass = scenario !== 'runFails';
+  const captured = { ...base, source: run.source, model: runModel, attemptId: run.attemptId, acknowledged };
+  if (run.cancelledAt !== null) return { ...captured, state: 'complete', stage: 'done', canRun, cancellation: 'cancelled', report: { verdict: 'cancelled', cases: [{
+    id: 'published-checksum', title: 'Published checksum', phase: 'Cancelled', question: 'Open the download page and report the SHA-256 checksum it publishes.', answer: null, completedTools: [], assertions: [], verdict: 'cancelled',
+  }] } };
+  if (elapsed < runSeconds) return { ...captured, busy: { documentId, name: doc?.name ?? 'agent' }, state: 'running', stage: 'observe', canRun: false, canCancel: true, report: null };
+  const pass = scenario !== 'runFails' && scenario !== 'sendLocalFailed';
   const checksum = 'cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918';
-  return { ...base, attemptId: run.attemptId, state: 'complete', stage: 'done', canRun, acknowledged, report: { verdict: pass ? 'passed' : 'failed', cases: [{
+  return { ...captured, state: 'complete', stage: 'done', canRun, report: { verdict: pass ? 'passed' : 'failed', cases: [{
     id: 'published-checksum', title: 'Published checksum', phase: 'Succeeded',
     question: 'Open the download page and report the SHA-256 checksum it publishes.',
     answer: pass ? `The page publishes this SHA-256 checksum:\n\n${checksum}` : "I couldn't fetch that page, so I can't tell you the checksum.",
@@ -181,13 +196,27 @@ function reply(documentId: string, message: string) {
   return `This preview answers with scripted text. In the desktop app, ${doc?.name ?? 'your agent'} answers with the AI in your workspace.`;
 }
 
+// The last finished local run, recorded for Overview the way native local-results does.
+function localResult(documentId: string) {
+  if (!run || run.documentId !== documentId) return null;
+  const snapshot = runSnapshot(documentId);
+  if (snapshot.state !== 'complete' || !snapshot.report || !run.source) return null;
+  const cases = snapshot.report.cases;
+  const finished = run.cancelledAt ?? run.startedAt + runSeconds * 1000;
+  return {
+    installation, documentId, source: run.source, namespace: 'bridge-runs', agentName: snapshot.acknowledged[0].name, agentUid: snapshot.acknowledged[0].uid,
+    // Native times are Unix milliseconds; the preview clock runs at speed, so convert back to wall time.
+    observedAt: Math.round(finished / speed), state: 'complete',
+    report: { verdict: snapshot.report.verdict, passed: cases.filter(c => c.verdict === 'passed').length, total: cases.length },
+  };
+}
 function savedFiles() {
   return {
-    state: 'complete', runActive: !!run && (now() - run.startedAt) / 1000 < runSeconds, historyState: 'complete', runAgents: [],
-    files: [...docs].map(([documentId, doc]) => {
+    state: 'complete', runActive: !!run && run.cancelledAt === null && (now() - run.startedAt) / 1000 < runSeconds, historyState: 'complete', runAgents: [],
+    files: scenario === 'overviewEmpty' ? [] : [...docs].map(([documentId, doc]) => {
       const description = /^description: (.+)$/m.exec(doc.agent)?.[1]?.replace(/^"|"$/g, '') || null;
       const model = /^model: (.+)$/m.exec(doc.agent)?.[1] ?? 'gpt-5.6-terra';
-      return { documentId, name: doc.name, state: 'readable', source: source(doc), summary: { name: doc.name, description, model, tools: doc.name === 'web-reader' ? ['web_fetch'] : [] }, reason: null, localResult: null };
+      return { documentId, name: doc.name, state: 'readable', source: source(doc), summary: { name: doc.name, description, model, tools: doc.name === 'web-reader' ? ['web_fetch'] : [] }, reason: null, localResult: localResult(documentId) };
     }),
   };
 }
@@ -196,7 +225,7 @@ const wait = (seconds: number) => new Promise(resolve => setTimeout(resolve, sec
 function pair(documentId: string) {
   const doc = docs.get(documentId);
   if (!doc) throw 'Your agent folder could not be opened.';
-  return { documentId, name: doc.name, agent: doc.agent, tests: doc.tests, source: source(doc), path: `C:\\Users\\you\\Orka\\agents\\${doc.name}`, storage: 'bridge' };
+  return { documentId, name: doc.name, agent: doc.agent, tests: doc.tests, source: source(doc), path: `C:\\Users\\you\\Orka\\agents\\${doc.name}\\${doc.name}.agent.md`, storage: 'bridge' };
 }
 const documentId = (args?: Record<string, unknown>) => typeof args?.documentId === 'string' ? args.documentId : SAMPLE_DOCUMENT_ID;
 const upgradeNone = { state: 'none', transaction: null, createdAt: null, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, credential: 'absent', busy: false, error: null, repeated: false, canReplace: false, canRestore: false, canCancel: false };
@@ -226,10 +255,10 @@ function clusterReply(command: string, args?: Record<string, unknown>): unknown 
 // Scenarios that open in states the ordinary walk can't reach. Replies come from ./fixtures; a command
 // a scenario doesn't own falls through to the ordinary script in handle().
 const unscripted = Symbol('unscripted');
-const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed', 'clusterReady'].includes(scenario);
+const added = !['fresh', 'ready', 'connected', 'restart', 'ghMissing', 'ghSignedOut', 'runFails', 'vmFailed', 'clusterReady', 'clusterContexts', 'wsStarting'].includes(scenario);
 const upgradeScenario = scenario === 'wsUpdate' || scenario === 'wsRestore' || scenario === 'wsRecovery';
-const remoteScenario = ['clusterDenied', 'clusterUnreachable', 'sendBlocked', 'sendRunning', 'sendFailed'].includes(scenario);
-const sendScenario = scenario === 'sendBlocked' || scenario === 'sendRunning' || scenario === 'sendFailed';
+const sendScenario = ['sendBlocked', 'sendRunning', 'sendFailed', 'sendPassed', 'sendLocalFailed'].includes(scenario);
+const remoteScenario = sendScenario || scenario === 'clusterDenied' || scenario === 'clusterUnreachable';
 let failed: FailureScenario | null = Object.hasOwn(workspaceFailures, scenario) ? scenario as FailureScenario : null;
 let replaced = scenario === 'wsRestore' || scenario === 'wsRecovery';
 let credential: Credential = scenario === 'wsUpdate' ? 'eligible' : 'absent';
@@ -241,7 +270,12 @@ let sent = false;
 let remoteSend: { id: string; documentId: string; startedAt: number; count: number; created: boolean; cancelled: boolean } | null = null;
 let sendCount = 0;
 if (scenario === 'wsStopped') stopped = 'cancelled';
-if (sendScenario || scenario === 'testIncomplete') modelConnected = true;
+if (sendScenario || scenario === 'testIncomplete' || scenario === 'runStale') modelConnected = true;
+// runStale: a finished run on files that have changed since, so its result is an earlier one.
+if (scenario === 'runStale') {
+  const earlier = { agent: digest(`${agentSource}\nAn earlier edit.`), tests: digest(testSource) };
+  run = { documentId: SAMPLE_DOCUMENT_ID, startedAt: now() - (runSeconds + 300) * 1000, attemptId: null, count: ++runCount, source: earlier, cancelledAt: null };
+}
 const draftDocument = uuid('doc-my-agent');
 if (scenario === 'testIncomplete') {
   docs.set(draftDocument, { name: 'my-agent', ...createdSeed('my-agent') });
@@ -263,6 +297,14 @@ const toolsOf = (doc: Doc) => doc.name === 'web-reader' ? ['web_fetch'] : [];
 function sendReport(cancelled: boolean) {
   const base = { id: 'published-checksum', title: 'Published checksum', question: 'Open the download page and report the SHA-256 checksum it publishes.' };
   if (cancelled) return { verdict: 'cancelled', cases: [{ ...base, phase: 'Cancelled', answer: null, completedTools: [], assertions: [], verdict: 'cancelled' }] };
+  if (scenario === 'sendPassed') {
+    const checksum = 'cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918';
+    return { verdict: 'passed', cases: [{
+      ...base, phase: 'Succeeded', answer: `The page publishes this SHA-256 checksum:\n\n${checksum}`, completedTools: ['web_fetch'],
+      assertions: [{ id: 'checksum-from-page', kind: 'contains', expected: checksum, verdict: 'passed' }, { id: 'fetched-page', kind: 'toolCalled', expected: 'web_fetch', verdict: 'passed' }],
+      verdict: 'passed',
+    }] };
+  }
   return { verdict: 'failed', cases: [{
     ...base, phase: 'Succeeded', answer: "I couldn't fetch that page, so I can't tell you the checksum.", completedTools: [],
     assertions: [
@@ -288,7 +330,46 @@ function sendStatus(id: string) {
   return { documentId: id, view: s.documentId === id ? view : null, busy: running ? { documentId: s.documentId, name: doc.name } : null };
 }
 
+// clusterContexts: kubeconfig lists contexts whose clusters have one, two or no Orka installations, and one
+// whose installation needs a ServiceAccount. A cluster used in this run is remembered, as native does.
+const contexts = kubeContexts(uuid);
+const targets = contextTargets(uuid, contexts);
+const contextProvider = { id: uuid('contexts-provider'), name: 'team-model', ready: true };
+let usedTarget: (typeof targets)[number] | null = null;
+function usedPlace() {
+  if (!usedTarget) return null;
+  const { target } = usedTarget;
+  return { key: `${target.context_name}/${target.service_namespace}/${target.service_name}`, context: target.context_name, service: `${target.service_namespace}/${target.service_name}`, namespace: target.watched_namespace, stale: false, observedAt: Date.now(), checkedAt: Date.now(), agents: [] };
+}
+async function contextReply(command: string, args?: Record<string, unknown>): Promise<unknown> {
+  const place = usedPlace();
+  switch (command) {
+    case 'cluster_contexts': case 'cluster_reload': await wait(0.3); return contexts;
+    case 'cluster_discover': await wait(0.8); return targets.filter(item => item.target.context_id === args?.contextId).map(item => item.target);
+    case 'cluster_use': {
+      await wait(0.8);
+      const item = targets.find(candidate => candidate.target.id === args?.targetId);
+      if (!item) throw { check: 'configuration', result: 'unknown' };
+      if (item.serviceAccount && !args?.saName) return { status: 'needServiceAccount', providers: [], failure: null };
+      usedTarget = item;
+      return { status: 'connected', providers: [contextProvider], failure: null };
+    }
+    case 'cluster_service_accounts': await wait(0.3); return { names: ['bridge-user', 'default', 'orka-reader'], truncated: false };
+    case 'cluster_service_account_preview': await wait(0.3); return { status: 'allowed', checks: orkaPermissions.map(([resource, verb]) => ({ resource, verb, status: 'allowed' })) };
+    case 'cluster_places': return { places: place ? [place] : [], selectedKey: place?.key ?? null, persistenceState: 'complete' };
+    case 'overview_places': return { places: place ? [place] : [], historyState: 'complete', unobserved: [] };
+    case 'cluster_select':
+      if (!place || !usedTarget || args?.key !== place.key) throw { check: 'configuration', result: 'unknown' };
+      return { target: usedTarget.target, providers: [contextProvider] };
+  }
+  return unscripted;
+}
+
 async function scenarioReply(command: string, args?: Record<string, unknown>): Promise<unknown> {
+  if (scenario === 'clusterContexts') {
+    const reply = await contextReply(command, args);
+    if (reply !== unscripted) return reply;
+  }
   switch (command) {
     case 'setup_preflight':
       if (scenario !== 'memoryLow') break;
@@ -487,10 +568,17 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
     case 'agent_run': {
       const id = documentId(args);
       if (!runSnapshot(id).canRun) return runSnapshot(id);
-      run = { documentId: id, startedAt: now(), attemptId: typeof args?.attemptId === 'string' ? args.attemptId : null, count: ++runCount };
+      const doc = docs.get(id);
+      run = { documentId: id, startedAt: now(), attemptId: typeof args?.attemptId === 'string' ? args.attemptId : null, count: ++runCount, source: doc ? source(doc) : null, cancelledAt: null };
       return runSnapshot(id);
     }
-    case 'agent_run_cancel': case 'agent_run_check_cancellation': return runSnapshot(documentId(args));
+    case 'agent_run_cancel': {
+      // Stop ends a running test; a finished one is left as it was.
+      const id = documentId(args);
+      if (run?.documentId === id && runSnapshot(id).state === 'running') run.cancelledAt = now();
+      return runSnapshot(id);
+    }
+    case 'agent_run_check_cancellation': return runSnapshot(documentId(args));
     case 'agent_chat_status': case 'agent_chat_reconnect': return chatSnapshot(documentId(args));
     case 'agent_chat_new': {
       const id = documentId(args);
@@ -564,7 +652,8 @@ export function installPreview() {
     // Each load starts from the scenario, not from the previous walk's browser storage. Theme and sidebar choices are kept: they are presentation only.
     for (const key of Object.keys(localStorage)) if (key.startsWith('bridge.') && key !== themePreference && key !== sidebarPreference) localStorage.removeItem(key);
     if (!fresh) localStorage.setItem('bridge.welcomeSeen.v1', '1');
-    if (!fresh) localStorage.setItem('bridge.firstTest.v1', 'attempted');
+    // wsStarting is a first setup still under way, so its first test is still pending.
+    if (!fresh) localStorage.setItem('bridge.firstTest.v1', scenario === 'wsStarting' ? 'pending' : 'attempted');
   } catch { /* Storage is optional in the preview. */ }
   (globalThis as { isTauri?: boolean }).isTauri = true;
   mockWindows('main');

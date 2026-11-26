@@ -80,10 +80,27 @@ try {
       key: index => [...values.keys()][index] ?? null, get length() { return values.size; }
     } });
   })();`;
+  // innerText applies CSS text-transform, so pills and section labels read in capitals. In this walk's world only,
+  // innerText returns the same visible text with each capitalised element's authored copy put back, so checks
+  // compare against the words the app wrote; any other casing still fails. The app itself never reads innerText.
+  const authoredInnerText = `(() => {
+    const native = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'innerText');
+    Object.defineProperty(HTMLElement.prototype, 'innerText', { configurable: true, set: native.set, get() {
+      let text = native.get.call(this);
+      for (const node of [this, ...this.querySelectorAll('*')]) {
+        if (!(node instanceof HTMLElement) || getComputedStyle(node).textTransform !== 'uppercase') continue;
+        const authored = node.textContent;
+        if (authored && authored !== authored.toUpperCase()) text = text.split(authored.toUpperCase()).join(authored);
+      }
+      return text;
+    } });
+  })();`;
   async function evaluate(expression) {
     if (contextId !== undefined && !preferenceContexts.has(contextId)) {
-      const initialized = await call('Runtime.evaluate', { expression: fixtureStorage, contextId, returnByValue: true });
-      if (initialized.exceptionDetails) throw Error(JSON.stringify(initialized.exceptionDetails));
+      for (const setup of [fixtureStorage, authoredInnerText]) {
+        const initialized = await call('Runtime.evaluate', { expression: setup, contextId, returnByValue: true });
+        if (initialized.exceptionDetails) throw Error(JSON.stringify(initialized.exceptionDetails));
+      }
       preferenceContexts.add(contextId);
     }
     const result = await call('Runtime.evaluate', { expression, contextId, awaitPromise: true, returnByValue: true });
@@ -182,14 +199,14 @@ try {
         if (recovery.bar || recovery.rows.length !== 4 || !recovery.failed) throw Error(`${name}: recovery must stay inside workspace step 2: ${JSON.stringify(recovery)}`);
       }
       if (cluster) await evaluate(`document.querySelector('.cluster-card').scrollIntoView({ block: 'end' })`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${name}.png`), Buffer.from(image.data, 'base64'));
       console.log(`Captured native WebView2 renderer fixture: ${theme}/${name}`);
     }
   }
   async function checkLayout(theme, size, name) {
-    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     const layout = await evaluate(`(() => {
       const shown = selector => [...document.querySelectorAll(selector)].filter(node => node.getClientRects().length);
       const rect = node => { if (!node) return null; const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, width: r.width }; };
@@ -200,7 +217,6 @@ try {
         host: rect(document.querySelector('.host-chip')), hostLabel: rect(document.querySelector('.host-label')), statusLine: rect(document.querySelector('.status-lines')), statusText: document.querySelector('.status-lines')?.textContent.trim() ?? '',
         names: shown('.tab-copy b').filter(node => node.getBoundingClientRect().width > 1).length,
         // The icon rail keeps each name and status line in the page for assistive technology, clipped to a point.
-        guided: !!document.querySelector('.app-shell.guided'),
         railNames: shown('.tab-copy').filter(node => node.getBoundingClientRect().width <= 1 && node.querySelector('b')?.textContent.trim()).length,
         labels: shown('.page-tab').map(node => node.getAttribute('aria-label')),
         described: shown('.page-tab').filter(node => document.getElementById(node.getAttribute('aria-describedby') ?? '')?.textContent.trim()).length,
@@ -217,27 +233,32 @@ try {
         setup: (() => { const root = shown('.workspace-setup-grid')[0]; if (!root) return null; const get = selector => rect(root.querySelector(selector)); return { progress: get('.setup-progress'), model: get('.setup-model-slot:not(:empty)'), meet: get('.workspace-meet') }; })(),
         designer: (() => { const root = shown('.designer-work')[0]; if (!root) return null; const get = selector => rect([...root.querySelectorAll(selector)].find(node => node.getClientRects().length)); return { tests: get('.designer-tests:not([hidden])'), editor: get('.designer-file'), send: get('.send-panel:not([hidden])'), history: get('.send-history') }; })(),
         fallback: { file: rect(shown('.designer > .designer-file')[0]), history: rect(shown('.designer > .designer-checks .send-history')[0]) },
+        guided: !!document.querySelector('.app-shell.guided'), hostShown: shown('.host-chip').length, exit: shown('.guided-exit:not(:disabled)').length,
+        statusRegion: (() => { const footer = document.querySelector('footer.status-bar'), region = footer?.querySelector('[role="status"]'); return !!region && [footer, region].every(node => getComputedStyle(node).display !== 'none' && getComputedStyle(node).visibility !== 'hidden'); })(),
       };
     })()`);
     const fail = reason => { throw Error(`${name}/${size}: ${reason}: ${JSON.stringify(layout)}`); };
     if ((layout.designer?.send || name.startsWith('chat-') || name.startsWith('upgrade-')) && layout.documentScrollHeight > layout.height + 2) fail('document overflows outside the page scroll');
     if (layout.scrollWidth > layout.clientWidth + 2) fail('page overflows horizontally');
     if (size === 'setup-fit' && layout.scrollHeight > layout.clientHeight + 2) fail('page overflows vertically');
-    if (layout.tabs.length !== 4 || layout.tabs.some(tab => Math.abs(tab.x - layout.tabs[0].x) > 1 || Math.abs(tab.width - layout.tabs[0].width) > 1 || tab.right > layout.page.x) || layout.tabs.some((tab, index) => index > 0 && tab.y < layout.tabs[index - 1].bottom)) fail('sidebar tabs must stack in one column left of the page');
-    // Narrow windows show the 60px icon rail with the status card's dot below the tabs; the guided first run keeps its
-    // labelled rail with the status card as a bar below the page.
-    const rail = layout.width <= 820 && !layout.guided;
-    const guidedCompact = layout.width <= 820 && layout.guided;
-    if (!guidedCompact && (layout.host.right > layout.page.x || layout.host.y < layout.tabs.at(-1).bottom)) fail('status card must sit in the sidebar below the tabs');
-    if (guidedCompact && layout.host.y < layout.page.bottom) fail('compact status bar must sit below the page');
-    if (rail) {
-      if (layout.page.x > 62 || layout.tabs.some(tab => tab.width > 46)) fail('narrow sidebar must be the 60px icon rail');
-      if (layout.names || layout.railNames !== 4 || layout.labels?.join() !== 'Home,Overview,Designer,Clusters' || layout.described !== 4) fail('rail tabs must keep their names and status descriptions for assistive technology, off screen');
-      if (!(layout.hostLabel && layout.hostLabel.width <= 1) || layout.statusText && !(layout.statusLine && layout.statusLine.width <= 1)) fail('rail status card must show only its dot and keep the place and status line for assistive technology');
-      if (!layout.brand) fail('narrow title bar must keep Bridge and the sidebar toggle');
+    if (layout.guided) {
+      // The guided first run is the whole window under the title bar: no sidebar or status card on screen. The
+      // status card's live region stays in the accessibility tree, and every screen after Welcome offers the way out.
+      if (layout.tabs.length || layout.names || layout.hostShown) fail('guided first run must not show the sidebar or status card');
+      if (layout.page.x > 1 || layout.page.right < layout.width - 1) fail('guided page must span the window');
+      if (!layout.statusRegion) fail('guided first run must keep the status live region in the accessibility tree');
+      if (name !== 'welcome' && !layout.exit) fail('guided screens after Welcome must offer Show all of Bridge');
     } else {
-      if (layout.names !== 4 || layout.statusText && !(layout.statusLine?.width > 1) || !(layout.hostLabel?.width > 1)) fail('page names, place and status line must stay visible');
-      if (guidedCompact && (layout.subtitles || layout.hostLabel.width > 160)) fail('compact subtitles/host label exceed their bounds');
+      if (layout.tabs.length !== 4 || layout.tabs.some(tab => Math.abs(tab.x - layout.tabs[0].x) > 1 || Math.abs(tab.width - layout.tabs[0].width) > 1 || tab.right > layout.page.x) || layout.tabs.some((tab, index) => index > 0 && tab.y < layout.tabs[index - 1].bottom)) fail('sidebar tabs must stack in one column left of the page');
+      // Wide windows show the full sidebar with the status card below the tabs; narrow ones the 60px icon rail, whose
+      // status card keeps only its dot and whose names and status lines stay for assistive technology, off screen.
+      if (layout.host.right > layout.page.x || layout.host.y < layout.tabs.at(-1).bottom) fail('status card must sit in the sidebar below the tabs');
+      if (layout.width <= 820) {
+        if (layout.page.x > 62 || layout.tabs.some(tab => tab.width > 46)) fail('narrow sidebar must be the 60px icon rail');
+        if (layout.names || layout.railNames !== 4 || layout.labels?.join() !== 'Home,Overview,Designer,Clusters' || layout.described !== 4) fail('rail tabs must keep their names and status descriptions for assistive technology, off screen');
+        if (!(layout.hostLabel && layout.hostLabel.width <= 1) || layout.statusText && !(layout.statusLine && layout.statusLine.width <= 1)) fail('rail status card must show only its dot and keep the place and status line for assistive technology');
+        if (!layout.brand) fail('narrow title bar must keep Bridge and the sidebar toggle');
+      } else if (layout.names !== 4 || layout.statusText && !(layout.statusLine?.width > 1) || !(layout.hostLabel?.width > 1)) fail('page names, place and status line must stay visible');
     }
     if (layout.quiet.some(item => item.start !== '0px' || item.end !== '0px')) fail('quiet control has inline padding');
     if (layout.scrollbar.width !== 'thin' || layout.scrollbar.color === 'auto') fail('page scrollbar must be thin and themed');
@@ -343,7 +364,7 @@ try {
     if (rows.count !== 4 || observed && rows.current !== (step === 2 ? 'Get your workspace ready' : 'Connect the AI')) throw Error(`${name}: list and shell disagree: ${JSON.stringify(rows)}`);
     if (observed && localVm !== 'ready' && rows.barRow !== 'Get your workspace ready') throw Error(`${name}: progress is outside the active workspace row`);
     if (localVm === 'starting' && rows.value !== null) throw Error(`${name}: startup must be indeterminate`);
-    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     if (!modelSupported && !await evaluate(`document.body.textContent.includes('Waiting') && !document.body.textContent.includes('Queued') && ![...document.querySelectorAll('button')].some(button => button.textContent === 'Connect the AI')`)) {
       throw new Error(`${name}: an unsupported platform must show Waiting with no model action`);
     }
@@ -444,12 +465,14 @@ try {
   if (runUi) actionFixtures.push('chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer', 'chat-two-versions', 'chat-long', 'send-ready', 'send-blocked', 'send-sending', 'send-passed', 'send-failed', 'send-unsupported', 'send-earlier-target', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure', 'cluster-connected', 'cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination');
   function assertWorkspacePresentation(state, probe, size) {
     const fail = reason => { throw Error(state + ': ' + reason + ': ' + JSON.stringify(probe)); };
-    if (probe.heading !== 'This computer' || probe.bar || probe.choices || probe.runs || probe.firstTest !== 'attempted' || !probe.grid) fail('invalid returning workspace');
+    // Only a starting workspace shows its progress bar.
+    const starting = state === 'starting-after-quit-synthetic';
+    if (probe.heading !== 'This computer' || probe.bar !== starting || probe.choices || probe.runs || probe.firstTest !== 'attempted' || !probe.grid) fail('invalid returning workspace');
     if (!probe.text.includes('Agents') || !probe.text.includes('Files') || probe.detailsOpen) fail('facts or folded diagnostics missing');
-    if (probe.buttons.some(label => ['Start', 'Stop', 'Stop the workspace', 'Cancel'].includes(label))) fail('obsolete workspace action');
+    if (probe.buttons.some(label => ['Start', 'Stop', 'Stop the workspace'].includes(label)) || !starting && probe.buttons.includes('Cancel')) fail('obsolete workspace action');
     if (size === 'compact' && (probe.width !== 540 || probe.height !== 640)) fail('minimum viewport is not 540x640');
     if (state === 'ready' && (probe.pill !== 'Ready' || probe.primary.length)) fail('Ready must have no primary action');
-    if (state === 'starting-after-quit-synthetic' && (!probe.text.includes('0:18 so far') || probe.primary.length)) fail('missing observed elapsed time or inert startup action');
+    if (starting && (!probe.text.includes('18 seconds elapsed') || probe.primary.length || !probe.buttons.includes('Cancel'))) fail('missing observed elapsed time, Cancel or inert startup action');
     if (state === 'stop-failed' && (!probe.text.includes("The workspace didn't stop.") || probe.primary.join('|') !== 'Quit Bridge')) fail('stop failure needs plain copy and primary Quit');
     if (['failed', 'stopped-unexpectedly'].includes(state) && probe.primary.join('|') !== 'Restart workspace') fail('start failure needs primary Restart');
   }
@@ -517,7 +540,7 @@ try {
       'send-unsupported': ['Check cluster status'], 'send-earlier-target': ['Send and run tests', 'See in Overview'] }[name];
     if (probe.header.map(button => button.label).join('|') !== labels.join('|')
         || probe.header[0]?.primary !== (name !== 'send-sending') || probe.header.slice(1).some(button => button.primary)) throw Error('Wrong Send header actions: ' + JSON.stringify(probe));
-    if (probe.heading !== 'To fixture-selected' || !probe.summary.includes('web-reader') || !probe.summary.includes('1 test')) throw Error('Send destination/compact summary missing: ' + JSON.stringify(probe));
+    if (probe.heading !== (['send-ready', 'send-blocked'].includes(name) ? 'Send your agent' : 'To fixture-selected') || name !== 'send-sending' && (!probe.summary.includes('web-reader') || !probe.summary.includes('1 test'))) throw Error('Send destination/compact summary missing: ' + JSON.stringify(probe));
     const checks = ['send-blocked', 'send-sending'].includes(name) ? '1 check passed' : 'Ready to send: 1 check passed';
     if (!probe.checks.startsWith(checks) || probe.checksOpen || probe.inlineChecks.join('|') !== (name === 'send-blocked' ? 'blocked' : '')) throw Error('Send must fold allowed/advisory checks, count only allowed and retain inline blockers: ' + JSON.stringify(probe));
     if (probe.changeDisabled !== (name === 'send-sending')) throw Error('Change must be disabled only during Send');
@@ -535,7 +558,7 @@ try {
       const resources = [...root.querySelectorAll('.card-details')].find(item => item.querySelector('summary')?.textContent.includes('Resources and file hashes'));
       const shown = selector => [...root.querySelectorAll(selector)].filter(button => button.getClientRects().length);
       return { header: shown('.long-card-head button').filter(button => button.textContent.trim() !== 'Change').map(button => ({ label: button.textContent.trim(), primary: button.classList.contains('button-primary') })),
-        heading: root.querySelector('.long-card-head h3').textContent.trim(), summary: root.querySelector('[aria-label="What you send"] p')?.textContent ?? '',
+        heading: root.querySelector('.long-card-head h3').textContent.trim(), summary: root.querySelector('.send-what')?.textContent ?? '',
         checks: root.querySelector('.send-checks > summary').textContent.trim(), checksOpen: root.querySelector('.send-checks').open,
         inlineChecks: shown('.send-preflight:not(details) li').map(row => row.dataset.state),
         changeDisabled: shown('.long-card-head button').find(button => button.textContent.trim() === 'Change')?.disabled,
@@ -546,7 +569,7 @@ try {
     })()`);
     const shoot = async (suffix, selector) => {
       await evaluate(`(() => { const root = document.querySelector('.send-panel'); const anchor = ${selector}; anchor.scrollIntoView({ block: 'start' }); })()`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-${name}${suffix}.png`), Buffer.from(image.data, 'base64'));
     };
@@ -935,7 +958,8 @@ try {
       await clickAction('Open');
     } else if (name.startsWith('designer') || name.startsWith('local-cancel-') || name.startsWith('chat-') || name.startsWith('new-agent-')) await clickAction('Read its instructions');
     if (sendScene) {
-      await clickAction('Send to a cluster');
+      // The Send card is always in Designer's right column; bring it into view.
+      await evaluate(`document.querySelector('.send-panel').scrollIntoView({ block: 'start' })`);
       await captureSendScene(theme, size, name);
       return;
     }
@@ -946,7 +970,7 @@ try {
       if (['chat-pending', 'chat-running', 'chat-session-null', 'chat-session-answer'].includes(name) && await evaluate(`['No answer was received.', 'failed without an answer'].some(text => document.querySelector('.try-task .try-result').innerText.includes(text))`)) throw Error('A waiting task shows a premature missing-answer fault');
       if (name.startsWith('chat-session-') && !await evaluate(`document.querySelector('.try-task').innerText.includes('Waiting for the task to finish saving…') || document.querySelector('.try-task .try-result .pill')?.textContent === 'Running'`)) throw Error('Session confirmation lost its pending status');
       await evaluate(`document.querySelector('.designer-try').scrollIntoView({ block: 'start' })`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const chatCopy = await evaluate(`(() => {
         const root = document.querySelector('.try-task'), main = document.querySelector('main'), field = root.querySelector('textarea'), send = root.querySelector('button[type="submit"]'), hint = document.getElementById(field.getAttribute('aria-describedby'));
         const rect = node => { const r = node.getBoundingClientRect(); return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }; };
@@ -1012,7 +1036,7 @@ try {
               }));
             })()`);
             if (!reachable) throw Error(scene + ': cluster actions overlap fixed chrome');
-            await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+            await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
             const image = await call('Page.captureScreenshot', { format: 'png' });
             await writeFile(join(output, `${theme}-${size}-${scene}.png`), Buffer.from(image.data, 'base64'));
             await compareReference(image.data, theme, size, scene, 'clusters');
@@ -1097,12 +1121,11 @@ try {
       const state = await evaluate(`({ historyHidden: !document.querySelector('.designer-checks .send-history')?.getClientRects().length, catalog: window.__bridgeCatalogCalls, runPrimary: [...document.querySelectorAll('.example-run button')].some(button => button.textContent === 'Run tests' && button.classList.contains('button-primary')) })`);
       if (await evaluate(`document.body.innerText.includes('Your agent selection could not be saved')`)) throw Error('Designer fixture failed to acknowledge document selection');
       if (name === 'designer' && (state.catalog.length || state.runPrimary)) throw Error('Disconnected Designer presents a runnable primary/catalog: ' + JSON.stringify(state));
-      // Send is retained but hidden until used or a cluster is selected; its header entry and Past Sends section are always present.
+      // The Send card and its Team cluster heading are always shown under This computer, with Past Sends as an open card below.
       const sendShown = await evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length`);
-      if (sendShown !== (name === 'designer-remote')) throw Error(`${name}: Send card visibility is wrong (visible=${sendShown})`);
-      if (!await evaluate(`!!document.querySelector('.send-panel') && !!document.querySelector('.agent-selector select') && [...document.querySelectorAll('.send-entry button')].some(b => b.textContent === 'Send to a cluster')`)) throw Error(`${name}: retained Send, header picker or Send entry is missing`);
-      if (!sendShown && await evaluate(`[...document.querySelectorAll('.designer-checks h2')].some(h => h.getClientRects().length)`)) throw Error(`${name}: hidden Send left its team heading`);
-      if (await evaluate(`document.querySelector('.send-history details')?.open !== false`)) throw Error(`${name}: Past Sends must start closed`);
+      if (!sendShown) throw Error(`${name}: Send card must always be shown`);
+      if (!await evaluate(`!!document.querySelector('.agent-selector select') && !document.querySelector('.send-entry') && [...document.querySelectorAll('.designer-checks h2')].some(h => h.textContent === 'Team cluster' && h.getClientRects().length)`)) throw Error(`${name}: header picker or Team cluster heading is missing, or a page-head Send entry returned`);
+      if (await evaluate(`!document.querySelector('.send-history > h3') || !!document.querySelector('.send-history > details')`)) throw Error(`${name}: Past Sends must be an open card`);
       if (name === 'designer-remote' && (state.historyHidden || !state.catalog.some(call => call.command === 'cluster_catalog' && call.args.targetId === '00000000-0000-4000-8000-000000000002' && call.args.providerId === '00000000-0000-4000-8000-000000000003'))) throw Error('Remote catalog is not scoped to the selected cluster/AI');
     }
     if (name.startsWith('local-cancel-')) {
@@ -1122,7 +1145,7 @@ try {
       // Open the kept answer and capture the card in the real native WebView.
       if (state === 'cancelled') await evaluate(`document.querySelector('.example-run .test-result').open = true`);
       await evaluate(`document.querySelector('.example-run').scrollIntoView({ block: 'start' })`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
       if (await evaluate('window.__bridgeCancelCalls.length') !== 0) throw Error('Cancellation replayed on mount');
@@ -1143,7 +1166,7 @@ try {
       console.log(`Captured native WebView2 local cancellation fixture: ${theme}/${size}/${name}`);
       return;
     }
-    const settle = () => evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    const settle = () => evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     const visibleText = text => `[...document.querySelectorAll('h1, p, span, button')].some(node => node.getClientRects().length && node.textContent === ${JSON.stringify(text)})`;
     if (name === 'first-test-passed') {
       await until(() => evaluate(visibleText('Your first agent passed its test')), 'first-pass moment').catch(async error => { throw Error(`${error.message}: ${await evaluate('document.body.innerText')}`); });
@@ -1212,7 +1235,7 @@ try {
         if (card.text.includes('Its test failed') !== (state === 'failed')) fail('failure message belongs only to the failed test');
         for (const [suffix, target] of [['', '[aria-label="Setup steps"] > li:last-child'], ['-card', '[aria-label="Workspace setup"]']]) {
           await evaluate(`document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' })`);
-          await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+          await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
           const image = await call('Page.captureScreenshot', { format: 'png' });
           await writeFile(join(output, `${theme}-${size}-sample-${state}${suffix}.png`), Buffer.from(image.data, 'base64'));
         }
@@ -1239,7 +1262,7 @@ try {
       const shoot = async (state, frame, target) => {
         await evaluate(`document.querySelector(${JSON.stringify(target)}).scrollIntoView({ block: 'center' })`);
         await checkLayout(theme, size, `ai-reset-${state}`);
-        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
         const image = await call('Page.captureScreenshot', { format: 'png' });
         await writeFile(join(output, `${theme}-${size}-ai-reset-${state}.png`), Buffer.from(image.data, 'base64'));
         await compareReference(image.data, theme, size, `ai-reset-${state}`, frame);
@@ -1298,7 +1321,7 @@ try {
         const start = [...root.querySelectorAll('button')].find(button => button.textContent === 'Get started');
         return { text: root.innerText, primary: start?.classList.contains('button-primary'), expert: [...root.querySelectorAll('button')].some(button => button.textContent.includes('I already run Orka on a cluster')) };
       })()`);
-      if (!welcome.primary || !welcome.expert || !welcome.text.includes("Send it to your team's cluster (preview).")) throw Error('Welcome lost its primary, expert route or preview caveat: ' + JSON.stringify(welcome));
+      if (!welcome.primary || welcome.expert || !welcome.text.includes("Send it to your team's cluster (preview).")) throw Error('Welcome lost its primary or preview caveat, or kept the cluster route that moved to the next screen: ' + JSON.stringify(welcome));
     }
     if (preflight) {
       if (name !== 'local-preflight-missing') await until(() => evaluate(`document.querySelector('[aria-label="Computer requirements"]')?.getAttribute('aria-busy') === 'false'`), 'settled computer checks');
@@ -1356,7 +1379,7 @@ try {
     }
     if (['designer-connected', 'designer-running', 'designer-failed', 'designer-passed', 'designer-stale'].includes(name)) await evaluate(`document.querySelector('.example-run').scrollIntoView({ block: 'start' })`);
     if (name.startsWith('ai-removal-')) await evaluate(`document.querySelector('.setup-model').scrollIntoView({ block: 'center' })`);
-    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+    await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
     const image = await call('Page.captureScreenshot', { format: 'png' });
     await writeFile(join(output, `${theme}-${size}-${name}.png`), Buffer.from(image.data, 'base64'));
     if (name === 'chat-answer') {
@@ -1408,7 +1431,7 @@ try {
     if (name === 'welcome' || preflight) {
       // The compact loop uses 540×640; preserve the choice and its scrolled action.
       await evaluate(`document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const actionLabel = name === 'welcome' ? 'Get started' : 'Continue';
       const reachable = await evaluate(`(() => {
         const button = [...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(actionLabel)} && button.getClientRects().length);
@@ -1420,7 +1443,8 @@ try {
       await writeFile(join(output, `${theme}-${size}-${name}-end.png`), Buffer.from(end.data, 'base64'));
       if (name === 'welcome') {
         await clickAction('Get started');
-        await until(() => evaluate(`document.body.innerText.includes('Choose where agents run') && !document.querySelector('.welcome-screen')`), 'Get started retains Places navigation');
+        // Someone who already runs Orka picks their cluster here: Add a cluster, or the cluster choice beside this computer.
+        await until(() => evaluate(`document.body.innerText.includes('Choose where agents run') && !document.querySelector('.welcome-screen') && [...document.querySelectorAll('button, #workspace-cluster')].some(node => (node.id === 'workspace-cluster' || node.textContent === 'Add a cluster') && node.getClientRects().length)`), 'Get started retains Places navigation and the cluster route');
       } else if (name === 'local-preflight-cluster') {
         await clickAction('Continue');
         await until(() => evaluate(`!!document.querySelector('.cluster-card')?.getClientRects().length`), 'existing cluster chooser');
@@ -1434,7 +1458,7 @@ try {
     if (name.startsWith('chat-') || name.startsWith('new-agent-') || noDestination) await compareDesigner(image.data, theme, size, name);
     if (size !== 'wide' && ['new-agent-form', 'cluster-failure'].includes(name)) {
       await evaluate(`document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight`);
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const labels = name === 'new-agent-form' ? ['Create', 'Cancel'] : ['Check again'];
       const reachable = await evaluate(`(() => {
         const main = document.querySelector('main').getBoundingClientRect();
@@ -1490,7 +1514,7 @@ try {
       const chip = () => evaluate(`[...document.querySelectorAll('.tool-pill')].some(pill => pill.querySelector('code')?.textContent === 'reply_in_conversation' && pill.getClientRects().length)`);
       const warned = () => evaluate(`[...document.querySelectorAll('[role="alert"]')].some(alert => alert.textContent.includes('reply_in_conversation') && alert.getClientRects().length)`);
       const settleShot = async suffix => {
-        await evaluate('document.querySelector(".agent-tool-row").scrollIntoView({ block: "center" }); document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        await evaluate('document.querySelector(".agent-tool-row").scrollIntoView({ block: "center" }); document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
         const image = await call('Page.captureScreenshot', { format: 'png' });
         await writeFile(join(output, `${theme}-${size}-${suffix}.png`), Buffer.from(image.data, 'base64'));
       };
@@ -1525,7 +1549,7 @@ try {
     if (name === 'ai-idle' && await evaluate(`document.querySelector('.setup-model').innerText.includes('Remove sign-in')`)) throw Error('Unused sign-in removal is visible before connecting');
     if (await evaluate(`document.body.innerText.includes('Change where agents run')`)) throw Error('Removed change panel is still visible');
     if (name === 'designer-connected' || name === 'designer-remote') {
-      const settle = () => evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      const settle = () => evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const shoot = async suffix => {
         await settle();
         const image = await call('Page.captureScreenshot', { format: 'png' });
@@ -1545,14 +1569,14 @@ try {
         if (type.model?.value !== 'gpt-5.6-terra' || type.model.shown !== 'Workspace default: GPT-5.6 Terra' || type.defaultRepeated) throw Error(`${name}: workspace default needs a friendly label, unchanged value and no repeated default: ${JSON.stringify(type)}`);
       }
       // Try a task supplies a place subtitle. Its header may grow, but controls stay in their row and File restores Agent's geometry.
-      const header = async () => { await evaluate(`document.querySelector('main').scrollTop = 0`); return evaluate(`(() => { const r = s => { const b = document.querySelector(s)?.getBoundingClientRect(); return b && { x: b.x, y: b.y, w: b.width, h: b.height }; }; return { switch: r('.view-switch'), picker: r('.agent-selector'), send: r('.send-entry'), name: r('.agent-name') }; })()`); };
+      const header = async () => { await evaluate(`document.querySelector('main').scrollTop = 0`); return evaluate(`(() => { const r = s => { const b = document.querySelector(s)?.getBoundingClientRect(); return b && { x: b.x, y: b.y, w: b.width, h: b.height }; }; return { switch: r('.view-switch'), picker: r('.agent-selector'), name: r('.agent-name') }; })()`); };
       const base = await header();
       for (const view of ['Try a task', 'File']) {
         await clickAction(view);
         await until(async () => await pressed() === view, `${view} view`);
         const now = await header();
         for (const key of Object.keys(base)) if (!base[key] || !now[key] || (view === 'Try a task' ? key === 'name' ? ['x', 'h'] : ['x', 'w', 'h'] : ['x', 'y', 'w', 'h']).some(k => Math.abs(base[key][k] - now[key][k]) > 2)) throw Error(`${name}: header ${key} moved in ${view}: ${JSON.stringify([base, now])}`);
-        if (view === 'Try a task' && ['picker', 'send'].some(key => Math.abs(now[key].y - base[key].y - (now.switch.y - base.switch.y)) > 2)) throw Error(`${name}: Try a task controls left their header row`);
+        if (view === 'Try a task' && ['picker'].some(key => Math.abs(now[key].y - base[key].y - (now.switch.y - base.switch.y)) > 2)) throw Error(`${name}: Try a task controls left their header row`);
         if (view === 'Try a task') {
           await until(() => evaluate(`!!document.querySelector('.try-task')?.getClientRects().length && !document.body.innerText.includes('Opening Try a task')`), 'Try a task snapshot');
           const chat = await evaluate(`(() => { const root = document.querySelector('.try-task'); return { text: root.innerText, run: root.querySelector('button[type="submit"]')?.disabled }; })()`);
@@ -1573,13 +1597,9 @@ try {
       await clickAction('Agent');
       await until(async () => await pressed() === 'Agent', 'Agent view');
       if (name === 'designer-connected') {
-        await clickAction('Send to a cluster');
-        await until(() => evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length && document.activeElement === document.querySelector('.send-panel')`), 'opened Send is shown and focused');
-        if (await evaluate(`document.querySelector('.send-history details').open`)) throw Error('Opening Send must not open Past Sends');
+        await until(() => evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length`), 'Send is shown');
         await evaluate(`document.querySelector('.send-panel').scrollIntoView({ block: 'start' })`);
         await shoot('send');
-        await evaluate(`document.querySelector('.send-history summary').click()`);
-        await until(() => evaluate(`document.querySelector('.send-history summary').getAttribute('aria-expanded') === 'true'`), 'Past Sends opens on request');
         await evaluate(`document.querySelector('.send-history').scrollIntoView({ block: 'center' })`);
         await shoot('history');
       } else if (!await evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length`)) throw Error('Returning from Try a task lost the retained Send');
@@ -1645,7 +1665,7 @@ try {
     await evaluate(`document.querySelector('button.page-tab[aria-label="Overview"]').click()`);
     const text = () => evaluate(`document.querySelector('section.overview:not([hidden])')?.innerText ?? ''`);
     const shoot = async suffix => {
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const image = await call('Page.captureScreenshot', { format: 'png' });
       await writeFile(join(output, `${theme}-${size}-overview-${variant}${suffix}.png`), Buffer.from(image.data, 'base64'));
       console.log(`Captured native WebView2 Overview fixture: ${theme}/${size}/${variant}${suffix}`);
@@ -1905,7 +1925,7 @@ try {
         }
         await until(() => evaluate(`document.activeElement?.matches('.workspace-upgrade summary:focus-visible')`), 'upgrade keyboard focus');
       }
-      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+      await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
       const base64 = await call('Page.captureScreenshot', { format: 'png' });
       // A variant explicitly named -confirm reserves that exact filename for the
       // open confirmation. Keep its prior observation separately, never *-confirm-confirm.
@@ -1923,7 +1943,7 @@ try {
         await until(() => evaluate(`document.activeElement?.textContent === 'Not now' && document.activeElement.matches(':focus-visible')`), 'confirmation keyboard focus');
         // The fresh-C and restore warnings can sit below the fold; scroll before the separate capture.
         await evaluate(`document.querySelector('.workspace-upgrade fieldset.workspace-stop-confirm').scrollIntoView({ block: 'center' })`);
-        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+        await evaluate('document.fonts.ready.then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))');
         const confirmImage = await call('Page.captureScreenshot', { format: 'png' });
         const confirmationName = name.endsWith('-confirm') ? name : `${name}-confirm`;
         await writeFile(join(output, `${theme}-${size}-${confirmationName}.png`), Buffer.from(confirmImage.data, 'base64'));

@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import { useState, type ComponentProps } from 'react';
@@ -75,11 +75,10 @@ test('a failed local open keeps saved Send history accessible without the source
   });
   render(<Example />);
   await screen.findByRole('button', { name: 'Try opening again' });
-  const history = await screen.findByRole('button', { name: 'Past Sends' });
-  expect(history.getAttribute('aria-expanded')).toBe('false');
-  fireEvent.click(history);
-  expect(await screen.findByText('No saved Sends yet.')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Send to a cluster' }).hasAttribute('disabled')).toBe(true);
+  // Past Sends is an always-open card; with no agent open there is no Send card to act from.
+  const history = await screen.findByRole('region', { name: 'Past Sends' });
+  expect(await within(history).findByText('No saved Sends yet.')).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Send and cluster tests' })).toBeNull();
 });
 test('opening keeps a form-shaped skeleton until the owned document arrives', async () => {
   vi.stubGlobal('isTauri', true); let finish!: (value: unknown) => void;

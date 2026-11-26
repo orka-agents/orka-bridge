@@ -63,8 +63,8 @@
 /* The page is flat paper with a hairline beside the sidebar. Its padding is 26px 30px at the boards' window size;
    taller windows add top space, and wide ones centre a content column of at most 1256px. */
 .page-content { --page-pad: 30px; --page-pad-top: 26px; grid-area: main; position: relative; min-width: 0; min-height: 0; overflow: auto; scrollbar-gutter: stable; padding: clamp(var(--page-pad-top), calc(var(--page-pad-top) + (100vh - 820px) * .12), 88px) max(var(--page-pad), calc((100vw - var(--sidebar-width) - 1256px) / 2)) var(--page-pad-top); border-left: 1px solid var(--color-border-strong); background: var(--color-page); }
-/* The guided first run keeps its own 24px page edges. */
-.app-shell.guided .page-content { --page-pad: var(--space-6); }
+/* The guided first run's page spans the window (firstrun.css), so it has no sidebar hairline. */
+.app-shell.guided > .page-content { border-left: 0; }
 .page-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
 .heading-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 /* The status card: the place in use, then its state, then the latest checks. */
@@ -86,7 +86,7 @@
   .app-shell[data-sidebar="collapsed"] .status-bar { place-items: center; min-height: 40px; margin-inline: var(--space-2); padding: 0; }
 }
 /* Narrow windows always show the rail. The title bar keeps Bridge and the toggle, which opens the full sidebar over
-   the page; it closes again when a page is chosen. The guided first run keeps its labelled rail (below). */
+   the page; it closes again when a page is chosen. The guided first run has no sidebar (firstrun.css). */
 @media (max-width: 820px) {
   .app-shell:not(.guided) { --sidebar-width: 60px; }
   .app-shell:not(.guided, [data-sidebar="overlay"]) .page-nav { overflow: visible; padding-inline: var(--space-2); }
@@ -100,20 +100,6 @@
   .app-shell[data-sidebar="overlay"]:not(.guided)::before { content: ''; grid-row: 2 / 4; grid-column: 1; z-index: 5; width: 232px; border-right: 1px solid var(--color-border-strong); background: var(--color-bar); box-shadow: var(--shadow-popover); }
   .app-shell[data-sidebar="overlay"]:not(.guided) .page-nav { z-index: 6; width: 232px; }
   .app-shell[data-sidebar="overlay"]:not(.guided) .status-bar { z-index: 6; width: 208px; }
-  /* The guided first run: a rail with each page's name under its icon, and the status card as a bar below the page,
-     so the place and status line stay visible. */
-  .app-shell.guided { --sidebar-width: 76px; grid-template-areas: "title title" "nav main" "status status"; }
-  .app-shell.guided :is(.brand b, .nav-group-label, .tab-copy small) { display: none; }
-  .app-shell.guided .page-nav { padding-inline: var(--space-1); }
-  .app-shell.guided .page-tab { flex-direction: column; justify-content: center; gap: 2px; min-height: 52px; padding: var(--space-1) 2px; text-align: center; }
-  .app-shell.guided .tab-copy { flex: none; width: 100%; }
-  .app-shell.guided .tab-copy b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--size-small, 12px); line-height: 16px; }
-  .app-shell.guided .status-bar { display: flex; align-items: center; gap: var(--space-3); margin: 0 var(--space-2) var(--space-1); padding: var(--space-1) var(--space-3); line-height: 16px; }
-  .app-shell.guided :is(.status-lines, .checks-status) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .app-shell.guided .status-lines { flex: 1; }
-  .app-shell.guided .host-chip { flex: none; max-width: 192px; }
-  .app-shell.guided .host-label { max-width: 160px; }
-  .app-shell.guided .page-content { --page-pad: var(--space-4); margin-bottom: var(--space-1); }
 }
 @media (max-width: 600px) {
   .app-shell:not(.guided) .page-content { --page-pad: var(--space-4); --page-pad-top: var(--space-4); }

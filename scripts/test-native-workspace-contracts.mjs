@@ -77,12 +77,15 @@ assert.ok(start >= 0, 'workspace presentation acceptance gate missing');
 const gate = Function(`${source.slice(start, source.indexOf('  async function captureWorkspace(', start))}; return assertWorkspacePresentation;`)();
 const probe = { heading: 'This computer', pill: 'Ready', text: 'Agents Files', buttons: [], primary: [], firstTest: 'attempted', bar: false, choices: false, runs: 0, grid: true, detailsOpen: false, width: 540, height: 640 };
 gate('ready', probe, 'compact');
-gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting', text: 'Agents Files 0:18 so far' }, 'compact');
+gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting', text: 'Agents Files 18 seconds elapsed', bar: true, buttons: ['Cancel'] }, 'compact');
 gate('stop-failed', { ...probe, pill: "Couldn't stop", text: "Agents Files The workspace didn't stop.", buttons: ['Quit Bridge'], primary: ['Quit Bridge'] }, 'compact');
 for (const mutation of [{ buttons: ['Stop'] }, { buttons: ['Start'] }, { grid: false }, { firstTest: undefined }, { text: 'Files only' }, { detailsOpen: true }]) {
   assert.throws(() => gate('ready', { ...probe, ...mutation }, 'compact'));
 }
 assert.throws(() => gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting' }, 'compact'));
+assert.throws(() => gate('starting-after-quit-synthetic', { ...probe, pill: 'Starting', text: 'Agents Files 18 seconds elapsed', bar: true }, 'compact'));
+assert.throws(() => gate('ready', { ...probe, bar: true }, 'compact'));
+assert.throws(() => gate('ready', { ...probe, buttons: ['Cancel'] }, 'compact'));
 assert.throws(() => gate('stop-failed', { ...probe, text: "The workspace didn't stop.", buttons: ['Restart workspace'], primary: ['Restart workspace'] }, 'compact'));
 for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps1']) {
   const driver = await read(`./${name}`);
@@ -99,6 +102,16 @@ for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps
     ? ['gutter = CGPoint(x: nav.maxX + 16, y: home.minY + 8)', 'x: ((gutter.x - rect.minX) * CGFloat(image.width) / rect.width).rounded(.down)', 'scroll?.location = CGPoint(x: gutter.x, y: rect.midY)', 'heading.minY >= pageTop']
     : ["Find-Control $script:window 'Clusters' $button", '$bitmap.GetPixel([int]($nav.Current.BoundingRectangle.Right + 16 - $r.X), [int]($homeButton.Current.BoundingRectangle.Top + 8 - $r.Y))'];
   for (const text of sample) assert.ok(driver.includes(text), `${name}: page paper must be sampled beside the actual sidebar: ${text}`);
+}
+// A fresh profile opens on guided Welcome, without the sidebar: start from Get started, leave guidance through
+// Show all of Bridge before the sidebar, and sample guided pages under their title-bar row.
+{
+  const mac = await read('./native-lifecycle-macos.swift'), windows = await read('./native-lifecycle-windows.ps1');
+  assert.ok(mac.includes('if !nodes(main).contains(where: { pressable($0, "Get started") }) { press(find(main, "Clusters") { pressable($0, "Clusters") }) }')
+    && mac.indexOf('pressable($0, "Show all of Bridge")') < mac.indexOf('press(find(main, "Designer")'), 'Mac lifecycle must start from guided Welcome and leave guidance before Designer');
+  assert.ok(windows.includes("if (!$control) { $control = Find-Control $script:window 'Get started' $button }")
+    && windows.indexOf("Find-Control $script:window 'Show all of Bridge' $button") < windows.indexOf("Wait-For 'Designer button missing'")
+    && windows.includes('$bitmap.GetPixel([int]($row.Left + 8 - $r.X), [int]($row.Bottom + 12 - $r.Y))'), 'Windows lifecycle must start from guided Welcome, sample guided pages and leave guidance before Designer');
 }
 const windowsLifecycle = await read('./native-lifecycle-windows.ps1');
 const clickPoint = windowsLifecycle.slice(windowsLifecycle.indexOf('function Get-ClickPoint('), windowsLifecycle.indexOf('function Press('));

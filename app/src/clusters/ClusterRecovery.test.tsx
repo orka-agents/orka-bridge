@@ -92,7 +92,9 @@ test('first failed check has one cause/action, safe copied labels and visible cl
   await select(user); await user.click(screen.getByRole('button', { name: 'Use this cluster' }));
   expect((await screen.findByRole('alert')).textContent).toContain('read AI connections');
   expect(screen.getByRole('alert').textContent).toContain('Access was denied');
-  expect(screen.getByRole('alert').textContent).toContain('agent files are kept');
+  // What is kept sits under the callout, as plain secondary text.
+  expect(screen.getByRole('alert').textContent).not.toContain('agent files are kept');
+  expect(screen.getByRole('alert').compareDocumentPosition(screen.getByText(/agent files are kept/)) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(screen.getByRole('alert').compareDocumentPosition(screen.getByRole('button', { name: 'Check again' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   if (!screen.queryByRole('button', { name: 'Copy details for help' })) await user.click(screen.getByRole('button', { name: 'Details' }));
   await user.click(screen.getByRole('button', { name: 'Copy details for help' }));
