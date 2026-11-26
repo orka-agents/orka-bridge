@@ -158,7 +158,7 @@ test('the guided first run has no Back or Forward; history starts when the full 
   mockIPC(command => {
     if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return { selected: null, localVm: 'idle', model: 'locked' };
-    if (command === 'setup_requirements') return { memoryBytes: 6 * 1024 ** 3, imageBytes: 3e9, stateDiskBytes: 32e9, downloadBytes: null };
+    if (command === 'setup_requirements') return { memoryBytes: 6 * 1024 ** 3, stateDiskBytes: 32e9, downloadBytes: null, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null };
     if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
     return null;
   });

@@ -10,7 +10,7 @@ import { armFirstTest, firstTestAttempted, firstTestPending, retireFirstTest } f
 import Model, { type ModelState } from './Model';
 import Preflight from './Preflight';
 import { canQueueModel, setupView } from './progress';
-import { formatRequirementGB, type WorkspaceRequirements, workspaceRequirements } from './requirements';
+import { setupNeeds, type WorkspaceRequirements, workspaceRequirements } from './requirements';
 import { type CheckStepState, Meet, SetupProgress } from './Steps';
 import { cancelLocal, type LocalVmState, type SetupStatus, selectLocal, setupStatus } from './state';
 import Welcome, { hasSeenWelcome, welcomePreference } from './Welcome';
@@ -350,7 +350,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); }, showLocal() { openLocal(); }, showCluster(item?: Place, selected = false) { chooseCluster(item, selected); } }));
   const titleId = active ? 'page-title' : undefined;
   if (!status && !error || launchPending) return <><h1 id={titleId}>Clusters</h1><p role="status">Checking the workspace…</p></>;
-  if (welcome && status) return <Welcome titleId={titleId} onStart={start} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
+  if (welcome && status) return <Welcome titleId={titleId} onStart={start} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} requirements={requirements} />;
   const selected = status?.selected === 'localVm';
   const modelRecovery = ['failed', 'resetFailed', 'removalFailed', 'resetting'].includes(modelState);
   // A failed connection keeps the stage's name; the AI card beside the steps says what went wrong.
@@ -399,12 +399,11 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
                 <input id="workspace-local" name="workspace-location" type="radio" value="local" checked={location === 'local'} onChange={() => { setPreflightBlocked(true); setLocation('local'); }} />
                 <label htmlFor="workspace-local">On this computer</label><span className="chip">Recommended</span>
                 <div className="workspace-option-detail">
-                  {!(location === 'local' && preflightFailed) && <p className="workspace-option-lede">The workspace includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>}
-                  <p className="workspace-option-req">{requirements ? `${requirements.downloadBytes !== null ? `Downloads about ${formatRequirementGB(requirements.downloadBytes)}. ` : ''}Needs virtualization and ${formatRequirementGB(requirements.memoryBytes)} of memory. Data disk can grow to ${formatRequirementGB(requirements.stateDiskBytes)}.` : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>
+                  <p className="workspace-option-req">{requirements ? setupNeeds(requirements) : requirements === undefined ? "Reading this build's requirements…" : 'Requirements are not available yet for this build.'}</p>
                   {location === 'local' && view === 'local' && !error && status && requirements && status.localVm !== 'notIntegrated' && <Preflight requiredMemoryBytes={requirements.memoryBytes} onBlocked={setPreflightBlocked} onFailed={setPreflightFailed} onCluster={() => { setLocation('cluster'); document.getElementById('workspace-cluster')?.focus(); }} onSetUpLater={onSetUpLater} />}
-                  {requirements && <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
+                  {!(location === 'local' && preflightFailed) && <Disclosure label="What's inside" open={inside} controls="workspace-inside" onOpenChange={setInside}>
                     <div id="workspace-inside" hidden={!inside}>
-                      <p>{`This build's image size is ${formatRequirementGB(requirements.imageBytes)} after installation, not the amount downloaded.`}</p>
+                      <p className="workspace-option-lede">The workspace includes Orka and the tools your agents use. Bridge checks the download before starting it.</p>
                     </div>
                   </Disclosure>}
                 </div>

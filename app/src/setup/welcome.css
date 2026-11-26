@@ -57,7 +57,8 @@
 .workspace-option-detail { grid-column: 2 / 4; color: var(--color-text-secondary); display: grid; gap: var(--space-2); }
 .workspace-option-detail p { margin: 0; }
 .workspace-option-detail > p.workspace-option-req { font: var(--type-caption); font-family: var(--font-mono); font-variant-ligatures: none; }
-.workspace-option-detail > p.workspace-option-lede { font: var(--type-body); font-size: 15px; line-height: 21px; }
+/* The lede sits inside What's inside, so it is not a direct child of the detail. */
+.workspace-option-detail p.workspace-option-lede { font: var(--type-body); font-size: 15px; line-height: 21px; }
 /* Beside Continue: what it does next, in the boards' mono hint. */
 .workspace-continue-hint { font: 400 13px/18px var(--font-mono); font-variant-ligatures: none; color: var(--color-text-secondary); }
 .local-preflight .workspace-option { align-items: start; }

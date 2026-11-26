@@ -619,7 +619,8 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
   const scripted = await scenarioReply(command, args);
   if (scripted !== unscripted) return scripted;
   switch (command) {
-    case 'setup_requirements': return { memoryBytes: 6 * GiB, imageBytes, stateDiskBytes: 32 * GiB, downloadBytes: null };
+    // Figures measured with the pinned Mac image, so Welcome and the choice show their longest wording.
+    case 'setup_requirements': return { memoryBytes: 6 * GiB, stateDiskBytes: 32 * GiB, downloadBytes: 2_380_070_756, setupDiskBytes: 6_997_696_512, freeDiskBytes: 24_257_590_349, readySeconds: 134 };
     case 'setup_preflight': return { platform: 'windows', virtualization: scenario === 'vmFailed' ? 'disabled' : 'ready', memory: 'ready', installedMemoryBytes: 32 * GiB, requiredMemoryBytes: 6 * GiB };
     case 'setup_status': return status();
     case 'setup_select_local':
