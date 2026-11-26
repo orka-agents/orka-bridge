@@ -427,12 +427,14 @@ try {
   if (runUi) actionFixtures.push('chat-empty', 'chat-pending', 'chat-running', 'chat-answer', 'chat-session-null', 'chat-session-answer', 'chat-two-versions', 'chat-long', 'send-ready', 'send-blocked', 'send-sending', 'send-passed', 'send-failed', 'send-unsupported', 'send-earlier-target', 'new-agent-form', 'new-agent-created', 'cluster-picker-open', 'cluster-checking', 'cluster-failure', 'cluster-connected', 'cluster-account-picker-open', 'cluster-account-allowed', 'cluster-account-forbidden', 'designer-no-destination');
   function assertWorkspacePresentation(state, probe, size) {
     const fail = reason => { throw Error(state + ': ' + reason + ': ' + JSON.stringify(probe)); };
-    if (probe.heading !== 'This computer' || probe.bar || probe.choices || probe.runs || probe.firstTest !== 'attempted' || !probe.grid) fail('invalid returning workspace');
+    // Only a starting workspace shows its progress bar.
+    const starting = state === 'starting-after-quit-synthetic';
+    if (probe.heading !== 'This computer' || probe.bar !== starting || probe.choices || probe.runs || probe.firstTest !== 'attempted' || !probe.grid) fail('invalid returning workspace');
     if (!probe.text.includes('Agents') || !probe.text.includes('Files') || probe.detailsOpen) fail('facts or folded diagnostics missing');
-    if (probe.buttons.some(label => ['Start', 'Stop', 'Stop the workspace', 'Cancel'].includes(label))) fail('obsolete workspace action');
+    if (probe.buttons.some(label => ['Start', 'Stop', 'Stop the workspace'].includes(label)) || !starting && probe.buttons.includes('Cancel')) fail('obsolete workspace action');
     if (size === 'compact' && (probe.width !== 540 || probe.height !== 640)) fail('minimum viewport is not 540x640');
     if (state === 'ready' && (probe.pill !== 'Ready' || probe.primary.length)) fail('Ready must have no primary action');
-    if (state === 'starting-after-quit-synthetic' && (!probe.text.includes('0:18 so far') || probe.primary.length)) fail('missing observed elapsed time or inert startup action');
+    if (starting && (!probe.text.includes('18 seconds elapsed') || probe.primary.length || !probe.buttons.includes('Cancel'))) fail('missing observed elapsed time, Cancel or inert startup action');
     if (state === 'stop-failed' && (!probe.text.includes("The workspace didn't stop.") || probe.primary.join('|') !== 'Quit Bridge')) fail('stop failure needs plain copy and primary Quit');
     if (['failed', 'stopped-unexpectedly'].includes(state) && probe.primary.join('|') !== 'Restart workspace') fail('start failure needs primary Restart');
   }

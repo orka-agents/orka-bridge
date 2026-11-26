@@ -394,7 +394,9 @@ test('an observed unconfirmed stop retains the selected workspace without admitt
   render(<App />); await openLocalSetup();
   expect(await screen.findByRole('button', { name: 'Quit Bridge' })).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'This computer', level: 1 })).toBeTruthy();
-  expect(screen.queryByRole('button', { name: /Start|Restart workspace|Continue|Try again/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: /Start|Continue|Try again/ })).toBeNull();
+  // Restart stays in view, disabled, so the remedy reads as Quit Bridge first.
+  expect((screen.getByRole('button', { name: 'Restart workspace' }) as HTMLButtonElement).disabled).toBe(true);
   expect(ipc.mock.calls.some(([c]) => ['setup_select_local', 'setup_change_local'].includes(c))).toBe(false);
 });
 

@@ -338,7 +338,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   }
 
   const changing = sending || upgradeBusy || !!upgrade?.busy || upgradeObservation.pending;
-  const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} ordinaryRestartEpoch={ordinaryRestartEpoch.current} observation={upgradeObservation} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || (!!status && pending(status.localVm)) || !!error || !upgradeKnown} onBusy={upgradeAction} onChange={value => { observeUpgrade(value); setCheck(check => check + 1); }} onCheck={() => { void checkWorkspace(); }} /> : undefined;
+  const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} savedConnectionInAiCard={workspace} ordinaryRestartEpoch={ordinaryRestartEpoch.current} observation={upgradeObservation} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || (!!status && pending(status.localVm)) || !!error || !upgradeKnown} onBusy={upgradeAction} onChange={value => { observeUpgrade(value); setCheck(check => check + 1); }} onCheck={() => { void checkWorkspace(); }} /> : undefined;
   const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && (changing || !ordinaryRecovery || status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked))} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); }, showCluster(item?: Place) { chooseCluster(item); } }));
   const titleId = active ? 'page-title' : undefined;
@@ -357,23 +357,30 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const presentation = setupView(error ? undefined : status, { stopping: sending && pendingAction !== 'start', starting: sending && pendingAction === 'start', workspace, model: modelState, check: firstCheck, initialAutomatic });
   const upgradeAttention = !error && (upgrading || !!notice && (notice !== 'unknown' || status?.workspaceReplaced));
   const upgradeLine = upgrading ? 'Updating workspace' : upgradeObservation.pending ? 'Checking workspace files' : occupied ? 'Workspace is busy' : notice === 'recovery' ? 'Workspace recovery needs attention' : 'Workspace update needs attention';
-  const placesView = upgradeAttention ? { ...presentation, line: upgradeLine, detail: 'Your agent files are kept.', status: upgrading || occupied || upgradeObservation.pending ? 'running' as const : 'needs-you' as const, done: false, action: 'Manage' } : presentation;
+  // The returning workspace's line repeats its detail ("Workspace ready"), so the list shows the detail once.
+  const placesView = upgradeAttention ? { ...presentation, line: upgradeLine, detail: 'Your agent files are kept.', status: upgrading || occupied || upgradeObservation.pending ? 'running' as const : 'needs-you' as const, done: false, action: 'Manage' } : workspace ? { ...presentation, line: presentation.detail } : presentation;
+  const updateBlocked = !!notice && (notice !== 'unknown' || !!status?.workspaceReplaced);
+  // On This computer, an update's reusable connection is offered in the AI card, unusable until the workspace starts.
+  const savedConnection = workspace && upgrade?.state === 'eligible' && upgrade.credential === 'eligible';
+  // With no other clusters, Add a cluster is the page's next step unless This computer still needs setting up.
+  const noClusters = !snapshotUnavailable && snapshot?.persistenceState === 'complete' && snapshot.places.length === 0;
+  const localNext = !modelRecovery && !error && !!status && !placesView.done && (selected || noClusters);
   const showPayoff = !workspace && !payoffDismissed && eligiblePayoff;
   const localStage = status?.localVm === 'ready' ? aiHeading : status?.localVm === 'failed'
     ? status.preflightFailure ? 'Check this computer' : workspaceRecovery(status.workspaceFailure).heading : 'Getting your workspace ready';
   return <div className="places-workspace">
-    {view === 'cluster' && <Button type="button" kind="quiet" className="places-back" onClick={back}>Back to clusters</Button>}
+    {(view === 'cluster' || view === 'local' && workspace && !showPayoff) && <Button type="button" kind="quiet" className="places-back" onClick={back}>Back to clusters</Button>}
     <div className="workspace-heading places-heading" hidden={!!showPayoff}>
       <h1 ref={heading} tabIndex={-1} id={showPayoff ? undefined : titleId}>{view === 'places' ? 'Clusters' : view === 'cluster' ? clusterName ? <code>{clusterName}</code> : entry?.remembered ? 'Use a cluster' : 'Add a cluster' : workspace || selected ? 'This computer' : 'Where should your agents run?'}</h1>
       {view === 'local' && !workspace && selected && !presentation.done && <p className="muted">{localStage}</p>}
       {view === 'places' && <p className="muted">Choose where agents run</p>}
-      {view === 'places' && <Button type="button" kind="secondary" onClick={() => chooseCluster()}>Add a cluster</Button>}
+      {view === 'places' && <Button type="button" kind={noClusters && !localNext ? 'primary' : 'secondary'} onClick={() => chooseCluster()}>Add a cluster</Button>}
     </div>
     {view === 'places' && <Places modelRecovery={modelRecovery} recoveryRef={setPlaceRecovery} snapshot={snapshot} unavailable={snapshotUnavailable} status={error ? undefined : status} view={placesView} place={currentPlace} onLocal={openLocal} onCluster={chooseCluster} />}
     {showPayoff && firstPass && <FirstPass snapshot={firstPass} titleId={titleId} onOpen={openExample} />}
     <div hidden={view !== 'local' || !!showPayoff}>
       {cluster && <Button type="button" kind="secondary" onClick={chooseComputer}>Use this computer</Button>}
-      <div className={workspace ? 'setup workspace-setup-grid' : selected ? `setup workspace-setup-grid${status?.localVm === 'failed' || modelRecovery ? ' workspace-setup-failed' : ''}` : 'workspace-choice local-preflight'}>
+      <div className={workspace ? `setup workspace-setup-grid returning-grid${updateBlocked || status?.localVm === 'failed' ? ' returning-grid-wide' : ''}` : selected ? `setup workspace-setup-grid${status?.localVm === 'failed' || modelRecovery ? ' workspace-setup-failed' : ''}` : 'workspace-choice local-preflight'}>
         {!selected && !workspace && <>
           <section className="card">
             <p className="workspace-choice-step muted">Step 1 of 4</p>
@@ -405,11 +412,15 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
         </>}
         <div className="setup-column setup-main">
         {!workspace && !selected && upgradePanel}
-        {workspace && status && <Workspace ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} onStart={() => { void chooseLocal(); }} active={active && view === 'local'} />}
+        {workspace && status && <Workspace ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} status={status} busy={changing || recoveryOnly} stopping={sending && pendingAction !== 'start'} starting={sending && pendingAction === 'start'} error={error} onStart={() => { void chooseLocal(); }} onCancel={() => { void chooseLocal('cancel'); }} onCluster={() => chooseCluster()} active={active && view === 'local'} />}
         {!workspace && selected && status && <SetupProgress ordinaryRecovery={ordinaryRecovery} updating={upgrading} updateBlocked={!!notice && (notice !== 'unknown' || !!status.workspaceReplaced)} upgrade={upgradePanel} modelChoiceRef={setStepChoice} modelUnavailable={modelUnavailable} onChooseProvider={() => setProviderChange(value => value + 1)} modelRecoveryRef={setStepRecovery} status={status} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={onCheckFirstTest} busy={sending || upgradeBusy || !!upgrade?.busy && !ordinaryStarting || upgradeObservation.pending || recoveryOnly} stopping={sending && pendingAction !== 'start'} error={error} modelState={modelMounted ? modelState : 'idle'} onCancel={() => { void chooseLocal('cancel'); }} onRestart={() => { void chooseLocal(); }} onCluster={() => chooseCluster()} onOpenExample={openExample} />}
         </div>
         <div className="setup-column setup-side">
-        {workspace && status?.localVm !== 'ready' && <section className="card"><h2>AI</h2><p className="muted">Waiting for the workspace to start.</p></section>}
+        {workspace && status?.localVm !== 'ready' && <section className="card"><h2>AI</h2>{savedConnection ? <>
+          <p>A saved connection can be reused without connecting automatically.</p>
+          <Button type="button" kind="secondary" disabled>Use saved connection</Button>
+          <p className="muted">Start the workspace before changing its saved connection</p>
+        </> : <p className="muted">{status && ['cancelled', 'closed'].includes(status.localVm) ? 'Start the workspace before connecting the AI.' : 'Waiting for the workspace to start.'}</p>}</section>}
         {status && modelMounted && <div className="setup-model-slot" hidden={workspace && status.localVm !== 'ready'}><Model key={upgrade?.credential === 'transferred' ? 'shared' : 'ordinary'} sharedConnection={upgrade?.credential === 'transferred'} title={workspace ? 'AI' : undefined} inline={!workspace && !status.workspaceReplaced && canQueueModel(status)} choiceTarget={workspace ? null : stepChoice} changeRequest={providerChange} onPlaceCard={view === 'places'} recoveryTarget={view === 'places' ? placeRecovery : workspace ? null : stepRecovery} enabled={status.model === 'available'} queueable={!status.workspaceReplaced && canQueueModel(status)} paused={!!error || changing} away={cluster} primary={status.localVm === 'ready'} onConnectRequest={() => { chooseComputer(); if (view === 'places') setPanel('local'); }} onState={observeModel} onSettled={() => setCheck(value => value + 1)} /></div>}
         {!workspace && selected && status && status.localVm !== 'ready' && status.localVm !== 'failed' && <Meet onRead={openExample} onName={onExampleName} />}
         </div>
