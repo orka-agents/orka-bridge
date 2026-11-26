@@ -66,7 +66,7 @@
 /* Every card on these screens has the ink edge, and every action that isn't a link is a large button. */
 .app-shell.guided .setup .card, .app-shell.guided .first-pass-stories > .test-answer { border: var(--border-control) solid var(--color-text); }
 .app-shell.guided .places-workspace .button:is(.button-primary, .button-secondary):not(.button-small) { min-height: var(--height-control-large); padding-inline: 18px; font: var(--type-control-large); }
-.app-shell.guided .setup.workspace-setup-grid:has(.setup-side .model-connect) { grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); }
+@media (min-width: 821px) { .app-shell.guided .setup.workspace-setup-grid:has(.setup-side .model-connect) { grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); } }
 .app-shell.guided .setup.workspace-setup-grid:has(.setup-side .model-connect) .setup-model .workspace-step-actions > .button-primary { min-width: 220px; }
 .app-shell.guided .setup.workspace-setup-grid:has(.setup-side .model-connect .workspace-failure) .setup-model .workspace-step-actions > .button-primary { min-width: 0; }
 
