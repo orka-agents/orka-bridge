@@ -194,6 +194,48 @@ async fn mac_private_disk_shares_the_cache_blocks_until_the_guest_writes() {
     assert_eq!(cached, disk);
     open_installed_image(&target).unwrap();
 }
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn mac_interrupted_clone_is_rehashed_and_reused_on_retry() {
+    let temp = tempfile::tempdir().unwrap();
+    let disk: Vec<u8> = (0..256 * 1024u32).map(|i| (i % 241) as u8 + 1).collect();
+    let image = factory_for(temp.path(), &disk, ImageTarget::MacosArm64);
+    let path = temp.path().join("install");
+    let (root, lock) = owner(&path);
+    let mut target = InstallationImageTarget::from_owned_installation(
+        &root,
+        &lock,
+        Uuid::parse_str("12345678-1234-4234-8234-123456789abc").unwrap(),
+        ImageTarget::MacosArm64,
+        &image.image().identity().state_compatibility_id,
+        true,
+    );
+    target.point = Some(Arc::new(|p| {
+        if p == "copy-chunk" {
+            Err(ImageError::Cancelled)
+        } else {
+            Ok(())
+        }
+    }));
+    let (_sender, closed) = tokio::sync::watch::channel(false);
+    assert_eq!(
+        materialize_image(&image, &target, closed.clone(), |_| {})
+            .await
+            .err(),
+        Some(ImageError::Cancelled)
+    );
+    let pending = path.join("image/.pending-1/os.disk");
+    assert_eq!(std::fs::read(&pending).unwrap(), disk);
+    target.point = None;
+    let installed = materialize_image(&image, &target, closed, |_| {})
+        .await
+        .unwrap();
+    let private = File::open(path.join(installed.disk_path())).unwrap();
+    assert_eq!(
+        device_offset(&private),
+        device_offset(&image.open_disk().unwrap())
+    );
+}
 #[path = "image_install_boundary_tests.rs"]
 mod boundary;
 #[path = "image_install_native_tests.rs"]
