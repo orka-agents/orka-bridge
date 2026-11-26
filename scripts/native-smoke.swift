@@ -120,7 +120,7 @@ while Date() < rendererDeadline {
         // cluster opens there), not a button that merely happens to be below the header.
         // The text viewport also needs the tab bar; do not query it during renderer startup.
         if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names)
-            && (names.contains("Get started") || nativeTextIsVisible("Choose where agents run") || nativeTextIsVisible("What should your agents do?")) { found = true; break }
+            && (names.contains("Get started") || nativeTextIsVisible("Choose where agents run") || nativeTextIsVisible("What do you want done?")) { found = true; break }
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 }
@@ -1934,7 +1934,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // Use the same observed page readiness as the initial launch.
     waitForWorkspaceRenderer()
     // Remembered clusters count as set up, so Bridge reopens on Home.
-    require(nativeTextIsVisible("What should your agents do?") && nativeButtons("Get started").isEmpty,
+    require(nativeTextIsVisible("What do you want done?") && nativeButtons("Get started").isEmpty,
             "Restart with remembered clusters must open on Home, not Welcome")
     clickTab("Clusters", [])
     let restarted = try capture("cluster-place-reopened", "Clusters")
@@ -1987,7 +1987,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     app = try launch()
     app.activate(options: [])
     waitForWorkspaceRenderer()
-    require(nativeTextIsVisible("What should your agents do?"), "Restart with remembered clusters must open on Home")
+    require(nativeTextIsVisible("What do you want done?"), "Restart with remembered clusters must open on Home")
     clickTab("Clusters", [])
     try capture("cluster-removal-reopened", "Clusters")
     require(nativeButtons("Use").count == remembered - 1 && nativeButtons("Manage").isEmpty,

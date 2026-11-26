@@ -69,6 +69,6 @@ test('a finished workspace opens on Home', async () => {
   localStorage.setItem('bridge.firstTest.v1', 'attempted');
   native({ runStatus: 'connected' });
   render(<App />);
-  expect(await screen.findByRole('textbox', { name: 'Message' })).toBeTruthy();
+  expect(await screen.findByRole('textbox', { name: /one task$/ })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Home' }).getAttribute('aria-current')).toBe('page');
 });

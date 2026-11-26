@@ -239,14 +239,14 @@ test('a finished workspace opens on Home without first showing the Clusters list
   expect(screen.getByText('Checking the workspace…', { selector: 'main p' })).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'This computer' })).toBeNull();
   finish(noUpgrade);
-  expect(await screen.findByRole('region', { name: 'What should your agents do?' })).toBeTruthy();
+  expect(await screen.findByRole('region', { name: 'What do you want done?' })).toBeTruthy();
   expect(current()).toBe('Home');
   expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
 });
 
 test('a remembered cluster without a local workspace opens on Home, even with fresh storage', async () => {
   launch(unselected, [team]); render(<App />);
-  expect(await screen.findByRole('region', { name: 'What should your agents do?' })).toBeTruthy();
+  expect(await screen.findByRole('region', { name: 'What do you want done?' })).toBeTruthy();
   expect(current()).toBe('Home');
   expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
 });

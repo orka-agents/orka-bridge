@@ -1196,7 +1196,7 @@ func waitForButton(_ label: String) {
 // Only a reload changes the page, so an optional reload that doesn't come leaves Clusters as it was.
 func reopenedOnHome(required: Bool = true) {
     for _ in 0..<(required ? 150 : 30) {
-        if nativeHeadingExists("What should your agents do?") { click("Clusters", []); return }
+        if nativeHeadingExists("What do you want done?") { click("Clusters", []); return }
         Thread.sleep(forTimeInterval: 0.1)
     }
     require(!required, "The reloaded renderer did not open on Home")
