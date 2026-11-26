@@ -539,7 +539,7 @@ for (const name of ['chat-long-early-wide', 'chat-long-early-minimum', 'chat-lon
   assert.ok(captureManifest.model.includes(name), `earlier-tasks capture must belong to model scope: ${name}`);
   assert.ok(!captureManifest['destinations-workspace'].includes(name), `earlier-tasks capture must not leak into destination scope: ${name}`);
 }
-assert.ok(!model.includes('nativeHeadingExists("Conversation') && model.includes('press("Earlier tasks: 1")') && model.includes('waitForChatText("Earlier tasks: 1")'), 'Try a task walks earlier tasks through their folded disclosure, never numbered conversation headings');
+assert.ok(!model.includes('nativeHeadingExists("Conversation') && model.includes('press("Earlier tasks: 1")') && model.includes('waitForNativeText(["Earlier tasks: 1"])'), 'Try a task walks earlier tasks through their folded disclosure, never numbered conversation headings');
 assert.ok(model.includes('click("Try a task", [])') && model.includes('enabledButton("Run task") == nil'), 'the native walk must open Try a task and prove a blocked Run task');
 assert.ok(model.includes('let delta = top + 64 - bounds.minY') && model.includes('let top = pageTop()'), 'heading navigation must use actual title-bar/heading geometry');
 assert.ok(smoke.indexOf('try capture("send-history-answer", "Designer")') > smoke.indexOf('let savedWide = try capturePreflight'), 'offline answer proof must follow its wide resize and provenance anchor');

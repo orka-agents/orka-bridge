@@ -255,7 +255,8 @@ const model = await read('./native-model-macos.swift');
 // than exhausting retries above the folded list.
 function earlySeek(driver) {
   const helper = driver.match(/func seek\([\s\S]*?\n\}/)?.[0];
-  const call = driver.match(/seek\("Earlier tasks: 1", (-?\d+)([^\n]*)/);
+  // The early, per-size seek (the one with diagnostics), not the follow-up frames' short seeks below the new task.
+  const call = driver.match(/seek\("Earlier tasks: 1", (-?\d+)(, diagnosticPrefix[^\n]*)/);
   assert.ok(helper && call, 'actual earlier-tasks seek and helper must exist');
   const bound = Number(helper.match(/for (?:_|attempt) in 0\.\.<(\d+)/)?.[1]);
   assert.equal(bound, 6, 'recovery must retain the existing six attempts');
@@ -271,7 +272,7 @@ function earlySeek(driver) {
 }
 const earlyRecovery = earlySeek(model);
 assert.deepEqual(earlyRecovery.captures, [0, 1000], 'large downward recovery must capture top then bottom');
-assert.throws(() => earlySeek(model.replace(/seek\("Earlier tasks: 1", -?\d+/, 'seek("Earlier tasks: 1", 100')), /cannot recover/);
+assert.throws(() => earlySeek(model.replace(/seek\("Earlier tasks: 1", -?\d+(?=, diagnosticPrefix)/, 'seek("Earlier tasks: 1", 100')), /cannot recover/);
 assert.ok(earlyRecovery.call[2].includes(String.raw`diagnosticPrefix: "chat-long-early-\(size)-seek"`), 'only explicit early caller opts into per-size diagnostics');
 assert.match(earlyRecovery.helper, /diagnosticPrefix: String\? = nil/);
 assert.ok(earlyRecovery.helper.indexOf('if let prefix = diagnosticPrefix') > earlyRecovery.helper.indexOf('capture("local-probe", [])'));
