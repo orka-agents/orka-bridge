@@ -146,6 +146,7 @@ try {
         document.getElementById('root').replaceWith(Object.assign(document.createElement('div'), { id: 'root' }));
       })()`);
       await evaluate(bundle);
+      await openClustersAfterLaunch();
       // VM-ready is unfinished until the AI is connected.
       if (model) await clickAction('Connect the AI');
       if (model) {
@@ -370,6 +371,13 @@ try {
   // Setup actions and the first test use the compiled app and synthetic IPC only.
   // first-test-passed, -unknown and -lost-reply each own one fresh automatic attempt after a page reload.
   const actionFixtures = runCore ? ['welcome', 'places-empty', 'places-populated', 'local-preflight', 'local-preflight-missing', 'local-preflight-unknown', 'local-preflight-blocked', 'local-preflight-memory', 'local-preflight-mixed', 'local-preflight-cluster', 'ai-idle', 'ai-key', 'ai-cli-missing', 'ai-connecting', 'ai-connected', 'ai-reset', 'local-completed', 'local-stopped', 'local-stop-failed', 'local-stop-lost-reply', 'ai-removal-confirmation', 'ai-removal-retry', 'first-test-running', 'first-test-result', 'first-test-badges', 'first-test-passed', 'first-test-unknown', 'first-test-lost-reply', 'switch-place', 'designer', 'designer-loading', 'designer-open-error', 'designer-connected', 'designer-catalog-busy', 'designer-file', 'designer-reply-saved', 'designer-failed', 'designer-passed', 'designer-stale', 'designer-running', 'designer-remote', 'designer-waiting', 'local-cancel-running', 'local-cancel-cancelling', 'local-cancel-cancelled', 'local-cancel-unconfirmed', 'local-cancel-before-start'] : [];
+  // Bridge opens on Welcome while nothing is set up and on Home once something is. These scenes start
+  // from Clusters, as a person reaches it with Get started or the Clusters tab.
+  async function openClustersAfterLaunch(keepWelcome = false) {
+    await until(() => evaluate(`!!document.querySelector('.app-shell') && ![...document.querySelectorAll('main p[role="status"]')].some(item => item.textContent === 'Checking the workspace…')`), 'launch page');
+    if (await evaluate(`document.querySelector('main')?.dataset.page === 'Home'`)) await evaluate(`document.querySelector('button.page-tab[aria-label="Clusters"]').click()`);
+    if (!keepWelcome && await evaluate(`!!document.querySelector('.welcome-screen')`)) await clickAction('Get started');
+  }
   async function clickAction(label) {
     const action = `[...document.querySelectorAll('button')].find(button => button.textContent === ${JSON.stringify(label)} && !button.disabled && button.getClientRects().length)`;
     await until(() => evaluate(`!!${action}`), label);
@@ -833,6 +841,7 @@ try {
       document.getElementById('root').replaceWith(Object.assign(document.createElement('div'), { id: 'root' }));
     })()`);
     await evaluate(bundle);
+    await openClustersAfterLaunch(name === 'welcome');
     if (name === 'designer-waiting') {
       await evaluate(`document.querySelector('button[aria-label="Designer"]').click()`);
       for (const tab of ['Agent', 'Chat']) {
