@@ -16,7 +16,7 @@
 .title-bar .button-icon { color: var(--color-text); }
 .title-bar .button-icon .icon { width: 16px; height: 16px; }
 .chrome-control:hover .control-tip, .chrome-control:has(:focus-visible) .control-tip { display: block; }
-.sidebar-toggle-control .control-tip { right: auto; left: 0; }
+.sidebar-toggle-control .control-tip, .history-control .control-tip { right: auto; left: 0; }
 .brand { display: flex; align-items: center; gap: var(--space-2); margin-left: var(--space-0-5); font: 700 15px/20px var(--font-ui); letter-spacing: -.01em; }
 .brand img { object-fit: contain; filter: var(--mark-filter); }
 /* Rows sit 8px in from the sidebar's edges and pad their own 12px, so the tiles line up 20px in. */

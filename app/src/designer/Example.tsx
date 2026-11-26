@@ -21,15 +21,17 @@ import type { SelectedPlace } from '../clusters/api';
 import Send, { SendHistory } from '../clusters/Send';
 import type { SendStart } from '../clusters/use-send-settlement';
 
-export type DocumentAction = { id: number; documentId: string; action: 'open' | 'chat' | 'run' | 'send' };
+export type DocumentAction = { id: number; documentId: string; action: 'open' | 'chat' | 'run' | 'send' | 'file' };
 
-export default function Example({ sampleRevision = 0, actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, workspaceReady = true, remote = false, catalogPaused = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview, startSend, onChatBlocked }: {
+export default function Example({ sampleRevision = 0, actionRequest, onActionHandled, agentsRevision = 0, onRegistered, documentId = SAMPLE_DOCUMENT_ID, persistInitialSelection = false, openDocumentRequest = 0, newAgentRequest = 0, onNewAgentHandled, onDocument, active = true, setupPending = false, workspaceReady = true, remote = false, catalogPaused = false, catalogKey, place = { kind: 'thisComputer' }, onChooseCluster, actions, onPair, onRun, onSaveState, onStale, onSeeInOverview, startSend, onChatBlocked, onView }: {
   actionRequest?: DocumentAction; onActionHandled?: (id: number) => void;
   sampleRevision?: number; agentsRevision?: number; onRegistered?: () => void; documentId?: string; persistInitialSelection?: boolean; openDocumentRequest?: number; newAgentRequest?: number; onNewAgentHandled?: () => void; onDocument?: (id: string) => void; active?: boolean; setupPending?: boolean; workspaceReady?: boolean; remote?: boolean; catalogPaused?: boolean; catalogKey?: number; place?: SelectedPlace; onChooseCluster?: () => void; actions?: ReactNode;
   onPair?: (pair: AgentPair | undefined, documentId: string) => void; onRun?: (snapshot: RunSnapshot | undefined, documentId: string) => void;
   onSaveState?: (state: SaveState, documentId: string) => void; onStale?: (stale: boolean, documentId: string) => void; onSeeInOverview?: (sendId: string) => void; startSend?: SendStart;
   // Reports why the open agent can't try a task, so Home's Try a task for the same agent can apply the same gate.
   onChatBlocked?: (documentId: string, reason: string | undefined) => void;
+  /** Reports the view shown, for Back and Forward. */
+  onView?: (view: 'Agent' | 'Try' | 'File') => void;
 }) {
   const [boundDocument, setBoundDocument] = useState(documentId);
   const [requestedDocument, setRequestedDocument] = useState(documentId);
@@ -82,6 +84,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   const reloadAdmitted = useRef(false);
   const reloadEpoch = useRef(0);
   const [view, setView] = useState<'Agent' | 'Try' | 'File'>('Agent');
+  useEffect(() => { onView?.(view); }, [view, onView]);
   const [stale, setStale] = useState(false);
   const observePendingSoul = useCallback((pending: boolean) => { pendingSoulCurrent.current = pending; setPendingSoul(pending); if (pending) setStale(true); }, []);
   const editInstructions = () => { setView('Agent'); requestAnimationFrame(() => { const editor = document.querySelector<HTMLTextAreaElement>('.instructions-editor'); editor?.focus(); editor?.scrollIntoView?.({ block: 'center' }); }); };
@@ -189,7 +192,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     if (!actionRequest || actionRequest.id === handledAction.current) return;
     if (!active || actionRequest.action === 'run' && setupPending || actionRequest.documentId !== documentId || creating || wantsCreate || selectionError || saveState === 'error' || error && !pair) { finishAction(); return; }
     if (!actionReady) return;
-    setView(actionRequest.action === 'chat' ? 'Try' : 'Agent');
+    setView(actionRequest.action === 'chat' ? 'Try' : actionRequest.action === 'file' ? 'File' : 'Agent');
     if (actionRequest.action === 'send') openSend();
     if (actionRequest.action !== 'run' || pair && isTestDraft(pair.tests)) finishAction();
   });

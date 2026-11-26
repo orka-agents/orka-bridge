@@ -1,13 +1,16 @@
 import { type ComponentProps, useCallback, useEffect, useRef, useState } from 'react';
 import mark from './assets/orka-mark.svg';
-import { selectCluster, type SelectedPlace } from './clusters/api';
+import { type ClusterPlaceSnapshot, clusterPlaces, selectCluster, type SelectedPlace } from './clusters/api';
 import { sendAgentFocus } from './clusters/send-api';
 import { useSendSettlement } from './clusters/use-send-settlement';
 import { Button } from './components/Button';
 import { agentInfo, SAMPLE_DOCUMENT_ID, type SaveState, type SourceId, sameSource } from './designer/agent-api';
-import { selectedDocument } from './designer/documents-api';
+import { listDocuments, selectedDocument } from './designer/documents-api';
 import Example, { type DocumentAction } from './designer/Example';
 import { type RunSnapshot, runCall } from './designer/run-api';
+import HistoryButtons from './chrome/HistoryButtons';
+import type { ClustersView, DesignerView, Location } from './chrome/history';
+import { useNavigationHistory } from './chrome/useNavigationHistory';
 import ThemeButton from './chrome/ThemeButton';
 import SidebarToggle from './chrome/SidebarToggle';
 import { narrowWindow, readSidebarCollapsed, useNarrowWindow, writeSidebarCollapsed } from './chrome/sidebar';
@@ -89,8 +92,10 @@ export default function App() {
   const [launching, setLaunching] = useState(true);
   const launchOpen = useRef(true);
   const setPage = useCallback((next: Page) => { launchOpen.current = false; setLaunching(false); overviewOpenRequest.current++; setOverviewNotice(undefined); setPageState(next); }, []);
+  // Moves the app makes itself replace the current Back/Forward entry instead of adding one.
+  const appMove = useRef<() => void>(undefined);
   const observeLaunch = useCallback((home: boolean) => {
-    if (launchOpen.current && home) setPageState('Home');
+    if (launchOpen.current && home) { appMove.current?.(); setPageState('Home'); }
     launchOpen.current = false; setLaunching(false);
   }, []);
   const [place, setPlace] = useState<SelectedPlace>({ kind: 'thisComputer' });
@@ -249,12 +254,33 @@ export default function App() {
     : run?.cancellation === 'cancelling' ? 'Cancelling tests' : run?.state === 'running' ? 'Running tests…' : run?.report?.verdict === 'cancelled' ? 'Tests cancelled' : run?.report?.verdict === 'unknown' ? 'Test result unknown' : cases
     ? `${cases.filter(check => check.verdict === 'passed').length} of ${cases.length} passed` : undefined;
   const checks = remote && localChecks ? `This computer: ${localChecks}` : localChecks;
+  const [designerView, setDesignerView] = useState<DesignerView>('Agent');
+  const [clustersView, setClustersView] = useState<ClustersView>({ kind: 'places' });
+  const placesRead = useRef<ClusterPlaceSnapshot>(undefined);
+  const navigation = useNavigationHistory({
+    enabled: !guided,
+    location: page === 'Designer' ? { page, documentId: exampleOpen ? documentId : undefined, view: exampleOpen ? designerView : 'Agent' } : page === 'Clusters' ? { page, view: clustersView } : { page },
+    exists: async target => {
+      if (target.page === 'Designer' && target.documentId && target.documentId !== SAMPLE_DOCUMENT_ID) {
+        const agents = await listDocuments();
+        return !agents || agents.some(agent => agent.id === target.documentId);
+      }
+      if (target.page === 'Clusters' && target.view.kind === 'cluster' && target.view.key) {
+        const key = target.view.key;
+        placesRead.current = await clusterPlaces();
+        return !placesRead.current || placesRead.current.places.some(item => item.key === key);
+      }
+      return true;
+    },
+    restore: target => restorePlace(target),
+  });
+  useEffect(() => { appMove.current = navigation.automatic; }, [navigation.automatic]);
   const firstTest = useFirstTest({
     retired: !!setup?.workspaceReplaced,
     ready: !upgradeNotice && !setup?.workspaceReplaced && setup?.selected === 'localVm' && setup.localVm === 'ready' && model === 'connected' && !workspaceBusy && !remote,
     canOpen: page === 'Clusters' && localSetupView && setup?.localVm === 'ready' && !workspaceBusy && !remote,
     sampleDirty,
-    onOpen: () => { if (!replacementObserved.current) openDesigner(SAMPLE_DOCUMENT_ID); },
+    onOpen: () => { if (!replacementObserved.current) { navigation.automatic(); openDesigner(SAMPLE_DOCUMENT_ID); } },
     onPrepared: () => setSampleRevision(value => value + 1),
     onSource: setSampleSource,
     onSnapshot: observeSampleRun,
@@ -377,6 +403,28 @@ export default function App() {
     openDesigner(id);
     setDocumentAction({ id: ++actionSequence.current, documentId: id, action });
   };
+  // Back and Forward go where the sidebar, the agent picker and the Clusters list go, through the same calls.
+  const restorePlace = (target: Location) => {
+    setDocumentAction(undefined); setSidebarOpen(false);
+    if (target.page === 'Designer') {
+      const id = target.documentId;
+      if (!id) { if (exampleOpen) setPage('Designer'); else openDesigner(); return; }
+      // Switching agents saves pending edits first, as the picker does; the view follows once the agent is open.
+      if (exampleOpen && id === documentId) setPage('Designer'); else openDesigner(id);
+      setDocumentAction({ id: ++actionSequence.current, documentId: id, action: target.view === 'Try' ? 'chat' : target.view === 'File' ? 'file' : 'open' });
+      return;
+    }
+    setPage(target.page);
+    if (target.page !== 'Clusters') return;
+    const view = target.view;
+    if (view.kind === 'places') localCluster.current?.showPlaces();
+    else if (view.kind === 'local') localCluster.current?.showLocal();
+    else {
+      const item = view.key ? placesRead.current?.places.find(candidate => candidate.key === view.key) : undefined;
+      if (view.key && !item) localCluster.current?.showPlaces();
+      else localCluster.current?.showCluster(item, !!item && place.kind === 'cluster' && !!place.target && placesRead.current?.selectedKey === item.key);
+    }
+  };
   const localLine = welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' && !returningWorkspace || setup?.model === 'locked' && setup?.localVm === 'ready' ? setupDetail : view.footerLine;
   const footer = [
     remote ? place.target ? `Orka in ${place.target.service_namespace}/${place.target.service_name}` : 'Not connected' : localLine,
@@ -393,6 +441,7 @@ export default function App() {
       <header className="title-bar" data-tauri-drag-region={customTitleBar() ? 'deep' : undefined}>
         <div className="title-bar-start">
           {!guided && <SidebarToggle collapsed={narrow ? !overlay : sidebarCollapsed} onToggle={toggleSidebar} />}
+          {!guided && <HistoryButtons canBack={navigation.canBack} canForward={navigation.canForward} onBack={navigation.back} onForward={navigation.forward} />}
           <span className="brand"><img src={mark} width="22" height="22" alt="Orka" /><b>Bridge</b></span>
         </div>
         <div className="title-bar-centre">{guided && <GuidedSteps current={guidedStep(view.step, view.done)} />}</div>
@@ -429,7 +478,7 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup ref={localCluster} place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onLaunch={observeLaunch} guided={guided} onSetUpLater={guided ? setUpLater : undefined}
+          <Setup ref={localCluster} onView={setClustersView} place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onLaunch={observeLaunch} guided={guided} onSetUpLater={guided ? setUpLater : undefined}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
         {page === 'Home' && <Home active revision={agentsRevision}
@@ -443,7 +492,7 @@ export default function App() {
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
           blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}
         {page === 'Designer' && overviewNotice && <p className="muted" role="status">{overviewNotice}</p>}
-        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} /></div>}
+        {exampleOpen && <div hidden={page !== 'Designer'}><Example key={exampleAttempt} sampleRevision={sampleRevision} actionRequest={documentAction} onActionHandled={handleDocumentAction} agentsRevision={agentsRevision} onRegistered={() => setAgentsRevision(value => value + 1)} documentId={documentId} persistInitialSelection={persistInitialSelection} openDocumentRequest={openDocumentRequest} newAgentRequest={newAgentRequest} onNewAgentHandled={() => setNewAgentRequest(0)} onDocument={setDocumentId} remote={remote} catalogPaused={!remote && automaticTestPending} catalogKey={catalogReady ? catalogEpoch : undefined} place={place} onChooseCluster={() => setPage('Clusters')} workspaceReady={workspaceReady && !workspaceBusy} setupPending={exampleReadOnly} active={page === 'Designer'} onPair={observePair} onRun={observeRun} onSaveState={observeSave} onStale={observeStale} onSeeInOverview={seeInOverview} startSend={startSend} onChatBlocked={observeChatBlocked} onView={setDesignerView} /></div>}
         <Overview onNewAgent={() => openDesigner(undefined, true)} localAiConnected={overviewAiConnected} active={page === 'Overview'} runBusy={firstTest === 'running' || !!run?.busy} activeDocumentId={firstTest === 'running' ? SAMPLE_DOCUMENT_ID : run?.busy?.documentId} workspaceKey={`${setup?.localVm ?? 'unknown'}/${workspaceBusy}`} workspaceNote={overviewWorkspaceNote} filesRevision={agentsRevision} placesRevision={placesRevision} onCounts={setOverviewCounts}
           onOpenDocument={(id, key) => { void openOverviewDocument(id, 'open', key); }}
           onChatDocument={id => openOverviewDocument(id, 'chat')}
