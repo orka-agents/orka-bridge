@@ -109,38 +109,64 @@
 .account-permissions { padding: 0; margin: 8px 0; list-style: none; }
 .account-permissions li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: var(--space-1) 0; border-top: 1px solid var(--color-border); }
 
+/* Send. */
 .send-entry { position: relative; }
 /* Non-modal popover placed by Send with measured, viewport-clamped coordinates; it overlays and never moves the page. */
-.send-warning { position: fixed; inset: auto; margin: 0; width: 340px; max-width: calc(100vw - 16px); padding: 12px; border: 1px solid var(--color-border-strong); border-radius: var(--radius-row); background: var(--color-card); color: var(--color-text); box-shadow: var(--shadow-overlay); }
+.send-warning { position: fixed; inset: auto; margin: 0; width: 340px; max-width: calc(100vw - 16px); padding: var(--space-3); border: 1px solid var(--color-border-strong); border-radius: var(--radius-overlay); background: var(--color-card); color: var(--color-text); box-shadow: var(--shadow-popover); }
 .send-warning:popover-open { display: grid; height: fit-content; align-content: start; gap: 12px; }
 .send-warning p { margin: 0; }
-.send-panel { min-width: 0; padding: 16px; }
+.send-warning .workspace-step-actions { margin-top: 0; gap: var(--space-2); }
+.send-panel { min-width: 0; padding: var(--space-4); }
 .send-panel > p { max-width: 65ch; }
+.send-panel p { margin: 0; }
 .send-panel .long-card-head h3 { min-width: 0; overflow-wrap: anywhere; }
+.send-panel .long-card-head .status-description:empty { display: none; }
 .send-panel :is(.long-card-summary, .card-section p) { overflow-wrap: anywhere; }
-.send-panel .card-section[aria-label="What you send"] { position: relative; border: 0; padding-top: 0; margin-top: 12px; }
+.send-panel .long-card > p.muted { margin-top: var(--space-3); }
+/* What you send: a labelled summary straight under the head. */
+.send-panel .card-section[aria-label="What you send"] { border: 0; padding-top: 0; margin-top: var(--space-3); }
+.send-panel .card-section[aria-label="What you send"] > h4 { margin-bottom: var(--space-1); }
 .send-panel .card-section[aria-label="What you send"] p { margin: 0; color: var(--color-text-secondary); }
-.send-panel .card-section[aria-label="What you send"] > h4 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.send-panel .send-checks { padding: 8px 12px; background: var(--color-chrome); border-radius: var(--radius-row); }
+.send-panel .card-section[aria-label="What you send"] code { color: var(--color-text); }
+/* What happened: the headline in the section style, coloured by the head's result. */
+.send-panel .card-section[aria-label="What happened"] { display: grid; gap: var(--space-2); }
+.send-panel .card-section[aria-label="What happened"] > h4.section-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.send-panel .card-section[aria-label="What happened"] > h4:not(.section-label) { margin: 0; font: var(--type-display-section); letter-spacing: var(--tracking-display-section); overflow-wrap: anywhere; }
+.send-panel:has(.long-card-head .pill.status-passed) .card-section[aria-label="What happened"] > h4:not(.section-label) { color: var(--color-status-succeeded); }
+.send-panel:has(.long-card-head .pill.status-failed) .card-section[aria-label="What happened"] > h4:not(.section-label) { color: var(--color-status-failed); }
+/* Pre-send checks: a table of rows. Name, explanation, then the state word at the right. */
+.send-preflight { margin: var(--space-3) 0 0; }
+.send-preflight ul { list-style: none; padding: 0; margin: 0; }
+.send-preflight li { display: grid; grid-template-columns: minmax(88px, 128px) minmax(0, 1fr) auto; align-items: baseline; column-gap: var(--space-3); padding: var(--space-2) 0; border-top: 1px solid var(--color-border); }
+.send-preflight li > div { display: contents; }
+.send-preflight li b { grid-column: 1; grid-row: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.send-preflight li p { grid-column: 2; grid-row: 1; margin: 0; max-width: 65ch; color: var(--color-text); overflow-wrap: anywhere; }
+.preflight-state { grid-column: 3; grid-row: 1; justify-self: end; display: inline-flex; align-items: baseline; color: var(--color-text-secondary); font: var(--type-label); letter-spacing: var(--tracking-label); text-transform: uppercase; white-space: nowrap; }
+.preflight-state > .status-icon { display: none; }
+.send-preflight li[data-state="allowed"] .preflight-state { color: var(--color-status-succeeded); }
+.send-preflight li[data-state="blocked"] .preflight-state { color: var(--color-status-failed); }
+.send-preflight li[data-state="cannotCheck"] .preflight-state { color: var(--color-status-pending); }
+.send-preflight > p { margin-top: var(--space-2); }
+.send-preflight > p:not([role="alert"]) { color: var(--color-text-secondary); }
+.send-panel .send-checks { margin-top: var(--space-3); }
 .send-checks > summary { display: flex; flex-wrap: wrap; }
 .send-checks > summary .disclosure-hint { margin-left: auto; }
+.send-checks > summary + * { margin-top: var(--space-2); }
+/* The card's actions: primary first, at the bottom left, before Details. */
+.send-actions { margin-top: var(--space-4); }
 .send-panel > .cluster-details { margin: 16px 0; }
-.send-preflight { margin: 16px 0; }
-.send-preflight h4 { margin: 0 0 12px; }
-.send-preflight ul { list-style: none; padding: 0; margin: 0 0 12px; }
-.send-preflight li { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; padding: 12px 0; border-top: 1px solid var(--color-border); }
-.send-preflight li p { margin: 4px 0 0; max-width: 65ch; color: var(--color-text-secondary); overflow-wrap: anywhere; }
-.preflight-state { display: inline-flex; align-items: baseline; gap: var(--space-1); font-size: var(--size-body); font-weight: 500; }
-.send-panel details { margin-top: 16px; }
-.send-panel details .cluster-details { margin-top: 12px; }
-.send-history { margin: 0; padding: 16px; min-width: 0; }
-.send-history > .disclosure > p { max-width: 65ch; color: var(--color-text-secondary); }
+.send-panel details .cluster-details { margin-top: 0; }
+.send-panel .card-details > div > p { color: var(--color-text-secondary); }
+.send-history { margin: 0; padding: var(--space-4); min-width: 0; }
+.send-history > .disclosure > summary { font: var(--type-card); }
+.send-history > .disclosure > p { max-width: 65ch; margin: 0; color: var(--color-text-secondary); }
 .send-history > .disclosure > details + p { margin-top: 12px; }
-.send-history ol { list-style: none; padding: 0; margin: 18px 0 0; }
-.send-history > .disclosure > ol > li { padding: 16px 0; border-top: 1px solid var(--color-border); overflow-wrap: anywhere; }
-.send-history-heading { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 18px; }
-.send-history li p { margin: 6px 0; color: var(--color-text-secondary); }
-.send-history li details { margin-top: 10px; }
+.send-history ol { list-style: none; padding: 0; margin: var(--space-3) 0 0; }
+.send-history > .disclosure > ol > li { padding: var(--space-3) 0; border-top: 1px solid var(--color-border); overflow-wrap: anywhere; }
+.send-history-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); }
+.send-history-heading > strong { font-family: var(--font-mono); font-weight: 600; font-variant-ligatures: none; }
+.send-history li p { margin: var(--space-1) 0; color: var(--color-text-secondary); }
+.send-history li details { margin-top: var(--space-2); }
 .send-history .send-history-remove:not(:disabled) { color: var(--color-text); }
 @media (max-width: 820px) {
   .places-list { grid-template-columns: calc(26px + var(--space-4)) minmax(0, 1fr) auto; }
@@ -152,4 +178,7 @@
   .place-model-recovery { grid-row: 4; }
   .workspace-sizes > div { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .cluster-details > div { grid-template-columns: minmax(0, 1fr); gap: var(--space-0-5); }
+  .send-preflight li { grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-0-5); }
+  .send-preflight li p { grid-column: 1 / -1; grid-row: 2; }
+  .preflight-state { grid-column: 2; }
 }
