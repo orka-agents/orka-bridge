@@ -15,7 +15,8 @@
 .places-workspace:has(> .places-back) > .places-back { grid-column: 2; grid-row: 1; margin: var(--space-1-5) 0 0; }
 .places-workspace:has(> .places-back) > .places-heading { grid-column: 1; grid-row: 1; }
 .places-workspace:has(> .places-back) > .places-heading > h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
-.places-workspace:has(> .places-back) > .places-heading > h1 > code { font: var(--type-display-object); letter-spacing: var(--tracking-display-section); }
+/* A cluster page names its cluster a step larger than other object titles, as on the boards. */
+.places-workspace:has(> .places-back) > .places-heading > h1 > code { font: var(--type-display-object); font-size: 28px; letter-spacing: var(--tracking-display-section); }
 
 /* The list: one row card per place on shared columns, so names, pills and actions line up. */
 /* A subgrid row's padding sits inside the parent's edge tracks, so the icon track adds the row's 18px padding. */
@@ -24,7 +25,7 @@
 .place-row { display: grid; grid-template-columns: subgrid; align-items: center; column-gap: var(--space-3); row-gap: var(--space-2); padding: var(--space-4) 18px; }
 .place-row > .icon-tile-row { width: 34px; height: 34px; }
 .place-summary { grid-column: 2; min-width: 0; overflow-wrap: anywhere; }
-.place-summary h2 { margin: 0; font: 700 17px/22px var(--font-ui); letter-spacing: -.01em; }
+.place-summary h2 { margin: 0; font: var(--type-card); letter-spacing: var(--tracking-card); }
 .place-summary h2 > code { font: 700 16px/22px var(--font-mono); letter-spacing: -.01em; }
 .place-summary p { margin: var(--space-0-5) 0 0; }
 .place-meta { font: var(--type-body); color: var(--color-text-secondary); }
@@ -46,7 +47,7 @@
 .workspace-sizes dd { margin: 0; overflow-wrap: anywhere; }
 
 /* The connection card: the strong card holding the page's next action, one 520px form column inside. */
-.cluster-card { position: relative; display: grid; gap: var(--space-3); min-width: 0; width: 100%; max-width: 660px; padding: 18px 20px; border: var(--border-control) solid var(--color-text); border-radius: var(--radius-card); background: var(--color-card); }
+.cluster-card { position: relative; display: grid; gap: var(--space-3); min-width: 0; width: 100%; max-width: 660px; padding: 20px 22px; border: var(--border-control) solid var(--color-text); border-radius: var(--radius-card); background: var(--color-card); }
 .cluster-card[hidden], .workspace-option[hidden] { display: none; }
 .cluster-card > :is(label, select, p, .account-choice) { max-width: 520px; }
 .cluster-card > label { font-weight: 600; }
@@ -54,7 +55,7 @@
 .cluster-card > select.field, .cluster-card > .context-trigger { width: min(100%, 320px); }
 .cluster-card > button, .cluster-card > .coming-control { justify-self: start; }
 .cluster-card p { max-width: 65ch; margin: 0; }
-.cluster-card h3 { margin: var(--space-1) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--color-border); font: var(--type-body); font-weight: 600; }
+.cluster-card h3 { margin: var(--space-1) 0 0; padding-top: var(--space-3); border-top: 1px solid var(--color-border); font: var(--type-part); }
 .cluster-card > ul:not([class]) { margin: 0; padding-left: var(--space-5); }
 .cluster-checking { display: flex; align-items: center; gap: 8px; }
 .cluster-actions { margin-top: 0; gap: var(--space-3); }
@@ -67,7 +68,7 @@
 select.cluster-mono-field { font: 500 13px/18px var(--font-mono); font-variant-ligatures: none; }
 #cluster-installation { width: min(100%, 392px); }
 #cluster-installation option { font-family: var(--font-mono); }
-.cluster-card-title { margin: 0; font: 700 17px/22px var(--font-ui); letter-spacing: -.01em; }
+.cluster-card-title { margin: 0; font: var(--type-card); letter-spacing: var(--tracking-card); }
 .cluster-card > .cluster-notice { max-width: none; }
 .cluster-notice { display: flex; align-items: flex-start; gap: var(--space-2); }
 .cluster-notice > .status-icon { flex: none; margin-top: 1px; }

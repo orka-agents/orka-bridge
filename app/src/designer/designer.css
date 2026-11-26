@@ -13,8 +13,8 @@
 
 /* New agent: one 560px card under a page title. */
 .new-agent h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
-.new-agent-form { display: grid; gap: var(--space-2); max-width: 560px; margin-top: var(--space-5); padding: var(--space-5); }
-.new-agent-form > label, .new-agent-form legend { font-weight: 600; }
+.new-agent-form { display: grid; gap: var(--space-2); max-width: 560px; margin-top: var(--space-5); padding: 20px 22px; }
+.new-agent-form > label, .new-agent-form legend { font: var(--type-part); }
 .new-agent-form > label { margin-bottom: calc(-1 * var(--space-1)); }
 .new-agent-form > input { width: 100%; height: 40px; padding-inline: var(--space-3); font: 500 15px/20px var(--font-mono); font-variant-ligatures: none; }
 .new-agent-form p { margin: 0; }
@@ -70,7 +70,7 @@
 /* Agent view: each part is a bold label, an optional hint and its control. */
 .agent-parts { display: grid; gap: var(--space-4); }
 .agent-part { display: grid; gap: var(--space-2); min-width: 0; }
-.agent-part label, .agent-part h3 { font: var(--type-body); font-weight: 600; color: var(--color-text); margin: 0; }
+.agent-part label, .agent-part h3 { font: var(--type-part); color: var(--color-text); margin: 0; }
 .agent-part p { margin: 0; }
 .agent-part > .muted, .agent-part > .agent-tool-row > .muted { font: var(--type-caption); }
 .instructions-editor, .description-editor, .tool-picker input { width: 100%; }
