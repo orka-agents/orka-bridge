@@ -437,6 +437,9 @@ func clickTab(_ page: String, _ observations: [VNRecognizedTextObservation]) -> 
         && bounds.maxX <= rect.minX + 260, "Native page button is not visible in the sidebar: \(page), \(bounds)")
     let point = CGPoint(x: bounds.midX, y: bounds.midY)
     mouse(.leftMouseDown, point); mouse(.leftMouseUp, point)
+    // In the narrow rail a hovered tab shows its name beside it, over the page (shell.css .page-tab::after). Move the
+    // pointer to the native window title so the capture shows the page, not the tab's hover label.
+    mouse(.mouseMoved, CGPoint(x: rect.midX, y: rect.minY + 12))
     Thread.sleep(forTimeInterval: 0.5)
     return target
 }
