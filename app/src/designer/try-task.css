@@ -25,9 +25,10 @@
 .try-result .card-section + .card-section { border-top: 0; padding-top: 0; }
 .try-tools { display: grid; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
 .try-tool { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.try-tool code { font-size: .92em; }
+.try-tool .code-chip { margin-left: var(--space-0-5); }
 .try-tools + .disclosure { margin-top: var(--space-2); }
 .try-waiting { display: flex; align-items: center; gap: var(--space-2); margin: 0; }
 .try-result .reading { margin: 0; }
+.try-answer-value { font: 500 13px/20px var(--font-mono); font-variant-ligatures: none; overflow-wrap: anywhere; }
 .try-result-meta code { font-size: .92em; }
 .try-earlier-list { display: grid; gap: var(--space-3); margin-top: var(--space-3); }

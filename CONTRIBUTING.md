@@ -30,7 +30,7 @@ globally to install dependencies.
 
 For quick UI work without a VM, start the dev server from `app/` with `npm run dev` and open `http://127.0.0.1:1420/?scenario=fresh`. In development builds only, a `scenario` query loads a scripted stand-in for the native commands (`app/src/preview/backend.ts`), so screens can be walked and captured in any browser. Scenarios are `fresh`, `ready`, `connected`, `restart`, `ghMissing`, `ghSignedOut`, `runFails` and `vmFailed`. Add `speed=20` to shorten waits, `clean` to hide the scenario toolbar and `page=Home`, `Overview`, `Designer` or `Clusters` to open that page. Like the app, the preview opens on Welcome while nothing is set up (`fresh`, `ghMissing`, `ghSignedOut`, `vmFailed`), on Clusters while setup is in progress (`restart`), and on Home once a workspace is ready (`ready`, `connected`, `runFails`, `clusterReady`). The preview is not native verification: it never runs a VM, an agent or a model.
 
-These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer, `memoryLow` opens on Welcome, and the rest open on Home; the steps say where the state appears, starting from Clusters unless they name another page.
+These scenarios open states the ordinary walk can't reach. The workspace ones open on This computer, `memoryLow` and the `first…` ones open on Welcome in the guided first run, and the rest open on Home; the steps say where the state appears, starting from Clusters unless they name another page.
 
 | Scenario | State | Where it appears |
 | --- | --- | --- |
@@ -42,6 +42,10 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `wsRestore` | Interrupted update, restore offered | Opens there |
 | `wsRecovery` | Interrupted update, setup incomplete | Opens there |
 | `wsStarting` | First setup, the workspace starting with its progress | Opens there |
+| `firstDownloadFails` | First run: the workspace download fails partway, then Try again finishes it | Get started → Set up → Continue |
+| `firstTestFails` | First run: the first agent's test fails | Get started → Set up → Continue, then Connect the AI |
+| `firstTestStale` | First run: the first test's result is from an earlier edit, so it needs running again | Get started → Set up → Continue, then Connect the AI |
+| `firstTestUnknown` | First run: the first test's result can't be confirmed | Get started → Set up → Continue, then Connect the AI |
 | `keyRejected` | API key not accepted | This computer → Manage → Your own API key, enter a key starting `sk-`, Connect the AI |
 | `aiMismatch` | Saved AI connection from an earlier setup | This computer → Manage → Connect the AI |
 | `clusterDenied` | Cluster access denied | `team-dev` → Use this cluster |
@@ -49,8 +53,8 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `clusterContexts` | kubectl contexts with one Orka installation (`team-dev`), two (`team-shared`), none (`kind-scratch`) and one that needs a ServiceAccount (`team-restricted`) | Add a cluster → kubectl context, then choose one; `team-restricted` asks for a ServiceAccount after Use this cluster |
 | `sendBlocked` | Send blocked by destination checks | `team-dev` → Use this cluster → Open your agent |
 | `sendRunning` | Send running on the cluster (until cancelled) | As `sendBlocked`, then Send and run tests |
-| `sendFailed` | Send finished with a failing test | As `sendRunning` |
-| `sendPassed` | Send finished with every test passing | As `sendRunning` |
+| `sendFailed` | Send finished with a failing test, recorded under `web-reader` in Overview | As `sendRunning` |
+| `sendPassed` | Send finished with every test passing; Overview then lists `team-dev` under `web-reader`, as a recorded Send does | As `sendRunning` |
 | `sendLocalFailed` | Local test failed, cluster ready to send | As `sendBlocked`, then Run tests, then Send and run tests for the warning |
 | `testIncomplete` | First test is incomplete | Designer, or add `page=Designer` |
 | `runStale` | Local result from before your last edit | Designer, or add `page=Designer` |
@@ -64,6 +68,8 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `navAgent` | A proposed agent card; Create agent writes the file | Opens there |
 
 The Navigator answers in every scenario with the AI connected, with scripted replies chosen by the question: a link or checksum gets a task card, "agent" an agent card, "new to Orka" an explanation, and a repo, monitor or charter question an explanation with no card, as Bridge can't set those up yet. It runs on This computer only: choose `team-dev` in the Orka switcher in `clusterUnreachable` for the can't-reach card, or in `clusterReady` for the card that offers This computer.
+
+In Try a task, `web-reader` fetches the page a task names, by a URL or a bare host such as `dl.k8s.io`, so its result shows Used a tool.
 
 In every scenario a local test run can be stopped while it runs, and a finished run is recorded for Overview with its time, as native local results are. A run keeps the files it started from, so editing the agent afterwards shows its result as not run since your edit.
 

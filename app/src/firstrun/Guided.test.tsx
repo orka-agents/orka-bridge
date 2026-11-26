@@ -198,7 +198,8 @@ test('with the workspace ready, its instructions also open in place until the AI
 test('outside the guided run, Read its instructions still opens Designer', async () => {
   localStorage.setItem('bridge.welcomeSeen.v1', '1');
   localStorage.setItem('bridge.firstRun.v1', 'done');
-  nativeSetup({ selected: 'localVm', localVm: 'starting', model: 'locked' });
+  // Outside the guided run, Meet is beside a paused setup; a workspace getting ready is the two-card page.
+  nativeSetup({ selected: 'localVm', localVm: 'cancelled', model: 'locked' });
   const user = userEvent.setup();
   render(<App />);
   const meet = await screen.findByRole('region', { name: 'web-reader' });

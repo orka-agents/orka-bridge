@@ -154,7 +154,8 @@ test.each([
 ])('unsupported sizing cannot produce requirements copy or leak data: %j', async value => {
   localStorage.setItem(preference, '1'); native(unselected, value); render(<App />); await openLocalSetup();
   expect(await screen.findByText(/Requirements are not available yet for this build\./)).toBeTruthy();
-  await userEvent.setup().click(screen.getByRole('button', { name: "What's inside" }));
+  // Without requirements there is no image size to show, so What's inside isn't offered.
+  expect(screen.queryByRole('button', { name: "What's inside" })).toBeNull();
   expect(document.body.textContent).not.toMatch(/\d[.,]\d GB|GiB/);
   expect(document.body.textContent).not.toContain('SECRET_MARKER');
 });

@@ -14,12 +14,14 @@ import './home.css';
 
 // What stands between the person and the Navigator. It thinks with the model of the selected Orka, which for now
 // is the workspace on this computer.
-export type NavigatorGate = { kind: 'ready' } | { kind: 'waiting' } | { kind: 'noModel' } | { kind: 'unreachable' } | { kind: 'elsewhere'; name: string };
+export type NavigatorGate = { kind: 'ready' } | { kind: 'waiting' } | { kind: 'noModel' } | { kind: 'unreachable'; name?: string } | { kind: 'elsewhere'; name: string };
 export type HomePage = 'Overview' | 'Designer' | 'Clusters';
 type Props = {
   active: boolean; revision: number; gate: NavigatorGate;
   onOpenPage: (page: HomePage) => void; onOpenAgent: (documentId: string) => void; onAgentCreated: () => void;
   onThisComputer: () => void; blockedFor?: (documentId: string) => string | undefined;
+  /** Opens the list of clusters, rather than the selected one. */
+  onManageClusters?: () => void;
 };
 
 const starters: { label: string; message: string }[] = [
@@ -46,7 +48,7 @@ function Hero({ lede = true }: { lede?: boolean }) {
 }
 
 // A disabled message box under a card that says why, and what to do.
-function Gated({ gate, onOpenPage, onThisComputer }: Props & { gate: Exclude<NavigatorGate, { kind: 'ready' }> }) {
+function Gated({ gate, onOpenPage, onThisComputer, onManageClusters }: Props & { gate: Exclude<NavigatorGate, { kind: 'ready' }> }) {
   const card = gate.kind === 'noModel' ? {
     title: 'Connect the AI first', line: 'no model connected',
     body: 'The Navigator thinks with the model your Orka is connected to. This computer has none yet. Overview, Designer and Clusters still work.',
@@ -56,9 +58,9 @@ function Gated({ gate, onOpenPage, onThisComputer }: Props & { gate: Exclude<Nav
     body: 'The Navigator thinks with the model in the workspace on this computer, so it can answer once the workspace is ready. Overview, Designer and Clusters still work.',
     actions: <Button type="button" kind="secondary" onClick={() => onOpenPage('Clusters')}>Open Clusters</Button>,
   } : gate.kind === 'unreachable' ? {
-    title: 'Can’t reach the selected cluster. Check your network or VPN.', line: 'can’t reach the cluster',
-    body: 'The Navigator thinks with the model on the Orka you have selected, so it can’t answer until the cluster is reachable. Nothing on the cluster has changed. Your agent files are on this computer and still open in Designer.',
-    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Check again</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button></>,
+    title: `Can’t reach ${gate.name ?? 'the selected cluster'}. Check your network or VPN.`, line: `can’t reach ${gate.name ?? 'the cluster'}`,
+    body: `The Navigator thinks with the model on the Orka you have selected, so it can’t answer until ${gate.name ?? 'the cluster'} is reachable. Nothing on the cluster has changed. Your agent files are on this computer and still open in Designer.`,
+    actions: <><Button type="button" kind="primary" onClick={() => onOpenPage('Clusters')}>Check again</Button><Button type="button" kind="secondary" onClick={onThisComputer}>Switch to This computer</Button>{onManageClusters && <Button type="button" kind="quiet" onClick={onManageClusters}>Open Clusters</Button>}</>,
   } : {
     title: 'The Navigator works with This computer for now.', line: 'works with This computer for now',
     body: `It thinks with the model in the workspace on this computer. Bridge doesn’t set up the Navigator on a cluster yet, so it can’t answer for ${gate.name}. Nothing on ${gate.name} has changed.`,
@@ -66,7 +68,7 @@ function Gated({ gate, onOpenPage, onThisComputer }: Props & { gate: Exclude<Nav
   };
   return <section className="home home-start" aria-labelledby="page-title">
     <Hero lede={false} />
-    <article className="card card-strong nav-gate" aria-labelledby="nav-gate-title">
+    <article className="card nav-gate" aria-labelledby="nav-gate-title">
       <header className="nav-gate-head"><StatusIcon state="needs-you" /><h2 id="nav-gate-title">{card.title}</h2><StatusPill state="needs-you">Needs you</StatusPill></header>
       <p>{card.body}</p>
       <div className="nav-actions">{card.actions}</div>
@@ -153,7 +155,8 @@ function Navigator({ active, revision, onOpenPage, onOpenAgent, onAgentCreated, 
     const box = field.current;
     if (!box) return;
     box.style.height = 'auto';
-    if (draft) box.style.height = `${box.scrollHeight}px`;
+    // Empty, the stylesheet sizes it (three lines, or one in a narrow window).
+    box.style.height = draft ? `${box.scrollHeight}px` : '';
   }, [draft, empty]);
   // Only the newest proposal of each kind can act; an older one stays as it was, marked Not created.
   const latest = new Map<string, string>();

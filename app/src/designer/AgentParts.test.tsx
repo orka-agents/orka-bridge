@@ -39,7 +39,8 @@ test('Instructions autosave through the existing writer without changing metadat
   fireEvent.change(field, { target: { value: 'New instructions\n' } });
   await waitFor(() => expect(writes).toEqual([agent.replace('Read a page.\n', 'New instructions\n')]));
   await waitFor(() => expect(screen.queryByText('Saving…')).toBeNull());
-  expect(screen.queryByText('Saved')).toBeNull();
+  // A routine save leaves the editor's status empty; only the tests card, now behind the edit, says Saved by Run tests.
+  expect(document.querySelector('.file-toolbar')?.textContent).not.toContain('Saved');
   expect(writes[0]).toContain('---\n\nNew instructions\n');
 });
 test('new leading blank lines remain visible and removable without changing the original separator', async () => {

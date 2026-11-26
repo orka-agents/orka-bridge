@@ -16,8 +16,10 @@ function Unavailable({ label, reason, children, focusRef }: { label: string; rea
 function toolDescription(tool: CatalogTool): string {
   return tool.kind === 'builtin' && Object.hasOwn(builtInToolDescriptions, tool.name) ? builtInToolDescriptions[tool.name] : tool.description;
 }
-export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_ID, readOnly, setupPending = false, catalog, catalogLoading = false, catalogAvailability = catalogLoading ? 'loading' : 'attempted', catalogDestination = 'This computer', remote = false, onPendingEdit, onChange }: {
+export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_ID, readOnly, setupPending = false, catalog, catalogLoading = false, catalogAvailability = catalogLoading ? 'loading' : 'attempted', catalogDestination = 'This computer', remote = false, trying = false, onPendingEdit, onChange }: {
   source: string; path?: string; documentId?: string; readOnly: boolean; setupPending?: boolean; catalog?: WorkspaceCatalogReply; catalogLoading?: boolean; catalogAvailability?: 'unavailable' | 'needsConnection' | 'loading' | 'paused' | 'attempted'; catalogDestination?: string; remote?: boolean; onPendingEdit?: (pending: boolean) => void; onChange: (source: string) => void;
+  /** Beside Try a task: instructions and model stay editable so a change can be tried at once; tools and other settings stay in Agent view. */
+  trying?: boolean;
 }) {
   const form = readForm(source); const id = useId();
   // Markdown's separating blank lines stay in the file, not above the prompt.
@@ -84,8 +86,10 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
   }, [picker, toolReason]);
   const modelReason = readOnly ? 'You can change the model after setup.' : !form.modelEditable ? 'Edit the model in File view for this file’s format.'
     : setupPending ? 'Models will be available when the workspace is ready.' : catalogLoading ? 'Loading models…' : catalogReason ?? (models === undefined ? `Couldn't read models from ${catalogDestination}. Check Clusters or edit File view.` : undefined);
+  // The routine note about a cluster's default reads as the select's tooltip; anything that needs action stays in view.
+  const modelTip = !catalogLoading && !modelReason && remote && models?.length ? 'The selected AI connection’s configured default. Other models can be entered in File view.' : undefined;
   const modelHelp = catalogLoading ? 'The model saved in your file is shown while choices load.' : modelReason
-    ?? (remote ? models?.length ? 'The selected AI connection’s configured default. Other models can be entered in File view.' : 'No default model is configured for this AI connection. Enter a model in File view.'
+    ?? (remote ? models?.length ? undefined : 'No default model is configured for this AI connection. Enter a model in File view.'
       : models?.length ? undefined : 'No models listed by the workspace.');
   const labelFor = (name: string) => Object.hasOwn(builtInTools, name) ? builtInTools[name] : name;
   const editSoul = async (value: string) => {
@@ -104,7 +108,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
     {catalogLoading && <p className="muted" role="status">Loading available tools and models…</p>}
     {!form.metadataEditable && <p className="muted">This file’s settings can be edited in File view.</p>}
     <div className="agent-part">
-      <div className="instructions-heading"><label htmlFor={`${id}-instructions`}>Instructions</label><p className="muted" id={`${id}-hint`}>The task the agent should do. Use Personality for its tone and style.</p></div>
+      <div className="instructions-heading"><label htmlFor={`${id}-instructions`}>Instructions</label><p className="muted" id={`${id}-hint`}>{trying ? 'Change them here and run the task again to see the difference.' : 'The task the agent should do. Use Personality for its tone and style.'}</p></div>
       <textarea ref={input} id={`${id}-instructions`} className="field instructions-editor" aria-describedby={`${id}-hint`} value={instructions}
         readOnly={readOnly || !form.instructionsEditable} onChange={event => change(changeInstructions(source, leading + event.target.value))} />
       {!form.instructionsEditable && <p className="muted">Finish the file’s opening settings in File view to edit its instructions here.</p>}
@@ -118,15 +122,15 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
           return <span className="tool-pill chip" key={tool.index} title={observation?.description}>
             <span>{label}</span>{label !== name && <code>{name}</code>}
             {tool.kind === 'tool' && <span className="muted">(Cluster tool{builtins.has(name) ? ', built-in takes precedence' : ''})</span>}
-            {!readOnly && form.toolsEditable && ['builtin', 'tool'].includes(tool.kind ?? '') && <Button kind="icon" aria-label={`Remove ${label}`} onClick={() => { change(removeTool(source, tool.index)); focusAdd(); }}><CloseIcon /></Button>}
+            {!trying && !readOnly && form.toolsEditable && ['builtin', 'tool'].includes(tool.kind ?? '') && <Button kind="icon" aria-label={`Remove ${label}`} onClick={() => { change(removeTool(source, tool.index)); focusAdd(); }}><CloseIcon /></Button>}
           </span>;
         })}
-        {toolReason ? <Unavailable label="Add a tool" reason={toolReason} focusRef={addPlaceholder}><Button kind="secondary" size="small" type="button" disabled title={toolReason}>Add a tool</Button></Unavailable>
+        {trying ? null : toolReason ? <Unavailable label="Add a tool" reason={toolReason} focusRef={addPlaceholder}><Button kind="secondary" size="small" type="button" disabled title={toolReason}>Add a tool</Button></Unavailable>
           : <Button kind="secondary" size="small" type="button" ref={add} aria-expanded={picker} aria-controls={`${id}-picker`} onClick={() => { if (picker) close(); else setPicker(true); }}><span aria-hidden="true">+ </span>Add a tool</Button>}
       </div>
       {!remote && form.tools.some(tool => tool.name && unsupportedLocalTool(tool.name)) && <div className="alert alert-needs-you"><p role="alert" className="alert-title">{unsupportedToolWarning}</p></div>}
-      {toolReason && !catalogLoading && <p className="muted">{toolReason}</p>}
-      {picker && !toolReason && <div role="dialog" aria-label="Choose a tool" ref={popover} id={`${id}-picker`} className="tool-picker" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
+      {!trying && toolReason && !catalogLoading && <p className="muted">{toolReason}</p>}
+      {picker && !trying && !toolReason && <div role="dialog" aria-label="Choose a tool" ref={popover} id={`${id}-picker`} className="tool-picker" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); close(); } }}>
         <div className="tool-picker-head"><span className="tool-picker-title">Choose a tool</span><Button kind="icon" className="picker-close" aria-label="Close picker" title="Close picker" onClick={close}><CloseIcon /></Button></div>
         <label className="sr-only" htmlFor={`${id}-search`}>Find a tool</label>
         <input className="field" id={`${id}-search`} type="search" placeholder="Find a tool" autoFocus value={query} onChange={event => setQuery(event.target.value)} />
@@ -149,7 +153,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
     <div className="agent-part">
       <label htmlFor={`${id}-model`}>It thinks with</label>
       <div className="agent-tool-row">
-        <select id={`${id}-model`} className="field model-select" disabled={!!modelReason} title={modelReason} value={form.model ?? ''} onChange={event => change(changeModel(source, event.target.value))}>
+        <select id={`${id}-model`} className="field model-select" disabled={!!modelReason} title={modelReason ?? modelTip} value={form.model ?? ''} onChange={event => change(changeModel(source, event.target.value))}>
           {!listed && <option value={form.model ?? ''}>{form.model ? `${modelLabel(form.model)}${unlistedLabel}` : 'No model in this file'}</option>}
           {models?.map(model => <option key={model.id} value={model.id}>{!remote && model.id === catalog?.defaultModel ? `Workspace default: ${modelLabel(model.id)}` : modelLabel(model.id)}</option>)}
         </select>
@@ -158,7 +162,7 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
       {!remote && catalog?.models.state === 'ready' && catalog.models.items.length === 1000 && <p className="muted">Showing up to 1,000 models; more may be available.</p>}
       {!remote && !listed && models && form.model && <p className="muted">{knownModel ? 'This model is not offered for chat in Bridge. Choose another model to use it here.' : 'This model is saved in your file but is not listed by the connected AI. It may not run here. Choose a listed model or check your AI connection.'}</p>}
     </div>
-    <Disclosure className="agent-settings" label="More settings">
+    {!trying && <Disclosure className="agent-settings" label="More settings">
       <div className="agent-part">
         <label htmlFor={`${id}-description`}>Description</label>
         {/* One line, as descriptions usually are; a description that already spans lines keeps a text area so no line is lost. */}
@@ -189,6 +193,6 @@ export default function AgentParts({ source, path, documentId = SAMPLE_DOCUMENT_
         </>}
       </div>
       <div className="agent-part"><h3>File</h3><FileLocation path={path} documentId={documentId} /></div>
-    </Disclosure>
+    </Disclosure>}
   </div>;
 }

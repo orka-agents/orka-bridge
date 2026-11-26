@@ -187,7 +187,8 @@ test('pending soul edits survive File view and block running until the atomic up
   await waitFor(() => expect(run.matches(':disabled')).toBe(false));
   await user.click(screen.getByText('More settings'));
   fireEvent.change(screen.getByRole('textbox', { name: 'Personality' }), { target: { value: 'New text' } });
-  expect(run.matches(':disabled')).toBe(true);
+  // After the edit, Run tests follows the "changed since this run" line.
+  expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   await user.click(screen.getByRole('button', { name: 'File' }));
   await act(async () => finish(new ArrayBuffer(32)));
   await waitFor(() => expect(saves.length).toBe(1));

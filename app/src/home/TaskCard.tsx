@@ -154,7 +154,7 @@ function EditTask({ cardKey, proposal, agents }: Props) {
         </select>
       </label>
       <label className="nav-field" htmlFor={`${id}-place`}><span>Runs on</span>
-        <select id={`${id}-place`} className="field" value="thisComputer" disabled title="Tasks from the Navigator run on this computer for now."><option value="thisComputer">This computer</option></select>
+        <select id={`${id}-place`} className="field" defaultValue="thisComputer" title="Tasks from the Navigator run on this computer for now."><option value="thisComputer">This computer</option></select>
       </label>
     </div>
     <label className="nav-field" htmlFor={`${id}-task`}><span>Task</span>

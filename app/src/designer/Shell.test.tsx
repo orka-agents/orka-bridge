@@ -68,14 +68,15 @@ test('New agent cancellation retains File, while successful creation opens Agent
   await waitFor(() => expect(screen.getByRole('button', { name: 'Agent' }).getAttribute('aria-pressed')).toBe('true'));
 });
 
-test('an unused Send still shows its card under Team cluster, Not started, with Choose a cluster and an open Past Sends card', async () => {
+test('an unused Send still shows its card under Team cluster, Not started, with Choose a cluster and no empty Past Sends card', async () => {
   native(); render(<Example />); const user = userEvent.setup();
   await screen.findByRole('textbox', { name: 'Instructions' });
   const send = screen.getByRole('region', { name: 'Send and cluster tests' });
   expect(screen.getByRole('heading', { name: 'Team cluster' })).toBeTruthy();
   expect(within(send).getByRole('heading', { name: 'Send your agent' })).toBeTruthy();
   expect(within(send).getByText('Not started', { selector: '.pill' })).toBeTruthy();
-  expect(await within(screen.getByRole('region', { name: 'Past Sends' })).findByText('No saved Sends yet.')).toBeTruthy();
+  await waitFor(() => expect(screen.queryByText('Reading saved Sends…')).toBeNull());
+  expect(screen.queryByRole('region', { name: 'Past Sends' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Send to a cluster' })).toBeNull();
   expect(screen.queryByText('Team clusters are early in this preview.')).toBeNull();
   expect(screen.getByRole('button', { name: 'Choose a cluster' }).className).toContain('secondary');

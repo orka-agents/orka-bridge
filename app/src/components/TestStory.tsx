@@ -12,7 +12,7 @@ export function TestStory({ result, stale = false, vendor }: { result: TestCase;
     <ol className="test-story">
       <li><span className="story-number" aria-hidden="true">1</span><div><h5>Asked</h5><p className="reading">{result.question}</p></div></li>
       <li><span className="story-number" aria-hidden="true">2</span><div><h5>{result.completedTools.length ? 'Used a tool' : 'Tool activity'}</h5>{result.completedTools.length
-        ? <ul className="story-tools">{result.completedTools.map((tool, i) => <li key={`${tool}:${i}`}>{Object.hasOwn(builtInTools, tool) ? builtInTools[tool] : tool} <code>{tool}</code></li>)}</ul>
+        ? <ul className="story-tools">{result.completedTools.map((tool, i) => <li key={`${tool}:${i}`}>{Object.hasOwn(builtInTools, tool) ? builtInTools[tool] : tool} <code className="code-chip">{tool}</code></li>)}</ul>
         : <p>No completed tool call was observed.</p>}</div></li>
       <li><span className="story-number" aria-hidden="true">3</span><div><h5>Answered</h5><p className="reading">{result.answer ?? 'No answer was observed.'}</p></div></li>
       <li><StatusIcon state={state} /><div><p className={`story-verdict status-${state}`}>{stale ? 'Earlier result, not run since your edit.' : result.phase === 'NotRun' ? 'The test was not submitted.' : { passed: 'The test passed.', failed: 'The test failed.', cancelled: 'The test was cancelled.', unknown: 'The test result is unknown.' }[result.verdict]}</p>{reason && <p className="test-reason">{reason}</p>}</div></li>

@@ -76,7 +76,8 @@ test('failed Connect refreshes retained guest details without locking the runnin
   const user = userEvent.setup(); mockIPC(ipc); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(screen.queryByText(detail)).toBeNull();
-  await user.click(screen.getByRole('button', { name: 'Show details' }));
+  // Once ready, the workspace step offers its details only when the workspace reported something.
+  await user.click(await screen.findByRole('button', { name: 'Show details' }));
   expect(await screen.findByText(detail)).toBeTruthy();
   expect(screen.getByText('Your workspace is ready on this computer.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Check again' }).matches(':disabled')).toBe(false);
@@ -200,6 +201,9 @@ test('Continue shows real startup states and a ready session can open the owned 
   expect(ipc.mock.calls.filter(([name]) => name === 'setup_select_local')).toHaveLength(1);
   await user.click(screen.getByRole('button', { name: 'Read its instructions' }));
   expect(await screen.findByText('exact agent source')).toBeTruthy();
+  // The read-only test file sits in File view's tests card.
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  await user.click(within(screen.getByRole('region', { name: 'This computer' })).getByText('Details'));
   expect(screen.getByText('exact test source')).toBeTruthy();
   expect(ipc.mock.calls.every(([name]) => ['setup_status', 'workspace_upgrade_status', 'setup_requirements', 'setup_select_local', 'setup_example', 'agent_open', 'agent_select', 'agents_list', 'agent_run_status', 'agent_chat_status', 'send_status', 'send_history', 'engine_call', 'cluster_places', 'overview_files'].includes(name))).toBe(true);
 });

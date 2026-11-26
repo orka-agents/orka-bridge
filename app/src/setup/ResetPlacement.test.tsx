@@ -55,8 +55,10 @@ test.each(['stay', 'navigate'])('AI recovery keeps reset completion visible afte
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' })); // Places' navigation action
   await user.click(await screen.findByRole('button', { name: 'Connect the AI' }));
   expect(await screen.findByRole('heading', { level: 1, name: 'This computer' })).toBeTruthy();
-  expect(screen.getByText("The AI couldn't connect", { selector: 'p' })).toBeTruthy();
-  const row = screen.getByText('Connect the AI', { selector: 'li b' }).closest('li')!;
+  // The page keeps the stage's name; the saved connection's recovery is the AI card beside the steps.
+  expect(screen.getByText('Connect the AI', { selector: '.workspace-heading p' })).toBeTruthy();
+  const row = screen.getByRole('region', { name: 'Saved AI connection' });
+  expect(row.closest('.setup-side')).toBeTruthy();
   expect(within(row).getByRole('button', { name: 'Reset AI connection' })).toBeTruthy();
   expect(screen.getByText('Your workspace is ready on this computer.')).toBeTruthy();
   await user.click(within(row).getByRole('button', { name: 'Show details' }));

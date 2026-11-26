@@ -155,7 +155,7 @@ test('a restored active Send keeps its completed result and unconfirmed recovery
   state = 'complete';
   await waitFor(() => expect(panel.textContent).toContain('Saved completed answer'));
   expect(screen.getByRole('region', { name: 'Send and cluster tests' })).toBe(panel);
-  expect(screen.getByRole('region', { name: 'Past Sends' }).closest('[hidden]')).toBeNull();
+  expect(panel.closest('[hidden]')).toBeNull();
   state = 'unknown';
   await waitFor(() => expect(panel.textContent).toContain('Cancellation not confirmed'));
   expect(screen.getByRole('region', { name: 'Send and cluster tests' })).toBe(panel);

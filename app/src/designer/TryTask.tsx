@@ -67,7 +67,7 @@ export function duration(ms: number) {
 }
 function ToolRow({ tool }: { tool: { name: string; state: Status; word: string } }) {
   const label = Object.hasOwn(builtInTools, tool.name) ? builtInTools[tool.name] : undefined;
-  return <li className="try-tool"><StatusIcon state={tool.state} /><span>{label && <>{label} </>}<code>{tool.name}</code></span><span className="muted">{tool.word}</span></li>;
+  return <li className="try-tool"><StatusIcon state={tool.state} /><span>{label && <>{label} </>}<code className="code-chip">{tool.name}</code></span><span className="muted">{tool.word}</span></li>;
 }
 function Result({ label, turn, live, waiting, model, actions }: { label: string; turn: ChatTurn; live?: ChatSnapshot['state']; waiting?: string; model?: string; actions?: ReactNode }) {
   const end = outcome(turn, live);
@@ -96,7 +96,8 @@ function Result({ label, turn, live, waiting, model, actions }: { label: string;
       </Disclosure>}
     </CardSection>}
     <CardSection title="Answered">
-      {turn.answer !== null ? <p className="reading">{turn.answer}</p>
+      {/* A one-word answer is a value (a checksum, an id): it reads in mono, like code. */}
+      {turn.answer !== null ? <p className={/^\S+$/.test(turn.answer.trim()) ? 'try-answer-value' : 'reading'}>{turn.answer}</p>
         : waiting ? <p className="try-waiting"><StatusIcon state="running" />{waiting}</p>
         : <p className="muted">{turn.phase === 'Failed' ? 'The task failed without an answer.' : 'No answer was received.'}</p>}
     </CardSection>

@@ -96,8 +96,8 @@ assert.match(source, /if \(runCore\) for \(const name of \['designer-connected'/
 const sendGate = source.slice(source.indexOf('  function assertSendPresentation('), source.indexOf('  async function captureSendScene('));
 assert.ok(sendGate.includes('Unsupported cancellation'), 'Send capture acceptance gate is missing');
 const checkSend = Function(`${sendGate}; return assertSendPresentation;`)();
-const sendProbe = { header: [{ label: 'Fix in Designer', primary: true }, { label: 'Run cluster tests again', primary: false }],
-  buttons: ['Fix in Designer', 'Run cluster tests again'], title: 'Captured checksum from the page', id: 'page-checksum',
+const sendProbe = { header: [{ label: 'Run cluster tests again', primary: false }, { label: 'Fix in Designer', primary: true }],
+  buttons: ['Run cluster tests again', 'Fix in Designer'], title: 'Captured checksum from the page', id: 'page-checksum',
   heading: 'To fixture-selected', summary: 'web-reader with 1 test', checks: 'Ready to send: 1 check passed Show checks', checksOpen: false,
   inlineChecks: [], changeDisabled: false, text: 'fixture-captured', detailsOpen: false, extras: [], width: 540, scrollWidth: 540 };
 checkSend('send-failed', sendProbe, false);
@@ -109,7 +109,7 @@ for (const [name, header] of [
   ['send-ready', [{ label: 'Send and run tests', primary: true }]],
   ['send-blocked', [{ label: 'Check again', primary: true }]],
   ['send-sending', [{ label: 'Cancel tests', primary: false }]],
-  ['send-passed', [{ label: 'See in Overview', primary: true }, { label: 'Run cluster tests again', primary: false }]],
+  ['send-passed', [{ label: 'Run cluster tests again', primary: false }, { label: 'See in Overview', primary: false }]],
 ]) {
   const probe = { ...sendProbe, header, title: name === 'send-passed' ? sendProbe.title : '', id: name === 'send-passed' ? sendProbe.id : '',
     heading: ['send-ready', 'send-blocked'].includes(name) ? 'Send your agent' : sendProbe.heading,
@@ -176,12 +176,12 @@ assert.throws(() => checkSend('send-unsupported', { ...unsupported, buttons: ['C
 assert.throws(() => checkSend('send-earlier-target', { ...sendProbe, text: 'fixture-captured fixture-selected' }, false));
 assert.throws(() => checkSend('send-failed', { ...sendProbe, detailsOpen: true, extras: ['Check again'] }, true));
 // Exercise the queued-state predicate with the rendered summary, including its workspace wording.
-const queuedGuard = source.split('\n').find(line => line.includes('if (!queued.status'));
+const queuedGuard = source.split('\n').find(line => line.includes("if (queued.pill !== 'Queued'"));
 assert.ok(queuedGuard);
 const checkQueued = Function('queued', 'name', queuedGuard);
-const queuedState = { status: true, inChoice: false, change: true, cancel: false, text: 'GitHub Copilot, connects when the workspace is ready' };
+const queuedState = { pill: 'Queued', inChoice: false, change: false, cancel: true, text: 'Connect the AI\nQueued\nGitHub Copilot · gpt-5.6-terra\nConnects when the workspace is ready.\nCancel' };
 assert.doesNotThrow(() => checkQueued(queuedState, 'setup-transfer-queued'));
-assert.throws(() => checkQueued({ ...queuedState, cancel: true }, 'setup-transfer-queued'));
+for (const mutation of [{ cancel: false }, { change: true }, { inChoice: true }, { pill: undefined }, { text: 'Connects through the local cluster.' }]) assert.throws(() => checkQueued({ ...queuedState, ...mutation }, 'setup-transfer-queued'));
 const welcomeGuard = source.split('\n').find(line => line.includes('if (!welcome.primary'));
 assert.ok(welcomeGuard);
 const checkWelcome = Function('welcome', welcomeGuard);

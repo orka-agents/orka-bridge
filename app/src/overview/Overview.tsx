@@ -11,6 +11,8 @@ export type OverviewProps = {
   onNewAgent?: () => void; active: boolean; runBusy: boolean; localAiConnected: boolean; activeDocumentId?: string; workspaceKey: string;
   onOpenDocument: (id: string, clusterKey?: string) => void; onChatDocument?: (id: string) => void; onRunDocument?: (id: string, clusterKey?: string) => void;
   onOpenExample: () => void; onChooseWorkspace: () => void; onCounts?: (label: string) => void;
+  /** How many agent files are saved on this computer, once that is known. */
+  onSavedCount?: (count: number | undefined) => void;
   /** Newest request wins. target is absent when native has no recorded agent for that Send. */
   focus?: { id: number; sendId: string; target?: AgentFocus };
   focusPending?: boolean;
@@ -20,7 +22,7 @@ export type OverviewProps = {
 const focusNotes = { present: 'Not shown in Overview yet.', gone: 'The original agent is no longer available. Your saved result is unchanged.', cannotCheck: 'Cannot check this agent. Your saved result is unchanged.' };
 const complete = (v?: LiveAgents): v is CompleteAgents => v?.state === 'complete' && v.installation !== null && v.observedAt !== null;
 const hasRunningSend = (value?: Places) => value?.places.some(p => p.agents.some(a => a.record?.verdict === 'running')) || value?.unobserved.some(a => a.verdict === 'running');
-export default function Overview({ onNewAgent, active, runBusy, localAiConnected, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, workspaceNote, filesRevision = 0, placesRevision = 0, focus: navigationFocus, focusPending = false, onRetryFocus }: OverviewProps) {
+export default function Overview({ onNewAgent, active, runBusy, localAiConnected, activeDocumentId, workspaceKey, onOpenDocument, onChatDocument, onRunDocument, onOpenExample, onChooseWorkspace, onCounts, onSavedCount, workspaceNote, filesRevision = 0, placesRevision = 0, focus: navigationFocus, focusPending = false, onRetryFocus }: OverviewProps) {
   const aiReasonId = useId();
   const [dismissedFocus, setDismissedFocus] = useState<number>();
   const focus = navigationFocus?.id === dismissedFocus ? undefined : navigationFocus;
@@ -180,8 +182,10 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
   const partial = !!workspaceNote || filesStale || files?.historyState !== 'complete' || !complete(live) || pending || !places || placeError || places.places.some(p => p.stale || p.observedAt === null);
   const counts = !files ? 'Reading saved files…' : files.state === 'unavailable' ? 'Saved files unavailable'
     : !filesVisited.current ? filesStale ? 'Saved files unavailable' : files.files.length ? `${files.files.length} saved agent${files.files.length === 1 ? '' : 's'}` : 'No saved agents yet'
-    : summaryLabel(agentRows(built.cards), partial);
+    : empty && !partial ? 'No saved agents yet' : summaryLabel(agentRows(built.cards), partial);
+  const savedCount = files?.state === 'complete' ? files.files.length : undefined;
   useEffect(() => { onCounts?.(counts); }, [counts, onCounts]);
+  useEffect(() => { onSavedCount?.(savedCount); }, [savedCount, onSavedCount]);
   const clusters = clusterGroups(inputs, built);
   const knownPlace = placeFilter === 'all' || placeFilter === 'local' || !!places?.places.some(place => place.key === placeFilter);
   const selectedPlace = knownPlace ? placeFilter : 'all';

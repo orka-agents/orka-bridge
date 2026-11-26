@@ -40,8 +40,8 @@ export function GeneratedValue({ label, value }: { label: string; value: string 
   }
   return <div className="generated-value"><span>{label}</span><code title={value}>{short === value ? value : <><span className="sr-only">{value}</span><span aria-hidden="true">{short}</span></>}</code><Button type="button" kind="icon" aria-label={`Copy ${label}`} title={`Copy ${label}`} onClick={() => { void copy(); }}><CopyIcon /></Button><span role="status">{feedback?.value === value ? feedback.text : ''}</span></div>;
 }
-export function Details({ children, hint }: { children: ReactNode; hint?: string }) {
-  return <Disclosure className="card-details" label="Details" hint={hint}><div>{children}</div></Disclosure>;
+export function Details({ children, hint, defaultOpen }: { children: ReactNode; hint?: string; defaultOpen?: boolean }) {
+  return <Disclosure className="card-details" label="Details" hint={hint} defaultOpen={defaultOpen}><div>{children}</div></Disclosure>;
 }
 export function CardSection({ title, children }: { title: string; children: ReactNode }) {
   return <section className="card-section" aria-label={title}><h4 className="section-label">{title}</h4>{children}</section>;

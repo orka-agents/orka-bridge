@@ -219,7 +219,7 @@ test('Overview fitting Try a task routes to the saved document on This computer'
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   const row = await screen.findByRole('article', { name: 'reader' });
   await user.click(within(row).getByRole('button', { name: 'Show places for reader' }));
-  await user.click(within(row).getByRole('button', { name: `${action} with reader` }));
+  await user.click(within(row).getByRole('button', { name: 'New task with reader' }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
   if (action === 'Try a task') await waitFor(() => expect(screen.getByRole('button', { name: 'Try a task', pressed: true })).toBeTruthy());
   else await waitFor(() => expect(calls.filter(call => call.command === 'agent_run')).toEqual([{ command: 'agent_run', args: { documentId: id } }]));
@@ -318,7 +318,8 @@ test.each([
   render(<App />);
   const footer = screen.getByRole('contentinfo');
   expect(await within(footer).findByText(detail)).toBeTruthy();
-  expect(within(screen.getByRole('navigation')).getByText(tabLine)).toBeTruthy();
+  // The tab keeps its checking line until the launch page is decided, a moment after the footer settles.
+  expect(await within(screen.getByRole('navigation')).findByText(tabLine)).toBeTruthy();
   expect(within(footer).queryByText(/saved|GPT|tests passing|\d+ of \d+ passed/i)).toBeNull();
 });
 
