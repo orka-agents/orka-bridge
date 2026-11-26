@@ -700,6 +700,29 @@ for (const name of ['upgrade-refresh-pending', 'upgrade-refresh-busy', 'upgrade-
 assert.throws(() => auditUpgrade([{ command: 'workspace_upgrade_status', args: { refresh: true } }], 'upgrade-refresh-arbitrary', 'fixture-transaction'));
 // Old isolated-world React pollers may still retire their own first-test intent;
 // their synthetic preferences must not change a later scene's identity.
+// Guided first-run screens have no sidebar: the smoke walk anchors the page under the guided title-bar row, finds
+// Get started as the native button (its arrow is CSS content) and leaves guidance only through Show all of Bridge.
+assert.ok(smoke.includes('guard let row = guidedTitleRow() else { fail("Cannot locate the native sidebar or the guided title bar for the page viewport") }')
+  && smoke.includes('return CGRect(x: rect.minX, y: row.maxY, width: rect.width, height: max(0, rect.maxY - row.maxY))')
+  && smoke.includes('== "Setup progress" }') && smoke.includes('bounds.width >= rect.width * 0.9, bounds.height < 100'), 'guided pages must be anchored under the actual guided title-bar row');
+assert.ok(smoke.includes('nativeButtons("Show all of Bridge")') && smoke.includes('"Show all of Bridge did not end the guided first run and bring back the sidebar"')
+  && (smoke.match(/leaveGuidedFirstRun\(\)\n\s*clickTab\(/g) ?? []).length >= 2, 'the walk must leave the guided first run before using the sidebar');
+assert.ok(!/topCandidates\(1\)\.first\?\.string == "Get started"/.test(smoke) && !smoke.includes('clickText("Get started"'), 'Get started carries a CSS arrow, so it is found as a native button, not an exact OCR line');
+// The walk reads visible text in its authored case: capitals drawn by CSS map back to the app's words, nothing else.
+{
+  const authored = source.match(/const authoredInnerText = `([\s\S]*?)`;/)?.[1];
+  assert.ok(authored && source.includes('for (const setup of [fixtureStorage, authoredInnerText])'), 'Windows walk must install authored-case innerText in every fixture world');
+  class HTMLElement { constructor(text, children = [], transform = 'none') { this.rendered = text; this.children = children; this.textContent = text; this.transform = transform; }
+    querySelectorAll() { return this.children.flatMap(child => [child, ...child.querySelectorAll()]); } }
+  Object.defineProperty(HTMLElement.prototype, 'innerText', { configurable: true, get() { return this.rendered; }, set() {} });
+  const world = { HTMLElement, getComputedStyle: node => ({ textTransform: node.transform }) };
+  vm.runInNewContext(authored, world);
+  const pill = new HTMLElement('Not started', [], 'uppercase');
+  const card = new HTMLElement('Tests on this computer\nNOT STARTED\nWaiting', [pill]);
+  assert.equal(card.innerText, 'Tests on this computer\nNot started\nWaiting');
+  const plain = new HTMLElement('READY TO SEND', [new HTMLElement('Ready to send')]);
+  assert.equal(plain.innerText, 'READY TO SEND', 'text the app wrote in capitals, or that CSS does not capitalise, is unchanged');
+}
 const fixtureStorage = source.match(/const fixtureStorage = `([\s\S]*?)`;/)?.[1];
 assert.ok(fixtureStorage, 'each renderer fixture world needs isolated presentation preferences');
 const nativePreferences = new Map([['native-sentinel', 'kept']]);
