@@ -1485,7 +1485,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try capture("agent-cluster-owned", "Designer")
     Thread.sleep(forTimeInterval: 1)
     let allowed = try capturePreflight("send-ready", "Ready to send")
-    require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Ready to send") }
+    require(allowed.contains { showsText($0.topCandidates(1).first?.string ?? "", "Ready to send") }
         && !nativeButtons("Send and run tests").isEmpty, "Ready destination must expose the Send action")
     func focusSend() throws {
         // Pixel scroll offsets are not stable across responsive reflow. The Send card is always in Designer's
@@ -1685,7 +1685,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     try resultSize(1280, 800)
     try capturePreflight("send-running-wide", "Waiting for answers and evaluating tests")
     let partial = try capturePreflight("send-running-partial", "published-checksum")
-    require(partial.contains { ($0.topCandidates(1).first?.string ?? "").contains("Passed") }, "Cancellation walk needs a completed test before Cancel tests")
+    // The verdict pill is drawn in CSS capitals.
+    require(partial.contains { showsText($0.topCandidates(1).first?.string ?? "", "Passed") }, "Cancellation walk needs a completed test before Cancel tests")
     try clickSendControl("published-checksum", scrolling: -250)
     try captureAnswer("send-running-answer-wide")
     try clickSendControl("published-checksum", scrolling: 250)
@@ -1697,7 +1698,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let cancellingFrame = try capture("send-cancelling", "Designer") {
         try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "requested"])
     }
-    require(cancellingFrame.contains { ($0.topCandidates(1).first?.string ?? "").contains("Cancelling tests") }, "Native cancellation progress missing from captured frame")
+    require(cancellingFrame.contains { showsText($0.topCandidates(1).first?.string ?? "", "Cancelling tests") }, "Native cancellation progress missing from captured frame")
     Thread.sleep(forTimeInterval: 0.5)
     try capturePreflight("send-cancel-requested-wide", "Cancellation requested. Waiting for the cluster.")
     try captureRecoveryActions("send-cancel-requested-actions-wide")
