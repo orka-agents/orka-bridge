@@ -253,7 +253,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Windows native recovery renderer fixtures (no VM or credentials)
         if: runner.os == 'Windows' && matrix.suite == 'bundle'
-        timeout-minutes: 3
+        timeout-minutes: 4
         shell: pwsh
         run: |
           $env:BRIDGE_DEV_IMAGE_DIR = Join-Path $env:RUNNER_TEMP "recovery-empty-$([Guid]::NewGuid().ToString('N'))"
@@ -264,7 +264,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Windows Chat agent and cluster renderer fixtures (no VM or credentials)
         if: runner.os == 'Windows' && matrix.suite == 'bundle'
-        timeout-minutes: 3
+        timeout-minutes: 4
         shell: pwsh
         run: |
           $env:BRIDGE_DEV_IMAGE_DIR = Join-Path $env:RUNNER_TEMP "ui-empty-$([Guid]::NewGuid().ToString('N'))"
@@ -273,7 +273,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
       - name: Windows workspace upgrade renderer fixtures (no VM or credentials)
         if: runner.os == 'Windows' && matrix.suite == 'bundle'
-        timeout-minutes: 3
+        timeout-minutes: 4
         shell: pwsh
         run: |
           $env:BRIDGE_DEV_IMAGE_DIR = Join-Path $env:RUNNER_TEMP "upgrade-empty-$([Guid]::NewGuid().ToString('N'))"

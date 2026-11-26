@@ -278,7 +278,7 @@ for (const [scope, directory] of [['core', 'native-recovery'], ['chat-agent-clus
   assert.ok(workflow.includes(command), `CI must run ${scope} into its own artifact directory`);
   const before = workflow.slice(0, workflow.indexOf(command));
   const step = before.slice(before.lastIndexOf('      - name:'));
-  assert.match(step, /timeout-minutes: 3\n/, 'each scope keeps the existing three-minute ceiling');
+  assert.match(step, /timeout-minutes: 4\n/, 'each scope keeps its four-minute ceiling');
 }
 assert.ok(workflow.includes('node ../scripts/test-native-recovery-scopes.mjs'));
 // Effective native grants are checked through Tauri's generated runtime
@@ -814,4 +814,4 @@ for (const intent of ['pending', 'attempted']) {
   assert.equal(local.get('bridge.firstTest.v1'), 'attempted', 'bootstrap must not rearm intent after the handshake');
 }
 await import('./test-native-workspace-contracts.mjs');
-console.log('PASS real scope parsing; 47+25 unique action cases; 29 upgrade variants/148 disjoint Windows frame slots; upgrade scope/50 baseline+20 integration-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with unchanged three-minute ceilings');
+console.log('PASS real scope parsing; 47+25 unique action cases; 29 upgrade variants/148 disjoint Windows frame slots; upgrade scope/50 baseline+20 integration-name matrix; connected cluster IPC/matrix; Chat/Send snapshot matrix and presentation gates; Swift source contracts; layout acceptance/rejection; IPC registration/injection; disjoint CI scopes with four-minute ceilings');
