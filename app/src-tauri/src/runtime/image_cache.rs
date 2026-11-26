@@ -483,8 +483,9 @@ fn punch(file: &File, start: u64, length: u64) {
     use std::os::fd::AsRawFd;
     let from = start.next_multiple_of(SPARSE_BLOCK);
     let to = (start + length) / SPARSE_BLOCK * SPARSE_BLOCK;
+    let length = to.saturating_sub(from);
     if let (true, Ok(fp_offset), Ok(fp_length)) =
-        (from < to, i64::try_from(from), i64::try_from(to - from))
+        (length > 0, i64::try_from(from), i64::try_from(length))
     {
         let mut hole = libc::fpunchhole_t {
             fp_flags: 0,
