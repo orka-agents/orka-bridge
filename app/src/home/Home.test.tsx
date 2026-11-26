@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor, within } from '@testing-library/react
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
-import { resetConversation } from './conversation-store';
+import { conversationState, resetConversation, updateConversation } from './conversation-store';
 import Home, { type NavigatorGate } from './Home';
 import { NAVIGATOR_ID } from './navigator-api';
 import tests from '../../src-tauri/example-agent/web-reader.agent.test.md?raw';
@@ -201,4 +201,12 @@ test('an unreachable cluster offers This computer', async () => {
   await user.click(screen.getByRole('button', { name: 'Check again' }));
   expect(onThisComputer).toHaveBeenCalledOnce();
   expect(onOpenPage).toHaveBeenCalledWith('Clusters');
+});
+
+test('a conversation forgotten by a replaced workspace starts over instead of hiding new turns', async () => {
+  updateConversation(() => ({ startVersion: 3, cards: { old: { status: 'dismissed' } } }));
+  nav.turns = [turn('After the replacement', 'A new answer.')];
+  home();
+  expect(await screen.findByText('A new answer.')).toBeTruthy();
+  expect(conversationState()).toEqual({ startVersion: 0, cards: {} });
 });

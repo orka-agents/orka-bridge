@@ -120,6 +120,11 @@ function Navigator({ active, revision, onOpenPage, onOpenAgent, onAgentCreated, 
     void listDocuments().then(list => { if (live) setAgents((list ?? []).filter(agent => agent.available)); });
     return () => { live = false; };
   }, [active, revision]);
+  // A replaced workspace forgets its conversations natively; start this one over rather than hide new turns.
+  const versionCount = snapshot?.versions.length;
+  useEffect(() => {
+    if (versionCount !== undefined && versionCount < conversation.startVersion) updateConversation(() => ({ startVersion: 0, cards: {} }));
+  }, [versionCount, conversation.startVersion]);
   const turns = useMemo(() => snapshot?.versions.slice(conversation.startVersion).flatMap(version => version.turns) ?? [], [snapshot, conversation.startVersion]);
   const thinking = !!snapshot?.busy || awaitingTurn;
   const empty = !turns.length && !awaitingTurn;
@@ -138,7 +143,11 @@ function Navigator({ active, revision, onOpenPage, onOpenAgent, onAgentCreated, 
   };
   // Follow the conversation as it grows.
   const count = turns.length; const last = turns.at(-1)?.answer;
-  useEffect(() => { end.current?.scrollIntoView?.({ block: 'end' }); }, [count, last, awaitingTurn]);
+  // The message box sits in the flow after the turns, so the page's full scroll shows the newest turn above it.
+  useEffect(() => {
+    const page = end.current?.closest('.page-content');
+    if (page) page.scrollTop = page.scrollHeight;
+  }, [count, last, awaitingTurn]);
   // Grow the field with what is written, as Try a task does.
   useEffect(() => {
     const box = field.current;
