@@ -57,7 +57,8 @@ test('a choice during transfer connects exactly once at readiness, with no secon
   await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect(model?.closest('.setup-column')).toBeTruthy();
   expect(screen.getByText('Queued', { selector: '.pill' }).closest('button')).toBeNull();
-  expect(screen.getByText('Queued', { selector: '.step-result' })).toBeTruthy();
+  // Outside the guided run the queued choice is the AI card's own state, beside the workspace card.
+  expect(screen.getByText('Queued', { selector: '.pill' }).closest('.steps-head')?.closest('.setup-model')).toBeTruthy();
   expect(connects()).toBe(0);
   // Orka can be ready before the model unlocks: hold, neither fire nor forget.
   sim.localVm = 'ready';
@@ -80,9 +81,9 @@ test('a choice during transfer connects exactly once at readiness, with no secon
 
 test.each([false, undefined])('a platform without native model support (%s) offers no early choice and never reaches for credentials', async modelSupported => {
   const { ipc, sim, connects } = native('installing', { modelSupported }); render(<App />); await openLocalSetup();
-  await screen.findAllByText('Getting your workspace ready', {}, wait);
+  await screen.findAllByText('Getting ready', { selector: '.pill' }, wait);
   expect(screen.queryByRole('button', { name: 'Connect the AI' })).toBeNull();
-  expect(screen.getAllByText('Waiting').length).toBeGreaterThan(0);
+  expect(document.querySelector('.setup-model')).toBeNull();
   expect(screen.queryByText('Pick any time')).toBeNull();
   sim.localVm = 'ready'; await observe(ipc);
   expect(screen.getByRole('button', { name: 'Connect the AI' }).matches(':disabled')).toBe(true);

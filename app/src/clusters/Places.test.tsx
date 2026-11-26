@@ -270,7 +270,6 @@ test('Back preserves a queued local Model and its one eventual connection while 
   await user.click(await screen.findByRole('button', { name: 'Clusters' }));
   await user.click(within(row('This computer')).getByRole('button', { name: 'Continue setup' }));
   expect(observe).not.toHaveBeenCalled();
-  await user.click(screen.getByRole('button', { name: 'Change' }));
   await user.click(screen.getByRole('button', { name: 'Connect the AI' }));
   expect(observe).toHaveBeenLastCalledWith({ kind: 'thisComputer' });
   expect(screen.getByText('Queued', { selector: '.pill' })).toBeTruthy();

@@ -56,12 +56,15 @@
 .workspace-option > .chip { font: var(--type-label); letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--color-text); padding: var(--space-0-5) var(--space-2); }
 .workspace-option-detail { grid-column: 2 / 4; color: var(--color-text-secondary); display: grid; gap: var(--space-2); }
 .workspace-option-detail p { margin: 0; }
-.workspace-option:has(#workspace-local) .workspace-option-detail > p:first-child { font: var(--type-caption); font-family: var(--font-mono); font-variant-ligatures: none; }
+.workspace-option-detail > p.workspace-option-req { font: var(--type-caption); font-family: var(--font-mono); font-variant-ligatures: none; }
+.workspace-option-detail > p.workspace-option-lede { font: var(--type-body); font-size: 15px; line-height: 21px; }
+/* Beside Continue: what it does next, in the boards' mono hint. */
+.workspace-continue-hint { font: 400 13px/18px var(--font-mono); font-variant-ligatures: none; color: var(--color-text-secondary); }
 .local-preflight .workspace-option { align-items: start; }
 .local-preflight .workspace-option > input { margin-top: 3px; }
 .local-preflight .workspace-option-detail p, .workspace-preflight p { max-width: 65ch; overflow-wrap: anywhere; }
 .local-preflight #workspace-inside:not([hidden]) { display: grid; gap: var(--space-2); }
-.local-preflight > .card > .workspace-step-actions { margin-top: var(--space-1); }
+.local-preflight > .card > .workspace-step-actions { margin-top: var(--space-1); gap: var(--space-3) 18px; }
 .local-preflight > .card > .workspace-step-actions > .button-primary { min-width: 200px; min-height: var(--height-control-large); font: var(--type-control-large); }
 
 /* The computer check: quiet while it passes, a failed callout inside the local choice when it doesn't. */
@@ -94,5 +97,5 @@
 .places-workspace > div:not([hidden]):has(> .local-preflight), .places-workspace .local-preflight, .places-workspace .local-preflight > .card { display: contents; }
 .places-workspace .local-preflight .workspace-choice-step { order: -1; margin-bottom: calc(var(--space-2-5) - var(--space-4)); font-size: 12px; }
 .local-preflight .workspace-option > label { font-size: 20px; }
-.workspace-option:has(#workspace-local) .workspace-option-detail > p:first-child { font-size: 13px; line-height: 18px; }
+.workspace-option-detail > p.workspace-option-req { font-size: 13px; line-height: 18px; }
 .workspace-option-detail { font-size: 14px; }
