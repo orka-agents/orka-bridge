@@ -18,7 +18,7 @@ export default function Welcome({ titleId, onStart, onCluster, unavailable }: { 
       <li><span className="journey-number" aria-hidden="true">3</span><b>Share it</b><span>Send it to your team's cluster (preview).</span></li>
     </ol>
     <div className="welcome-actions">
-      <Button kind="primary" type="button" onClick={onStart}>Get started</Button>
+      <Button kind="primary" size="large" type="button" onClick={onStart}>Get started</Button>
       <span className="muted">About 5 minutes, mostly a download</span>
       {unavailable && <p className="muted">{unavailable}</p>}
     </div>
