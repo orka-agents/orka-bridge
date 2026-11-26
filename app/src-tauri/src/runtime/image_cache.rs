@@ -781,6 +781,7 @@ impl CacheTransaction {
         Ok(())
     }
     /// Hands a chunk kept from an earlier run to a decoder that starts from the first byte.
+    #[allow(dead_code)] // Image-only harnesses omit the acquisition caller.
     pub(crate) fn replay(
         &self,
         index: usize,

@@ -131,24 +131,6 @@ fn complete_unselected_generation_recovers_without_rewriting_assets() {
     tx.commit(&closed).unwrap();
     assert!(cache.verified(&image).unwrap().is_some());
 }
-/// The same image with its compressed disk in two chunks, so decoding spans downloads.
-pub(crate) fn two_chunk_image() -> (ResolvedImage, Vec<Vec<u8>>) {
-    let (mut image, mut files) = complete_image();
-    let half = files[0].len() / 2;
-    let second = files[0].split_off(half);
-    let pin = |asset: &mut ImageAsset, data: &[u8]| {
-        asset.bytes = data.len() as u64;
-        asset.sha256 = format!("{:x}", Sha256::digest(data));
-    };
-    let mut asset = image.assets[0].clone();
-    asset.location.leaf = "fixture-3".into();
-    asset.role = ImageAssetRole::Chunk(1);
-    pin(&mut asset, &second);
-    pin(&mut image.assets[0], &files[0]);
-    image.assets.insert(1, asset);
-    files.insert(1, second);
-    (image, files)
-}
 fn rewrite(path: &std::path::Path) {
     // In place, so the file keeps the identity its owner recorded.
     let length = std::fs::metadata(path).unwrap().len() as usize;

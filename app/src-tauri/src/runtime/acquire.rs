@@ -343,7 +343,12 @@ pub async fn acquire_image(
         };
         // Its own thread: it waits on writes that need the blocking pool.
         let (done, job) = tokio::sync::oneshot::channel();
-        std::thread::spawn(move || done.send(owner.decode(source, &stop)));
+        std::thread::spawn(move || {
+            let decoded = owner.decode(source, &stop);
+            // Release the cache before the result, so a returned acquisition owns nothing.
+            drop(owner);
+            done.send(decoded)
+        });
         (Some(decoder), Some(job))
     } else {
         (None, None)
