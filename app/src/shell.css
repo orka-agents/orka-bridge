@@ -35,7 +35,7 @@
 .tab-agent-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 40%; white-space: pre; }
 .tab-agent-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tab-status-word { color: var(--status); }
-.host-chip { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--color-text); font-size: var(--size-body); font-weight: 500; white-space: nowrap; }
+.host-chip { position: relative; display: flex; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--color-text); font-size: var(--size-body); font-weight: 500; text-align: left; white-space: nowrap; }
 .host-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .host-chip .chip { flex: none; padding: 0 var(--space-1); font: var(--type-small); }
 .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-text-tertiary); flex: none; }
