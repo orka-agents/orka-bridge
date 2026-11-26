@@ -202,6 +202,9 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
   function chooseKind(kind: 'copilot' | 'key') { clearKey(); setQueued(false); setChoice(kind); setError(undefined); }
   const keyMode = choice === 'key';
   const keyProblem = keyMode && error && !removalFailed;
+  // A key the company refused, or one that isn't whole, is an error on the field itself.
+  const fieldError = keyProblem && ['modelKeyInvalid', 'modelCredentialRejected'].includes(error.category);
+  const callout = !!error && !fieldError;
   const sharedNotice = <p>To change provider, use Remove saved connection in the Workspace card. Its confirmation explains removal for all retained workspaces.</p>;
   const removalAction = sharedConnection ? sharedNotice : hasSignIn && !busy && <Button ref={removal} type="button" kind={removalFailed ? 'primary' : 'quiet'} className={removalFailed ? undefined : 'button-danger'} disabled={!enabled || paused || !!busy}
             onClick={() => {
@@ -213,55 +216,80 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     const custody = recovery.resetStage === 'recordRemovalUnconfirmed'
       ? 'Native credential removed; saved record removal not confirmed.'
       : recovery.resetStage === 'credentialRemovalUnconfirmed' ? 'Native credential removal not confirmed; saved record kept.' : resetFailed ? 'Bridge could not check what is still saved. The identifiers below are from the last confirmed record.' : 'Saved record: model-v1. Native credential removal has not been requested.';
+    // On its own card the recovery has a head; what happened sits in the callout, the choices stay below it.
     const content = <section ref={root} className={recoveryTarget ? 'model-recovery' : 'card setup-model model-recovery'} aria-label="Saved AI connection" aria-busy={!!busy}>
+      {!recoveryTarget && <div className="steps-head"><h2>Connect the AI</h2>{busy !== 'reset' && <StatusPill state="needs-you">Needs you</StatusPill>}</div>}
       {actionReason && <p className="muted">{actionReason}</p>}
       {busy === 'reset' ? <div ref={status} role="status" tabIndex={-1} className="model-state"><StatusPill state="running">Resetting</StatusPill><p>Removing Bridge's saved AI connection. Your workspace and agents aren't touched.</p></div>
         : <div className="workspace-failure" role="alert"><div className="workspace-failure-explanation">
           {resetFailed ? <><h2 className="failure-summary">Bridge couldn't reset the AI connection</h2><p>{resetAttempts > 1 ? 'Reset failed again. Copy the details for whoever helps you with Bridge; Show details lists what Bridge could confirm.' : "Bridge couldn't confirm the saved connection was removed. Try once more. If it fails again, copy the details for whoever helps you with Bridge."}</p></>
             : <><p className="failure-summary">Bridge's saved AI connection is from an earlier setup.</p><p>{sharedConnection ? 'Your agents are safe.' : 'This happens after a reinstall. Reset it and choose the AI again. Your agents are safe.'}</p></>}
-          {sharedConnection ? sharedNotice : confirmReset ? <div role="group" aria-label="Reset AI connection confirmation"><h3>Reset the AI connection?</h3><p>Bridge forgets its saved AI connection for this workspace. Your GitHub account and your agents don't change. Use another provider starts with this same reset.</p><div className="workspace-step-actions">
+          </div>
+          {sharedConnection ? sharedNotice : <div className="workspace-step-actions">
+            <Button ref={confirmReset ? undefined : retry} kind="primary" disabled={!enabled || paused || !!busy} onClick={() => { refocus.current = 'connect'; if (resetFailed) void perform('reset'); else { setAnotherProvider(false); setConfirmReset(true); } }}>{resetFailed ? 'Reset again' : 'Reset AI connection'}</Button>
+            {!resetFailed && <Button kind="secondary" disabled={!enabled || paused || !!busy} onClick={() => { refocus.current = 'connect'; setAnotherProvider(true); setConfirmReset(true); }}>Use another provider</Button>}
+            <Button kind="quiet" onClick={() => { void copy(); }}>Copy details for help</Button>
+          </div>}
+          {!sharedConnection && confirmReset && <div role="group" aria-label="Reset AI connection confirmation"><h3>Reset the AI connection?</h3><p>Bridge forgets its saved AI connection for this workspace. Your GitHub account and your agents don't change. Use another provider starts with this same reset.</p><div className="workspace-step-actions">
             <Button ref={retry} kind="primary" disabled={!enabled || paused || !!busy} onClick={() => { refocus.current = 'connect'; void perform('reset'); }}>Reset</Button>
             <Button ref={cancelRemoval} kind="secondary" onClick={() => { refocus.current = 'connect'; setConfirmReset(false); }}>Cancel</Button>
-          </div></div> : <div className="workspace-step-actions">
-            <Button ref={retry} kind="primary" disabled={!enabled || paused || !!busy} onClick={() => { refocus.current = 'connect'; if (resetFailed) void perform('reset'); else { setAnotherProvider(false); setConfirmReset(true); } }}>{resetFailed ? 'Reset again' : 'Reset AI connection'}</Button>
-            {!resetFailed && <Button kind="secondary" disabled={!enabled || paused || !!busy} onClick={() => { refocus.current = 'connect'; setAnotherProvider(true); setConfirmReset(true); }}>Use another provider</Button>}
-            <Button kind="secondary" onClick={() => { void copy(); }}>Copy details for help</Button>
-          </div>}
+          </div></div>}
           <Disclosure label={details ? 'Hide details' : 'Show details'} open={details} onOpenChange={setDetails} controls="model-recovery-details">
             <div id="model-recovery-details" hidden={!details}><p>{custody}</p><dl className="model-recovery-details"><dt>Category</dt><dd>{error?.category ?? 'modelInstallationMismatch'}</dd><dt>This installation</dt><dd>{recovery.installation}</dd><dt>Saved installation</dt><dd>{recovery.savedInstallation}</dd><dt>Saved record</dt><dd>Bridge app data: model-v1</dd><dt>Native credential slot</dt><dd>{recovery.credentialSlot}</dd></dl></div>
           </Disclosure>
-        </div></div>}
+        </div>}
       {notice && <p role="status">{notice}</p>}
     </section>;
     return recoveryTarget ? createPortal(content, recoveryTarget) : content;
   }
   const portaled = !!recoveryTarget && (!!error || onPlaceCard && (resetDone || cardRecovery));
   const compact = inline && !portaled;
+  // This computer's own AI card names its state in the head: connecting, connected, or couldn't connect.
+  const ownCard = title === 'AI' && !compact && !portaled;
+  const connectFailed = !!error && failedAction === 'connect' && !removalFailed;
+  const headTitle = removalFailed ? `Couldn't remove the saved ${keyMode ? 'key' : 'sign-in'}` : ownCard && !ready ? connectFailed ? "The AI couldn't connect" : 'Connect the AI' : title;
+  const headBusy = ownCard && !!busy;
+  const removalConfirm = <div role="group" aria-label={`Remove ${keyMode ? 'key' : 'sign-in'} confirmation`}>
+    <p>{keyMode ? 'Disconnect the AI and remove Bridge’s saved key? This does not revoke the key with the company.' : 'Disconnect the AI and remove Bridge’s saved sign-in? GitHub CLI stays signed in.'}</p>
+    <div className="workspace-step-actions">
+      <Button ref={cancelRemoval} type="button" kind="primary" onClick={() => {
+        refocus.current = document.activeElement === cancelRemoval.current ? 'remove' : undefined;
+        setConfirmRemoval(false);
+      }}>Cancel</Button>
+      <Button ref={removal} type="button" kind="secondary" className="button-danger" disabled={!enabled || paused || !!busy} onClick={() => {
+        refocus.current = document.activeElement === removal.current ? 'remove' : undefined;
+        void perform('remove');
+      }}>{keyMode ? 'Remove key' : 'Remove sign-in'}</Button>
+    </div>
+  </div>;
   const content = <section ref={root} className={portaled || compact ? 'setup-model' : 'card setup-model'} aria-labelledby="model-title" aria-busy={!!busy} onFocusCapture={() => { focusWithin.current = true; }} onBlurCapture={event => { if (event.relatedTarget) focusWithin.current = !!root.current?.contains(event.relatedTarget); }} onKeyDown={event => { if (event.key === 'Escape' && !busy && (changing || confirmRemoval || compact && expanded)) { event.stopPropagation(); closeChange(); } }}>
     <div className={compact ? 'model-inline-head' : 'steps-head'}>
-      <h2 id="model-title" ref={heading} tabIndex={-1} className={compact ? 'sr-only' : undefined}>{removalFailed ? `Couldn't remove the saved ${keyMode ? 'key' : 'sign-in'}` : title}</h2>
+      <h2 id="model-title" ref={heading} tabIndex={-1} className={compact ? 'sr-only' : undefined}>{headTitle}</h2>
       {compact && <span role="status" aria-atomic="true">{keyMode ? 'Your own API key' : 'GitHub Copilot'}{queued ? ', connects when the workspace is ready' : ', connect at step 3'}</span>}
       {ready && <div ref={status} role="status" tabIndex={-1} className="model-state"><StatusPill state="passed">Connected</StatusPill></div>}
+      {headBusy && !ready && <div ref={status} tabIndex={-1} className="model-state"><StatusPill state="running">{busy === 'remove' ? 'Removing' : keyMode ? 'Checking' : 'Connecting'}</StatusPill></div>}
+      {ownCard && connectFailed && !busy && <StatusPill state="needs-you">Needs you</StatusPill>}
       {compact && <Button ref={changeButton} type="button" kind="quiet" disabled={paused || !!busy} aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>Change</Button>}
     </div>
     <div hidden={compact && !expanded}>
-    {actionReason && (paused || busy || removalFailed) && <p className="muted">{actionReason}</p>}
+    {actionReason && (paused || busy && !headBusy || removalFailed) && <p className="muted">{actionReason}</p>}
     {!ready && busy !== 'remove' && !removalFailed && <>
-      <fieldset className="model-choice" title={providerReason} disabled={!!busy || hasSignIn}>
+      {!(headBusy && busy === 'connect') && <><fieldset className="model-choice" title={providerReason} disabled={!!busy || hasSignIn}>
         <legend className="sr-only">AI connection</legend>
         <label><input type="radio" name="model-kind" checked={!keyMode} onChange={() => chooseKind('copilot')} /> GitHub Copilot</label>
         <label><input type="radio" name="model-kind" checked={keyMode} onChange={() => chooseKind('key')} /> Your own API key <span className="muted">(OpenAI, Anthropic)</span></label>
       </fieldset>
-      {providerReason && providerReason !== actionReason && <p className="muted">{providerReason}</p>}
+      {providerReason && providerReason !== actionReason && <p className="muted">{providerReason}</p>}</>}
       {keyMode ? <div className="model-key-form">
         <fieldset className="view-switch"><legend className="sr-only">Company</legend>
           {(['openai', 'anthropic'] as const).map(item => <button key={item} type="button" aria-pressed={vendor === item} disabled={!!busy || hasSignIn} onClick={() => { clearKey(); setVendor(item); setError(undefined); }}>{companies[item].name}</button>)}
         </fieldset>
         <label htmlFor="model-api-key">API key</label>
-        <input ref={keyField} className="field" onChange={event => setHasKey(!!event.currentTarget.value.trim())} id="model-api-key" type="password" autoComplete="off" spellCheck={false} autoCapitalize="none" disabled={!enabled || paused || !!busy} aria-describedby="model-key-help" aria-invalid={error?.category === 'modelKeyInvalid' || error?.category === 'modelCredentialRejected'} />
+        <input ref={keyField} className="field" onChange={event => setHasKey(!!event.currentTarget.value.trim())} id="model-api-key" type="password" autoComplete="off" spellCheck={false} autoCapitalize="none" disabled={!enabled || paused || !!busy} aria-describedby={fieldError ? 'model-key-error model-key-help' : 'model-key-help'} aria-invalid={error?.category === 'modelKeyInvalid' || error?.category === 'modelCredentialRejected'} />
+        {fieldError && <p id="model-key-error" role="alert" className="field-error">{keyFailure(error, vendor)}</p>}
         <p id="model-key-help" className="muted">Stored on this computer, never in your agent files.</p>
         <a href={`https://${company.site}`} onClick={event => { event.preventDefault(); void help(vendor === 'openai' ? 'openaiKey' : 'anthropicKey'); }}>Where do I get a key?</a>
-      </div> : <p className="muted">Use GitHub Copilot. GitHub CLI must be installed and signed in to github.com.</p>}
+      </div> : !(headBusy && busy === 'connect') && <p className="muted">Use GitHub Copilot. GitHub CLI must be installed and signed in to github.com.</p>}
       <p>Model <code>{keyMode ? company.model : copilotModel}</code>, a good default.</p>
       {!enabled && keyMode ? <p className="muted">Bridge can't queue a key. Enter it once the workspace is ready.</p>
         : !enabled && (queueable || queued) ? <p className="muted">Choose now to connect automatically when the workspace is ready.</p>
@@ -270,11 +298,11 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
     </>}
     {ready && connection && <>
       <p>{connection.kind === 'key' ? `${companies[connection.vendor].name} with your API key` : 'GitHub Copilot'} · <code>{connection.model}</code></p>
-      {connection.kind === 'copilot' && <p>Saved GitHub sign-in: {connection.account ?? 'account unavailable'}</p>}
+      {connection.kind === 'copilot' && <p className="muted">Saved GitHub sign-in: {connection.account ?? 'account unavailable'}</p>}
     </>}
-    <div className={error ? 'workspace-failure' : undefined} role={error ? 'alert' : undefined}>
-      <div className={error ? 'workspace-failure-explanation' : undefined}>
-        {error && <><p className="failure-summary">{removalFailed && error.category === 'unknown' ? `Bridge could not confirm ${keyMode ? 'key' : 'sign-in'} removal.` : keyMode ? keyFailure(error, vendor) : error.message}</p>
+    <div className={callout ? 'workspace-failure' : undefined} role={callout ? 'alert' : undefined}>
+      <div className={callout ? 'workspace-failure-explanation' : undefined}>
+        {callout && <><p className="failure-summary">{removalFailed && error.category === 'unknown' ? `Bridge could not confirm ${keyMode ? 'key' : 'sign-in'} removal.` : keyMode ? keyFailure(error, vendor) : error.message}</p>
         {!keyProblem && <><p>{removalFailed ? 'Press Retry removal to retry cleanup. If it happens again, copy the details for help.'
           : cliUnavailable ? 'Install GitHub CLI if needed, then sign in to github.com in your terminal:'
           : signInCheck ? 'Check your GitHub CLI sign-in in your terminal:'
@@ -285,24 +313,13 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
         {!removalFailed && <p className="muted">Check again reconnects the AI using your saved sign-in when available.</p>}</>}
         </>}
         <div className="workspace-step-actions">
-          {changing && !confirmRemoval && <fieldset className="workspace-change" aria-label="Change the AI">
+          {changing && <fieldset className="workspace-change" aria-label="Change the AI">
             <legend>Change the AI</legend><p>Remove the saved {keyMode ? 'key' : 'sign-in'} before choosing another provider.</p>
-            <div className="workspace-step-actions">{removalAction}<Button ref={doneChange} type="button" kind="quiet" onClick={closeChange}>Done</Button></div>
+            {confirmRemoval && !sharedConnection && removalConfirm}
+            <div className="workspace-step-actions">{!confirmRemoval && removalAction}<Button ref={doneChange} type="button" kind="secondary" onClick={closeChange}>Done</Button></div>
           </fieldset>}
-          {confirmRemoval && !sharedConnection ? <div role="group" aria-label={`Remove ${keyMode ? 'key' : 'sign-in'} confirmation`}>
-            <p>{keyMode ? 'Disconnect the AI and remove Bridge’s saved key? This does not revoke the key with the company.' : 'Disconnect the AI and remove Bridge’s saved sign-in? GitHub CLI stays signed in.'}</p>
-            <div className="workspace-step-actions">
-              <Button ref={cancelRemoval} type="button" kind="primary" onClick={() => {
-                refocus.current = document.activeElement === cancelRemoval.current ? 'remove' : undefined;
-                setConfirmRemoval(false);
-              }}>Cancel</Button>
-              <Button ref={removal} type="button" kind="secondary" className="button-danger" disabled={!enabled || paused || !!busy} onClick={() => {
-                refocus.current = document.activeElement === removal.current ? 'remove' : undefined;
-                void perform('remove');
-              }}>{keyMode ? 'Remove key' : 'Remove sign-in'}</Button>
-            </div>
-          </div> : <>
-          {queued || busy ? <div ref={status} role={queued ? 'status' : undefined} tabIndex={-1} className="model-state">
+          {confirmRemoval && !sharedConnection ? !changing && removalConfirm : <>
+          {queued || busy ? !headBusy && <div ref={status} role={queued ? 'status' : undefined} tabIndex={-1} className="model-state">
             <StatusPill state={ready ? 'passed' : queued ? 'not-started' : 'running'}>{busy === 'remove' ? 'Removing' : ready ? 'Connected' : queued ? 'Queued' : keyMode ? 'Checking' : 'Connecting'}</StatusPill>
             {busy && (busy === 'remove' || !keyMode) && <span className="status-description">{busy === 'remove' ? keyMode ? 'Removing key…' : 'Removing sign-in…' : 'Connecting the AI…'}</span>}
             {queued && <><span className="status-description">Connects when the workspace is ready.</span>{(!compact || expanded) && <Button type="button" kind="secondary" aria-label={compact ? undefined : 'Cancel queued connection'} onClick={() => { setQueued(false); if (compact) { setExpanded(false); changeButton.current?.focus(); } }}>{compact ? "Don't connect automatically" : 'Cancel'}</Button>}</>}
@@ -312,7 +329,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
           </Button>}
           {ready && !changing && <Button ref={changeButton} type="button" kind="quiet" title={actionReason} disabled={paused || !!busy} aria-expanded={false} onClick={event => { if (document.activeElement === event.currentTarget) changeFocus.current = 'panel'; setChanging(true); }}>Change</Button>}
           {removalFailed && removalAction}
-          {error && <Button type="button" kind="secondary" onClick={() => { void copy(); }}>Copy details for help</Button>}
+          {error && <Button type="button" kind="quiet" onClick={() => { void copy(); }}>Copy details for help</Button>}
           {cliUnavailable && <Button type="button" kind="quiet" onClick={() => { void help('githubCliInstall'); }}>Install GitHub CLI</Button>}
           {(cliUnavailable || signInCheck) && <Button type="button" kind="quiet" onClick={() => { void help('githubSignIn'); }}>Sign-in help</Button>}
           {!ready && !removalFailed && removalAction}
@@ -321,6 +338,7 @@ export default function Model({ title = 'Connect the AI', enabled, queueable = f
       </div>
     </div>
     {busy === 'connect' && <p role="status">{keyMode ? `Asking ${company.name} to confirm the key…` : 'Connecting with your saved sign-in. This may take a few seconds…'}</p>}
+    {headBusy && busy === 'connect' && <div className="infra-bar indeterminate" aria-hidden="true"><span /></div>}
     {busy === 'remove' && <p role="status">Disconnecting the AI and removing Bridge’s saved {keyMode ? 'key' : 'sign-in'}…</p>}
     {resetDone && <p role="status">Connection reset. Choose the AI again.</p>}
     {removed && !resetDone && <p role="status">{keyMode ? 'Key removed.' : 'Saved sign-in removed.'}</p>}
