@@ -1920,7 +1920,10 @@ func workspaceCapture(_ state: String, _ expected: [String]) throws {
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
         localSize(width, height); scroll(4000)
         _ = try capture("local-workspace-\(state)-\(size)", expected)
-        require(enabledButton("Stop the workspace") == nil && enabledButton("Start") == nil && enabledButton("Cancel") == nil, "Returning workspace must not expose Start/Stop/Cancel")
+        // Starting shows the same bar, elapsed time and Cancel (which pauses it) as first setup; no other scene cancels.
+        let starting = state.hasPrefix("starting")
+        require(enabledButton("Stop the workspace") == nil && enabledButton("Start") == nil && (enabledButton("Cancel") != nil) == starting,
+                starting ? "Returning Starting must offer Cancel and no Start/Stop" : "Returning workspace must not expose Start/Stop/Cancel")
         if ["failed", "stopped-unexpectedly", "stop-failed", "forced-stop"].contains(state) {
             require(!anyButton("Hide details"), "Diagnostics must start folded")
             click("Show details", [])
@@ -1936,12 +1939,14 @@ try workspacePhase("workspace-scene-ready")
 reopenedOnHome()
 waitForButton("Manage"); click("Manage", [])
 try workspaceCapture("ready", ["This computer", "Ready", "Agents", "Files"])
-require(nativeHeadingExists("AI"), "Returning Model must be headed AI")
+// The returning AI card is headed AI once connected (Connect the AI before, The AI couldn't connect after a failure).
+require(nativeHeadingExists("AI"), "Returning connected Model must be headed AI")
 click("What's inside", [])
 _ = try capture("local-workspace-inside", ["4 GB of memory"])
 click("What's inside", [])
 try workspacePhase("workspace-scene-starting")
-try workspaceCapture("starting-after-quit-synthetic", ["This computer", "Starting", "0:18 so far"])
+// The fixture reports 18000 ms elapsed while starting.
+try workspaceCapture("starting-after-quit-synthetic", ["This computer", "Starting", "18 seconds elapsed"])
 click("Designer", [])
 for (view, label) in [("Agent", "tests"), ("Try a task", "chat")] {
     localSize(1280, 800); scroll(4000)
