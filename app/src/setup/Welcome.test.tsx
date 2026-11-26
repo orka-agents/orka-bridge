@@ -8,7 +8,7 @@ import App from '../App';
 
 const preference = 'bridge.welcomeSeen.v1';
 const unselected = { selected: null, localVm: 'idle', model: 'locked' };
-const requirements = { memoryBytes: 6442450944, imageBytes: 3651994962, stateDiskBytes: 34359738368, downloadBytes: 2800000000 };
+const requirements = { memoryBytes: 6442450944, imageBytes: 3651994962, stateDiskBytes: 34359738368, downloadBytes: 2800000000, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null };
 function native(initial: object = unselected, sizing: unknown = requirements) {
   vi.stubGlobal('isTauri', true);
   let status = initial;
@@ -35,7 +35,7 @@ test('Get started remembers the welcome without starting a workspace, including 
   expect(screen.getByText('Write it')).toBeTruthy();
   expect(screen.getByText('Test it')).toBeTruthy();
   expect(screen.getByText('Share it')).toBeTruthy();
-  expect(screen.getByText('About 5 minutes, mostly a download').parentElement).toBe(screen.getByRole('button', { name: 'Get started' }).parentElement);
+  expect(screen.getByText('Mostly a 2.8 GB download').parentElement).toBe(screen.getByRole('button', { name: 'Get started' }).parentElement);
   expect(screen.getByText("Send it to your team's cluster (preview).")).toBeTruthy();
   await user.click(screen.getByRole('button', { name: 'Get started' }));
   const heading = await screen.findByRole('heading', { name: 'Clusters' });
@@ -98,7 +98,7 @@ test('keyboard disclosure and opening local setup are inert; only Continue start
 });
 
 test('requirements render the native build values rather than fixed image or memory sizes', async () => {
-  localStorage.setItem(preference, '1'); native(unselected, { memoryBytes: 8589934592, imageBytes: 18253611008, stateDiskBytes: 68719476736, downloadBytes: 2380070756 });
+  localStorage.setItem(preference, '1'); native(unselected, { memoryBytes: 8589934592, imageBytes: 18253611008, stateDiskBytes: 68719476736, downloadBytes: 2380070756, setupDiskBytes: null, freeDiskBytes: null, readySeconds: null });
   render(<App />); await openLocalSetup();
   expect(screen.getByText('Downloads about 2.4 GB. Needs virtualization and 8.6 GB of memory. Data disk can grow to 68.7 GB.')).toBeTruthy();
   expect(screen.getByText('Use Orka on a Kubernetes cluster you already have.')).toBeTruthy();
@@ -151,6 +151,9 @@ test.each([
   { ...requirements, downloadBytes: 'SECRET_MARKER' },
   { memoryBytes: 'SECRET_MARKER', imageBytes: 123, stateDiskBytes: 123 },
   { ...requirements, secret: 'SECRET_MARKER' },
+  { ...requirements, readySeconds: -1 },
+  { ...requirements, setupDiskBytes: 'SECRET_MARKER' },
+  { memoryBytes: 6442450944, imageBytes: 3651994962, stateDiskBytes: 34359738368, downloadBytes: 2800000000 },
 ])('unsupported sizing cannot produce requirements copy or leak data: %j', async value => {
   localStorage.setItem(preference, '1'); native(unselected, value); render(<App />); await openLocalSetup();
   expect(await screen.findByText(/Requirements are not available yet for this build\./)).toBeTruthy();
@@ -185,4 +188,19 @@ test('a delayed initial status cannot flash welcome over an existing workspace',
   complete({ selected: 'localVm', localVm: 'starting', model: 'locked' });
   await waitFor(() => expect(screen.getByText('Starting the workspace…')).toBeTruthy());
   expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+});
+
+const measuredMac = { memoryBytes: 6442450944, imageBytes: 17179869184, stateDiskBytes: 34359738368, downloadBytes: 2380070756, setupDiskBytes: 6997696512, freeDiskBytes: 24257590349, readySeconds: 134 };
+test('a measured image shows its setup time on Welcome and its free and kept disk on the choice', async () => {
+  native(unselected, measuredMac); render(<App />);
+  expect(await screen.findByText('Mostly a 2.4 GB download, then about 2 minutes to start')).toBeTruthy();
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Get started' }));
+  await openLocalSetup();
+  expect(await screen.findByText('Downloads about 2.4 GB. Needs virtualization, 6.4 GB of memory and 24.3 GB of free disk; about 7.0 GB stays in use. Data disk can grow to 34.4 GB.')).toBeTruthy();
+});
+
+test('Welcome claims no time or size it was not given', async () => {
+  native(unselected, null); render(<App />);
+  expect(await screen.findByText('Mostly a download')).toBeTruthy();
+  expect(document.body.textContent).not.toMatch(/minute|\d GB/);
 });

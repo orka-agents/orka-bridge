@@ -397,7 +397,7 @@ try {
         Wait-For 'Local size facts did not settle' {
             $names = Get-UiNames $script:window
             $text = ($names -join ' ') -replace '\s+', ' '
-            ($text -cmatch 'Needs virtualization and \d+\.\d GB of memory') -and ($text -cmatch 'image size is \d+\.\d GB after installation, not the amount downloaded') -and ($text -cmatch 'Data disk can grow to \d+\.\d GB') -and !($names -cmatch '^Reading|Unavailable in this build')
+            ($text -cmatch 'Needs virtualization(,| and) \d+\.\d GB of memory') -and ($text -cmatch 'image size is \d+\.\d GB after installation, not the amount downloaded') -and ($text -cmatch 'Data disk can grow to \d+\.\d GB') -and !($names -cmatch '^Reading|Unavailable in this build')
         } | Out-Null
         # Observe the real runner; never inject Ready or select a local workspace.
         Capture 'computer-requirements'
