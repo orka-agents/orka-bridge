@@ -891,9 +891,19 @@ fn resume_prefix(
 fn clone(context: &Context, stage: &Dir, name: &str, source: &File) -> Result<bool, ImageError> {
     use std::os::fd::AsRawFd;
     context.stop()?;
-    let name = std::ffi::CString::new(name).map_err(|_| ImageError::UnsafePath)?;
+    let path = std::ffi::CString::new(name).map_err(|_| ImageError::UnsafePath)?;
     // fclonefileat creates the name only if absent and reads its arguments only during the call.
-    Ok(unsafe { libc::fclonefileat(source.as_raw_fd(), stage.as_raw_fd(), name.as_ptr(), 0) } == 0)
+    if unsafe { libc::fclonefileat(source.as_raw_fd(), stage.as_raw_fd(), path.as_ptr(), 0) } != 0 {
+        return Ok(false);
+    }
+    // A clone carries the cache file's mode and flags; give it what a fresh copy would have.
+    let file = regular(stage, name, false, false)?;
+    if unsafe { libc::fchflags(file.as_raw_fd(), 0) } != 0
+        || unsafe { libc::fchmod(file.as_raw_fd(), 0o644) } != 0
+    {
+        return Err(storage(std::io::Error::last_os_error()));
+    }
+    Ok(true)
 }
 #[cfg(not(target_os = "macos"))]
 fn clone(_: &Context, _: &Dir, _: &str, _: &File) -> Result<bool, ImageError> {

@@ -161,6 +161,11 @@ async fn mac_private_disk_shares_the_cache_blocks_until_the_guest_writes() {
     let temp = tempfile::tempdir().unwrap();
     let disk: Vec<u8> = (0..256 * 1024u32).map(|i| (i % 251) as u8 + 1).collect();
     let image = factory_for(temp.path(), &disk, ImageTarget::MacosArm64);
+    // A read-only cache file must not make the clone read-only.
+    let cache = image.open_disk().unwrap();
+    let mut mode = cache.metadata().unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut mode, 0o444);
+    cache.set_permissions(mode).unwrap();
     let path = temp.path().join("install");
     let (root, lock) = owner(&path);
     let target = InstallationImageTarget::from_owned_installation(
@@ -180,7 +185,6 @@ async fn mac_private_disk_shares_the_cache_blocks_until_the_guest_writes() {
         .write(true)
         .open(path.join(installed.disk_path()))
         .unwrap();
-    let cache = image.open_disk().unwrap();
     assert_eq!(device_offset(&private), device_offset(&cache));
     private.write_all_at(b"guest", 0).unwrap();
     private.sync_all().unwrap();
