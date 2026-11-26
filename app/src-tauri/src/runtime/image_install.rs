@@ -891,6 +891,11 @@ fn resume_prefix(
 fn clone(context: &Context, stage: &Dir, name: &str, source: &File) -> Result<bool, ImageError> {
     use std::os::fd::AsRawFd;
     context.stop()?;
+    // Tests refuse the clone to exercise the copy that other volumes get.
+    #[cfg(test)]
+    if context.point.as_ref().is_some_and(|p| p("clone").is_err()) {
+        return Ok(false);
+    }
     let path = std::ffi::CString::new(name).map_err(|_| ImageError::UnsafePath)?;
     // fclonefileat creates the name only if absent and reads its arguments only during the call.
     if unsafe { libc::fclonefileat(source.as_raw_fd(), stage.as_raw_fd(), path.as_ptr(), 0) } != 0 {
