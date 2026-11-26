@@ -2,11 +2,11 @@ import type { ComponentPropsWithRef } from 'react';
 
 type ButtonProps = ComponentPropsWithRef<'button'> & {
   kind?: 'primary' | 'secondary' | 'quiet' | 'icon';
-  size?: 'default' | 'small';
+  size?: 'default' | 'small' | 'large';
 };
 
 export function Button({ kind = 'secondary', size = 'default', type = 'button', className = '', ...props }: ButtonProps) {
-  return <button {...props} type={type} className={`button button-${kind}${size === 'small' ? ' button-small' : ''}${className ? ` ${className}` : ''}`} />;
+  return <button {...props} type={type} className={`button button-${kind}${size === 'default' ? '' : ` button-${size}`}${className ? ` ${className}` : ''}`} />;
 }
 export function CloseIcon() {
   return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>;
