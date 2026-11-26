@@ -427,15 +427,14 @@ for (phase, expected) in [("installing", "Downloading, 1.1 of 2.1 GB"), ("starti
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
         localSize(width, height)
         scroll(4000)
-        _ = try capture("local-setup-\(phase)-\(size)", ["Getting your workspace ready", "Where agents run", "Get your workspace ready", expected])
-        if phase == "installing" {
-            // Show the file-derived tool/test rows, not just the card heading at the fold.
-            scroll(-4000)
-            require(nativeChatTextIsVisible("web_fetch"), "Meet tool name must be visible")
-            _ = try capture("local-setup-meet-\(size)", ["Meet your first agent", "web-reader", "Read a web page"])
-        }
+        // Outside the guided first run, a first workspace getting ready is two cards: the Workspace card (pill, bar,
+        // elapsed or download line, Cancel) and the AI card, with no step list headings and no Meet card.
+        _ = try capture("local-setup-\(phase)-\(size)", ["This computer", "Workspace", expected])
+        require(enabledButton("Cancel") != nil, "The Workspace card must offer Cancel while \(phase)")
+        require(!["Getting your workspace ready", "Get your workspace ready", "Meet your first agent"].contains(where: nativeTextExists),
+                "Two-card first setup must not show the step list headings or Meet your first agent")
     }
-    if phase == "installing" { try setupFitCapture("download", ["Meet your first agent", "Run your first agent"], "Read its instructions") }
+    if phase == "installing" { try setupFitCapture("download", ["Workspace", expected], "Cancel") }
 }
 localSize(1280, 800)
 scroll(4000)
@@ -1517,8 +1516,9 @@ require(exactTextIsVisible("Saved"), "A completed edit/save must acknowledge Sav
 scroll(4000)
 _ = try seek("Not run since your edit", -250)
 _ = try capture("local-stale", ["Not run since your edit"])
-// Shell evidence beside the approved Designer frame: Agent and File, then the Send card and Past Sends, which are
-// always in Designer's right column (beside the editor when wide, below it at the minimum size).
+// Shell evidence beside the approved Designer frame: Agent and File, then the Send card, which is always in Designer's
+// right column (beside the editor when wide, below it at the minimum size). Past Sends joins it only once a Send is
+// saved, and this fixture has none, so its limits are read at the end of the Send card's Details instead.
 // Blocked Try a task is captured in the remote section above.
 }
 func exactTextIsVisible(_ expected: String) -> Bool {
@@ -1534,8 +1534,8 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     click("Agent", [])
     require(nativeElements().contains { attribute($0, "AXRole") as? String == "AXPopUpButton" }, "Header agent picker missing")
     // Without a cluster the always-shown Send card offers Choose a cluster, not a disabled Send to a cluster.
-    require(anyButton("Choose a cluster") && !anyButton("Send to a cluster") && nativeHeadingExists("Past Sends"),
-            "The Send card and Past Sends must always be in Designer's right column")
+    require(anyButton("Choose a cluster") && !anyButton("Send to a cluster") && !nativeHeadingExists("Past Sends"),
+            "The Send card must always be in Designer's right column, without Past Sends before any Send is saved")
     _ = try capture("local-shell-agent-\(size)", ["Instructions and settings"])
     click("File", [])
     _ = try capture("local-shell-file-\(size)", ["web-reader.agent.md"])
@@ -1544,9 +1544,20 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     require(exactTextIsVisible("Send your agent") && !nativeChatTextIsVisible("Team clusters are early in this preview."), "Send must retain its headline without repeating Welcome's preview sentence")
     require(enabledButton("Choose a cluster") != nil && !anyButton("Send and run tests"), "Without a cluster, Choose a cluster must replace Send outside Details")
     _ = try capture("local-shell-send-\(size)", ["Send your agent", "Choose a cluster"])
-    _ = try seek("Saved results and limits", -150)
-    scroll(-100)
-    _ = try capture("local-shell-history-\(size)", ["Past Sends", "Saved results and limits"])
+    func sendDetails() -> AXUIElement {
+        let matches = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXButton"
+                && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.contains("Resources and file hashes") == true }
+        }
+        require(matches.count == 1, "Expected one Send card Details disclosure")
+        return matches[0]
+    }
+    require(AXUIElementPerformAction(sendDetails(), kAXPressAction as CFString) == .success, "Cannot open the Send card's Details")
+    Thread.sleep(forTimeInterval: 0.5)
+    _ = try seek("Past Sends keeps up to 256 Sends", -150)
+    _ = try capture("local-shell-history-\(size)", ["Past Sends keeps up to 256 Sends"])
+    require(AXUIElementPerformAction(sendDetails(), kAXPressAction as CFString) == .success, "Cannot close the Send card's Details")
+    Thread.sleep(forTimeInterval: 0.3)
     scroll(4000)
 }
 localSize(1280, 800)

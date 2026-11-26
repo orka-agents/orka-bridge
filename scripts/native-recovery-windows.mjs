@@ -555,9 +555,10 @@ try {
   }
   function assertSendPresentation(name, probe, details) {
     const labels = { 'send-ready': ['Send and run tests'], 'send-blocked': ['Check again'], 'send-sending': ['Cancel tests'],
-      'send-passed': ['Run cluster tests again', 'See in Overview'], 'send-failed': ['Run cluster tests again', 'Fix in Designer'],
+      'send-passed': ['Run cluster tests again', 'See in Overview'], 'send-failed': ['Run cluster tests again', 'Fix in Designer', 'See in Overview'],
       'send-unsupported': ['Check cluster status'], 'send-earlier-target': ['Send and run tests', 'See in Overview'] }[name];
-    // Rerunning leads every result; a passed result has no primary, and a failed one makes Fix in Designer primary.
+    // Rerunning leads every result; a passed result has no primary, and a failed one makes Fix in Designer primary,
+    // followed by See in Overview.
     const primaryAt = { 'send-sending': -1, 'send-passed': -1, 'send-failed': 1 }[name] ?? 0;
     if (probe.header.map(button => button.label).join('|') !== labels.join('|')
         || probe.header.some((button, index) => button.primary !== (index === primaryAt))) throw Error('Wrong Send header actions: ' + JSON.stringify(probe));
@@ -1622,8 +1623,12 @@ try {
         await until(() => evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length`), 'Send is shown');
         await evaluate(`document.querySelector('.send-panel').scrollIntoView({ block: 'start' })`);
         await shoot('send');
-        await evaluate(`document.querySelector('.send-history').scrollIntoView({ block: 'center' })`);
+        // With no saved Sends, Past Sends is not beside the card; its limits are the last line of the card's Details.
+        await evaluate(`[...document.querySelectorAll('.send-panel details.card-details')].find(node => node.querySelector('summary')?.textContent.includes('Resources and file hashes')).open = true`);
+        await until(() => evaluate(`!![...document.querySelectorAll('.send-panel details.card-details[open] p')].find(node => node.textContent.startsWith('Past Sends keeps up to 256 Sends') && node.getClientRects().length)`), 'Send Details shows the Past Sends limits');
+        await evaluate(`[...document.querySelectorAll('.send-panel details.card-details[open] p')].find(node => node.textContent.startsWith('Past Sends keeps up to 256 Sends')).scrollIntoView({ block: 'center' })`);
         await shoot('history');
+        await evaluate(`document.querySelector('.send-panel details.card-details[open]').open = false`);
       } else if (!await evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length`)) throw Error('Returning from Try a task lost the retained Send');
     }
     console.log(`Captured native WebView2 action fixture: ${theme}/${size}/${name}`);

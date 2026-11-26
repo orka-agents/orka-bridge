@@ -1434,10 +1434,12 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     func requireSendActions(_ expected: [String]) throws {
         try closeSendDetails()
         let root = nativeRegion("Send and cluster tests")
-        let actions = sendActionLabels.filter { label in
-            nativeButtons(label, root: root).contains { nativeBounds($0).map { $0.width > 1 && $0.height > 1 } == true }
-        }
-        require(actions.count <= 2 && actions.sorted() == expected.sorted(), "Unexpected Send header actions: \(actions); expected \(expected)")
+        // Actions in reading order (row, then left to right), as the card lays them out; a failed result has three.
+        let shown = sendActionLabels.compactMap { label -> (String, CGRect)? in
+            nativeButtons(label, root: root).compactMap { nativeBounds($0) }.first { $0.width > 1 && $0.height > 1 }.map { (label, $0) }
+        }.sorted { abs($0.1.minY - $1.1.minY) > 4 ? $0.1.minY < $1.1.minY : $0.1.minX < $1.1.minX }
+        let actions = shown.map { $0.0 }
+        require(actions.count <= 3 && actions == expected, "Unexpected Send actions: \(actions); expected, in order, \(expected)")
     }
     func captureRecoveryActions(_ name: String, retry: Bool = true) throws {
         try requireSendActions(retry ? ["Check cluster status", "Retry cancellation"] : ["Check cluster status"])
@@ -1564,7 +1566,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     }
     try assertDeployment(passedUID, generation: 1, tasks: 1)
     try capturePreflight("send-unchanged", "Run cluster tests again")
-    try requireSendActions(["See in Overview", "Run cluster tests again"])
+    // A passing result: rerun first, then See in Overview, both secondary.
+    try requireSendActions(["Run cluster tests again", "See in Overview"])
     try clickSendControl("Run cluster tests again", scrolling: -350)
     try capturePreflight("send-unchanged-result", "1 of 1 tests passed")
     try assertDeployment(passedUID, generation: 1, tasks: 2)
@@ -1645,7 +1648,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     require(nativeStrings().contains { showsText($0, "has-a-date") }, "Captured test title must retain its code ID")
     try resultSize(540, 640)
     try capturePreflight("send-failed-minimum", "Finds the publication date", anchor: "has-a-date", requiring: visibleFailure)
-    try captureSendPresentation("send-failed", actions: ["Fix in Designer", "Run cluster tests again"])
+    // A failed result: rerun first (secondary), Fix in Designer (the one primary), then See in Overview.
+    try captureSendPresentation("send-failed", actions: ["Run cluster tests again", "Fix in Designer", "See in Overview"])
     // Arm only the loopback fixture: first answer completes, second Task stays
     // live. Hold the cancel reply until its in-flight state has been captured.
     try fixtureControl(["action": "cancel-mode", "place": "fixture-cluster", "mode": "cancelling"])
@@ -2050,7 +2054,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             "Removed cluster returned after restart")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
-    // Past Sends is an always-open card under the Send card, labelled by its heading.
+    // Past Sends shows under the Send card once a Send is saved (several are by now), labelled by its heading.
     guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {
         fail("Saved Send history was not reachable after restart")
     }

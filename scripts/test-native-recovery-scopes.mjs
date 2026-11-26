@@ -96,8 +96,8 @@ assert.match(source, /if \(runCore\) for \(const name of \['designer-connected'/
 const sendGate = source.slice(source.indexOf('  function assertSendPresentation('), source.indexOf('  async function captureSendScene('));
 assert.ok(sendGate.includes('Unsupported cancellation'), 'Send capture acceptance gate is missing');
 const checkSend = Function(`${sendGate}; return assertSendPresentation;`)();
-const sendProbe = { header: [{ label: 'Run cluster tests again', primary: false }, { label: 'Fix in Designer', primary: true }],
-  buttons: ['Run cluster tests again', 'Fix in Designer'], title: 'Captured checksum from the page', id: 'page-checksum',
+const sendProbe = { header: [{ label: 'Run cluster tests again', primary: false }, { label: 'Fix in Designer', primary: true }, { label: 'See in Overview', primary: false }],
+  buttons: ['Run cluster tests again', 'Fix in Designer', 'See in Overview'], title: 'Captured checksum from the page', id: 'page-checksum',
   heading: 'To fixture-selected', summary: 'web-reader with 1 test', checks: 'Ready to send: 1 check passed Show checks', checksOpen: false,
   inlineChecks: [], changeDisabled: false, text: 'fixture-captured', detailsOpen: false, extras: [], width: 540, scrollWidth: 540 };
 checkSend('send-failed', sendProbe, false);
@@ -551,7 +551,8 @@ assert.ok(smoke.includes('text.hasSuffix("-")'), 'hyphenated fixture IDs must su
 assert.ok(smoke.includes('region: "Past Sends", requiring:'), 'saved history anchors keep their separate region');
 // The Send card is always in Designer's right column: the walk brings its native region into view, with no page-head entry.
 assert.ok(!smoke.includes('clickText("Send to a cluster"') && !smoke.includes('clickSendControl("Send to a cluster"') && smoke.includes('guard let card = nativeBounds(nativeRegion("Send and cluster tests")) else { fail("Send card has no bounds") }')
-  && smoke.includes('guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {'), 'the walk must reach the always-shown Send card and Past Sends without a page-head entry');
+  && smoke.includes('guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {'), 'the walk must reach the always-shown Send card, and Past Sends once Sends are saved, without a page-head entry');
+assert.ok(model.includes('!nativeHeadingExists("Past Sends")') && model.includes('_ = try capture("local-shell-history-\\(size)", ["Past Sends keeps up to 256 Sends"])') && !model.includes('Saved results and limits'), 'with no saved Sends the model walk must see no Past Sends and read its limits in the Send card Details');
 assert.ok(smoke.includes('if let anchor = textAnchor ?? buttonAnchor'), 'native action anchors retain frozen-frame verification');
 assert.ok(smoke.includes('func uniqueOCRTarget('), 'scoped OCR click selection must reject distinct targets');
 assert.ok(smoke.includes('let scopedSeen = seen.filter'), 'OCR click candidates must belong to the selected native region');
@@ -571,7 +572,8 @@ assert.ok(model.includes('Runs once on this computer. It does not change test re
 assert.ok(model.includes('requireChatComposerVisible()'), 'Mac captures must verify composer geometry');
 assert.ok(model.includes('chat-long-early-') && model.includes('chat-long-end-'), 'Mac Try a task must capture earlier tasks folded and open');
 assert.ok(model.includes('name.hasPrefix("local-shell-chat-")'), 'mixed local/Try a task captures must check the visible native subtitle, not only OCR');
-assert.ok(smoke.includes('"Fix in Designer", "Run cluster tests again"'), 'failed Send must preserve Fix primary and precise rerun secondary');
+assert.ok(smoke.includes('actions: ["Run cluster tests again", "Fix in Designer", "See in Overview"]') && smoke.includes('try requireSendActions(["Run cluster tests again", "See in Overview"])')
+  && smoke.includes('require(actions.count <= 3 && actions == expected,'), 'Send results must keep their exact actions in reading order: rerun first, Fix in Designer on a failure, then See in Overview');
 assert.ok(source.includes('chat-long-early') && source.includes('chat-long-end'), 'many earlier tasks need distinct captures');
 assert.ok(source.includes("resizeTo({ width: 1280, height: 800 }, 'Wide')"));
 assert.ok(source.includes("resizeTo({ width: 540, height: 640 }, 'Compact')"));
