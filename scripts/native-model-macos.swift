@@ -772,13 +772,14 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
 }
 try "ready".write(to: catalogRelease, atomically: true, encoding: .utf8)
 localSize(1280, 800); scroll(4000)
-waitForButton("Add a tool"); click("Add a tool", [])
 // The picker's visible title is Choose a tool; Find a tool is only the search's hidden label and placeholder.
+// Open it at each size: the app brings the picker into view when it opens, and a later window resize does not.
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
-    localSize(CGFloat(width), CGFloat(height))
+    localSize(CGFloat(width), CGFloat(height)); scroll(4000)
+    waitForButton("Add a tool"); reveal("Add a tool"); click("Add a tool", [])
     _ = try capture("local-catalog-first-open-\(size)", ["Choose a tool", "Read a file"])
+    click("Close picker", [])
 }
-click("Close picker", [])
 localSize(1280, 800); scroll(4000)
 click("Clusters", [])
 rows = try capture("local-first-test-failed", ["This computer", "Its test failed", "See what it answered"])
