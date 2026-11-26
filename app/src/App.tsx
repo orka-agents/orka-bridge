@@ -17,6 +17,7 @@ import WindowControls, { customTitleBar } from './chrome/WindowControls';
 import { finishGuidedFirstRun, guidedFirstRun, guidedStep } from './firstrun/guided';
 import GuidedSteps from './firstrun/GuidedSteps';
 import './firstrun/firstrun.css';
+import './art.css';
 import Home from './home/Home';
 import Overview from './overview/Overview';
 import { firstTestPending, retireFirstTest, useFirstTest } from './setup/first-test';
@@ -389,7 +390,7 @@ export default function App() {
           ))}
         </div>)}
       </nav>
-      <main ref={content} className="page-content" aria-labelledby="page-title">
+      <main ref={content} className="page-content" data-page={page} aria-labelledby="page-title">
         {page === 'Designer' && !exampleOpen && <div className="page-heading">
           <h1 id="page-title">{page}</h1>
           {page === 'Designer' && <div className="heading-actions">

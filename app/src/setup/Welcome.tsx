@@ -1,5 +1,4 @@
 import { Button } from '../components/Button';
-import mark from '../assets/orka-mark.svg';
 
 export const welcomePreference = 'bridge.welcomeSeen.v1';
 export function hasSeenWelcome() {
@@ -9,7 +8,7 @@ export function hasSeenWelcome() {
 
 export default function Welcome({ titleId, onStart, onCluster, unavailable }: { titleId?: string; onStart: () => void; onCluster: () => void; unavailable?: string }) {
   return <section className="welcome-screen">
-    <img className="welcome-mark" src={mark} width="44" height="44" alt="" />
+    <div className="art-orca" aria-hidden="true" />
     <h1 id={titleId}>Build an AI agent that does a real job</h1>
     <p className="welcome-lede">Bridge runs your agent on this computer and checks its answers. No Kubernetes needed.</p>
     <ol className="welcome-journey">

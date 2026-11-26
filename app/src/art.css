@@ -1,0 +1,50 @@
+/* Decorative artwork. It sits under the page's content and never takes clicks. It stays out of the page's left
+   24px and top 80px: native walks sample the paper there. Chart and pod are masks in the ink colour, so they
+   follow the theme; the orca and sea have their own dark drawings. */
+.page-content { container-type: size; isolation: isolate; }
+
+/* Chart lines, or the pod, fill the page from 24px in and 80px down, and stay put while the page scrolls. The
+   negative bottom margin cancels the space they take, so the content starts where it always did. */
+.page-content::before {
+  content: ''; display: none; position: sticky; top: 80px; z-index: -1; flex: none;
+  width: calc(100cqw + 2 * var(--page-pad) - 24px); height: calc(100cqh + 2 * var(--page-pad) - 80px);
+  margin: calc(80px - var(--page-pad)) 0 calc(-100cqh - var(--page-pad)) calc(24px - var(--page-pad));
+  /* At most 7% ink (8% in dark), so every text colour still reads at 4.5:1 over the darkest line. */
+  background: var(--color-text); opacity: .07; pointer-events: none;
+  -webkit-mask: url('./assets/art/chart.png') 0 100% / cover no-repeat; mask: url('./assets/art/chart.png') 0 100% / cover no-repeat;
+}
+.page-content:is([data-page="Home"], [data-page="Overview"], [data-page="Designer"], [data-page="Clusters"])::before { display: block; }
+/* An empty Overview and the Clusters list show the pod in the bottom right instead. */
+.page-content:is([data-page="Overview"]:has(.overview-empty), [data-page="Clusters"]:has(.places-list):not(.guided *))::before {
+  -webkit-mask: url('./assets/art/pod.png') 100% 100% / min(560px, 60%) auto no-repeat; mask: url('./assets/art/pod.png') 100% 100% / min(560px, 60%) auto no-repeat;
+}
+
+/* The breaching orca above the Welcome and Home headlines. */
+.art-orca { width: 320px; max-width: 100%; aspect-ratio: 8 / 5; pointer-events: none; background: url('./assets/art/orca.png') 50% 100% / contain no-repeat; }
+.welcome-screen .art-orca { width: 256px; }
+.home .art-orca { width: 240px; }
+
+/* The guided first run ends on a sea strip along the bottom of the page. It scrolls with the page and the space after
+   the content keeps it clear of text. */
+.app-shell.guided .page-content {
+  background: url('./assets/art/sea.png') 100% 100% / calc(100% - 24px) auto no-repeat local, var(--color-page);
+}
+.app-shell.guided .page-content::after { content: ''; display: block; flex: none; height: calc((100cqw + 2 * var(--page-pad) - 24px) * 207 / 2172); }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .art-orca { background-image: url('./assets/art/orca-dark.png'); }
+  :root:not([data-theme="light"]) .app-shell.guided .page-content { background-image: url('./assets/art/sea-dark.png'); }
+  :root:not([data-theme="light"]) .page-content::before { opacity: .08; }
+}
+:root[data-theme="dark"] .art-orca { background-image: url('./assets/art/orca-dark.png'); }
+:root[data-theme="dark"] .app-shell.guided .page-content { background-image: url('./assets/art/sea-dark.png'); }
+:root[data-theme="dark"] .page-content::before { opacity: .08; }
+
+/* Narrow windows keep the chart and the orca, smaller. */
+@media (max-width: 820px) {
+  .page-content:is([data-page="Overview"]:has(.overview-empty), [data-page="Clusters"]:has(.places-list):not(.guided *))::before { display: none; }
+  .app-shell.guided .page-content { background-image: none; }
+  :root:not([data-theme="light"]) .app-shell.guided .page-content, :root[data-theme="dark"] .app-shell.guided .page-content { background-image: none; }
+  .app-shell.guided .page-content::after { content: none; }
+  .art-orca, .welcome-screen .art-orca, .home .art-orca { width: 160px; }
+}
