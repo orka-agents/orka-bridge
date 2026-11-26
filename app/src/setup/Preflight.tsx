@@ -7,7 +7,8 @@ import { formatRequirementGB } from './requirements';
 import { StatusIcon } from '../components/DesignSystem';
 import SetUpLater from '../firstrun/SetUpLater';
 
-export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster, onSetUpLater }: { requiredMemoryBytes: number; onBlocked: (blocked: boolean) => void; onCluster: () => void; onSetUpLater?: () => void }) {
+// onFailed reports a finished check that found a problem, so the page can say why Continue is off.
+export default function Preflight({ requiredMemoryBytes, onBlocked, onFailed, onCluster, onSetUpLater }: { requiredMemoryBytes: number; onBlocked: (blocked: boolean) => void; onFailed?: (failed: boolean) => void; onCluster: () => void; onSetUpLater?: () => void }) {
   const [result, setResult] = useState<HostPreflight | null>();
   const [checking, setChecking] = useState(true);
   const [attempt, setAttempt] = useState(0);
@@ -24,14 +25,15 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster, o
   const status = checking ? 'Checking this computer before setup.' : uncertain ? `Bridge couldn't check ${unchecked} yet. It checks again when the workspace starts.` : failedVirtualization || memory === 'insufficient' ? '' : 'These checks do not change this computer.';
   useEffect(() => {
     let active = true;
-    onBlocked(true);
+    onBlocked(true); onFailed?.(false);
     void readPreflight(requiredMemoryBytes).then(value => {
       if (!active) return;
       setResult(value); setChecking(false);
-      onBlocked(!!value && (value.memory === 'insufficient' || !['ready', 'unknown'].includes(value.virtualization)));
+      const blocked = !!value && (value.memory === 'insufficient' || !['ready', 'unknown'].includes(value.virtualization));
+      onBlocked(blocked); onFailed?.(blocked);
     });
-    return () => { active = false; onBlocked(false); };
-  }, [attempt, requiredMemoryBytes, onBlocked]);
+    return () => { active = false; onBlocked(false); onFailed?.(false); };
+  }, [attempt, requiredMemoryBytes, onBlocked, onFailed]);
   async function help(next: boolean) {
     setVirtualHelp(next);
     if (!next) return;
@@ -56,7 +58,7 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster, o
           : 'Turn on Windows Hypervisor Platform in Windows features, then restart this PC.'}</p>}</Disclosure>
       </section>}
       {!checking && memory === 'insufficient' && result?.installedMemoryBytes != null && <section aria-label="Installed memory">
-        <p className="preflight-result" role="alert"><StatusIcon state="failed" /><span>{`${formatRequirementGB(result.installedMemoryBytes) === formatRequirementGB(requiredMemoryBytes) ? 'Not enough memory. ' : ''}This computer has ${formatRequirementGB(result.installedMemoryBytes)} of memory; Bridge needs ${formatRequirementGB(requiredMemoryBytes)}.`}</span></p>
+        <p className="preflight-result" role="alert"><StatusIcon state="failed" /><span><b>Not enough memory. </b><span>{`This computer has ${formatRequirementGB(result.installedMemoryBytes)} of memory; Bridge needs ${formatRequirementGB(requiredMemoryBytes)}.`}</span></span></p>
         <Disclosure label="About this check" open={memoryHelp} controls="preflight-memory-help" onOpenChange={setMemoryHelp}>
         {memoryHelp && <div id="preflight-memory-help"><p>This is installed RAM, not currently free memory.</p>
           <p>{`Required: ${requiredMemoryBytes.toLocaleString()} bytes.${result?.installedMemoryBytes != null ? ` Installed: ${result.installedMemoryBytes.toLocaleString()} bytes.` : ''}`}</p></div>}</Disclosure>
@@ -65,8 +67,8 @@ export default function Preflight({ requiredMemoryBytes, onBlocked, onCluster, o
     <p className={!status || !checking && !uncertain && attempt === 0 ? 'sr-only' : 'muted'} id="preflight-reason" role="status" ref={reason} tabIndex={-1}>{status}</p>
     {!checking && (failedVirtualization || memory === 'insufficient') && <div className="workspace-step-actions">
       <Button type="button" kind="secondary" onClick={onCluster}>Use a cluster instead</Button>
-      {failedVirtualization && <><Button type="button" kind="secondary" onClick={() => { reason.current?.focus(); onBlocked(true); setChecking(true); setNotice(''); setAttempt(value => value + 1); }}>Check again</Button>
-      <Button type="button" kind="quiet" onClick={() => { void copy(); }}>Copy details for help</Button></>}
+      {failedVirtualization && <Button type="button" kind="secondary" onClick={() => { reason.current?.focus(); onBlocked(true); setChecking(true); setNotice(''); setAttempt(value => value + 1); }}>Check again</Button>}
+      <Button type="button" kind="quiet" onClick={() => { void copy(); }}>Copy details for help</Button>
       {onSetUpLater && <SetUpLater onClick={onSetUpLater} />}
     </div>}
     {notice && <p role="status">{notice}</p>}
