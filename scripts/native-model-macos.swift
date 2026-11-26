@@ -631,11 +631,10 @@ click("Clusters", [])
 // Returning workspace observations follow the original baseline coverage below.
 // Reuse the setup-progress selector and the existing Places entry to remount real
 // preflight for each bounded synthetic result. No native admission command runs.
-// This synthetic reset is a fresh choice, so acknowledge Welcome explicitly;
-// Stop no longer provides that unrelated presentation side effect.
+// The fixture always remembers team-dev, so this synthetic reset counts as set up and
+// shows the Clusters list, not Welcome.
 try "preflight-ready".write(to: setupProgress, atomically: true, encoding: .utf8)
-waitForButton("Get started")
-click("Get started", [])
+waitForButton("Set up")
 for state in ["ready", "unknown", "blocked", "memory", "mixed", "cluster"] {
     try "preflight-\(state)".write(to: setupProgress, atomically: true, encoding: .utf8)
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
@@ -768,6 +767,8 @@ for outcome in ["passed", "unknown"] {
     try outcome.write(to: firstTestOutcome, atomically: true, encoding: .utf8)
     localSize(1280, 800); scroll(4000)
     try "preflight-ready".write(to: setupProgress, atomically: true, encoding: .utf8)
+    // Resetting a selected workspace reloads the renderer; with team-dev remembered it reopens on Home.
+    reopenedOnHome(required: false)
     waitForButton("Set up")
     try FileManager.default.removeItem(at: setupProgress)
     click("Set up", [])
@@ -1191,6 +1192,15 @@ func waitForButton(_ label: String) {
     require(false, "Native Chat action did not become available: \(label)")
 }
 // Presence checks for state assertions; unlike enabledButton these include disabled controls.
+// A fixture reload with something set up opens on Home; continue from Clusters as a person would.
+// Only a reload changes the page, so an optional reload that doesn't come leaves Clusters as it was.
+func reopenedOnHome(required: Bool = true) {
+    for _ in 0..<(required ? 150 : 30) {
+        if nativeHeadingExists("What should your agents do?") { click("Clusters", []); return }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+    require(!required, "The reloaded renderer did not open on Home")
+}
 func anyButton(_ label: String) -> Bool {
     nativeElements().contains { element in
         ["AXButton", "AXCheckBox"].contains(attribute(element, "AXRole") as? String ?? "")
@@ -1940,6 +1950,8 @@ func workspaceCapture(_ state: String, _ expected: [String]) throws {
 }
 // First scene reloads once with selected localVm plus the attempted marker.
 try workspacePhase("workspace-scene-ready")
+// The returning reload has a finished workspace, so it reopens on Home.
+reopenedOnHome()
 waitForButton("Manage"); click("Manage", [])
 try workspaceCapture("ready", ["This computer", "Ready", "Agents", "Files"])
 require(nativeHeadingExists("AI"), "Returning Model must be headed AI")

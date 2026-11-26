@@ -28,12 +28,14 @@ const runtimeCopy = {
 export type UpgradeNotice = 'recovery' | 'required' | 'error' | 'unknown' | 'checking' | 'busy';
 // showCluster opens a remembered cluster's card, or Add a cluster without one, as the Clusters list does.
 export type LocalClusterControl = { showPlaces: () => void; showCluster: (place?: Place) => void };
-export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, active = true }: {
+export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onLaunch, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, active = true }: {
   ref?: Ref<LocalClusterControl>;
   onOpenExample: () => void; onOpenAgent?: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
   onModelState?: (state: ModelState) => void;
   onWelcome?: (visible: boolean) => void;
+  // Reported once at launch: true when something is already set up, so Bridge can open on Home.
+  onLaunch?: (home: boolean) => void;
   onExampleName?: (name: string | undefined) => void;
   firstCheck?: CheckStepState;
   firstPass?: RunSnapshot;
@@ -99,7 +101,11 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const observeModel = useCallback((value: ModelState) => { setModelState(value); onModelState?.(value); }, [onModelState]);
   const [check, setCheck] = useState(0);
   const [setupCheck, setSetupCheck] = useState(0);
-  const [seen, setSeen] = useState(hasSeenWelcome);
+  const [seen] = useState(hasSeenWelcome);
+  // Welcome's buttons dismiss it for the rest of this run, even while nothing is set up yet.
+  const [dismissed, setDismissed] = useState(false);
+  // Whether a cluster was remembered when Bridge opened; null when that couldn't be read.
+  const [launchPlaces, setLaunchPlaces] = useState<boolean | null>();
   const [inside, setInside] = useState(false);
   // Navigation is not destination selection. Standalone callers retain the same contract.
   const [ownPlace, setOwnPlace] = useState<SelectedPlace>({ kind: 'thisComputer' });
@@ -135,9 +141,11 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const heading = useRef<HTMLHeadingElement>(null);
   const focusChoice = useRef(false);
-  const welcome = !seen && !!status && !error && status.selected !== 'localVm';
+  // Nothing set up: no local workspace and no cluster remembered at launch. An unreadable list falls back to the stored dismissal.
+  const unchosen = !dismissed && !!status && !error && status.selected !== 'localVm';
+  const welcome = unchosen && (launchPlaces === false || launchPlaces === null && !seen);
   useEffect(() => { onWelcome?.(welcome); }, [welcome, onWelcome]);
-  const readSnapshot = active && !welcome && (seen || !!error || !!status);
+  const readSnapshot = active && (seen || !!error || !!status);
   useEffect(() => {
     if (!readSnapshot) return;
     const request = ++snapshotEpoch.current;
@@ -145,6 +153,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
     void clusterPlaces().then(value => {
       if (request !== snapshotEpoch.current) return;
       setSnapshotUnavailable(!value);
+      setLaunchPlaces(previous => previous ?? (value ? value.places.length > 0 : null));
       setSnapshot(previous => value ?? (previous && { ...previous, selectedKey: null }));
     });
     return () => { snapshotEpoch.current++; };
@@ -152,7 +161,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   useEffect(() => {
     if (focusChoice.current && active) heading.current?.focus();
     focusChoice.current = false;
-  }, [seen, status?.selected, status?.localVm, active, view]);
+  }, [dismissed, status?.selected, status?.localVm, active, view]);
   useEffect(() => {
     let active = true;
     void workspaceRequirements().then(value => { if (active) setRequirements(value); });
@@ -254,6 +263,19 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const ordinaryRecovery = upgradeKnown
     ? !!upgrade && ['none', 'fresh', 'consumed'].includes(upgrade.state)
     : status?.selected === 'localVm' && !status.workspaceReplaced && !upgrade;
+  // Home only for a finished local workspace with nothing pending, or a remembered cluster without one.
+  // Setup in progress, a failure or a workspace update keeps Bridge on Clusters, as before.
+  const launchHome = !status ? error ? false : undefined
+    : status.selected === 'localVm'
+      ? status.localVm !== 'ready' || !!status.workspaceReplaced || firstTestPending() ? false
+        : upgradeKnown ? upgrade?.state === 'none' && !upgrade.busy : upgradeError !== undefined ? false : undefined
+      : error ? false : launchPlaces === undefined ? undefined : launchPlaces === true;
+  const [launched, setLaunched] = useState(false);
+  useEffect(() => {
+    if (launched || launchHome === undefined) return;
+    setLaunched(true); onLaunch?.(launchHome);
+  }, [launched, launchHome, onLaunch]);
+  const launchPending = !launched && launchHome === undefined && !!status && !error;
   // Model stays mounted from preparing through ready, so it owns its queued state; no Model means no model state.
   const modelMounted = (!status?.workspaceReplaced || upgradeKnown && !!upgrade) && (!upgrade || ['none', 'fresh', 'consumed'].includes(upgrade.state)) && !upgradeBusy && !upgrade?.busy && upgrade?.credential !== 'attention' && upgrade?.credential !== 'eligible' && status?.selected === 'localVm' && (status.localVm === 'ready' || (!status.workspaceReplaced && canQueueModel(status)));
   useEffect(() => { if (!modelMounted) observeModel('idle'); }, [modelMounted, observeModel]);
@@ -261,7 +283,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   function start() {
     try { localStorage.setItem(welcomePreference, '1'); } catch { /* A presentation preference must not block setup. */ }
     focusChoice.current = true;
-    setSeen(true);
+    setDismissed(true);
   }
   function publishPlace(value: SelectedPlace) { setOwnPlace(value); onPlace?.(value); }
   function chooseCluster(item?: Place, selected = false) {
@@ -320,7 +342,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && (changing || !ordinaryRecovery || status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked))} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
   useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); }, showCluster(item?: Place) { chooseCluster(item); } }));
   const titleId = active ? 'page-title' : undefined;
-  if (!status && !error) return <><h1 id={titleId}>Clusters</h1><p role="status">Checking the workspace…</p></>;
+  if (!status && !error || launchPending) return <><h1 id={titleId}>Clusters</h1><p role="status">Checking the workspace…</p></>;
   if (welcome && status) return <Welcome titleId={titleId} onStart={start} onCluster={() => chooseCluster()} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;
   const selected = status?.selected === 'localVm';
   const modelRecovery = ['failed', 'resetFailed', 'removalFailed', 'resetting'].includes(modelState);

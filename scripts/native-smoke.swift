@@ -116,11 +116,11 @@ while Date() < rendererDeadline {
             ["AXTitle", "AXDescription"].compactMap { attribute(element, $0) as? String }
         })
         // Navigation/footer controls can render before setup_status settles.
-        // Observe the welcome or the actual release setup result, not a button
-        // that merely happens to be below the header.
+        // Observe the welcome, the actual release setup result or Home (a remembered
+        // cluster opens there), not a button that merely happens to be below the header.
         // The text viewport also needs the tab bar; do not query it during renderer startup.
         if Set(["Overview", "Designer", "Clusters"]).isSubset(of: names)
-            && (names.contains("Get started") || nativeTextIsVisible("Choose where agents run")) { found = true; break }
+            && (names.contains("Get started") || nativeTextIsVisible("Choose where agents run") || nativeTextIsVisible("What should your agents do?")) { found = true; break }
     }
     RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
 }
@@ -968,9 +968,15 @@ require(app.isTerminated, "Bridge did not quit before preference check")
 app = try launch()
 app.activate(options: [])
 waitForWorkspaceRenderer()
+// Nothing is set up yet, so Welcome returns on every launch until Get started in that run.
+let reopened = try capture("welcome-reopened", "Clusters")
+require(reopened.contains { $0.topCandidates(1).first?.string == "Get started" },
+        "Restart with nothing set up must show Welcome again")
+clickText("Get started", in: reopened)
 let retained = try capture("places-retained", "Clusters")
 require(!retained.contains { $0.topCandidates(1).first?.string == "Get started" },
-        "Restart must retain welcome dismissal without starting a workspace")
+        "Get started must dismiss Welcome without starting a workspace")
+requireNoLocalWorkspace()
 clickTab("Overview", retained)
 _ = try capture("overview", "Overview")
 require(!nativeTextIsVisible("This workspace can't list its agents yet."),
@@ -1927,6 +1933,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     // A native frame can appear before the relaunched WebView paints anything.
     // Use the same observed page readiness as the initial launch.
     waitForWorkspaceRenderer()
+    // Remembered clusters count as set up, so Bridge reopens on Home.
+    require(nativeTextIsVisible("What should your agents do?") && nativeButtons("Get started").isEmpty,
+            "Restart with remembered clusters must open on Home, not Welcome")
+    clickTab("Clusters", [])
     let restarted = try capture("cluster-place-reopened", "Clusters")
     // Remembered metadata survives, but neither selection nor live access does.
     let remembered = nativeButtons("Use").count
@@ -1977,6 +1987,8 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     app = try launch()
     app.activate(options: [])
     waitForWorkspaceRenderer()
+    require(nativeTextIsVisible("What should your agents do?"), "Restart with remembered clusters must open on Home")
+    clickTab("Clusters", [])
     try capture("cluster-removal-reopened", "Clusters")
     require(nativeButtons("Use").count == remembered - 1 && nativeButtons("Manage").isEmpty,
             "Removed cluster returned after restart")

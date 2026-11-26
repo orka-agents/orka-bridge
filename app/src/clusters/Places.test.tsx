@@ -303,6 +303,8 @@ test('hidden snapshot replies are fenced and returning to Clusters reads a new p
 test('a known empty list promotes Set up, but a metadata failure does not imply emptiness', async () => {
   const { sim } = native(); sim.snapshot.places = []; sim.snapshot.selectedKey = null;
   const user = userEvent.setup(); render(<Host />);
+  // Nothing is set up, so Welcome comes first even though it was dismissed before.
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
   const setup = await screen.findByRole('button', { name: 'Set up' });
   await screen.findByText(/No other clusters added/);
   expect(setup.className).toContain('button-primary');

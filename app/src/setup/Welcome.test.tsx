@@ -186,3 +186,91 @@ test('a delayed initial status cannot flash welcome over an existing workspace',
   await waitFor(() => expect(screen.getByText('Starting the workspace…')).toBeTruthy());
   expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
 });
+
+// Launch: Welcome whenever nothing is set up; Home once something is.
+const team = { key: 'binding-primary', context: 'team-dev', namespace: 'agents', service: 'control / orka', stale: false, observedAt: 1700000000000, agents: [] };
+function launch(status: object, places: object[] = [], upgrade: () => unknown = () => noUpgrade) {
+  vi.stubGlobal('isTauri', true);
+  const ipc = vi.fn((command: string) => {
+    if (command === 'workspace_upgrade_status') return upgrade();
+    if (command === 'setup_status') return status;
+    if (command === 'setup_requirements') return requirements;
+    if (command === 'cluster_places') return { places, selectedKey: null, persistenceState: 'complete' };
+    if (command === 'overview_places') return { places, historyState: 'complete', unobserved: [] };
+    return Promise.reject({ kind: 'unavailable' });
+  });
+  mockIPC(ipc);
+  return ipc;
+}
+const current = () => document.querySelector('.page-tab[aria-current="page"]')?.getAttribute('aria-label');
+
+test('a computer that dismissed Welcome before but set nothing up opens on Welcome again', async () => {
+  localStorage.setItem(preference, '1'); launch(unselected); render(<App />);
+  expect(await screen.findByRole('heading', { name: 'Build an AI agent that does a real job' })).toBeTruthy();
+  expect(current()).toBe('Clusters');
+  expect(await within(screen.getByRole('navigation')).findByText('Start here')).toBeTruthy();
+  expect(within(screen.getByRole('contentinfo')).getByText('Nothing is set up yet')).toBeTruthy();
+});
+
+test.each(['Get started', 'I already run Orka on a cluster'])('%s dismisses Welcome for the rest of the run', async name => {
+  localStorage.setItem(preference, '1'); launch(unselected); const user = userEvent.setup(); render(<App />);
+  await user.click(await screen.findByRole('button', { name }));
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  await user.click(screen.getByRole('button', { name: 'Clusters' }));
+  if (name !== 'Get started') await user.click(await screen.findByRole('button', { name: 'Back to clusters' }));
+  expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+  expect(localStorage.getItem(preference)).toBe('1');
+});
+
+test('an unreadable cluster list falls back to the stored dismissal', async () => {
+  localStorage.setItem(preference, '1'); native(); render(<App />);
+  expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+  expect(current()).toBe('Clusters');
+});
+
+test('a finished workspace opens on Home without first showing the Clusters list', async () => {
+  let finish!: (value: unknown) => void;
+  const upgrade = new Promise(resolve => { finish = resolve; });
+  localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  launch({ selected: 'localVm', localVm: 'ready', model: 'available' }, [], () => upgrade); render(<App />);
+  await waitFor(() => expect(screen.getByRole('contentinfo').textContent).toContain('Checking the workspace…'));
+  expect(screen.getByText('Checking the workspace…', { selector: 'main p' })).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'This computer' })).toBeNull();
+  finish(noUpgrade);
+  expect(await screen.findByRole('region', { name: 'What should your agents do?' })).toBeTruthy();
+  expect(current()).toBe('Home');
+  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+});
+
+test('a remembered cluster without a local workspace opens on Home, even with fresh storage', async () => {
+  launch(unselected, [team]); render(<App />);
+  expect(await screen.findByRole('region', { name: 'What should your agents do?' })).toBeTruthy();
+  expect(current()).toBe('Home');
+  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+});
+
+test.each([
+  ['setup in progress', { selected: 'localVm', localVm: 'starting', model: 'locked' }, 'attempted', noUpgrade],
+  ['the first test still pending', { selected: 'localVm', localVm: 'ready', model: 'available' }, 'pending', noUpgrade],
+  ['a workspace update', { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true }, 'attempted', { ...noUpgrade, state: 'incomplete' }],
+])('%s still opens on Clusters', async (_, status, firstTest, upgrade) => {
+  localStorage.setItem(preference, '1'); localStorage.setItem('bridge.firstTest.v1', firstTest);
+  launch(status, [team], () => upgrade); render(<App />);
+  await waitFor(() => expect(screen.queryByText('Checking the workspace…', { selector: 'main p' })).toBeNull());
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(current()).toBe('Clusters');
+  expect(screen.queryByRole('button', { name: 'Get started' })).toBeNull();
+});
+
+test('a page chosen before the launch reads finish is kept', async () => {
+  let finish!: (value: unknown) => void;
+  const upgrade = new Promise(resolve => { finish = resolve; });
+  localStorage.setItem('bridge.firstTest.v1', 'attempted');
+  launch({ selected: 'localVm', localVm: 'ready', model: 'available' }, [], () => upgrade); const user = userEvent.setup(); render(<App />);
+  await user.click(screen.getByRole('button', { name: 'Overview' }));
+  finish(noUpgrade);
+  await waitFor(() => expect(screen.getByRole('contentinfo').textContent).not.toContain('Checking the workspace…'));
+  expect(current()).toBe('Overview');
+});

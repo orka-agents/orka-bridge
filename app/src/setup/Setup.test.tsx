@@ -123,6 +123,7 @@ test.each([null, 'attempted'])('a lost selection reply preserves durable intent 
     throw Error('Forbidden command: ' + command);
   });
   mockIPC(ipc); const user = userEvent.setup(); const view = render(<Setup onOpenExample={vi.fn()} />);
+  await user.click(await screen.findByRole('button', { name: 'Get started' }));
   await openLocalSetup(user);
   await user.click(await screen.findByRole('button', { name: 'Continue' }));
   expect(intentAtSelection).toBe(previous ?? 'pending');

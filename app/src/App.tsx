@@ -14,7 +14,7 @@ import SidebarToggle from './chrome/SidebarToggle';
 import { readSidebarCollapsed, writeSidebarCollapsed } from './chrome/sidebar';
 import OrkaSwitcher from './chrome/OrkaSwitcher';
 import WindowControls, { customTitleBar } from './chrome/WindowControls';
-import { finishGuidedFirstRun, guidedFirstRun, guidedStep } from './firstrun/guided';
+import { finishGuidedFirstRun, guidedFirstRun, guidedStep, resumeGuidedFirstRun } from './firstrun/guided';
 import GuidedSteps from './firstrun/GuidedSteps';
 import './firstrun/firstrun.css';
 import './art.css';
@@ -59,12 +59,20 @@ function ComingButton({ label, reason }: { label: string; reason: string }) {
 export default function App() {
   const [page, setPageState] = useState<Page>('Clusters');
   const [guided, setGuided] = useState(guidedFirstRun);
-  const leaveGuided = useCallback(() => { finishGuidedFirstRun(); setGuided(false); }, []);
+  const guidedLeft = useRef(false);
+  const leaveGuided = useCallback(() => { guidedLeft.current = true; finishGuidedFirstRun(); setGuided(false); }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const toggleSidebar = useCallback(() => setSidebarCollapsed(value => { writeSidebarCollapsed(!value); return !value; }), []);
   const overviewOpenRequest = useRef(0);
   const [overviewNotice, setOverviewNotice] = useState<string>();
-  const setPage = useCallback((next: Page) => { overviewOpenRequest.current++; setOverviewNotice(undefined); setPageState(next); }, []);
+  // Bridge opens on Clusters until Setup's first reads say whether anything is set up; a page the person picks first wins.
+  const [launching, setLaunching] = useState(true);
+  const launchOpen = useRef(true);
+  const setPage = useCallback((next: Page) => { launchOpen.current = false; setLaunching(false); overviewOpenRequest.current++; setOverviewNotice(undefined); setPageState(next); }, []);
+  const observeLaunch = useCallback((home: boolean) => {
+    if (launchOpen.current && home) setPageState('Home');
+    launchOpen.current = false; setLaunching(false);
+  }, []);
   const [place, setPlace] = useState<SelectedPlace>({ kind: 'thisComputer' });
   const remote = place.kind === 'cluster';
   // The guided first run ends once the person moves on: another page, or a cluster instead of this computer.
@@ -109,6 +117,10 @@ export default function App() {
   }, [exampleOpen, setupReadOnly, place]);
   const [checking, setChecking] = useState(true);
   const [welcome, setWelcome] = useState(false);
+  // Welcome shows whenever nothing is set up, so the guided steps come back with it unless the person left them this run.
+  useEffect(() => {
+    if (welcome && page === 'Clusters' && !guided && !guidedLeft.current) { resumeGuidedFirstRun(); setGuided(true); }
+  }, [welcome, page, guided]);
   const [model, setModel] = useState<ModelState>('idle');
   const [catalogEpoch, setCatalogEpoch] = useState(0);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
@@ -236,7 +248,7 @@ export default function App() {
   // Tab, footer and Setup share the stage. The chip names the place, not AI or test health.
   const initialAutomatic = firstTest === 'running' || (model === 'connected' && firstTestPending() && (!sample || sample.state === 'idle'));
   const firstTestResult = !setup?.workspaceReplaced && sampleSource !== null && sample?.report ? { failed: sample.report.cases.filter(check => check.verdict === 'failed').length } : undefined;
-  const ordinaryView = setupView(setup, { checking, stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping, workspace: returningWorkspace, model, check: firstCheck, initialAutomatic });
+  const ordinaryView = setupView(launching ? undefined : setup, { checking: checking || launching, stopping: workspaceStopping, starting: workspaceBusy && !workspaceStopping, workspace: returningWorkspace, model, check: firstCheck, initialAutomatic });
   const updating = workspaceUpdating && !!setup;
   const recovery = upgradeNotice === 'recovery' && !!setup;
   const required = upgradeNotice === 'required' && !!setup;
@@ -399,7 +411,7 @@ export default function App() {
           </div>}
         </div>}
         <div hidden={page !== 'Clusters'}>
-          <Setup ref={localCluster} place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome}
+          <Setup ref={localCluster} place={place} onPlace={choosePlace} onLocalView={setLocalSetupView} onWorkspaceMode={setReturningWorkspace} onWorkspaceAction={observeWorkspaceAction} active={page === 'Clusters'} firstPass={firstPass} modelUnavailable={sample?.error === 'model'} firstCheck={firstCheck} firstTestResult={firstTestResult} initialAutomatic={initialAutomatic} onCheckFirstTest={checkFirstTest} onStarting={() => setSetupReadOnly(true)} onStatus={observeSetup} onModelState={observeModel} onWelcome={setWelcome} onLaunch={observeLaunch}
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
         {page === 'Home' && <Home active revision={agentsRevision} onOpenAgent={id => openDesigner(id)} onChooseWorkspace={() => setPage('Clusters')}
