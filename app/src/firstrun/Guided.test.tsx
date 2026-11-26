@@ -9,14 +9,23 @@ import { guidedStep } from './guided';
 
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
-function nativeSetup(status: Record<string, unknown>) {
+const example = { agent: '---\nname: web-reader\nkmx:\n  runtime: orka\n  schemaVersion: 1\n  tools: [{ name: web_fetch, kind: builtin }]\n---\nRead the page and report its checksum.', tests: 'A test.' };
+function nativeSetup(status: Record<string, unknown>, preflight?: Record<string, unknown>) {
   vi.stubGlobal('isTauri', true);
   mockIPC(command => {
     if (command === 'workspace_upgrade_status') return noUpgrade;
     if (command === 'setup_status') return status;
     if (command === 'setup_requirements') return { memoryBytes: 6 * 1024 ** 3, imageBytes: 3e9, stateDiskBytes: 32e9, downloadBytes: null };
+    if (command === 'setup_preflight' && preflight) return { platform: 'windows', virtualization: 'ready', memory: 'ready', installedMemoryBytes: 16 * 1024 ** 3, requiredMemoryBytes: 6 * 1024 ** 3, ...preflight };
+    if (command === 'setup_example') return example;
+    if (command === 'cluster_places') return { places: [], selectedKey: null, persistenceState: 'complete' };
     return { kind: 'version', version: 'v0.4.2', hasDiagnostics: false };
   });
+}
+// A guided run already past Welcome, as after Get started on a first launch.
+function guidedRun() {
+  localStorage.setItem('bridge.welcomeSeen.v1', '1');
+  localStorage.setItem('bridge.firstRun.v1', 'active');
 }
 const shell = () => document.querySelector('.app-shell')!;
 
@@ -132,4 +141,62 @@ test('a computer with nothing set up is guided again alongside Welcome, and leav
   expect(await screen.findByRole('button', { name: 'Set up' })).toBeTruthy();
   expect(shell().classList.contains('guided')).toBe(false);
   expect(localStorage.getItem('bridge.firstRun.v1')).toBe('done');
+});
+
+test('Read its instructions opens them in place on the Meet card, and Open in Designer is the way out', async () => {
+  guidedRun();
+  nativeSetup({ selected: 'localVm', localVm: 'starting', model: 'locked' });
+  const user = userEvent.setup();
+  render(<App />);
+  const meet = await screen.findByRole('region', { name: 'web-reader' });
+  const read = await within(meet).findByRole('button', { name: 'Read its instructions' });
+  expect(read.getAttribute('aria-expanded')).toBe('false');
+  expect(within(meet).queryByRole('button', { name: 'Open in Designer' })).toBeNull();
+  await user.click(read);
+  expect(read.getAttribute('aria-expanded')).toBe('true');
+  const text = within(meet).getByText('Read the page and report its checksum.');
+  // Read-only and bounded: not a field, and focusable so a long text can scroll from the keyboard.
+  expect(text.closest('textarea, input, [contenteditable="true"]')).toBeNull();
+  expect(text.classList.contains('agent-instructions-text')).toBe(true);
+  expect(text.tabIndex).toBe(0);
+  expect(shell().classList.contains('guided')).toBe(true);
+  expect(screen.getByRole('main').dataset.page).toBe('Clusters');
+  await user.click(read);
+  expect(within(meet).queryByText('Read the page and report its checksum.')).toBeNull();
+  expect(shell().classList.contains('guided')).toBe(true);
+  await user.click(read);
+  await user.click(within(meet).getByRole('button', { name: 'Open in Designer' }));
+  await waitFor(() => expect(screen.getByRole('main').dataset.page).toBe('Designer'));
+  expect(shell().classList.contains('guided')).toBe(false);
+  expect(localStorage.getItem('bridge.firstRun.v1')).toBe('done');
+});
+
+test('with the workspace ready, its instructions also open in place until the AI connects', async () => {
+  guidedRun();
+  const status: Record<string, unknown> = { selected: 'localVm', localVm: 'starting', model: 'locked' };
+  nativeSetup(status);
+  const user = userEvent.setup();
+  render(<App />);
+  const progress = await screen.findByRole('region', { name: 'Workspace setup' });
+  Object.assign(status, { localVm: 'ready', model: 'available' });
+  await within(progress).findByText('Your workspace is ready on this computer.');
+  await user.click(await within(progress).findByRole('button', { name: 'Read its instructions' }));
+  expect(await within(progress).findByText('Read the page and report its checksum.')).toBeTruthy();
+  expect(shell().classList.contains('guided')).toBe(true);
+  expect(screen.getByRole('main').dataset.page).toBe('Clusters');
+  await user.click(within(progress).getByRole('button', { name: 'Open in Designer' }));
+  await waitFor(() => expect(shell().classList.contains('guided')).toBe(false));
+});
+
+test('outside the guided run, Read its instructions still opens Designer', async () => {
+  localStorage.setItem('bridge.welcomeSeen.v1', '1');
+  localStorage.setItem('bridge.firstRun.v1', 'done');
+  nativeSetup({ selected: 'localVm', localVm: 'starting', model: 'locked' });
+  const user = userEvent.setup();
+  render(<App />);
+  const meet = await screen.findByRole('region', { name: 'web-reader' });
+  const read = await within(meet).findByRole('button', { name: 'Read its instructions' });
+  expect(read.tagName).toBe('BUTTON');
+  await user.click(read);
+  await waitFor(() => expect(screen.getByRole('main').dataset.page).toBe('Designer'));
 });

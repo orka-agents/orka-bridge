@@ -65,6 +65,10 @@
 .workspace-meet dd { margin: 0; font: var(--type-body); max-width: 65ch; }
 .workspace-meet dd p, .setup .workspace-meet dd p { margin: 0; }
 .workspace-meet dd p + p { margin-top: var(--space-1); }
+/* The agent's instructions, read in place: the text scrolls inside a bounded box, Open in Designer below it. */
+.agent-instructions-body { display: grid; justify-items: start; gap: var(--space-2); }
+.agent-instructions-text { box-sizing: border-box; width: 100%; max-width: none; max-height: min(260px, 40dvh); overflow-y: auto; margin: 0; padding: var(--space-3); border: 1px solid var(--color-border-strong); border-radius: var(--radius-control); background: var(--color-chrome); color: var(--color-text); }
+.setup-progress > .agent-instructions { margin-top: var(--space-3); }
 .workspace-tool { display: inline-flex; align-items: center; gap: var(--space-1-5); margin: 0 var(--space-2) var(--space-1) 0; }
 .workspace-tool code { font: 500 var(--size-body)/18px var(--font-mono); font-size: .92em; font-variant-ligatures: none; padding: 1px var(--space-1-5); border-radius: var(--radius-small); background: var(--color-chrome); color: var(--color-text); }
 
