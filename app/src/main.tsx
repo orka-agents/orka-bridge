@@ -15,5 +15,8 @@ const render = () => createRoot(document.getElementById('root')!).render(
 );
 // import.meta.env.DEV is false in production builds, so the preview module is never bundled there.
 if (import.meta.env.DEV && previewRequested(import.meta.env.DEV, location.search)) {
-  void import('./preview/backend').then(preview => { preview.installPreview(); render(); });
+  // `&gallery` shows the shared components instead of the app; it is part of the dev-only preview.
+  if (new URLSearchParams(location.search).has('gallery')) {
+    void import('./components/Gallery').then(({ default: Gallery }) => createRoot(document.getElementById('root')!).render(<StrictMode><Gallery /></StrictMode>));
+  } else void import('./preview/backend').then(preview => { preview.installPreview(); render(); });
 } else render();
