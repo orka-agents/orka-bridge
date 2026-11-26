@@ -278,7 +278,7 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         let chatText = !found && !accountExpectation
             && (name.hasPrefix("chat-") || name.hasPrefix("cluster-") || name.hasPrefix("local-shell-chat-"))
             && nativeChatTextIsVisible(value)
-        let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
+        let workspaceControl = !found && (name.hasPrefix("local-workspace-") || name.hasPrefix("local-reset-")) && nativeWorkspaceButtonIsVisible(value)
         // Context and account choices are buttons named by their mono name (WebKit exposes no text inside them), and
         // Vision can skip a short mono line in a picker; accept the exact named choice drawn inside the window.
         let pickerChoice = !found && (name.hasPrefix("cluster-picker-") || name.hasPrefix("cluster-account-picker-")) && nativeWorkspaceButtonIsVisible(value)
