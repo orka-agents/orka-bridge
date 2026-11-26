@@ -100,10 +100,12 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
     const { target, sendId } = focus;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let targetFound = false;
-    async function list(navigate = false, resolveAbsence = false) {
+    async function list(navigate = false, resolveAbsence = false, first = false) {
       const value = target ? await readPlaces(target.key) : undefined;
       if (request !== focusEpoch.current) return;
       if (navigate) autofocus.completed = true;
+      // This effect's first read, not a Send poll, starts a new Recent activity and Conversations pass.
+      if (target && first) setActivityRevision(v => v + 1);
       if (target) setPlaceError(!value);
       const seen = value?.places.find(p => p.key === target?.key);
       // Other places were not queried by this refresh, so keep their cached freshness.
@@ -121,7 +123,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       if (request === focusEpoch.current && !targetFound) { absencePending.current = false; setFocusNote(focusNotes[check]); }
     }
     // Resume either unfinished step without repeating navigation's initialization resets.
-    void list(!autofocus.completed, absencePending.current);
+    void list(!autofocus.completed, absencePending.current, true);
     return () => { focusEpoch.current++; clearTimeout(timer); };
   }, [active, focus, focusRetry, focusPending, placesRevision]);
   useEffect(() => {
