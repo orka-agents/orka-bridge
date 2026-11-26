@@ -1,3 +1,4 @@
+import './designer.css';
 import { isTauri } from '@tauri-apps/api/core';
 import { Disclosure } from '../components/Disclosure';
 import { Button } from '../components/Button';
@@ -248,7 +249,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     }} onCancel={() => { setCreating(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('.new-agent-entry')?.focus()); }} />}
     <section className="designer" hidden={creating} aria-labelledby={active && !creating ? 'page-title' : undefined}>
     <div className="page-heading designer-heading">
-      <div className="agent-heading-copy"><h1 className="agent-name" id={active && !creating ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{view === 'Chat' ? <p className="muted">Chat on this computer. Chat doesn't change test results.</p> : info.description && <p className="muted">{info.description}</p>}</div>
+      <div className="agent-heading-copy"><h1 className={info.name ? 'agent-name' : undefined} id={active && !creating ? 'page-title' : undefined}>{info.name ?? (pair ? 'Agent file' : 'Designer')}</h1>{view === 'Chat' ? <p className="muted">Chat on this computer. Chat doesn't change test results.</p> : info.description && <p className="muted">{info.description}</p>}</div>
       <div className="heading-actions">
         <div className="view-switch" role="group" aria-label="Designer view">
           <button type="button" aria-pressed={view === 'Agent'} onClick={() => setView('Agent')}>Agent</button>
@@ -265,12 +266,13 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
       </div>
     </div>
     {selectionError && <p role="alert">{selectionError}</p>}
-    {!pair ? error ? <div className="designer-file card"><p role="alert">{error}</p><div className="heading-actions"><Button type="button" kind="secondary" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</Button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
+    {!pair ? error ? <div className="designer-file card"><div className="alert alert-failed"><p role="alert" className="alert-title">{error}</p></div><div className="heading-actions"><Button type="button" kind="primary" onClick={() => { setError(undefined); requestDocument(boundDocument); setOpenAttempt(value => value + 1); }}>Try opening again</Button></div></div> : <div className="designer-file card designer-skeleton" role="status" aria-label="Opening your agent" aria-busy="true"><span className="sr-only">Opening your agent…</span><div aria-hidden="true"><div className="skeleton-field skeleton-prompt" /><div className="skeleton-field" /><div className="skeleton-field" /><div className="skeleton-field" /></div></div> : <>
       <div className="designer-chat" hidden={view !== 'Chat'}><Chat key={boundDocument} documentId={boundDocument} blocked={chatBlocked} active={active && !creating && view === 'Chat'} /></div>
       <div hidden={view === 'Chat'} className="designer-work">
       <div className="designer-editing">
+      <div className="file-toolbar"><h2 className="section-label">{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2><span className="muted" role="status">{saveLabel}</span></div>
+      {error && <div className="save-error"><div className="alert alert-failed"><p role="alert" className="alert-title">{error}</p></div><Button kind="primary" className="action-spaced" type="button" onClick={() => { void flush(true); }}>Try saving again</Button></div>}
       <div className="designer-file card">
-        <div className="file-toolbar"><h2>{view === 'File' ? `${pair.name ?? 'web-reader'}.agent.md` : 'Instructions and settings'}</h2><span className="muted" role="status">{saveLabel}</span></div>
         {view === 'File' ? <>
           <FileLocation path={pair.path} documentId={boundDocument} />
           <p className="muted" id="file-hint">The --- block contains your agent’s name, model and tools. Instructions follow it. Your edits save automatically.</p>
@@ -281,7 +283,6 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
           {currentCatalog && (!currentCatalog.reply || currentCatalog.reply.models.state === 'unavailable' || currentCatalog.reply.tools.state === 'unavailable') && <Button type="button" kind="secondary" onClick={() => setCatalogAttempt(attempt => attempt + 1)}>Refresh tools and models</Button>}
         </div>
         {pair.storage && <p className="muted">{storageCopy[pair.storage]}</p>}
-        {error && <div className="save-error"><p role="alert">{error}</p><Button kind="primary" className="action-spaced" type="button" onClick={() => { void flush(true); }}>Try saving again</Button></div>}
       </div>
       </div>
       <div className="designer-side">

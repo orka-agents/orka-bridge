@@ -92,7 +92,7 @@ export default function Run({ tests, documentId = SAMPLE_DOCUMENT_ID, onSnapshot
         </>}
         {actionMessage && <p role="status">{actionMessage}</p>}
         {message && <p role="status">{message}</p>}
-        {snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected) && <p role="alert">{errors[snapshot.error]}</p>}
+        {snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected) && <div className="alert alert-needs-you"><p role="alert" className="alert-title">{errors[snapshot.error]}</p></div>}
         {!running && !outdated && !uncertain && !cancellationLine && snapshot?.report?.verdict === 'failed' && <div className="test-next-step">
           <p>{snapshot.report.cases.some(c => c.verdict === 'failed' && c.phase !== 'Succeeded') ? 'The task did not finish successfully. Review its answer and tool activity below before trying again.' : 'The agent answered, but its checks failed. Compare the answer with the test, then adjust the instructions or test file.'}</p>
           {onEditInstructions && <Button type="button" kind="secondary" onClick={onEditInstructions}>Edit instructions</Button>}
