@@ -32,3 +32,5 @@
 .try-answer-value { font: 500 13px/20px var(--font-mono); font-variant-ligatures: none; overflow-wrap: anywhere; }
 .try-result-meta code { font-size: .92em; }
 .try-earlier-list { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+.try-about-copy { display: grid; gap: var(--space-1-5); font: var(--type-body); }
+.try-about-copy > p { margin: 0; }

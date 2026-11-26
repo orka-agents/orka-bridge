@@ -41,6 +41,22 @@ test('names this computer and keeps earlier tasks folded, newest first, without 
   const tasks = within(earlier).getAllByRole('article', { name: /^Earlier task/, hidden: true }).map(card => card.querySelector('.try-result-task')?.textContent);
   expect(tasks).toEqual(['Second task', 'First task']);
 });
+test('About tasks here says, folded, what is kept, that each task starts fresh, what Stop can promise and the way out', async () => {
+  await open();
+  const about = screen.getByText('About tasks here').closest('details')!;
+  expect(about.open).toBe(false);
+  expect(about.closest('.try-task')).toBe(screen.getByRole('region', { name: 'Try a task on this computer' }));
+  expect([...about.querySelectorAll('p')].map(p => p.textContent)).toEqual([
+    'Earlier tasks are kept only while Bridge is open.',
+    'Each task starts fresh and doesn’t remember earlier ones.',
+    'Stop asks the task to stop. A tool that already started may finish, and what it did isn’t undone.',
+    'If a task can’t be stopped, restart the workspace.',
+  ]);
+  // One task is one new conversation, so the conversation's message limit never applies here.
+  expect(about.textContent).not.toMatch(/\d/);
+  fireEvent.click(within(about).getByRole('button', { name: 'About tasks here' }));
+  expect(about.open).toBe(true);
+});
 test('an empty Try a task shows its labelled composer and where the result will appear, without routine status clutter', async () => {
   await open();
   expect(field().placeholder).toBe('Describe the task');
@@ -52,7 +68,7 @@ test('an empty Try a task shows its labelled composer and where the result will 
   expect(document.getElementById(field().getAttribute('aria-describedby')!)?.textContent).toContain('Enter runs the task · Shift+Enter for a new line');
   expect(runButton().closest('form')).toBe(field().closest('form'));
   expect(runButton().hasAttribute('disabled')).toBe(true);
-  expect(screen.queryByText('Earlier tasks', { exact: false })).toBeNull();
+  expect(screen.queryByText(/^Earlier tasks:/)).toBeNull();
 });
 test('one task is one fresh conversation: Enter starts clean, then runs exactly once, and the appended turn consumes the composer', async () => {
   send = () => (snapshot = { ...idle, state: 'preparing', busy: true, canSend: false });
@@ -265,6 +281,42 @@ test('Stop dispatches only stop, and its notice stays on that task after another
   snapshot = { ...idle, versions: [snapshot.versions[0], { turns: [{ ...turn, message: 'After Stop' }] }] }; await poll();
   const earlier = screen.getByText('Earlier tasks: 1').closest('details')!;
   expect(within(earlier).getByText('Stop requested. Execution termination is unconfirmed.')).toBeTruthy();
+});
+test('after Run task settles, focus returns to the task field', async () => {
+  send = () => (snapshot = { ...idle, state: 'preparing', busy: true, canSend: false });
+  await open(); fireEvent.change(field(), { target: { value: 'Hello' } });
+  runButton().focus(); fireEvent.click(runButton()); await settle();
+  expect(commands()).toEqual(['agent_chat_new', 'agent_chat_send']);
+  expect(runButton().hasAttribute('disabled')).toBe(true);
+  expect(document.activeElement).toBe(field());
+});
+test('after Run again settles, focus returns to the task field', async () => {
+  snapshot = { ...idle, versions: [{ turns: [turn] }] };
+  send = () => (snapshot = { ...snapshot, state: 'preparing', busy: true, canSend: false });
+  await open();
+  const again = screen.getByRole('button', { name: 'Run again' }); again.focus(); fireEvent.click(again); await settle();
+  expect(document.activeElement).toBe(field());
+});
+test.each(['Stop', 'Reconnect'])('after %s settles, focus returns to the task field', async name => {
+  snapshot = { ...idle, state: name === 'Stop' ? 'working' : 'observationLost', busy: name === 'Stop', canSend: false, versions: [{ turns: [{ ...turn, answer: null, phase: 'Running', finishedAt: null }] }] };
+  await open();
+  const button = within(result()).getByRole('button', { name }); button.focus(); fireEvent.click(button); await settle();
+  expect(commands()).toEqual([name === 'Stop' ? 'agent_chat_stop' : 'agent_chat_reconnect']);
+  expect(document.activeElement).toBe(field());
+});
+test('a settling command does not take focus back from a control the person moved to', async () => {
+  snapshot = { ...idle, state: 'working', busy: true, canSend: false, versions: [{ turns: [{ ...turn, answer: null, phase: 'Running', finishedAt: null }] }] };
+  let reply!: (value: ChatSnapshot) => void;
+  mockIPC(command => {
+    calls.push({ command, args: {} });
+    if (command === 'agent_chat_stop') return new Promise(resolve => { reply = resolve; });
+    return structuredClone(snapshot);
+  });
+  render(<>{element()}<button type="button">Elsewhere</button></>); await settle();
+  const stop = within(result()).getByRole('button', { name: 'Stop' }); stop.focus(); fireEvent.click(stop); await settle();
+  const elsewhere = screen.getByRole('button', { name: 'Elsewhere' }); elsewhere.focus();
+  await act(async () => { reply({ ...snapshot, state: 'stopRequested' }); }); await settle();
+  expect(document.activeElement).toBe(elsewhere);
 });
 test.each(['Pending', 'Queued', 'Scheduled', ''])('a working snapshot with phase %s shows waiting to start', async phase => {
   snapshot = { ...idle, state: 'working', busy: true, canSend: false, versions: [{ turns: [{ ...turn, answer: null, phase, finishedAt: null }] }] };

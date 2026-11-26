@@ -134,14 +134,22 @@ export default function TryTask({ documentId, agentName, model, blocked, active 
   const reason = blocked ?? (command ? 'Wait for this action to finish.' : awaitingTurn ? 'Wait for this task to be accepted.' : !snapshot ? 'Opening Try a task…'
     : held && ['observationLost', 'stopUnconfirmed'].includes(snapshot.state) ? 'Check the last task first: reconnect or stop it.'
     : !runnable ? 'Wait for the current task or test to finish.' : undefined);
-  const run = async (message: string) => {
+  // When a command settles, the control used may be disabled or gone. Hand focus back to the task field, unless the
+  // person moved it somewhere else while the command was in flight.
+  const settle = async (work: () => Promise<unknown>) => {
+    const before = document.activeElement;
+    await work();
+    const now = document.activeElement;
+    if (!now || now === document.body || now === before) composer.current?.focus();
+  };
+  const run = (message: string) => settle(async () => {
     if (reason || !message.trim()) return;
     const index = turns.length;
     // A new conversation first, so the task starts clean. A refusal (a held or busy task) stops here.
     if (await act('agent_chat_new') !== true) return;
     models.current.set(index, model);
     await act('agent_chat_send', message);
-  };
+  });
   const status = pending.current?.uncertain ? 'Checking whether your task was accepted. Do not run it again.'
     : command === 'agent_chat_stop' ? states.requestingStop
     : snapshot?.state === 'working' && current && ['', 'Pending', 'Queued', 'Scheduled'].includes(current.phase) ? 'Waiting to start…'
@@ -160,8 +168,8 @@ export default function TryTask({ documentId, agentName, model, blocked, active 
       ? ['Running', 'Finalizing'].includes(current.phase) ? 'Waiting for your agent’s reply…' : 'Waiting for your agent to start…'
     : undefined;
   const recovery = <>
-    {canStop && <Button type="button" kind="secondary" disabled={!!command || snapshot.state === 'requestingStop'} onClick={() => { void act('agent_chat_stop'); }}>Stop</Button>}
-    {canReconnect && <Button type="button" kind="secondary" disabled={!!command} onClick={() => { void act('agent_chat_reconnect'); }}>Reconnect</Button>}
+    {canStop && <Button type="button" kind="secondary" disabled={!!command || snapshot.state === 'requestingStop'} onClick={() => { void settle(() => act('agent_chat_stop')); }}>Stop</Button>}
+    {canReconnect && <Button type="button" kind="secondary" disabled={!!command} onClick={() => { void settle(() => act('agent_chat_reconnect')); }}>Reconnect</Button>}
   </>;
   // Without a turn for it yet, recovery belongs to the composer; once the task shows, to its result.
   const recoveryOnCard = !!current && !awaitingTurn && (canStop || canReconnect);
@@ -190,5 +198,14 @@ export default function TryTask({ documentId, agentName, model, blocked, active 
     {!!earlier.length && <Disclosure className="try-earlier" label={`Earlier tasks: ${earlier.length}`}>
       <div className="try-earlier-list">{earlier.map(({ turn, index }) => <Result key={index} label="Earlier task" turn={turn} model={models.current.get(index)} />)}</div>
     </Disclosure>}
+    {/* What Try a task keeps and what Stop can promise, from the native conversation path. */}
+    <Disclosure className="try-about" label="About tasks here">
+      <div className="try-about-copy muted">
+        <p>Earlier tasks are kept only while Bridge is open.</p>
+        <p>Each task starts fresh and doesn’t remember earlier ones.</p>
+        <p>Stop asks the task to stop. A tool that already started may finish, and what it did isn’t undone.</p>
+        <p>If a task can’t be stopped, restart the workspace.</p>
+      </div>
+    </Disclosure>
   </section>;
 }

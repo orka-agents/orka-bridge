@@ -16,9 +16,15 @@ test('a downloading workspace shows the AI card beside its one card, with one Ca
     if (command === 'cluster_places') return { places: [], persistenceState: 'complete', selectedKey: null };
     throw Error(command);
   });
-  render(<Setup onOpenExample={() => {}} />);
+  const openExample = vi.fn();
+  render(<Setup onOpenExample={openExample} />);
   const workspace = await screen.findByRole('region', { name: 'Workspace setup' });
   expect(screen.queryByRole('list', { name: 'Setup steps' })).toBeNull();
+  // Without Meet, the example's introduction is one quiet click away in the Workspace card.
+  const see = within(workspace).getByRole('button', { name: 'See your first agent' });
+  expect(see.className).toContain('button-quiet');
+  fireEvent.click(see);
+  expect(openExample).toHaveBeenCalledTimes(1);
   const ai = (await screen.findByRole('heading', { name: 'Connect the AI' })).closest('section')!;
   expect(ai.closest('.setup-side')).toBeTruthy();
   expect(workspace.closest('.setup-main')).toBeTruthy();

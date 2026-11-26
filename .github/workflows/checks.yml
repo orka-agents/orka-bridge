@@ -262,7 +262,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node ../scripts/native-recovery-windows.mjs src-tauri/target/debug/orka-bridge.exe windows-artifact/native-recovery core
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: Windows Chat agent and cluster renderer fixtures (no VM or credentials)
+      - name: Windows Try a task, agent and cluster renderer fixtures (no VM or credentials)
         if: runner.os == 'Windows' && matrix.suite == 'bundle'
         timeout-minutes: 4
         shell: pwsh

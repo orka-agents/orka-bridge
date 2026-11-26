@@ -104,7 +104,8 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
     return () => cancelAnimationFrame(frame);
   }, [sendRequest]);
   // One keyboard target: the failing local result, which then offers Edit instructions.
-  // Fix it first opens the folded tests card on the failure, with its Edit instructions.
+  // Asking to fix (Fix it first, Fix in Designer) opens the folded tests card on the failure, with its Edit
+  // instructions, whether it folded for a local failure or behind a Send.
   const [fixing, setFixing] = useState(false);
   useEffect(() => { setFixing(false); }, [boundDocument, localRun?.attemptId]);
   const focusLocalResult = (testId: string) => { setFixing(true); requestAnimationFrame(() => {
@@ -258,7 +259,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
   // and, like a Send in progress or settled, leaves This computer at its head line and closed test rows.
   const clusterChosen = place.kind === 'cluster' && !!place.target;
   const localFailed = !stale && localRun?.sourceCurrent !== false && localRun?.report?.verdict === 'failed';
-  const testsFolded = sendActive || clusterChosen && localFailed && !fixing;
+  const testsFolded = !fixing && (sendActive || clusterChosen && localFailed);
   const sendLeads = sendActive;
   const testsSection = pair && <section key="tests" className="designer-tests" aria-label="This computer"><h2 className="section-label">This computer</h2><div className="card">
         {instructionsMissing && !testDraft && <p>Write instructions in Agent view before running tests.</p>}
@@ -269,7 +270,7 @@ export default function Example({ sampleRevision = 0, actionRequest, onActionHan
         {setupPending && !testDraft && <><DesignerTests definitions={definitions} stale={false} /><Details hint="Test file">{testSource}</Details></>}
       </div></section>;
   const checksSection = pair && <section key="checks" className="designer-checks" aria-label="Team cluster">
-        <Send documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} agentName={savedName ?? pair.name} testCount={definitions?.length} onFixInDesigner={editInstructions} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} startSend={startSend} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} onActivity={setSendActive} />
+        <Send documentId={boundDocument} place={place} source={pair.source} model={readForm(draft).model} agentName={savedName ?? pair.name} testCount={definitions?.length} onFixInDesigner={() => { setFixing(true); editInstructions(); }} local={localRun} stale={stale} blocked={sendBlocked} onSeeInOverview={onSeeInOverview} startSend={startSend} onFixLocal={focusLocalResult} onChooseCluster={onChooseCluster} onReloadSource={reloadSource} onActivity={setSendActive} />
       </section>;
   return <>
     {creating && <NewAgent active={active} onRegistered={() => { if (onRegistered) onRegistered(); else if (mounted.current) setListAttempt(value => value + 1); }} model={currentCatalog?.reply?.defaultModel ?? undefined} onCreated={async id => {
