@@ -87,8 +87,8 @@ The proposed namespace and access model for team clusters is described in
   own Orka API or Kubernetes integration.
 - **Local VM:** The Bridge app itself is small. On first run it downloads a VM image, published as a GitHub release
   asset, containing a container runtime, [kind](https://kind.sigs.k8s.io/), a preconfigured Orka cluster, and kmx.
-  No separate installation is required. The planned runtimes are Apple's Virtualization framework on Apple silicon,
-  WSL2 on Windows, and QEMU/KVM on Linux. The image and build pipeline are not implemented yet. For scale: Orka's
+  No separate installation is required. The VM runs under Apple's Virtualization framework on Apple silicon and under
+  QEMU with Windows Hypervisor Platform on Windows. For scale: Orka's
   own images plus the kind node image are about 800 MB compressed, before the VM's operating system.
 - **Models:** Bridge uses your existing GitHub Copilot sign-in through a model gateway inside the VM. This route has
   been verified on a kind cluster: a native Orka agent fetched a real web page through Copilot with no API key and no
@@ -106,7 +106,7 @@ The initial focus is the local development and deployment experience described a
 - Teams and Telegram messaging
 - Skills and MCP tools in Designer
 - Session history across clusters
-- The VM image build, which the local VM choice needs, and its updates
+- VM image updates
 - Shared team clusters
 - Repository-based development with coding agents
 
@@ -116,9 +116,6 @@ issues for opportunities to contribute. The initial screens will land through ma
 one, comment on the relevant issue first to avoid duplicating work.
 
 ## Development
-
-The native shell opens Overview, Designer and Clusters with empty screens.
-It does not connect to kmx or a cluster yet.
 
 Install Node 26.5.0, npm 11.17.0, Rust 1.98.1 and the
 [Tauri system prerequisites](https://v2.tauri.app/start/prerequisites/).
