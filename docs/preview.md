@@ -45,7 +45,7 @@ your user profile. This includes room for the app, cached image, private VM
 copy, disk growth and working space. If you download the app to another drive,
 that drive also needs room for its archive and extraction.
 
-Setup itself checks for about 23 GiB free on a Mac, or 12 GiB on Windows,
+Setup itself checks for about 23 GiB free on a Mac, or 13 GiB on Windows,
 before it writes the image. The choice screen shows the figure for your build.
 
 Approximate sizes, rounded from measured packages:
@@ -53,7 +53,7 @@ Approximate sizes, rounded from measured packages:
 | Item | Windows | Mac |
 | --- | ---: | ---: |
 | Image download | 1.84 GiB | 2.23 GiB |
-| Image cache and private copy, before VM writes | 8.91 GiB | 6.52 GiB |
+| Image cache and private copy, before VM writes | 8.80 GiB | 6.52 GiB |
 | App archive / unpacked files | 53 / 425 MiB | 9 / 29 MiB |
 
 The sparse 32 GiB state disk grows as used. Windows's system disk can grow

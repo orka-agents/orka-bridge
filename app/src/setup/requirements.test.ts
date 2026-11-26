@@ -17,4 +17,7 @@ test('disk need appears only when both the free and kept figures were measured',
   for (const missing of [{ freeDiskBytes: null }, { setupDiskBytes: null }]) {
     expect(setupNeeds({ ...base, ...missing })).toBe('Downloads about 2.0 GB. Needs virtualization and 6.4 GB of memory. Data disk can grow to 34.4 GB.');
   }
+  // 24.21 GB would round down to 24.2; the need rounds up instead.
+  expect(setupNeeds({ ...base, freeDiskBytes: 24210000000 })).toContain('24.3 GB of free disk');
+  expect(setupNeeds({ ...base, freeDiskBytes: 24200000000 })).toContain('24.2 GB of free disk');
 });

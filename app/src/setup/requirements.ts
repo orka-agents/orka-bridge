@@ -23,6 +23,11 @@ export function formatRequirementGB(bytes: number) {
   return `${new Intl.NumberFormat(undefined, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(bytes / 1e9)} GB`;
 }
 
+// A needed amount rounds up, so meeting the shown figure always meets the check.
+function formatNeededGB(bytes: number) {
+  return formatRequirementGB(Math.ceil(bytes / 1e8) * 1e8);
+}
+
 export function setupTime(requirements: WorkspaceRequirements | null | undefined) {
   if (!requirements || requirements.downloadBytes === null) return 'Mostly a download';
   const download = `Mostly a ${formatRequirementGB(requirements.downloadBytes)} download`;
@@ -36,7 +41,7 @@ export function setupNeeds(requirements: WorkspaceRequirements) {
   const memory = `${formatRequirementGB(requirements.memoryBytes)} of memory`;
   const needs = requirements.freeDiskBytes === null || requirements.setupDiskBytes === null
     ? `Needs virtualization and ${memory}.`
-    : `Needs virtualization, ${memory} and ${formatRequirementGB(requirements.freeDiskBytes)} of free disk; about ${formatRequirementGB(requirements.setupDiskBytes)} stays in use.`;
+    : `Needs virtualization, ${memory} and ${formatNeededGB(requirements.freeDiskBytes)} of free disk; about ${formatRequirementGB(requirements.setupDiskBytes)} stays in use.`;
   return `${download}${needs} Data disk can grow to ${formatRequirementGB(requirements.stateDiskBytes)}.`;
 }
 
