@@ -1793,7 +1793,9 @@ _ = try capture("local-running", ["Waiting for answers", "Observed for"])
 localSize(1280, 800)
 scroll(4000)
 _ = try seek("Waiting for answers", -250)
-_ = try capture("local-running-wide", ["Waiting for answers", "Observed for", "Stop", "Copies the checksum from the page", "Awaiting result"])
+// While tests run, the wider AWAITING RESULT pill (x 1100-1222 at 1280x800) wraps reads-page's description after
+// "from the", leaving "page" alone on the next line, which Vision does not read. Require the drawn first line.
+_ = try capture("local-running-wide", ["Waiting for answers", "Observed for", "Stop", "reads-page Copies the checksum from the", "Awaiting result"])
 localSize(540, 640)
 scroll(4000)
 _ = try seek("Stop", -100)
