@@ -233,7 +233,7 @@ try {
         rows: shown('.place-row').map(row => ({ name: rect(row.querySelector('.place-summary')), pill: rect(row.querySelector(':scope > .pill')), action: rect(row.querySelector(':scope > button')), row: rect(row) })),
         checks: shown('.cluster-checks li').map(row => ({ row: rect(row), card: rect(row.closest('.cluster-card')) })),
         setup: (() => { const root = shown('.workspace-setup-grid')[0]; if (!root) return null; const get = selector => rect(root.querySelector(selector)); return { progress: get('.setup-progress'), model: get('.setup-model-slot:not(:empty)'), meet: get('.workspace-meet') }; })(),
-        designer: (() => { const root = shown('.designer-work')[0]; if (!root) return null; const get = selector => rect([...root.querySelectorAll(selector)].find(node => node.getClientRects().length)); return { tests: get('.designer-tests:not([hidden])'), editor: get('.designer-file'), send: get('.send-panel:not([hidden])'), history: get('.send-history') }; })(),
+        designer: (() => { const root = shown('.designer-work')[0]; if (!root) return null; const get = selector => rect([...root.querySelectorAll(selector)].find(node => node.getClientRects().length)); return { tests: get('.designer-tests:not([hidden])'), editor: get('.designer-editing') ?? get('.designer-file'), send: get('.send-panel:not([hidden])'), history: get('.send-history') }; })(),
         fallback: { file: rect(shown('.designer > .designer-file')[0]), history: rect(shown('.designer > .designer-checks .send-history')[0]) },
         guided: !!document.querySelector('.app-shell.guided'), hostShown: shown('.host-chip').length,
         // Guidance has no title-bar way out; a screen where setup stopped (a failed check, start, AI connection or test) offers Set up later.
@@ -1392,7 +1392,8 @@ try {
       await until(() => evaluate(`!!document.querySelector('.designer-work')`), 'Designer columns');
       const layout = await evaluate(`(() => {
         const tests = document.querySelector('.designer-tests').getBoundingClientRect();
-        const editor = document.querySelector('.designer-file').getBoundingClientRect();
+        // The editing column (its section label above the editor card) lines up with the tests section and its label.
+        const editor = (document.querySelector('.designer-editing') ?? document.querySelector('.designer-file')).getBoundingClientRect();
         const send = document.querySelector('.designer-checks').getBoundingClientRect();
         return { tests: { x: tests.x, y: tests.y, right: tests.right, bottom: tests.bottom }, editor: { x: editor.x, y: editor.y, right: editor.right, bottom: editor.bottom }, send: { x: send.x, y: send.y, right: send.right, bottom: send.bottom }, sendY: send.y, width: innerWidth, height: innerHeight, scrollWidth: document.querySelector('main').scrollWidth };
       })()`);
