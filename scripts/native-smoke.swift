@@ -236,19 +236,25 @@ func bodyBounds() -> CGRect {
     let bottom = statusBar.map { $0.minY - 8 } ?? rect.maxY - 8
     return CGRect(x: left, y: top, width: max(0, rect.maxX - left), height: max(0, bottom - top))
 }
-// The guided first run's title-bar row: the full-width row that holds the Setup progress list.
+// The guided first run's title-bar row: the full-width row that holds the Setup progress list. WebKit drops the
+// list role of an <ol> drawn with list-style: none (it reports a group), so match the labelled node as either.
 func guidedTitleRow() -> CGRect? {
     let rect = window()!.1
     guard var node = nativeElements().first(where: { element in
-        attribute(element, "AXRole") as? String == "AXList"
+        ["AXList", "AXGroup"].contains(attribute(element, "AXRole") as? String ?? "")
             && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Setup progress" }
     }) else { return nil }
+    let list = nativeBounds(node)
     for _ in 0..<8 {
         if let bounds = nativeBounds(node), bounds.width >= rect.width * 0.9, bounds.height < 100 { return bounds }
-        guard let parent = attribute(node, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { return nil }
+        guard let parent = attribute(node, "AXParent"), CFGetTypeID(parent) == AXUIElementGetTypeID() else { break }
         node = parent as! AXUIElement
     }
-    return nil
+    // WebKit may not expose the title bar's own element; then the row runs from the list down to the page's main
+    // landmark, which starts where the title bar ends.
+    guard let list, let main = nativeElements().first(where: { attribute($0, "AXSubrole") as? String == "AXLandmarkMain" }).flatMap(nativeBounds),
+          main.minY > list.maxY, main.minY - list.minY < 100 else { return nil }
+    return CGRect(x: rect.minX, y: list.minY, width: rect.width, height: main.minY - list.minY)
 }
 // The guided first run has no side door on a healthy setup screen: it ends when a cluster is in use (or at Set up
 // later, offered only where setup has stopped, which this runner's unknown virtualization check never reaches).

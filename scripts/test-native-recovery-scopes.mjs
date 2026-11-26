@@ -437,6 +437,10 @@ const model = (await readFile(new URL('./native-model-macos.swift', import.meta.
 const captureManifest = JSON.parse(await readFile(new URL('./native-model-captures.json', import.meta.url), 'utf8'));
 assert.ok(model.includes('let upgradeText = !found && name.hasPrefix("local-upgrade-") && nativeChatTextIsVisible(value, aboveFooter: true)'), 'upgrade OCR fallback must prove the unchanged expected substring in a fully visible native node');
 assert.ok(model.includes('require(found || nativeText || upgradeText || chatText || workspaceControl || overviewControl || overviewHeading'), 'native upgrade evidence must feed the original hard capture assertion');
+// Context choices are buttons named by their context; only an exact, drawn choice in a cluster picker capture may stand in for missed OCR.
+assert.ok(model.includes('let pickerChoice = !found && name.hasPrefix("cluster-picker-") && nativeWorkspaceButtonIsVisible(value)'), 'picker choices must fall back only to an exact visible named button');
+// The guided title-bar row is found from the Setup progress list, which WebKit reports as a group under list-style: none.
+assert.ok(smoke.includes('["AXList", "AXGroup"].contains(attribute(element, "AXRole") as? String ?? "")') && smoke.includes('main.minY > list.maxY, main.minY - list.minY < 100'), 'the guided row must come from the labelled Setup progress list');
 assert.match(model, /theme\s*==\s*"dark"\s*\?\s*\[\s*9\s*,\s*9\s*,\s*10\s*\]\s*:\s*\[\s*255\s*,\s*255\s*,\s*255\s*\]/, 'native model captures must declare exact Orka paper in both themes');
 assert.ok(model.includes('Native fixture does not use Orka paper'), 'native model captures must reject a different rendered paper colour');
 assert.ok(model.includes('let paper = pageGutter()') && model.includes('x: ((paper.x - windowFrame.minX) * CGFloat(image.width) / windowFrame.width).rounded(.down)') && model.includes('y: ((paper.y - windowFrame.minY) * CGFloat(image.height) / windowFrame.height).rounded(.down)'), 'native theme sampling must use an integral pixel in the page panel, below the title bar');
