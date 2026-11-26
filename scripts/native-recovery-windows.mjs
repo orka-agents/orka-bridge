@@ -13,7 +13,7 @@ const usage = 'Usage: node native-recovery-windows.mjs <executable> <output-dire
 if (!executableArgument || !outputArgument || process.argv.length > 5) throw Error(`Expected executable, output directory and optional capture scope. ${usage}`);
 if (!['all', 'core', 'chat-agent-clusters', 'workspace-upgrade'].includes(captureScope)) throw Error(`Unknown capture scope. ${usage}`);
 const executable = resolve(executableArgument), output = resolve(outputArgument);
-// Partition complete capture groups across fixed three-minute CI steps.
+// Partition complete capture groups across fixed four-minute CI steps.
 const runCore = captureScope === 'all' || captureScope === 'core';
 const runUi = captureScope === 'all' || captureScope === 'chat-agent-clusters';
 const runUpgrade = captureScope === 'all' || captureScope === 'workspace-upgrade';
