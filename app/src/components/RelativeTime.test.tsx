@@ -38,3 +38,9 @@ test('milliseconds from Overview retain an exact machine-readable and hover date
   expect(time.getAttribute('datetime')).toBe('2026-11-13T11:58:00.000Z');
   expect(time.title).toBe(new Date(timestamp).toLocaleString());
 });
+
+test('an age that follows other words starts in lower case', () => {
+  const { container } = render(<p>Checked <RelativeTime value={Date.now()} inline /></p>);
+  expect(container.textContent).toMatch(/^Checked just now/);
+  expect(container.querySelector('time')?.getAttribute('aria-label')).toMatch(/^just now\./);
+});

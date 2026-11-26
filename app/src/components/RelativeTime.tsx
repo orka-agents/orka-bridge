@@ -10,9 +10,11 @@ export function relativeTime(value: number, now = Date.now()): string {
 }
 
 // Ages refresh with the existing view; the exact timestamp is always available on hover.
-export function RelativeTime({ value }: { value: number }) {
+// inline: the age follows other words in a sentence ("Checked just now"), so it starts in lower case.
+export function RelativeTime({ value, inline = false }: { value: number; inline?: boolean }) {
   const date = new Date(value);
-  const exact = date.toLocaleString(), age = relativeTime(value);
+  const exact = date.toLocaleString(), relative = relativeTime(value);
+  const age = inline ? relative.charAt(0).toLowerCase() + relative.slice(1) : relative;
   return Number.isFinite(date.getTime())
     ? <time className="coming-control" tabIndex={0} dateTime={date.toISOString()} title={exact} aria-label={`${age}. ${exact}`}>
       {age}<span className="control-tip" aria-hidden="true">{exact}</span>
