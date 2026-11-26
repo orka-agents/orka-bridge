@@ -99,7 +99,7 @@
 .tool-picker code { color: var(--color-text-secondary); font-family: var(--font-mono); font-size: .92em; overflow-wrap: anywhere; }
 
 /* Tool picker: a card in the page under the tools, closed with its X, Escape, a choice or a press outside it. */
-.tool-picker { display: grid; gap: var(--space-1-5); max-height: 360px; overflow: auto; border: var(--border-editing) solid var(--color-text); border-radius: var(--radius-control); padding: var(--space-3); background: var(--color-card); color: var(--color-text); box-shadow: var(--shadow-popover); }
+.tool-picker { display: grid; gap: var(--space-1-5); max-height: min(440px, calc(100vh - 120px)); overflow: auto; border: var(--border-editing) solid var(--color-text); border-radius: var(--radius-control); padding: var(--space-3); background: var(--color-card); color: var(--color-text); box-shadow: var(--shadow-popover); }
 .tool-picker-title { font-weight: 700; }
 .tool-picker-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .tool-picker-head > .picker-close { margin: calc(-1 * var(--space-1)) calc(-1 * var(--space-1)) calc(-1 * var(--space-1)) 0; }
