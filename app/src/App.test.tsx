@@ -219,7 +219,7 @@ test('Overview fitting Try a task routes to the saved document on This computer'
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   const row = await screen.findByRole('article', { name: 'reader' });
   await user.click(within(row).getByRole('button', { name: 'Show places for reader' }));
-  await user.click(within(row).getByRole('button', { name: `${action} with reader` }));
+  await user.click(within(row).getByRole('button', { name: 'New task with reader' }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
   if (action === 'Try a task') await waitFor(() => expect(screen.getByRole('button', { name: 'Try a task', pressed: true })).toBeTruthy());
   else await waitFor(() => expect(calls.filter(call => call.command === 'agent_run')).toEqual([{ command: 'agent_run', args: { documentId: id } }]));

@@ -10,7 +10,7 @@ function PlaceRow({ card, actions }: { card: Card; actions: CardActions }) {
   const [details, setDetails] = useState(false);
   const id = useId();
   const action = card.status === 'passed' ? card.actions.find(a => a.id === 'chat') ?? card.actions.find(a => a.id === 'run') : card.actions.find(a => a.id === 'run');
-  const label = action?.id === 'chat' ? 'Try a task' : 'Run tests';
+  const label = action?.id === 'chat' ? 'New task' : 'Run tests';
   return <article className="overview-place" data-card-key={card.key} tabIndex={-1} aria-label={`${card.place}, ${card.pill ?? 'No recorded result'}`}>
     <div className="overview-place-head">
       <span className={card.remote ? 'overview-mono' : undefined}>{card.place}</span>

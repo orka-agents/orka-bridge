@@ -4,6 +4,8 @@
 .places-heading > h1 { flex-basis: 100%; min-width: 0; overflow-wrap: anywhere; }
 .places-heading > p { margin: 0; }
 .places-back { margin-bottom: 16px; }
+/* On a wide window the heading and list share one 904px column, so Add a cluster stays beside the list. */
+.places-workspace:has(> .places-list) { max-width: 904px; }
 /* The list's head: the page title and subtitle on the left, Add a cluster at the right. */
 .places-workspace:has(> .places-list) > .places-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-1) var(--space-4); }
 .places-workspace:has(> .places-list) > .places-heading > h1 { grid-column: 1; font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }

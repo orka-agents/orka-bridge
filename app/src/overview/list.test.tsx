@@ -143,7 +143,7 @@ test('AI gating applies only to fitting local action, remote Run and Open stay e
   ipc(); render(<Overview {...props} localAiConnected={false} />); const agent = await row();
   await userEvent.click(within(agent).getByRole('button', { name: 'Show places for reader' }));
   const local = within(agent).getByRole('article', { name: 'This computer, Passed' });
-  const chat = within(local).getByRole('button', { name: 'Try a task with reader' });
+  const chat = within(local).getByRole('button', { name: 'New task with reader' });
   expect(chat).toHaveProperty('disabled', true);
   expect(document.getElementById(chat.getAttribute('aria-describedby')!)?.textContent).toContain('Connect the AI');
   expect(within(agent).getByRole('button', { name: 'Open reader' })).toHaveProperty('disabled', false);
