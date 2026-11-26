@@ -199,6 +199,12 @@ try {
         tabs: shown('.page-tab').map(node => rect(node)), page: rect(main),
         host: rect(document.querySelector('.host-chip')), hostLabel: rect(document.querySelector('.host-label')), statusLine: rect(document.querySelector('.status-lines')), statusText: document.querySelector('.status-lines')?.textContent.trim() ?? '',
         names: shown('.tab-copy b').filter(node => node.getBoundingClientRect().width > 1).length,
+        // The icon rail keeps each name and status line in the page for assistive technology, clipped to a point.
+        guided: !!document.querySelector('.app-shell.guided'),
+        railNames: shown('.tab-copy').filter(node => node.getBoundingClientRect().width <= 1 && node.querySelector('b')?.textContent.trim()).length,
+        labels: shown('.page-tab').map(node => node.getAttribute('aria-label')),
+        described: shown('.page-tab').filter(node => document.getElementById(node.getAttribute('aria-describedby') ?? '')?.textContent.trim()).length,
+        brand: !!(document.querySelector('.brand b')?.getBoundingClientRect().width > 1 && document.querySelector('.sidebar-toggle')?.getClientRects().length),
         subtitles: shown('.tab-copy small').filter(node => getComputedStyle(node).display !== 'none').length,
         quiet: shown('.button-quiet').map(node => ({ start: getComputedStyle(node).paddingInlineStart, end: getComputedStyle(node).paddingInlineEnd })),
         scrollbar: { width: getComputedStyle(main).scrollbarWidth, color: getComputedStyle(main).scrollbarColor },
@@ -218,10 +224,21 @@ try {
     if (layout.scrollWidth > layout.clientWidth + 2) fail('page overflows horizontally');
     if (size === 'setup-fit' && layout.scrollHeight > layout.clientHeight + 2) fail('page overflows vertically');
     if (layout.tabs.length !== 4 || layout.tabs.some(tab => Math.abs(tab.x - layout.tabs[0].x) > 1 || Math.abs(tab.width - layout.tabs[0].width) > 1 || tab.right > layout.page.x) || layout.tabs.some((tab, index) => index > 0 && tab.y < layout.tabs[index - 1].bottom)) fail('sidebar tabs must stack in one column left of the page');
-    if (layout.width > 820 && (layout.host.right > layout.page.x || layout.host.y < layout.tabs.at(-1).bottom)) fail('status card must sit in the sidebar below the tabs');
-    if (layout.width <= 820 && layout.host.y < layout.page.bottom) fail('compact status bar must sit below the page');
-    if (layout.names !== 4 || layout.statusText && !(layout.statusLine?.width > 1) || !(layout.hostLabel?.width > 1)) fail('page names, place and status line must stay visible');
-    if (layout.width <= 820 && (layout.subtitles || layout.hostLabel.width > 160)) fail('compact subtitles/host label exceed their bounds');
+    // Narrow windows show the 60px icon rail with the status card's dot below the tabs; the guided first run keeps its
+    // labelled rail with the status card as a bar below the page.
+    const rail = layout.width <= 820 && !layout.guided;
+    const guidedCompact = layout.width <= 820 && layout.guided;
+    if (!guidedCompact && (layout.host.right > layout.page.x || layout.host.y < layout.tabs.at(-1).bottom)) fail('status card must sit in the sidebar below the tabs');
+    if (guidedCompact && layout.host.y < layout.page.bottom) fail('compact status bar must sit below the page');
+    if (rail) {
+      if (layout.page.x > 62 || layout.tabs.some(tab => tab.width > 46)) fail('narrow sidebar must be the 60px icon rail');
+      if (layout.names || layout.railNames !== 4 || layout.labels?.join() !== 'Home,Overview,Designer,Clusters' || layout.described !== 4) fail('rail tabs must keep their names and status descriptions for assistive technology, off screen');
+      if (!(layout.hostLabel && layout.hostLabel.width <= 1) || layout.statusText && !(layout.statusLine && layout.statusLine.width <= 1)) fail('rail status card must show only its dot and keep the place and status line for assistive technology');
+      if (!layout.brand) fail('narrow title bar must keep Bridge and the sidebar toggle');
+    } else {
+      if (layout.names !== 4 || layout.statusText && !(layout.statusLine?.width > 1) || !(layout.hostLabel?.width > 1)) fail('page names, place and status line must stay visible');
+      if (guidedCompact && (layout.subtitles || layout.hostLabel.width > 160)) fail('compact subtitles/host label exceed their bounds');
+    }
     if (layout.quiet.some(item => item.start !== '0px' || item.end !== '0px')) fail('quiet control has inline padding');
     if (layout.scrollbar.width !== 'thin' || layout.scrollbar.color === 'auto') fail('page scrollbar must be thin and themed');
     const expectedTheme = theme === 'dark' ? { page: 'rgb(9, 9, 10)', ink: 'rgb(244, 244, 245)' } : { page: 'rgb(255, 255, 255)', ink: 'rgb(11, 11, 12)' };

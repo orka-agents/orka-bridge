@@ -11,7 +11,7 @@ import { type RunSnapshot, runCall } from './designer/run-api';
 import FileMenu from './chrome/FileMenu';
 import ThemeButton from './chrome/ThemeButton';
 import SidebarToggle from './chrome/SidebarToggle';
-import { readSidebarCollapsed, writeSidebarCollapsed } from './chrome/sidebar';
+import { narrowWindow, readSidebarCollapsed, useNarrowWindow, writeSidebarCollapsed } from './chrome/sidebar';
 import OrkaSwitcher from './chrome/OrkaSwitcher';
 import WindowControls, { customTitleBar } from './chrome/WindowControls';
 import { finishGuidedFirstRun, guidedFirstRun, guidedStep, resumeGuidedFirstRun } from './firstrun/guided';
@@ -62,7 +62,26 @@ export default function App() {
   const guidedLeft = useRef(false);
   const leaveGuided = useCallback(() => { guidedLeft.current = true; finishGuidedFirstRun(); setGuided(false); }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
-  const toggleSidebar = useCallback(() => setSidebarCollapsed(value => { writeSidebarCollapsed(!value); return !value; }), []);
+  // Narrow windows always show the rail; there the toggle opens the full sidebar over the page until a page is chosen.
+  const narrow = useNarrowWindow();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const toggleSidebar = useCallback(() => {
+    if (narrowWindow()) { setSidebarOpen(value => !value); return; }
+    setSidebarCollapsed(value => { writeSidebarCollapsed(!value); return !value; });
+  }, []);
+  const overlay = !guided && narrow && sidebarOpen;
+  useEffect(() => { if (!narrow) setSidebarOpen(false); }, [narrow]);
+  useEffect(() => {
+    if (!overlay) return;
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) setSidebarOpen(false); };
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (!target?.closest('.page-nav, .status-bar, .sidebar-toggle-control')) setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', key);
+    document.addEventListener('pointerdown', outside);
+    return () => { window.removeEventListener('keydown', key); document.removeEventListener('pointerdown', outside); };
+  }, [overlay]);
   const overviewOpenRequest = useRef(0);
   const [overviewNotice, setOverviewNotice] = useState<string>();
   // Bridge opens on Clusters until Setup's first reads say whether anything is set up; a page the person picks first wins.
@@ -305,11 +324,11 @@ export default function App() {
     : cases ? 'tests passing' : 'ready to edit';
   const agentStateWord = agentStatus.match(/\b(passing|failing|running|cancelled|cancelling|unknown|unavailable|unconfirmed|not confirmed|ready)\b/);
   const tabStatus: Record<Page, string> = {
-    Home: 'Ask your agents',
+    Home: 'Give an agent a task',
     Overview: welcome ? '' : overviewCounts,
     Designer: agentName ? `${agentName}, ${agentStatus}` : !exampleOpen ? exampleReadOnly ? 'Ready after setup' : 'No agent open'
       : exampleState === 'failed' ? 'Example unavailable' : exampleState === 'loaded' ? 'Agent file' : 'Opening example…',
-    Clusters: remote ? place.target ? 'Access confirmed' : 'Choose a cluster' : welcome ? 'Start here' : view.tabLine,
+    Clusters: remote ? place.target ? `${place.target.context_name}, connected` : 'Choose a cluster' : welcome ? 'Start here' : returningWorkspace ? view.line : view.tabLine,
   };
   const tabTone = exampleReadOnly ? 'not-started' : stale || (run?.sourceCurrent === false && !!run.report) ? 'stale' : run?.state === 'running' ? 'running' : run?.cancellation === 'unconfirmed' ? 'needs-you' : run?.report?.verdict === 'failed' ? 'failed' : run?.report?.verdict === 'passed' ? 'passed' : 'not-started';
   const catalogConnected = run?.modelConnected ?? model === 'connected';
@@ -359,7 +378,7 @@ export default function App() {
   };
   const localLine = welcome ? 'Nothing is set up yet' : setup?.localVm === 'failed' || setup?.model === 'locked' && setup?.localVm === 'ready' ? setupDetail : view.footerLine;
   const footer = [
-    remote ? place.target ? `Cluster: ${place.target.context_name}` : 'Choose a cluster' : localLine,
+    remote ? place.target ? `Orka in ${place.target.service_namespace}/${place.target.service_name}` : 'Not connected' : localLine,
     exampleState === 'loaded' && (saveState !== 'saved' || saveNotice.id === documentId && saveNotice.edited) ? { saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: 'Not saved' }[saveState] : undefined,
   ].filter(Boolean);
   const checkFirstTest = () => {
@@ -369,10 +388,10 @@ export default function App() {
   };
   return (
     // The guided first run has no sidebar toggle, so it always shows the full sidebar.
-    <div className={guided ? 'app-shell guided' : 'app-shell'} data-sidebar={!guided && sidebarCollapsed ? 'collapsed' : undefined}>
+    <div className={guided ? 'app-shell guided' : 'app-shell'} data-sidebar={guided ? undefined : overlay ? 'overlay' : sidebarCollapsed ? 'collapsed' : undefined}>
       <header className="title-bar" data-tauri-drag-region={customTitleBar() ? 'deep' : undefined}>
         <div className="title-bar-start">
-          {!guided && <SidebarToggle collapsed={sidebarCollapsed} onToggle={toggleSidebar} />}
+          {!guided && <SidebarToggle collapsed={narrow ? !overlay : sidebarCollapsed} onToggle={toggleSidebar} />}
           <span className="brand"><img src={mark} width="22" height="22" alt="Orka" /><b>Bridge</b></span>
           <FileMenu />
         </div>
@@ -391,7 +410,7 @@ export default function App() {
               aria-label={name} aria-describedby={`tab-status-${name}`}
               aria-current={page === name ? 'page' : undefined}
               onClick={() => {
-                setDocumentAction(undefined);
+                setDocumentAction(undefined); setSidebarOpen(false);
                 if (name === 'Clusters' && page === 'Clusters') localCluster.current?.showPlaces();
                 if (name === 'Designer' && !exampleOpen) openDesigner();
                 else setPage(name);

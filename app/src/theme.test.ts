@@ -53,32 +53,44 @@ describe('Orka ink and paper theme contract', () => {
       ['color-text-secondary', 'color-tint-stale'],
     ]) expect(contrast(palette[ink], palette[surface])).toBeGreaterThanOrEqual(4.5);
   });
-  it('declares themed thin scrollbars and a sidebar of full-width page buttons', () => {
+  it('declares themed thin scrollbars and a flat page beside a sidebar of full-width page buttons', () => {
     const shell = readFileSync('src/shell.css', 'utf8');
     const controls = readFileSync('src/components/controls.css', 'utf8');
     expect(shell).toMatch(/scrollbar-width:\s*thin/);
     expect(shell).toMatch(/scrollbar-color:\s*var\(--color-text-tertiary\)\s+var\(--color-page\)/);
-    expect(shell).toMatch(/\.app-shell\s*\{[^}]*grid-template-areas:\s*"title title"\s*"nav main"\s*"status main"/);
-    expect(shell).toMatch(/\.page-tab\s*\{[^}]*width:\s*100%/);
-    // Narrow windows keep a rail with page names, and the status card becomes a bar below the page, as main's footer was.
-    const compact = shell.slice(shell.indexOf('@media (max-width: 820px)'));
-    expect(compact).toMatch(/\.app-shell\s*\{[^}]*--sidebar-width:\s*76px;[^}]*grid-template-areas:\s*"title title"\s*"nav main"\s*"status status"/);
-    expect(compact).toMatch(/\.brand b, \.nav-group-label, \.tab-copy small\s*\{\s*display:\s*none/);
-    expect(compact).not.toMatch(/\.tab-copy\s*\{[^}]*display:\s*none|\.tab-copy b[^{]*\{[^}]*display:\s*none|clip-path|\.status-lines[^{]*\{[^}]*(display:\s*none|position:\s*absolute)|\.host-label[^{]*\{[^}]*(display:\s*none|position:\s*absolute)/);
+    expect(shell).toMatch(/\.app-shell\s*\{[^}]*--sidebar-width:\s*232px;[^}]*grid-template-areas:\s*"title title"\s*"nav main"\s*"status main";[^}]*background: var\(--color-bar\)/);
+    // The frame is the bar colour with hairlines under the title bar and beside the sidebar; the page is flat paper.
+    expect(shell).toMatch(/\.title-bar\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\);[^}]*min-height:\s*44px;[^}]*border-bottom: 1px solid var\(--color-border-strong\);[^}]*background: var\(--color-bar\)/);
+    expect(shell).toMatch(/\.page-content\s*\{[^}]*border-left: 1px solid var\(--color-border-strong\);[^}]*background: var\(--color-page\)/);
+    expect(shell).not.toMatch(/\.page-content\s*\{[^}]*(box-shadow|border-radius|margin:)/);
+    expect(shell).toMatch(/\.page-tab\s*\{[^}]*width:\s*100%[^}]*min-height: 44px/);
+    expect(shell).toMatch(/\.page-tab\[aria-current="page"\]\s*\{\s*background: var\(--color-well\);/);
+    expect(shell).toMatch(/\.status-bar\s*\{[^}]*border: var\(--border-control\) solid var\(--color-text\)/);
     expect(controls).toMatch(/\.button-quiet\s*\{[^}]*padding-inline:\s*0/);
   });
-  it('folds the wide sidebar to a 60px rail that keeps names and status for assistive technology', () => {
+  it('folds the sidebar to a 60px rail that keeps names and status for assistive technology, wide by choice and narrow always', () => {
     const shell = readFileSync('src/shell.css', 'utf8');
-    expect(shell).toMatch(/\.app-shell\s*\{[^}]*--sidebar-width:\s*248px;/);
-    expect(shell).toMatch(/\.title-bar\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\);[^}]*min-height:\s*44px/);
-    // The folded rail applies to wide windows only, so the narrow rules after it keep their visible names and status bar.
+    // The folded rail in wide windows and the narrow rail are the same rules for two selectors.
     const folded = shell.slice(shell.indexOf('@media (min-width: 821px)'), shell.indexOf('@media (max-width: 820px)'));
+    const compact = shell.slice(shell.indexOf('@media (max-width: 820px)'), shell.indexOf('@media (max-width: 600px)'));
+    const rail = compact.split('\n').filter(line => line.includes('.app-shell:not(.guided')).join('\n');
     expect(folded).toMatch(/\.app-shell\[data-sidebar="collapsed"\]\s*\{\s*--sidebar-width:\s*60px;\s*\}/);
-    expect(folded).toMatch(/\.app-shell\[data-sidebar="collapsed"\] :is\(\.nav-group-label, \.tab-copy, \.host-label, \.host-chip \.chip, \.status-lines, \.checks-status\)\s*\{[^}]*position: absolute;[^}]*clip-path: inset\(50%\)/);
-    expect(folded).toMatch(/\.page-tab::after\s*\{\s*content: attr\(aria-label\)/);
-    expect(folded).not.toMatch(/display:\s*none/);
-    const compact = shell.slice(shell.indexOf('@media (max-width: 820px)'));
-    expect(compact).toMatch(/\.sidebar-toggle-control\s*\{\s*display:\s*none/);
+    expect(rail).toMatch(/\.app-shell:not\(\.guided\)\s*\{\s*--sidebar-width:\s*60px;\s*\}/);
+    for (const [block, shellSelector] of [[folded, '.app-shell[data-sidebar="collapsed"]'], [rail, '.app-shell:not(.guided, [data-sidebar="overlay"])']] as const) {
+      const at = (rule: string) => block.split('\n').find(line => line.trimStart().startsWith(`${shellSelector} ${rule}`)) ?? '';
+      expect(at(':is(.nav-group-label, .tab-copy, .host-label, .host-chip .chip, .status-lines, .checks-status)')).toMatch(/position: absolute;[^}]*clip-path: inset\(50%\)/);
+      expect(at('.page-tab::after')).toMatch(/content: attr\(aria-label\)/);
+      expect(at('.status-bar')).toMatch(/place-items: center/);
+      expect(block).not.toMatch(/display:\s*none/);
+    }
+    // Narrow windows keep Bridge and the toggle, which opens the full sidebar over the page.
+    expect(compact).not.toMatch(/\.sidebar-toggle-control\s*\{[^}]*display:\s*none/);
+    expect(rail).not.toMatch(/\.brand b/);
+    expect(compact).toMatch(/\.app-shell\[data-sidebar="overlay"\]:not\(\.guided\)::before\s*\{[^}]*width: 232px/);
+    // The guided first run keeps its labelled rail and the status card as a bar below the page, with its text visible.
+    const guided = compact.split('\n').filter(line => line.includes('.app-shell.guided')).join('\n');
+    expect(guided).toMatch(/\.app-shell\.guided\s*\{[^}]*--sidebar-width:\s*76px;[^}]*grid-template-areas:\s*"title title"\s*"nav main"\s*"status status"/);
+    expect(guided).not.toMatch(/clip-path|\.tab-copy b[^{]*\{[^}]*display:\s*none|\.status-lines[^{]*\{[^}]*(display:\s*none|position:\s*absolute)/);
   });
   it('uses the system dark preference and bundled reading and code families', () => {
     expect(css).toContain('@media (prefers-color-scheme: dark)');
@@ -110,7 +122,8 @@ describe('Orka ink and paper theme contract', () => {
     const shell = readFileSync('src/shell.css', 'utf8');
     const controls = readFileSync('src/components/controls.css', 'utf8');
     expect(designSystem).not.toContain('border-radius: 999px');
-    expect(shell).toMatch(/\.tile-overview, \.tile-designer, \.tile-clusters\s*\{[^}]*color: var\(--color-text\);[^}]*background: var\(--color-icon-tile\)/s);
+    // Sidebar tiles are outlined, not filled, so they show on the bar in both themes.
+    expect(shell).toMatch(/\.tile-overview, \.tile-designer, \.tile-clusters\s*\{[^}]*color: var\(--color-text\);[^}]*background: transparent;[^}]*border: var\(--border-control\) solid var\(--color-border-strong\)/s);
     expect(controls).toMatch(/\.button-danger\s*\{\s*color: var\(--color-status-failed\);/);
     expect(css).toMatch(/\.view-switch button\[aria-pressed="true"\]\s*\{[^}]*box-shadow: inset 0 0 0 1px var\(--color-border-strong\);/);
     expect(css).not.toMatch(/\.view-switch button\[aria-pressed="true"\]\s*\{[^}]*outline:/);

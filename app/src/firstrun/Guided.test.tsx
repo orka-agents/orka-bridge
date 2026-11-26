@@ -89,7 +89,9 @@ test('the status card stays during guidance and at narrow widths keeps its text 
   const guided = readFileSync('src/firstrun/firstrun.css', 'utf8');
   const shellCss = readFileSync('src/shell.css', 'utf8');
   expect(guided).not.toMatch(/status-bar[^}]*display:\s*none/);
-  const compact = shellCss.slice(shellCss.indexOf('@media (max-width: 820px)'));
+  // Outside guidance, narrow windows fold to an icon rail; the guided run's own narrow rules keep the text on screen.
+  const compact = shellCss.slice(shellCss.indexOf('@media (max-width: 820px)')).split('\n').filter(line => line.includes('.app-shell.guided')).join('\n');
+  expect(compact).toMatch(/\.app-shell\.guided \.status-bar\s*\{/);
   expect(compact).not.toMatch(/\.status-lines[^{]*\{[^}]*display:\s*none/);
   expect(compact).not.toMatch(/clip-path/);
 });

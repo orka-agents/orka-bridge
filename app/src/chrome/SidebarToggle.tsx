@@ -1,12 +1,13 @@
 import { useEffect } from 'react';
 import { Button } from '../components/Button';
-import { isSidebarShortcut, narrowWindow, sidebarShortcutKeys, sidebarShortcutLabel } from './sidebar';
+import { isSidebarShortcut, sidebarShortcutKeys, sidebarShortcutLabel } from './sidebar';
 
-// Folds the sidebar to an icon rail and back. Hidden in narrow windows, where the rail is always shown.
+// Folds the sidebar to an icon rail and back. In narrow windows, where the rail is always shown, it opens the full
+// sidebar over the page instead; App decides which.
 export default function SidebarToggle({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || !isSidebarShortcut(event) || narrowWindow()) return;
+      if (event.defaultPrevented || event.repeat || !isSidebarShortcut(event)) return;
       event.preventDefault();
       onToggle();
     };

@@ -1,4 +1,7 @@
-// The sidebar can fold to an icon rail. Narrow windows always show the rail, so the choice applies to wide ones.
+import { useEffect, useState } from 'react';
+
+// The sidebar can fold to an icon rail. Narrow windows always show the rail, so the choice applies to wide ones;
+// there the toggle opens the full sidebar over the page instead.
 export const sidebarPreference = 'bridge.sidebar.v1';
 export const narrowQuery = '(max-width: 820px)';
 
@@ -10,6 +13,20 @@ export function writeSidebarCollapsed(collapsed: boolean) {
 }
 export function narrowWindow() {
   return typeof window.matchMedia === 'function' && window.matchMedia(narrowQuery).matches;
+}
+/** Whether the window is narrow, following resizes. Always false where matchMedia is missing (jsdom). */
+export function useNarrowWindow() {
+  const [narrow, setNarrow] = useState(narrowWindow);
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const query = window.matchMedia(narrowQuery);
+    const change = () => setNarrow(query.matches);
+    change();
+    if (typeof query.addEventListener !== 'function') return;
+    query.addEventListener('change', change);
+    return () => query.removeEventListener('change', change);
+  }, []);
+  return narrow;
 }
 
 // The keyboard shortcut is a proposal; this is its only definition, so it can be dropped here.

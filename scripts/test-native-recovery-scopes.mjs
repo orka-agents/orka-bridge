@@ -191,9 +191,11 @@ assert.throws(() => checkWelcome({ ...welcomeState, primary: false }));
 const layoutGate = source.slice(source.indexOf('  async function checkLayout('), source.indexOf('  // Setup-progress states:'));
 assert.ok(layoutGate.includes('sidebar tabs must stack in one column left of the page'));
 assert.ok(layoutGate.includes('status card must sit in the sidebar below the tabs'));
+assert.ok(layoutGate.includes('narrow sidebar must be the 60px icon rail'));
 const tab = i => ({ x: 8, y: 40 + 48 * i, width: 216, right: 224, bottom: 80 + 48 * i });
+const labels = ['Home', 'Overview', 'Designer', 'Clusters'];
 const wide = { width: 1280, scrollWidth: 1000, clientWidth: 1000, scrollHeight: 700, clientHeight: 700, forms: [], rows: [], checks: [],
-  tabs: [0, 1, 2, 3].map(tab), page: { x: 232 },
+  tabs: [0, 1, 2, 3].map(tab), page: { x: 232 }, guided: false, labels, described: 4, railNames: 0, brand: true,
   host: { x: 20, y: 740, right: 220 }, hostLabel: { width: 100 }, statusLine: { width: 180 }, statusText: 'Workspace ready', names: 4, subtitles: 4, quiet: [{ start: '0px', end: '0px' }],
   scrollbar: { width: 'thin', color: 'rgb(90, 90, 90) rgb(240, 240, 240)' }, theme: { page: 'rgb(255, 255, 255)', ink: 'rgb(11, 11, 12)' }, fallback: {} };
 async function gate(layout) {
@@ -201,9 +203,20 @@ async function gate(layout) {
     async () => layout, async () => {}, () => '', '');
 }
 await gate(wide);
-const compact = { ...wide, width: 540, subtitles: 0, tabs: [0, 1, 2, 3].map(i => ({ ...tab(i), width: 68, right: 72 })), page: { x: 76, bottom: 600 }, host: { x: 20, y: 608, right: 200 } };
+// Narrow windows: the 60px icon rail, names and status lines clipped for assistive technology, the dot below the tabs.
+const compact = { ...wide, width: 540, names: 0, railNames: 4, tabs: [0, 1, 2, 3].map(i => ({ ...tab(i), width: 44, right: 52 })), page: { x: 60, bottom: 640 },
+  host: { x: 8, y: 588, right: 52 }, hostLabel: { width: 1 }, statusLine: { width: 1 } };
 await gate(compact);
-for (const mutation of [{ host: { x: 20, y: 590, right: 200 } }, { names: 0 }, { statusLine: { width: 1 } }, { hostLabel: { width: 1 } }]) await assert.rejects(() => gate({ ...compact, ...mutation }));
+for (const mutation of [
+  { page: { x: 76, bottom: 640 } }, { tabs: compact.tabs.map(item => ({ ...item, width: 68, right: 72 })) },
+  { host: { x: 8, y: 100, right: 52 } }, { host: { x: 70, y: 588, right: 300 } },
+  { names: 4 }, { railNames: 3 }, { described: 3 }, { labels: labels.slice(1) },
+  { hostLabel: { width: 100 } }, { hostLabel: null }, { statusLine: { width: 180 } }, { statusLine: null }, { brand: false },
+]) await assert.rejects(() => gate({ ...compact, ...mutation }));
+// The guided first run keeps its labelled rail and the status card as a bar below the page.
+const guided = { ...wide, guided: true, width: 540, subtitles: 0, tabs: [0, 1, 2, 3].map(i => ({ ...tab(i), width: 68, right: 72 })), page: { x: 76, bottom: 600 }, host: { x: 20, y: 608, right: 200 } };
+await gate(guided);
+for (const mutation of [{ host: { x: 20, y: 590, right: 200 } }, { names: 0 }, { statusLine: { width: 1 } }, { hostLabel: { width: 1 } }, { subtitles: 4 }, { hostLabel: { width: 161 } }]) await assert.rejects(() => gate({ ...guided, ...mutation }));
 for (const mutation of [
   { tabs: wide.tabs.slice(1) },
   { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, x: 30 } : item) },
@@ -211,7 +224,7 @@ for (const mutation of [
   { tabs: wide.tabs.map((item, i) => i === 2 ? { ...item, y: 100 } : item) },
   { page: { x: 200 } },
   { host: { x: 20, y: 100, right: 220 } }, { host: { x: 240, y: 740, right: 400 } },
-  { width: 540 }, { width: 540, subtitles: 0, hostLabel: { width: 161 } },
+  { names: 3 }, { hostLabel: { width: 1 } }, { statusLine: { width: 1 } },
   { quiet: [{ start: '4px', end: '0px' }] }, { scrollbar: { width: 'auto', color: 'auto' } },
   { theme: { page: 'rgb(242, 241, 237)', ink: 'rgb(27, 32, 38)' } },
   { scrollHeight: 703 },
