@@ -3,20 +3,19 @@
    follow the theme; the orca and sea have their own dark drawings. */
 .page-content { container-type: size; isolation: isolate; }
 
-/* Chart lines, or the pod, fill the page from 24px in and 80px down, and stay put while the page scrolls. The
-   negative bottom margin cancels the space they take, so the content starts where it always did. */
-.page-content::before {
-  content: ''; display: none; position: sticky; top: 80px; z-index: -1; flex: none;
-  width: calc(100cqw + 2 * var(--page-pad) - 24px); height: calc(100cqh + 2 * var(--page-pad) - 80px);
-  margin: calc(80px - var(--page-pad)) 0 calc(-100cqh - var(--page-pad)) calc(24px - var(--page-pad));
-  /* At most 7% ink (8% in dark), so every text colour still reads at 4.5:1 over the darkest line. */
-  background: var(--color-text); opacity: .07; pointer-events: none;
-  -webkit-mask: url('./assets/art/chart.png') 0 100% / cover no-repeat; mask: url('./assets/art/chart.png') 0 100% / cover no-repeat;
+/* Chart lines, or the pod, are a background of the page panel itself, so they stay put while the page scrolls and
+   can never add a scrollbar. The files are already as faint as they should be (7% ink, 8% in dark), so every text
+   colour still reads at 4.5:1 over the darkest line. A strip of paper keeps the panel's left 24px clear: native
+   walks sample the paper there. */
+.page-content:is([data-page="Home"], [data-page="Overview"], [data-page="Designer"], [data-page="Clusters"]) {
+  --art-gutter: linear-gradient(var(--color-page), var(--color-page)) 0 0 / 24px 100% no-repeat;
+  --art-chart: url('./assets/art/chart-faint.png');
+  --art-pod: url('./assets/art/pod-faint.png');
+  background: var(--art-gutter), var(--art-chart) 100% 100% / cover no-repeat, var(--color-page);
 }
-.page-content:is([data-page="Home"], [data-page="Overview"], [data-page="Designer"], [data-page="Clusters"])::before { display: block; }
 /* An empty or filtered-out Overview and the Clusters list show the pod in the bottom right instead. */
-.page-content:is([data-page="Overview"]:has(.overview-empty, .overview-list > .empty-state), [data-page="Clusters"]:has(.places-list):not(.guided *))::before {
-  -webkit-mask: url('./assets/art/pod.png') 100% 100% / min(560px, 60%) auto no-repeat; mask: url('./assets/art/pod.png') 100% 100% / min(560px, 60%) auto no-repeat;
+.page-content:is([data-page="Overview"]:has(.overview-empty, .overview-list > .empty-state), [data-page="Clusters"]:has(.places-list):not(.guided *)) {
+  background: var(--art-gutter), var(--art-pod) 100% 100% / min(560px, 60%) auto no-repeat, var(--color-page);
 }
 
 /* The breaching orca above the Welcome and Home headlines. */
@@ -27,24 +26,22 @@
 /* The guided first run ends on a sea strip along the bottom of the page. It scrolls with the page and the space after
    the content keeps it clear of text. */
 .app-shell.guided .page-content {
-  background: url('./assets/art/sea.png') 100% 100% / calc(100% - 24px) auto no-repeat local, var(--color-page);
+  --art-sea: url('./assets/art/sea.png');
+  background: var(--art-sea) 100% 100% / calc(100% - 24px) min(170px, calc((100cqw + 2 * var(--page-pad) - 24px) * 207 / 2172)) no-repeat local, var(--art-gutter), var(--art-chart) 100% 100% / cover no-repeat, var(--color-page);
 }
-.app-shell.guided .page-content::after { content: ''; display: block; flex: none; height: calc((100cqw + 2 * var(--page-pad) - 24px) * 207 / 2172); }
+.app-shell.guided .page-content::after { content: ''; display: block; flex: none; height: min(170px, calc((100cqw + 2 * var(--page-pad) - 24px) * 207 / 2172)); }
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) .art-orca { background-image: url('./assets/art/orca-dark.png'); }
-  :root:not([data-theme="light"]) .app-shell.guided .page-content { background-image: url('./assets/art/sea-dark.png'); }
-  :root:not([data-theme="light"]) .page-content::before { opacity: .08; }
+  :root:not([data-theme="light"]) .page-content { --art-chart: url('./assets/art/chart-faint-dark.png'); --art-pod: url('./assets/art/pod-faint-dark.png'); --art-sea: url('./assets/art/sea-dark.png'); }
 }
 :root[data-theme="dark"] .art-orca { background-image: url('./assets/art/orca-dark.png'); }
-:root[data-theme="dark"] .app-shell.guided .page-content { background-image: url('./assets/art/sea-dark.png'); }
-:root[data-theme="dark"] .page-content::before { opacity: .08; }
+:root[data-theme="dark"] .page-content { --art-chart: url('./assets/art/chart-faint-dark.png'); --art-pod: url('./assets/art/pod-faint-dark.png'); --art-sea: url('./assets/art/sea-dark.png'); }
 
 /* Narrow windows keep the chart and the orca, smaller. */
 @media (max-width: 820px) {
-  .page-content:is([data-page="Overview"]:has(.overview-empty, .overview-list > .empty-state), [data-page="Clusters"]:has(.places-list):not(.guided *))::before { display: none; }
-  .app-shell.guided .page-content { background-image: none; }
-  :root:not([data-theme="light"]) .app-shell.guided .page-content, :root[data-theme="dark"] .app-shell.guided .page-content { background-image: none; }
+  .page-content:is([data-page="Overview"]:has(.overview-empty, .overview-list > .empty-state), [data-page="Clusters"]:has(.places-list):not(.guided *)) { background: var(--color-page); }
+  .app-shell.guided .page-content { background: var(--art-gutter), var(--art-chart) 100% 100% / cover no-repeat, var(--color-page); }
   .app-shell.guided .page-content::after { content: none; }
   .art-orca, .welcome-screen .art-orca, .home .art-orca { width: 160px; }
 }
