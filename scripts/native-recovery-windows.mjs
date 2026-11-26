@@ -584,8 +584,9 @@ try {
     if (!['send-ready', 'send-blocked', 'send-sending'].includes(name) && (probe.title !== 'Captured checksum from the page' || probe.id !== 'page-checksum')) throw Error('Captured title and code ID must both survive');
     if (name === 'send-earlier-target' && (!probe.text.includes('Earlier result on fixture-captured') || !probe.text.includes('To fixture-selected'))) throw Error('Earlier result and selected destination must be distinct and labelled');
     // While tests run, the Send card opens its Details to explain what Cancel keeps; Cancel stays the only action there.
+    // Its generated values keep their icon copy buttons (named "Copy <label>"), which are not Send actions.
     if (name === 'send-sending') {
-      if (!probe.detailsOpen || probe.extras.length || !probe.text.includes('Cancel tests requests cancellation')) throw Error('Running Send must open Details on what Cancel keeps, with no other actions: ' + JSON.stringify(probe));
+      if (!probe.detailsOpen || probe.extras.some(label => !/^Copy \S/.test(label)) || !probe.text.includes('Cancel tests requests cancellation')) throw Error('Running Send must open Details on what Cancel keeps, with no other actions: ' + JSON.stringify(probe));
     } else if (probe.detailsOpen !== details || details && !['Check again', 'Send as a separate agent'].every(label => probe.extras.includes(label))) throw Error('Resources Details did not expose the relocated controls');
     if (probe.scrollWidth > probe.width + 2) throw Error('Send overflows the native client width');
   }
@@ -603,7 +604,7 @@ try {
         changeDisabled: shown('.long-card-head button, .send-actions button').find(button => button.textContent.trim() === 'Change')?.disabled,
         buttons: shown('button').map(button => button.textContent.trim()), title: root.querySelector('.test-result > summary .test-name > span')?.textContent ?? '',
         id: root.querySelector('.test-result > summary code')?.textContent, text: root.innerText.replace(/\\s+/g, ' '),
-        detailsOpen: resources.open, extras: [...resources.querySelectorAll('button')].filter(button => button.getClientRects().length).map(button => button.textContent.trim()),
+        detailsOpen: resources.open, extras: [...resources.querySelectorAll('button')].filter(button => button.getClientRects().length).map(button => button.textContent.trim() || button.getAttribute('aria-label') || ''),
         width: innerWidth, scrollWidth: document.querySelector('main').scrollWidth };
     })()`);
     const shoot = async (suffix, selector) => {

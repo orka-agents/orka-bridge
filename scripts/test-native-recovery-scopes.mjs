@@ -123,6 +123,8 @@ for (const [name, header] of [
     assert.throws(() => checkSend(name, { ...probe, checks: sendProbe.checks }, false), 'running Send must not advertise readiness');
     assert.throws(() => checkSend(name, { ...probe, detailsOpen: false }, false), /what Cancel keeps/);
     assert.throws(() => checkSend(name, { ...probe, extras: ['Send as a separate agent'] }, false), /no other actions/);
+    checkSend(name, { ...probe, extras: ['Copy Planned agent', 'Copy Agent UID'] }, false);
+    assert.throws(() => checkSend(name, { ...probe, extras: [''] }, false), /no other actions/, 'an unnamed button is not a copy control');
   }
   if (name === 'send-blocked') assert.throws(() => checkSend(name, { ...probe, inlineChecks: ['allowed', 'blocked'] }, false));
   if (name === 'send-blocked') assert.throws(() => checkSend(name, { ...probe, header: [{ ...header[0], disabled: false }, header[1]] }, false), /must stay disabled/);
