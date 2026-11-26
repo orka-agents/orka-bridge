@@ -79,6 +79,46 @@ test('Fix it first focuses the visible partial failed result while a local suite
   expect(document.activeElement?.tagName).toBe('SUMMARY');
   expect(screen.queryByRole('dialog')).toBeNull();
 });
+// The tests card folds while a Send leads and when a local failure is told in the Send card; asking to fix opens
+// it on the failure, with Edit instructions, whichever caused the fold.
+async function expectOpenOnFailure() {
+  const card = await screen.findByRole('region', { name: 'Tests on this computer' });
+  await waitFor(() => expect(card.classList.contains('example-run-collapsed')).toBe(false));
+  const row = card.querySelector<HTMLDetailsElement>('[data-result-id="reads-the-title"]')!;
+  expect(row.open).toBe(true);
+  expect(within(card).getByRole('button', { name: 'Edit instructions' })).toBeTruthy();
+}
+test.each([['a local failure', null], ['a Send result', sendView]] as const)('Fix it first opens the tests card folded by %s on the failure', async (_cause, send) => {
+  native(localResult, send); const user = userEvent.setup();
+  render(<Example remote place={place} />);
+  const card = await screen.findByRole('region', { name: 'Tests on this computer' });
+  await within(card).findByText('reads-the-title');
+  await waitFor(() => expect(card.classList.contains('example-run-collapsed')).toBe(true));
+  expect(within(card).queryByRole('button', { name: 'Edit instructions' })).toBeNull();
+  const sendButton = await screen.findByRole('button', { name: 'Send and run tests' });
+  await waitFor(() => expect((sendButton as HTMLButtonElement).disabled).toBe(false));
+  await user.click(sendButton);
+  await user.click(await screen.findByRole('button', { name: 'Fix it first' }));
+  await expectOpenOnFailure();
+  await waitFor(() => expect(document.activeElement?.closest('[data-result-id]')?.getAttribute('data-result-id')).toBe('reads-the-title'));
+});
+test('Fix in Designer on a failed Send result opens the tests card folded behind it, with Edit instructions', async () => {
+  native(localResult, sendView); const user = userEvent.setup();
+  render(<Example remote place={place} />);
+  const card = await screen.findByRole('region', { name: 'Tests on this computer' });
+  await waitFor(() => expect(card.classList.contains('example-run-collapsed')).toBe(true));
+  await user.click(await screen.findByRole('button', { name: 'Fix in Designer' }));
+  await expectOpenOnFailure();
+  await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Instructions' })));
+});
+test('without a request to fix, a Send result keeps the tests card folded', async () => {
+  native(localResult, sendView);
+  render(<Example remote place={place} />);
+  const card = await screen.findByRole('region', { name: 'Tests on this computer' });
+  await screen.findByRole('button', { name: 'Fix in Designer' });
+  await waitFor(() => expect(card.classList.contains('example-run-collapsed')).toBe(true));
+  expect(within(card).queryByRole('button', { name: 'Edit instructions' })).toBeNull();
+});
 test('the Send card stands in the right column under Team cluster, with no page-head Send control', async () => {
   const ipc = native();
   render(<Example remote place={place} />);
