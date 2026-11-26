@@ -1724,9 +1724,10 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 900, "compact"), (540, 
         let pixels = proof.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
         let failedCountMiss = theme == "dark" && size == "wide" && scene == "earlier-failed"
             && pixels.contains("lot & passed, derore your edle")
-            && pixels.contains("Failed") && pixels.contains("Run tests")
+            && showsText(pixels, "Failed") && pixels.contains("Run tests")
             && nativeOverviewResultIsVisible("pr-summary", before: "release-notes", "1 of 2 passed, before your edit")
-        require(expected.allSatisfy { pixels.contains($0) } || failedCountMiss,
+        // Pills are drawn in CSS capitals, so the pill words may read in capitals; nothing else may differ.
+        require(expected.allSatisfy { showsText(pixels, $0) } || failedCountMiss,
             "Expanded Overview result must have exact OCR or paired native evidence")
         scroll(4000)
         setOverviewExpanded(agent, false)
