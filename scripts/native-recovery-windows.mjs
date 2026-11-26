@@ -500,7 +500,7 @@ try {
       'send-unsupported': ['Check cluster status'], 'send-earlier-target': ['Send and run tests', 'See in Overview'] }[name];
     if (probe.header.map(button => button.label).join('|') !== labels.join('|')
         || probe.header[0]?.primary !== (name !== 'send-sending') || probe.header.slice(1).some(button => button.primary)) throw Error('Wrong Send header actions: ' + JSON.stringify(probe));
-    if (probe.heading !== 'To fixture-selected' || !probe.summary.includes('web-reader') || !probe.summary.includes('1 test')) throw Error('Send destination/compact summary missing: ' + JSON.stringify(probe));
+    if (probe.heading !== (['send-ready', 'send-blocked'].includes(name) ? 'Send your agent' : 'To fixture-selected') || name !== 'send-sending' && (!probe.summary.includes('web-reader') || !probe.summary.includes('1 test'))) throw Error('Send destination/compact summary missing: ' + JSON.stringify(probe));
     const checks = ['send-blocked', 'send-sending'].includes(name) ? '1 check passed' : 'Ready to send: 1 check passed';
     if (!probe.checks.startsWith(checks) || probe.checksOpen || probe.inlineChecks.join('|') !== (name === 'send-blocked' ? 'blocked' : '')) throw Error('Send must fold allowed/advisory checks, count only allowed and retain inline blockers: ' + JSON.stringify(probe));
     if (probe.changeDisabled !== (name === 'send-sending')) throw Error('Change must be disabled only during Send');
@@ -518,7 +518,7 @@ try {
       const resources = [...root.querySelectorAll('.card-details')].find(item => item.querySelector('summary')?.textContent.includes('Resources and file hashes'));
       const shown = selector => [...root.querySelectorAll(selector)].filter(button => button.getClientRects().length);
       return { header: shown('.long-card-head button').filter(button => button.textContent.trim() !== 'Change').map(button => ({ label: button.textContent.trim(), primary: button.classList.contains('button-primary') })),
-        heading: root.querySelector('.long-card-head h3').textContent.trim(), summary: root.querySelector('[aria-label="What you send"] p')?.textContent ?? '',
+        heading: root.querySelector('.long-card-head h3').textContent.trim(), summary: root.querySelector('.send-what')?.textContent ?? '',
         checks: root.querySelector('.send-checks > summary').textContent.trim(), checksOpen: root.querySelector('.send-checks').open,
         inlineChecks: shown('.send-preflight:not(details) li').map(row => row.dataset.state),
         changeDisabled: shown('.long-card-head button').find(button => button.textContent.trim() === 'Change')?.disabled,
@@ -918,7 +918,8 @@ try {
       await clickAction('Open');
     } else if (name.startsWith('designer') || name.startsWith('local-cancel-') || name.startsWith('chat-') || name.startsWith('new-agent-')) await clickAction('Read its instructions');
     if (sendScene) {
-      await clickAction('Send to a cluster');
+      // The Send card is always in Designer's right column; bring it into view.
+      await evaluate(`document.querySelector('.send-panel').scrollIntoView({ block: 'start' })`);
       await captureSendScene(theme, size, name);
       return;
     }
@@ -1080,12 +1081,11 @@ try {
       const state = await evaluate(`({ historyHidden: !document.querySelector('.designer-checks .send-history')?.getClientRects().length, catalog: window.__bridgeCatalogCalls, runPrimary: [...document.querySelectorAll('.example-run button')].some(button => button.textContent === 'Run tests' && button.classList.contains('button-primary')) })`);
       if (await evaluate(`document.body.innerText.includes('Your agent selection could not be saved')`)) throw Error('Designer fixture failed to acknowledge document selection');
       if (name === 'designer' && (state.catalog.length || state.runPrimary)) throw Error('Disconnected Designer presents a runnable primary/catalog: ' + JSON.stringify(state));
-      // Send is retained but hidden until used or a cluster is selected; its header entry and Past Sends section are always present.
+      // The Send card and its Team cluster heading are always shown under This computer, with Past Sends as an open card below.
       const sendShown = await evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length`);
-      if (sendShown !== (name === 'designer-remote')) throw Error(`${name}: Send card visibility is wrong (visible=${sendShown})`);
-      if (!await evaluate(`!!document.querySelector('.send-panel') && !!document.querySelector('.agent-selector select') && [...document.querySelectorAll('.send-entry button')].some(b => b.textContent === 'Send to a cluster')`)) throw Error(`${name}: retained Send, header picker or Send entry is missing`);
-      if (!sendShown && await evaluate(`[...document.querySelectorAll('.designer-checks h2')].some(h => h.getClientRects().length)`)) throw Error(`${name}: hidden Send left its team heading`);
-      if (await evaluate(`document.querySelector('.send-history details')?.open !== false`)) throw Error(`${name}: Past Sends must start closed`);
+      if (!sendShown) throw Error(`${name}: Send card must always be shown`);
+      if (!await evaluate(`!!document.querySelector('.agent-selector select') && !document.querySelector('.send-entry') && [...document.querySelectorAll('.designer-checks h2')].some(h => h.textContent === 'Team cluster' && h.getClientRects().length)`)) throw Error(`${name}: header picker or Team cluster heading is missing, or a page-head Send entry returned`);
+      if (await evaluate(`!document.querySelector('.send-history > h3') || !!document.querySelector('.send-history > details')`)) throw Error(`${name}: Past Sends must be an open card`);
       if (name === 'designer-remote' && (state.historyHidden || !state.catalog.some(call => call.command === 'cluster_catalog' && call.args.targetId === '00000000-0000-4000-8000-000000000002' && call.args.providerId === '00000000-0000-4000-8000-000000000003'))) throw Error('Remote catalog is not scoped to the selected cluster/AI');
     }
     if (name.startsWith('local-cancel-')) {
@@ -1528,14 +1528,14 @@ try {
         if (type.model?.value !== 'gpt-5.6-terra' || type.model.shown !== 'Workspace default: GPT-5.6 Terra' || type.defaultRepeated) throw Error(`${name}: workspace default needs a friendly label, unchanged value and no repeated default: ${JSON.stringify(type)}`);
       }
       // Try a task supplies a place subtitle. Its header may grow, but controls stay in their row and File restores Agent's geometry.
-      const header = async () => { await evaluate(`document.querySelector('main').scrollTop = 0`); return evaluate(`(() => { const r = s => { const b = document.querySelector(s)?.getBoundingClientRect(); return b && { x: b.x, y: b.y, w: b.width, h: b.height }; }; return { switch: r('.view-switch'), picker: r('.agent-selector'), send: r('.send-entry'), name: r('.agent-name') }; })()`); };
+      const header = async () => { await evaluate(`document.querySelector('main').scrollTop = 0`); return evaluate(`(() => { const r = s => { const b = document.querySelector(s)?.getBoundingClientRect(); return b && { x: b.x, y: b.y, w: b.width, h: b.height }; }; return { switch: r('.view-switch'), picker: r('.agent-selector'), name: r('.agent-name') }; })()`); };
       const base = await header();
       for (const view of ['Try a task', 'File']) {
         await clickAction(view);
         await until(async () => await pressed() === view, `${view} view`);
         const now = await header();
         for (const key of Object.keys(base)) if (!base[key] || !now[key] || (view === 'Try a task' ? key === 'name' ? ['x', 'h'] : ['x', 'w', 'h'] : ['x', 'y', 'w', 'h']).some(k => Math.abs(base[key][k] - now[key][k]) > 2)) throw Error(`${name}: header ${key} moved in ${view}: ${JSON.stringify([base, now])}`);
-        if (view === 'Try a task' && ['picker', 'send'].some(key => Math.abs(now[key].y - base[key].y - (now.switch.y - base.switch.y)) > 2)) throw Error(`${name}: Try a task controls left their header row`);
+        if (view === 'Try a task' && ['picker'].some(key => Math.abs(now[key].y - base[key].y - (now.switch.y - base.switch.y)) > 2)) throw Error(`${name}: Try a task controls left their header row`);
         if (view === 'Try a task') {
           await until(() => evaluate(`!!document.querySelector('.try-task')?.getClientRects().length && !document.body.innerText.includes('Opening Try a task')`), 'Try a task snapshot');
           const chat = await evaluate(`(() => { const root = document.querySelector('.try-task'); return { text: root.innerText, run: root.querySelector('button[type="submit"]')?.disabled }; })()`);
@@ -1556,13 +1556,9 @@ try {
       await clickAction('Agent');
       await until(async () => await pressed() === 'Agent', 'Agent view');
       if (name === 'designer-connected') {
-        await clickAction('Send to a cluster');
-        await until(() => evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length && document.activeElement === document.querySelector('.send-panel')`), 'opened Send is shown and focused');
-        if (await evaluate(`document.querySelector('.send-history details').open`)) throw Error('Opening Send must not open Past Sends');
+        await until(() => evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length`), 'Send is shown');
         await evaluate(`document.querySelector('.send-panel').scrollIntoView({ block: 'start' })`);
         await shoot('send');
-        await evaluate(`document.querySelector('.send-history summary').click()`);
-        await until(() => evaluate(`document.querySelector('.send-history summary').getAttribute('aria-expanded') === 'true'`), 'Past Sends opens on request');
         await evaluate(`document.querySelector('.send-history').scrollIntoView({ block: 'center' })`);
         await shoot('history');
       } else if (!await evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length`)) throw Error('Returning from Try a task lost the retained Send');

@@ -1,5 +1,5 @@
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, test, vi } from 'vitest';
 import Example from './Example';
@@ -68,26 +68,26 @@ test('New agent cancellation retains File, while successful creation opens Agent
   await waitFor(() => expect(screen.getByRole('button', { name: 'Agent' }).getAttribute('aria-pressed')).toBe('true'));
 });
 
-test('an unused Send has no card or Team cluster heading; its entry remains on Try a task and reveals/focuses it', async () => {
+test('an unused Send still shows its card under Team cluster, Not started, with Choose a cluster and an open Past Sends card', async () => {
   native(); render(<Example />); const user = userEvent.setup();
   await screen.findByRole('textbox', { name: 'Instructions' });
-  expect(screen.queryByRole('region', { name: 'Send and cluster tests' })).toBeNull();
-  expect(screen.queryByRole('heading', { name: 'Team cluster' })).toBeNull();
-  const history = screen.getByRole('button', { name: 'Past Sends' });
-  expect(history.getAttribute('aria-expanded')).toBe('false');
-  await user.click(history);
-  expect(await screen.findByText('No saved Sends yet.')).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Try a task' }));
-  await user.click(screen.getByRole('button', { name: 'Send to a cluster' }));
-  const send = await screen.findByRole('region', { name: 'Send and cluster tests' });
-  await waitFor(() => expect(document.activeElement).toBe(send));
-  expect(screen.getByRole('button', { name: 'Agent' }).getAttribute('aria-pressed')).toBe('true');
+  const send = screen.getByRole('region', { name: 'Send and cluster tests' });
+  expect(screen.getByRole('heading', { name: 'Team cluster' })).toBeTruthy();
+  expect(within(send).getByRole('heading', { name: 'Send your agent' })).toBeTruthy();
+  expect(within(send).getByText('Not started', { selector: '.pill' })).toBeTruthy();
+  expect(await within(screen.getByRole('region', { name: 'Past Sends' })).findByText('No saved Sends yet.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Send to a cluster' })).toBeNull();
   expect(screen.queryByText('Team clusters are early in this preview.')).toBeNull();
-  expect(screen.getByRole('button', { name: 'Choose a cluster' }).className).toContain('primary');
+  expect(screen.getByRole('button', { name: 'Choose a cluster' }).className).toContain('secondary');
   const action = screen.getByRole('button', { name: 'Send and run tests' });
   expect(action.hasAttribute('disabled')).toBe(true);
   expect(screen.getByText('Choose a cluster and AI connection in Clusters first')).toBeTruthy();
-  expect(screen.queryByText('Needs attention')).toBeNull();
+  expect(screen.queryByText('Needs you')).toBeNull();
+  // Try a task takes the right column; the Send card returns with Agent view.
+  await user.click(screen.getByRole('button', { name: 'Try a task' }));
+  expect(screen.queryByRole('region', { name: 'Send and cluster tests' })).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'Agent' }));
+  expect(screen.getByRole('region', { name: 'Send and cluster tests' })).toBeTruthy();
 });
 
 test('a delayed document list reserves a disabled agent picker instead of inserting a new header control', async () => {

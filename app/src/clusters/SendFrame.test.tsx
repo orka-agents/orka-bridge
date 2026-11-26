@@ -21,13 +21,15 @@ function native(view: unknown = null, preflight: unknown = check, start?: Promis
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); });
 const card = () => screen.getByRole('region', { name: 'Send and cluster tests' });
 
-test('destination head and one summary precede honest collapsed checks and separate history card', async () => {
+test('an unsent card heads Send your agent, then one summary, honest collapsed checks and a separate history card', async () => {
   const choose = vi.fn(); native();
   render(<Send place={place} source={source} stale={false} agentName="web-reader" testCount={2} onChooseCluster={choose} />);
   await screen.findByText('Ready to send: 1 check passed');
-  expect(within(card()).getByRole('heading', { name: 'To team-dev' })).toBeTruthy();
-  expect(within(card()).getByRole('region', { name: 'What you send' }).textContent).toContain('web-reader with 2 tests');
-  expect(within(card()).getByRole('region', { name: 'What you send' }).textContent).toContain('Into control/orka on team-dev, namespace agents.');
+  expect(within(card()).getByRole('heading', { name: 'Send your agent' })).toBeTruthy();
+  const what = card().querySelector<HTMLElement>('.send-what')!;
+  expect(what.textContent).toContain('web-reader with 2 tests');
+  expect(what.textContent).toContain('Into control/orka on team-dev, namespace agents.');
+  expect(what.querySelectorAll('code.code-chip')).toHaveLength(4);
   const checks = screen.getByText('Ready to send: 1 check passed').closest('details')!;
   expect(checks.open).toBe(false);
   expect(checks.contains(screen.getByText('Checked when tests run.'))).toBe(true);
@@ -38,8 +40,10 @@ test('capturing a model is not presented as a completed Send after a storage rej
   native({ ...result, state: 'unknown', stage: 'storage', error: 'storage', acknowledged: [], report: null });
   render(<Send place={place} source={source} stale={false} />);
   await screen.findByText('Nothing was sent because Bridge could not save a summary. Check local storage before trying again.');
-  expect(card().querySelector('.long-card-summary')?.textContent).toContain('Captured model: GPT-5.6 Terra');
-  expect(card().querySelector('.long-card-summary')?.textContent).not.toContain('Sent with');
+  // The captured model is a recorded detail, not a result line.
+  expect(card().querySelector('.long-card-summary')).toBeNull();
+  expect(within(card()).getByText('Model sent').parentElement?.textContent).toContain('gpt-5.6-terra');
+  expect(card().textContent).not.toContain('Sent with');
 });
 test('only blocking checks are exposed; passing and advisory rows stay folded', async () => {
   native(null, { ...check, canSend: false, action: 'blocked', rows: [...check.rows, { label: 'Missing tool', status: 'blocked', message: 'Install page-reader.' }] });
@@ -87,7 +91,8 @@ test.each(['running', 'foreign'] as const)('%s Send keeps passed checks neutral 
   render(<Send place={place} source={source} stale={false} />);
   await screen.findByText(mode === 'running' ? 'Waiting for answers and evaluating tests' : 'another-agent is sending tests.');
   expect(screen.queryByText(/^Ready to send:/)).toBeNull();
-  expect(screen.getByText('1 check passed')).toBeTruthy();
+  // The checks belong to the next Send, so this card's own running Send folds them into Details.
+  expect(screen.getByText('1 check passed').closest('.card-details')).toBe(mode === 'running' ? card().querySelector('.long-card > .card-details') : null);
 });
 test('Change is disabled with a reason during admission, before a running snapshot arrives', async () => {
   native(null, check, new Promise(() => {}));
