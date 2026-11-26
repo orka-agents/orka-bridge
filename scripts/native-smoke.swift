@@ -1981,7 +1981,11 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
             try resultSize(width, height)
             try capturePreflight("\(name)-\(size)", expected)
-            try requireSendActions(["Check again"])
+            // A blocked destination keeps its Send action in view, disabled, with Check again beside it (clusters/Send.tsx).
+            // Preflight reports a refused Send as action "blocked", which the card labels as an update.
+            try requireSendActions(["Update agent and run tests", "Check again"])
+            require(nativeButtons("Update agent and run tests", root: nativeRegion("Send and cluster tests"))
+                .allSatisfy { attribute($0, "AXEnabled") as? Bool == false }, "\(name): the blocked Send action must stay disabled")
         }
         clickTab("Clusters", [])
     }
