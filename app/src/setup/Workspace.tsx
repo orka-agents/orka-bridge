@@ -18,7 +18,8 @@ export default function Workspace({ status, busy, stopping, starting, error, act
   const [agents, setAgents] = useState<AgentEntry[]>();
   const [path, setPath] = useState<string>();
   const [inside, setInside] = useState(false);
-  const [details, setDetails] = useState(false);
+  // A failed start's details start open, as the board shows: the stage and what the workspace reported. A stop's stay closed.
+  const [details, setDetails] = useState(() => status.workspaceFailure?.operation !== 'stop');
   const [quitError, setQuitError] = useState(false);
   const [quitting, setQuitting] = useState(false);
   const [helpError, setHelpError] = useState(false);
@@ -100,7 +101,7 @@ export default function Workspace({ status, busy, stopping, starting, error, act
     {failed && notice && <p role="status">{notice}</p>}
     {quitError && <p role="alert">Couldn't quit Bridge. Try again or use Quit Bridge from its menu.</p>}
     {failed && ordinaryRecovery && <Disclosure label={details ? 'Hide details' : 'Show details'} open={details} controls="returning-workspace-error" onOpenChange={setDetails}>
-      {details && <div className="workspace-progress-details"><p>Stage: {recovery.stage}</p><pre id="returning-workspace-error">{status.localVmError || recovery.summary}</pre></div>}
+      {details && <div className="workspace-progress-details"><p>Stage: {recovery.stage}</p><pre id="returning-workspace-error">{status.localVmError || 'No further error details were reported.'}</pre></div>}
     </Disclosure>}
     {/* An update or recovery decision takes the card; the facts return once it is settled. */}
     {!updateBlocked && <>
