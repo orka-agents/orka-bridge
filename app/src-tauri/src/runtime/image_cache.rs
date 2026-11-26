@@ -476,6 +476,28 @@ fn zero(block: &[u8]) -> bool {
     let (words, tail) = block.as_chunks::<8>();
     words.iter().fold(0, |a, w| a | u64::from_ne_bytes(*w)) == 0 && tail.iter().all(|b| *b == 0)
 }
+/// macOS can zero-fill a skipped range when a later write lands past it; punching returns those
+/// blocks. A volume without holes refuses, and its zeros read the same, so failure is ignored.
+#[cfg(target_os = "macos")]
+fn punch(file: &File, start: u64, length: u64) {
+    use std::os::fd::AsRawFd;
+    let from = start.next_multiple_of(SPARSE_BLOCK);
+    let to = (start + length) / SPARSE_BLOCK * SPARSE_BLOCK;
+    if let (true, Ok(fp_offset), Ok(fp_length)) =
+        (from < to, i64::try_from(from), i64::try_from(to - from))
+    {
+        let mut hole = libc::fpunchhole_t {
+            fp_flags: 0,
+            reserved: 0,
+            fp_offset,
+            fp_length,
+        };
+        // fcntl reads this region descriptor for the open file; no pointer outlives the call.
+        unsafe { libc::fcntl(file.as_raw_fd(), libc::F_PUNCHHOLE, &mut hole) };
+    }
+}
+#[cfg(not(target_os = "macos"))]
+fn punch(_: &File, _: u64, _: u64) {}
 impl SparseOutput {
     fn write(&mut self, mut data: &[u8]) -> io::Result<()> {
         while !data.is_empty() {
@@ -494,12 +516,13 @@ impl SparseOutput {
             if zeroes == Some(true) {
                 self.hole += run as u64;
             } else {
+                let start = self.length - self.hole;
                 if self.hole > 0 {
                     let hole = i64::try_from(self.hole).map_err(|_| io::ErrorKind::InvalidData)?;
                     self.file.seek(SeekFrom::Current(hole))?;
-                    self.hole = 0;
                 }
                 self.file.write_all(&data[..run])?;
+                punch(&self.file, start, std::mem::take(&mut self.hole));
             }
             self.length += run as u64;
             data = &data[run..];
