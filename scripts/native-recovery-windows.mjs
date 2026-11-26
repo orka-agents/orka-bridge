@@ -210,17 +210,28 @@ try {
         setup: (() => { const root = shown('.workspace-setup-grid')[0]; if (!root) return null; const get = selector => rect(root.querySelector(selector)); return { progress: get('.setup-progress'), model: get('.setup-model-slot:not(:empty)'), meet: get('.workspace-meet') }; })(),
         designer: (() => { const root = shown('.designer-work')[0]; if (!root) return null; const get = selector => rect([...root.querySelectorAll(selector)].find(node => node.getClientRects().length)); return { tests: get('.designer-tests:not([hidden])'), editor: get('.designer-file'), send: get('.send-panel:not([hidden])'), history: get('.send-history') }; })(),
         fallback: { file: rect(shown('.designer > .designer-file')[0]), history: rect(shown('.designer > .designer-checks .send-history')[0]) },
+        guided: !!document.querySelector('.app-shell.guided'), hostShown: shown('.host-chip').length, exit: shown('.guided-exit:not(:disabled)').length,
+        statusRegion: (() => { const footer = document.querySelector('footer.status-bar'), region = footer?.querySelector('[role="status"]'); return !!region && [footer, region].every(node => getComputedStyle(node).display !== 'none' && getComputedStyle(node).visibility !== 'hidden'); })(),
       };
     })()`);
     const fail = reason => { throw Error(`${name}/${size}: ${reason}: ${JSON.stringify(layout)}`); };
     if ((layout.designer?.send || name.startsWith('chat-') || name.startsWith('upgrade-')) && layout.documentScrollHeight > layout.height + 2) fail('document overflows outside the page scroll');
     if (layout.scrollWidth > layout.clientWidth + 2) fail('page overflows horizontally');
     if (size === 'setup-fit' && layout.scrollHeight > layout.clientHeight + 2) fail('page overflows vertically');
-    if (layout.tabs.length !== 4 || layout.tabs.some(tab => Math.abs(tab.x - layout.tabs[0].x) > 1 || Math.abs(tab.width - layout.tabs[0].width) > 1 || tab.right > layout.page.x) || layout.tabs.some((tab, index) => index > 0 && tab.y < layout.tabs[index - 1].bottom)) fail('sidebar tabs must stack in one column left of the page');
-    if (layout.width > 820 && (layout.host.right > layout.page.x || layout.host.y < layout.tabs.at(-1).bottom)) fail('status card must sit in the sidebar below the tabs');
-    if (layout.width <= 820 && layout.host.y < layout.page.bottom) fail('compact status bar must sit below the page');
-    if (layout.names !== 4 || layout.statusText && !(layout.statusLine?.width > 1) || !(layout.hostLabel?.width > 1)) fail('page names, place and status line must stay visible');
-    if (layout.width <= 820 && (layout.subtitles || layout.hostLabel.width > 160)) fail('compact subtitles/host label exceed their bounds');
+    if (layout.guided) {
+      // The guided first run is the whole window under the title bar: no sidebar or status card on screen. The
+      // status card's live region stays in the accessibility tree, and every screen after Welcome offers the way out.
+      if (layout.tabs.length || layout.names || layout.hostShown) fail('guided first run must not show the sidebar or status card');
+      if (layout.page.x > 1 || layout.page.right < layout.width - 1) fail('guided page must span the window');
+      if (!layout.statusRegion) fail('guided first run must keep the status live region in the accessibility tree');
+      if (name !== 'welcome' && !layout.exit) fail('guided screens after Welcome must offer Show all of Bridge');
+    } else {
+      if (layout.tabs.length !== 4 || layout.tabs.some(tab => Math.abs(tab.x - layout.tabs[0].x) > 1 || Math.abs(tab.width - layout.tabs[0].width) > 1 || tab.right > layout.page.x) || layout.tabs.some((tab, index) => index > 0 && tab.y < layout.tabs[index - 1].bottom)) fail('sidebar tabs must stack in one column left of the page');
+      if (layout.width > 820 && (layout.host.right > layout.page.x || layout.host.y < layout.tabs.at(-1).bottom)) fail('status card must sit in the sidebar below the tabs');
+      if (layout.width <= 820 && layout.host.y < layout.page.bottom) fail('compact status bar must sit below the page');
+      if (layout.names !== 4 || layout.statusText && !(layout.statusLine?.width > 1) || !(layout.hostLabel?.width > 1)) fail('page names, place and status line must stay visible');
+      if (layout.width <= 820 && (layout.subtitles || layout.hostLabel.width > 160)) fail('compact subtitles/host label exceed their bounds');
+    }
     if (layout.quiet.some(item => item.start !== '0px' || item.end !== '0px')) fail('quiet control has inline padding');
     if (layout.scrollbar.width !== 'thin' || layout.scrollbar.color === 'auto') fail('page scrollbar must be thin and themed');
     const expectedTheme = theme === 'dark' ? { page: 'rgb(9, 9, 10)', ink: 'rgb(244, 244, 245)' } : { page: 'rgb(255, 255, 255)', ink: 'rgb(11, 11, 12)' };

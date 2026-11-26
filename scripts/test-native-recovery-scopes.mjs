@@ -211,6 +211,16 @@ for (const mutation of [
   { theme: { page: 'rgb(242, 241, 237)', ink: 'rgb(27, 32, 38)' } },
   { scrollHeight: 703 },
 ]) await assert.rejects(() => gate({ ...wide, ...mutation }));
+// The guided first run spans the window with no sidebar or status card on screen, keeps the status live region and
+// offers Show all of Bridge; any other screen is still held to the sidebar layout above.
+const guided = { ...wide, guided: true, tabs: [], names: 0, subtitles: 0, hostShown: 0, host: { x: 0, y: 0, right: 0, width: 0 }, hostLabel: { width: 0 }, page: { x: 0, right: 1280 }, statusRegion: true, exit: 1 };
+await gate(guided);
+await gate({ ...guided, width: 540, page: { x: 0, right: 540 } });
+for (const mutation of [
+  { tabs: wide.tabs }, { names: 4 }, { hostShown: 1 }, { page: { x: 232, right: 1280 } }, { page: { x: 0, right: 1000 } },
+  { statusRegion: false }, { exit: 0 },
+]) await assert.rejects(() => gate({ ...guided, ...mutation }));
+await assert.rejects(() => gate({ ...guided, guided: false }));
 // The compact Change image must be framed before requesting its screenshot.
 const changeCapture = source.match(/if \(name\.startsWith\('ai-removal-'\)\) \{([\s\S]*?)\n      await clickAction\('Remove saved sign-in'\);/)?.[1];
 assert.ok(changeCapture);
