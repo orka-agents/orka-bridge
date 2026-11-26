@@ -57,12 +57,13 @@ export const installationMismatch = (installation: string, savedInstallation: st
 });
 
 // One remembered cluster, restored from disk after a restart: not yet checked in this run.
+// Native observation times are Unix milliseconds.
 export function failingClusterPlace(uid: (seed: string) => string, checked: boolean) {
   const [service, deployment] = [uid('cluster-service'), uid('cluster-deployment')];
   return {
     key: JSON.stringify(['team-dev', null, 'control', service, 'control', deployment, 'agents']),
     context: 'team-dev', service: 'control/orka', namespace: 'agents',
-    stale: !checked, observedAt: checked ? seconds() : null, checkedAt: checked ? seconds() : seconds() - 2 * day, agents: [],
+    stale: !checked, observedAt: checked ? Date.now() : null, checkedAt: checked ? Date.now() : Date.now() - 2 * day * 1000, agents: [],
   };
 }
 export const failingClusterTarget = (uid: (seed: string) => string) => ({
