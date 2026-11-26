@@ -1,3 +1,4 @@
+import './designer.css';
 import { isTauri } from '@tauri-apps/api/core';
 import { Disclosure } from '../components/Disclosure';
 import { Button } from '../components/Button';
