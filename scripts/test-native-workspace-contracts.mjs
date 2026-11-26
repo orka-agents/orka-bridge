@@ -125,6 +125,8 @@ for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps
 const windowsLifecycle = await read('./native-lifecycle-windows.ps1');
 // Disclosures and radios act through their UIA patterns before any pointer fallback.
 assert.ok(windowsLifecycle.includes('[System.Windows.Automation.ExpandCollapsePattern]::Pattern') && windowsLifecycle.includes('[System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) { $pattern.Select(); return }'), 'Windows lifecycle must expand disclosures and select radios through UIA patterns');
+// The pointer fallback accepts a hit on Tauri's resize child only for a point clear of the window's resize border.
+assert.ok(windowsLifecycle.includes("$first.Current.Name -eq 'TAURI_DRAG_RESIZE_WINDOW' -and $inside") && windowsLifecycle.includes('$centre.X -ge $frame.Left + 8 -and $centre.X -le $frame.Right - 8'), 'Windows lifecycle may treat only the resize child as transparent, and only inside its border');
 const clickPoint = windowsLifecycle.slice(windowsLifecycle.indexOf('function Get-ClickPoint('), windowsLifecycle.indexOf('function Press('));
 // A coordinate click without UIA's clickable point must still prove, by hit test, that it lands on the control.
 assert.ok(clickPoint.includes('$Element.TryGetClickablePoint([ref]$point)') && clickPoint.includes('[System.Windows.Automation.AutomationElement]::FromPoint($centre)')

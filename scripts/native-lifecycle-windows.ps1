@@ -132,10 +132,21 @@ function Get-ClickPoint($Element) {
     if ($Element.Current.IsOffscreen -or $visible.IsEmpty -or $visible.Width -lt 1 -or $visible.Height -lt 1) { throw "Native control is not on screen: $($Element.Current.Name)" }
     $centre = [System.Windows.Point]::new($visible.X + $visible.Width / 2, $visible.Y + $visible.Height / 2)
     $walker = [System.Windows.Automation.TreeWalker]::RawViewWalker
-    for ($hit = [System.Windows.Automation.AutomationElement]::FromPoint($centre); $hit; $hit = $walker.GetParent($hit)) {
+    $first = [System.Windows.Automation.AutomationElement]::FromPoint($centre)
+    for ($hit = $first; $hit; $hit = $walker.GetParent($hit)) {
         if ([System.Windows.Automation.Automation]::Compare($hit, $Element)) { return [Drawing.Point]::new([int]$centre.X, [int]$centre.Y) }
     }
-    throw "Native control is covered at its visible centre: $($Element.Current.Name)"
+    # CI showed UIA hit-testing every page point to Tauri's resize child (it goes by window rectangles, not the
+    # child's border-only region), while real clicks reach the page. Only then, and only for a point clear of the
+    # resize border inside the window, is the pointer click allowed; anything else still counts as covered.
+    $frame = $script:window.Current.BoundingRectangle
+    $inside = $centre.X -ge $frame.Left + 8 -and $centre.X -le $frame.Right - 8 -and $centre.Y -ge $frame.Top + 8 -and $centre.Y -le $frame.Bottom - 8
+    if ($first -and $first.Current.Name -eq 'TAURI_DRAG_RESIZE_WINDOW' -and $inside) {
+        Write-Host "Hit test reached the resize child; clicking the visible centre of $($Element.Current.Name)"
+        return [Drawing.Point]::new([int]$centre.X, [int]$centre.Y)
+    }
+    $hitName = if ($first) { "$($first.Current.Name) ($($first.Current.ControlType.ProgrammaticName))" } else { 'nothing' }
+    throw "Native control is covered at its visible centre: $($Element.Current.Name); hit $hitName"
 }
 function Press($Element) {
     $pattern = $null
