@@ -15,9 +15,11 @@ export const chatErrors = {
   workspaceChanged: 'The workspace changed. Your next message starts a new conversation.',
   interrupted: 'The turn was interrupted. Execution may still be running.',
 } as const;
-export type ChatTurn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean };
+export type ChatTurn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean; startedAt: number; finishedAt: number | null };
 export type ChatSnapshot = { documentId: string; state: typeof chatStates[number]; busy: boolean; canSend: boolean; versions: { turns: ChatTurn[] }[]; error: keyof typeof chatErrors | null };
 export type ChatCommand = 'agent_chat_status' | 'agent_chat_send' | 'agent_chat_reconnect' | 'agent_chat_stop' | 'agent_chat_new';
+// Unix milliseconds from the native clock.
+const millis = (value: unknown) => Number.isSafeInteger(value) && (value as number) >= 0;
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 export function isChatSnapshot(value: unknown): value is ChatSnapshot {
   return object(value) && isDocumentId(value.documentId) && chatStates.includes(value.state as ChatSnapshot['state'])
@@ -26,6 +28,7 @@ export function isChatSnapshot(value: unknown): value is ChatSnapshot {
     && Array.isArray(value.versions) && value.versions.every(version => object(version) && Array.isArray(version.turns) && version.turns.every(turn =>
       object(turn) && typeof turn.message === 'string' && (turn.answer === null || typeof turn.answer === 'string') && typeof turn.phase === 'string'
       && ['contextRetained', 'terminationUnconfirmed', 'stopUnconfirmed'].every(key => typeof turn[key] === 'boolean')
+      && millis(turn.startedAt) && (turn.finishedAt === null || millis(turn.finishedAt))
       && Array.isArray(turn.tools) && turn.tools.every(tool => object(tool) && typeof tool.name === 'string' && typeof tool.callId === 'string' && typeof tool.phase === 'string')));
 }
 export async function chatCall(command: ChatCommand, documentId: string, message?: string): Promise<{ ok: true; snapshot: ChatSnapshot } | { ok: false; message: string; uncertain?: true }> {

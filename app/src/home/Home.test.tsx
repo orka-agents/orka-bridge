@@ -19,7 +19,7 @@ beforeEach(() => {
       { id: '2b2b93c4-375c-4815-9717-39852a96e413', name: 'missing', path: null, available: false },
     ];
     if (command === 'agent_chat_status') return snapshot(a.documentId);
-    if (command === 'agent_chat_send') { sent.push({ documentId: a.documentId, message: a.message }); return snapshot(a.documentId, [{ message: a.message, answer: null, phase: 'Running', tools: [], contextRetained: false, terminationUnconfirmed: false, stopUnconfirmed: false }]); }
+    if (command === 'agent_chat_send') { sent.push({ documentId: a.documentId, message: a.message }); return snapshot(a.documentId, [{ message: a.message, answer: null, phase: 'Running', tools: [], contextRetained: false, terminationUnconfirmed: false, stopUnconfirmed: false, startedAt: 1_700_000_000_000, finishedAt: null }]); }
     throw Error(`unexpected ${command}`);
   });
 });

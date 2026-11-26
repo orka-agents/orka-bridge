@@ -45,6 +45,11 @@ async fn two_turns_reuse_frozen_agent_and_session_and_drain_cursor_events() {
     );
     assert!(first.versions[0].turns[0].context_retained);
     assert_eq!(first.versions[0].turns[0].tools.len(), 2);
+    let started = first.versions[0].turns[0].started_at;
+    assert!(started > 0);
+    assert!(first.versions[0].turns[0]
+        .finished_at
+        .is_some_and(|finished| finished >= started));
     chat.send(f.vm.clone(), f.folder.clone(), "Follow-up".into())
         .unwrap();
     let second = ready(&chat, id).await;
@@ -366,10 +371,12 @@ async fn acknowledged_stop_is_not_termination_and_notice_survives_follow_up() {
     let id = f.folder.document_id();
     chat.send(f.vm.clone(), f.folder.clone(), "Work".into())
         .unwrap();
-    until(&chat, id, |s| {
+    let running = until(&chat, id, |s| {
         !s.versions.is_empty() && s.versions[0].turns[0].tools.len() == 2
     })
     .await;
+    assert!(running.versions[0].turns[0].started_at > 0);
+    assert!(running.versions[0].turns[0].finished_at.is_none());
     chat.stop(f.vm.clone(), id).unwrap();
     until(&chat, id, |s| s.state == ChatState::StopRequested).await;
     assert!(!chat.status(id).can_send);

@@ -3,6 +3,17 @@
 #[cfg(not(all(target_os = "macos", feature = "custom-protocol")))]
 fn main() {}
 
+#[cfg(all(target_os = "macos", feature = "custom-protocol"))]
+fn fixture_millis() -> u64 {
+    u64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
+
 // Stages are advanced only by explicit UI actions and status reads. The final
 // turn waits for Stop so the driver cannot miss that control on a fast runner.
 #[cfg(all(target_os = "macos", feature = "custom-protocol"))]
@@ -63,6 +74,7 @@ impl ChatFixture {
                     turn.termination_unconfirmed = true;
                 } else {
                     turn.phase = "Succeeded".into();
+                    turn.finished_at = Some(fixture_millis());
                     turn.answer = Some(if first {
                         "The checksum is ALPHA. <script>fixture</script>".into()
                     } else {
@@ -127,6 +139,7 @@ impl ChatFixture {
                         call_id: "fixture-tool".into(),
                         phase: "running".into(),
                     }],
+                    started_at: fixture_millis(),
                     ..ChatTurn::default()
                 });
                 let held = self.phase_file.as_ref().is_some_and(|path| path.exists());

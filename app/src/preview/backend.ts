@@ -140,28 +140,45 @@ function runSnapshot(documentId: string) {
   }] } };
 }
 
-type Turn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean; sentAt: number };
-const chats = new Map<string, Turn[]>();
+// One scripted task per conversation, as Try a task uses it: New, then Send. Phases advance with time; web-reader
+// fetches the page it was given. Stop deletes the task, as the native path does, and leaves its phase as last seen.
+type Turn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean; sentAt: number; startedAt: number; finishedAt: number | null; stopped: boolean };
+type Chat = { versions: Turn[][]; fresh: boolean };
+const chats = new Map<string, Chat>();
+const chatPhases = [[0.1, 'Pending'], [0.3, 'Scheduled'], [0.5, 'Running'], [0.85, 'Finalizing']] as const;
 function chatSnapshot(documentId: string) {
-  const turns = chats.get(documentId) ?? [];
+  const chat = chats.get(documentId) ?? { versions: [], fresh: true };
+  const turns = chat.versions.flat();
   for (const turn of turns) {
-    if (turn.answer === null && (now() - turn.sentAt) / 1000 >= chatSeconds) { turn.answer = reply(documentId, turn.message, turns); turn.phase = 'Succeeded'; }
+    if (turn.answer !== null || turn.stopped) continue;
+    const progress = (now() - turn.sentAt) / 1000 / chatSeconds;
+    const fetches = docs.get(documentId)?.name === 'web-reader' && /https?:\/\//.test(turn.message);
+    if (progress >= 1) {
+      const failed = scenario === 'runFails';
+      turn.phase = failed ? 'Failed' : 'Succeeded'; turn.finishedAt = turn.startedAt + Math.round(chatSeconds * 1000 / speed);
+      turn.answer = failed ? "I couldn't fetch that page, so I can't answer from it." : reply(documentId, turn.message);
+      turn.contextRetained = true;
+      if (fetches) turn.tools = [{ name: 'web_fetch', callId: 'preview-call', phase: 'ToolCallStarted' }, { name: 'web_fetch', callId: 'preview-call', phase: failed ? 'ToolCallFailed' : 'ToolCallCompleted' }];
+    } else {
+      turn.phase = [...chatPhases].reverse().find(([at]) => progress >= at)?.[1] ?? '';
+      if (fetches && progress >= 0.5) turn.tools = [{ name: 'web_fetch', callId: 'preview-call', phase: 'ToolCallStarted' }];
+    }
   }
-  const working = turns.some(turn => turn.answer === null);
+  const working = turns.some(turn => turn.answer === null && !turn.stopped);
   const canSend = ready() && modelConnected && !working;
   return {
     documentId, state: working ? 'working' : 'ready', busy: working, canSend, error: null,
-    versions: [{ turns: turns.map(turn => ({ message: turn.message, answer: turn.answer, phase: turn.phase, tools: turn.tools, contextRetained: turn.answer !== null, terminationUnconfirmed: false, stopUnconfirmed: false })) }],
+    versions: chat.versions.map(version => ({ turns: version.map(turn => ({ message: turn.message, answer: turn.answer, phase: turn.phase, tools: turn.tools, contextRetained: turn.contextRetained, terminationUnconfirmed: turn.terminationUnconfirmed, stopUnconfirmed: turn.stopUnconfirmed, startedAt: turn.startedAt, finishedAt: turn.finishedAt })) })),
   };
 }
-function reply(documentId: string, message: string, turns: Turn[]) {
+function reply(documentId: string, message: string) {
   const doc = docs.get(documentId);
   if (doc?.name === 'web-reader') {
     const url = /https?:\/\/\S+/.exec(message)?.[0]?.replace(/[.,)]+$/, '');
     return url ? `I read ${url}.\n\n- It is a placeholder page kept for documentation examples.\n- It has one heading and one paragraph.\n- It links to an explanation of why the domain is reserved.`
-      : 'Send me a link and I will read the page and tell you what it says.';
+      : 'Give me a link and I will read the page and tell you what it says.';
   }
-  return `This preview answers with scripted text. In the desktop app, ${doc?.name ?? 'your agent'} answers with the AI in your workspace.${turns.length > 1 ? `\n\nThis conversation has ${turns.length} messages so far.` : ''}`;
+  return `This preview answers with scripted text. In the desktop app, ${doc?.name ?? 'your agent'} answers with the AI in your workspace.`;
 }
 
 function savedFiles() {
@@ -474,15 +491,26 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
       return runSnapshot(id);
     }
     case 'agent_run_cancel': case 'agent_run_check_cancellation': return runSnapshot(documentId(args));
-    case 'agent_chat_status': case 'agent_chat_reconnect': case 'agent_chat_start': return chatSnapshot(documentId(args));
-    case 'agent_chat_new': chats.set(documentId(args), []); return chatSnapshot(documentId(args));
-    case 'agent_chat_stop': return chatSnapshot(documentId(args));
+    case 'agent_chat_status': case 'agent_chat_reconnect': return chatSnapshot(documentId(args));
+    case 'agent_chat_new': {
+      const id = documentId(args);
+      if (chatSnapshot(id).busy) throw 'busy';
+      chats.set(id, { versions: chats.get(id)?.versions ?? [], fresh: true });
+      return chatSnapshot(id);
+    }
+    case 'agent_chat_stop': {
+      const id = documentId(args);
+      for (const turn of chats.get(id)?.versions.flat() ?? []) if (turn.answer === null) { turn.stopped = true; turn.terminationUnconfirmed = true; }
+      return chatSnapshot(id);
+    }
     case 'agent_chat_send': {
       const id = documentId(args);
       if (!chatSnapshot(id).canSend) throw 'busy';
-      const turns = chats.get(id) ?? [];
-      turns.push({ message: String(args?.message ?? ''), answer: null, phase: 'Running', tools: [], contextRetained: turns.length > 0, terminationUnconfirmed: false, stopUnconfirmed: false, sentAt: now() });
-      chats.set(id, turns);
+      const chat = chats.get(id) ?? { versions: [], fresh: true };
+      if (chat.fresh || !chat.versions.length) chat.versions.push([]);
+      chat.fresh = false;
+      chat.versions.at(-1)!.push({ message: String(args?.message ?? ''), answer: null, phase: '', tools: [], contextRetained: false, terminationUnconfirmed: false, stopUnconfirmed: false, sentAt: now(), startedAt: Date.now(), finishedAt: null, stopped: false });
+      chats.set(id, chat);
       return chatSnapshot(id);
     }
     case 'overview_files': return savedFiles();
