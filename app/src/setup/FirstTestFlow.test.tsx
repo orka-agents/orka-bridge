@@ -82,7 +82,7 @@ test('a replaced workspace retires a stale pending first test even after explici
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([]);
 });
 
-test.each(['sourceSelected', 'restoring'] as const)('recovery %s blocks local Designer Run and Chat despite a ready VM and capable snapshots', async state => {
+test.each(['sourceSelected', 'restoring'] as const)('recovery %s blocks local Designer Run and Try a task despite a ready VM and capable snapshots', async state => {
   const { ipc } = native(); const original = ipc.getMockImplementation()!;
   ipc.mockImplementation((command, args) => command === 'setup_status'
     ? { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true }
@@ -97,13 +97,13 @@ test.each(['sourceSelected', 'restoring'] as const)('recovery %s blocks local De
   const run = await screen.findByRole('button', { name: 'Run tests' });
   await within(document.querySelector('.example-run')!).findByText('capable-run-snapshot');
   expect(run.matches(':disabled')).toBe(true); fireEvent.click(run);
-  await user.click(screen.getByRole('button', { name: 'Chat' }));
-  const message = await screen.findByRole('textbox', { name: 'Message' });
+  await user.click(screen.getByRole('button', { name: 'Try a task' }));
+  const message = await screen.findByRole('textbox', { name: /one task$/ });
   fireEvent.change(message, { target: { value: 'Do not send during recovery' } }); fireEvent.keyDown(message, { key: 'Enter' });
-  expect(screen.getByRole('button', { name: 'Send message' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run task' }).matches(':disabled')).toBe(true);
   expect(ipc.mock.calls.filter(([command]) => ['agent_run', 'agent_chat_send', 'setup_connect_model'].includes(command))).toEqual([]);
 });
-test.each(['hung', 'failed'] as const)('unreadable upgrade blocks capable local Run and Chat but leaves file editing available (%s)', async observation => {
+test.each(['hung', 'failed'] as const)('unreadable upgrade blocks capable local Run and Try a task but leaves file editing available (%s)', async observation => {
   const { ipc } = native(); const original = ipc.getMockImplementation()!;
   ipc.mockImplementation((command, args) => {
     if (command === 'setup_status') return { selected: 'localVm', localVm: 'ready', model: 'available', workspaceReplaced: true };
@@ -123,11 +123,11 @@ test.each(['hung', 'failed'] as const)('unreadable upgrade blocks capable local 
   await within(document.querySelector('.example-run')!).findByText('capable-run-snapshot');
   expect(run.matches(':disabled')).toBe(true);
   expect(screen.getByRole('textbox', { name: 'Instructions' }).matches(':disabled')).toBe(false);
-  await user.click(screen.getByRole('button', { name: 'Chat' }));
-  const message = await screen.findByRole('textbox', { name: 'Message' });
+  await user.click(screen.getByRole('button', { name: 'Try a task' }));
+  const message = await screen.findByRole('textbox', { name: /one task$/ });
   fireEvent.change(message, { target: { value: 'Do not send while upgrade status is unknown' } });
   fireEvent.keyDown(message, { key: 'Enter' });
-  expect(screen.getByRole('button', { name: 'Send message' }).matches(':disabled')).toBe(true);
+  expect(screen.getByRole('button', { name: 'Run task' }).matches(':disabled')).toBe(true);
   expect(ipc.mock.calls.filter(([command]) => ['agent_run', 'agent_chat_send', 'setup_connect_model'].includes(command))).toEqual([]);
 });
 
@@ -506,7 +506,7 @@ test('a newer automatic test replaces retained sample evidence after Designer sw
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1));
   expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first agentRunning');
   await user.click(screen.getByRole('button', { name: 'Overview' })); finish();
-  await screen.findByText('The workspace is stopped. Start it to test or chat.', {}, { timeout: 2000 });
+  await screen.findByText('The workspace is stopped. Start it to run tests or try a task.', {}, { timeout: 2000 });
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   expect(screen.getByText('Run your first agent', { selector: 'li b' }).closest('li')!.textContent).toBe('Run your first agentIts test passed');
 });
@@ -540,7 +540,7 @@ test.each([false, true])('Overview refreshes after the automatic test releases n
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   await screen.findByText('Updating when the test finishes.');
   finish();
-  expect(await screen.findByText('The workspace is stopped. Start it to test or chat.', {}, { timeout: 2000 })).toBeTruthy();
+  expect(await screen.findByText('The workspace is stopped. Start it to run tests or try a task.', {}, { timeout: 2000 })).toBeTruthy();
   expect(screen.queryByText('Updating when the test finishes.')).toBeNull();
   expect(screen.getByRole('button', { name: 'Overview' }).getAttribute('aria-current')).toBe('page');
   expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toHaveLength(1);

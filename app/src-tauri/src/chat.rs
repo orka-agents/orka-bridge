@@ -16,7 +16,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     sync::{watch, OwnedMutexGuard},
@@ -69,6 +69,10 @@ pub struct ChatTurn {
     pub context_retained: bool,
     pub termination_unconfirmed: bool,
     pub stop_unconfirmed: bool,
+    /// Unix milliseconds when the turn was admitted.
+    pub started_at: u64,
+    /// Unix milliseconds when a terminal Task phase was first observed.
+    pub finished_at: Option<u64>,
 }
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct ChatVersion {
@@ -538,6 +542,7 @@ impl Worker {
                 }
                 s.versions.last_mut().unwrap().turns.push(ChatTurn {
                     message,
+                    started_at: unix_millis(),
                     ..ChatTurn::default()
                 });
             });
@@ -715,9 +720,14 @@ impl Worker {
                             Some(phase) => phase.as_str().ok_or(ChatError::Response)?,
                         }
                         .to_owned();
-                        self.turn(|t| t.phase = phase.clone());
                         let terminal =
                             matches!(phase.as_str(), "Succeeded" | "Failed" | "Cancelled");
+                        self.turn(|t| {
+                            t.phase = phase.clone();
+                            if terminal && t.finished_at.is_none() {
+                                t.finished_at = Some(unix_millis());
+                            }
+                        });
                         self.state(if phase == "WaitingForInput" || phase == "InputRequired" {
                             ChatState::WaitingForInput
                         } else {
@@ -927,6 +937,15 @@ impl Worker {
         Ok(true)
     }
 }
+fn unix_millis() -> u64 {
+    u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis(),
+    )
+    .unwrap_or(u64::MAX)
+}
 #[derive(Deserialize)]
 struct TranscriptMessage {
     id: String,
@@ -1035,6 +1054,26 @@ mod tests {
         assert_eq!(fresh.state, ChatState::Ready);
         assert!(fresh.error.is_none());
         assert!(fresh.can_send && !fresh.busy && fresh.versions.is_empty());
+    }
+
+    #[test]
+    fn turn_times_serialize_as_unix_milliseconds_with_null_until_finished() {
+        let turn = ChatTurn {
+            started_at: 1_700_000_000_000,
+            ..ChatTurn::default()
+        };
+        let value = serde_json::to_value(&turn).unwrap();
+        assert_eq!(value["startedAt"], 1_700_000_000_000u64);
+        assert!(value["finishedAt"].is_null());
+        let done = ChatTurn {
+            finished_at: Some(1_700_000_004_000),
+            ..turn
+        };
+        assert_eq!(
+            serde_json::to_value(&done).unwrap()["finishedAt"],
+            1_700_000_004_000u64
+        );
+        assert!(unix_millis() > 1_700_000_000_000);
     }
 
     #[test]

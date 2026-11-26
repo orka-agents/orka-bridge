@@ -66,7 +66,7 @@ export default function Gallery() {
             <Item label="Textarea"><textarea className="field gallery-field" aria-label="Textarea" rows={2} defaultValue="Read the page and answer." /></Item>
           </div>
           <div className="gallery-row">
-            <Item label="Segmented"><div className="view-switch" role="group" aria-label="View"><button type="button" aria-pressed="true">Agent</button><button type="button" aria-pressed="false">Chat</button><button type="button" aria-pressed="false">File</button></div></Item>
+            <Item label="Segmented"><div className="view-switch" role="group" aria-label="View"><button type="button" aria-pressed="true">Agent</button><button type="button" aria-pressed="false">Try a task</button><button type="button" aria-pressed="false">File</button></div></Item>
             <Item label="Checkbox"><label className="gallery-check"><input type="checkbox" defaultChecked />Pull requests</label></Item>
             <Item label="Radio"><label className="gallery-check"><input type="radio" name="gallery-radio" defaultChecked />This computer</label></Item>
           </div>

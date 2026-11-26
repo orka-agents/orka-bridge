@@ -63,6 +63,8 @@ for (const name of ['chat-pending', 'chat-running', 'chat-answer', 'chat-session
   assert.equal(turn.contextRetained, name === 'chat-answer', name);
   assert.equal(snapshot.busy, name !== 'chat-answer', name);
   assert.equal(snapshot.canSend, name === 'chat-answer', name);
+  assert.ok(Number.isSafeInteger(turn.startedAt) && turn.startedAt > 0, `${name} needs a start time`);
+  assert.equal(turn.finishedAt === null, ['chat-pending', 'chat-running'].includes(name), `${name} finishes only once settled`);
 }
 for (const name of ['chat-answer', 'chat-long']) {
   const snapshot = Function('name', 'documentId', chatStatus)(name, 'fixture-document');
@@ -132,35 +134,38 @@ assert.throws(() => checkDocumentScroll({ documentScrollHeight: 2105, height: 90
 assert.throws(() => checkDocumentScroll({ documentScrollHeight: 2105, height: 900 }, 'chat-long', assert.fail));
 assert.doesNotThrow(() => checkDocumentScroll({ documentScrollHeight: 640, height: 640 }, 'upgrade-consumed-restore-confirm', assert.fail));
 assert.throws(() => checkDocumentScroll({ documentScrollHeight: 720, height: 640 }, 'upgrade-consumed-restore-confirm', assert.fail));
-// The Chat subtitle can resize the heading, but not reorder or independently move its controls.
-const headerGate = source.match(/const now = await header\(\);\n([\s\S]*?)\n        if \(view === 'Chat'\)/)?.[1];
+// The Try a task subtitle can resize the heading, but not reorder or independently move its controls.
+const headerGate = source.match(/const now = await header\(\);\n([\s\S]*?)\n        if \(view === 'Try a task'\)/)?.[1];
 assert.ok(headerGate);
 const verifyDesignerHeader = Function('base', 'now', 'view', 'name', headerGate);
 const headerBase = Object.fromEntries(['switch', 'picker', 'send', 'name'].map((key, i) => [key, { x: i * 100, y: 80, w: 80, h: 32 }]));
 const chatHeader = Object.fromEntries(Object.entries(headerBase).map(([key, rect]) => [key, { ...rect, y: key === 'name' ? 75 : 88, w: key === 'name' ? 200 : rect.w }]));
-assert.doesNotThrow(() => verifyDesignerHeader(headerBase, chatHeader, 'Chat', 'fixture'));
+assert.doesNotThrow(() => verifyDesignerHeader(headerBase, chatHeader, 'Try a task', 'fixture'));
 assert.throws(() => verifyDesignerHeader(headerBase, chatHeader, 'File', 'fixture'));
-assert.throws(() => verifyDesignerHeader(headerBase, { ...chatHeader, picker: { ...chatHeader.picker, x: 120 } }, 'Chat', 'fixture'));
-assert.throws(() => verifyDesignerHeader(headerBase, { ...chatHeader, picker: { ...chatHeader.picker, y: 100 } }, 'Chat', 'fixture'));
-// Exercise the actual Chat gate, including composer geometry while reading earlier turns.
+assert.throws(() => verifyDesignerHeader(headerBase, { ...chatHeader, picker: { ...chatHeader.picker, x: 120 } }, 'Try a task', 'fixture'));
+assert.throws(() => verifyDesignerHeader(headerBase, { ...chatHeader, picker: { ...chatHeader.picker, y: 100 } }, 'Try a task', 'fixture'));
+// Exercise the actual Try a task gate, including the folded earlier tasks.
 const chatGate = source.slice(source.indexOf('  function assertChatPresentation('), source.indexOf('  async function captureActions('));
-assert.ok(chatGate.includes('earlier'), 'Chat needs a reader-position geometry gate');
+assert.ok(chatGate.includes('Earlier tasks'), 'Try a task needs an earlier-tasks gate');
 const checkChat = Function(`${chatGate}; return assertChatPresentation;`)();
-const chatProbe = { card: false, headingHidden: true, label: 'Chat on this computer', heading: 'Chat on this computer',
-  subtitle: "Chat on this computer. Chat doesn't change test results.", text: '', status: '', numbers: [], controls: [],
-  hint: 'Enter sends · Shift+Enter for a new line', sendLabel: 'Send message', sendText: 'Send', fieldLabel: 'Message', tools: [], toolDisclosure: false,
-  composer: { top: 480, bottom: 600, left: 24, right: 516 }, field: { top: 480, bottom: 528 }, send: { top: 496, bottom: 528 },
-  viewport: { top: 60, bottom: 640, left: 0, right: 540 }, nestedScroll: false, earlier: true, long: true, scrollTop: 140, scrollMax: 1800 };
+const chatProbe = { card: false, composerStrong: true, label: 'Try a task on this computer', heading: 'Try a task',
+  subtitle: 'Try a task on this computer before you rely on it.', text: 'No tasks run yet. The result shows here.', status: '', controls: [],
+  hint: 'Runs once on this computer. It does not change test results.', sendText: 'Run task', fieldLabel: 'Give web-reader one task', tools: [], toolDisclosure: false,
+  earlier: '', earlierOpen: false,
+  composer: { top: 200, bottom: 360, left: 24, right: 516 }, field: { top: 240, bottom: 312 }, send: { top: 320, bottom: 364 },
+  viewport: { top: 60, bottom: 640, left: 0, right: 540 }, nestedScroll: false, scrollTop: 0, scrollMax: 1800 };
 checkChat('chat-empty', chatProbe);
-checkChat('chat-answer', { ...chatProbe, tools: ['web_fetch · Succeeded'] });
-checkChat('chat-long', chatProbe);
-for (const mutation of [{ card: true }, { headingHidden: false }, { status: 'Ready for your message.' }, { hint: 'Enter to send' },
-  { controls: ['New conversation'] }, { text: 'Ask your agent a question to start a conversation.' },
-  { composer: { ...chatProbe.composer, bottom: 650 } }, { nestedScroll: true }]) assert.throws(() => checkChat('chat-empty', { ...chatProbe, ...mutation }));
+checkChat('chat-answer', { ...chatProbe, text: 'The page says fixture-checksum.', tools: ['Read a web page web_fetchDone'] });
+checkChat('chat-two-versions', { ...chatProbe, text: 'The page says fixture-checksum.', earlier: 'Earlier tasks: 1' });
+checkChat('chat-long', { ...chatProbe, text: 'The page says fixture-checksum.', earlier: 'Earlier tasks: 19' });
+for (const mutation of [{ card: true }, { composerStrong: false }, { status: 'Ready for a task.' }, { hint: 'Enter to run' },
+  { controls: ['Run again'] }, { text: '' }, { text: 'No tasks run yet. Conversation 1' }, { text: 'No tasks run yet. Save as a test' },
+  { fieldLabel: 'Message' }, { sendText: 'Send' }, { subtitle: "Chat on this computer. Chat doesn't change test results." },
+  { field: { top: 600, bottom: 700 } }, { nestedScroll: true }]) assert.throws(() => checkChat('chat-empty', { ...chatProbe, ...mutation }));
 assert.throws(() => checkChat('chat-answer', { ...chatProbe, tools: [] }));
-assert.throws(() => checkChat('chat-answer', { ...chatProbe, tools: ['web_fetch'], status: 'Ready for your message.' }));
-assert.throws(() => checkChat('chat-long', { ...chatProbe, earlier: false }));
-assert.throws(() => checkChat('chat-long', { ...chatProbe, scrollTop: 1790 }));
+assert.throws(() => checkChat('chat-answer', { ...chatProbe, tools: ['web_fetch'], toolDisclosure: true }));
+assert.throws(() => checkChat('chat-two-versions', { ...chatProbe, earlier: 'Earlier tasks: 1', earlierOpen: true }));
+assert.throws(() => checkChat('chat-long', { ...chatProbe, earlier: '' }));
 for (const mutation of [
   { header: [...sendProbe.header, { label: 'Send as a separate agent', primary: false }] },
   { header: sendProbe.header.map(button => ({ ...button, primary: !button.primary })) },
@@ -470,7 +475,7 @@ assert.ok(overviewResult.includes('enabledButton("Show places for \\(agent)")') 
 assert.ok(model.includes('theme == "dark" && size == "wide" && scene == "earlier-failed"') && model.includes('pixels.contains("lot & passed, derore your edle")') && model.includes('pixels.contains("Failed") && pixels.contains("Run tests")') && model.includes('nativeOverviewResultIsVisible("pr-summary", before: "release-notes", "1 of 2 passed, before your edit")') && model.includes('expected.allSatisfy { pixels.contains($0) } || failedCountMiss'), 'only the observed dark wide Overview verdict OCR miss may use exact card-scoped native evidence');
 assert.ok(!model.includes('by-cluster') && !model.includes('by-agent'), 'native model fixtures must not retain grouping controls');
 assert.ok(model.includes('Cannot bring Overview disclosure into view') && model.includes('let top = pageTop()') && model.includes('func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 4 }'), 'native Overview disclosures must be brought clear of fixed navigation before pointer activation');
-assert.ok(model.includes('capture("local-overview-ai-disconnected-collapsed-\\(size)", ["Your agents"])') && model.includes('require(nativeResultTextIsVisible("Connect the AI in Clusters to chat or run tests on this computer.")'), 'disconnected Overview must verify the exact native reason without fragile OCR of AI/Al');
+assert.ok(model.includes('capture("local-overview-ai-disconnected-collapsed-\\(size)", ["Your agents"])') && model.includes('require(nativeResultTextIsVisible("Connect the AI in Clusters to try a task or run tests on this computer.")'), 'disconnected Overview must verify the exact native reason without fragile OCR of AI/Al');
 assert.ok(smoke.includes('Show places for web-reader') && smoke.includes('overview-fixture-multiple-places-expanded'), 'native smoke must expand the agent list before proving per-place evidence');
 assert.ok(!smoke.includes('heading: "fixture-secondary"'), 'place names are marks or evidence labels, never list headings');
 assert.ok(smoke.includes('overviewShot("overview-fixture-offline-expanded", ["fixture-secondary:",'), 'offline recovery must anchor its source label, not a distant place mark');
@@ -484,12 +489,12 @@ assert.ok(smoke.includes('theme == "dark" ? [9, 9, 10] : [255, 255, 255]') && sm
 assert.ok(source.includes("theme === 'dark' ? '#09090a' : '#ffffff'") && source.includes("theme === 'dark' ? '#f4f4f5' : '#0b0b0c'"), 'Windows comparisons must use Orka paper and ink');
 assert.ok(!smoke.includes('clickText("Refresh"') && !smoke.includes('clickButton("Refresh")') && !smoke.includes('clickText("By agent"') && !smoke.includes('clickText("By cluster"'), 'native smoke must remove top Refresh and grouping-only Overview paths');
 for (const name of ['chat-long-early-wide', 'chat-long-early-minimum', 'chat-long-end-wide', 'chat-long-end-minimum']) {
-  assert.ok(captureManifest.model.includes(name), `long Chat capture must belong to model scope: ${name}`);
-  assert.ok(!captureManifest['destinations-workspace'].includes(name), `long Chat capture must not leak into destination scope: ${name}`);
+  assert.ok(captureManifest.model.includes(name), `earlier-tasks capture must belong to model scope: ${name}`);
+  assert.ok(!captureManifest['destinations-workspace'].includes(name), `earlier-tasks capture must not leak into destination scope: ${name}`);
 }
-assert.ok(model.includes('nativeHeadingExists("Conversation 1") && nativeHeadingExists("Conversation 2")'), 'numbered Chat versions must be verified as native headings, not body static text');
-assert.ok(model.includes('anchorChatHeading("Conversation 2")'), 'Chat capture must align its native heading clear of fixed navigation');
-assert.ok(model.includes('let delta = top + 64 - bounds.minY') && model.includes('let top = pageTop()'), 'Chat heading navigation must use actual title-bar/heading geometry');
+assert.ok(!model.includes('nativeHeadingExists("Conversation') && model.includes('press("Earlier tasks: 1")') && model.includes('waitForChatText("Earlier tasks: 1")'), 'Try a task walks earlier tasks through their folded disclosure, never numbered conversation headings');
+assert.ok(model.includes('click("Try a task", [])') && model.includes('enabledButton("Run task") == nil'), 'the native walk must open Try a task and prove a blocked Run task');
+assert.ok(model.includes('let delta = top + 64 - bounds.minY') && model.includes('let top = pageTop()'), 'heading navigation must use actual title-bar/heading geometry');
 assert.ok(smoke.indexOf('try capture("send-history-answer", "Designer")') > smoke.indexOf('let savedWide = try capturePreflight'), 'offline answer proof must follow its wide resize and provenance anchor');
 assert.ok(model.includes('attribute(element, "AXRole") as? String == "AXHeading"'), 'Chat heading discovery must use its actual native role');
 assert.ok(smoke.includes('("minimum", CGFloat(540), CGFloat(640))'));
@@ -524,13 +529,13 @@ assert.ok(checksumLabel.test('› published-checksum'));
 assert.ok(checksumLabel.test('Copies the checksum from the pagepublished-checksum'), 'OCR can join captured title and stable test ID');
 assert.ok(!checksumLabel.test('Copies a different checksum'));
 assert.ok(model.includes('localSize(540, 640)') && model.includes('chat-new-version-minimum'));
-assert.ok(!model.includes('seek("Ask your agent a question"'), 'empty Chat has no invitation to seek');
-assert.ok(model.includes('Enter sends · Shift+Enter for a new line'), 'Mac capture must check the precise composer hint');
+assert.ok(!model.includes('seek("Ask your agent a question"'), 'empty Try a task has no invitation to seek');
+assert.ok(model.includes('Runs once on this computer. It does not change test results.'), 'Mac capture must check the precise composer hint');
 assert.ok(model.includes('requireChatComposerVisible()'), 'Mac captures must verify composer geometry');
-assert.ok(model.includes('chat-long-early-') && model.includes('chat-long-end-'), 'Mac long Chat must capture earlier-reader and end states');
-assert.ok(model.includes('name.hasPrefix("local-shell-chat-")'), 'mixed local/Chat captures must check the visible native subtitle, not only OCR');
+assert.ok(model.includes('chat-long-early-') && model.includes('chat-long-end-'), 'Mac Try a task must capture earlier tasks folded and open');
+assert.ok(model.includes('name.hasPrefix("local-shell-chat-")'), 'mixed local/Try a task captures must check the visible native subtitle, not only OCR');
 assert.ok(smoke.includes('"Fix in Designer", "Run cluster tests again"'), 'failed Send must preserve Fix primary and precise rerun secondary');
-assert.ok(source.includes('chat-long-early') && source.includes('chat-long-end'), 'long Chat needs distinct earlier-reader and end captures');
+assert.ok(source.includes('chat-long-early') && source.includes('chat-long-end'), 'many earlier tasks need distinct captures');
 assert.ok(source.includes("resizeTo({ width: 1280, height: 800 }, 'Wide')"));
 assert.ok(source.includes("resizeTo({ width: 540, height: 640 }, 'Compact')"));
 assert.ok(!source.includes('Emulation.setDeviceMetricsOverride'), 'a fake viewport cannot qualify native size evidence');

@@ -68,7 +68,7 @@ test('New agent cancellation retains File, while successful creation opens Agent
   await waitFor(() => expect(screen.getByRole('button', { name: 'Agent' }).getAttribute('aria-pressed')).toBe('true'));
 });
 
-test('an unused Send has no card or Team cluster heading; its entry remains on Chat and reveals/focuses it', async () => {
+test('an unused Send has no card or Team cluster heading; its entry remains on Try a task and reveals/focuses it', async () => {
   native(); render(<Example />); const user = userEvent.setup();
   await screen.findByRole('textbox', { name: 'Instructions' });
   expect(screen.queryByRole('region', { name: 'Send and cluster tests' })).toBeNull();
@@ -77,7 +77,7 @@ test('an unused Send has no card or Team cluster heading; its entry remains on C
   expect(history.getAttribute('aria-expanded')).toBe('false');
   await user.click(history);
   expect(await screen.findByText('No saved Sends yet.')).toBeTruthy();
-  await user.click(screen.getByRole('button', { name: 'Chat' }));
+  await user.click(screen.getByRole('button', { name: 'Try a task' }));
   await user.click(screen.getByRole('button', { name: 'Send to a cluster' }));
   const send = await screen.findByRole('region', { name: 'Send and cluster tests' });
   await waitFor(() => expect(document.activeElement).toBe(send));

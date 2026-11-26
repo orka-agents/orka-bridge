@@ -65,6 +65,25 @@ describe('preview backend replies', () => {
     expect((await readAgents()).state).toBe('complete');
   });
 
+  it('runs each task in a fresh conversation with its own start and finish times', async () => {
+    await preview('scenario=connected&speed=1000');
+    await connectModel();
+    const task = 'Read https://example.com and summarise it.';
+    for (const round of [1, 2]) {
+      expect(await chatCall('agent_chat_new', SAMPLE_DOCUMENT_ID)).toMatchObject({ ok: true });
+      const sent = await chatCall('agent_chat_send', SAMPLE_DOCUMENT_ID, task);
+      expect(sent).toMatchObject({ ok: true, snapshot: { busy: true } });
+      expect(sent.ok && sent.snapshot.versions.at(-1)!.turns[0]).toMatchObject({ message: task, finishedAt: null });
+      await new Promise(resolve => setTimeout(resolve, 20));
+      const done = await chatCall('agent_chat_status', SAMPLE_DOCUMENT_ID);
+      expect(done.ok && done.snapshot.versions).toHaveLength(round);
+      const turn = done.ok ? done.snapshot.versions.at(-1)!.turns : [];
+      expect(turn).toHaveLength(1);
+      expect(turn[0]).toMatchObject({ phase: 'Succeeded', tools: [{ name: 'web_fetch', phase: 'ToolCallStarted' }, { name: 'web_fetch', phase: 'ToolCallCompleted' }] });
+      expect(turn[0].finishedAt).toBeGreaterThanOrEqual(turn[0].startedAt);
+    }
+  });
+
   it('reports an idle Send in the original scenarios', async () => {
     for (const name of ['ready', 'connected', 'runFails', 'restart']) {
       await preview(`scenario=${name}`);

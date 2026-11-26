@@ -98,7 +98,7 @@ test.each(['builtin', 'tool'] as const)('approval %s is explained but cannot be 
   await user.type(screen.getByRole('searchbox'), 'request_approval');
   const option = screen.getByRole('button', { name: /request_approval/ });
   expect(option.matches(':disabled')).toBe(true);
-  expect(screen.getByText('Approval tools need autonomous coordination, which Bridge does not support for local tests or Chat.')).toBeTruthy();
+  expect(screen.getByText('Approval tools need autonomous coordination, which Bridge does not support for local tests or Try a task.')).toBeTruthy();
   await user.click(option);
   expect(changed).not.toHaveBeenCalled();
 });
@@ -107,7 +107,7 @@ test('a saved approval declaration stays visible and unchanged until explicitly 
   const saved = source.replace('tools: []', 'tools: [{kind: builtin, name: request_approval}]');
   render(<AgentParts source={saved} readOnly={false} onChange={changed} />);
   expect(screen.getByText('Ask for approval')).toBeTruthy();
-  expect(screen.getByText(/Remove all request_approval and reply_in_conversation tools before running local tests or Chat/)).toBeTruthy();
+  expect(screen.getByText(/Remove all request_approval and reply_in_conversation tools before running local tests or Try a task/)).toBeTruthy();
   expect(changed).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Remove Ask for approval' }));
   expect(readForm(changed.mock.calls[0][0]).tools).toEqual([]);
@@ -240,7 +240,7 @@ test('workspace loss invalidates catalog and waits for startup without freezing 
   expect(document.querySelector('.instructions-editor')?.textContent).toBe('Role only.\n');
   expect((screen.getByRole('textbox', { name: 'Instructions' }) as HTMLTextAreaElement).disabled).toBe(false);
   expect((screen.getByRole('button', { name: 'Run tests' }) as HTMLButtonElement).disabled).toBe(true);
-  await user.click(screen.getByRole('button', { name: 'Chat' }));
+  await user.click(screen.getByRole('button', { name: 'Try a task' }));
   expect(screen.getAllByText('Waiting for the workspace to start.').length).toBeGreaterThan(0);
 });
 test('workspace generation invalidates a late catalog without losing the owned draft', async () => {

@@ -113,7 +113,7 @@ export function buildCards(i: Inputs) {
   // installation + namespace + UID in the recorded list (or the live observation).
   const owned = new Set([...(files?.runAgents ?? []).map(a => exact(a.installation, a.namespace, a.agentUid)),
     ...(i.observed?.observation ? [exact(i.observed.installation, i.observed.observation.namespace, i.observed.observation.agentUid)] : [])]);
-  // Chat's generated Agents are implementation details, not the creator's files. This is display-only;
+  // Try a task's generated Agents are implementation details, not the creator's files. This is display-only;
   // it must never be used to claim ownership or authorize resource cleanup.
   const strays: Card[] = !ownershipKnown || !i.observed ? [] : i.observed.agents.filter(a => !/^bridge-chat-agent-[0-9a-f]{32}$/.test(a.name) && !owned.has(exact(i.observed!.installation, a.namespace, a.uid))).map(a => ({
     key: `local/${exact(a.namespace, a.uid)}`, groupKey: 'local', agentKey: `agent/local/${a.namespace}/${a.uid}`, title: a.name, place: 'This computer', subject: a.name,
@@ -153,7 +153,7 @@ export function clusterGroups(i: Inputs, built: Built): Group[] {
   if (state === 'reading') notes.push({ text: 'Reading agents…' });
   if (state === 'updating') notes.push({ text: 'Updating when the test finishes.', seen });
   if (state === 'busy') notes.push({ text: 'The workspace is busy right now.', seen, check: true });
-  if (state === 'stopped') notes.push({ text: 'The workspace is stopped. Start it to test or chat.', clusters: true });
+  if (state === 'stopped') notes.push({ text: 'The workspace is stopped. Start it to run tests or try a task.', clusters: true });
   if (state === 'read') notes.push({ text: "Couldn't check just now.", seen, check: true });
   if (i.files?.state === 'complete' && !history && !i.filesStale) notes.push({ text: "Test history is unavailable, so other agents on this cluster aren't shown and results are unknown.", check: true });
   if (history && state === 'ok' && !local.length && !strays.length) notes.push({ text: 'No agents on this computer yet.' });

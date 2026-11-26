@@ -352,7 +352,7 @@ export default function App() {
       setDocumentAction({ id: ++actionSequence.current, documentId: id, action: action === 'run' ? 'send' : 'open' });
       return;
     }
-    // Local tests stay local; Chat needs the workspace, while Open keeps the selected Send destination.
+    // Local tests stay local; Try a task needs the workspace, while Open keeps the selected Send destination.
     if (remote && action === 'chat') choosePlace({ kind: 'thisComputer' });
     openDesigner(id);
     setDocumentAction({ id: ++actionSequence.current, documentId: id, action });
@@ -415,8 +415,8 @@ export default function App() {
             onOpenExample={() => openDesigner(SAMPLE_DOCUMENT_ID)} onOpenAgent={() => openDesigner()} />
         </div>
         {page === 'Home' && <Home active revision={agentsRevision} onOpenAgent={id => openDesigner(id)} onChooseWorkspace={() => setPage('Clusters')}
-          blocked={remote ? 'Chat runs on the workspace. Choose This computer in Clusters.' : !workspaceReady || workspaceBusy ? 'Waiting for the workspace to start.'
-            : setup?.model !== 'available' || aiObserved === false ? 'Connect the AI in Clusters before chatting.' : undefined}
+          blocked={remote ? 'Try a task runs on the workspace. Choose This computer in Clusters.' : !workspaceReady || workspaceBusy ? 'Waiting for the workspace to start.'
+            : setup?.model !== 'available' || aiObserved === false ? 'Connect the AI in Clusters before trying a task.' : undefined}
           // Designer's own gate for the agent it has open (unsaved edits, missing instructions, pending reloads).
           blockedFor={id => designerChat?.documentId === id ? designerChat.reason : undefined} />}
         {page === 'Designer' && overviewNotice && <p className="muted" role="status">{overviewNotice}</p>}

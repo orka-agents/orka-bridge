@@ -6,7 +6,7 @@ import AgentParts from './AgentParts';
 import { readForm } from './agent-form';
 
 const source = '---\nname: reader\nmodel: m\nkmx:\n  schemaVersion: 1\n  runtime: orka\n  tools: []\n---\nRead.';
-const replyReason = 'Conversation replies need an authenticated gateway conversation, which local tests and Chat do not have.';
+const replyReason = 'Conversation replies need an authenticated gateway conversation, which local tests and Try a task do not have.';
 const catalog = (kind: CatalogTool['kind']): WorkspaceCatalogReply => ({ defaultModel: 'm', models: { state: 'ready', items: [{ id: 'm' }] }, tools: { state: 'ready', items: [{ kind, name: 'reply_in_conversation', description: 'Reply.' }] } });
 beforeEach(() => { Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; } }); });
 afterEach(() => { cleanup(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
@@ -34,7 +34,7 @@ test('a saved reply is warned about but preserved until explicit removal', async
   const changed = vi.fn(); const user = userEvent.setup();
   const view = render(<AgentParts source={saved} readOnly={false} onChange={changed} />);
   expect(screen.getByText('Reply in a conversation')).toBeTruthy();
-  expect(screen.getByRole('alert').textContent).toMatch(/Remove all .*reply_in_conversation tools before running local tests or Chat/);
+  expect(screen.getByRole('alert').textContent).toMatch(/Remove all .*reply_in_conversation tools before running local tests or Try a task/);
   expect(screen.getByRole('alert').textContent).not.toContain('No work was submitted');
   expect(changed).not.toHaveBeenCalled();
   await user.click(screen.getByRole('button', { name: 'Remove Reply in a conversation' }));
@@ -48,7 +48,7 @@ test('a saved agent with both unsupported tools is warned until both are removed
   const saved = source.replace('tools: []', 'tools: [{kind: builtin, name: request_approval}, {kind: builtin, name: reply_in_conversation}]');
   const changed = vi.fn(); const user = userEvent.setup();
   const view = render(<AgentParts source={saved} readOnly={false} onChange={changed} />);
-  expect(screen.getByRole('alert').textContent).toBe('Remove all request_approval and reply_in_conversation tools before running local tests or Chat.');
+  expect(screen.getByRole('alert').textContent).toBe('Remove all request_approval and reply_in_conversation tools before running local tests or Try a task.');
   await user.click(screen.getByRole('button', { name: 'Remove Reply in a conversation' }));
   const approvalOnly = changed.mock.calls.at(-1)![0];
   view.rerender(<AgentParts source={approvalOnly} readOnly={false} onChange={changed} />);

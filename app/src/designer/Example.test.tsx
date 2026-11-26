@@ -97,10 +97,14 @@ test('opens the owned pair without a VM and exposes a keyboard File switch', asy
   expect(await screen.findByRole('heading', { name: 'web-reader', level: 1 })).toBeTruthy();
   expect(screen.getByText('Reads a page you name.', { selector: 'p' })).toBeTruthy();
   expect(screen.getByText('Checks from disk')).toBeTruthy();
-  const chat = screen.getByRole('button', { name: 'Chat' });
+  const chat = screen.getByRole('button', { name: 'Try a task' });
   expect(chat.hasAttribute('disabled')).toBe(false);
   screen.getByRole('button', { name: 'File' }).focus(); await user.keyboard('{Enter}');
   expect((screen.getByRole('textbox', { name: 'Agent file' }) as HTMLTextAreaElement).value).toBe(pair.agent);
+  // The file name keeps its real case; only the plain section labels are uppercased.
+  expect(screen.getByRole('heading', { name: 'web-reader.agent.md', level: 2 }).className).toBe('section-label file-name');
+  await user.click(screen.getByRole('button', { name: 'Agent' }));
+  expect(screen.getByRole('heading', { name: 'Instructions and settings', level: 2 }).className).toBe('section-label');
 });
 test('the editor leads and local tests sit above the Team cluster Send card, with history inside it', async () => {
   native(); const user = userEvent.setup(); const { container } = render(<Example />);

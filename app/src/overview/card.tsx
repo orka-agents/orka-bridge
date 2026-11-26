@@ -10,14 +10,14 @@ function PlaceRow({ card, actions }: { card: Card; actions: CardActions }) {
   const [details, setDetails] = useState(false);
   const id = useId();
   const action = card.status === 'passed' ? card.actions.find(a => a.id === 'chat') ?? card.actions.find(a => a.id === 'run') : card.actions.find(a => a.id === 'run');
-  const label = action?.id === 'chat' ? 'Chat' : 'Run tests';
+  const label = action?.id === 'chat' ? 'Try a task' : 'Run tests';
   return <article className="overview-place" data-card-key={card.key} tabIndex={-1} aria-label={`${card.place}, ${card.pill ?? 'No recorded result'}`}>
     <div className="overview-place-head">
       <span className={card.remote ? 'overview-mono' : undefined}>{card.place}</span>
       {card.status ? <StatusPill state={card.status}>{card.pill}</StatusPill> : <span className="overview-note">No recorded result</span>}
       {card.meta.tests && <span className="overview-place-count">{card.meta.tests}</span>}
       {card.testedAt !== undefined && <span className="overview-time"><RelativeTime value={card.testedAt} /></span>}
-      {action && <Button size="small" disabled={!card.remote && !!actions.localAiReason} aria-describedby={!card.remote ? actions.localAiReason : undefined} aria-label={`${label} ${card.subject}${card.remote ? ` on ${card.place}` : ''}`} onClick={() => {
+      {action && <Button size="small" disabled={!card.remote && !!actions.localAiReason} aria-describedby={!card.remote ? actions.localAiReason : undefined} aria-label={`${action.id === 'chat' ? `${label} with` : label} ${card.subject}${card.remote ? ` on ${card.place}` : ''}`} onClick={() => {
         if (!card.documentId) return;
         if (action.id === 'chat') actions.onChat?.(card.documentId);
         else if (card.remote) actions.onRun?.(card.documentId, card.groupKey);

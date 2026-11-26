@@ -3,11 +3,11 @@ import unsupportedTools from './unsupported-tools.json';
 // Orka 3cb1f0df: task_controller.go approval validation and aitools/gateway_reply.go eligibility.
 // Match effective names: Orka resolves built-ins before same-named Tool resources.
 export const unsupportedLocalTool = (name: string) => unsupportedTools.includes(name.trim());
-export const unsupportedToolReason = 'Approval tools need autonomous coordination, which Bridge does not support for local tests or Chat.';
+export const unsupportedToolReason = 'Approval tools need autonomous coordination, which Bridge does not support for local tests or Try a task.';
 export const unsupportedLocalToolReason = (name: string) => name.trim() === 'reply_in_conversation'
-  ? 'Conversation replies need an authenticated gateway conversation, which local tests and Chat do not have.'
+  ? 'Conversation replies need an authenticated gateway conversation, which local tests and Try a task do not have.'
   : unsupportedToolReason;
-export const unsupportedToolWarning = 'Remove all request_approval and reply_in_conversation tools before running local tests or Chat.';
+export const unsupportedToolWarning = 'Remove all request_approval and reply_in_conversation tools before running local tests or Try a task.';
 export const unsupportedToolMessage = `${unsupportedToolWarning} No work was submitted.`;
 
 // Creator-facing descriptions for common built-ins; unknown tools keep their supplied text.
