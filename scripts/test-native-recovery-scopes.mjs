@@ -107,7 +107,7 @@ checkSend('send-earlier-target', { ...sendProbe, header: [{ label: 'Send and run
 checkSend('send-failed', { ...sendProbe, detailsOpen: true, extras: ['Check again', 'Send as a separate agent'] }, true);
 for (const [name, header] of [
   ['send-ready', [{ label: 'Send and run tests', primary: true }]],
-  ['send-blocked', [{ label: 'Check again', primary: true }]],
+  ['send-blocked', [{ label: 'Update agent and run tests', primary: true, disabled: true }, { label: 'Check again', primary: false }]],
   ['send-sending', [{ label: 'Cancel tests', primary: false }]],
   ['send-passed', [{ label: 'Run cluster tests again', primary: false }, { label: 'See in Overview', primary: false }]],
 ]) {
@@ -122,6 +122,7 @@ for (const [name, header] of [
     assert.throws(() => checkSend(name, { ...probe, checks: sendProbe.checks }, false), 'running Send must not advertise readiness');
   }
   if (name === 'send-blocked') assert.throws(() => checkSend(name, { ...probe, inlineChecks: ['allowed', 'blocked'] }, false));
+  if (name === 'send-blocked') assert.throws(() => checkSend(name, { ...probe, header: [{ ...header[0], disabled: false }, header[1]] }, false), /must stay disabled/);
 }
 for (const mutation of [{ heading: 'Send your agent' }, { summary: '' }, { checks: 'Ready to send: 2 checks passed' }]) {
   assert.throws(() => checkSend('send-failed', { ...sendProbe, ...mutation }, false));

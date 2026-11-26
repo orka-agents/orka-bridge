@@ -565,14 +565,17 @@ try {
     if (await evaluate('window.__bridgeStops') !== 0 || await evaluate('window.__bridgeLocalSelections') > 1) throw Error('Captures must not stop or repeatedly select a workspace');
   }
   function assertSendPresentation(name, probe, details) {
-    const labels = { 'send-ready': ['Send and run tests'], 'send-blocked': ['Check again'], 'send-sending': ['Cancel tests'],
+    const labels = { 'send-ready': ['Send and run tests'], 'send-blocked': ['Update agent and run tests', 'Check again'], 'send-sending': ['Cancel tests'],
       'send-passed': ['Run cluster tests again', 'See in Overview'], 'send-failed': ['Run cluster tests again', 'Fix in Designer', 'See in Overview'],
       'send-unsupported': ['Check cluster status'], 'send-earlier-target': ['Send and run tests', 'See in Overview'] }[name];
+    // The actions sit at the card's foot (.send-actions). A blocked destination keeps its Send action, disabled and
+    // labelled from preflight's "blocked" action as native SendCheck::finish reports it, with Check again beside it.
     // Rerunning leads every result; a passed result has no primary, and a failed one makes Fix in Designer primary,
     // followed by See in Overview.
     const primaryAt = { 'send-sending': -1, 'send-passed': -1, 'send-failed': 1 }[name] ?? 0;
     if (probe.header.map(button => button.label).join('|') !== labels.join('|')
         || probe.header.some((button, index) => button.primary !== (index === primaryAt))) throw Error('Wrong Send header actions: ' + JSON.stringify(probe));
+    if (name === 'send-blocked' && !probe.header[0].disabled) throw Error('The blocked Send action must stay disabled: ' + JSON.stringify(probe));
     if (probe.heading !== (['send-ready', 'send-blocked'].includes(name) ? 'Send your agent' : 'To fixture-selected') || name !== 'send-sending' && (!probe.summary.includes('web-reader') || !probe.summary.includes('1 test'))) throw Error('Send destination/compact summary missing: ' + JSON.stringify(probe));
     const checks = ['send-blocked', 'send-sending'].includes(name) ? '1 check passed' : 'Ready to send: 1 check passed';
     if (!probe.checks.startsWith(checks) || probe.checksOpen || probe.inlineChecks.join('|') !== (name === 'send-blocked' ? 'blocked' : '')) throw Error('Send must fold allowed/advisory checks, count only allowed and retain inline blockers: ' + JSON.stringify(probe));
@@ -590,11 +593,11 @@ try {
       const root = document.querySelector('.send-panel');
       const resources = [...root.querySelectorAll('.card-details')].find(item => item.querySelector('summary')?.textContent.includes('Resources and file hashes'));
       const shown = selector => [...root.querySelectorAll(selector)].filter(button => button.getClientRects().length);
-      return { header: shown('.long-card-head button').filter(button => button.textContent.trim() !== 'Change').map(button => ({ label: button.textContent.trim(), primary: button.classList.contains('button-primary') })),
+      return { header: shown('.send-actions button').filter(button => button.textContent.trim() !== 'Change').map(button => ({ label: button.textContent.trim(), primary: button.classList.contains('button-primary'), disabled: button.disabled })),
         heading: root.querySelector('.long-card-head h3').textContent.trim(), summary: root.querySelector('.send-what')?.textContent ?? '',
         checks: root.querySelector('.send-checks > summary').textContent.trim(), checksOpen: root.querySelector('.send-checks').open,
         inlineChecks: shown('.send-preflight:not(details) li').map(row => row.dataset.state),
-        changeDisabled: shown('.long-card-head button').find(button => button.textContent.trim() === 'Change')?.disabled,
+        changeDisabled: shown('.long-card-head button, .send-actions button').find(button => button.textContent.trim() === 'Change')?.disabled,
         buttons: shown('button').map(button => button.textContent.trim()), title: root.querySelector('.test-result > summary .test-name > span')?.textContent ?? '',
         id: root.querySelector('.test-result > summary code')?.textContent, text: root.innerText.replace(/\\s+/g, ' '),
         detailsOpen: resources.open, extras: [...resources.querySelectorAll('button')].filter(button => button.getClientRects().length).map(button => button.textContent.trim()),
@@ -893,7 +896,7 @@ try {
           if (name === 'cluster-checking') return new Promise(() => {});
           throw { check: 'clusterApi', result: 'connectionFailed' };
         }
-        if (sendScene && command === 'send_preflight') return { documentId, targetId: target.id, providerId: provider.id, source, model: 'gpt-5.6-terra', canSend: name !== 'send-blocked', action: ['send-ready', 'send-blocked', 'send-earlier-target'].includes(name) ? 'create' : 'unchanged', canSeparate: true, rows: [{ label: 'Cluster', status: 'allowed', message: 'Ready.' }, { label: 'Inference', status: 'unverified', message: 'Checked when tests run.' }, ...name === 'send-blocked' ? [{ label: 'Tool access', status: 'blocked', message: 'The selected account cannot use web_fetch.' }] : []] };
+        if (sendScene && command === 'send_preflight') return { documentId, targetId: target.id, providerId: provider.id, source, model: 'gpt-5.6-terra', canSend: name !== 'send-blocked', action: name === 'send-blocked' ? 'blocked' : ['send-ready', 'send-earlier-target'].includes(name) ? 'create' : 'unchanged', canSeparate: true, rows: [{ label: 'Cluster', status: 'allowed', message: 'Ready.' }, { label: 'Inference', status: 'unverified', message: 'Checked when tests run.' }, ...name === 'send-blocked' ? [{ label: 'Tool access', status: 'blocked', message: 'The selected account cannot use web_fetch.' }] : []] };
         if (name === 'designer-remote' && command === 'send_preflight') return { documentId, targetId: target.id, providerId: provider.id, source, model: 'fixture-model', canSend: true, action: 'create', canSeparate: false, rows: [{ label: 'Cluster', status: 'allowed', message: 'Ready.' }] };
         // In-memory only: lets this fixture's existing editor path save a removal and its restore.
         if (name === 'designer-reply-saved' && command === 'agent_save') { pair.agent = args.content; return { ...pair, documentId, name: 'web-reader' }; }
