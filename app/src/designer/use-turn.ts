@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { type ChatCommand, type ChatSnapshot, chatCall } from './chat-api';
+import { type ChatCall, type ChatCommand, type ChatSnapshot, chatCall } from './chat-api';
 
 // A submitted message waiting to appear as a turn. scrollTop and readerMovedAway belong to the caller's scrolling.
 export type PendingTurn = { message: string; count: number; scrollTop?: number; uncertain?: boolean; readerMovedAway?: boolean };
@@ -8,6 +8,8 @@ export type TurnOptions = {
   resumeFollow?: () => void;
   // Read when a message is submitted, so the caller can tell later whether the reader moved.
   scrollTop?: () => number | undefined;
+  // The native command set to use; Try a task's by default. The Navigator has its own.
+  call?: ChatCall;
 };
 
 // Polls one agent's native turn state and reconciles commands against it. A lost reply is never treated as a
@@ -51,7 +53,7 @@ export function useTurn(documentId: string, blocked: string | undefined, options
       if (!mounted) return;
       if (!mutation.current) {
         const request = epoch.current;
-        const result = await chatCall('agent_chat_status', documentId);
+        const result = await (hooks.current.call ?? chatCall)('agent_chat_status', documentId);
         if (mounted && request === epoch.current) {
           if (result.ok) { receiveRef.current(result.snapshot); setReadError(undefined); } else setReadError(result.message);
         }
@@ -76,7 +78,7 @@ export function useTurn(documentId: string, blocked: string | undefined, options
       setAwaitingTurn(true);
     }
     const operation = action === 'agent_chat_reconnect' && pending.current?.uncertain ? 'agent_chat_status' : action;
-    const result = await chatCall(operation, documentId, pending.current?.message);
+    const result = await (hooks.current.call ?? chatCall)(operation, documentId, pending.current?.message);
     if (!alive.current || request !== epoch.current) return;
     if (result.ok) {
       if (action === 'agent_chat_send') hooks.current.resumeFollow?.();

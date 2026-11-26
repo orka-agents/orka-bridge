@@ -31,7 +31,9 @@ export function isChatSnapshot(value: unknown): value is ChatSnapshot {
       && millis(turn.startedAt) && (turn.finishedAt === null || millis(turn.finishedAt))
       && Array.isArray(turn.tools) && turn.tools.every(tool => object(tool) && typeof tool.name === 'string' && typeof tool.callId === 'string' && typeof tool.phase === 'string')));
 }
-export async function chatCall(command: ChatCommand, documentId: string, message?: string): Promise<{ ok: true; snapshot: ChatSnapshot } | { ok: false; message: string; uncertain?: true }> {
+export type ChatResult = { ok: true; snapshot: ChatSnapshot } | { ok: false; message: string; uncertain?: true };
+export type ChatCall = (command: ChatCommand, documentId: string, message?: string) => Promise<ChatResult>;
+export async function chatCall(command: ChatCommand, documentId: string, message?: string): Promise<ChatResult> {
   if (!isTauri()) return { ok: false, message: 'Try a task is available only in the native app.' };
   try {
     const value = await invoke<unknown>(command, { documentId, ...(command === 'agent_chat_send' ? { message } : {}) });
