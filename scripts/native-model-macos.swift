@@ -306,21 +306,12 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         return true
     }
     require(sampled, "Cannot sample native theme in sRGB")
-    let pickerOpen = enabledButton("Close picker") != nil
-    // The cluster context and account pickers are popovers with a transparent backdrop (.context-picker::backdrop in
-    // clusters.css), so the page beside them stays plain paper; the tool picker still dims the page.
-    let dimmingPicker = pickerOpen && !name.hasPrefix("cluster-")
+    // No picker dims the page any more: the cluster context and account pickers are popovers with a transparent
+    // backdrop (.context-picker::backdrop in clusters.css) and the tool picker is a card in the page (designer.css),
+    // so the sampled corner is plain paper with or without one open.
     let page: [CGFloat] = theme == "dark" ? [9, 9, 10] : [255, 255, 255]
     let actual = rgba.prefix(3).map { CGFloat($0) }
-    if dimmingPicker {
-        let backdrop: [CGFloat] = theme == "dark" ? [0, 0, 0] : [11, 11, 12]
-        let opacity: CGFloat = theme == "dark" ? 0.55 : 0.18
-        let expected = zip(page, backdrop).map { $0 * (1 - opacity) + $1 * opacity }
-        require(zip(actual, expected).allSatisfy { abs($0 - $1) < 3 },
-            "Native fixture picker backdrop does not use the Orka paper composite: \(actual)")
-    } else {
-        require(zip(actual, page).allSatisfy { abs($0 - $1) < 8 }, "Native fixture does not use Orka paper: \(actual)")
-    }
+    require(zip(actual, page).allSatisfy { abs($0 - $1) < 8 }, "Native fixture does not use Orka paper: \(actual)")
     // Setup frames 1c, 1d (cropped) and 1e exist only in light; dark captures use them as layout references.
     // Frames 1g (AI connection failed) and 1h (AI reset) are approved in both themes.
     let frame: (file: String, label: String)? =
@@ -736,9 +727,10 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
 try "ready".write(to: catalogRelease, atomically: true, encoding: .utf8)
 localSize(1280, 800); scroll(4000)
 waitForButton("Add a tool"); click("Add a tool", [])
+// The picker's visible title is Choose a tool; Find a tool is only the search's hidden label and placeholder.
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height))
-    _ = try capture("local-catalog-first-open-\(size)", ["Find a tool", "Read a file"])
+    _ = try capture("local-catalog-first-open-\(size)", ["Choose a tool", "Read a file"])
 }
 click("Close picker", [])
 localSize(1280, 800); scroll(4000)
@@ -1362,8 +1354,9 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
             && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Find a tool" }
     }
     require(search.count == 1, "Expected the labeled picker search field")
-    require(nativeBounds(search[0]).map { abs($0.height - 32) < 2 } == true, "Picker search must be 32px high")
-    _ = try capture("local-controls-picker-\(size)", ["Find a tool", "Read a file"])
+    // Fields are --height-control (34px) since the spec sizes; the search is an ordinary .field.
+    require(nativeBounds(search[0]).map { abs($0.height - 34) < 2 } == true, "Picker search must be 34px high")
+    _ = try capture("local-controls-picker-\(size)", ["Choose a tool", "Read a file"])
     let approvalReason = "Approval tools need autonomous coordination, which Bridge does not support for local tests or Try a task."
     let approvalButtons = nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXButton"
@@ -1371,7 +1364,7 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     }
     require(approvalButtons.count == 1 && attribute(approvalButtons[0], "AXEnabled") as? Bool == false, "Approval tool must stay disabled locally")
     require(nativeResultTextIsVisible(approvalReason), "Approval reason must be fully visible in the picker")
-    _ = try capture("local-approval-tool-\(size)", ["Find a tool", "Ask for approval", approvalReason])
+    _ = try capture("local-approval-tool-\(size)", ["Choose a tool", "Ask for approval", approvalReason])
     // Filter after the approval frame so the reply row and any reason must fit at every size, minimum included.
     require(AXUIElementSetAttributeValue(search[0], kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus picker search")
     typeUnicode("reply")
@@ -1382,11 +1375,12 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     require(replyButtons.count == 1, "Search must leave exactly the reply tool row")
     require(attribute(replyButtons[0], "AXEnabled") as? Bool == false, "Reply tool must stay disabled locally")
     // Require the whole reason in the captured window, not only accessibility-node geometry.
-    _ = try capture("local-reply-tool-\(size)", ["Find a tool", "Reply in a conversation", replyReason])
+    _ = try capture("local-reply-tool-\(size)", ["Choose a tool", "Reply in a conversation", replyReason])
     guard let close = enabledButton("Close picker"), let bounds = nativeBounds(close) else {
         fatalError("Labeled picker X missing")
     }
-    require(abs(bounds.width - 26) < 2 && abs(bounds.height - 26) < 2, "Picker X must be 26px square")
+    // Icon buttons are 28px square (.button-icon) since the spec sizes.
+    require(abs(bounds.width - 28) < 2 && abs(bounds.height - 28) < 2, "Picker X must be 28px square")
     // Use the labeled AX control after filtering rather than a second geometry lookup.
     require(AXUIElementPerformAction(close, kAXPressAction as CFString) == .success, "Cannot press picker X")
     Thread.sleep(forTimeInterval: 1)
