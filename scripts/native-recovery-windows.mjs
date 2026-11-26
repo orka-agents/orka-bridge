@@ -221,6 +221,8 @@ try {
         labels: shown('.page-tab').map(node => node.getAttribute('aria-label')),
         described: shown('.page-tab').filter(node => document.getElementById(node.getAttribute('aria-describedby') ?? '')?.textContent.trim()).length,
         brand: !!(document.querySelector('.brand b')?.getBoundingClientRect().width > 1 && document.querySelector('.sidebar-toggle')?.getClientRects().length),
+        // The title bar's controls in reading order; Windows has no in-page File menu (Quit is the tray icon's Quit Bridge).
+        titleBar: (() => { const bar = document.querySelector('header.title-bar'); const get = selector => { const node = bar?.querySelector(selector); return node?.getClientRects().length ? rect(node) : null; }; return { bar: rect(bar), toggle: get('.sidebar-toggle'), back: get('.history-back'), forward: get('.history-forward'), brand: get('.brand'), theme: get('.theme-button'), controls: get('.window-controls'), fileMenu: shown('.file-menu, .file-menu-button').length }; })(),
         subtitles: shown('.tab-copy small').filter(node => getComputedStyle(node).display !== 'none').length,
         quiet: shown('.button-quiet').map(node => ({ start: getComputedStyle(node).paddingInlineStart, end: getComputedStyle(node).paddingInlineEnd })),
         scrollbar: { width: getComputedStyle(main).scrollbarWidth, color: getComputedStyle(main).scrollbarColor },
@@ -245,7 +247,9 @@ try {
     if ((layout.designer?.send || name.startsWith('chat-') || name.startsWith('upgrade-')) && layout.documentScrollHeight > layout.height + 2) fail('document overflows outside the page scroll');
     if (layout.scrollWidth > layout.clientWidth + 2) fail('page overflows horizontally');
     if (size === 'setup-fit' && layout.scrollHeight > layout.clientHeight + 2) fail('page overflows vertically');
+    if (layout.titleBar?.fileMenu) fail('title bar must not draw a File menu');
     if (layout.guided) {
+      if (layout.titleBar?.back || layout.titleBar?.forward) fail('guided first run must not show Back and Forward');
       // The guided first run is the whole window under the title bar: no sidebar or status card on screen. The
       // status card's live region stays in the accessibility tree. The way out is offered only where setup stopped.
       if (layout.tabs.length || layout.names || layout.hostShown) fail('guided first run must not show the sidebar or status card');
@@ -254,6 +258,11 @@ try {
       if (layout.exit) fail('guided screens must not offer Show all of Bridge');
       if (layout.stopped && !layout.later) fail('guided screens where setup stopped must offer Set up later');
     } else {
+      // Back and Forward follow the sidebar toggle, before Bridge; the whole row fits the window down to its 540 minimum.
+      const bar = layout.titleBar;
+      const row = bar && [bar.toggle, bar.back, bar.forward, bar.brand, bar.theme, bar.controls].filter(Boolean);
+      if (!bar?.toggle || !bar.back || !bar.forward || !bar.brand || !bar.theme) fail('title bar must show the sidebar toggle, Back, Forward, Bridge and the theme button');
+      if (row.some((item, index) => index > 0 && item.x < row[index - 1].right - 0.5) || row.at(-1).right > layout.width + 1) fail('title bar controls must sit in one row, in order, inside the window');
       if (layout.tabs.length !== 4 || layout.tabs.some(tab => Math.abs(tab.x - layout.tabs[0].x) > 1 || Math.abs(tab.width - layout.tabs[0].width) > 1 || tab.right > layout.page.x) || layout.tabs.some((tab, index) => index > 0 && tab.y < layout.tabs[index - 1].bottom)) fail('sidebar tabs must stack in one column left of the page');
       // Wide windows show the full sidebar with the status card below the tabs; narrow ones the 60px icon rail, whose
       // status card keeps only its dot and whose names and status lines stay for assistive technology, off screen.

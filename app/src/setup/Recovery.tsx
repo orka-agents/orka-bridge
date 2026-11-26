@@ -15,7 +15,7 @@ export default function Recovery({ detail, preflightFailure, failure, disabled, 
   async function quit() {
     setQuitting(true); setNotice('');
     try { await invoke('quit_bridge'); }
-    catch { setNotice("Couldn't quit Bridge. Use Quit Bridge from its menu."); setQuitting(false); }
+    catch { setNotice("Couldn't quit Bridge. Use Quit Bridge from the Bridge icon in the tray or menu bar."); setQuitting(false); }
   }
   async function help() {
     try { await invoke('setup_open_help', { topic: info.topic }); setNotice('Help opened in your browser.'); }

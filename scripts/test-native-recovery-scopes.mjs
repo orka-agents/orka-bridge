@@ -198,6 +198,7 @@ const tab = i => ({ x: 8, y: 40 + 48 * i, width: 216, right: 224, bottom: 80 + 4
 const labels = ['Home', 'Overview', 'Designer', 'Clusters'];
 const wide = { width: 1280, scrollWidth: 1000, clientWidth: 1000, scrollHeight: 700, clientHeight: 700, forms: [], rows: [], checks: [],
   tabs: [0, 1, 2, 3].map(tab), page: { x: 232 }, guided: false, labels, described: 4, railNames: 0, brand: true,
+  titleBar: { bar: { x: 0, right: 1280 }, toggle: { x: 16, right: 44 }, back: { x: 52, right: 80 }, forward: { x: 88, right: 116 }, brand: { x: 126, right: 196 }, theme: { x: 1088, right: 1116 }, controls: { x: 1124, right: 1262 }, fileMenu: 0 },
   host: { x: 20, y: 740, right: 220 }, hostLabel: { width: 100 }, statusLine: { width: 180 }, statusText: 'Workspace ready', names: 4, subtitles: 4, quiet: [{ start: '0px', end: '0px' }],
   scrollbar: { width: 'thin', color: 'rgb(90, 90, 90) rgb(240, 240, 240)' }, theme: { page: 'rgb(255, 255, 255)', ink: 'rgb(11, 11, 12)' }, fallback: {} };
 async function gate(layout) {
@@ -207,6 +208,7 @@ async function gate(layout) {
 await gate(wide);
 // Narrow windows: the 60px icon rail, names and status lines clipped for assistive technology, the dot below the tabs.
 const compact = { ...wide, width: 540, names: 0, railNames: 4, tabs: [0, 1, 2, 3].map(i => ({ ...tab(i), width: 44, right: 52 })), page: { x: 60, bottom: 640 },
+  titleBar: { ...wide.titleBar, bar: { x: 0, right: 540 }, theme: { x: 348, right: 376 }, controls: { x: 384, right: 522 } },
   host: { x: 8, y: 588, right: 52 }, hostLabel: { width: 1 }, statusLine: { width: 1 } };
 await gate(compact);
 for (const mutation of [
@@ -214,6 +216,10 @@ for (const mutation of [
   { host: { x: 8, y: 100, right: 52 } }, { host: { x: 70, y: 588, right: 300 } },
   { names: 4 }, { railNames: 3 }, { described: 3 }, { labels: labels.slice(1) },
   { hostLabel: { width: 100 } }, { hostLabel: null }, { statusLine: { width: 180 } }, { statusLine: null }, { brand: false },
+  // Back and Forward: present, after the toggle and before Bridge, the row inside the 540 window, and no File menu.
+  { titleBar: { ...compact.titleBar, back: null } }, { titleBar: { ...compact.titleBar, forward: null } },
+  { titleBar: { ...compact.titleBar, back: { x: 140, right: 168 } } }, { titleBar: { ...compact.titleBar, controls: { x: 420, right: 558 } } },
+  { titleBar: { ...compact.titleBar, fileMenu: 1 } },
 ]) await assert.rejects(() => gate({ ...compact, ...mutation }));
 for (const mutation of [
   { tabs: wide.tabs.slice(1) },
@@ -230,7 +236,8 @@ for (const mutation of [
 // The guided first run spans the window with no sidebar or status card on screen and keeps the status live region.
 // It has no title-bar way out: Show all of Bridge is gone, and only a screen where setup stopped offers Set up later.
 // Any other screen is still held to the sidebar layout above.
-const guided = { ...wide, guided: true, tabs: [], names: 0, subtitles: 0, hostShown: 0, host: { x: 0, y: 0, right: 0, width: 0 }, hostLabel: { width: 0 }, page: { x: 0, right: 1280 }, statusRegion: true, exit: 0, stopped: 0, later: 0 };
+const guided = { ...wide, guided: true, tabs: [], names: 0, subtitles: 0, hostShown: 0, host: { x: 0, y: 0, right: 0, width: 0 }, hostLabel: { width: 0 }, page: { x: 0, right: 1280 }, statusRegion: true, exit: 0, stopped: 0, later: 0,
+  titleBar: { ...wide.titleBar, toggle: null, back: null, forward: null } };
 const stopped = { ...guided, stopped: 1, later: 1 };
 await gate(guided);
 await gate({ ...guided, width: 540, page: { x: 0, right: 540 } });
@@ -240,7 +247,7 @@ await gate({ ...stopped, width: 540, page: { x: 0, right: 540 } });
 await gate({ ...guided, later: 1 });
 for (const mutation of [
   { tabs: wide.tabs }, { names: 4 }, { hostShown: 1 }, { page: { x: 232, right: 1280 } }, { page: { x: 0, right: 1000 } },
-  { statusRegion: false }, { exit: 1 }, { stopped: 1 },
+  { statusRegion: false }, { exit: 1 }, { stopped: 1 }, { titleBar: wide.titleBar }, { titleBar: { ...guided.titleBar, fileMenu: 1 } },
 ]) await assert.rejects(() => gate({ ...guided, ...mutation }));
 for (const mutation of [{ later: 0 }, { exit: 1 }]) await assert.rejects(() => gate({ ...stopped, ...mutation }));
 assert.ok(layoutGate.includes("node.textContent.trim() === 'Show all of Bridge'") && layoutGate.includes("node.textContent.trim() === 'Set up later'"), 'the guided gate must measure the controls by their names');

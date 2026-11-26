@@ -1,4 +1,5 @@
 import { type Ref, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { ClustersView } from '../chrome/history';
 import { type ClusterPlaceSnapshot, clusterPlaces, type SelectedPlace } from '../clusters/api';
 import ClusterCard from '../clusters/ClusterCard';
 import Places from '../clusters/Places';
@@ -27,9 +28,9 @@ const runtimeCopy = {
   notIntegrated: 'Workspace setup is not included in this build. Nothing will be downloaded or started.',
 };
 export type UpgradeNotice = 'recovery' | 'required' | 'error' | 'unknown' | 'checking' | 'busy';
-// showCluster opens a remembered cluster's card, or Add a cluster without one, as the Clusters list does.
-export type LocalClusterControl = { showPlaces: () => void; showCluster: (place?: Place) => void };
-export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onLaunch, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, guided = false, onSetUpLater, active = true }: {
+// showCluster opens a remembered cluster's card, or Add a cluster without one, as the Clusters list does; showLocal opens This computer.
+export type LocalClusterControl = { showPlaces: () => void; showLocal: () => void; showCluster: (place?: Place, selected?: boolean) => void };
+export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onModelState, onWelcome, onLaunch, onExampleName, firstCheck, firstPass, modelUnavailable, firstTestResult, initialAutomatic, onCheckFirstTest, onStarting, onWorkspaceAction, onPlace, place, onLocalView, onWorkspaceMode, guided = false, onSetUpLater, active = true, onView }: {
   ref?: Ref<LocalClusterControl>;
   onOpenExample: () => void; onOpenAgent?: () => void; active?: boolean;
   onStatus?: (status: SetupStatus | undefined) => void;
@@ -46,6 +47,8 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   onWorkspaceAction?: (pending: boolean, stopping?: boolean, updating?: boolean, notice?: UpgradeNotice) => void;
   onPlace?: (place: SelectedPlace) => void;
   onLocalView?: (visible: boolean) => void;
+  /** The view shown, for Back and Forward: the list, This computer, or a cluster's page (no key: Add a cluster). */
+  onView?: (view: ClustersView) => void;
   onWorkspaceMode?: (returning: boolean) => void;
   place?: SelectedPlace;
   // The guided first run: reading the example's instructions stays in place, and screens where setup has stopped offer Set up later.
@@ -132,6 +135,8 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   }, [firstPass, active, view, eligiblePayoff]);
   const [entry, setEntry] = useState<{ revision: number; current?: SelectedPlace; remembered?: Place }>();
   const [clusterName, setClusterName] = useState<string>();
+  const viewedCluster = view === 'cluster' ? entry?.remembered?.key ?? '' : undefined;
+  useEffect(() => { onView?.(viewedCluster === undefined ? { kind: view === 'local' ? 'local' : 'places' } : { kind: 'cluster', key: viewedCluster || undefined }); }, [view, viewedCluster, onView]);
   const [snapshot, setSnapshot] = useState<ClusterPlaceSnapshot>();
   const [snapshotUnavailable, setSnapshotUnavailable] = useState(false);
   const snapshotEpoch = useRef(0);
@@ -342,7 +347,7 @@ export default function Setup({ ref, onOpenExample, onOpenAgent, onStatus, onMod
   const changing = sending || upgradeBusy || !!upgrade?.busy || upgradeObservation.pending;
   const upgradePanel = upgrade && upgrade.state !== 'none' ? <Upgrade status={upgrade} savedConnectionInAiCard={workspace} ordinaryRestartEpoch={ordinaryRestartEpoch.current} observation={upgradeObservation} canUseCredential={status?.localVm === 'ready' || upgrade.state === 'consumed'} disabled={sending || (!!status && pending(status.localVm)) || !!error || !upgradeKnown} onBusy={upgradeAction} onChange={value => { observeUpgrade(value); setCheck(check => check + 1); }} onCheck={() => { void checkWorkspace(); }} /> : undefined;
   const continueAction = <Button type="button" kind="primary" aria-describedby={location === 'local' && requirements ? 'preflight-reason' : undefined} disabled={busy || !status || !!error || (location === 'local' && (changing || !ordinaryRecovery || status.localVm !== 'notIntegrated' && requirements !== null && preflightBlocked))} onClick={() => { if (location === 'cluster') chooseCluster(); else void chooseLocal(); }}>Continue</Button>;
-  useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); }, showCluster(item?: Place) { chooseCluster(item); } }));
+  useImperativeHandle(ref, () => ({ showPlaces() { if (view !== 'places') back(); }, showLocal() { openLocal(); }, showCluster(item?: Place, selected = false) { chooseCluster(item, selected); } }));
   const titleId = active ? 'page-title' : undefined;
   if (!status && !error || launchPending) return <><h1 id={titleId}>Clusters</h1><p role="status">Checking the workspace…</p></>;
   if (welcome && status) return <Welcome titleId={titleId} onStart={start} unavailable={status.localVm === 'notIntegrated' ? runtimeCopy.notIntegrated : undefined} />;

@@ -99,7 +99,7 @@ export default function Workspace({ status, busy, stopping, starting, error, act
       {failed && !error && onCluster && <Button type="button" kind="quiet" disabled={busy} onClick={onCluster}>Use a cluster you already have instead</Button>}</div>}
     {failed && helpError && <p role="alert">Couldn't open help. Open Show details to read the error.</p>}
     {failed && notice && <p role="status">{notice}</p>}
-    {quitError && <p role="alert">Couldn't quit Bridge. Try again or use Quit Bridge from its menu.</p>}
+    {quitError && <p role="alert">Couldn't quit Bridge. Try again or use Quit Bridge from the Bridge icon in the tray or menu bar.</p>}
     {failed && ordinaryRecovery && <Disclosure label={details ? 'Hide details' : 'Show details'} open={details} controls="returning-workspace-error" onOpenChange={setDetails}>
       {details && <div className="workspace-progress-details"><p>Stage: {recovery.stage}</p><pre id="returning-workspace-error">{status.localVmError || 'No further error details were reported.'}</pre></div>}
     </Disclosure>}

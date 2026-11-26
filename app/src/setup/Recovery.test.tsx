@@ -122,7 +122,7 @@ test('forced-stop Quit failure is recoverable without exposing native text', asy
   const user = userEvent.setup();
   render(<Recovery failure={{ cause: 'forcedStop', operation: 'stop', codes: [] }} disabled={false} onRetry={() => {}} />);
   await user.click(screen.getByRole('button', { name: 'Quit Bridge' }));
-  expect(await screen.findByText("Couldn't quit Bridge. Use Quit Bridge from its menu.")).toBeTruthy();
+  expect(await screen.findByText("Couldn't quit Bridge. Use Quit Bridge from the Bridge icon in the tray or menu bar.")).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Quit Bridge' }).matches(':disabled')).toBe(false);
   expect(screen.queryByText(/PRIVATE/)).toBeNull();
 });

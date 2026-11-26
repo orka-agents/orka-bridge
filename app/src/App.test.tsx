@@ -420,7 +420,7 @@ test('unconfirmed run cancellation offers native Quit Bridge without another wor
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
   await user.click(await screen.findByRole('button', { name: 'Read its instructions' }));
   await user.click(await screen.findByRole('button', { name: 'Quit Bridge' }));
-  expect(await screen.findByText("Couldn't quit Bridge. Use Quit Bridge from its menu.")).toBeTruthy();
+  expect(await screen.findByText("Couldn't quit Bridge. Use Quit Bridge from the Bridge icon in the tray or menu bar.")).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Designer' }).getAttribute('aria-current')).toBe('page');
   expect(screen.queryByRole('button', { name: 'Stop the workspace' })).toBeNull();
   expect(localStorage.getItem('bridge.firstTest.v1')).toBeNull();
