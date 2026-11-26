@@ -202,7 +202,7 @@
 .first-pass:has(.test-answer + .test-answer) > .first-pass-stories { gap: var(--space-2); margin-top: var(--space-3); }
 .first-pass:has(.test-answer + .test-answer) > .first-pass-stories > .test-answer { padding: var(--space-2) var(--space-4) var(--space-3); }
 .first-pass:has(.test-answer + .test-answer) .test-story { gap: 0; }
-.first-pass:has(.test-answer + .test-answer) .test-story > li { padding-block: var(--space-1-5); }
+.first-pass:has(.test-answer + .test-answer) .test-story > li { padding-block: 0; }
 .first-pass:has(.test-answer + .test-answer) > p:not(.muted), .first-pass:has(.test-answer + .test-answer) > .workspace-step-actions { margin-top: var(--space-3); }
 .first-pass .reading { overflow-wrap: anywhere; }
 .first-pass > p:not(.muted) { margin: var(--space-4) 0 0; font: var(--type-reading); max-width: 70ch; }
