@@ -447,7 +447,7 @@ func normalizedSendText(_ text: String) -> String {
 func sendFrameVisible(_ observations: [VNRecognizedTextObservation]) -> Bool {
     let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     let markers = ["Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
-        "What you send", "What happened", "Earlier result", "Send needs attention", "Running tests",
+        "Earlier result", "Send needs attention", "Running tests",
         "Cancelling tests", "Cancellation requested.", "Cannot cancel with this cluster identity", "This Orka cannot cancel tests.", "Cancellation not confirmed.", "Tests cancelled on the cluster.", "Tests finished before cancellation."]
     return markers.contains { text.localizedCaseInsensitiveContains($0) }
 }
@@ -1458,31 +1458,18 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let connected = try capture("cluster-access-compact", "Clusters")
     clickText("Open your agent", in: connected)
     Thread.sleep(forTimeInterval: 0.5)
-    let ownedAgent = try capture("agent-cluster-owned", "Designer")
-    clickText("Send to a cluster", in: ownedAgent)
+    // The Send card is always in Designer's right column; there is no page-head entry to open it.
+    try capture("agent-cluster-owned", "Designer")
     Thread.sleep(forTimeInterval: 1)
     let allowed = try capturePreflight("send-ready", "Ready to send")
     require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Ready to send") }
         && !nativeButtons("Send and run tests").isEmpty, "Ready destination must expose the Send action")
     func focusSend() throws {
-        // Pixel scroll offsets are not stable across responsive reflow. Focus
-        // the real entry button, then pointer-click its verified native bounds.
-        let matches = nativeElements().filter { element in
-            attribute(element, "AXRole") as? String == "AXButton"
-                && attribute(element, "AXEnabled") as? Bool == true
-                && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Send to a cluster" }
-        }
-        require(matches.count == 1, "Expected one enabled Send entry")
-        let entry = matches[0]
-        require(AXUIElementSetAttributeValue(entry, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus Send entry")
-        Thread.sleep(forTimeInterval: 0.3)
-        guard let focusedBounds = nativeBounds(entry) else { fail("Focused Send entry has no bounds") }
-        if !bodyBounds().contains(focusedBounds) {
-            scrollMain(Int32((bodyBounds().minY + 32 - focusedBounds.minY).rounded()))
-        }
-        guard let bounds = nativeBounds(entry), bodyBounds().contains(bounds) else { fail("Focused Send entry is not visible") }
-        mouse(.leftMouseDown, CGPoint(x: bounds.midX, y: bounds.midY))
-        mouse(.leftMouseUp, CGPoint(x: bounds.midX, y: bounds.midY))
+        // Pixel scroll offsets are not stable across responsive reflow. The Send card is always in Designer's
+        // right column (there is no page-head entry), so bring its actual native top under the page top.
+        guard let card = nativeBounds(nativeRegion("Send and cluster tests")) else { fail("Send card has no bounds") }
+        if abs(card.minY - (bodyBounds().minY + 32)) > 1 { scrollMain(Int32((bodyBounds().minY + 32 - card.minY).rounded())) }
+        guard let shown = nativeBounds(nativeRegion("Send and cluster tests")), bodyBounds().contains(CGPoint(x: shown.midX, y: shown.minY + 1)) else { fail("Send card top is not visible") }
         Thread.sleep(forTimeInterval: 0.5)
         try closeSendDetails()
         // Observe a real Send control after reflow. Vision can omit the small uppercase section label.
@@ -1905,8 +1892,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickButton("Manage")
     scrollMain(-400)
     clickText("Open your agent", in: try capture("cluster-probe", "Clusters"))
-    let secondAgent = try capture("agent-cluster-owned", "Designer")
-    clickText("Send to a cluster", in: secondAgent)
+    try capture("agent-cluster-owned", "Designer")
     // The primary's restored-version Send already reloaded these exact files.
     try clickSendControl("Check again", scrolling: -250)
     // The primary's result remains visible as Earlier result; destination readiness is a collapsed disclosure.
@@ -1957,8 +1943,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(-400)
         let connected = try capture("cluster-access", "Clusters")
         clickText("Open your agent", in: connected)
-        let agent = try capture("agent-cluster-owned", "Designer")
-        clickText("Send to a cluster", in: agent)
+        try capture("agent-cluster-owned", "Designer")
         Thread.sleep(forTimeInterval: 1)
         for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
             try resultSize(width, height)
@@ -1974,7 +1959,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Use this cluster", in: cancellationTarget)
     scrollMain(-400)
     clickText("Open your agent", in: try capture("cluster-probe", "Clusters"))
-    try clickSendControl("Send to a cluster", scrolling: -350, region: nil)
+    try focusSend()
     restoreTemporaryTests = { try originalTests.write(to: testsURL, options: .atomic) }
     try mixedTests.write(to: testsURL, options: .atomic)
     try clickSendControl("Check again", scrolling: -250)
@@ -2065,12 +2050,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             "Removed cluster returned after restart")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
-    try clickSendControl("Send to a cluster", scrolling: -350, region: nil)
-    clickButton("Past Sends")
-    guard let historyHeading = nativeButtons("Past Sends").compactMap({ nativeBounds($0) }).first else {
+    // Past Sends is an always-open card under the Send card, labelled by its heading.
+    guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {
         fail("Saved Send history was not reachable after restart")
     }
-    // The label is now a disclosure control, not a standalone OCR heading.
     // Put it near the top so the newest saved summaries fit in the frame.
     scrollMain(Int32((bodyBounds().minY + 24 - historyHeading.minY).rounded()))
     try capture("send-history-restarted", "Designer")

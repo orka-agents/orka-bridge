@@ -1523,9 +1523,9 @@ require(exactTextIsVisible("Saved"), "A completed edit/save must acknowledge Sav
 scroll(4000)
 _ = try seek("Not run since your edit", -250)
 _ = try capture("local-stale", ["Not run since your edit"])
-// Shell evidence beside the approved Designer frame: Agent, File, then Send and Past Sends opened on request.
-// Blocked Try a task is captured in the remote section above. The first (wide) pass sees the unused Send hidden; opening it
-// keeps it retained, so the minimum pass must see it already visible.
+// Shell evidence beside the approved Designer frame: Agent and File, then the Send card and Past Sends, which are
+// always in Designer's right column (beside the editor when wide, below it at the minimum size).
+// Blocked Try a task is captured in the remote section above.
 }
 func exactTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
@@ -1539,23 +1539,21 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     click("Agent", [])
     require(nativeElements().contains { attribute($0, "AXRole") as? String == "AXPopUpButton" }, "Header agent picker missing")
-    require(anyButton("Send to a cluster") && anyButton("Past Sends"), "Header Send entry and Past Sends must always exist")
-    if size == "wide" { require(!anyButton("Choose a cluster"), "An unused Send must start hidden") }
-    else { require(anyButton("Choose a cluster"), "Send opened earlier must stay retained and visible") }
+    // Without a cluster the always-shown Send card offers Choose a cluster, not a disabled Send to a cluster.
+    require(anyButton("Choose a cluster") && !anyButton("Send to a cluster") && nativeHeadingExists("Past Sends"),
+            "The Send card and Past Sends must always be in Designer's right column")
     _ = try capture("local-shell-agent-\(size)", ["Instructions and settings"])
     click("File", [])
     _ = try capture("local-shell-file-\(size)", ["web-reader.agent.md"])
     click("Agent", [])
-    click("Send to a cluster", [])
-    // The header action already reveals and scrolls the card into view.
+    _ = try seek("Send your agent", -250)
     require(exactTextIsVisible("Send your agent") && !nativeChatTextIsVisible("Team clusters are early in this preview."), "Send must retain its headline without repeating Welcome's preview sentence")
     require(enabledButton("Choose a cluster") != nil && !anyButton("Send and run tests"), "Without a cluster, Choose a cluster must replace Send outside Details")
     _ = try capture("local-shell-send-\(size)", ["Send your agent", "Choose a cluster"])
-    press("Past Sends")
     _ = try seek("Saved results and limits", -150)
     scroll(-100)
     _ = try capture("local-shell-history-\(size)", ["Past Sends", "Saved results and limits"])
-    press("Past Sends")
+    scroll(4000)
 }
 localSize(1280, 800)
 // Try a task runs before the final Run, which intentionally stays busy forever in

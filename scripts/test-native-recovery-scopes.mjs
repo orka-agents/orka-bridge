@@ -543,7 +543,9 @@ assert.ok(smoke.includes('attribute(element, "AXSubrole") as? String == "AXLandm
 assert.ok(smoke.includes('return viewport.contains(textBounds)'), 'frozen OCR evidence must be contained in the visible native region');
 assert.ok(smoke.includes('text.hasSuffix("-")'), 'hyphenated fixture IDs must survive native OCR line wraps');
 assert.ok(smoke.includes('region: "Past Sends", requiring:'), 'saved history anchors keep their separate region');
-assert.ok(smoke.includes('scrolling: -350, region: nil'), 'the Designer Send entry is outside the result region');
+// The Send card is always in Designer's right column: the walk brings its native region into view, with no page-head entry.
+assert.ok(!smoke.includes('clickText("Send to a cluster"') && !smoke.includes('clickSendControl("Send to a cluster"') && smoke.includes('guard let card = nativeBounds(nativeRegion("Send and cluster tests")) else { fail("Send card has no bounds") }')
+  && smoke.includes('guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {'), 'the walk must reach the always-shown Send card and Past Sends without a page-head entry');
 assert.ok(smoke.includes('if let anchor = textAnchor ?? buttonAnchor'), 'native action anchors retain frozen-frame verification');
 assert.ok(smoke.includes('func uniqueOCRTarget('), 'scoped OCR click selection must reject distinct targets');
 assert.ok(smoke.includes('let scopedSeen = seen.filter'), 'OCR click candidates must belong to the selected native region');
