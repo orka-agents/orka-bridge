@@ -1,4 +1,5 @@
-.overview { width: 100%; }
+/* On a wide window the table keeps a name and its Open within reach of each other. */
+.overview { width: 100%; max-width: 1040px; }
 .overview > .page-heading { margin-bottom: var(--space-4); }
 .overview .page-heading h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
 .overview-actions, .overview-filters { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
@@ -24,10 +25,11 @@
 .overview-agent-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--space-4); padding: 14px var(--space-1); }
 .overview-agent-head h2 { margin: 0; min-width: 0; font: inherit; }
 .overview-row-toggle { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-4); width: 100%; min-width: 0; padding: 0; border: 0; border-radius: var(--radius-small); background: transparent; color: var(--color-text); text-align: left; }
-.overview-agent-identity { display: flex; align-items: flex-start; gap: var(--space-2); min-width: 0; }
-/* The row chevron is the shared disclosure one: 12px, closed points down, open points up. */
-.overview-agent-identity > .icon { flex: none; width: 12px; height: 12px; margin-top: 5px; stroke-width: 2; transition: transform 120ms ease-out; }
-.overview-chevron-open { transform: rotate(180deg); }
+.overview-agent-identity { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
+/* The row chevron sits in its own 28px column, centred on the name and description, in ink-2: closed it points
+   right, open it points down. */
+.overview-agent-identity > .icon { flex: none; width: 12px; height: 12px; margin-inline: var(--space-2); color: var(--color-text-secondary); stroke-width: 2; transform: rotate(-90deg); transition: transform 120ms ease-out; }
+.overview-agent-identity > .overview-chevron-open { transform: none; }
 .overview-agent-name { display: grid; gap: var(--space-0-5); min-width: 0; }
 .overview-agent-title { font: 700 16px/22px var(--font-mono); font-variant-ligatures: none; margin: 0; overflow-wrap: anywhere; }
 .overview-description { color: var(--color-text-secondary); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font: var(--type-body); }
@@ -71,7 +73,7 @@
   .overview-agent-head > h2 { grid-column: 1; grid-row: 1 / 3; }
   .overview-row-toggle { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
   .overview-description { white-space: normal; }
-  .overview-marks { justify-content: flex-start; padding-left: var(--space-6); }
+  .overview-marks { justify-content: flex-start; padding-left: var(--space-8); }
   .overview-agent-head > .button { grid-column: 2; grid-row: 1; }
   .overview-agent-head > .overview-time { grid-column: 2; grid-row: 2; justify-self: end; }
   .overview-places { margin-left: 0; }

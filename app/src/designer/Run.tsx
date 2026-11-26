@@ -3,14 +3,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '../components/Button';
 import { DesignerTests } from '../components/DesignerTests';
 import { CardSection, Details, GeneratedValue, LongCard, type Status, StatusPill } from '../components/DesignSystem';
-import { Disclosure } from '../components/Disclosure';
 import { changedFiles, resultAnnouncement, resultLabel, TestProgress } from '../components/TestResults';
 import { SAMPLE_DOCUMENT_ID, type SourceId, sameSource } from './agent-api';
 import { errors, type RunSnapshot, runCall } from './run-api';
 import { testDefinitions } from './test-definitions';
-export default function Run({ tests, documentId = SAMPLE_DOCUMENT_ID, onSnapshot, blocked = false, workspaceReady = true, stale = false, onStart, source, onChooseCluster, onEditInstructions, startRequest, onStartRequestHandled, collapsed = false }: { tests?: string; documentId?: string; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; workspaceReady?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId; onChooseCluster?: () => void; onEditInstructions?: () => void; startRequest?: number; onStartRequestHandled?: () => void;
-  /** Folds the card to its head and a disclosure, so a Send card below stays in view. */
-  collapsed?: boolean }) {
+export default function Run({ tests, documentId = SAMPLE_DOCUMENT_ID, onSnapshot, blocked = false, workspaceReady = true, stale = false, onStart, source, onChooseCluster, onEditInstructions, startRequest, onStartRequestHandled, collapsed = false, details = true, saveLabel }: { tests?: string; documentId?: string; onSnapshot?: (snapshot: RunSnapshot | undefined) => void; blocked?: boolean; workspaceReady?: boolean; stale?: boolean; onStart?: () => void; source?: SourceId; onChooseCluster?: () => void; onEditInstructions?: () => void; startRequest?: number; onStartRequestHandled?: () => void;
+  /** Folds the card to its head line and closed test rows, so the Send card beside it leads. */
+  collapsed?: boolean;
+  /** Shows the read-only test file and file hashes. */
+  details?: boolean;
+  /** The editor's save state, shown beside Run tests once the files changed since the last run. */
+  saveLabel?: string }) {
   const definitions = useMemo(() => tests === undefined ? undefined : testDefinitions(tests), [tests]);
   const [received, setSnapshot] = useState<RunSnapshot>();
   const snapshot = received?.documentId === documentId ? received : undefined;
@@ -91,27 +94,30 @@ export default function Run({ tests, documentId = SAMPLE_DOCUMENT_ID, onSnapshot
     {actionMessage && <p role="status">{actionMessage}</p>}
     {message && <p role="status">{message}</p>}
     {snapshot?.error && !(snapshot.error === 'model' && snapshot.modelConnected) && <div className="alert alert-needs-you"><p role="alert" className="alert-title">{errors[snapshot.error]}</p></div>}
-    {!running && !outdated && !uncertain && !cancellationLine && snapshot?.report?.verdict === 'failed' && <div className="test-next-step">
+    {!collapsed && !running && !outdated && !uncertain && !cancellationLine && snapshot?.report?.verdict === 'failed' && <div className="test-next-step">
       <p>{snapshot.report.cases.some(c => c.verdict === 'failed' && c.phase !== 'Succeeded') ? 'The task did not finish successfully. Review its answer and tool activity below before trying again.' : 'The agent answered, but its checks failed. Compare the answer with the test, then adjust the instructions or test file.'}</p>
       {onEditInstructions && <Button type="button" kind="secondary" size="small" onClick={onEditInstructions}>Edit instructions</Button>}
     </div>}
   </>;
-  const list = <DesignerTests definitions={running && sourceCurrent === false ? undefined : definitions} report={snapshot?.report} stale={outdated} running={running} vendor={snapshot?.vendor} />;
-  const details = (tests !== undefined || !!snapshot?.acknowledged.length || snapshot?.pending || snapshot?.source) && <Details hint="Test file, resources and file hashes">
+  const list = <DesignerTests definitions={running && sourceCurrent === false ? undefined : definitions} report={snapshot?.report} stale={outdated} running={running} vendor={snapshot?.vendor} closed={collapsed} />;
+  const fileDetails = details && (tests !== undefined || !!snapshot?.acknowledged.length || snapshot?.pending || snapshot?.source) && <Details hint="Test file, resources and file hashes">
     {tests !== undefined && <section className="test-file-source" aria-label="Test file, read-only"><h5 className="section-label">Test file, read-only</h5><pre className="example-source">{tests}</pre></section>}
     {snapshot?.source && <><GeneratedValue label="Agent file hash" value={snapshot.source.agent} /><GeneratedValue label="Test file hash" value={snapshot.source.tests} /></>}
     {snapshot?.acknowledged.map(r => <GeneratedValue key={r.uid} label={r.kind} value={r.name} />)}
     {snapshot?.pending && <GeneratedValue label={`Possibly created ${snapshot.pending.kind}`} value={snapshot.pending.name} />}
   </Details>;
+  const runActions = (!unconfirmed || !snapshot?.canCheckCancellation) && <div className="workspace-step-actions" role={!workspaceReady ? 'group' : undefined} aria-label={!workspaceReady ? 'Run tests: Waiting for the workspace to start.' : undefined}>{workspaceReady && snapshot?.modelConnected === false && onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Connect the AI</Button>}<Button type="button" kind={canRun && !blocked && !collapsed ? 'primary' : 'secondary'} disabled={!!action || blocked || !canRun} title={!workspaceReady ? 'Waiting for the workspace to start.' : blocked ? 'Save your changes before running the test' : !canRun ? 'Start the workspace and connect the AI in Clusters first' : undefined} onClick={() => { void act('agent_run'); }}>Run tests</Button>{/* Saved files are what a run reads; while an edit is still saving, the editor's own status says so. */}{outdated && !collapsed && saveLabel === '' && <span className="save-state">Saved</span>}</div>;
+  // After an edit the card leads with what changed, and Run tests follows it rather than sitting in the head.
+  const actionBelow = outdated && !running && !collapsed;
   return <section className={collapsed ? 'example-run example-run-collapsed' : 'example-run'} aria-label="Tests on this computer">
-    <LongCard title="Tests on this computer" status={<><StatusPill state={state}>{pillWord}</StatusPill><span className="status-description">{outdated || running || cancellationLine || uncertain ? undefined : resultLabel(snapshot?.report)}</span></>} summary={!collapsed && <>On this computer{snapshot?.model && <> · <code className="code-chip">{snapshot.model}</code></>}.{snapshot?.modelConnected === false && ' Connect the AI in Clusters first.'}</>}
+    <LongCard title="Tests on this computer" status={<><StatusPill state={state}>{pillWord}</StatusPill><span className="status-description">{outdated || running || cancellationLine || uncertain ? undefined : resultLabel(snapshot?.report)}</span></>} summary={!collapsed && !outdated && <>On this computer{snapshot?.model && <> · <code className="code-chip">{snapshot.model}</code></>}.{snapshot?.modelConnected === false && ' Connect the AI in Clusters first.'}</>}
       action={running ? !cancelling && snapshot?.canCancel && <Button type="button" kind="secondary" onClick={() => { void act('agent_run_cancel'); }}>Stop</Button>
-        : (!unconfirmed || !snapshot?.canCheckCancellation) && <div className="workspace-step-actions" role={!workspaceReady ? 'group' : undefined} aria-label={!workspaceReady ? 'Run tests: Waiting for the workspace to start.' : undefined}>{workspaceReady && snapshot?.modelConnected === false && onChooseCluster && <Button type="button" kind="primary" onClick={onChooseCluster}>Connect the AI</Button>}<Button type="button" kind={canRun && !blocked ? 'primary' : 'secondary'} disabled={!!action || blocked || !canRun} title={!workspaceReady ? 'Waiting for the workspace to start.' : blocked ? 'Save your changes before running the test' : !canRun ? 'Start the workspace and connect the AI in Clusters first' : undefined} onClick={() => { void act('agent_run'); }}>Run tests</Button></div>}>
+        : !actionBelow && runActions}>
       {!workspaceReady && <p className="muted">Waiting for the workspace to start.</p>}
       <p className="sr-only test-announcement" role="status" aria-live="polite" aria-atomic="true">{!running ? cancellationLine ?? (!outdated ? uncertain ? 'Test result unknown.' : resultAnnouncement(snapshot?.report) : undefined) : undefined}</p>
-      {collapsed ? <Disclosure className="run-collapsed" label="Show test results"><div className="run-body">{content}{list}{details}</div></Disclosure>
+      {collapsed ? <div className="run-body">{content}{list}</div>
         // The running stage is the one place the card names what is happening; results are their own rows.
-        : running ? <><CardSection title="What happened">{content}</CardSection>{list}{details}</> : <div className="run-body">{content}{list}{details}</div>}
+        : running ? <><CardSection title="What happened">{content}</CardSection>{list}{fileDetails}</> : <div className="run-body">{content}{actionBelow && runActions}{list}{fileDetails}</div>}
     </LongCard>
   </section>;
 }

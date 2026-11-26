@@ -541,10 +541,12 @@ try {
   }
   function assertSendPresentation(name, probe, details) {
     const labels = { 'send-ready': ['Send and run tests'], 'send-blocked': ['Check again'], 'send-sending': ['Cancel tests'],
-      'send-passed': ['See in Overview', 'Run cluster tests again'], 'send-failed': ['Fix in Designer', 'Run cluster tests again'],
+      'send-passed': ['Run cluster tests again', 'See in Overview'], 'send-failed': ['Run cluster tests again', 'Fix in Designer'],
       'send-unsupported': ['Check cluster status'], 'send-earlier-target': ['Send and run tests', 'See in Overview'] }[name];
+    // Rerunning leads every result; a passed result has no primary, and a failed one makes Fix in Designer primary.
+    const primaryAt = { 'send-sending': -1, 'send-passed': -1, 'send-failed': 1 }[name] ?? 0;
     if (probe.header.map(button => button.label).join('|') !== labels.join('|')
-        || probe.header[0]?.primary !== (name !== 'send-sending') || probe.header.slice(1).some(button => button.primary)) throw Error('Wrong Send header actions: ' + JSON.stringify(probe));
+        || probe.header.some((button, index) => button.primary !== (index === primaryAt))) throw Error('Wrong Send header actions: ' + JSON.stringify(probe));
     if (probe.heading !== (['send-ready', 'send-blocked'].includes(name) ? 'Send your agent' : 'To fixture-selected') || name !== 'send-sending' && (!probe.summary.includes('web-reader') || !probe.summary.includes('1 test'))) throw Error('Send destination/compact summary missing: ' + JSON.stringify(probe));
     const checks = ['send-blocked', 'send-sending'].includes(name) ? '1 check passed' : 'Ready to send: 1 check passed';
     if (!probe.checks.startsWith(checks) || probe.checksOpen || probe.inlineChecks.join('|') !== (name === 'send-blocked' ? 'blocked' : '')) throw Error('Send must fold allowed/advisory checks, count only allowed and retain inline blockers: ' + JSON.stringify(probe));
@@ -1126,12 +1128,12 @@ try {
       const state = await evaluate(`({ historyHidden: !document.querySelector('.designer-checks .send-history')?.getClientRects().length, catalog: window.__bridgeCatalogCalls, runPrimary: [...document.querySelectorAll('.example-run button')].some(button => button.textContent === 'Run tests' && button.classList.contains('button-primary')) })`);
       if (await evaluate(`document.body.innerText.includes('Your agent selection could not be saved')`)) throw Error('Designer fixture failed to acknowledge document selection');
       if (name === 'designer' && (state.catalog.length || state.runPrimary)) throw Error('Disconnected Designer presents a runnable primary/catalog: ' + JSON.stringify(state));
-      // The Send card and its Team cluster heading are always shown under This computer, with Past Sends as an open card below.
+      // The Send card and its Team cluster heading are always shown under This computer. Past Sends joins them once a Send is saved.
       const sendShown = await evaluate(`!!document.querySelector('.send-panel')?.getClientRects().length`);
       if (!sendShown) throw Error(`${name}: Send card must always be shown`);
       if (!await evaluate(`!!document.querySelector('.agent-selector select') && !document.querySelector('.send-entry') && [...document.querySelectorAll('.designer-checks h2')].some(h => h.textContent === 'Team cluster' && h.getClientRects().length)`)) throw Error(`${name}: header picker or Team cluster heading is missing, or a page-head Send entry returned`);
-      if (await evaluate(`!document.querySelector('.send-history > h3') || !!document.querySelector('.send-history > details')`)) throw Error(`${name}: Past Sends must be an open card`);
-      if (name === 'designer-remote' && (state.historyHidden || !state.catalog.some(call => call.command === 'cluster_catalog' && call.args.targetId === '00000000-0000-4000-8000-000000000002' && call.args.providerId === '00000000-0000-4000-8000-000000000003'))) throw Error('Remote catalog is not scoped to the selected cluster/AI');
+      if (!state.historyHidden) throw Error(`${name}: with no saved Sends, Past Sends must not be shown`);
+      if (name === 'designer-remote' && (!state.catalog.some(call => call.command === 'cluster_catalog' && call.args.targetId === '00000000-0000-4000-8000-000000000002' && call.args.providerId === '00000000-0000-4000-8000-000000000003'))) throw Error('Remote catalog is not scoped to the selected cluster/AI');
     }
     if (name.startsWith('local-cancel-')) {
       const state = name.slice('local-cancel-'.length);
@@ -1708,7 +1710,7 @@ try {
       const readiness = await evaluate(`(() => {
         const root = document.querySelector('section.overview');
         const reason = [...root.querySelectorAll('.overview-note')].filter(n => n.textContent === 'Connect the AI in Clusters to try a task or run tests on this computer.');
-        const actions = [...root.querySelectorAll('.overview-place button')].filter(b => /^(Try a task with|Run tests) /.test(b.getAttribute('aria-label') ?? ''));
+        const actions = [...root.querySelectorAll('.overview-place button')].filter(b => /^(New task with|Run tests) /.test(b.getAttribute('aria-label') ?? ''));
         const local = actions.filter(b => b.closest('[data-card-key]').dataset.cardKey.startsWith('local/'));
         const remote = actions.filter(b => !b.closest('[data-card-key]').dataset.cardKey.startsWith('local/'));
         const labels = [...document.querySelectorAll('.overview-place')].every(place => /, (?:No recorded result|[^,]+)$/.test(place.getAttribute('aria-label') ?? ''));

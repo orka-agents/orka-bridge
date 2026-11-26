@@ -29,6 +29,8 @@
 .nav-gate-head .status-icon { color: var(--color-status-pending); }
 .nav-gate-head h2 { margin: 0; font: 600 16px/22px var(--font-ui); }
 .nav-gate-head .pill { margin-left: auto; }
+/* While the Navigator can't answer, the orca steps back behind the card that says why. */
+.home-start:has(.nav-gate) .art-orca { opacity: .5; }
 
 .home-conversation { max-width: 720px; flex: 1 0 auto; display: flex; flex-direction: column; gap: var(--space-3); }
 .page-content:has(> .home-conversation) { display: flex; flex-direction: column; }
@@ -50,6 +52,7 @@
 /* Cards in the conversation: a label row with the card's state, then rows or fields, then the actions. */
 .nav-card { display: grid; gap: var(--space-2); padding: 14px var(--space-4); }
 .nav-card > * { margin: 0; }
+.nav-card .alert { max-width: none; }
 .nav-card-head { display: flex; align-items: center; gap: var(--space-2-5); min-height: 24px; }
 .nav-card-head h3 { display: inline-flex; align-items: baseline; gap: var(--space-2); }
 .nav-card-head .pill { margin-left: auto; }
@@ -72,8 +75,10 @@
 .nav-edit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
 .nav-field { display: grid; gap: var(--space-1); font-weight: 600; }
 .nav-field .field { font-weight: 400; }
-.nav-field textarea { resize: vertical; }
+.nav-field select.field { width: 260px; max-width: 100%; }
+.nav-field textarea { resize: none; }
 .nav-mono { font-family: var(--font-mono); font-variant-ligatures: none; }
+.nav-field select.nav-mono { font: 500 13px/18px var(--font-mono); }
 
 @media (max-width: 820px) {
   .home-hero h1 { font: var(--type-display-page); letter-spacing: var(--tracking-display-page); }
@@ -83,6 +88,8 @@
   .nav-line-wide { display: none; }
   .nav-composer-start .nav-links { display: none; }
   .nav-composer-start .nav-composer-foot > .button { margin-left: auto; }
+  /* One line to start with: the box grows as the message does. */
+  .nav-composer-start textarea { min-height: 44px; height: 44px; }
   .nav-edit-grid { grid-template-columns: minmax(0, 1fr); }
   .nav-rows > div { grid-template-columns: minmax(0, 1fr); gap: var(--space-0-5); }
   .nav-user { max-width: 92%; }

@@ -49,8 +49,8 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `clusterContexts` | kubectl contexts with one Orka installation (`team-dev`), two (`team-shared`), none (`kind-scratch`) and one that needs a ServiceAccount (`team-restricted`) | Add a cluster → kubectl context, then choose one; `team-restricted` asks for a ServiceAccount after Use this cluster |
 | `sendBlocked` | Send blocked by destination checks | `team-dev` → Use this cluster → Open your agent |
 | `sendRunning` | Send running on the cluster (until cancelled) | As `sendBlocked`, then Send and run tests |
-| `sendFailed` | Send finished with a failing test | As `sendRunning` |
-| `sendPassed` | Send finished with every test passing | As `sendRunning` |
+| `sendFailed` | Send finished with a failing test, recorded under `web-reader` in Overview | As `sendRunning` |
+| `sendPassed` | Send finished with every test passing; Overview then lists `team-dev` under `web-reader`, as a recorded Send does | As `sendRunning` |
 | `sendLocalFailed` | Local test failed, cluster ready to send | As `sendBlocked`, then Run tests, then Send and run tests for the warning |
 | `testIncomplete` | First test is incomplete | Designer, or add `page=Designer` |
 | `runStale` | Local result from before your last edit | Designer, or add `page=Designer` |
@@ -64,6 +64,8 @@ These scenarios open states the ordinary walk can't reach. The workspace ones op
 | `navAgent` | A proposed agent card; Create agent writes the file | Opens there |
 
 The Navigator answers in every scenario with the AI connected, with scripted replies chosen by the question: a link or checksum gets a task card, "agent" an agent card, "new to Orka" an explanation, and a repo, monitor or charter question an explanation with no card, as Bridge can't set those up yet. It runs on This computer only: choose `team-dev` in the Orka switcher in `clusterUnreachable` for the can't-reach card, or in `clusterReady` for the card that offers This computer.
+
+In Try a task, `web-reader` fetches the page a task names, by a URL or a bare host such as `dl.k8s.io`, so its result shows Used a tool.
 
 In every scenario a local test run can be stopped while it runs, and a finished run is recorded for Overview with its time, as native local results are. A run keeps the files it started from, so editing the agent afterwards shows its result as not run since your edit.
 
