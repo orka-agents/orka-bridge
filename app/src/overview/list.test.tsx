@@ -39,6 +39,27 @@ test('Send polling rereads places without rescanning Recent activity or Conversa
   expect(calls.filter(c => c === 'overview_sessions')).toHaveLength(1);
 });
 
+test('See in Overview after a visit rescans Recent activity and Conversations once, not on its polls', async () => {
+  const calls: string[] = [];
+  const running = place('team', 'running');
+  mockIPC(command => {
+    calls.push(command);
+    return command === 'overview_activity' ? { places: [{ key: 'team', state: 'complete', observedAt: 9500, connection: 1, entries: [] }] }
+      : command === 'overview_files' ? { state: 'complete', files: [file()], historyState: 'complete', runAgents: [], runActive: false }
+        : command === 'overview_places' ? { places: [running], historyState: 'complete', unobserved: [] }
+          : { state: 'complete', installation: id, observedAt: 1000, agents: [], observation: null, runActive: false, reason: null };
+  });
+  const view = render(<Overview {...props} />);
+  await waitFor(() => expect(calls.filter(c => c === 'overview_activity')).toHaveLength(1));
+  await waitFor(() => expect(calls.filter(c => c === 'overview_sessions')).toHaveLength(1));
+  view.rerender(<Overview {...props} active={false} />);
+  const placesBefore = calls.filter(c => c === 'overview_places').length;
+  view.rerender(<Overview {...props} focus={{ id: 1, sendId: id, target: { key: 'team', name: 'remote-reader', namespace: 'agents', uid: 'team-uid' } }} />);
+  await waitFor(() => expect(calls.filter(c => c === 'overview_places').length).toBeGreaterThanOrEqual(placesBefore + 3), { timeout: 3000 });
+  expect(calls.filter(c => c === 'overview_activity')).toHaveLength(2);
+  expect(calls.filter(c => c === 'overview_sessions')).toHaveLength(2);
+});
+
 test('Show agent in Recent activity clears the filters, expands the agent row and focuses its card', async () => {
   const run = { task: 'run-1', uid: 'run-uid', agent: 'remote-reader', agentUid: 'team-uid', phase: 'failed', createdAt: 9000, startedAt: null, completedAt: null, message: null, test: false };
   ipc(undefined, undefined, { places: [{ key: 'team', state: 'complete', observedAt: 9500, connection: 1, entries: [run] }] });
