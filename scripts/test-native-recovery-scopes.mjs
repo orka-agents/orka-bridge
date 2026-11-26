@@ -571,7 +571,8 @@ assert.ok(model.includes('Runs once on this computer. It does not change test re
 assert.ok(model.includes('requireChatComposerVisible()'), 'Mac captures must verify composer geometry');
 assert.ok(model.includes('chat-long-early-') && model.includes('chat-long-end-'), 'Mac Try a task must capture earlier tasks folded and open');
 assert.ok(model.includes('name.hasPrefix("local-shell-chat-")'), 'mixed local/Try a task captures must check the visible native subtitle, not only OCR');
-assert.ok(smoke.includes('"Fix in Designer", "Run cluster tests again"'), 'failed Send must preserve Fix primary and precise rerun secondary');
+assert.ok(smoke.includes('actions: ["Run cluster tests again", "Fix in Designer", "See in Overview"]') && smoke.includes('try requireSendActions(["Run cluster tests again", "See in Overview"])')
+  && smoke.includes('require(actions.count <= 3 && actions == expected,'), 'Send results must keep their exact actions in reading order: rerun first, Fix in Designer on a failure, then See in Overview');
 assert.ok(source.includes('chat-long-early') && source.includes('chat-long-end'), 'many earlier tasks need distinct captures');
 assert.ok(source.includes("resizeTo({ width: 1280, height: 800 }, 'Wide')"));
 assert.ok(source.includes("resizeTo({ width: 540, height: 640 }, 'Compact')"));
