@@ -89,7 +89,7 @@ test('single-target discovery keeps This computer selected and successful Use se
   expect(ipc.mock.calls.map(([c]) => c)).not.toContain('agent_run');
 });
 
-test('failed context discovery leaves local Run and Chat usable without reselecting This computer', async () => {
+test('failed context discovery leaves local Run and Try a task usable without reselecting This computer', async () => {
   const ipc = native();
   const documentId = '9b2b93c4-375c-4815-9717-39852a96e411';
   ipc.mockImplementation(command => {
@@ -99,7 +99,7 @@ test('failed context discovery leaves local Run and Chat usable without reselect
     if (command === 'cluster_discover') return Promise.reject({ check: 'clusterApi', result: 'connectionFailed' });
     if (command === 'agent_open') return { documentId, name: 'reader', agent: '---\nname: reader\n---\nRead.', tests: 'Checks' };
     if (command === 'agent_run_status' || command === 'agent_run') return { documentId, busy: null, state: 'idle', canRun: true, report: null, acknowledged: [], pending: null, error: null };
-    if (command === 'agent_chat_status' || command === 'agent_chat_send') return { documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null };
+    if (command === 'agent_chat_status' || command === 'agent_chat_send' || command === 'agent_chat_new') return { documentId, state: 'ready', busy: false, canSend: true, versions: [], error: null };
     throw Error('Unsupported');
   });
   const user = userEvent.setup(); render(<App />); await openLocalSetup();
@@ -113,9 +113,9 @@ test('failed context discovery leaves local Run and Chat usable without reselect
   await waitFor(() => expect(run.matches(':disabled')).toBe(false));
   await user.click(run);
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_run')).toEqual([['agent_run', { documentId }]]));
-  await user.click(screen.getByRole('button', { name: 'Chat' }));
-  await user.type(await screen.findByRole('textbox', { name: 'Message' }), 'Still local');
-  const send = screen.getByRole('button', { name: 'Send message' });
+  await user.click(screen.getByRole('button', { name: 'Try a task' }));
+  await user.type(await screen.findByRole('textbox', { name: /one task$/ }), 'Still local');
+  const send = screen.getByRole('button', { name: 'Run task' });
   await waitFor(() => expect(send.matches(':disabled')).toBe(false));
   await user.click(send);
   await waitFor(() => expect(ipc.mock.calls.filter(([c]) => c === 'agent_chat_send')).toEqual([['agent_chat_send', { documentId, message: 'Still local' }]]));

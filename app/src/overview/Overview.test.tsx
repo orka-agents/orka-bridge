@@ -41,17 +41,17 @@ test.each(['Starting the local cluster', 'Getting your workspace ready…', 'Sto
   expect(screen.queryByText(/The workspace is stopped/)).toBeNull();
   const agent = await expanded();
   expect(within(agent).getByRole('button', { name: 'Open reader' })).toBeTruthy();
-  expect(within(agent).queryByRole('button', { name: /^Chat|^Run tests/ })).toBeNull();
+  expect(within(agent).queryByRole('button', { name: /^Try a task|^Run tests/ })).toBeNull();
 });
 
 test('setup status blocks readiness actions even if the last live inventory is complete', async () => {
   ipc(); const view = render(<Overview {...props} />); await expanded();
   view.rerender(<Overview {...props} workspaceNote="Starting the local cluster" />);
-  const agent = await row(); expect(within(agent).queryByRole('button', { name: /^Chat|^Run tests/ })).toBeNull();
+  const agent = await row(); expect(within(agent).queryByRole('button', { name: /^Try a task|^Run tests/ })).toBeNull();
   expect(within(agent).getByRole('button', { name: 'Open reader' })).toBeTruthy();
 });
 
-test('generated Chat runtime Agents are hidden without hiding saved, remote or similarly named Agents', async () => {
+test('generated Try a task runtime Agents are hidden without hiding saved, remote or similarly named Agents', async () => {
   const generated = `bridge-chat-agent-${'a'.repeat(32)}`;
   const ownFile = named(id2, generated, { localResult: null });
   const runtime = (name: string, uid: string) => ({ name, namespace: 'orka-system', uid });
@@ -151,12 +151,12 @@ test('list rows are compact, accessible by exact title, and evidence waits behin
 test('AI readiness disables only the fitting local action with one shared reason', async () => {
   ipc(); const open = vi.fn(), chat = vi.fn(), run = vi.fn(); const own = { ...props, onOpenDocument: open, onChatDocument: chat, onRunDocument: run };
   const view = render(<Overview {...own} localAiConnected={false} />); const agent = await expanded();
-  const reason = screen.getByText('Connect the AI in Clusters to chat or run tests on this computer.'); expect(reason.tabIndex).toBe(0);
-  const fitting = within(agent).getByRole('button', { name: 'Chat reader' }); expect(fitting).toHaveProperty('disabled', true); expect(fitting.getAttribute('aria-describedby')).toBe(reason.id);
+  const reason = screen.getByText('Connect the AI in Clusters to try a task or run tests on this computer.'); expect(reason.tabIndex).toBe(0);
+  const fitting = within(agent).getByRole('button', { name: 'Try a task with reader' }); expect(fitting).toHaveProperty('disabled', true); expect(fitting.getAttribute('aria-describedby')).toBe(reason.id);
   await userEvent.click(fitting); expect(chat).not.toHaveBeenCalled();
   expect(within(agent).queryByRole('button', { name: 'Run tests reader' })).toBeNull();
   await userEvent.click(within(agent).getByRole('button', { name: 'Open reader' })); expect(open).toHaveBeenCalledWith(id);
-  view.rerender(<Overview {...own} localAiConnected />); await userEvent.click(within(agent).getByRole('button', { name: 'Chat reader' })); expect(chat).toHaveBeenCalledWith(id);
+  view.rerender(<Overview {...own} localAiConnected />); await userEvent.click(within(agent).getByRole('button', { name: 'Try a task with reader' })); expect(chat).toHaveBeenCalledWith(id);
   expect(screen.queryByText(reason.textContent!)).toBeNull();
 });
 
@@ -165,18 +165,18 @@ test('fitting actions and absence callbacks do not preserve obsolete per-card co
   const fresh = named(id3, 'fresh', { localResult: null }); ipc(files([file, other, fresh]), live());
   render(<Overview {...props} />);
   const passed = await expanded(/^reader$/), failed = await expanded(/^failing$/), untested = await expanded(/^fresh$/);
-  expect(within(passed).getByRole('button', { name: 'Chat reader' })).toBeTruthy(); expect(within(passed).queryByRole('button', { name: 'Run tests reader' })).toBeNull();
-  expect(within(failed).getByRole('button', { name: 'Run tests failing' })).toBeTruthy(); expect(within(failed).queryByRole('button', { name: 'Chat failing' })).toBeNull();
+  expect(within(passed).getByRole('button', { name: 'Try a task with reader' })).toBeTruthy(); expect(within(passed).queryByRole('button', { name: 'Run tests reader' })).toBeNull();
+  expect(within(failed).getByRole('button', { name: 'Run tests failing' })).toBeTruthy(); expect(within(failed).queryByRole('button', { name: 'Try a task with failing' })).toBeNull();
   expect(within(untested).getByRole('button', { name: 'Run tests fresh' })).toBeTruthy();
   for (const agent of [passed, failed, untested]) expect(agent.querySelectorAll('.button-primary')).toHaveLength(0);
 });
 
-test('Open, Chat and Run report the document while missing optional callbacks remove only those actions', async () => {
+test('Open, Try a task and Run report the document while missing optional callbacks remove only those actions', async () => {
   ipc(); const open = vi.fn(), chat = vi.fn(), run = vi.fn(); const view = render(<Overview {...props} onOpenDocument={open} onChatDocument={chat} onRunDocument={run} />);
-  const agent = await expanded(); await userEvent.click(within(agent).getByRole('button', { name: 'Open reader' })); await userEvent.click(within(agent).getByRole('button', { name: 'Chat reader' }));
+  const agent = await expanded(); await userEvent.click(within(agent).getByRole('button', { name: 'Open reader' })); await userEvent.click(within(agent).getByRole('button', { name: 'Try a task with reader' }));
   expect([open, chat].map(f => f.mock.calls)).toEqual([[[id]], [[id]]]); expect(run).not.toHaveBeenCalled();
   view.rerender(<Overview {...props} onChatDocument={undefined} onRunDocument={undefined} />);
-  expect(within(agent).queryByRole('button', { name: /^Chat|^Run tests/ })).toBeNull();
+  expect(within(agent).queryByRole('button', { name: /^Try a task|^Run tests/ })).toBeNull();
 });
 
 test('each saved file owns its local result and earlier failures stay failed', async () => {
@@ -241,12 +241,12 @@ test('a local test in progress keeps last good Agents and says why while removin
   const agents = [{ name: 'mine', namespace: 'orka-system', uid: 'mine-uid' }]; ipc(files(), live(agents)); const view = render(<Overview {...props} />);
   await row(/^mine$/); mockIPC(command => command === 'overview_files' ? files([file], { runActive: true }) : command === 'overview_places' ? none : live([]));
   view.rerender(<Overview {...props} runBusy />); expect(await screen.findByText(/Updating when the test finishes/)).toBeTruthy();
-  expect(screen.getByRole('article', { name: /^mine$/ })).toBeTruthy(); const agent = await expanded(); expect(within(agent).queryByRole('button', { name: /^Chat|^Run tests/ })).toBeNull();
+  expect(screen.getByRole('article', { name: /^mine$/ })).toBeTruthy(); const agent = await expanded(); expect(within(agent).queryByRole('button', { name: /^Try a task|^Run tests/ })).toBeNull();
 });
 
 test('stopped workspace keeps saved rows and only Open at the parent; true empty offers onboarding', async () => {
-  ipc(files(), unavailable); const view = render(<Overview {...props} />); expect(await screen.findByText('The workspace is stopped. Start it to test or chat.')).toBeTruthy();
-  const agent = await expanded(); expect(within(agent).queryByRole('button', { name: /^Chat|^Run tests/ })).toBeNull(); expect(within(agent).getByRole('button', { name: 'Open reader' })).toBeTruthy();
+  ipc(files(), unavailable); const view = render(<Overview {...props} />); expect(await screen.findByText('The workspace is stopped. Start it to run tests or try a task.')).toBeTruthy();
+  const agent = await expanded(); expect(within(agent).queryByRole('button', { name: /^Try a task|^Run tests/ })).toBeNull(); expect(within(agent).getByRole('button', { name: 'Open reader' })).toBeTruthy();
   const choose = vi.fn(); view.rerender(<Overview {...props} onChooseWorkspace={choose} />); await userEvent.click(screen.getByRole('button', { name: 'Open Clusters' })); expect(choose).toHaveBeenCalled();
   view.unmount(); ipc(files([]), unavailable); render(<Overview {...props} onNewAgent={noop} />);
   expect(await screen.findByRole('heading', { name: 'No agents yet' })).toBeTruthy(); expect(screen.getAllByRole('button', { name: 'New agent' })).toHaveLength(1);
@@ -255,7 +255,7 @@ test('stopped workspace keeps saved rows and only Open at the parent; true empty
 test('image-limited listing keeps saved results and fitting local action', async () => {
   ipc(files(), { ...unavailable, reason: 'image' }); render(<Overview {...props} />); const agent = await expanded();
   expect(screen.queryByText(/can't list its agents/)).toBeNull(); expect(within(agent).getByRole('article', { name: 'This computer, Passed' })).toBeTruthy();
-  expect(within(agent).getByRole('button', { name: 'Chat reader' })).toBeTruthy();
+  expect(within(agent).getByRole('button', { name: 'Try a task with reader' })).toBeTruthy();
 });
 
 test('failed reads retain data and never produce empty onboarding', async () => {

@@ -1,4 +1,4 @@
-/* One centred column: the mark, the headline in the display style, one line under it, then the agent and its chat. */
+/* One centred column: the mark, the headline in the display style, one line under it, then the agent and its task. */
 .home { display: grid; gap: var(--space-4); max-width: 700px; margin-inline: auto; }
 .home-hero { display: grid; justify-items: center; gap: var(--space-3); padding-top: calc(80px - var(--page-pad, 24px)); text-align: center; }
 .home-hero h1 { margin: var(--space-2) 0 0; font: var(--type-display); letter-spacing: var(--tracking-display); }

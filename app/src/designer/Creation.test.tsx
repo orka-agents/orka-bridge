@@ -54,7 +54,7 @@ test('creates during setup, previews the native location and both files, and ope
   expect(calls).not.toContain('agent_run'); expect(calls).not.toContain('workspace_catalog');
 });
 
-test.each(['Chat', 'File'])('creation from %s opens empty Instructions with an incomplete test, never a format error', async previousView => {
+test.each(['Try a task', 'File'])('creation from %s opens empty Instructions with an incomplete test, never a format error', async previousView => {
   const calls: string[] = [];
   native((command, args) => {
     calls.push(command);
@@ -73,10 +73,10 @@ test.each(['Chat', 'File'])('creation from %s opens empty Instructions with an i
   expect(screen.queryByText(/test list could not be read/i)).toBeNull();
   expect(screen.getByRole('button', { name: 'Run tests' }).matches(':disabled')).toBe(true);
   expect(screen.getByRole('button', { name: 'Send to a cluster' }).matches(':disabled')).toBe(true);
-  await user.click(screen.getByRole('button', { name: 'Chat' }));
-  expect(screen.getByText(/write instructions in Agent view before chatting/i)).toBeTruthy();
-  await screen.findByText('Chat is unavailable.');
-  await user.type(screen.getByRole('textbox', { name: 'Message' }), 'Hello{Enter}');
+  await user.click(screen.getByRole('button', { name: 'Try a task' }));
+  expect(screen.getByText(/write instructions in Agent view before trying a task/i)).toBeTruthy();
+  await screen.findByText('Try a task is unavailable.');
+  await user.type(screen.getByRole('textbox', { name: /one task$/ }), 'Hello{Enter}');
   expect(calls).not.toContain('agent_run');
   expect(calls).not.toContain('agent_chat_send');
 });

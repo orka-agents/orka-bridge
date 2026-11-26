@@ -21,9 +21,9 @@ test.each([[false, true], [true, false]])('Home asks to connect the AI only when
   });
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Home' }));
-  await screen.findByRole('textbox', { name: 'Message' });
+  await screen.findByRole('textbox', { name: /one task$/ });
   await new Promise(resolve => setTimeout(resolve, 700));
-  expect(screen.queryAllByText('Connect the AI in Clusters before chatting.', { exact: false }).length > 0).toBe(warned);
+  expect(screen.queryAllByText('Connect the AI in Clusters before trying a task.', { exact: false }).length > 0).toBe(warned);
 });
 
 function native(options: { runStatus: 'connected' | 'unreadable'; agent?: string }) {
@@ -48,19 +48,19 @@ test('an unreadable status poll does not claim the AI is disconnected', async ()
   native({ runStatus: 'unreadable' });
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Home' }));
-  await screen.findByRole('textbox', { name: 'Message' });
+  await screen.findByRole('textbox', { name: /one task$/ });
   await new Promise(resolve => setTimeout(resolve, 700));
-  expect(screen.queryAllByText('Connect the AI in Clusters before chatting.', { exact: false })).toHaveLength(0);
+  expect(screen.queryAllByText('Connect the AI in Clusters before trying a task.', { exact: false })).toHaveLength(0);
 });
 
-test('Home applies Designer\'s chat gate for the agent Designer has open', async () => {
+test('Home applies Designer\'s Try a task gate for the agent Designer has open', async () => {
   native({ runStatus: 'connected', agent: '---\nname: web-reader\nmodel: gpt-5.6-terra\nkmx:\n  runtime: orka\n  schemaVersion: 1\n  tools: []\n---\n' });
   const user = userEvent.setup(); render(<App />);
   await user.click(screen.getByRole('button', { name: 'Designer' }));
   await screen.findByRole('textbox', { name: 'Instructions' });
   await user.click(screen.getByRole('button', { name: 'Home' }));
-  // Designer's Chat stays mounted but hidden, so look only inside Home.
-  const home = await screen.findByRole('region', { name: 'What should your agents do?' });
-  expect((await within(home).findAllByText('Write instructions in Agent view before chatting.', { exact: false })).length).toBeGreaterThan(0);
-  expect(within(home).getByRole('button', { name: 'Send message' }).matches(':disabled')).toBe(true);
+  // Designer's Try a task stays mounted but hidden, so look only inside Home.
+  const home = await screen.findByRole('region', { name: 'What do you want done?' });
+  expect((await within(home).findAllByText('Write instructions in Agent view before trying a task.', { exact: false })).length).toBeGreaterThan(0);
+  expect(within(home).getByRole('button', { name: 'Run task' }).matches(':disabled')).toBe(true);
 });

@@ -34,6 +34,9 @@
 .designer-side { grid-column: 2; grid-row: 1; min-width: 0; display: grid; gap: var(--space-6); }
 .designer-side > section > h2 { margin-bottom: var(--space-2); }
 .designer-work[hidden] { display: none; }
+/* Try a task takes the right-hand column; the instructions stay on the left so a change can be tried at once. */
+.designer-try { grid-column: 2; grid-row: 1; min-width: 0; display: grid; gap: var(--space-2); align-content: start; }
+.designer-side[hidden], .designer-try[hidden] { display: none; }
 .designer-work :is(.designer-file, .designer-tests, .designer-checks) { margin-top: 0; }
 .designer-editing { grid-column: 1; grid-row: 1; min-width: 0; display: grid; gap: var(--space-2); }
 .file-toolbar { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2); min-height: 16px; }
@@ -127,7 +130,9 @@
 
 @media (max-width: 820px) {
   .designer-work { grid-template-columns: minmax(0, 1fr); }
-  .designer-side, .designer-editing { grid-column: auto; grid-row: auto; }
+  .designer-side, .designer-editing, .designer-try { grid-column: auto; grid-row: auto; }
+  /* The composer holds the next action, so it comes first in one column. */
+  .designer-try { order: -1; }
 }
 @media (max-width: 1000px) {
   .designer-heading { flex-wrap: wrap; }

@@ -200,7 +200,7 @@ export default function Overview({ onNewAgent, active, runBusy, localAiConnected
       <input className="field" aria-label="Filter by name" placeholder="Filter by name" value={nameFilter} onChange={event => { setReveal(undefined); setNameFilter(event.target.value); }} />
       <span className="overview-filter-count" role="status">{summaryLabel(rows, partial)}</span>
     </div>}
-    {needsAi && <p id={aiReasonId} className="overview-note" tabIndex={0}>Connect the AI in Clusters to chat or run tests on this computer.</p>}
+    {needsAi && <p id={aiReasonId} className="overview-note" tabIndex={0}>Connect the AI in Clusters to try a task or run tests on this computer.</p>}
     {focusNote && <div className="overview-note alert" role="status"><p>{focusNote}</p><Button size="small" onClick={() => { if (focus && !focus.target && onRetryFocus) onRetryFocus(focus.sendId); else setFocusRetry(v => v + 1); }}>Refresh</Button></div>}
     {placeError && <div className="overview-note alert" role="status"><p>Couldn't read clusters just now.{places && ' Showing what Bridge last saw.'}</p><Button size="small" onClick={actions.onCheck}>Check again</Button></div>}
     {places?.historyState === 'unavailable' && <div role="alert" className="overview-note alert"><p>Saved Send results are unavailable, so cluster agents show no test result.</p><Button size="small" onClick={actions.onCheck}>Check again</Button></div>}

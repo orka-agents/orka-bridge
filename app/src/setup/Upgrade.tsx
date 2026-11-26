@@ -122,7 +122,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
     {ready && <>
       {s.credential === 'eligible' && !confirmation && <Button type="button" kind="primary" disabled={blocked || !canUseCredential} title={!canUseCredential ? 'Start the workspace before changing its saved connection' : undefined} onClick={() => { void act('transfer'); }}>Use saved connection</Button>}
       {s.credential === 'attention' && <p>The saved connection needs attention. Remove it explicitly before entering another sign-in or key.</p>}
-      {s.credential === 'transferred' && <p>Saved connection ready. Use Connect in the AI card; no test or chat will run automatically.</p>}
+      {s.credential === 'transferred' && <p>Saved connection ready. Use Connect in the AI card; no test or task will run automatically.</p>}
       {(s.credential === 'absent' || s.credential === 'removed') && <p>Enter a new sign-in or key in the AI card, then choose Connect.</p>}
     </>}
     {confirmation && <fieldset className="workspace-stop-confirm" aria-label={confirmation.action === 'restore' ? 'Restore previous workspace?' : confirmation.action === 'remove' ? 'Remove saved connection?' : 'Set up new workspace?'} onKeyDown={event => { if (event.key === 'Escape' && !busy) { event.stopPropagation(); dismiss(); } }}>
@@ -134,7 +134,7 @@ export default function Upgrade({ status: s, disabled, canUseCredential = true, 
         <p>Keep the workspace used with {source} and set up a fresh workspace for Bridge {s.targetRelease}. Old cluster objects, chats and volumes stay in the retained workspace; they are not imported.</p>
         <p>If setup is interrupted, reopen this version of Bridge to finish recovery. Do not open the older version until Restore has completed.</p>
         {(s.repeated || s.state === 'restored') && <p>This creates another new workspace. The workspace kept from your last update will not be reopened.</p>}
-        <p>Saved results stay historical. Setup will not connect the AI or run a test or chat.</p>
+        <p>Saved results stay historical. Setup will not connect the AI or run a test or task.</p>
       </>}
       <div className="workspace-step-actions"><Button type="button" kind="secondary" className={confirmation.action === 'remove' ? 'button-danger' : undefined} disabled={blocked} onClick={() => { void act(confirmation.action === 'replace' && retry ? 'retry' : confirmation.action); }}>{confirmation.action === 'restore' ? 'Restore this workspace' : confirmation.action === 'remove' ? 'Remove for all retained workspaces' : 'Keep old workspace and set up new'}</Button>
         <Button ref={cancel} type="button" kind="quiet" disabled={busy} onClick={dismiss}>Not now</Button></div>

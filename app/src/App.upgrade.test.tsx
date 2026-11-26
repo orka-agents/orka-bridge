@@ -6,7 +6,7 @@ import App from './App';
 vi.mock('./designer/Example', () => ({ default: (props: { workspaceReady: boolean; setupPending: boolean }) => <output data-testid="designer-admission">{JSON.stringify(props)}</output> }));
 afterEach(() => { cleanup(); clearMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 const none = { state: 'none', transaction: null, createdAt: null, sourceReleases: [], targetRelease: null, retainedAllocatedBytes: null, additionalBytes: null, credential: 'absent', canCancel: false, busy: false, error: null, repeated: false, canReplace: false, canRestore: false };
-test.each(['hung', 'failed'] as const)('unreadable replaced upgrade blocks local Run/Chat but not file editing or remote Send (%s)', async observation => {
+test.each(['hung', 'failed'] as const)('unreadable replaced upgrade blocks local Run/Try a task but not file editing or remote Send (%s)', async observation => {
   vi.stubGlobal('isTauri', true); localStorage.setItem('bridge.welcomeSeen.v1', '1');
   let known = false;
   mockIPC(command => {

@@ -42,5 +42,5 @@ test('hides unknown native exception contents', async () => {
 });
 test('browser preview cannot dispatch or claim a native conversation', async () => {
   vi.stubGlobal('isTauri', false);
-  expect(await chatCall('agent_chat_status', id)).toEqual({ ok: false, message: 'Chat is available only in the native app.' });
+  expect(await chatCall('agent_chat_status', id)).toEqual({ ok: false, message: 'Try a task is available only in the native app.' });
 });

@@ -192,8 +192,8 @@ test('Overview reads saved documents without opening, setup or VM commands; Open
   expect(calls.filter(c => c === 'agent_open')).toHaveLength(1);
 });
 
-test('Overview fitting Chat routes to the saved document on This computer', async () => {
-  const action = 'Chat';
+test('Overview fitting Try a task routes to the saved document on This computer', async () => {
+  const action = 'Try a task';
   vi.stubGlobal('isTauri', true);
   const id = '12345678-1234-4234-8234-123456789abc';
   const installation = '22345678-1234-4234-8234-123456789abc';
@@ -219,9 +219,9 @@ test('Overview fitting Chat routes to the saved document on This computer', asyn
   await user.click(screen.getByRole('button', { name: 'Overview' }));
   const row = await screen.findByRole('article', { name: 'reader' });
   await user.click(within(row).getByRole('button', { name: 'Show places for reader' }));
-  await user.click(within(row).getByRole('button', { name: `${action} reader` }));
+  await user.click(within(row).getByRole('button', { name: `${action} with reader` }));
   await screen.findByRole('heading', { name: 'reader', level: 1 });
-  if (action === 'Chat') await waitFor(() => expect(screen.getByRole('button', { name: 'Chat', pressed: true })).toBeTruthy());
+  if (action === 'Try a task') await waitFor(() => expect(screen.getByRole('button', { name: 'Try a task', pressed: true })).toBeTruthy());
   else await waitFor(() => expect(calls.filter(call => call.command === 'agent_run')).toEqual([{ command: 'agent_run', args: { documentId: id } }]));
   expect(calls.some(call => call.command === 'send_start')).toBe(false);
 });
@@ -697,7 +697,7 @@ test('Overview waits for native busy release even when the report is already com
   await user.click(screen.getByRole('button', { name: 'Clusters' }));
   busy = false;
   await user.click(screen.getByRole('button', { name: 'Overview' }));
-  await screen.findByText('The workspace is stopped. Start it to test or chat.', {}, { timeout: 2000 });
+  await screen.findByText('The workspace is stopped. Start it to run tests or try a task.', {}, { timeout: 2000 });
   expect(lists).toBe(1);
 });
 
