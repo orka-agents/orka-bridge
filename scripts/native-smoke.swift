@@ -215,10 +215,9 @@ func nativeButtons(_ label: String, root: AXUIElement? = nil) -> [AXUIElement] {
             }
     }
 }
-// Page content only: the sidebar holds the page buttons, so the page starts to the right of the actual
-// native Clusters button (the compact rail is narrower than the wide sidebar) and below the title bar,
-// which ends just above the sidebar's first button (Home). The status card sits in the sidebar when
-// wide; in a compact window it is a bar across the bottom, and the page ends above it.
+// Page content only, in the flat frame: the page starts at the sidebar's hairline, 8pt right of the actual native
+// Clusters button (the narrow icon rail is 60pt, the wide sidebar 232pt), and below the title bar, which ends 12pt
+// above the sidebar's first button (Home). The status card sits in the sidebar (a dot box in the narrow rail).
 func bodyBounds() -> CGRect {
     let rect = window()!.1
     guard let nav = nativeButtons("Clusters").compactMap({ nativeBounds($0) }).first,
@@ -229,7 +228,7 @@ func bodyBounds() -> CGRect {
         return CGRect(x: rect.minX, y: row.maxY, width: rect.width, height: max(0, rect.maxY - row.maxY))
     }
     let left = nav.maxX + 8
-    let top = max(rect.minY, home - 4)
+    let top = max(rect.minY, home - 12)
     let statusBar = nativeElements()
         .filter { attribute($0, "AXSubrole") as? String == "AXLandmarkContentInfo" }
         .compactMap { nativeBounds($0) }
@@ -251,25 +250,59 @@ func guidedTitleRow() -> CGRect? {
     }
     return nil
 }
-// Show all of Bridge, in the guided title bar after Welcome, is the only way to the sidebar during a guided run.
+// The guided first run has no side door on a healthy setup screen: it ends when a cluster is in use (or at Set up
+// later, offered only where setup has stopped, which this runner's unknown virtualization check never reaches).
+// Continue on this computer would download and start a real workspace, so connect the CI fixture cluster instead,
+// then forget it and return to this computer, leaving the walk's state as it was: nothing set up, nothing
+// remembered, guidance over for this run.
 func leaveGuidedFirstRun() {
     guard nativeButtons("Home").isEmpty else { return }
-    let rect = window()!.1
-    let exits = nativeButtons("Show all of Bridge").filter { attribute($0, "AXEnabled") as? Bool == true }
-        .compactMap { nativeBounds($0) }.filter { rect.contains($0) }
-    require(exits.count == 1, "The guided first run must offer one visible Show all of Bridge")
-    mouse(.leftMouseDown, CGPoint(x: exits[0].midX, y: exits[0].midY)); mouse(.leftMouseUp, CGPoint(x: exits[0].midX, y: exits[0].midY))
-    for _ in 0..<30 {
-        if !nativeButtons("Home").isEmpty && !nativeButtons("Clusters").isEmpty { break }
-        Thread.sleep(forTimeInterval: 0.1)
+    require(ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil,
+            "The guided first run ends only through a connected cluster here; the walk needs its fixture kubeconfig")
+    scrollMain(4000)
+    if visibleButtons("Add a cluster").count == 1 {
+        clickButton("Add a cluster")
+    } else {
+        // The where-to-run step: choose the cluster option, then Continue, which opens Add a cluster.
+        let rect = window()!.1
+        let choices = nativeElements().filter { element in
+            attribute(element, "AXRole") as? String == "AXRadioButton"
+                && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.hasPrefix("On a cluster you already have") == true }
+        }.compactMap { nativeBounds($0) }.filter { rect.contains($0) }
+        require(choices.count == 1, "The guided where-to-run step must offer one visible cluster choice")
+        mouse(.leftMouseDown, CGPoint(x: choices[0].midX, y: choices[0].midY)); mouse(.leftMouseUp, CGPoint(x: choices[0].midX, y: choices[0].midY))
+        Thread.sleep(forTimeInterval: 0.3)
+        clickButton("Continue")
+    }
+    Thread.sleep(forTimeInterval: 1)
+    clickButton("kubectl context")
+    clickButton("fixture-cluster")
+    for _ in 0..<50 where nativeButtons("Use this cluster").isEmpty { Thread.sleep(forTimeInterval: 0.2) }
+    clickButton("Use this cluster")
+    for _ in 0..<50 {
+        if !nativeButtons("Home").isEmpty && !nativeButtons("Clusters").isEmpty && !nativeButtons("Done").isEmpty { break }
+        Thread.sleep(forTimeInterval: 0.2)
     }
     require(!nativeButtons("Home").isEmpty && !nativeButtons("Clusters").isEmpty && guidedTitleRow() == nil,
-            "Show all of Bridge did not end the guided first run and bring back the sidebar")
+            "Using the fixture cluster did not end the guided first run and bring back the sidebar")
+    requireNoLocalWorkspace()
+    // Forget the cluster again and choose this computer, as the rest of the walk expects.
+    clickButton("Done")
+    clickButton("Manage")
+    clickButton("Show details")
+    clickButton("Remove")
+    clickButton("Remove cluster")
+    for _ in 0..<30 where !nativeButtons("Manage").isEmpty { Thread.sleep(forTimeInterval: 0.1) }
+    require(nativeButtons("Manage").isEmpty && nativeTextIsVisible("No other clusters added yet"), "The fixture cluster used to leave guidance was not forgotten")
+    clickButton("Set up")
+    clickButton("Use this computer")
+    requireNoLocalWorkspace()
+    require(nativeButtons("Use this computer").isEmpty && guidedTitleRow() == nil, "This computer was not chosen again after leaving guidance")
 }
-// A point in the page panel's bare left padding: page content starts 16-24pt in from the panel's left edge, so
-// no control, text or scrollbar is under it. Just under the title bar it is also above every fixed picker (80pt
-// down), so its colour is page paper, or paper under the picker's backdrop. On guided screens it is inside the
-// solid paper corner (32pt radius) that art.css keeps clear of the chart.
+// A point in the page's bare left padding: page content starts 16-30pt in from the page's left edge, so no control,
+// text or scrollbar is under it. Just under the title bar it is also above every fixed picker (80pt down), and inside
+// the solid paper corner art.css keeps clear of the chart (40pt radius; 32pt on guided screens), so its colour is
+// page paper, or paper under the picker's backdrop.
 func pageGutter(y: CGFloat? = nil) -> CGPoint {
     let page = bodyBounds()
     return CGPoint(x: page.minX + 8, y: y ?? page.minY + 12)
@@ -414,7 +447,7 @@ func normalizedSendText(_ text: String) -> String {
 func sendFrameVisible(_ observations: [VNRecognizedTextObservation]) -> Bool {
     let text = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " ")
     let markers = ["Send your agent", "Team cluster", "Ready to send", "Tests on your cluster", "passed", "evaluating tests", "Planned agent", "question", "answer", "Earlier files", "Not run since your edit", "Stopped watching",
-        "What you send", "What happened", "Earlier result", "Send needs attention", "Running tests",
+        "Earlier result", "Send needs attention", "Running tests",
         "Cancelling tests", "Cancellation requested.", "Cannot cancel with this cluster identity", "This Orka cannot cancel tests.", "Cancellation not confirmed.", "Tests cancelled on the cluster.", "Tests finished before cancellation."]
     return markers.contains { text.localizedCaseInsensitiveContains($0) }
 }
@@ -445,7 +478,7 @@ func capture(_ name: String, _ page: String, searching: Bool = false, afterFrame
         guard let tiff = comparison.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using: .png, properties: [:]) else { fail("Cannot compose native comparison") }
         try png.write(to: URL(fileURLWithPath: "\(output)/\(name)-comparison.png"))
     }
-    // The window edge is now the chrome around the page panel, so sample the panel itself.
+    // The window edge is the page's scrollbar or chrome, so sample the page's top-left corner instead.
     let frame = window()!.1, paper = pageGutter()
     // Render the PNG's profile into sRGB bytes; NSColor calibration changed the sampled values.
     guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: file) as CFURL, nil),
@@ -1425,31 +1458,18 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     let connected = try capture("cluster-access-compact", "Clusters")
     clickText("Open your agent", in: connected)
     Thread.sleep(forTimeInterval: 0.5)
-    let ownedAgent = try capture("agent-cluster-owned", "Designer")
-    clickText("Send to a cluster", in: ownedAgent)
+    // The Send card is always in Designer's right column; there is no page-head entry to open it.
+    try capture("agent-cluster-owned", "Designer")
     Thread.sleep(forTimeInterval: 1)
     let allowed = try capturePreflight("send-ready", "Ready to send")
     require(allowed.contains { ($0.topCandidates(1).first?.string ?? "").contains("Ready to send") }
         && !nativeButtons("Send and run tests").isEmpty, "Ready destination must expose the Send action")
     func focusSend() throws {
-        // Pixel scroll offsets are not stable across responsive reflow. Focus
-        // the real entry button, then pointer-click its verified native bounds.
-        let matches = nativeElements().filter { element in
-            attribute(element, "AXRole") as? String == "AXButton"
-                && attribute(element, "AXEnabled") as? Bool == true
-                && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Send to a cluster" }
-        }
-        require(matches.count == 1, "Expected one enabled Send entry")
-        let entry = matches[0]
-        require(AXUIElementSetAttributeValue(entry, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus Send entry")
-        Thread.sleep(forTimeInterval: 0.3)
-        guard let focusedBounds = nativeBounds(entry) else { fail("Focused Send entry has no bounds") }
-        if !bodyBounds().contains(focusedBounds) {
-            scrollMain(Int32((bodyBounds().minY + 32 - focusedBounds.minY).rounded()))
-        }
-        guard let bounds = nativeBounds(entry), bodyBounds().contains(bounds) else { fail("Focused Send entry is not visible") }
-        mouse(.leftMouseDown, CGPoint(x: bounds.midX, y: bounds.midY))
-        mouse(.leftMouseUp, CGPoint(x: bounds.midX, y: bounds.midY))
+        // Pixel scroll offsets are not stable across responsive reflow. The Send card is always in Designer's
+        // right column (there is no page-head entry), so bring its actual native top under the page top.
+        guard let card = nativeBounds(nativeRegion("Send and cluster tests")) else { fail("Send card has no bounds") }
+        if abs(card.minY - (bodyBounds().minY + 32)) > 1 { scrollMain(Int32((bodyBounds().minY + 32 - card.minY).rounded())) }
+        guard let shown = nativeBounds(nativeRegion("Send and cluster tests")), bodyBounds().contains(CGPoint(x: shown.midX, y: shown.minY + 1)) else { fail("Send card top is not visible") }
         Thread.sleep(forTimeInterval: 0.5)
         try closeSendDetails()
         // Observe a real Send control after reflow. Vision can omit the small uppercase section label.
@@ -1872,8 +1892,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickButton("Manage")
     scrollMain(-400)
     clickText("Open your agent", in: try capture("cluster-probe", "Clusters"))
-    let secondAgent = try capture("agent-cluster-owned", "Designer")
-    clickText("Send to a cluster", in: secondAgent)
+    try capture("agent-cluster-owned", "Designer")
     // The primary's restored-version Send already reloaded these exact files.
     try clickSendControl("Check again", scrolling: -250)
     // The primary's result remains visible as Earlier result; destination readiness is a collapsed disclosure.
@@ -1924,8 +1943,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
         scrollMain(-400)
         let connected = try capture("cluster-access", "Clusters")
         clickText("Open your agent", in: connected)
-        let agent = try capture("agent-cluster-owned", "Designer")
-        clickText("Send to a cluster", in: agent)
+        try capture("agent-cluster-owned", "Designer")
         Thread.sleep(forTimeInterval: 1)
         for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
             try resultSize(width, height)
@@ -1941,7 +1959,7 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
     clickText("Use this cluster", in: cancellationTarget)
     scrollMain(-400)
     clickText("Open your agent", in: try capture("cluster-probe", "Clusters"))
-    try clickSendControl("Send to a cluster", scrolling: -350, region: nil)
+    try focusSend()
     restoreTemporaryTests = { try originalTests.write(to: testsURL, options: .atomic) }
     try mixedTests.write(to: testsURL, options: .atomic)
     try clickSendControl("Check again", scrolling: -250)
@@ -2032,12 +2050,10 @@ if ProcessInfo.processInfo.environment["BRIDGE_WALK_KUBECONFIG"] != nil {
             "Removed cluster returned after restart")
     clickTab("Designer", restarted)
     Thread.sleep(forTimeInterval: 1)
-    try clickSendControl("Send to a cluster", scrolling: -350, region: nil)
-    clickButton("Past Sends")
-    guard let historyHeading = nativeButtons("Past Sends").compactMap({ nativeBounds($0) }).first else {
+    // Past Sends is an always-open card under the Send card, labelled by its heading.
+    guard let historyHeading = nativeBounds(nativeRegion("Past Sends")) else {
         fail("Saved Send history was not reachable after restart")
     }
-    // The label is now a disclosure control, not a standalone OCR heading.
     // Put it near the top so the newest saved summaries fit in the frame.
     scrollMain(Int32((bodyBounds().minY + 24 - historyHeading.minY).rounded()))
     try capture("send-history-restarted", "Designer")

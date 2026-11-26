@@ -86,6 +86,9 @@ $data = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'ai.orka.bri
 $selected = Join-Path $data 'setup-v1/local-vm'
 $vmData = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'ai.orka.bridge/local-vm-v1'
 if (Test-Path $data) { throw "Expected fresh hosted-CI application profile: $data (will not erase it)" }
+# Loopback cluster fixture: the only way out of the guided first run on a healthy setup screen without a workspace.
+if (!$env:BRIDGE_WALK_KUBECONFIG -or !(Test-Path $env:BRIDGE_WALK_KUBECONFIG -PathType Leaf)) { throw 'Expected the CI loopback cluster fixture kubeconfig' }
+$env:KUBECONFIG = $env:BRIDGE_WALK_KUBECONFIG
 if (!(Test-Path $env:BRIDGE_DEV_IMAGE_DIR -PathType Container) -or @(Get-ChildItem -Force $env:BRIDGE_DEV_IMAGE_DIR).Count) { throw 'Expected empty image source directory' }
 if (Get-Process -Name orka-bridge -ErrorAction SilentlyContinue) { throw 'Bridge is already running' }
 $desktop = $null
@@ -161,9 +164,9 @@ function Capture([string]$Name, [bool]$Menu = $false) {
         $graphics.CopyFromScreen([int]$r.X, [int]$r.Y, 0, 0, $bitmap.Size)
         $bitmap.Save((Join-Path $script:themeOutput "$Name.png"), [Drawing.Imaging.ImageFormat]::Png)
         if (!$Menu) {
-            # Sample the page panel, not the sidebar, title bar or the chrome margin around the panel. It starts
-            # 8px right of the sidebar's buttons and under the title bar, which ends 4px above the sidebar's first
-            # button (Home); its content starts 16-24px in, so this pixel in its left padding is bare page colour.
+            # Sample the page, not the sidebar or title bar. It starts 8px right of the sidebar's buttons and under the
+            # title bar, which ends 12px above the sidebar's first button (Home); its content starts 16-30px in and
+            # art.css keeps its top-left corner solid paper, so this pixel is bare page colour.
             # It is near the top, clear of the taskbar where the maximized frame extends below the display.
             $nav = Find-Control $script:window 'Clusters' $button
             $homeButton = Find-Control $script:window 'Home' $button
@@ -446,9 +449,32 @@ try {
         # Observe the real runner; never inject Ready or select a local workspace.
         Capture 'computer-requirements'
         if (Test-Path $selected) { throw 'Preflight selected a workspace' }
-        # The guided first run keeps the sidebar away until Show all of Bridge, in its title bar after Welcome.
-        $exit = Find-Control $script:window 'Show all of Bridge' $button
-        if ($exit) { Press $exit }
+        # The guided first run has no side door on this healthy screen, and Continue on this computer would select
+        # and start a workspace. It ends when a cluster is in use: use the loopback fixture cluster, then forget it
+        # and choose this computer again, so nothing is remembered or selected afterwards.
+        if (!(Find-Control $script:window 'Designer' $button)) {
+            Press (Wait-For 'Guided cluster choice missing' { $buttons = $script:window.FindAll($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::RadioButton)); foreach ($candidate in $buttons) { if ($candidate.Current.Name -and $candidate.Current.Name.StartsWith('On a cluster you already have', [StringComparison]::Ordinal)) { return $candidate } } })
+            Press (Wait-For 'Guided Continue missing' { Find-Control $script:window 'Continue' $button })
+            Press (Wait-For 'kubectl context picker missing' {
+                # The trigger opens a dialog, so its control type is the browser's choice; skip the visible label text.
+                foreach ($candidate in $script:window.FindAll($children, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'kubectl context'))) {
+                    if ($candidate.Current.ControlType -ne [System.Windows.Automation.ControlType]::Text -and $candidate.Current.IsEnabled) { return $candidate }
+                }
+            })
+            Press (Wait-For 'Fixture context missing' { Find-Action $script:window 'fixture-cluster' })
+            Press (Wait-For 'Use this cluster missing' { Find-Control $script:window 'Use this cluster' $button })
+            Wait-For 'Using the fixture cluster did not end the guided first run' { (Find-Control $script:window 'Designer' $button) -and (Find-Control $script:window 'Done' $button) } | Out-Null
+            if (Test-Path $selected) { throw 'Leaving guidance selected a workspace' }
+            Press (Find-Control $script:window 'Done' $button)
+            Press (Wait-For 'Fixture Manage missing' { Find-Action $script:window 'Manage' })
+            Press (Wait-For 'Fixture Show details missing' { Find-Control $script:window 'Show details' $button })
+            Press (Wait-For 'Fixture Remove missing' { Find-Control $script:window 'Remove' $button })
+            Press (Wait-For 'Remove cluster confirmation missing' { Find-Control $script:window 'Remove cluster' $button })
+            Press (Wait-For 'This computer Set up missing after removal' { if ((Get-UiNames $script:window) -match 'No other clusters added yet') { Find-Action $script:window 'Set up' } })
+            Press (Wait-For 'Use this computer missing' { Find-Control $script:window 'Use this computer' $button })
+            Wait-For 'This computer was not chosen again' { !(Find-Control $script:window 'Use this computer' $button) } | Out-Null
+            if (Test-Path $selected) { throw 'Returning to this computer selected a workspace' }
+        }
         Press (Wait-For 'Designer button missing' { Find-Control $script:window 'Designer' $button })
         # Observe the actual editable owned example before toggling File, not a
         # welcome-button proxy or a read-only preview that will be remounted.

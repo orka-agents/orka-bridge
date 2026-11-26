@@ -306,21 +306,12 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
         return true
     }
     require(sampled, "Cannot sample native theme in sRGB")
-    let pickerOpen = enabledButton("Close picker") != nil
-    // The cluster context and account pickers are popovers with a transparent backdrop (.context-picker::backdrop in
-    // clusters.css), so the page beside them stays plain paper; the tool picker still dims the page.
-    let dimmingPicker = pickerOpen && !name.hasPrefix("cluster-")
+    // No picker dims the page any more: the cluster context and account pickers are popovers with a transparent
+    // backdrop (.context-picker::backdrop in clusters.css) and the tool picker is a card in the page (designer.css),
+    // so the sampled corner is plain paper with or without one open.
     let page: [CGFloat] = theme == "dark" ? [9, 9, 10] : [255, 255, 255]
     let actual = rgba.prefix(3).map { CGFloat($0) }
-    if dimmingPicker {
-        let backdrop: [CGFloat] = theme == "dark" ? [0, 0, 0] : [11, 11, 12]
-        let opacity: CGFloat = theme == "dark" ? 0.55 : 0.18
-        let expected = zip(page, backdrop).map { $0 * (1 - opacity) + $1 * opacity }
-        require(zip(actual, expected).allSatisfy { abs($0 - $1) < 3 },
-            "Native fixture picker backdrop does not use the Orka paper composite: \(actual)")
-    } else {
-        require(zip(actual, page).allSatisfy { abs($0 - $1) < 8 }, "Native fixture does not use Orka paper: \(actual)")
-    }
+    require(zip(actual, page).allSatisfy { abs($0 - $1) < 8 }, "Native fixture does not use Orka paper: \(actual)")
     // Setup frames 1c, 1d (cropped) and 1e exist only in light; dark captures use them as layout references.
     // Frames 1g (AI connection failed) and 1h (AI reset) are approved in both themes.
     let frame: (file: String, label: String)? =
@@ -375,8 +366,8 @@ func enabledButton(_ label: String) -> AXUIElement? {
 // accessibility values, is then the authored copy or exactly its capitals; any other casing is still a mismatch.
 func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }
 func isText(_ text: String, _ expected: String) -> Bool { text == expected || text == expected.uppercased() }
-// The page starts under the title bar, which ends just above the sidebar's first button (Home).
-func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 4 } ?? window()!.1.minY }
+// The page starts under the title bar, which ends 12pt above the sidebar's first button (Home).
+func pageTop() -> CGFloat { enabledButton("Home").flatMap(nativeBounds).map { $0.minY - 12 } ?? window()!.1.minY }
 // A sidebar page button by name, enabled or not: an open picker makes the page behind it inert, not moved.
 func sidebarButton(_ label: String) -> CGRect? {
     nativeElements().filter { element in
@@ -384,9 +375,10 @@ func sidebarButton(_ label: String) -> CGRect? {
             && ["AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == label })
     }.compactMap(nativeBounds).min { $0.minX < $1.minX }
 }
-// A point in the page panel's bare left padding. The panel starts 8pt right of the sidebar's buttons and its
-// content 16-24pt further in, so no control, text or scrollbar is under it. Just under the title bar it is also
-// above every fixed picker (80pt down), so its colour is page paper, or paper under the picker's backdrop.
+// A point in the page's bare left padding. The page starts 8pt right of the sidebar's buttons and its content
+// 16-30pt further in, so no control, text or scrollbar is under it. Just under the title bar it is also above every
+// fixed picker (80pt down) and inside the solid paper corner art.css keeps clear of the chart, so its colour is page
+// paper, or paper under the picker's backdrop.
 func pageGutter(y: CGFloat? = nil) -> CGPoint {
     guard let nav = sidebarButton("Clusters"), let home = sidebarButton("Home") else { fail("Cannot locate the native sidebar beside the page") }
     return CGPoint(x: nav.maxX + 16, y: y ?? home.minY + 8)
@@ -735,9 +727,10 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
 try "ready".write(to: catalogRelease, atomically: true, encoding: .utf8)
 localSize(1280, 800); scroll(4000)
 waitForButton("Add a tool"); click("Add a tool", [])
+// The picker's visible title is Choose a tool; Find a tool is only the search's hidden label and placeholder.
 for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height))
-    _ = try capture("local-catalog-first-open-\(size)", ["Find a tool", "Read a file"])
+    _ = try capture("local-catalog-first-open-\(size)", ["Choose a tool", "Read a file"])
 }
 click("Close picker", [])
 localSize(1280, 800); scroll(4000)
@@ -1153,8 +1146,8 @@ func nativeControlShowsObservedOCRValue(_ label: String, _ expected: String, _ o
     return matches.count == 1
 }
 func nativeOverviewHeadingIsVisible(_ expected: String) -> Bool {
-    // The page starts under the title bar, which ends just above the sidebar's first button (Home).
-    guard let top = enabledButton("Home").flatMap(nativeBounds).map({ $0.minY - 4 }) else { return false }
+    // The page starts under the title bar, which ends 12pt above the sidebar's first button (Home).
+    guard let top = enabledButton("Home").flatMap(nativeBounds).map({ $0.minY - 12 }) else { return false }
     return nativeElements().contains { element in
         guard attribute(element, "AXRole") as? String == "AXHeading",
             ["AXValue", "AXTitle", "AXDescription"].contains(where: { attribute(element, $0) as? String == expected }),
@@ -1361,8 +1354,9 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
             && ["AXTitle", "AXDescription"].contains { attribute(element, $0) as? String == "Find a tool" }
     }
     require(search.count == 1, "Expected the labeled picker search field")
-    require(nativeBounds(search[0]).map { abs($0.height - 32) < 2 } == true, "Picker search must be 32px high")
-    _ = try capture("local-controls-picker-\(size)", ["Find a tool", "Read a file"])
+    // Fields are --height-control (34px) since the spec sizes; the search is an ordinary .field.
+    require(nativeBounds(search[0]).map { abs($0.height - 34) < 2 } == true, "Picker search must be 34px high")
+    _ = try capture("local-controls-picker-\(size)", ["Choose a tool", "Read a file"])
     let approvalReason = "Approval tools need autonomous coordination, which Bridge does not support for local tests or Try a task."
     let approvalButtons = nativeElements().filter { element in
         attribute(element, "AXRole") as? String == "AXButton"
@@ -1370,7 +1364,7 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     }
     require(approvalButtons.count == 1 && attribute(approvalButtons[0], "AXEnabled") as? Bool == false, "Approval tool must stay disabled locally")
     require(nativeResultTextIsVisible(approvalReason), "Approval reason must be fully visible in the picker")
-    _ = try capture("local-approval-tool-\(size)", ["Find a tool", "Ask for approval", approvalReason])
+    _ = try capture("local-approval-tool-\(size)", ["Choose a tool", "Ask for approval", approvalReason])
     // Filter after the approval frame so the reply row and any reason must fit at every size, minimum included.
     require(AXUIElementSetAttributeValue(search[0], kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success, "Cannot focus picker search")
     typeUnicode("reply")
@@ -1381,11 +1375,12 @@ for (width, height, size) in [(1280, 800, "wide"), (900, 800, "medium"), (540, 9
     require(replyButtons.count == 1, "Search must leave exactly the reply tool row")
     require(attribute(replyButtons[0], "AXEnabled") as? Bool == false, "Reply tool must stay disabled locally")
     // Require the whole reason in the captured window, not only accessibility-node geometry.
-    _ = try capture("local-reply-tool-\(size)", ["Find a tool", "Reply in a conversation", replyReason])
+    _ = try capture("local-reply-tool-\(size)", ["Choose a tool", "Reply in a conversation", replyReason])
     guard let close = enabledButton("Close picker"), let bounds = nativeBounds(close) else {
         fatalError("Labeled picker X missing")
     }
-    require(abs(bounds.width - 26) < 2 && abs(bounds.height - 26) < 2, "Picker X must be 26px square")
+    // Icon buttons are 28px square (.button-icon) since the spec sizes.
+    require(abs(bounds.width - 28) < 2 && abs(bounds.height - 28) < 2, "Picker X must be 28px square")
     // Use the labeled AX control after filtering rather than a second geometry lookup.
     require(AXUIElementPerformAction(close, kAXPressAction as CFString) == .success, "Cannot press picker X")
     Thread.sleep(forTimeInterval: 1)
@@ -1522,9 +1517,9 @@ require(exactTextIsVisible("Saved"), "A completed edit/save must acknowledge Sav
 scroll(4000)
 _ = try seek("Not run since your edit", -250)
 _ = try capture("local-stale", ["Not run since your edit"])
-// Shell evidence beside the approved Designer frame: Agent, File, then Send and Past Sends opened on request.
-// Blocked Try a task is captured in the remote section above. The first (wide) pass sees the unused Send hidden; opening it
-// keeps it retained, so the minimum pass must see it already visible.
+// Shell evidence beside the approved Designer frame: Agent and File, then the Send card and Past Sends, which are
+// always in Designer's right column (beside the editor when wide, below it at the minimum size).
+// Blocked Try a task is captured in the remote section above.
 }
 func exactTextIsVisible(_ expected: String) -> Bool {
     nativeElements().contains { element in
@@ -1538,23 +1533,21 @@ for (width, height, size) in [(1280, 800, "wide"), (540, 640, "minimum")] {
     localSize(CGFloat(width), CGFloat(height)); scroll(4000)
     click("Agent", [])
     require(nativeElements().contains { attribute($0, "AXRole") as? String == "AXPopUpButton" }, "Header agent picker missing")
-    require(anyButton("Send to a cluster") && anyButton("Past Sends"), "Header Send entry and Past Sends must always exist")
-    if size == "wide" { require(!anyButton("Choose a cluster"), "An unused Send must start hidden") }
-    else { require(anyButton("Choose a cluster"), "Send opened earlier must stay retained and visible") }
+    // Without a cluster the always-shown Send card offers Choose a cluster, not a disabled Send to a cluster.
+    require(anyButton("Choose a cluster") && !anyButton("Send to a cluster") && nativeHeadingExists("Past Sends"),
+            "The Send card and Past Sends must always be in Designer's right column")
     _ = try capture("local-shell-agent-\(size)", ["Instructions and settings"])
     click("File", [])
     _ = try capture("local-shell-file-\(size)", ["web-reader.agent.md"])
     click("Agent", [])
-    click("Send to a cluster", [])
-    // The header action already reveals and scrolls the card into view.
+    _ = try seek("Send your agent", -250)
     require(exactTextIsVisible("Send your agent") && !nativeChatTextIsVisible("Team clusters are early in this preview."), "Send must retain its headline without repeating Welcome's preview sentence")
     require(enabledButton("Choose a cluster") != nil && !anyButton("Send and run tests"), "Without a cluster, Choose a cluster must replace Send outside Details")
     _ = try capture("local-shell-send-\(size)", ["Send your agent", "Choose a cluster"])
-    press("Past Sends")
     _ = try seek("Saved results and limits", -150)
     scroll(-100)
     _ = try capture("local-shell-history-\(size)", ["Past Sends", "Saved results and limits"])
-    press("Past Sends")
+    scroll(4000)
 }
 localSize(1280, 800)
 // Try a task runs before the final Run, which intentionally stays busy forever in
@@ -1927,7 +1920,10 @@ func workspaceCapture(_ state: String, _ expected: [String]) throws {
     for (size, width, height) in [("wide", CGFloat(1280), CGFloat(800)), ("minimum", CGFloat(540), CGFloat(640))] {
         localSize(width, height); scroll(4000)
         _ = try capture("local-workspace-\(state)-\(size)", expected)
-        require(enabledButton("Stop the workspace") == nil && enabledButton("Start") == nil && enabledButton("Cancel") == nil, "Returning workspace must not expose Start/Stop/Cancel")
+        // Starting shows the same bar, elapsed time and Cancel (which pauses it) as first setup; no other scene cancels.
+        let starting = state.hasPrefix("starting")
+        require(enabledButton("Stop the workspace") == nil && enabledButton("Start") == nil && (enabledButton("Cancel") != nil) == starting,
+                starting ? "Returning Starting must offer Cancel and no Start/Stop" : "Returning workspace must not expose Start/Stop/Cancel")
         if ["failed", "stopped-unexpectedly", "stop-failed", "forced-stop"].contains(state) {
             require(!anyButton("Hide details"), "Diagnostics must start folded")
             click("Show details", [])
@@ -1943,12 +1939,14 @@ try workspacePhase("workspace-scene-ready")
 reopenedOnHome()
 waitForButton("Manage"); click("Manage", [])
 try workspaceCapture("ready", ["This computer", "Ready", "Agents", "Files"])
-require(nativeHeadingExists("AI"), "Returning Model must be headed AI")
+// The returning AI card is headed AI once connected (Connect the AI before, The AI couldn't connect after a failure).
+require(nativeHeadingExists("AI"), "Returning connected Model must be headed AI")
 click("What's inside", [])
 _ = try capture("local-workspace-inside", ["4 GB of memory"])
 click("What's inside", [])
 try workspacePhase("workspace-scene-starting")
-try workspaceCapture("starting-after-quit-synthetic", ["This computer", "Starting", "0:18 so far"])
+// The fixture reports 18000 ms elapsed while starting.
+try workspaceCapture("starting-after-quit-synthetic", ["This computer", "Starting", "18 seconds elapsed"])
 click("Designer", [])
 for (view, label) in [("Agent", "tests"), ("Try a task", "chat")] {
     localSize(1280, 800); scroll(4000)

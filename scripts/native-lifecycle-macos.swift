@@ -36,6 +36,9 @@ let selected = data.appendingPathComponent("setup-v1/local-vm").path
 check(!FileManager.default.fileExists(atPath: selected), "Existing saved local selection; will not launch or erase it")
 check(!FileManager.default.fileExists(atPath: data.appendingPathComponent("local-vm-v1").path), "Existing VM data; refusing walk")
 if theme == "light" { check(!FileManager.default.fileExists(atPath: data.path), "Expected fresh CI application profile") }
+// Loopback cluster fixture: the only way out of the guided first run on a healthy setup screen without a workspace.
+let kubeconfig = env["BRIDGE_WALK_KUBECONFIG"] ?? ""
+check(!kubeconfig.isEmpty && FileManager.default.fileExists(atPath: kubeconfig), "Expected the CI loopback cluster fixture kubeconfig")
 let source = env["BRIDGE_DEV_IMAGE_DIR"] ?? ""
 check(!source.isEmpty, "Expected empty source directory")
 check(try FileManager.default.contentsOfDirectory(atPath: source).isEmpty, "Expected empty source directory")
@@ -162,7 +165,7 @@ func bounds(_ element: AXUIElement) -> CGRect? {
         && extent.width > 0 && extent.height > 0 else { return nil }
     return CGRect(origin: point, size: extent)
 }
-// A sidebar page button by name (the leftmost match), which places the page panel beside it.
+// A sidebar page button by name (the leftmost match), which places the page beside it.
 func sidebarButton(_ label: String) -> CGRect? {
     nodes(AXUIElementCreateApplication(app!.processIdentifier)).filter { element in
         attribute(element, "AXRole") as? String == "AXButton"
@@ -173,14 +176,14 @@ func sidebarButton(_ label: String) -> CGRect? {
 // WebKit's accessibility values, is then the authored copy or exactly its capitals; any other casing is a mismatch.
 func showsText(_ text: String, _ expected: String) -> Bool { text.contains(expected) || text.contains(expected.uppercased()) }
 func capture(_ name: String, menu: Bool = false) throws {
-    // The page panel starts 8pt right of the sidebar's buttons and under the title bar, which ends 4pt above
-    // the sidebar's first button (Home). Its content starts 16-24pt in, so its left padding is bare page paper.
+    // The page starts 8pt right of the sidebar's buttons and under the title bar, which ends 12pt above the sidebar's
+    // first button (Home). Its content starts 16-30pt in, and art.css keeps its top-left corner solid paper.
     var gutter = CGPoint.zero, pageTop = CGFloat(0)
     if !menu, let rect = windowInfo()?.1 {
         guard let nav = sidebarButton("Clusters"), let home = sidebarButton("Home") else {
             check(false, "Cannot locate the native sidebar beside the page"); return
         }
-        gutter = CGPoint(x: nav.maxX + 16, y: home.minY + 8); pageTop = home.minY - 4
+        gutter = CGPoint(x: nav.maxX + 16, y: home.minY + 8); pageTop = home.minY - 12
         // File view now grows with its content. Restore the page heading after
         // end-of-file typing before testing its visible title in the capture.
         for attempt in 0..<10 {
@@ -234,7 +237,7 @@ func launch() throws -> AXUIElement {
     check(!FileManager.default.fileExists(atPath: selected) && !FileManager.default.fileExists(atPath: data.appendingPathComponent("local-vm-v1").path), "Saved selection or VM data appeared; refusing to resume")
     check(NSRunningApplication.runningApplications(withBundleIdentifier: identifier).isEmpty, "Bridge is already running")
     // open supplies the override explicitly; release smoke uses its unchanged environment.
-    try command("/usr/bin/open", [bundle, "--env", "BRIDGE_DEV_IMAGE_DIR=\(source)"])
+    try command("/usr/bin/open", [bundle, "--env", "BRIDGE_DEV_IMAGE_DIR=\(source)", "--env", "KUBECONFIG=\(kubeconfig)"])
     wait("Bridge did not launch") {
         app = NSRunningApplication.runningApplications(withBundleIdentifier: identifier).first
         return app != nil
@@ -295,8 +298,30 @@ wait("Local size facts did not settle") {
 // Capture the runner observations as drawn, without selecting local or asserting Ready.
 try command("/usr/sbin/screencapture", ["-x", "-o", "-l", String(windowInfo()!.0), "\(output)/computer-requirements.png"])
 check(!FileManager.default.fileExists(atPath: selected), "Preflight selected a workspace")
-// The guided first run keeps the sidebar away until Show all of Bridge, in its title bar after Welcome.
-if let exit = nodes(main).first(where: { pressable($0, "Show all of Bridge") }) { press(exit) }
+// The guided first run has no side door on this healthy screen, and Continue on this computer would select and
+// start a workspace. It ends when a cluster is in use: use the loopback fixture cluster, then forget it and choose
+// this computer again, so nothing is remembered or selected afterwards.
+if !nodes(main).contains(where: { pressable($0, "Designer") }) {
+    press(find(main, "guided-cluster-choice") { element in
+        attribute(element, "AXRole") as? String == "AXRadioButton"
+            && ["AXTitle", "AXDescription"].contains { (attribute(element, $0) as? String)?.hasPrefix("On a cluster you already have") == true }
+    })
+    press(find(main, "guided-continue") { pressable($0, "Continue") })
+    press(find(main, "guided-context-picker") { pressable($0, "kubectl context") })
+    press(find(main, "guided-fixture-context") { pressableAction($0, "fixture-cluster") })
+    press(find(main, "guided-use-cluster") { pressable($0, "Use this cluster") })
+    _ = find(main, "guided-ended") { pressable($0, "Designer") }
+    check(!FileManager.default.fileExists(atPath: selected), "Leaving guidance selected a workspace")
+    press(find(main, "fixture-done") { pressable($0, "Done") })
+    press(find(main, "fixture-manage") { pressableAction($0, "Manage") })
+    press(find(main, "fixture-details") { pressable($0, "Show details") })
+    press(find(main, "fixture-remove") { pressable($0, "Remove") })
+    press(find(main, "fixture-remove-confirm") { pressable($0, "Remove cluster") })
+    press(find(main, "computer-set-up") { pressableAction($0, "Set up") && shownStrings(main).contains { $0.contains("No other clusters added yet") } })
+    press(find(main, "use-this-computer") { pressable($0, "Use this computer") })
+    wait("This computer was not chosen again") { !nodes(main).contains { pressable($0, "Use this computer") } }
+    check(!FileManager.default.fileExists(atPath: selected), "Returning to this computer selected a workspace")
+}
 press(find(main, "Designer") { pressable($0, "Designer") })
 // A writable Agent-view textarea proves the owned example loaded, not a
 // temporary read-only preview that will remount and reset its view toggle.
@@ -366,6 +391,6 @@ wait("Idle Close did not exit") { app!.isTerminated }
 check((try? Data(contentsOf: noticeMarker)) == priorNoticeMarker, "Idle Close changed the running-workspace notice marker")
 try "idle-close-exited: no native Ready producer; no background notice claimed.\n".write(toFile: "\(output)/idle-close-exited.txt", atomically: true, encoding: .utf8)
 check(!FileManager.default.fileExists(atPath: selected) && !FileManager.default.fileExists(atPath: data.appendingPathComponent("local-vm-v1").path), "Saved local selection or VM data appeared")
-let evidence = "PASS \(theme): idle-close-exited without notice/marker change; native menu/Open, same PID \(pid)/window \(originalID), File view and edited text retained, Dock activation, minimized second launch, menu Quit Bridge, standard Quit. Integrated debug shell only; empty image source, no VM/Ready/background-close/notice/provider/cluster/session logout proof.\n"
+let evidence = "PASS \(theme): idle-close-exited without notice/marker change; native menu/Open, same PID \(pid)/window \(originalID), File view and edited text retained, Dock activation, minimized second launch, menu Quit Bridge, standard Quit. Integrated debug shell only; empty image source, loopback fixture cluster used only to leave the guided first run and then forgotten; no VM/Ready/background-close/notice/provider/cluster/session logout proof.\n"
 try evidence.write(toFile: "\(output)/evidence.txt", atomically: true, encoding: .utf8)
 print(evidence)

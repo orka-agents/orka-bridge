@@ -103,15 +103,24 @@ for (const name of ['native-lifecycle-macos.swift', 'native-lifecycle-windows.ps
     : ["Find-Control $script:window 'Clusters' $button", '$bitmap.GetPixel([int]($nav.Current.BoundingRectangle.Right + 16 - $r.X), [int]($homeButton.Current.BoundingRectangle.Top + 8 - $r.Y))'];
   for (const text of sample) assert.ok(driver.includes(text), `${name}: page paper must be sampled beside the actual sidebar: ${text}`);
 }
-// A fresh profile opens on guided Welcome, without the sidebar: start from Get started, leave guidance through
-// Show all of Bridge before the sidebar, and sample guided pages under their title-bar row.
+// A fresh profile opens on guided Welcome, without the sidebar. On a healthy setup screen guidance ends only when a
+// cluster is in use: the walks use the loopback fixture cluster, never Continue on this computer, then forget it
+// and choose this computer again, and sample guided pages under their title-bar row.
 {
   const mac = await read('./native-lifecycle-macos.swift'), windows = await read('./native-lifecycle-windows.ps1');
+  const order = (text, steps) => steps.every((step, index) => text.indexOf(step) >= 0 && (index === 0 || text.indexOf(step) > text.indexOf(steps[index - 1])));
+  assert.ok(!mac.includes('Show all of Bridge') && !windows.includes('Show all of Bridge'), 'the guided title bar has no Show all of Bridge');
   assert.ok(mac.includes('if !nodes(main).contains(where: { pressable($0, "Get started") }) { press(find(main, "Clusters") { pressable($0, "Clusters") }) }')
-    && mac.indexOf('pressable($0, "Show all of Bridge")') < mac.indexOf('press(find(main, "Designer")'), 'Mac lifecycle must start from guided Welcome and leave guidance before Designer');
-  assert.ok(windows.includes("if (!$control) { $control = Find-Control $script:window 'Get started' $button }")
-    && windows.indexOf("Find-Control $script:window 'Show all of Bridge' $button") < windows.indexOf("Wait-For 'Designer button missing'")
-    && windows.includes('$bitmap.GetPixel([int]($row.Left + 8 - $r.X), [int]($row.Bottom + 12 - $r.Y))'), 'Windows lifecycle must start from guided Welcome, sample guided pages and leave guidance before Designer');
+    && mac.includes('"--env", "KUBECONFIG=\\(kubeconfig)"')
+    && order(mac, ['hasPrefix("On a cluster you already have")', 'pressable($0, "Continue")', 'pressableAction($0, "fixture-cluster")', 'pressable($0, "Use this cluster")',
+      'check(!FileManager.default.fileExists(atPath: selected), "Leaving guidance selected a workspace")', 'pressable($0, "Remove cluster")', 'pressable($0, "Use this computer")',
+      'check(!FileManager.default.fileExists(atPath: selected), "Returning to this computer selected a workspace")', 'press(find(main, "Designer")']),
+    'Mac lifecycle must leave guidance through the fixture cluster, forget it, and never select a workspace before Designer');
+  assert.ok(windows.includes("if (!$control) { $control = Find-Control $script:window 'Get started' $button }") && windows.includes('$env:KUBECONFIG = $env:BRIDGE_WALK_KUBECONFIG')
+    && order(windows, ["StartsWith('On a cluster you already have'", "'Guided Continue missing'", "Find-Action $script:window 'fixture-cluster'", "Find-Control $script:window 'Use this cluster' $button",
+      "throw 'Leaving guidance selected a workspace'", "Find-Control $script:window 'Remove cluster' $button", "Find-Control $script:window 'Use this computer' $button",
+      "throw 'Returning to this computer selected a workspace'", "Wait-For 'Designer button missing'"])
+    && windows.includes('$bitmap.GetPixel([int]($row.Left + 8 - $r.X), [int]($row.Bottom + 12 - $r.Y))'), 'Windows lifecycle must leave guidance through the fixture cluster, forget it, sample guided pages, and never select a workspace');
 }
 const windowsLifecycle = await read('./native-lifecycle-windows.ps1');
 const clickPoint = windowsLifecycle.slice(windowsLifecycle.indexOf('function Get-ClickPoint('), windowsLifecycle.indexOf('function Press('));
