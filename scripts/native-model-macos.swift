@@ -279,9 +279,9 @@ func capture(_ name: String, _ expected: [String]) throws -> [VNRecognizedTextOb
             && (name.hasPrefix("chat-") || name.hasPrefix("cluster-") || name.hasPrefix("local-shell-chat-"))
             && nativeChatTextIsVisible(value)
         let workspaceControl = !found && name.hasPrefix("local-workspace-") && nativeWorkspaceButtonIsVisible(value)
-        // Context choices are buttons named by their mono context (WebKit exposes no text inside them), and Vision can
-        // skip a short mono line in the picker; accept the exact named choice drawn inside the window.
-        let pickerChoice = !found && name.hasPrefix("cluster-picker-") && nativeWorkspaceButtonIsVisible(value)
+        // Context and account choices are buttons named by their mono name (WebKit exposes no text inside them), and
+        // Vision can skip a short mono line in a picker; accept the exact named choice drawn inside the window.
+        let pickerChoice = !found && (name.hasPrefix("cluster-picker-") || name.hasPrefix("cluster-account-picker-")) && nativeWorkspaceButtonIsVisible(value)
         let overviewControl = !found && name.hasPrefix("local-") && name.contains("overview") && nativeWorkspaceButtonIsVisible(value)
         let overviewHeading = !found && value == "web-reader"
             && (name.hasPrefix("local-overview-") || name.hasPrefix("local-controls-overview-"))
@@ -1965,8 +1965,10 @@ try workspacePhase("workspace-scene-ready")
 reopenedOnHome()
 waitForButton("Manage"); click("Manage", [])
 try workspaceCapture("ready", ["This computer", "Ready", "Agents", "Files"])
-// The returning AI card is headed AI once connected (Connect the AI before, The AI couldn't connect after a failure).
-require(nativeHeadingExists("AI"), "Returning connected Model must be headed AI")
+// The returning AI card names its state: AI once connected, Connect the AI before, The AI couldn't connect after a
+// failure. The reloaded ready scene has no saved connection (its capture shows the choices and Connect the AI).
+require(nativeHeadingExists("Connect the AI") && !nativeHeadingExists("AI") && enabledButton("Connect the AI") != nil,
+        "Returning Model without a connection must be headed Connect the AI and offer it")
 click("What's inside", [])
 _ = try capture("local-workspace-inside", ["4 GB of memory"])
 click("What's inside", [])
