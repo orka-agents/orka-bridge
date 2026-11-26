@@ -901,3 +901,60 @@ async fn valid_events_continue_beyond_sixteen_pages_without_reconnect() {
         .iter()
         .any(|r| r.after == Some(17)));
 }
+
+// The Navigator reuses the chat path under its own names, with Bridge's instructions and no tools.
+#[tokio::test]
+async fn navigator_turns_use_navigator_names_and_keep_one_agent_and_session() {
+    let f = Fixture::new().await;
+    let chat = owner();
+    let id = bridge_engine::navigator::CONVERSATION;
+    chat.send_navigator(
+        f.vm.clone(),
+        "- web-reader: Answers from a page".into(),
+        "What is a Task?".into(),
+    )
+    .unwrap();
+    ready(&chat, id).await;
+    assert!(chat.thinks_with().is_some());
+    // A newly saved agent does not restart the conversation's Session.
+    chat.send_navigator(
+        f.vm.clone(),
+        "- web-reader\n- inbox-digest".into(),
+        "And a Session?".into(),
+    )
+    .unwrap();
+    let second = ready(&chat, id).await;
+    assert_eq!(second.versions.len(), 1);
+    assert_eq!(second.versions[0].turns.len(), 2);
+    let g = f.guest.lock().unwrap();
+    let agents = g.posts("agents");
+    assert_eq!(agents.len(), 1);
+    let name = agents[0]["name"].as_str().unwrap();
+    assert!(name.starts_with("bridge-nav-agent-"), "{name}");
+    assert_eq!(agents[0]["spec"]["tools"], serde_json::json!([]));
+    let prompt = agents[0]["spec"]["systemPrompt"]["inline"]
+        .as_str()
+        .unwrap();
+    assert!(prompt.contains("navigator-card"));
+    assert!(prompt.contains("- web-reader: Answers from a page"));
+    assert!(!prompt.contains("inbox-digest"));
+    let tasks = g.posts("tasks");
+    assert_eq!(tasks.len(), 2);
+    for task in &tasks {
+        assert!(task["name"]
+            .as_str()
+            .unwrap()
+            .starts_with("bridge-nav-task-"));
+        assert_eq!(task["spec"]["agentRef"]["name"], name);
+        assert!(task["spec"]["sessionRef"]["name"]
+            .as_str()
+            .unwrap()
+            .starts_with("bridge-nav-"));
+    }
+    assert_eq!(
+        tasks[0]["spec"]["sessionRef"]["name"],
+        tasks[1]["spec"]["sessionRef"]["name"]
+    );
+    // A document conversation owner never sees the Navigator's conversation.
+    assert!(owner().status(id).versions.is_empty());
+}

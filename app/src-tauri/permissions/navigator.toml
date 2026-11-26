@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "navigator"
+description = "Talks with the Navigator on Home: sends a message to its one conversation on the local workspace, reads, reconnects or stops it, and starts a new one. Its Agent is built natively from Bridge's bundled instructions and has no tools."
+commands.allow = ["navigator_status", "navigator_send", "navigator_reconnect", "navigator_stop", "navigator_new"]

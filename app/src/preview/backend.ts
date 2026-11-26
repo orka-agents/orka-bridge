@@ -6,6 +6,7 @@ import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import agentSource from '../../src-tauri/example-agent/web-reader.agent.md?raw';
 import testSource from '../../src-tauri/example-agent/web-reader.agent.test.md?raw';
 import { SAMPLE_DOCUMENT_ID } from '../designer/agent-api';
+import { NAVIGATOR_ID } from '../home/navigator-api';
 import { orkaPermissions } from '../clusters/api';
 import { sidebarPreference } from '../chrome/sidebar';
 import { themePreference } from '../chrome/theme';
@@ -45,6 +46,13 @@ export const scenarios = {
   overviewEmpty: 'No saved agents yet',
   clusterContexts: 'Add a cluster with kubectl contexts',
   wsStarting: 'First setup, the workspace starting',
+  navThinking: 'Navigator: thinking about an answer',
+  navReplyFailed: 'Navigator: could not answer',
+  navNoModel: 'Navigator: no model connected',
+  navExplain: 'Navigator: explains Orka',
+  navTask: 'Navigator: proposes a task',
+  navTaskFails: 'Navigator: proposes a task that fails',
+  navAgent: 'Navigator: proposes an agent',
 } as const;
 export type Scenario = keyof typeof scenarios;
 type Gh = 'missing' | 'signedOut' | 'signedIn';
@@ -54,6 +62,7 @@ const imageBytes = 3_334_537_216;
 // Seconds per phase, shaped like a first run on a typical Windows computer.
 const timing = { verify: 3, copy: 8, start: 90, reopen: 30 };
 const runSeconds = 20;
+const pageChecksum = 'cf699c56340dc775230fde4ef84237d27563ea6ef52164c7d078072b586c3918';
 const chatSeconds = 3;
 
 const params = new URLSearchParams(location.search);
@@ -70,7 +79,8 @@ let selected: 'localVm' | null = fresh ? null : 'localVm';
 let startedAt: number | null = scenario === 'restart' ? now() : scenario === 'wsStarting' ? now() - (timing.verify + timing.copy + 12) * 1000 : null;
 let reopened = scenario === 'restart';
 let stopped: 'cancelled' | 'closed' | null = null;
-let modelConnected = scenario === 'connected' || scenario === 'runFails' || scenario === 'clusterReady';
+const navScenario = scenario.startsWith('nav');
+let modelConnected = scenario === 'connected' || scenario === 'runFails' || scenario === 'clusterReady' || navScenario && scenario !== 'navNoModel';
 
 // Deterministic 64-hex digest; the preview only needs stable, distinct source ids.
 function digest(text: string) {
@@ -157,21 +167,32 @@ function runSnapshot(documentId: string) {
 
 // One scripted task per conversation, as Try a task uses it: New, then Send. Phases advance with time; web-reader
 // fetches the page it was given. Stop deletes the task, as the native path does, and leaves its phase as last seen.
-type Turn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean; sentAt: number; startedAt: number; finishedAt: number | null; stopped: boolean };
+type Turn = { message: string; answer: string | null; phase: string; tools: { name: string; callId: string; phase: string }[]; contextRetained: boolean; terminationUnconfirmed: boolean; stopUnconfirmed: boolean; sentAt: number; startedAt: number; finishedAt: number | null; stopped: boolean; hold?: boolean };
 type Chat = { versions: Turn[][]; fresh: boolean };
 const chats = new Map<string, Chat>();
 const chatPhases = [[0.1, 'Pending'], [0.3, 'Scheduled'], [0.5, 'Running'], [0.85, 'Finalizing']] as const;
+// The workspace admits one conversation turn at a time, Navigator or Try a task, as native authoring does.
+const working = (turn: Turn) => turn.answer === null && !turn.stopped && turn.phase !== 'Failed' && (turn.hold || (now() - turn.sentAt) / 1000 / chatSeconds < 1);
+const anyWorking = () => [...chats.values()].some(chat => chat.versions.flat().some(working));
 function chatSnapshot(documentId: string) {
   const chat = chats.get(documentId) ?? { versions: [], fresh: true };
   const turns = chat.versions.flat();
+  const navigator = documentId === NAVIGATOR_ID;
   for (const turn of turns) {
-    if (turn.answer !== null || turn.stopped) continue;
-    const progress = (now() - turn.sentAt) / 1000 / chatSeconds;
+    if (turn.answer !== null || turn.stopped || turn.phase === 'Failed') continue;
+    const progress = turn.hold ? 0.6 : (now() - turn.sentAt) / 1000 / chatSeconds;
     const fetches = docs.get(documentId)?.name === 'web-reader' && /https?:\/\//.test(turn.message);
-    if (progress >= 1) {
-      const failed = scenario === 'runFails';
+    if (navigator) {
+      if (progress < 1) { turn.phase = [...chatPhases].reverse().find(([at]) => progress >= at)?.[1] ?? ''; continue; }
+      const failed = scenario === 'navReplyFailed';
       turn.phase = failed ? 'Failed' : 'Succeeded'; turn.finishedAt = turn.startedAt + Math.round(chatSeconds * 1000 / speed);
-      turn.answer = failed ? "I couldn't fetch that page, so I can't answer from it." : reply(documentId, turn.message);
+      turn.answer = failed ? null : navigatorReply(turn.message); turn.contextRetained = !failed;
+      continue;
+    }
+    if (progress >= 1) {
+      const failed = scenario === 'runFails' || scenario === 'navTaskFails';
+      turn.phase = failed ? 'Failed' : 'Succeeded'; turn.finishedAt = turn.startedAt + Math.round(chatSeconds * 1000 / speed);
+      turn.answer = failed ? scenario === 'navTaskFails' ? 'The page could not be fetched, so I stopped without answering.' : "I couldn't fetch that page, so I can't answer from it." : reply(documentId, turn.message);
       turn.contextRetained = true;
       if (fetches) turn.tools = [{ name: 'web_fetch', callId: 'preview-call', phase: 'ToolCallStarted' }, { name: 'web_fetch', callId: 'preview-call', phase: failed ? 'ToolCallFailed' : 'ToolCallCompleted' }];
     } else {
@@ -179,21 +200,79 @@ function chatSnapshot(documentId: string) {
       if (fetches && progress >= 0.5) turn.tools = [{ name: 'web_fetch', callId: 'preview-call', phase: 'ToolCallStarted' }];
     }
   }
-  const working = turns.some(turn => turn.answer === null && !turn.stopped);
-  const canSend = ready() && modelConnected && !working;
+  const busy = turns.some(working);
+  const canSend = ready() && modelConnected && !anyWorking();
   return {
-    documentId, state: working ? 'working' : 'ready', busy: working, canSend, error: null,
+    documentId, state: busy ? 'working' : 'ready', busy, canSend, error: null,
     versions: chat.versions.map(version => ({ turns: version.map(turn => ({ message: turn.message, answer: turn.answer, phase: turn.phase, tools: turn.tools, contextRetained: turn.contextRetained, terminationUnconfirmed: turn.terminationUnconfirmed, stopUnconfirmed: turn.stopUnconfirmed, startedAt: turn.startedAt, finishedAt: turn.finishedAt })) })),
   };
 }
 function reply(documentId: string, message: string) {
   const doc = docs.get(documentId);
+  if (doc?.name === 'web-reader' && /checksum|sha-?256/i.test(message)) return pageChecksum;
   if (doc?.name === 'web-reader') {
     const url = /https?:\/\/\S+/.exec(message)?.[0]?.replace(/[.,)]+$/, '');
     return url ? `I read ${url}.\n\n- It is a placeholder page kept for documentation examples.\n- It has one heading and one paragraph.\n- It links to an explanation of why the domain is reserved.`
       : 'Give me a link and I will read the page and tell you what it says.';
   }
   return `This preview answers with scripted text. In the desktop app, ${doc?.name ?? 'your agent'} answers with the AI in your workspace.`;
+}
+
+// The Navigator's scripted answers: a reply per kind of question, each with at most one card, as the real one is
+// instructed to write them (home/navigator/instructions.md).
+const card = (value: object) => '\n\n```navigator-card\n' + JSON.stringify(value) + '\n```';
+const kubectlQuestion = 'What SHA-256 checksum does https://dl.k8s.io/release/v1.35.0/bin/darwin/arm64/kubectl.sha256 publish for kubectl v1.35.0 on Apple silicon Macs?';
+const explainQuestion = 'I’m new to Orka. What is a Task, and how is it different from an agent?';
+const agentQuestion = 'I need an agent that summarises new issues in my repo.';
+function navigatorReply(message: string) {
+  if (/checksum|sha-?256|https?:\/\//i.test(message)) return 'That needs the live page, so I shouldn’t answer from memory. Your agent web-reader is set up for exactly this.'
+    + card({ kind: 'task', agent: 'web-reader', task: message });
+  if (/just answer here/i.test(message)) return 'I can’t read web pages myself, so I can’t answer that from here. Ask web-reader with a task when you want the page’s exact value.';
+  if (/new to orka|what is a task|explain/i.test(message)) return 'An agent is something you set up; a task is something you ask it to do. You don’t chat with an agent. You hand it a task, it runs, and you read the result.'
+    + card({ kind: 'explain', title: 'How it fits together', rows: [
+      { term: 'Agent', text: 'What does the work: instructions, tools and tests. You set it up once.' },
+      { term: 'Task', text: 'One piece of work handed to an agent. It runs somewhere isolated and leaves a record.' },
+      { term: 'Session', text: 'A conversation an agent keeps across tasks.' },
+      { term: 'Cluster', text: 'Where tasks run: this computer, or your team’s Kubernetes cluster.' },
+    ], actions: [{ label: 'Create my first task', ask: 'Help me create my first task.' }, { label: 'Show me my agents', open: 'Overview' }] })
+    + '\n\nSources: orka:getting-started.md#mental-model, bridge:docs/glossary.md';
+  if (/agent that|set up an agent|new agent|summari/i.test(message)) return 'An agent is a file with instructions, tools and tests. Here is a first draft; you can change every line in Designer afterwards.'
+    + card({ kind: 'agent', name: 'issue-summary', description: 'Summarises new issues in a repo', instructions: 'You summarise new issues in the repo named in the task.\nRead each issue before you write about it.\nGive one line per issue: what is asked, and what is missing.', tools: ['web_fetch'] });
+  if (/pull request|repo|monitor/i.test(message)) return 'That’s a repository monitor: Orka checks the repo on a schedule and hands each new pull request to a reviewer agent as a task. Bridge can’t set one up yet; today it is created on the cluster with a RepositoryMonitor resource.'
+    + '\n\nSources: orka:guides/repository-monitors.md';
+  if (/charter|ask before/i.test(message)) return 'A charter would state hard rules for a namespace once, such as every write needing a person. Charters aren’t part of Orka yet, so Bridge can’t write one. Today a task can ask a person first with the `request_approval` tool.';
+  if (/task/i.test(message)) return 'Tell me what you want done, with any link or value it needs. Your saved agent web-reader answers from a web page you name.';
+  return 'This preview answers with scripted text. In the desktop app, the Navigator answers with the AI in your workspace.';
+}
+const seeded = (message: string, answer: string | null, extra: Partial<Turn> = {}): Turn => ({ message, answer, phase: answer === null ? '' : 'Succeeded', tools: [], contextRetained: answer !== null,
+  terminationUnconfirmed: false, stopUnconfirmed: false, sentAt: now() - 60_000 * speed, startedAt: Date.now() - 60_000, finishedAt: answer === null ? null : Date.now() - 57_000, stopped: false, ...extra });
+const navSeed: Partial<Record<Scenario, Turn[]>> = {
+  navThinking: [seeded(kubectlQuestion, null, { hold: true, sentAt: now(), startedAt: Date.now() })],
+  navReplyFailed: [seeded(kubectlQuestion, null, { phase: 'Failed', finishedAt: Date.now() - 30_000 })],
+  navExplain: [seeded(explainQuestion, navigatorReply(explainQuestion))],
+  navTask: [seeded(kubectlQuestion, navigatorReply(kubectlQuestion))],
+  navTaskFails: [seeded(kubectlQuestion, navigatorReply(kubectlQuestion))],
+  navAgent: [seeded(agentQuestion, navigatorReply(agentQuestion))],
+};
+const navTurns = navSeed[scenario];
+if (navTurns) chats.set(NAVIGATOR_ID, { versions: [navTurns], fresh: false });
+function navigatorSnapshot() {
+  return { chat: chatSnapshot(NAVIGATOR_ID), thinksWith: modelConnected ? { kind: 'copilot', model: 'gpt-5.6-terra' } : null };
+}
+function chatNew(id: string) {
+  if (chatSnapshot(id).busy) throw 'busy';
+  chats.set(id, { versions: chats.get(id)?.versions ?? [], fresh: true });
+}
+function chatStop(id: string) {
+  for (const turn of chats.get(id)?.versions.flat() ?? []) if (turn.answer === null && turn.phase !== 'Failed') { turn.stopped = true; turn.hold = false; turn.terminationUnconfirmed = true; }
+}
+function chatSend(id: string, message: string) {
+  if (!chatSnapshot(id).canSend) throw 'busy';
+  const chat = chats.get(id) ?? { versions: [], fresh: true };
+  if (chat.fresh || !chat.versions.length) chat.versions.push([]);
+  chat.fresh = false;
+  chat.versions.at(-1)!.push({ message, answer: null, phase: '', tools: [], contextRetained: false, terminationUnconfirmed: false, stopUnconfirmed: false, sentAt: now(), startedAt: Date.now(), finishedAt: null, stopped: false, hold: scenario === 'navThinking' });
+  chats.set(id, chat);
 }
 
 // The last finished local run, recorded for Overview the way native local-results does.
@@ -580,27 +659,13 @@ async function handle(command: string, args?: Record<string, unknown>): Promise<
     }
     case 'agent_run_check_cancellation': return runSnapshot(documentId(args));
     case 'agent_chat_status': case 'agent_chat_reconnect': return chatSnapshot(documentId(args));
-    case 'agent_chat_new': {
-      const id = documentId(args);
-      if (chatSnapshot(id).busy) throw 'busy';
-      chats.set(id, { versions: chats.get(id)?.versions ?? [], fresh: true });
-      return chatSnapshot(id);
-    }
-    case 'agent_chat_stop': {
-      const id = documentId(args);
-      for (const turn of chats.get(id)?.versions.flat() ?? []) if (turn.answer === null) { turn.stopped = true; turn.terminationUnconfirmed = true; }
-      return chatSnapshot(id);
-    }
-    case 'agent_chat_send': {
-      const id = documentId(args);
-      if (!chatSnapshot(id).canSend) throw 'busy';
-      const chat = chats.get(id) ?? { versions: [], fresh: true };
-      if (chat.fresh || !chat.versions.length) chat.versions.push([]);
-      chat.fresh = false;
-      chat.versions.at(-1)!.push({ message: String(args?.message ?? ''), answer: null, phase: '', tools: [], contextRetained: false, terminationUnconfirmed: false, stopUnconfirmed: false, sentAt: now(), startedAt: Date.now(), finishedAt: null, stopped: false });
-      chats.set(id, chat);
-      return chatSnapshot(id);
-    }
+    case 'agent_chat_new': chatNew(documentId(args)); return chatSnapshot(documentId(args));
+    case 'agent_chat_stop': chatStop(documentId(args)); return chatSnapshot(documentId(args));
+    case 'agent_chat_send': chatSend(documentId(args), String(args?.message ?? '')); return chatSnapshot(documentId(args));
+    case 'navigator_status': case 'navigator_reconnect': return navigatorSnapshot();
+    case 'navigator_new': chatNew(NAVIGATOR_ID); return navigatorSnapshot();
+    case 'navigator_stop': chatStop(NAVIGATOR_ID); return navigatorSnapshot();
+    case 'navigator_send': chatSend(NAVIGATOR_ID, String(args?.message ?? '')); return navigatorSnapshot();
     case 'overview_files': return savedFiles();
     case 'overview_agents': return ready()
       ? { state: 'complete', installation, agents: [], observedAt: Math.floor(Date.now() / 1000), observation: null, runActive: false, reason: null }
