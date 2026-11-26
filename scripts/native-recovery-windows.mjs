@@ -288,7 +288,8 @@ try {
       if (row.x < card.x + 16 || row.right > card.right - 16) fail('check border escapes card padding');
     }
     for (const { name: title, pill, action, row } of layout.rows) {
-      if (layout.width <= 820 && (Math.abs(pill.y - action.y) > 2 || Math.abs(pill.x - title.x) > 2 || action.right > row.right - 16)) fail('compact pill/action row is not aligned below the name');
+      // The 22px pill and the 28px small action share a centre line (align-items: center), not a top edge.
+      if (layout.width <= 820 && (Math.abs((pill.y + pill.bottom) / 2 - (action.y + action.bottom) / 2) > 2 || Math.abs(pill.x - title.x) > 2 || action.right > row.right - 16)) fail('compact pill/action row is not aligned below the name');
     }
     if (layout.rows.some(row => Math.abs(row.name.x - layout.rows[0].name.x) > 2)) fail('list names do not align');
     const setup = layout.setup;
