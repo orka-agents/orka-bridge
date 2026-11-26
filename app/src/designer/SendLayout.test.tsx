@@ -14,6 +14,7 @@ const provider = { id: '00000000-0000-4000-8000-000000000003', name: 'team-model
 const place = { kind: 'cluster' as const, target, providers: [provider], providerId: provider.id };
 const failed = { id: 'reads-the-title', question: 'What is the title?', phase: 'Succeeded', answer: 'No', completedTools: [], assertions: [{ id: 'has', kind: 'contains', expected: 'Title', verdict: 'failed' }], verdict: 'failed' };
 const localResult = { documentId: id, busy: null, state: 'complete', stage: 'done', canRun: true, modelConnected: true, source, report: { verdict: 'failed', cases: [failed] }, acknowledged: [], pending: null, error: null };
+const sendView = { documentId: id, id: '00000000-0000-4000-8000-000000000004', targetId: target.id, providerId: provider.id, targetName: target.context_name, source, model: 'literal-model', agentName: 'generated-agent', agentAction: 'create', state: 'complete', stage: 'done', acknowledged: [{ kind: 'Agent', name: 'generated-agent', uid: 'uid' }], pending: null, report: { verdict: 'failed', cases: [failed] }, error: null, storageError: false, cancellation: null };
 beforeEach(() => { Object.defineProperty(HTMLDivElement.prototype, 'showPopover', { configurable: true, value() { this.style.display = 'grid'; } }); });
 afterEach(() => { cleanup(); clearMocks(); vi.restoreAllMocks(); vi.unstubAllGlobals(); Reflect.deleteProperty(HTMLDivElement.prototype, 'showPopover'); });
 function native(run: object = localResult, send: object | null = null, opened = pair) {
@@ -94,6 +95,23 @@ test('a failed cluster Send offers Fix in Designer and focuses the instructions,
   const fix = await screen.findByRole('button', { name: 'Fix in Designer' });
   await userEvent.click(fix);
   await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Instructions' })));
+});
+test('after a Send, File view still shows the folded tests card’s test file, hashes and resources', async () => {
+  native({ ...localResult, report: { verdict: 'passed', cases: [{ ...failed, verdict: 'passed', assertions: [{ ...failed.assertions[0], verdict: 'passed' }] }] }, acknowledged: [{ kind: 'Agent', name: 'local-agent', uid: 'local-uid' }] }, sendView);
+  const user = userEvent.setup(); render(<Example remote place={place} />);
+  await screen.findByRole('button', { name: 'Fix in Designer' });
+  const local = screen.getByRole('region', { name: 'Tests on this computer' });
+  await waitFor(() => expect(local.classList.contains('example-run-collapsed')).toBe(true));
+  // Agent view keeps the folded card to its head line and rows.
+  expect(within(local).queryByText('Test file, resources and file hashes')).toBeNull();
+  await user.click(screen.getByRole('button', { name: 'File' }));
+  const folded = screen.getByRole('region', { name: 'Tests on this computer' });
+  expect(folded.classList.contains('example-run-collapsed')).toBe(true);
+  expect(within(folded).getByText('Test file, resources and file hashes')).toBeTruthy();
+  expect(within(folded).getByText('Checks from disk')).toBeTruthy();
+  expect(within(folded).getByText('Agent file hash')).toBeTruthy();
+  expect(within(folded).getByText('Test file hash')).toBeTruthy();
+  expect(within(folded).getByText('local-agent')).toBeTruthy();
 });
 test.each([
   ['frontmatter-reader', pair.agent.replace('name: web-reader', 'name: frontmatter-reader')],

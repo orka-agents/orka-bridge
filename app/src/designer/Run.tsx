@@ -115,7 +115,8 @@ export default function Run({ tests, documentId = SAMPLE_DOCUMENT_ID, onSnapshot
         : !actionBelow && runActions}>
       {!workspaceReady && <p className="muted">Waiting for the workspace to start.</p>}
       <p className="sr-only test-announcement" role="status" aria-live="polite" aria-atomic="true">{!running ? cancellationLine ?? (!outdated ? uncertain ? 'Test result unknown.' : resultAnnouncement(snapshot?.report) : undefined) : undefined}</p>
-      {collapsed ? <div className="run-body">{content}{list}</div>
+      {/* Folded, the card still keeps the test file, hashes and resources in File view: nowhere else shows them. */}
+      {collapsed ? <div className="run-body">{content}{list}{fileDetails}</div>
         // The running stage is the one place the card names what is happening; results are their own rows.
         : running ? <><CardSection title="What happened">{content}</CardSection>{list}{fileDetails}</> : <div className="run-body">{content}{actionBelow && runActions}{list}{fileDetails}</div>}
     </LongCard>
