@@ -10,7 +10,7 @@ export type Card = {
   meta: { tests?: string };
   documentId?: string; remote: boolean; actions: CardAction[]; details: Detail[];
 };
-export type Note = { text: string; seen?: number; check?: boolean; clusters?: boolean };
+export type Note = { text: string; seen?: number; check?: boolean; clusters?: boolean; /** Says only that the list is empty, which the empty Overview already says. */ empty?: boolean };
 export type Group = { key: string; title: string; sub?: string; description?: string; count?: number; notes: Note[]; cards: Card[] };
 export type CompleteAgents = LiveAgents & { state: 'complete'; installation: string; observedAt: number };
 export type Inputs = {
@@ -156,7 +156,7 @@ export function clusterGroups(i: Inputs, built: Built): Group[] {
   if (state === 'stopped') notes.push({ text: 'The workspace is stopped. Start it to run tests or try a task.', clusters: true });
   if (state === 'read') notes.push({ text: "Couldn't check just now.", seen, check: true });
   if (i.files?.state === 'complete' && !history && !i.filesStale) notes.push({ text: "Test history is unavailable, so other agents on this cluster aren't shown and results are unknown.", check: true });
-  if (history && state === 'ok' && !local.length && !strays.length) notes.push({ text: 'No agents on this computer yet.' });
+  if (history && state === 'ok' && !local.length && !strays.length) notes.push({ text: 'No agents on this computer yet.', empty: true });
   const groups: Group[] = [{ key: 'local', title: 'This computer', notes, cards: [...local, ...strays], count: local.length + strays.length || undefined }];
   (i.places?.places ?? []).forEach(place => {
     const cards = built.remoteCards.filter(c => c.groupKey === place.key);
